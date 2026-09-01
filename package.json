@@ -1,0 +1,21 @@
+{
+  "name": "@tandem/canvas-extension",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsx scripts/build.ts",
+    "dev": "tsx scripts/build.ts --watch",
+    "check": "tsc --noEmit",
+    "pack": "npm run check && npm run build && tsx scripts/pack.ts"
+  },
+  "devDependencies": {
+    "@github/copilot-sdk": "1.0.11",
+    "@types/archiver": "8.0.0",
+    "@types/node": "26.3.0",
+    "archiver": "8.0.0",
+    "esbuild": "0.28.2",
+    "tsx": "4.23.12",
+    "typescript": "7.0.2"
+  }
+}

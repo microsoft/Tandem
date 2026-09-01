@@ -1,0 +1,3707 @@
+export {};
+
+type AnyRecord = Record<string, any>;
+
+const elements: AnyRecord = {
+  stage: document.getElementById("stage"),
+  currentStage: document.getElementById("current-stage"),
+  currentStageIndex: document.getElementById("current-stage-index"),
+  phase: document.getElementById("phase"),
+  goal: document.getElementById("goal"),
+  status: document.getElementById("status"),
+  nextActionGuide: document.getElementById("next-action-guide"),
+  questionHost: document.getElementById("question-host"),
+  confirmed: document.getElementById("confirmed"),
+  assumed: document.getElementById("assumed"),
+  deferred: document.getElementById("deferred"),
+  artifactList: document.getElementById("artifact-list"),
+  artifactCount: document.getElementById("artifact-count"),
+  artifactHeading: document.getElementById("artifact-heading"),
+  artifactMeta: document.getElementById("artifact-meta"),
+  artifactContent: document.getElementById("artifact-content"),
+  artifactDiagram: document.getElementById("artifact-diagram"),
+  artifactReview: document.getElementById("artifact-review"),
+  artifactReviewThreads: document.getElementById("artifact-review-threads"),
+  mermaidHost: document.getElementById("mermaid-host"),
+  mermaidSource: document.getElementById("mermaid-source"),
+  diagramStatus: document.getElementById("diagram-status"),
+  diagramSourceDetails: document.getElementById("diagram-source-details"),
+  contentCard: document.getElementById("content-card"),
+  contentEmpty: document.getElementById("content-empty"),
+  designTreePanel: document.getElementById("design-tree-panel"),
+  designTreeCard: document.getElementById("design-tree-card"),
+  designTreeEmpty: document.getElementById("design-tree-empty"),
+  designTreeCurrent: document.getElementById("design-tree-current"),
+  designTreePhase: document.getElementById("design-tree-phase"),
+  designTreeHost: document.getElementById("design-tree-host"),
+  designTreeStatus: document.getElementById("design-tree-status"),
+  designTreeSource: document.getElementById("design-tree-source"),
+  designTreeSourceDetails: document.getElementById("design-tree-source-details"),
+  designReviewTab: document.getElementById("design-review-tab"),
+  reviewCount: document.getElementById("review-count"),
+  designReviewPanel: document.getElementById("design-review-panel"),
+  productDesignSubstage: document.getElementById("product-design-substage"),
+  testDesignSubstage: document.getElementById("test-design-substage"),
+  designReviewTitle: document.getElementById("design-review-title"),
+  designReviewProgress: document.getElementById("design-review-progress"),
+  finishReview: document.getElementById("finish-review"),
+  designReviewThreads: document.getElementById("design-review-threads"),
+  designReviewForm: document.getElementById("design-review-form"),
+  reviewRequestKind: document.getElementById("review-request-kind"),
+  designReviewInput: document.getElementById("design-review-input"),
+  designReviewStatus: document.getElementById("design-review-status"),
+  reviewSubmit: document.getElementById("review-submit"),
+  planTab: document.getElementById("plan-tab"),
+  planPanel: document.getElementById("plan-panel"),
+  planProgress: document.getElementById("plan-progress"),
+  planMaxAgents: document.getElementById("plan-max-agents"),
+  generatePlan: document.getElementById("generate-plan"),
+  finalizePlan: document.getElementById("finalize-plan"),
+  planMetrics: document.getElementById("plan-metrics"),
+  planStrategySection: document.getElementById("plan-strategy-section"),
+  planStrategy: document.getElementById("plan-strategy"),
+  planDagSection: document.getElementById("plan-dag-section"),
+  planDag: document.getElementById("plan-dag"),
+  planDagStatus: document.getElementById("plan-dag-status"),
+  planColumns: document.getElementById("plan-columns"),
+  planWaves: document.getElementById("plan-waves"),
+  planWorkItems: document.getElementById("plan-work-items"),
+  planAgents: document.getElementById("plan-agents"),
+  planRisks: document.getElementById("plan-risks"),
+  planRevisionSection: document.getElementById("plan-revision-section"),
+  planRevisionForm: document.getElementById("plan-revision-form"),
+  planRevisionInput: document.getElementById("plan-revision-input"),
+  optimizePlan: document.getElementById("optimize-plan"),
+  revisePlan: document.getElementById("revise-plan"),
+  planStatus: document.getElementById("plan-status"),
+  implementationTab: document.getElementById("implementation-tab"),
+  implementationPanel: document.getElementById("implementation-panel"),
+  implementationProgress: document.getElementById("implementation-progress"),
+  implementationProgressLabel: document.getElementById("implementation-progress-label"),
+  implementationProgressBar: document.getElementById("implementation-progress-bar"),
+  implementationMetrics: document.getElementById("implementation-metrics"),
+  implementationWaves: document.getElementById("implementation-waves"),
+  implementationWorkItems: document.getElementById("implementation-work-items"),
+  implementationAgents: document.getElementById("implementation-agents"),
+  implementationStrategyForm: document.getElementById("implementation-strategy-form"),
+  implementationStrategyInput: document.getElementById("implementation-strategy-input"),
+  submitImplementationStrategy: document.getElementById("submit-implementation-strategy"),
+  implementationStrategies: document.getElementById("implementation-strategies"),
+  implementationEvents: document.getElementById("implementation-events"),
+  implementationStatus: document.getElementById("implementation-status"),
+  startImplementation: document.getElementById("start-implementation"),
+  stopImplementation: document.getElementById("stop-implementation"),
+  testTab: document.getElementById("test-tab"),
+  testPanel: document.getElementById("test-panel"),
+  testProgress: document.getElementById("test-progress"),
+  testProgressLabel: document.getElementById("test-progress-label"),
+  testProgressBar: document.getElementById("test-progress-bar"),
+  testMetrics: document.getElementById("test-metrics"),
+  testScenarios: document.getElementById("test-scenarios"),
+  testAgents: document.getElementById("test-agents"),
+  testEvents: document.getElementById("test-events"),
+  testStatus: document.getElementById("test-status"),
+  startTests: document.getElementById("start-tests"),
+  previewTabs: Array.from(document.querySelectorAll('[role="tab"]')),
+  previewPanel: document.getElementById("live-preview-panel"),
+  contentPanel: document.getElementById("content-panel"),
+  previewTools: document.getElementById("preview-tools"),
+  previewStatus: document.getElementById("preview-status"),
+  previewTab: document.getElementById("live-preview-tab"),
+  prototypeBuilding: document.getElementById("prototype-building"),
+  prototypeBuildingMessage: document.getElementById("prototype-building-message"),
+  previewEmpty: document.getElementById("preview-empty"),
+  previewFrame: document.getElementById("preview-frame"),
+  openPreview: document.getElementById("open-preview"),
+  workspace: document.getElementById("studio-workspace"),
+  requirements: document.getElementById("requirements-pane"),
+  splitter: document.getElementById("studio-splitter"),
+  reloadButton: document.getElementById("reload-extension"),
+  reloadStatus: document.getElementById("reload-status"),
+  stageList: document.getElementById("stage-list"),
+  completeStage: document.getElementById("complete-stage"),
+  stageMessage: document.getElementById("stage-message"),
+  requirementsSubstageSection: document.getElementById("requirements-substage-section"),
+  usageSubstage: document.getElementById("usage-substage"),
+  dagSubstage: document.getElementById("dag-substage"),
+  usageIntake: document.getElementById("usage-intake"),
+  usageItems: document.getElementById("usage-items"),
+  usageForm: document.getElementById("usage-form"),
+  usageInput: document.getElementById("usage-input"),
+  addUsage: document.getElementById("add-usage"),
+  usageSuggestionArea: document.getElementById("usage-suggestion-area"),
+  usageSuggestions: document.getElementById("usage-suggestions"),
+  generateDag: document.getElementById("generate-dag"),
+  usageMessage: document.getElementById("usage-message"),
+  prototypeReview: document.getElementById("prototype-review"),
+  revisionForm: document.getElementById("revision-form"),
+  revisionInput: document.getElementById("revision-input"),
+  submitRevision: document.getElementById("submit-revision"),
+  revisionQuestion: document.getElementById("revision-question"),
+  revisionQuestionTitle: document.getElementById("revision-question-title"),
+  revisionQuestionRationale: document.getElementById("revision-question-rationale"),
+  revisionQuestionForm: document.getElementById("revision-question-form"),
+  revisionQuestionChoices: document.getElementById("revision-question-choices"),
+  revisionQuestionDetail: document.getElementById("revision-question-detail"),
+  submitClarification: document.getElementById("submit-clarification"),
+  revisionHistory: document.getElementById("revision-history"),
+  revisionStatus: document.getElementById("revision-status"),
+};
+
+const MIN_REQUIREMENTS_WIDTH = 280;
+const MIN_PREVIEW_WIDTH = 360;
+const DEFAULT_REQUIREMENTS_RATIO = 0.24;
+const KEYBOARD_RESIZE_STEP = 24;
+const LIFECYCLE_STAGES = [
+  { id: "requirements", label: "Requirements" },
+  { id: "prototype", label: "Prototype" },
+  { id: "design", label: "Design" },
+  { id: "plan", label: "Plan" },
+  { id: "implement", label: "Implement" },
+  { id: "test", label: "Test" },
+];
+let currentState = null;
+let submitting = false;
+let applyingAllRecommended = false;
+let appliedRecommendedCount = 0;
+let completingStage = false;
+let activePointerId = null;
+let reloadRequestError = "";
+let activeOutputTab = "design-tree";
+let selectedArtifactId = null;
+let selectedDecisionId = null;
+let mermaidModulePromise = null;
+let diagramRenderId = 0;
+let designTreeRenderId = 0;
+let planRenderId = 0;
+let lastLifecycleStage = null;
+let implementationSubmitting = false;
+let lastImplementationRuntimeSignature = "";
+let testSubmitting = false;
+let lastTestRuntimeSignature = "";
+let processingMessageTimer = null;
+let prototypeBuildMessageTimer = null;
+let prototypeBuildKey = "";
+let prototypeBuildStartedAt = 0;
+const diagramScales = new WeakMap<HTMLElement, number>();
+let lastNextActionLabel = "";
+
+function splitterBounds() {
+  const workspaceRect = elements.workspace.getBoundingClientRect();
+  const splitterWidth = elements.splitter.getBoundingClientRect().width || 9;
+  return {
+    workspaceRect,
+    min: MIN_REQUIREMENTS_WIDTH,
+    max: Math.max(
+      MIN_REQUIREMENTS_WIDTH,
+      workspaceRect.width - splitterWidth - MIN_PREVIEW_WIDTH,
+    ),
+  };
+}
+
+function setRequirementsWidth(width) {
+  if (window.matchMedia("(max-width: 760px)").matches) return;
+  const bounds = splitterBounds();
+  const next = Math.round(Math.min(bounds.max, Math.max(bounds.min, width)));
+  elements.workspace.style.setProperty("--requirements-width", next + "px");
+  elements.splitter.setAttribute("aria-valuemin", String(bounds.min));
+  elements.splitter.setAttribute("aria-valuemax", String(Math.round(bounds.max)));
+  elements.splitter.setAttribute("aria-valuenow", String(next));
+  const percent = bounds.workspaceRect.width > 0
+    ? Math.round((next / bounds.workspaceRect.width) * 100)
+    : DEFAULT_REQUIREMENTS_RATIO * 100;
+  elements.splitter.setAttribute(
+    "aria-valuetext",
+    percent + "% requirements, " + (100 - percent) + "% preview",
+  );
+}
+
+function syncSplitterBounds() {
+  if (window.matchMedia("(max-width: 760px)").matches) return;
+  const currentWidth = elements.requirements.getBoundingClientRect().width;
+  setRequirementsWidth(
+    currentWidth || elements.workspace.clientWidth * DEFAULT_REQUIREMENTS_RATIO,
+  );
+}
+
+function resizeFromPointer(clientX) {
+  const { workspaceRect } = splitterBounds();
+  setRequirementsWidth(clientX - workspaceRect.left);
+}
+
+function finishPointerResize(pointerId, releaseCapture) {
+  if (activePointerId !== pointerId) return;
+  activePointerId = null;
+  elements.splitter.classList.remove("is-dragging");
+  document.body.classList.remove("is-resizing");
+  if (
+    releaseCapture &&
+    elements.splitter.hasPointerCapture(pointerId)
+  ) {
+    elements.splitter.releasePointerCapture(pointerId);
+  }
+}
+
+elements.splitter.addEventListener("pointerdown", (event) => {
+  if (event.button !== 0 || window.matchMedia("(max-width: 760px)").matches) {
+    return;
+  }
+  activePointerId = event.pointerId;
+  elements.splitter.setPointerCapture(event.pointerId);
+  elements.splitter.classList.add("is-dragging");
+  document.body.classList.add("is-resizing");
+  resizeFromPointer(event.clientX);
+  event.preventDefault();
+});
+
+elements.splitter.addEventListener("pointermove", (event) => {
+  if (activePointerId !== event.pointerId) return;
+  resizeFromPointer(event.clientX);
+});
+
+elements.splitter.addEventListener("pointerup", (event) => {
+  finishPointerResize(event.pointerId, true);
+});
+
+elements.splitter.addEventListener("pointercancel", (event) => {
+  finishPointerResize(event.pointerId, true);
+});
+
+elements.splitter.addEventListener("lostpointercapture", (event) => {
+  finishPointerResize(event.pointerId, false);
+});
+
+elements.splitter.addEventListener("keydown", (event) => {
+  if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+  const direction = event.key === "ArrowLeft" ? -1 : 1;
+  const step = event.shiftKey ? KEYBOARD_RESIZE_STEP * 2 : KEYBOARD_RESIZE_STEP;
+  setRequirementsWidth(
+    elements.requirements.getBoundingClientRect().width + direction * step,
+  );
+  event.preventDefault();
+});
+
+window.addEventListener("resize", syncSplitterBounds);
+requestAnimationFrame(syncSplitterBounds);
+
+function renderReload(state) {
+  const provider = state.provider || {};
+  const receipt = state.reloadReceipt;
+  const canReload = provider.canReload === true;
+  const isReloading = receipt?.status === "reloading";
+
+  elements.reloadButton.disabled = !canReload || isReloading;
+  elements.reloadButton.textContent = isReloading
+    ? "Reloading..."
+    : "Reload latest installed";
+
+  let status = "";
+  let statusKind = "idle";
+  if (reloadRequestError) {
+    status = reloadRequestError;
+    statusKind = "error";
+  } else if (!canReload) {
+    status = provider.source === "project"
+      ? "Available from the user-installed Tandem"
+      : "Reload unavailable";
+  } else if (receipt?.status === "reloading") {
+    status = receipt.message || "Reloading...";
+  } else if (receipt?.status === "success") {
+    status = receipt.message || "Reloaded";
+    statusKind = "success";
+  } else if (receipt?.status === "error") {
+    status = receipt.message || "Reload failed";
+    statusKind = "error";
+  } else {
+    status = "Current session only";
+  }
+
+  elements.reloadStatus.textContent = status;
+  elements.reloadStatus.dataset.status = statusKind;
+  elements.reloadButton.title = canReload
+    ? "Restart this session's provider from the latest installed user extension. This does not download updates."
+    : status;
+}
+
+elements.reloadButton.addEventListener("click", async () => {
+  if (elements.reloadButton.disabled) return;
+  reloadRequestError = "";
+  elements.reloadButton.disabled = true;
+  elements.reloadButton.textContent = "Checking...";
+  elements.reloadStatus.textContent = "Checking installed user extension...";
+  elements.reloadStatus.dataset.status = "idle";
+
+  try {
+    const response = await fetch("/api/reload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error || "Reload request failed.");
+    }
+    elements.reloadButton.textContent = "Reloading...";
+    elements.reloadStatus.textContent = "Reloading this session...";
+  } catch (error) {
+    reloadRequestError = error instanceof Error
+      ? error.message
+      : "Reload request failed.";
+    if (currentState) renderReload(currentState);
+  }
+});
+
+async function submitRequirementAction(action, answer) {
+  if (
+    submitting ||
+    !currentState ||
+    currentState.processing?.status === "running"
+  ) {
+    return;
+  }
+  submitting = true;
+  elements.usageMessage.textContent =
+    action === "generate-dag"
+      ? "Generating the DAG from your usage list..."
+      : "Adding usage and generating suggestions...";
+  elements.usageMessage.dataset.status = "idle";
+  renderRequirementsSubstage(currentState);
+  try {
+    const response = await fetch("/api/answer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        questionId: "usage-intake",
+        answer,
+        action,
+      }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error || "Could not update requirements.");
+    }
+  } catch (error) {
+    submitting = false;
+    elements.usageMessage.textContent = error instanceof Error
+      ? error.message
+      : "Could not update requirements.";
+    elements.usageMessage.dataset.status = "error";
+    renderRequirementsSubstage(currentState, true);
+  }
+}
+
+elements.usageForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const usage = elements.usageInput.value.trim();
+  if (!usage) {
+    elements.usageMessage.textContent = "Enter one usage sentence.";
+    elements.usageMessage.dataset.status = "error";
+    return;
+  }
+  elements.usageInput.value = "";
+  submitRequirementAction("add-usage", usage);
+});
+
+elements.generateDag.addEventListener("click", () => {
+  submitRequirementAction(
+    "generate-dag",
+    "Generate the requirements DAG from the complete usage list.",
+  );
+});
+
+elements.revisionForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (submitting || !currentState) return;
+  const suggestion = elements.revisionInput.value.trim();
+  if (!suggestion) {
+    elements.revisionStatus.textContent = "Enter a revision suggestion.";
+    elements.revisionStatus.dataset.status = "error";
+    return;
+  }
+  submitting = true;
+  elements.submitRevision.disabled = true;
+  elements.submitRevision.textContent = "Sending...";
+  elements.revisionStatus.textContent = "";
+  try {
+    const response = await fetch("/api/revision", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ suggestion }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error || "Could not submit the revision.");
+    }
+    elements.revisionInput.value = "";
+  } catch (error) {
+    submitting = false;
+    elements.revisionStatus.textContent = error instanceof Error
+      ? error.message
+      : "Could not submit the revision.";
+    elements.revisionStatus.dataset.status = "error";
+    if (currentState) renderPrototypeReview(currentState, true);
+  }
+});
+
+elements.revisionQuestionForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (submitting || !currentState) return;
+  const question = currentState.prototypeReview?.question;
+  if (!question) return;
+  const selected = elements.revisionQuestionChoices.querySelector(
+    'input[name="revision-clarification"]:checked',
+  );
+  const detail = elements.revisionQuestionDetail.value.trim();
+  const answer = detail || selected?.value || "";
+  if (!answer) {
+    elements.revisionStatus.textContent =
+      "Choose an option or enter clarification.";
+    elements.revisionStatus.dataset.status = "error";
+    return;
+  }
+  submitting = true;
+  elements.submitClarification.disabled = true;
+  elements.submitClarification.textContent = "Sending...";
+  elements.revisionStatus.textContent = "";
+  try {
+    const response = await fetch("/api/answer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        questionId: question.id,
+        answer,
+        action: "clarify-revision",
+      }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error || "Could not submit clarification.");
+    }
+  } catch (error) {
+    submitting = false;
+    elements.revisionStatus.textContent = error instanceof Error
+      ? error.message
+      : "Could not submit clarification.";
+    elements.revisionStatus.dataset.status = "error";
+    if (currentState) renderPrototypeReview(currentState, true);
+  }
+});
+
+function reviewRequestDetails() {
+  const value = elements.reviewRequestKind.value;
+  return value === "question"
+    ? { type: "question", artifactKind: null, label: "Ask question" }
+    : { type: "artifact", artifactKind: value, label: "Generate artifact" };
+}
+
+elements.reviewRequestKind.addEventListener("change", () => {
+  const request = reviewRequestDetails();
+  elements.reviewSubmit.textContent = request.label;
+  elements.designReviewInput.placeholder = request.type === "question"
+    ? "Ask about the design, tradeoffs, behavior, or risks."
+    : request.artifactKind === "diagram"
+      ? "Describe the architecture, sequence, state, or workflow diagram to generate."
+      : request.artifactKind === "contract"
+        ? "Describe the UI-facing boundary or contract to clarify."
+        : request.artifactKind === "test-scenario"
+          ? "Describe the integration boundary or user interaction scenario to test."
+          : "Describe the design decision and tradeoff to record.";
+});
+
+elements.designReviewForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (submitting || !currentState) return;
+  const prompt = elements.designReviewInput.value.trim();
+  const artifact = (currentState.artifacts || []).find(
+    (candidate) => candidate.id === selectedArtifactId,
+  );
+  if (!artifact || artifact.stage !== "design") {
+    elements.designReviewStatus.textContent =
+      "Select a Design artifact before starting a review.";
+    elements.designReviewStatus.dataset.status = "error";
+    return;
+  }
+  if (!prompt) {
+    elements.designReviewStatus.textContent =
+      "Enter a design question or artifact request.";
+    elements.designReviewStatus.dataset.status = "error";
+    return;
+  }
+  const request = reviewRequestDetails();
+  submitting = true;
+  elements.reviewSubmit.disabled = true;
+  elements.reviewSubmit.textContent = "Queueing...";
+  elements.designReviewStatus.textContent = "";
+  try {
+    const response = await fetch("/api/design-review", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt,
+        type: request.type,
+        artifactKind: request.artifactKind,
+        artifactId: artifact.id,
+      }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error || "Could not queue this review request.");
+    }
+    elements.designReviewInput.value = "";
+    submitting = false;
+  } catch (error) {
+    submitting = false;
+    elements.designReviewStatus.textContent = error instanceof Error
+      ? error.message
+      : "Could not queue this review request.";
+    elements.designReviewStatus.dataset.status = "error";
+    if (currentState) renderDesignReview(currentState, true);
+  }
+});
+
+elements.finishReview.addEventListener("click", async () => {
+  if (elements.finishReview.disabled || !currentState) return;
+  submitting = true;
+  elements.finishReview.disabled = true;
+  elements.finishReview.textContent = "Capturing review...";
+  elements.designReviewStatus.textContent = "";
+  try {
+    const response = await fetch("/api/design-review/finalize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error || "Could not finish the design review.");
+    }
+    submitting = false;
+  } catch (error) {
+    submitting = false;
+    elements.designReviewStatus.textContent = error instanceof Error
+      ? error.message
+      : "Could not finish the design review.";
+    elements.designReviewStatus.dataset.status = "error";
+    if (currentState) renderDesignReview(currentState, true);
+  }
+});
+
+async function submitPlanRequest(action, instruction) {
+  if (submitting || !currentState) return;
+  const maxAgents = Math.max(
+    1,
+    Math.min(30, Number.parseInt(elements.planMaxAgents.value, 10) || 4),
+  );
+  submitting = true;
+  elements.planStatus.textContent = "";
+  renderPlan(currentState);
+  try {
+    const response = await fetch("/api/plan/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, instruction, maxAgents }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error || "Could not generate the execution plan.");
+    }
+  } catch (error) {
+    submitting = false;
+    elements.planStatus.textContent = error instanceof Error
+      ? error.message
+      : "Could not generate the execution plan.";
+    elements.planStatus.dataset.status = "error";
+    if (currentState) renderPlan(currentState, true);
+  }
+}
+
+elements.generatePlan.addEventListener("click", () => {
+  const hasPlan = (currentState?.planning?.workItems || []).length > 0;
+  submitPlanRequest(
+    hasPlan ? "revise" : "generate",
+    hasPlan
+      ? "Regenerate the complete plan for the selected agent limit while preserving accepted design scope."
+      : "",
+  );
+});
+
+elements.optimizePlan.addEventListener("click", () => {
+  submitPlanRequest(
+    "revise",
+    "Reduce unnecessary dependencies and file ownership conflicts, widen safe parallel frontiers, balance agent workload, and shorten scheduled elapsed time without dropping scope or validation.",
+  );
+});
+
+elements.planRevisionForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const instruction = elements.planRevisionInput.value.trim();
+  if (!instruction) {
+    elements.planStatus.textContent = "Describe how the plan should change.";
+    elements.planStatus.dataset.status = "error";
+    return;
+  }
+  elements.planRevisionInput.value = "";
+  submitPlanRequest("revise", instruction);
+});
+
+elements.finalizePlan.addEventListener("click", async () => {
+  if (elements.finalizePlan.disabled || !currentState) return;
+  submitting = true;
+  elements.finalizePlan.disabled = true;
+  elements.finalizePlan.textContent = "Finalizing...";
+  elements.planStatus.textContent = "";
+  try {
+    const response = await fetch("/api/plan/finalize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error || "Could not finalize the execution plan.");
+    }
+    submitting = false;
+    render(result);
+  } catch (error) {
+    submitting = false;
+    elements.planStatus.textContent = error instanceof Error
+      ? error.message
+      : "Could not finalize the execution plan.";
+    elements.planStatus.dataset.status = "error";
+    if (currentState) renderPlan(currentState, true);
+  }
+});
+
+elements.startImplementation.addEventListener("click", async () => {
+  if (implementationSubmitting || !currentState) return;
+  implementationSubmitting = true;
+  elements.implementationStatus.textContent = "Starting agents...";
+  elements.implementationStatus.dataset.status = "idle";
+  renderImplementation(currentState, true);
+  try {
+    const response = await fetch("/api/implementation/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error || "Could not start implementation.");
+    }
+    elements.implementationStatus.textContent =
+      "Implementation agents are starting.";
+  } catch (error) {
+    elements.implementationStatus.textContent = error instanceof Error
+      ? error.message
+      : "Could not start implementation.";
+    elements.implementationStatus.dataset.status = "error";
+  } finally {
+    implementationSubmitting = false;
+    if (currentState) renderImplementation(currentState, true);
+  }
+});
+
+elements.stopImplementation.addEventListener("click", async () => {
+  if (implementationSubmitting || !currentState) return;
+  implementationSubmitting = true;
+  elements.implementationStatus.textContent = "Stopping agents...";
+  elements.implementationStatus.dataset.status = "idle";
+  renderImplementation(currentState, true);
+  try {
+    const response = await fetch("/api/implementation/stop", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error || "Could not stop implementation.");
+    }
+  } catch (error) {
+    elements.implementationStatus.textContent = error instanceof Error
+      ? error.message
+      : "Could not stop implementation.";
+    elements.implementationStatus.dataset.status = "error";
+  } finally {
+    implementationSubmitting = false;
+    if (currentState) renderImplementation(currentState, true);
+  }
+});
+
+elements.implementationStrategyForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (implementationSubmitting || !currentState) return;
+  const text = elements.implementationStrategyInput.value.trim();
+  if (!text) {
+    elements.implementationStatus.textContent =
+      "Describe how the execution strategy should change.";
+    elements.implementationStatus.dataset.status = "error";
+    return;
+  }
+  implementationSubmitting = true;
+  elements.submitImplementationStrategy.disabled = true;
+  elements.submitImplementationStrategy.textContent = "Queueing...";
+  elements.implementationStatus.textContent = "";
+  try {
+    const response = await fetch("/api/implementation/strategy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error || "Could not queue this adjustment.");
+    }
+    elements.implementationStrategyInput.value = "";
+    render(result);
+  } catch (error) {
+    elements.implementationStatus.textContent = error instanceof Error
+      ? error.message
+      : "Could not queue this adjustment.";
+    elements.implementationStatus.dataset.status = "error";
+  } finally {
+    implementationSubmitting = false;
+    if (currentState) renderImplementation(currentState, true);
+  }
+});
+
+elements.startTests.addEventListener("click", async () => {
+  if (testSubmitting || !currentState) return;
+  testSubmitting = true;
+  elements.testStatus.textContent = "Starting test agents...";
+  elements.testStatus.dataset.status = "idle";
+  renderTest(currentState, true);
+  try {
+    const response = await fetch("/api/test/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error || "Could not start tests.");
+    }
+    elements.testStatus.textContent = "Test agents are starting.";
+  } catch (error) {
+    elements.testStatus.textContent = error instanceof Error
+      ? error.message
+      : "Could not start tests.";
+    elements.testStatus.dataset.status = "error";
+  } finally {
+    testSubmitting = false;
+    if (currentState) renderTest(currentState, true);
+  }
+});
+
+elements.completeStage.addEventListener("click", async () => {
+  if (elements.completeStage.disabled || !currentState) return;
+  const stageId = currentState.lifecycle?.currentStage || "requirements";
+  completingStage = true;
+  elements.completeStage.disabled = true;
+  elements.completeStage.textContent = "Saving stage output...";
+  elements.stageMessage.textContent = "";
+  elements.stageMessage.dataset.status = "idle";
+  try {
+    const response = await fetch("/api/stage/complete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stageId }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error || "Could not complete this stage.");
+    }
+    if (response.status === 202 && result.accepted) {
+      completingStage = false;
+      elements.stageMessage.textContent =
+        "Collecting evidence and generating the draft feature specification...";
+      elements.stageMessage.dataset.status = "idle";
+      if (currentState) renderLifecycle(currentState, true);
+      return;
+    }
+    completingStage = false;
+    render(result);
+  } catch (error) {
+    completingStage = false;
+    elements.stageMessage.textContent = error instanceof Error
+      ? error.message
+      : "Could not complete this stage.";
+    elements.stageMessage.dataset.status = "error";
+    if (currentState) renderLifecycle(currentState, true);
+  }
+});
+
+function activateOutputTab(tabName, focusTab = false) {
+  activeOutputTab = [
+    "preview",
+    "design-tree",
+    "design-review",
+    "plan",
+    "implementation",
+    "test",
+    "content",
+  ].includes(tabName)
+    ? tabName
+    : "preview";
+  for (const tab of elements.previewTabs) {
+    const isActive = tab.dataset.tab === activeOutputTab;
+    tab.setAttribute("aria-selected", String(isActive));
+    tab.tabIndex = isActive ? 0 : -1;
+    if (isActive && focusTab) tab.focus();
+  }
+  elements.previewPanel.hidden = activeOutputTab !== "preview";
+  elements.designTreePanel.hidden = activeOutputTab !== "design-tree";
+  elements.designReviewPanel.hidden = activeOutputTab !== "design-review";
+  elements.planPanel.hidden = activeOutputTab !== "plan";
+  elements.implementationPanel.hidden = activeOutputTab !== "implementation";
+  elements.testPanel.hidden = activeOutputTab !== "test";
+  elements.contentPanel.hidden = activeOutputTab !== "content";
+  elements.previewTools.hidden = activeOutputTab !== "preview";
+  if (currentState) renderNextAction(currentState);
+}
+
+for (const tab of elements.previewTabs) {
+  tab.addEventListener("click", () => activateOutputTab(tab.dataset.tab));
+  tab.addEventListener("keydown", (event) => {
+    const visibleTabs = elements.previewTabs.filter(
+      (candidate) => !candidate.hidden,
+    );
+    const currentIndex = visibleTabs.indexOf(tab);
+    let nextIndex = null;
+    if (event.key === "ArrowLeft") {
+      nextIndex = (currentIndex - 1 + visibleTabs.length) % visibleTabs.length;
+    } else if (event.key === "ArrowRight") {
+      nextIndex = (currentIndex + 1) % visibleTabs.length;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = visibleTabs.length - 1;
+    }
+    if (nextIndex === null) return;
+    activateOutputTab(visibleTabs[nextIndex].dataset.tab, true);
+    event.preventDefault();
+  });
+}
+
+function renderLifecycle(state, preserveMessage = false) {
+  const lifecycle = state.lifecycle || {
+    currentStage: "requirements",
+    completedStages: [],
+    outputs: [],
+  };
+  const completed = new Set(lifecycle.completedStages || []);
+  const outputs = new Map<string, AnyRecord>(
+    (lifecycle.outputs || []).map(
+      (output): [string, AnyRecord] => [output.stageId, output],
+    ),
+  );
+  const hasFinalCodeArtifact = (state.artifacts || []).some(
+    (artifact) =>
+      artifact.id === "final-code" &&
+      artifact.kind === "final-code" &&
+      artifact.stage === "implement" &&
+      artifact.path &&
+      artifact.reviewStatus !== "stale",
+  );
+  const allComplete = LIFECYCLE_STAGES.every((stage) => completed.has(stage.id));
+  const currentStageId = lifecycle.currentStage || "requirements";
+  const currentIndex = Math.max(
+    0,
+    LIFECYCLE_STAGES.findIndex((stage) => stage.id === currentStageId),
+  );
+  const currentDefinition = LIFECYCLE_STAGES[currentIndex];
+
+  elements.stageList.replaceChildren();
+  LIFECYCLE_STAGES.forEach((stage, index) => {
+    const isComplete = completed.has(stage.id);
+    const isActive = stage.id === currentStageId && !allComplete;
+    const status = isComplete ? "complete" : isActive ? "active" : "locked";
+    const item = document.createElement("li");
+    const button = document.createElement("button");
+    button.className = "stage-step";
+    button.type = "button";
+    button.dataset.status = status;
+    button.disabled = status === "locked";
+    button.setAttribute("aria-current", String(isActive));
+
+    const number = document.createElement("span");
+    number.className = "stage-step-index";
+    number.textContent = String(index + 1);
+    const label = document.createElement("span");
+    label.className = "stage-step-label";
+    label.textContent = stage.label;
+    const statusLabel = document.createElement("span");
+    statusLabel.className = "stage-step-status";
+    statusLabel.textContent = status;
+    button.append(number, label, statusLabel);
+
+    const output = outputs.get(stage.id);
+    if (output) {
+      button.addEventListener("click", () => {
+        elements.stageMessage.textContent = output.path;
+        elements.stageMessage.dataset.status = "idle";
+      });
+    }
+    item.append(button);
+    elements.stageList.append(item);
+  });
+
+  elements.currentStageIndex.textContent = String(currentIndex + 1);
+  elements.stage.textContent = currentDefinition.label;
+  elements.currentStage.setAttribute(
+    "aria-label",
+    "Current lifecycle stage: " + currentDefinition.label,
+  );
+  elements.completeStage.disabled = completingStage
+    || allComplete
+    || state.provider?.canSubmitAnswers === false
+    || state.processing?.status === "running"
+    || (
+      currentStageId === "prototype"
+      && (
+        state.previewStatus !== "ready"
+        || Boolean(state.prototypeReview?.question)
+      )
+    )
+    || (
+      currentStageId === "requirements"
+      && (
+        state.requirements?.substage !== "dag"
+        || !Array.isArray(state.decisionGraph?.nodes)
+        || state.decisionGraph.nodes.length === 0
+        || state.decisionGraph.nodes.some((node) => !node.answer)
+      )
+    )
+    || (
+      currentStageId === "design"
+      && (
+        !["design-spec", "design-review"].includes(
+          state.designReview?.finalizedArtifactId,
+        )
+        || Boolean(state.designReview?.processing)
+        || Boolean(state.designReview?.finalizeRequested)
+        || (state.designReview?.threads || []).some(
+          (thread) => thread.status !== "resolved",
+        )
+        || state.testDesignReview?.finalizedArtifactId !== "test-spec"
+        || Boolean(state.testDesignReview?.processing)
+        || Boolean(state.testDesignReview?.finalizeRequested)
+        || (state.testDesignReview?.threads || []).some(
+          (thread) => thread.status !== "resolved",
+        )
+      )
+    )
+    || (
+      currentStageId === "plan"
+      && (
+        state.planning?.status !== "complete"
+        || state.planning?.finalizedArtifactId !== "execution-plan"
+        || Boolean(state.planning?.processing)
+      )
+    )
+    || (
+      currentStageId === "implement"
+      && (
+        state.implementation?.status !== "completed"
+        || state.implementation?.finalizedArtifactId !== "final-code"
+        || !hasFinalCodeArtifact
+        || (state.implementation?.workItems || []).some(
+          (item) => item.status !== "completed",
+        )
+      )
+    )
+    || (
+      currentStageId === "test"
+      && (
+        state.testing?.status !== "completed"
+        || state.testing?.finalizedArtifactId !== "test-results"
+        || (state.testing?.scenarios || []).some(
+          (scenario) => scenario.status !== "passed",
+        )
+      )
+    );
+  elements.completeStage.textContent = allComplete
+    ? "All stages complete"
+    : completingStage
+      ? "Saving stage output..."
+      : state.processing?.status === "running"
+          && state.processing?.action === "generate-design-spec"
+        ? "Generating draft feature spec..."
+      : "Finish " + currentDefinition.label.toLowerCase();
+
+  if (!preserveMessage) {
+    const latestOutput = [...(lifecycle.outputs || [])].pop();
+    elements.stageMessage.textContent = latestOutput
+      ? "Saved " + latestOutput.path
+      : "Complete the active stage to unlock the next.";
+    elements.stageMessage.dataset.status = "idle";
+  }
+}
+
+function renderRequirementsSubstage(state, preserveMessage = false) {
+  const isRequirements =
+    (state.lifecycle?.currentStage || "requirements") === "requirements";
+  elements.requirementsSubstageSection.hidden = !isRequirements;
+  if (!isRequirements) return;
+
+  const requirements = state.requirements || {
+    substage: decisionNodesForState(state).length > 0 ? "dag" : "usage",
+    usageItems: [],
+    suggestions: [],
+  };
+  const isUsage = requirements.substage !== "dag";
+  elements.usageSubstage.dataset.status = isUsage ? "active" : "complete";
+  elements.dagSubstage.dataset.status = isUsage ? "locked" : "active";
+  elements.usageIntake.hidden = !isUsage;
+
+  const usageItems = Array.isArray(requirements.usageItems)
+    ? requirements.usageItems
+    : [];
+  elements.usageItems.replaceChildren();
+  if (usageItems.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "muted";
+    empty.textContent = "No usages added yet.";
+    elements.usageItems.append(empty);
+  } else {
+    usageItems.forEach((usage, index) => {
+      const item = document.createElement("li");
+      item.className = "usage-item";
+      item.textContent = (index + 1) + ". " + usage;
+      elements.usageItems.append(item);
+    });
+  }
+
+  const suggestions = Array.isArray(requirements.suggestions)
+    ? requirements.suggestions
+    : [];
+  elements.usageSuggestions.replaceChildren();
+  const processing = state.processing?.status === "running" || submitting;
+  const suggestionsLoading =
+    state.suggestionProcessing?.status === "running";
+  elements.usageSuggestionArea.hidden =
+    suggestions.length === 0 && !suggestionsLoading;
+  if (suggestionsLoading && suggestions.length === 0) {
+    const loading = document.createElement("li");
+    loading.className = "muted";
+    loading.textContent = "Generating AI suggestions...";
+    elements.usageSuggestions.append(loading);
+  }
+  const canSubmit = state.provider?.canSubmitAnswers !== false;
+  for (const suggestion of suggestions) {
+    const item = document.createElement("li");
+    const button = document.createElement("button");
+    button.className = "usage-suggestion";
+    button.type = "button";
+    button.textContent = "+ " + suggestion;
+    button.disabled = processing || !canSubmit;
+    button.addEventListener("click", () => {
+      submitRequirementAction("add-usage", suggestion);
+    });
+    item.append(button);
+    elements.usageSuggestions.append(item);
+  }
+
+  elements.usageInput.disabled = processing || !canSubmit;
+  elements.addUsage.disabled = processing || !canSubmit;
+  elements.generateDag.disabled =
+    processing || !canSubmit || usageItems.length === 0;
+  elements.addUsage.textContent = processing ? "Working..." : "Add usage";
+  elements.generateDag.textContent =
+    state.processing?.action === "generate-dag"
+      ? "Generating DAG..."
+      : "Generate requirements DAG";
+
+  if (!preserveMessage) {
+    elements.usageMessage.textContent = !canSubmit
+      ? "Open the installed user-scoped Tandem to edit requirements."
+      : processing
+        ? state.status || "Updating requirements..."
+        : suggestionsLoading
+          ? usageItems.length === 0
+            ? "Starter suggestions are loading; you can add a usage now."
+            : "Usage saved. Suggestions are refreshing; you can keep adding usages."
+        : isUsage
+          ? usageItems.length === 0
+            ? "Add the first usage to receive AI suggestions."
+            : "Add another usage or generate the decision DAG."
+          : "Usage collection is complete. Work through the dynamic DAG.";
+    elements.usageMessage.dataset.status = "idle";
+  }
+}
+
+function setList(element, values) {
+  element.replaceChildren();
+  if (!Array.isArray(values) || values.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "empty-item";
+    empty.textContent = "None yet";
+    element.append(empty);
+    return;
+  }
+
+  for (const value of values) {
+    const item = document.createElement("li");
+    item.textContent = value;
+    element.append(item);
+  }
+}
+
+function loadMermaid() {
+  if (!mermaidModulePromise) {
+    mermaidModulePromise = import(
+      // @ts-expect-error The canvas loads Mermaid directly in the browser.
+      "https://cdn.jsdelivr.net/npm/mermaid@11.17.2/dist/mermaid.esm.min.mjs"
+    )
+      .then((module) => {
+        const mermaid = module.default;
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: "strict",
+          suppressErrorRendering: true,
+          theme: document.documentElement.dataset.colorMode === "dark"
+            ? "dark"
+            : "default",
+          flowchart: {
+            htmlLabels: false,
+            useMaxWidth: true,
+          },
+        });
+        return mermaid;
+      })
+      .catch((error) => {
+        mermaidModulePromise = null;
+        throw error;
+      });
+  }
+  return mermaidModulePromise;
+}
+
+function diagramNaturalWidth(svg) {
+  const viewBox = String(svg.getAttribute("viewBox") || "")
+    .trim()
+    .split(/\s+/)
+    .map(Number);
+  if (viewBox.length === 4 && Number.isFinite(viewBox[2]) && viewBox[2] > 0) {
+    return viewBox[2];
+  }
+  const width = Number.parseFloat(svg.getAttribute("width") || "");
+  return Number.isFinite(width) && width > 0 ? width : 800;
+}
+
+function updateDiagramToolbar(host, label) {
+  const toolbar = host.previousElementSibling;
+  if (!toolbar?.classList.contains("diagram-toolbar")) return;
+  const output = toolbar.querySelector(".diagram-toolbar-output");
+  if (output) output.textContent = label;
+}
+
+function setDiagramFit(host) {
+  const svg = host.querySelector("svg") as SVGSVGElement | null;
+  if (!svg) return;
+  diagramScales.set(host, 1);
+  svg.style.width = "100%";
+  svg.style.minWidth = "0";
+  svg.style.maxWidth = "none";
+  svg.style.height = "auto";
+  updateDiagramToolbar(host, "Fit");
+}
+
+function setDiagramScale(host, scale) {
+  const svg = host.querySelector("svg") as SVGSVGElement | null;
+  if (!svg) return;
+  const nextScale = Math.min(4, Math.max(0.25, scale));
+  diagramScales.set(host, nextScale);
+  svg.style.width = `${diagramNaturalWidth(svg) * nextScale}px`;
+  svg.style.minWidth = "0";
+  svg.style.maxWidth = "none";
+  svg.style.height = "auto";
+  updateDiagramToolbar(host, `${Math.round(nextScale * 100)}%`);
+}
+
+function ensureDiagramControls(host) {
+  if (host.previousElementSibling?.classList.contains("diagram-toolbar")) {
+    host.previousElementSibling.hidden = false;
+    setDiagramFit(host);
+    return;
+  }
+  const toolbar = document.createElement("div");
+  toolbar.className = "diagram-toolbar";
+  toolbar.setAttribute("role", "toolbar");
+  toolbar.setAttribute("aria-label", "Diagram zoom controls");
+
+  const controls = [
+    { action: "out", label: "−", title: "Zoom out" },
+    { action: "in", label: "+", title: "Zoom in" },
+    { action: "actual", label: "100%", title: "Actual size" },
+    { action: "fit", label: "Fit", title: "Fit diagram" },
+  ];
+  for (const control of controls) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = control.label;
+    button.title = control.title;
+    button.setAttribute("aria-label", control.title);
+    button.addEventListener("click", () => {
+      if (control.action === "fit") {
+        setDiagramFit(host);
+        return;
+      }
+      if (control.action === "actual") {
+        setDiagramScale(host, 1);
+        return;
+      }
+      const current = diagramScales.get(host) || 1;
+      setDiagramScale(host, current * (control.action === "in" ? 1.25 : 0.8));
+    });
+    toolbar.append(button);
+  }
+  const output = document.createElement("span");
+  output.className = "diagram-toolbar-output";
+  output.setAttribute("aria-live", "polite");
+  toolbar.append(output);
+  host.before(toolbar);
+  setDiagramFit(host);
+}
+
+function hideDiagramControls(host) {
+  const toolbar = host.previousElementSibling;
+  if (toolbar?.classList.contains("diagram-toolbar")) {
+    (toolbar as HTMLElement).hidden = true;
+  }
+}
+
+async function renderMermaidArtifact(artifact) {
+  const source = String(artifact?.mermaid || "").trim();
+  const renderId = ++diagramRenderId;
+  elements.artifactDiagram.hidden = !source;
+  elements.mermaidSource.textContent = source;
+  elements.mermaidHost.replaceChildren();
+  hideDiagramControls(elements.mermaidHost);
+  elements.diagramStatus.textContent = "";
+  elements.diagramStatus.dataset.status = "idle";
+  elements.diagramSourceDetails.open = false;
+  if (!source) return;
+
+  elements.mermaidHost.setAttribute(
+    "aria-label",
+    artifact.title + " workflow diagram",
+  );
+  elements.diagramStatus.textContent = "Rendering Mermaid diagram...";
+  try {
+    const mermaid = await loadMermaid();
+    const result = await mermaid.render(
+      "tandem-diagram-" + renderId,
+      source,
+    );
+    if (renderId !== diagramRenderId) return;
+    elements.mermaidHost.innerHTML = result.svg;
+    if (typeof result.bindFunctions === "function") {
+      result.bindFunctions(elements.mermaidHost);
+    }
+    ensureDiagramControls(elements.mermaidHost);
+    elements.diagramStatus.textContent = "";
+  } catch {
+    if (renderId !== diagramRenderId) return;
+    elements.diagramStatus.textContent =
+      "Mermaid could not render this diagram. The source is available below.";
+    elements.diagramStatus.dataset.status = "error";
+    elements.diagramSourceDetails.open = true;
+  }
+}
+
+function decisionNodesForState(state) {
+  if (state.requirements?.substage === "usage") return [];
+  const nodes = Array.isArray(state.decisionGraph?.nodes)
+    ? state.decisionGraph.nodes
+    : [];
+  if (nodes.length > 0) return nodes;
+  if (!state.question) return [];
+  return [{
+    id: state.question.id,
+    title: state.question.text,
+    dependencies: [],
+    question: state.question,
+    answer: null,
+    status: "active",
+  }];
+}
+
+function escapeMermaidLabel(value) {
+  return String(value || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, "'")
+    .replace(/\r?\n/g, " ");
+}
+
+function buildDecisionGraphMermaid(nodes) {
+  const aliases = new Map();
+  const lines = ["flowchart LR"];
+  nodes.forEach((node, index) => {
+    const alias = "Decision" + index;
+    aliases.set(alias, node);
+    lines.push("  " + alias + "[\"" + escapeMermaidLabel(node.title) + "\"]");
+  });
+  nodes.forEach((node, index) => {
+    for (const dependencyId of node.dependencies || []) {
+      const dependencyIndex = nodes.findIndex(
+        (candidate) => candidate.id === dependencyId,
+      );
+      if (dependencyIndex >= 0) {
+        lines.push("  Decision" + dependencyIndex + " --> Decision" + index);
+      }
+    }
+  });
+  lines.push(
+    "  classDef answered fill:#dafbe1,stroke:#1a7f37,stroke-width:2px,color:#1f2328",
+    "  classDef active fill:#ddf4ff,stroke:#0969da,stroke-width:3px,color:#1f2328",
+    "  classDef toAnswer fill:#fff8c5,stroke:#bf8700,stroke-width:2px,color:#1f2328",
+  );
+  for (const status of ["answered", "active", "toAnswer"]) {
+    const members = nodes
+      .map((node, index) => node.status === status ? "Decision" + index : null)
+      .filter(Boolean);
+    if (members.length > 0) {
+      lines.push("  class " + members.join(",") + " " + status);
+    }
+  }
+  return { source: lines.join("\n"), aliases };
+}
+
+function showDecisionQuestion(state, nodes, nodeId) {
+  const node = nodes.find((candidate) => candidate.id === nodeId) || null;
+  if (!node || node.status === "toAnswer") return;
+  selectedDecisionId = node.id;
+  for (
+    const group of elements.designTreeHost.querySelectorAll(
+      "g.node",
+    ) as NodeListOf<HTMLElement>
+  ) {
+    group.dataset.selected = String(group.dataset.decisionId === node.id);
+  }
+  const processing = ["running", "error"].includes(state.processing?.status)
+    && state.processing?.question?.id === node.id
+    ? state.processing
+    : null;
+  renderQuestion(
+    node.question,
+    processing,
+    state.provider?.canSubmitAnswers !== false
+      && (state.lifecycle?.currentStage || "requirements") === "requirements",
+    node,
+  );
+  const toAnswerCount = nodes.filter(
+    (candidate) => candidate.status === "toAnswer",
+  ).length;
+  elements.designTreeCurrent.textContent =
+    (node.status === "active" ? "Active" : "Answered")
+      + " · " + node.title
+      + (toAnswerCount > 0 ? " · " + toAnswerCount + " to answer" : "");
+}
+
+async function postDecisionAnswer(questionId, answer, action = "answer-decision") {
+  const response = await fetch("/api/answer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ questionId, answer, action }),
+  });
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(result.error || "Could not send answer.");
+  }
+  return result;
+}
+
+function stopApplyingAllRecommended(message = "", isError = false) {
+  applyingAllRecommended = false;
+  submitting = false;
+  if (message) {
+    elements.designTreeStatus.textContent = message;
+    elements.designTreeStatus.dataset.status = isError ? "error" : "success";
+  }
+  if (currentState) renderNextAction(currentState);
+}
+
+async function continueApplyingAllRecommended(state) {
+  if (
+    !applyingAllRecommended ||
+    submitting ||
+    state !== currentState
+  ) {
+    return;
+  }
+  if (
+    (state.lifecycle?.currentStage || "requirements") !== "requirements" ||
+    state.requirements?.substage !== "dag"
+  ) {
+    stopApplyingAllRecommended();
+    return;
+  }
+  if (state.processing?.status === "running") return;
+  if (state.processing?.status === "error") {
+    stopApplyingAllRecommended(
+      state.processing.message || "Could not apply all recommended answers.",
+      true,
+    );
+    return;
+  }
+
+  const activeNode = (state.decisionGraph?.nodes || []).find(
+    (node) => node.status === "active",
+  );
+  if (!activeNode) {
+    const count = appliedRecommendedCount;
+    appliedRecommendedCount = 0;
+    stopApplyingAllRecommended(
+      count > 0
+        ? `Applied ${count} recommended ${count === 1 ? "answer" : "answers"}.`
+        : "No recommended answers are waiting.",
+    );
+    return;
+  }
+
+  const recommendation = String(activeNode.question?.recommended || "").trim();
+  if (!recommendation) {
+    stopApplyingAllRecommended(
+      `Stopped at "${activeNode.title}" because it has no recommended answer.`,
+      true,
+    );
+    return;
+  }
+
+  submitting = true;
+  renderNextAction(state);
+  const bulkButton = elements.questionHost.querySelector(
+    ".all-recommended",
+  ) as HTMLButtonElement | null;
+  const sendButton = elements.questionHost.querySelector(
+    ".send",
+  ) as HTMLButtonElement | null;
+  if (bulkButton) {
+    bulkButton.disabled = true;
+    bulkButton.textContent = "Applying recommendations...";
+  }
+  if (sendButton) sendButton.disabled = true;
+
+  try {
+    await postDecisionAnswer(activeNode.id, recommendation);
+    appliedRecommendedCount += 1;
+  } catch (error) {
+    stopApplyingAllRecommended(
+      error instanceof Error
+        ? error.message
+        : "Could not apply all recommended answers.",
+      true,
+    );
+  }
+}
+
+async function renderDesignTree(state) {
+  const nodes = decisionNodesForState(state);
+  const graph = buildDecisionGraphMermaid(nodes);
+  const source = graph.source;
+  const renderId = ++designTreeRenderId;
+  elements.designTreeCard.hidden = nodes.length === 0;
+  elements.designTreeEmpty.hidden = nodes.length > 0;
+  elements.designTreeHost.replaceChildren();
+  hideDiagramControls(elements.designTreeHost);
+  elements.designTreeSource.textContent = source;
+  elements.designTreeStatus.textContent = "";
+  elements.designTreeStatus.dataset.status = "idle";
+  elements.designTreeSourceDetails.open = false;
+  elements.designTreePhase.textContent = state.phase || "discovery";
+
+  if (nodes.length === 0) {
+    renderQuestion(null, state.processing, false, null);
+    return;
+  }
+  const activeNode = nodes.find((node) => node.status === "active") || null;
+  const selectedNode = nodes.find(
+    (node) => node.id === selectedDecisionId && node.status === "answered",
+  );
+  const defaultNode = activeNode
+    || selectedNode
+    || nodes.find((node) => node.status === "answered")
+    || null;
+  selectedDecisionId = defaultNode?.id || null;
+
+  elements.designTreeStatus.textContent = "Rendering requirements DAG...";
+  try {
+    const mermaid = await loadMermaid();
+    const result = await mermaid.render(
+      "tandem-design-tree-" + renderId,
+      source,
+    );
+    if (renderId !== designTreeRenderId) return;
+    elements.designTreeHost.innerHTML = result.svg;
+    if (typeof result.bindFunctions === "function") {
+      result.bindFunctions(elements.designTreeHost);
+    }
+    ensureDiagramControls(elements.designTreeHost);
+    for (const [alias, node] of graph.aliases) {
+      const group = Array.from(
+        elements.designTreeHost.querySelectorAll(
+          "g.node",
+        ) as NodeListOf<HTMLElement>,
+      ).find((candidate) => candidate.id.includes("-" + alias + "-"));
+      if (!group) continue;
+
+      const canAnswer = node.status === "active"
+        && state.processing?.status !== "running";
+      const canReview = node.status === "answered";
+      const selectable = canAnswer || canReview;
+      group.dataset.decisionId = node.id;
+      group.dataset.selectable = String(selectable);
+      group.dataset.selected = String(node.id === selectedDecisionId);
+      group.setAttribute(
+        "aria-label",
+        node.title + ". " + (
+          node.status === "active"
+            ? "Active question"
+            : node.status === "answered"
+              ? "Answered"
+              : "To answer"
+        ),
+      );
+      if (!selectable) continue;
+
+      group.setAttribute("role", "button");
+      group.setAttribute("tabindex", "0");
+      const select = () => showDecisionQuestion(state, nodes, node.id);
+      group.addEventListener("click", select);
+      group.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        select();
+      });
+    }
+    if (defaultNode) {
+      showDecisionQuestion(state, nodes, defaultNode.id);
+    }
+    renderNextAction(state);
+    elements.designTreeStatus.textContent = "";
+  } catch {
+    if (renderId !== designTreeRenderId) return;
+    elements.designTreeStatus.textContent =
+      "Mermaid could not render this requirements DAG. The source is available below.";
+    elements.designTreeStatus.dataset.status = "error";
+    elements.designTreeSourceDetails.open = true;
+  }
+}
+
+function reviewThreadsForArtifact(state, artifact) {
+  if (!artifact) return [];
+  const sourceThreadIds = new Set(artifact.sourceThreadIds || []);
+  return [
+    ...(state?.designReview?.threads || []),
+    ...(state?.testDesignReview?.threads || []),
+  ].filter((thread) =>
+    sourceThreadIds.has(thread.id) ||
+    thread.reviewArtifactId === artifact.id ||
+    (thread.artifactIds || []).includes(artifact.id)
+  );
+}
+
+function appendReviewThreadHeading(card, thread, isTestDesign = false) {
+  const heading = document.createElement("div");
+  heading.className = "review-thread-heading";
+  const kind = document.createElement("span");
+  kind.className = "review-thread-kind";
+  kind.textContent = thread.type === "artifact"
+    ? "Artifact · " + String(thread.artifactKind || "").replace("-", " ")
+    : isTestDesign ? "Test design question" : "Product design question";
+  const status = document.createElement("span");
+  status.className = "review-thread-state";
+  status.textContent = thread.status;
+  heading.append(kind, status);
+  card.append(heading);
+}
+
+function renderArtifactReview(state, artifact) {
+  elements.artifactReviewThreads.replaceChildren();
+  const isDesignArtifact = artifact?.stage === "design";
+  elements.artifactReview.hidden = !isDesignArtifact;
+  if (!isDesignArtifact) return;
+  const canReview =
+    (state.lifecycle?.currentStage || "requirements") === "design";
+  elements.designReviewForm.hidden = !canReview;
+  if (elements.reviewRequestKind.value === "question") {
+    elements.designReviewInput.placeholder =
+      `Ask about ${artifact.title}, its tradeoffs, behavior, or risks.`;
+  }
+
+  const currentReview = state.design?.substage === "test"
+    ? state.testDesignReview
+    : state.designReview;
+  const activeThreadIds = new Set(
+    (currentReview?.threads || []).map((thread) => thread.id),
+  );
+  const threads = reviewThreadsForArtifact(state, artifact);
+  for (const thread of threads) {
+    const card = document.createElement("article");
+    card.className = "review-thread";
+    card.dataset.status = thread.status;
+    appendReviewThreadHeading(
+      card,
+      thread,
+      (state.testDesignReview?.threads || []).some(
+        (candidate) => candidate.id === thread.id,
+      ),
+    );
+
+    const isDefaultArtifact =
+      thread.type === "artifact"
+      && String(thread.id || "").startsWith("default-project-");
+    if (!isDefaultArtifact) {
+      const prompt = document.createElement("p");
+      prompt.className = "review-thread-prompt";
+      prompt.textContent = thread.prompt;
+      card.append(prompt);
+      if (thread.answer) {
+        const answer = document.createElement("p");
+        answer.className = "review-thread-answer";
+        answer.textContent = thread.answer;
+        card.append(answer);
+      } else if (["queued", "processing"].includes(thread.status)) {
+        const waiting = document.createElement("p");
+        waiting.className = "review-thread-answer muted";
+        waiting.textContent = thread.status === "queued"
+          ? "Waiting in the Tandem review queue..."
+          : "Tandem is preparing a design response...";
+        card.append(waiting);
+      }
+    }
+
+    if (thread.error) {
+      const error = document.createElement("p");
+      error.className = "review-thread-error";
+      error.textContent = thread.error;
+      card.append(error);
+    }
+
+    const actionName = thread.status === "answered"
+      ? "resolve"
+      : thread.status === "resolved"
+        ? "reopen"
+        : thread.status === "failed"
+          ? "retry"
+          : null;
+    if (
+      actionName &&
+      activeThreadIds.has(thread.id) &&
+      canReview
+    ) {
+      const actions = document.createElement("div");
+      actions.className = "review-thread-actions";
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "thread-action";
+      button.dataset.threadAction = actionName;
+      button.textContent = actionName === "resolve"
+        ? "Mark resolved"
+        : actionName === "reopen"
+          ? "Reopen"
+          : "Retry";
+      button.disabled = submitting || state.provider?.canSubmitAnswers === false;
+      button.addEventListener("click", () =>
+        submitDesignThreadAction(thread.id, actionName)
+      );
+      actions.append(button);
+      card.append(actions);
+    }
+    elements.artifactReviewThreads.append(card);
+  }
+}
+
+function renderArtifactContent(artifacts) {
+  const artifact = artifacts.find((item) => item.id === selectedArtifactId) || null;
+  elements.contentCard.hidden = !artifact;
+  elements.contentEmpty.hidden = Boolean(artifact);
+  if (!artifact) {
+    elements.artifactHeading.textContent = "Artifact content";
+    elements.artifactMeta.textContent = "";
+    elements.artifactContent.textContent = "";
+    elements.artifactContent.hidden = true;
+    elements.artifactReview.hidden = true;
+    elements.artifactReviewThreads.replaceChildren();
+    renderMermaidArtifact(null);
+    return;
+  }
+
+  elements.artifactHeading.textContent = artifact.title;
+  const stageLabel = LIFECYCLE_STAGES.find(
+    (stage) => stage.id === artifact.stage,
+  )?.label;
+  elements.artifactMeta.textContent = [
+    stageLabel,
+    artifact.kind,
+    artifact.path,
+    artifact.reviewStatus === "stale" ? "stale" : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  elements.artifactContent.textContent = artifact.content || "";
+  elements.artifactContent.hidden = !artifact.content;
+  renderMermaidArtifact(artifact);
+  renderArtifactReview(currentState, artifact);
+}
+
+function renderArtifacts(value) {
+  const artifacts = Array.isArray(value) ? value : [];
+  if (!artifacts.some((artifact) => artifact.id === selectedArtifactId)) {
+    selectedArtifactId = artifacts[0]?.id || null;
+  }
+
+  elements.artifactCount.textContent = artifacts.length > 0
+    ? "(" + artifacts.length + ")"
+    : "";
+  elements.artifactList.replaceChildren();
+
+  for (const stage of LIFECYCLE_STAGES) {
+    const stageArtifacts = artifacts.filter(
+      (artifact) => (artifact.stage || "requirements") === stage.id,
+    );
+    const group = document.createElement("section");
+    group.className = "artifact-stage-group";
+    group.setAttribute("aria-label", stage.label + " artifacts");
+
+    const heading = document.createElement("h3");
+    heading.className = "artifact-stage-heading";
+    heading.textContent = stage.label;
+    const count = document.createElement("span");
+    count.textContent = String(stageArtifacts.length);
+    heading.append(count);
+
+    const list = document.createElement("ul");
+    list.className = "artifact-stage-items";
+    if (stageArtifacts.length === 0) {
+      const empty = document.createElement("li");
+      empty.className = "empty-item";
+      empty.textContent = "No artifacts yet";
+      list.append(empty);
+    }
+
+    for (const artifact of stageArtifacts) {
+      const item = document.createElement("li");
+      const button = document.createElement("button");
+      button.className = "artifact-button";
+      button.type = "button";
+      button.dataset.artifactId = artifact.id;
+      button.setAttribute(
+        "aria-current",
+        String(artifact.id === selectedArtifactId),
+      );
+
+      const title = document.createElement("span");
+      title.className = "artifact-title";
+      title.textContent = artifact.title;
+      button.append(title);
+
+      const metaValue = [
+        artifact.kind,
+        artifact.path,
+        artifact.reviewStatus === "stale" ? "stale" : "",
+      ].filter(Boolean).join(" · ");
+      if (metaValue) {
+        const meta = document.createElement("span");
+        meta.className = "artifact-list-meta";
+        meta.textContent = metaValue;
+        button.append(meta);
+      }
+
+      button.addEventListener("click", () => {
+        selectedArtifactId = artifact.id;
+        for (const candidate of elements.artifactList.querySelectorAll("button")) {
+          candidate.setAttribute(
+            "aria-current",
+            String(candidate.dataset.artifactId === selectedArtifactId),
+          );
+        }
+        renderArtifactContent(artifacts);
+        activateOutputTab("content");
+      });
+      item.append(button);
+      list.append(item);
+    }
+    group.append(heading, list);
+    elements.artifactList.append(group);
+  }
+
+  renderArtifactContent(artifacts);
+}
+
+const PROCESSING_PRESENTATIONS = {
+  "add-usage": {
+    title: "Updating usage guidance",
+    steps: [
+      "Saving the new usage without blocking further input.",
+      "Comparing it with the existing usage list.",
+      "Generating complementary suggestions.",
+    ],
+  },
+  "generate-dag": {
+    title: "Building requirements DAG",
+    steps: [
+      "Analyzing usages and shared prerequisites.",
+      "Creating decision nodes, questions, and dependency edges.",
+      "Validating the graph and selecting the first active decision.",
+    ],
+  },
+  "answer-decision": {
+    title: "Applying your decision",
+    steps: [
+      "Recording the answer in the requirements ledger.",
+      "Recomputing dependent questions and assumptions.",
+      "Promoting the next eligible decision to active.",
+    ],
+  },
+  "change-answer": {
+    title: "Revising dependent decisions",
+    steps: [
+      "Updating the selected answer.",
+      "Regenerating every affected downstream decision.",
+      "Validating dependencies and selecting the next active decision.",
+    ],
+  },
+  "submit-revision": {
+    title: "Reviewing prototype revision",
+    steps: [
+      "Checking the requested behavior against the current prototype.",
+      "Resolving interaction details and applying the revision.",
+      "Validating the updated preview and recording evidence.",
+    ],
+  },
+  "clarify-revision": {
+    title: "Applying your clarification",
+    steps: [
+      "Adding the clarification to the active revision.",
+      "Updating the affected prototype interactions.",
+      "Validating the preview and recording the result.",
+    ],
+  },
+  "generate-design-spec": {
+    title: "Preparing design specification",
+    steps: [
+      "Collecting confirmed requirements and prototype evidence.",
+      "Synthesizing workflows, contracts, and interaction states.",
+      "Validating the specification for the Design handoff.",
+    ],
+  },
+};
+
+function renderQuestion(question, processing, canSubmitAnswers, decisionNode = null) {
+  if (processingMessageTimer !== null) {
+    window.clearInterval(processingMessageTimer);
+    processingMessageTimer = null;
+  }
+  elements.questionHost.replaceChildren();
+  const isChangingAnswer =
+    decisionNode?.status === "answered" && processing?.status !== "running";
+  if (isChangingAnswer) {
+    const title = document.createElement("p");
+    title.className = "question";
+    title.textContent = question?.text || decisionNode.title;
+    const label = document.createElement("p");
+    label.className = "muted";
+    label.textContent = "Answered";
+    const answer = document.createElement("div");
+    answer.className = "choice";
+    const answerText = document.createElement("span");
+    answerText.textContent = decisionNode.answer || "No answer recorded.";
+    answer.append(answerText);
+    elements.questionHost.append(title, label, answer);
+    if (!canSubmitAnswers) return;
+  }
+  if (processing?.status === "running") {
+    const state = document.createElement("div");
+    state.className = "processing-state";
+    state.setAttribute("role", "status");
+    state.setAttribute("aria-live", "polite");
+    state.setAttribute("aria-atomic", "true");
+
+    const indicator = document.createElement("span");
+    indicator.className = "processing-indicator";
+    indicator.setAttribute("aria-hidden", "true");
+
+    const copy = document.createElement("span");
+    copy.className = "processing-copy";
+    const heading = document.createElement("span");
+    heading.className = "processing-heading";
+    const title = document.createElement("strong");
+    const dots = document.createElement("span");
+    dots.className = "processing-dots";
+    dots.setAttribute("aria-hidden", "true");
+    for (let index = 0; index < 3; index += 1) {
+      dots.append(document.createElement("i"));
+    }
+    const detail = document.createElement("span");
+    detail.className = "muted";
+    const presentation = PROCESSING_PRESENTATIONS[processing.action] || {
+      title: "Processing Tandem update",
+      steps: [processing.message || "Applying the requested change."],
+    };
+    title.textContent = presentation.title;
+    heading.append(title, dots);
+    copy.append(heading, detail);
+    state.append(indicator, copy);
+    elements.questionHost.append(state);
+
+    const requestedAt = Date.parse(processing.requestedAt || "");
+    const startedAt = Number.isFinite(requestedAt) ? requestedAt : Date.now();
+    const updateMessage = () => {
+      const elapsed = Math.max(0, Date.now() - startedAt);
+      const index = Math.min(
+        presentation.steps.length - 1,
+        Math.floor(elapsed / 4500),
+      );
+      detail.textContent = presentation.steps[index];
+    };
+    updateMessage();
+    processingMessageTimer = window.setInterval(updateMessage, 1000);
+    return;
+  }
+
+  if (processing?.status === "error") {
+    const failure = document.createElement("p");
+    failure.className = "processing-error";
+    failure.setAttribute("role", "alert");
+    failure.textContent = processing.message || "Tandem processing failed.";
+    elements.questionHost.append(failure);
+  }
+
+  if (!question) {
+    const waiting = document.createElement("p");
+    waiting.className = "muted";
+    waiting.textContent = processing?.status === "success"
+      ? "No decision is waiting."
+      : "Preparing the next decision...";
+    elements.questionHost.append(waiting);
+    return;
+  }
+
+  if (!canSubmitAnswers) {
+    const notice = document.createElement("p");
+    notice.className = "provider-notice";
+    notice.textContent =
+      "Answers are routed through the installed user-scoped Tandem.";
+    elements.questionHost.append(notice);
+  }
+
+  const title = document.createElement("p");
+  title.className = "question";
+  title.textContent = isChangingAnswer ? "Change this answer" : question.text;
+  elements.questionHost.append(title);
+
+  if (question.rationale && !isChangingAnswer) {
+    const rationale = document.createElement("p");
+    rationale.className = "rationale";
+    rationale.textContent = question.rationale;
+    elements.questionHost.append(rationale);
+  }
+
+  const form = document.createElement("form");
+  const choices = document.createElement("div");
+  choices.className = "choices";
+
+  for (const value of question.choices || []) {
+    const label = document.createElement("label");
+    label.className = "choice";
+
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.name = "prototype-choice";
+    radio.value = value;
+    radio.checked = !isChangingAnswer && value === question.recommended;
+
+    const text = document.createElement("span");
+    text.textContent = value;
+
+    label.append(radio, text);
+    if (value === question.recommended && !isChangingAnswer) {
+      const badge = document.createElement("span");
+      badge.className = "recommended";
+      badge.textContent = "Recommended";
+      label.append(badge);
+    }
+    choices.append(label);
+  }
+  if (choices.childElementCount > 0) form.append(choices);
+
+  let detail = null;
+  if (question.allowFreeText !== false) {
+    detail = document.createElement("textarea");
+    detail.name = "prototype-detail";
+    detail.placeholder = question.answerPlaceholder || (
+      choices.childElementCount > 0
+        ? "Optional context"
+        : "Enter your answer"
+    );
+    if (isChangingAnswer) {
+      detail.placeholder = "Enter a replacement answer";
+    }
+    detail.setAttribute("aria-label", "Additional answer context");
+    detail.addEventListener("input", () => {
+      const radios = Array.from(
+        form.querySelectorAll<HTMLInputElement>(
+          'input[name="prototype-choice"]',
+        ),
+      );
+      if (detail.value.trim()) {
+        for (const radio of radios) radio.checked = false;
+        return;
+      }
+
+      const recommended = radios.find(
+        (radio) => radio.value === question.recommended,
+      );
+      if (recommended) recommended.checked = true;
+    });
+    form.append(detail);
+  }
+
+  for (
+    const radio of form.querySelectorAll<HTMLInputElement>(
+      'input[name="prototype-choice"]',
+    )
+  ) {
+    radio.addEventListener("change", () => {
+      if (radio.checked && detail) detail.value = "";
+    });
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "actions";
+  const send = document.createElement("button");
+  send.className = "send";
+  send.type = "submit";
+  send.textContent = canSubmitAnswers
+    ? isChangingAnswer
+      ? "Update answer and dependents"
+      : "Use this answer"
+    : "Open installed Tandem to answer";
+  send.disabled = submitting || !canSubmitAnswers;
+  let allRecommended = null;
+  if (!isChangingAnswer && question.recommended && canSubmitAnswers) {
+    allRecommended = document.createElement("button");
+    allRecommended.className = "all-recommended";
+    allRecommended.type = "button";
+    allRecommended.textContent = applyingAllRecommended
+      ? "Applying recommendations..."
+      : "All as Recommended";
+    allRecommended.title =
+      "Use each active recommendation, updating dependent decisions as the DAG changes.";
+    allRecommended.disabled = submitting || applyingAllRecommended;
+    allRecommended.addEventListener("click", () => {
+      if (submitting || applyingAllRecommended || !currentState) return;
+      applyingAllRecommended = true;
+      appliedRecommendedCount = 0;
+      void continueApplyingAllRecommended(currentState);
+    });
+  }
+  const error = document.createElement("p");
+  error.className = "error";
+  error.setAttribute("role", "alert");
+  actions.append(send);
+  if (allRecommended) actions.append(allRecommended);
+  actions.append(error);
+  form.append(actions);
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (submitting) return;
+
+    const selected = form.querySelector<HTMLInputElement>(
+      'input[name="prototype-choice"]:checked',
+    );
+    const note = detail ? detail.value.trim() : "";
+    const answer = note || selected?.value || "";
+    if (!answer) {
+      error.textContent = "Choose an option or enter an answer.";
+      return;
+    }
+
+    submitting = true;
+    send.disabled = true;
+    send.textContent = "Sending...";
+    error.textContent = "";
+    try {
+      await postDecisionAnswer(
+        question.id,
+        answer,
+        isChangingAnswer ? "change-answer" : "answer-decision",
+      );
+    } catch (requestError) {
+      submitting = false;
+      send.disabled = false;
+      send.textContent = isChangingAnswer
+        ? "Update answer and dependents"
+        : "Use this answer";
+      error.textContent = requestError instanceof Error
+        ? requestError.message
+        : "Could not send answer.";
+    }
+  });
+
+  elements.questionHost.append(form);
+}
+
+function renderPrototypeReview(state, preserveMessage = false) {
+  const isPrototype =
+    (state.lifecycle?.currentStage || "requirements") === "prototype";
+  elements.prototypeReview.hidden = !isPrototype;
+  if (!isPrototype) return;
+
+  const review = state.prototypeReview || {
+    revisions: [],
+    activeRevisionId: null,
+    question: null,
+    evidence: [],
+  };
+  const processing = state.processing?.status === "running";
+  const canSubmit = state.provider?.canSubmitAnswers !== false;
+  const previewReady = state.previewStatus === "ready";
+  const question = review.question || null;
+  const revisionDisabled =
+    submitting || processing || Boolean(question) || !canSubmit || !previewReady;
+  elements.revisionInput.disabled = revisionDisabled;
+  elements.submitRevision.disabled = revisionDisabled;
+  elements.submitRevision.textContent = processing
+    ? "Applying revision..."
+    : "Send revision";
+
+  elements.revisionQuestion.hidden = !question;
+  elements.revisionQuestionChoices.replaceChildren();
+  elements.revisionQuestionDetail.value = "";
+  if (question) {
+    elements.revisionQuestionTitle.textContent = question.text;
+    elements.revisionQuestionRationale.textContent = question.rationale || "";
+    elements.revisionQuestionRationale.hidden = !question.rationale;
+    for (const choice of question.choices || []) {
+      const label = document.createElement("label");
+      label.className = "revision-question-choice";
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = "revision-clarification";
+      radio.value = choice;
+      radio.checked = choice === question.recommended;
+      const text = document.createElement("span");
+      text.textContent = choice;
+      label.append(radio, text);
+      elements.revisionQuestionChoices.append(label);
+    }
+    const allowFreeText = question.allowFreeText !== false;
+    elements.revisionQuestionDetail.hidden = !allowFreeText;
+    elements.revisionQuestionDetail.disabled =
+      !allowFreeText || submitting || processing || !canSubmit;
+    elements.revisionQuestionDetail.placeholder =
+      question.answerPlaceholder || "Optional clarification";
+    elements.revisionQuestionDetail.oninput = () => {
+      if (!elements.revisionQuestionDetail.value.trim()) return;
+      for (const radio of elements.revisionQuestionChoices.querySelectorAll(
+        'input[name="revision-clarification"]',
+      )) {
+        radio.checked = false;
+      }
+    };
+    for (const radio of elements.revisionQuestionChoices.querySelectorAll(
+      'input[name="revision-clarification"]',
+    )) {
+      radio.disabled = submitting || processing || !canSubmit;
+      radio.addEventListener("change", () => {
+        if (radio.checked) elements.revisionQuestionDetail.value = "";
+      });
+    }
+    elements.submitClarification.disabled =
+      submitting || processing || !canSubmit;
+    elements.submitClarification.textContent = processing
+      ? "Applying..."
+      : "Use this answer";
+  }
+
+  const revisions = Array.isArray(review.revisions) ? review.revisions : [];
+  elements.revisionHistory.replaceChildren();
+  for (const revision of revisions.slice(-5).reverse()) {
+    const item = document.createElement("li");
+    const suggestion = document.createElement("strong");
+    suggestion.textContent = revision.summary || revision.suggestion;
+    const status = document.createElement("span");
+    status.textContent = revision.status;
+    item.append(suggestion, status);
+    elements.revisionHistory.append(item);
+  }
+
+  if (!preserveMessage) {
+    elements.revisionStatus.textContent = !canSubmit
+      ? "Open the installed user-scoped Tandem to submit revisions."
+      : !previewReady
+        ? "The revision box will enable when the preview is ready."
+        : processing
+          ? state.status || "Applying the prototype revision..."
+          : question
+            ? "Clarify this revision before the prototype is updated."
+            : revisions.length > 0
+              ? "Add another revision, or finish Prototype when no changes remain."
+              : "Try the prototype, then describe any revision you want.";
+    elements.revisionStatus.dataset.status =
+      state.processing?.status === "error" ? "error" : "idle";
+  }
+}
+
+async function submitDesignThreadAction(threadId, action) {
+  if (submitting) return;
+  submitting = true;
+  try {
+    const response = await fetch("/api/design-review/thread", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ threadId, action }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error || "Could not update this review thread.");
+    }
+    submitting = false;
+    render(result);
+  } catch (error) {
+    submitting = false;
+    elements.designReviewStatus.textContent = error instanceof Error
+      ? error.message
+      : "Could not update this review thread.";
+    elements.designReviewStatus.dataset.status = "error";
+    if (currentState) renderDesignReview(currentState, true);
+  }
+}
+
+function renderDesignReview(state, preserveMessage = false) {
+  const isDesign =
+    (state.lifecycle?.currentStage || "requirements") === "design";
+  const designComplete = (state.lifecycle?.completedStages || []).includes("design");
+  const isTestDesign = state.design?.substage === "test";
+  const review = (isTestDesign
+    ? state.testDesignReview
+    : state.designReview) || {
+    threads: [],
+    processing: null,
+    finalizeRequested: false,
+    finalizedArtifactId: null,
+  };
+  const threads = Array.isArray(review.threads) ? review.threads : [];
+  const canSubmit = isDesign && state.provider?.canSubmitAnswers !== false;
+  const selectedArtifact = (state.artifacts || []).find(
+    (artifact) => artifact.id === selectedArtifactId,
+  );
+  const reviewingArtifact = selectedArtifact?.stage === "design";
+  const finalized = isTestDesign
+    ? review.finalizedArtifactId === "test-spec"
+    : ["design-spec", "design-review"].includes(review.finalizedArtifactId);
+  elements.productDesignSubstage.dataset.status = designComplete
+    ? "complete"
+    : !isDesign
+      ? "locked"
+      : isTestDesign
+        ? "complete"
+        : "active";
+  elements.testDesignSubstage.dataset.status = designComplete
+    ? "complete"
+    : isDesign && isTestDesign
+      ? "active"
+      : "locked";
+  elements.designReviewTitle.textContent = isTestDesign
+    ? "Integration and interaction test design"
+    : "Product design review";
+  if (elements.reviewRequestKind.value === "question") {
+    elements.designReviewInput.placeholder = reviewingArtifact
+      ? `Ask about ${selectedArtifact.title}, its tradeoffs, behavior, or risks.`
+      : "Select a Design artifact to start a review.";
+  }
+  const unresolved = threads.filter((thread) => thread.status !== "resolved");
+  const queued = threads.filter((thread) =>
+    ["queued", "processing"].includes(thread.status),
+  ).length;
+  const resolved = threads.length - unresolved.length;
+
+  elements.reviewCount.textContent = threads.length > 0
+    ? "(" + threads.length + ")"
+    : "";
+  elements.designReviewProgress.textContent = finalized
+    ? "Review captured from " + resolved + " resolved thread"
+      + (resolved === 1 ? "." : "s.")
+    : resolved + " resolved · " + unresolved.length + " open"
+      + (queued > 0 ? " · " + queued + " queued" : "");
+
+  elements.designReviewThreads.replaceChildren();
+  if (threads.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "design-review-empty";
+    empty.textContent =
+      !isDesign && !designComplete
+        ? "Required project-specific design artifacts will be generated after Prototype."
+        : isTestDesign
+        ? "Ask about integration or interaction coverage, or generate a test scenario."
+        : "Preparing the required project-specific design artifacts for review.";
+    elements.designReviewThreads.append(empty);
+  }
+
+  for (const thread of threads) {
+    const card = document.createElement("article");
+    card.className = "review-thread";
+    card.dataset.status = thread.status;
+    card.dataset.threadId = thread.id;
+    appendReviewThreadHeading(card, thread, isTestDesign);
+
+    if (thread.error) {
+      const error = document.createElement("p");
+      error.className = "review-thread-error";
+      error.textContent = thread.error;
+      card.append(error);
+    }
+
+    const artifactIds = Array.from(new Set([
+      ...(Array.isArray(thread.artifactIds) ? thread.artifactIds : []),
+      ...(thread.reviewArtifactId ? [thread.reviewArtifactId] : []),
+    ]));
+    if (artifactIds.length > 0) {
+      const artifactLinks = document.createElement("div");
+      artifactLinks.className = "review-thread-artifacts";
+      for (const artifactId of artifactIds) {
+        const artifact = (state.artifacts || []).find(
+          (candidate) => candidate.id === artifactId,
+        );
+        if (!artifact) continue;
+        const link = document.createElement("button");
+        link.type = "button";
+        link.className = "review-artifact-link";
+        link.dataset.threadId = thread.id;
+        link.textContent = artifact.title
+          + (artifact.reviewStatus === "stale" ? " · stale" : "");
+        link.addEventListener("click", () => {
+          selectedArtifactId = artifact.id;
+          renderArtifacts(state.artifacts);
+          activateOutputTab("content");
+        });
+        artifactLinks.append(link);
+      }
+      card.append(artifactLinks);
+    }
+
+    if (thread.status === "failed" && artifactIds.length === 0 && isDesign) {
+      const actions = document.createElement("div");
+      actions.className = "review-thread-actions";
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "thread-action";
+      button.dataset.threadAction = "retry";
+      button.textContent = "Retry";
+      button.disabled = submitting || !canSubmit;
+      button.addEventListener("click", () =>
+        submitDesignThreadAction(thread.id, "retry"),
+      );
+      actions.append(button);
+      card.append(actions);
+    }
+    elements.designReviewThreads.append(card);
+  }
+
+  const request = reviewRequestDetails();
+  elements.designReviewForm.hidden = !isDesign || !reviewingArtifact;
+  elements.finishReview.hidden = !isDesign;
+  elements.reviewRequestKind.disabled = submitting || !canSubmit;
+  const testScenarioOption = elements.reviewRequestKind.querySelector(
+    'option[value="test-scenario"]',
+  );
+  if (testScenarioOption) testScenarioOption.hidden = !isTestDesign;
+  if (!isTestDesign && elements.reviewRequestKind.value === "test-scenario") {
+    elements.reviewRequestKind.value = "question";
+  }
+  elements.designReviewInput.disabled = submitting || !canSubmit;
+  elements.reviewSubmit.disabled = submitting || !canSubmit;
+  elements.reviewSubmit.textContent = submitting
+    ? "Sending..."
+    : review.processing
+      ? request.type === "question"
+        ? "Queue question"
+        : "Queue artifact"
+      : request.label;
+  elements.finishReview.disabled =
+    submitting ||
+    !canSubmit ||
+    finalized ||
+    Boolean(review.processing) ||
+    Boolean(review.finalizeRequested) ||
+    unresolved.length > 0;
+  elements.finishReview.textContent = finalized
+    ? isTestDesign ? "Test spec captured" : "Design spec captured"
+    : review.finalizeRequested ||
+        review.processing?.action === "finalize"
+      ? "Capturing specification..."
+      : isTestDesign ? "Finish test design" : "Finish product design";
+
+  if (!preserveMessage) {
+    const failed = threads.find((thread) => thread.status === "failed");
+    elements.designReviewStatus.textContent = !isDesign
+      ? designComplete
+        ? "Design review is complete and remains available for reference."
+        : "Complete Prototype to unlock review actions."
+      : !canSubmit
+      ? "Open the installed user-scoped Tandem to conduct the review."
+      : failed
+        ? "A review request failed. Retry it before finishing."
+        : review.processing
+          ? "You can queue another request while this one is processing."
+          : finalized
+            ? isTestDesign
+              ? "The test specification is available under Artifacts → Design."
+              : "The design specification is available under Artifacts → Design."
+            : unresolved.length > 0
+              ? "Resolve each answer when it is clear."
+              : "Ask another question or finish the review.";
+    elements.designReviewStatus.dataset.status = failed ? "error" : "idle";
+  }
+}
+
+function buildPlanMermaid(workItems) {
+  const aliases = new Map();
+  const lines = ["flowchart LR"];
+  workItems.forEach((item, index) => {
+    const alias = "PlanWork" + index;
+    aliases.set(item.id, alias);
+    lines.push(
+      "  " + alias + "[\"" + escapeMermaidLabel(item.title)
+        + "<br/>" + escapeMermaidLabel(item.agentId) + "\"]",
+    );
+  });
+  for (const item of workItems) {
+    for (const dependency of item.dependencies || []) {
+      if (aliases.has(dependency)) {
+        lines.push(
+          "  " + aliases.get(dependency) + " --> " + aliases.get(item.id),
+        );
+      }
+    }
+  }
+  return lines.join("\n");
+}
+
+function appendPlanList(host, items, emptyText) {
+  host.replaceChildren();
+  const values = Array.isArray(items) ? items : [];
+  if (values.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "muted";
+    empty.textContent = emptyText;
+    host.append(empty);
+    return;
+  }
+  for (const value of values) {
+    const item = document.createElement("li");
+    item.textContent = value;
+    host.append(item);
+  }
+}
+
+async function renderPlanDag(workItems) {
+  const source = buildPlanMermaid(workItems);
+  const renderId = ++planRenderId;
+  elements.planDag.replaceChildren();
+  hideDiagramControls(elements.planDag);
+  elements.planDagStatus.textContent = "Rendering execution DAG...";
+  elements.planDagStatus.dataset.status = "idle";
+  try {
+    const mermaid = await loadMermaid();
+    const result = await mermaid.render(
+      "tandem-plan-" + renderId,
+      source,
+    );
+    if (renderId !== planRenderId) return;
+    elements.planDag.innerHTML = result.svg;
+    if (typeof result.bindFunctions === "function") {
+      result.bindFunctions(elements.planDag);
+    }
+    ensureDiagramControls(elements.planDag);
+    elements.planDagStatus.textContent = "";
+  } catch {
+    if (renderId !== planRenderId) return;
+    elements.planDagStatus.textContent =
+      "The execution DAG could not be rendered.";
+    elements.planDagStatus.dataset.status = "error";
+  }
+}
+
+function renderPlan(state, preserveMessage = false) {
+  const isPlan =
+    (state.lifecycle?.currentStage || "requirements") === "plan";
+  elements.planTab.hidden = !isPlan;
+  if (!isPlan) return;
+
+  const planning = state.planning || {
+    status: "idle",
+    summary: "",
+    strategy: "",
+    maxAgents: 4,
+    workItems: [],
+    waves: [],
+    agents: [],
+    risks: [],
+    metrics: {},
+    processing: null,
+    finalizedArtifactId: null,
+    error: "",
+  };
+  const workItems = Array.isArray(planning.workItems)
+    ? planning.workItems
+    : [];
+  const waves = Array.isArray(planning.waves) ? planning.waves : [];
+  const agents = Array.isArray(planning.agents) ? planning.agents : [];
+  const hasPlan = workItems.length > 0;
+  const processing = Boolean(planning.processing);
+  const finalized = planning.finalizedArtifactId === "execution-plan"
+    && planning.status === "complete";
+  const canSubmit = state.provider?.canSubmitAnswers !== false;
+
+  if (document.activeElement !== elements.planMaxAgents) {
+    elements.planMaxAgents.value = String(planning.maxAgents || 4);
+  }
+  elements.planMaxAgents.disabled = processing || submitting || !canSubmit;
+  elements.generatePlan.disabled = processing || submitting || !canSubmit;
+  elements.generatePlan.textContent = processing
+    ? planning.processing?.action === "revise"
+      ? "Revising..."
+      : "Generating..."
+    : hasPlan
+      ? "Regenerate plan"
+      : "Generate plan";
+  elements.finalizePlan.disabled =
+    processing ||
+    submitting ||
+    !canSubmit ||
+    !hasPlan ||
+    planning.status !== "ready";
+  elements.finalizePlan.textContent = finalized
+    ? "Plan finalized"
+    : "Finalize plan";
+  elements.planProgress.textContent = processing
+    ? "The planning agent is building an optimized execution schedule."
+    : finalized
+      ? "Execution plan captured and ready for implementation."
+      : hasPlan
+        ? workItems.length + " work items · " + waves.length
+          + " parallel waves · " + agents.length + " agents"
+        : "Generate work items, schedule waves, and agent assignments.";
+
+  const metricValues = [
+    [workItems.length, "Work items"],
+    [waves.length, "Parallel waves"],
+    [agents.length, "Agents"],
+    [(planning.metrics?.scheduledHours || 0) + "h", "Elapsed schedule"],
+    [
+      (planning.metrics?.parallelismSavingsHours || 0) + "h",
+      "Parallel time saved",
+    ],
+  ];
+  elements.planMetrics.replaceChildren();
+  for (const [value, label] of metricValues) {
+    const card = document.createElement("div");
+    card.className = "plan-metric";
+    const strong = document.createElement("strong");
+    strong.textContent = String(value);
+    const span = document.createElement("span");
+    span.textContent = label;
+    card.append(strong, span);
+    elements.planMetrics.append(card);
+  }
+
+  elements.planStrategySection.hidden = !hasPlan;
+  elements.planStrategy.textContent = planning.strategy || planning.summary || "";
+  elements.planDagSection.hidden = !hasPlan;
+  elements.planColumns.hidden = !hasPlan;
+  elements.planRevisionSection.hidden = !hasPlan;
+  if (hasPlan) void renderPlanDag(workItems);
+
+  elements.planWaves.replaceChildren();
+  for (const wave of waves) {
+    const card = document.createElement("div");
+    card.className = "plan-wave";
+    const heading = document.createElement("div");
+    heading.className = "plan-wave-heading";
+    const title = document.createElement("strong");
+    title.textContent = "Wave " + wave.index;
+    const timing = document.createElement("span");
+    timing.textContent = "Hours " + wave.startHour + "–" + wave.endHour;
+    heading.append(title, timing);
+    const items = document.createElement("div");
+    items.className = "plan-wave-items";
+    for (const id of wave.workItemIds || []) {
+      const workItem = workItems.find((candidate) => candidate.id === id);
+      if (!workItem) continue;
+      const pill = document.createElement("span");
+      pill.className = "plan-wave-item";
+      pill.textContent = workItem.agentId + " · " + workItem.title;
+      items.append(pill);
+    }
+    card.append(heading, items);
+    elements.planWaves.append(card);
+  }
+
+  elements.planWorkItems.replaceChildren();
+  for (const item of workItems) {
+    const details = document.createElement("details");
+    details.className = "plan-work-item";
+    const summary = document.createElement("summary");
+    const heading = document.createElement("span");
+    heading.className = "plan-work-item-heading";
+    const title = document.createElement("strong");
+    title.textContent = item.title;
+    const meta = document.createElement("span");
+    meta.className = "plan-work-item-meta";
+    meta.textContent = item.agentId + " · " + item.estimatedHours + "h";
+    heading.append(title, meta);
+    summary.append(heading);
+
+    const body = document.createElement("div");
+    body.className = "plan-work-item-body";
+    const description = document.createElement("p");
+    description.textContent = item.description;
+    const assignment = document.createElement("p");
+    assignment.className = "plan-work-item-meta";
+    assignment.textContent =
+      "Role: " + item.agentRole
+      + " · Dependencies: " + ((item.dependencies || []).join(", ") || "None")
+      + " · Files: " + ((item.files || []).join(", ") || "Owned scope TBD");
+    const criteriaHeading = document.createElement("strong");
+    criteriaHeading.textContent = "Acceptance criteria";
+    const criteria = document.createElement("ul");
+    appendPlanList(criteria, item.acceptanceCriteria, "None recorded");
+    const validationHeading = document.createElement("strong");
+    validationHeading.textContent = "Validation";
+    const validation = document.createElement("ul");
+    appendPlanList(validation, item.validation, "None recorded");
+    body.append(
+      description,
+      assignment,
+      criteriaHeading,
+      criteria,
+      validationHeading,
+      validation,
+    );
+    details.append(summary, body);
+    elements.planWorkItems.append(details);
+  }
+
+  elements.planAgents.replaceChildren();
+  for (const agent of agents) {
+    const card = document.createElement("div");
+    card.className = "plan-agent";
+    const title = document.createElement("strong");
+    title.textContent = agent.id;
+    const meta = document.createElement("span");
+    meta.className = "plan-agent-meta";
+    meta.textContent =
+      agent.estimatedHours + "h · "
+      + (agent.roles || []).join(", ") + " · "
+      + (agent.workItemIds || []).length + " items";
+    card.append(title, meta);
+    elements.planAgents.append(card);
+  }
+  appendPlanList(
+    elements.planRisks,
+    planning.risks,
+    "No additional planning risks recorded.",
+  );
+
+  elements.planRevisionInput.disabled = processing || submitting || !canSubmit;
+  elements.optimizePlan.disabled = processing || submitting || !canSubmit;
+  elements.revisePlan.disabled = processing || submitting || !canSubmit;
+  elements.revisePlan.textContent = processing ? "Revising..." : "Revise plan";
+
+  if (!preserveMessage) {
+    elements.planStatus.textContent = !canSubmit
+      ? "Open the installed user-scoped Tandem to generate the plan."
+      : planning.error
+        ? planning.error
+        : processing
+          ? "Planning continues asynchronously."
+          : finalized
+            ? "The final execution plan is available under Artifacts → Plan."
+            : hasPlan
+              ? "Review the schedule, revise it, then finalize the plan."
+              : "Set the agent limit and generate the initial plan.";
+    elements.planStatus.dataset.status =
+      planning.status === "failed" || planning.error ? "error" : "idle";
+  }
+}
+
+function implementationElapsed(startedAt, completedAt) {
+  if (!startedAt) return "0m";
+  const start = Date.parse(startedAt);
+  const end = completedAt ? Date.parse(completedAt) : Date.now();
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return "0m";
+  const minutes = Math.max(0, Math.round((end - start) / 60000));
+  if (minutes < 60) return minutes + "m";
+  return Math.floor(minutes / 60) + "h " + (minutes % 60) + "m";
+}
+
+function appendImplementationEmpty(host, message) {
+  const empty = document.createElement("p");
+  empty.className = "muted";
+  empty.textContent = message;
+  host.append(empty);
+}
+
+function renderImplementation(state, preserveMessage = false) {
+  const isImplementation =
+    (state.lifecycle?.currentStage || "requirements") === "implement";
+  elements.implementationTab.hidden = !isImplementation;
+  if (!isImplementation) return;
+
+  const planning = state.planning || { workItems: [], waves: [] };
+  const implementation = state.implementation || {
+    status: "idle",
+    currentWaveIndex: 0,
+    workItems: [],
+    agents: [],
+    strategySuggestions: [],
+    events: [],
+    error: "",
+  };
+  const runtime = state.implementationRuntime || null;
+  const planItems = Array.isArray(planning.workItems)
+    ? planning.workItems
+    : [];
+  const workItems = Array.isArray(implementation.workItems)
+    ? implementation.workItems
+    : [];
+  const workById = new Map<string, AnyRecord>(
+    workItems.map((item): [string, AnyRecord] => [item.id, item]),
+  );
+  const completed = workItems.filter(
+    (item) => item.status === "completed",
+  ).length;
+  const running = workItems.filter(
+    (item) => item.status === "running",
+  ).length;
+  const failed = workItems.filter((item) =>
+    ["failed", "blocked", "cancelled"].includes(item.status),
+  ).length;
+  const active = ["starting", "running"].includes(implementation.status);
+  const canSubmit = state.provider?.canSubmitAnswers !== false;
+  const progress = workItems.length > 0
+    ? Math.round((completed / workItems.length) * 100)
+    : 0;
+
+  elements.implementationProgress.textContent = active
+    ? "Wave " + (implementation.currentWaveIndex || 1)
+      + " is active · " + (runtime?.liveAgentCount || running) + " live agents"
+    : implementation.status === "completed"
+      ? "All planned work completed and final code was captured."
+      : failed > 0
+        ? "Review failures, adjust strategy, and retry incomplete work."
+        : "Ready to assign the finalized work items.";
+  elements.implementationProgressLabel.textContent =
+    completed + " of " + workItems.length + " complete · " + progress + "%";
+  elements.implementationProgressBar.style.width = progress + "%";
+
+  elements.startImplementation.disabled =
+    implementationSubmitting || active || !canSubmit
+    || implementation.status === "completed" || planItems.length === 0;
+  elements.startImplementation.textContent = implementation.status === "failed"
+    || implementation.status === "cancelled"
+    ? "Retry incomplete work"
+    : implementation.status === "completed"
+      ? "Implementation complete"
+      : active
+        ? "Agents running..."
+        : "Start implementation";
+  elements.stopImplementation.hidden = !active;
+  elements.stopImplementation.disabled =
+    implementationSubmitting || !canSubmit;
+  elements.implementationStrategyInput.disabled =
+    implementationSubmitting || !canSubmit
+    || implementation.status === "completed";
+  elements.submitImplementationStrategy.disabled =
+    implementationSubmitting || !canSubmit
+    || implementation.status === "completed";
+  elements.submitImplementationStrategy.textContent =
+    implementationSubmitting ? "Queueing..." : "Queue adjustment";
+
+  const metrics = [
+    [completed + "/" + workItems.length, "Completed"],
+    [runtime?.liveAgentCount || running, "Live agents"],
+    [implementation.currentWaveIndex || 0, "Current wave"],
+    [failed, "Needs attention"],
+    [
+      implementationElapsed(
+        implementation.startedAt,
+        implementation.completedAt,
+      ),
+      "Elapsed",
+    ],
+  ];
+  elements.implementationMetrics.replaceChildren();
+  for (const [value, label] of metrics) {
+    const card = document.createElement("div");
+    card.className = "plan-metric";
+    const strong = document.createElement("strong");
+    strong.textContent = String(value);
+    const span = document.createElement("span");
+    span.textContent = label;
+    card.append(strong, span);
+    elements.implementationMetrics.append(card);
+  }
+
+  elements.implementationWaves.replaceChildren();
+  for (const wave of planning.waves || []) {
+    const states = (wave.workItemIds || []).map(
+      (id) => workById.get(id)?.status || "pending",
+    );
+    const waveStatus = states.length > 0
+      && states.every((status) => status === "completed")
+      ? "completed"
+      : states.some((status) => status === "running")
+        ? "running"
+        : states.some((status) =>
+          ["failed", "blocked", "cancelled"].includes(status))
+          ? "failed"
+          : "pending";
+    const card = document.createElement("div");
+    card.className = "implementation-card";
+    card.dataset.status = waveStatus;
+    const heading = document.createElement("div");
+    heading.className = "implementation-card-heading";
+    const title = document.createElement("strong");
+    title.textContent = "Wave " + wave.index;
+    const badge = document.createElement("span");
+    badge.className = "implementation-badge";
+    badge.textContent = waveStatus;
+    heading.append(title, badge);
+    const meta = document.createElement("p");
+    meta.className = "implementation-meta";
+    meta.textContent = (wave.workItemIds || []).map((id) => {
+      const planItem = planItems.find((item) => item.id === id);
+      return planItem?.title || id;
+    }).join(" · ");
+    card.append(heading, meta);
+    elements.implementationWaves.append(card);
+  }
+  if (!(planning.waves || []).length) {
+    appendImplementationEmpty(
+      elements.implementationWaves,
+      "No execution waves are available.",
+    );
+  }
+
+  elements.implementationWorkItems.replaceChildren();
+  for (const planItem of planItems) {
+    const item = workById.get(planItem.id) || {
+      status: "pending",
+      summary: "",
+      filesChanged: [],
+      validation: [],
+      blockers: [],
+    };
+    const card = document.createElement("details");
+    card.className = "implementation-card";
+    card.dataset.status = item.status;
+    if (["running", "failed", "blocked"].includes(item.status)) card.open = true;
+    const summary = document.createElement("summary");
+    summary.className = "implementation-card-heading";
+    const title = document.createElement("strong");
+    title.textContent = planItem.title;
+    const badge = document.createElement("span");
+    badge.className = "implementation-badge";
+    badge.textContent = item.status;
+    summary.append(title, badge);
+    const body = document.createElement("div");
+    const assignment = document.createElement("p");
+    assignment.className = "implementation-meta";
+    assignment.textContent =
+      planItem.agentId + " · " + planItem.agentRole
+      + " · dependencies: "
+      + ((planItem.dependencies || []).join(", ") || "none");
+    body.append(assignment);
+    if (item.summary) {
+      const outcome = document.createElement("p");
+      outcome.textContent = item.summary;
+      body.append(outcome);
+    }
+    if ((item.filesChanged || []).length > 0) {
+      const files = document.createElement("p");
+      files.className = "implementation-meta";
+      files.textContent = "Files: " + item.filesChanged.join(", ");
+      body.append(files);
+    }
+    if ((item.validation || []).length > 0) {
+      const validation = document.createElement("p");
+      validation.className = "implementation-meta";
+      validation.textContent = "Validation: " + item.validation.join(" · ");
+      body.append(validation);
+    }
+    if ((item.blockers || []).length > 0) {
+      const blockers = document.createElement("p");
+      blockers.textContent = "Blocked: " + item.blockers.join(" · ");
+      body.append(blockers);
+    }
+    card.append(summary, body);
+    elements.implementationWorkItems.append(card);
+  }
+
+  const liveByWorkItem = new Map<string, AnyRecord>(
+    (runtime?.agents || []).map(
+      (agent): [string, AnyRecord] => [
+        String(agent.label || "").replace(/^work:/, ""),
+        agent,
+      ],
+    ),
+  );
+  const storedByWorkItem = new Map<string, AnyRecord>(
+    (implementation.agents || []).map(
+      (agent): [string, AnyRecord] => [agent.workItemId, agent],
+    ),
+  );
+  const agentWorkItemIds = new Set([
+    ...storedByWorkItem.keys(),
+    ...liveByWorkItem.keys(),
+  ]);
+  elements.implementationAgents.replaceChildren();
+  for (const workItemId of agentWorkItemIds) {
+    const stored = storedByWorkItem.get(workItemId) || {};
+    const live = liveByWorkItem.get(workItemId) || {};
+    const planItem = planItems.find((item) => item.id === workItemId);
+    const status = live.status || stored.status || "pending";
+    const card = document.createElement("div");
+    card.className = "implementation-card";
+    card.dataset.status = status;
+    const heading = document.createElement("div");
+    heading.className = "implementation-card-heading";
+    const title = document.createElement("strong");
+    title.textContent = planItem?.agentId || stored.id || "Implementation agent";
+    const badge = document.createElement("span");
+    badge.className = "implementation-badge";
+    badge.textContent = status;
+    heading.append(title, badge);
+    const meta = document.createElement("p");
+    meta.className = "implementation-meta";
+    meta.textContent =
+      (planItem?.agentRole || stored.role || "Implementation")
+      + " · " + (planItem?.title || workItemId)
+      + (live.model ? " · " + live.model : "")
+      + (live.activeMs ? " · " + Math.round(live.activeMs / 1000) + "s active" : "");
+    const activity = document.createElement("p");
+    activity.textContent =
+      live.activity || stored.activity || stored.summary || "Waiting for activity.";
+    card.append(heading, meta, activity);
+    elements.implementationAgents.append(card);
+  }
+  if (agentWorkItemIds.size === 0) {
+    appendImplementationEmpty(
+      elements.implementationAgents,
+      "Agents appear here after implementation starts.",
+    );
+  }
+
+  elements.implementationStrategies.replaceChildren();
+  for (const suggestion of [...(implementation.strategySuggestions || [])].reverse()) {
+    const card = document.createElement("div");
+    card.className = "implementation-strategy";
+    const heading = document.createElement("div");
+    heading.className = "implementation-card-heading";
+    const badge = document.createElement("span");
+    badge.className = "implementation-badge";
+    badge.textContent = suggestion.status;
+    const meta = document.createElement("span");
+    meta.className = "implementation-meta";
+    meta.textContent = suggestion.waveIndex
+      ? "Applied to wave " + suggestion.waveIndex
+      : "Applies at the next wave boundary";
+    heading.append(badge, meta);
+    const text = document.createElement("p");
+    text.textContent = suggestion.text;
+    card.append(heading, text);
+    elements.implementationStrategies.append(card);
+  }
+
+  const activity = [
+    ...(implementation.events || []).map((event) => ({
+      id: event.id,
+      text: event.message,
+      at: Date.parse(event.at) || 0,
+    })),
+    ...(runtime?.progress || []).map((event) => ({
+      id: "runtime-" + event.seq,
+      text: event.text,
+      at: Number(event.recordedAt) || 0,
+    })),
+  ].sort((left, right) => right.at - left.at).slice(0, 20);
+  elements.implementationEvents.replaceChildren();
+  for (const event of activity) {
+    const card = document.createElement("div");
+    card.className = "implementation-event";
+    const heading = document.createElement("div");
+    heading.className = "implementation-event-heading";
+    const text = document.createElement("p");
+    text.textContent = event.text;
+    const time = document.createElement("time");
+    time.textContent = event.at
+      ? new Date(event.at).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : "";
+    heading.append(text, time);
+    card.append(heading);
+    elements.implementationEvents.append(card);
+  }
+  if (activity.length === 0) {
+    appendImplementationEmpty(
+      elements.implementationEvents,
+      "Run events and factory progress appear here.",
+    );
+  }
+
+  if (!preserveMessage) {
+    elements.implementationStatus.textContent = !canSubmit
+      ? "Open the installed user-scoped Tandem to run implementation."
+      : runtime?.error
+        ? "Live agent details are unavailable: " + runtime.error
+      : implementation.error
+        ? implementation.error
+        : active
+          ? "Suggestions are queued immediately and applied before the next wave."
+          : implementation.status === "completed"
+            ? "Final code is available under Artifacts → Implement."
+            : failed > 0
+              ? "Retry preserves completed work and reruns only incomplete items."
+              : "Start the agents when the execution plan is ready.";
+    elements.implementationStatus.dataset.status =
+      implementation.status === "failed" || implementation.error || runtime?.error
+        ? "error"
+        : "idle";
+  }
+}
+
+function renderTest(state, preserveMessage = false) {
+  const isTest = (state.lifecycle?.currentStage || "requirements") === "test";
+  elements.testTab.hidden = !isTest;
+  if (!isTest) return;
+
+  const specs = Array.isArray(state.testDesignReview?.scenarios)
+    ? state.testDesignReview.scenarios
+    : [];
+  const testing = state.testing || {
+    status: "idle",
+    currentWaveIndex: 0,
+    scenarios: [],
+    agents: [],
+    events: [],
+    error: "",
+  };
+  const runtime = state.testRuntime || null;
+  const results = Array.isArray(testing.scenarios) ? testing.scenarios : [];
+  const resultById = new Map<string, AnyRecord>(
+    results.map((scenario): [string, AnyRecord] => [scenario.id, scenario]),
+  );
+  const passed = results.filter((scenario) => scenario.status === "passed").length;
+  const running = results.filter((scenario) => scenario.status === "running").length;
+  const failed = results.filter((scenario) =>
+    ["failed", "blocked"].includes(scenario.status),
+  ).length;
+  const active = ["starting", "running"].includes(testing.status);
+  const complete = testing.status === "completed";
+  const canSubmit = state.provider?.canSubmitAnswers !== false;
+  const progress = results.length > 0
+    ? Math.round((passed / results.length) * 100)
+    : 0;
+
+  elements.testProgress.textContent = active
+    ? "Wave " + (testing.currentWaveIndex || 1) + " is active · "
+      + (runtime?.liveAgentCount || running) + " live agents"
+    : complete
+      ? "All approved scenarios passed and test evidence was captured."
+      : failed > 0
+        ? "Review failed or blocked scenarios, then retry incomplete tests."
+        : "Ready to execute the approved test specification.";
+  elements.testProgressLabel.textContent =
+    passed + " of " + results.length + " passed · " + progress + "%";
+  elements.testProgressBar.style.width = progress + "%";
+  elements.startTests.disabled =
+    testSubmitting || active || complete || !canSubmit || specs.length === 0;
+  elements.startTests.textContent = complete
+    ? "Tests complete"
+    : active
+      ? "Tests running..."
+      : failed > 0
+        ? "Retry incomplete tests"
+        : "Run tests";
+
+  const metrics = [
+    [passed + "/" + results.length, "Passed"],
+    [runtime?.liveAgentCount || running, "Live agents"],
+    [testing.currentWaveIndex || 0, "Current wave"],
+    [failed, "Needs attention"],
+    [implementationElapsed(testing.startedAt, testing.completedAt), "Elapsed"],
+  ];
+  elements.testMetrics.replaceChildren();
+  for (const [value, label] of metrics) {
+    const card = document.createElement("div");
+    card.className = "plan-metric";
+    const strong = document.createElement("strong");
+    strong.textContent = String(value);
+    const span = document.createElement("span");
+    span.textContent = label;
+    card.append(strong, span);
+    elements.testMetrics.append(card);
+  }
+
+  elements.testScenarios.replaceChildren();
+  for (const spec of specs) {
+    const result = resultById.get(spec.id) || {
+      status: "pending",
+      summary: "",
+      evidence: [],
+    };
+    const card = document.createElement("details");
+    card.className = "implementation-card";
+    card.dataset.status = result.status;
+    if (["running", "failed", "blocked"].includes(result.status)) card.open = true;
+    const summary = document.createElement("summary");
+    summary.className = "implementation-card-heading";
+    const title = document.createElement("strong");
+    title.textContent = spec.title;
+    const badge = document.createElement("span");
+    badge.className = "implementation-badge";
+    badge.textContent = result.status;
+    summary.append(title, badge);
+    const body = document.createElement("div");
+    const meta = document.createElement("p");
+    meta.className = "implementation-meta";
+    meta.textContent =
+      String(spec.type || "integration") + " · dependencies: "
+      + ((spec.dependencies || []).join(", ") || "none");
+    body.append(meta);
+    if (spec.description) {
+      const description = document.createElement("p");
+      description.textContent = spec.description;
+      body.append(description);
+    }
+    if (result.summary) {
+      const outcome = document.createElement("p");
+      outcome.textContent = result.summary;
+      body.append(outcome);
+    }
+    if ((result.evidence || []).length > 0) {
+      const evidenceHeading = document.createElement("strong");
+      evidenceHeading.textContent = "Evidence";
+      const evidence = document.createElement("ul");
+      appendPlanList(evidence, result.evidence, "No evidence captured.");
+      body.append(evidenceHeading, evidence);
+    }
+    card.append(summary, body);
+    elements.testScenarios.append(card);
+  }
+  if (specs.length === 0) {
+    appendImplementationEmpty(
+      elements.testScenarios,
+      "Finalize Test design to create executable scenarios.",
+    );
+  }
+
+  const liveByScenario = new Map<string, AnyRecord>(
+    (runtime?.agents || []).map(
+      (agent): [string, AnyRecord] => [
+        String(agent.label || "").replace(/^test:/, ""),
+        agent,
+      ],
+    ),
+  );
+  const storedByScenario = new Map<string, AnyRecord>(
+    (testing.agents || []).map(
+      (agent): [string, AnyRecord] => [agent.scenarioId, agent],
+    ),
+  );
+  const agentScenarioIds = new Set([
+    ...storedByScenario.keys(),
+    ...liveByScenario.keys(),
+  ]);
+  elements.testAgents.replaceChildren();
+  for (const scenarioId of agentScenarioIds) {
+    const stored = storedByScenario.get(scenarioId) || {};
+    const live = liveByScenario.get(scenarioId) || {};
+    const spec = specs.find((candidate) => candidate.id === scenarioId);
+    const status = live.status || stored.status || "pending";
+    const card = document.createElement("div");
+    card.className = "implementation-card";
+    card.dataset.status = status;
+    const heading = document.createElement("div");
+    heading.className = "implementation-card-heading";
+    const title = document.createElement("strong");
+    title.textContent = stored.id || "Test agent";
+    const badge = document.createElement("span");
+    badge.className = "implementation-badge";
+    badge.textContent = status;
+    heading.append(title, badge);
+    const meta = document.createElement("p");
+    meta.className = "implementation-meta";
+    meta.textContent =
+      (spec?.type || "integration") + " · " + (spec?.title || scenarioId)
+      + (live.model ? " · " + live.model : "")
+      + (live.activeMs ? " · " + Math.round(live.activeMs / 1000) + "s active" : "");
+    const activity = document.createElement("p");
+    activity.textContent =
+      live.activity || stored.activity || stored.summary || "Waiting for activity.";
+    card.append(heading, meta, activity);
+    elements.testAgents.append(card);
+  }
+  if (agentScenarioIds.size === 0) {
+    appendImplementationEmpty(
+      elements.testAgents,
+      "Agents appear here after test execution starts.",
+    );
+  }
+
+  const activity = [
+    ...(testing.events || []).map((event) => ({
+      id: event.id,
+      text: event.message,
+      at: Date.parse(event.at) || 0,
+    })),
+    ...(runtime?.progress || []).map((event) => ({
+      id: "runtime-" + event.seq,
+      text: event.text,
+      at: Number(event.recordedAt) || 0,
+    })),
+  ].sort((left, right) => right.at - left.at).slice(0, 20);
+  elements.testEvents.replaceChildren();
+  for (const event of activity) {
+    const card = document.createElement("div");
+    card.className = "implementation-event";
+    const heading = document.createElement("div");
+    heading.className = "implementation-event-heading";
+    const text = document.createElement("p");
+    text.textContent = event.text;
+    const time = document.createElement("time");
+    time.textContent = event.at
+      ? new Date(event.at).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : "";
+    heading.append(text, time);
+    card.append(heading);
+    elements.testEvents.append(card);
+  }
+  if (activity.length === 0) {
+    appendImplementationEmpty(
+      elements.testEvents,
+      "Test events and factory progress appear here.",
+    );
+  }
+
+  if (!preserveMessage) {
+    elements.testStatus.textContent = !canSubmit
+      ? "Open the installed user-scoped Tandem to run tests."
+      : runtime?.error
+        ? "Live agent details are unavailable: " + runtime.error
+        : testing.error
+          ? testing.error
+          : active
+            ? "Independent scenarios run concurrently within each dependency wave."
+            : complete
+              ? "Test results are available under Artifacts → Test."
+              : failed > 0
+                ? "Retry preserves passing scenarios and reruns only incomplete tests."
+                : "Run the approved integration and interaction scenarios.";
+    elements.testStatus.dataset.status =
+      testing.status === "failed" || testing.error || runtime?.error
+        ? "error"
+        : "idle";
+  }
+}
+
+function renderPreview(state) {
+  const currentStage = state.lifecycle?.currentStage || "requirements";
+  const previewStatus = state.previewStatus || "waiting";
+  const building = currentStage === "prototype"
+    && !["ready", "error"].includes(previewStatus);
+  elements.previewStatus.textContent = building ? "building" : previewStatus;
+  elements.previewTab.classList.toggle("prototype-building-tab", building);
+  elements.previewTab.setAttribute(
+    "aria-label",
+    building ? "Live prototype, building" : "Live prototype",
+  );
+  elements.prototypeBuilding.hidden = !building;
+
+  if (prototypeBuildMessageTimer !== null) {
+    window.clearInterval(prototypeBuildMessageTimer);
+    prototypeBuildMessageTimer = null;
+  }
+  if (building) {
+    const key = state.prototypeId || "prototype";
+    if (key !== prototypeBuildKey) {
+      prototypeBuildKey = key;
+      prototypeBuildStartedAt = Date.now();
+    }
+    const steps = [
+      "Preparing the prototype workspace and app structure.",
+      "Building the primary interaction flow from confirmed requirements.",
+      "Connecting screens, states, and representative sample data.",
+      "Starting and verifying the runnable preview.",
+    ];
+    const updateMessage = () => {
+      const elapsed = Math.max(0, Date.now() - prototypeBuildStartedAt);
+      const index = Math.min(steps.length - 1, Math.floor(elapsed / 4500));
+      elements.prototypeBuildingMessage.textContent = steps[index];
+    };
+    updateMessage();
+    prototypeBuildMessageTimer = window.setInterval(updateMessage, 1000);
+  } else {
+    prototypeBuildKey = "";
+    prototypeBuildStartedAt = 0;
+  }
+
+  const url = state.previewUrl;
+  if (!url || building) {
+    elements.previewEmpty.style.display = building ? "none" : "grid";
+    elements.previewFrame.style.display = "none";
+    elements.openPreview.style.display = "none";
+    return;
+  }
+
+  elements.previewEmpty.style.display = "none";
+  elements.previewFrame.style.display = "block";
+  elements.openPreview.style.display = "inline";
+  elements.openPreview.href = url;
+  if (elements.previewFrame.dataset.url !== url) {
+    elements.previewFrame.dataset.url = url;
+    elements.previewFrame.src = url;
+  }
+}
+
+function clearNextAction() {
+  for (const element of document.querySelectorAll(
+    ".next-action-target, .next-action-tab",
+  )) {
+    element.classList.remove("next-action-target", "next-action-tab");
+    element.removeAttribute("data-next-action-label");
+    element.removeAttribute("aria-describedby");
+    element.removeAttribute("title");
+  }
+}
+
+function nextActionForState(state) {
+  if (
+    completingStage ||
+    submitting ||
+    implementationSubmitting ||
+    testSubmitting ||
+    state.provider?.canSubmitAnswers === false
+  ) {
+    return null;
+  }
+
+  const stage = state.lifecycle?.currentStage || "requirements";
+  if (stage === "requirements") {
+    if (state.processing?.status === "running") return null;
+    if (state.requirements?.substage !== "dag") {
+      const hasUsages = (state.requirements?.usageItems || []).length > 0;
+      return hasUsages
+        ? {
+            tab: "design-tree",
+            target: elements.generateDag,
+            label: "Generate the requirements DAG",
+          }
+        : {
+            tab: "design-tree",
+            target: elements.addUsage,
+            label: "Add the first app usage",
+          };
+    }
+    if ((state.decisionGraph?.nodes || []).some((node) => node.status === "active")) {
+      return {
+        tab: "design-tree",
+        target: elements.questionHost.querySelector(".send"),
+        label: "Answer the active requirement decision",
+      };
+    }
+    if (!elements.completeStage.disabled) {
+      return {
+        target: elements.completeStage,
+        label: "Finish requirements collection",
+      };
+    }
+    return null;
+  }
+
+  if (stage === "prototype") {
+    if (state.processing?.status === "running") return null;
+    if (state.prototypeReview?.question) {
+      return {
+        tab: "preview",
+        target: elements.submitClarification,
+        label: "Answer the prototype clarification",
+      };
+    }
+    if (!elements.completeStage.disabled) {
+      return {
+        target: elements.completeStage,
+        label: "Finish prototype iteration",
+      };
+    }
+    return null;
+  }
+
+  if (stage === "design") {
+    const review = state.design?.substage === "test"
+      ? state.testDesignReview
+      : state.designReview;
+    if (review?.processing || review?.finalizeRequested) return null;
+    const failed = document.querySelector(
+      '[data-thread-action="retry"]',
+    );
+    if (failed) {
+      return {
+        tab: failed.closest("#artifact-review") ? "content" : "design-review",
+        target: failed,
+        label: "Retry the failed design review request",
+      };
+    }
+    const resolve = elements.artifactReviewThreads.querySelector(
+      '[data-thread-action="resolve"]',
+    );
+    if (resolve) {
+      return {
+        tab: "content",
+        target: resolve,
+        label: "Mark the answered design thread resolved",
+      };
+    }
+    const threadToReview = (review?.threads || []).find(
+      (thread) => ["answered", "failed"].includes(thread.status),
+    );
+    if (threadToReview) {
+      const link = Array.from(
+        elements.designReviewThreads.querySelectorAll(".review-artifact-link"),
+      ).find((candidate: HTMLElement) =>
+        candidate.dataset.threadId === threadToReview.id
+      );
+      if (link) {
+        return {
+          tab: "design-review",
+          target: link,
+          label: "Open the design artifact for review",
+        };
+      }
+    }
+    if (!elements.finishReview.disabled) {
+      return {
+        tab: "design-review",
+        target: elements.finishReview,
+        label: state.design?.substage === "test"
+          ? "Finish integration and interaction test design"
+          : "Finish product design",
+      };
+    }
+    if (!elements.completeStage.disabled) {
+      return {
+        target: elements.completeStage,
+        label: "Finish the Design stage",
+      };
+    }
+    return null;
+  }
+
+  if (stage === "plan") {
+    if (state.planning?.processing) return null;
+    if (!elements.completeStage.disabled) {
+      return {
+        target: elements.completeStage,
+        label: "Finish execution planning",
+      };
+    }
+    const hasPlan = (state.planning?.workItems || []).length > 0;
+    if (hasPlan && !elements.finalizePlan.disabled) {
+      return {
+        tab: "plan",
+        target: elements.finalizePlan,
+        label: "Finalize the execution plan",
+      };
+    }
+    if (!elements.generatePlan.disabled) {
+      return {
+        tab: "plan",
+        target: elements.generatePlan,
+        label: hasPlan ? "Regenerate the execution plan" : "Generate the execution plan",
+      };
+    }
+    return null;
+  }
+
+  if (stage === "implement") {
+    if (["starting", "running"].includes(state.implementation?.status)) return null;
+    if (!elements.completeStage.disabled) {
+      return {
+        target: elements.completeStage,
+        label: "Finish implementation",
+      };
+    }
+    if (!elements.startImplementation.disabled) {
+      return {
+        tab: "implementation",
+        target: elements.startImplementation,
+        label: ["failed", "cancelled"].includes(state.implementation?.status)
+          ? "Retry incomplete implementation work"
+          : "Start implementation",
+      };
+    }
+    return null;
+  }
+
+  if (stage === "test") {
+    if (["starting", "running"].includes(state.testing?.status)) return null;
+    if (!elements.completeStage.disabled) {
+      return {
+        target: elements.completeStage,
+        label: "Finish integration testing",
+      };
+    }
+    if (!elements.startTests.disabled) {
+      return {
+        tab: "test",
+        target: elements.startTests,
+        label: (state.testing?.scenarios || []).some(
+          (scenario) => ["failed", "blocked"].includes(scenario.status),
+        )
+          ? "Retry incomplete integration tests"
+          : "Run integration and interaction tests",
+      };
+    }
+  }
+  return null;
+}
+
+function renderNextAction(state) {
+  clearNextAction();
+  const action = nextActionForState(state);
+  if (!action?.target || action.target.disabled) {
+    if (lastNextActionLabel) {
+      elements.nextActionGuide.textContent = "";
+      lastNextActionLabel = "";
+    }
+    return;
+  }
+
+  action.target.classList.add("next-action-target");
+  action.target.dataset.nextActionLabel = "Next";
+  action.target.title = "Next action: " + action.label;
+  action.target.setAttribute("aria-describedby", "next-action-guide");
+  if (action.label !== lastNextActionLabel) {
+    elements.nextActionGuide.textContent = "Next action: " + action.label;
+    lastNextActionLabel = action.label;
+  }
+
+  if (action.tab && action.tab !== activeOutputTab) {
+    const tab = elements.previewTabs.find(
+      (candidate) => candidate.dataset.tab === action.tab,
+    );
+    if (tab && !tab.hidden) {
+      tab.classList.add("next-action-tab");
+      tab.dataset.nextActionLabel = "Next";
+      tab.title = "Open this tab for the next action: " + action.label;
+      tab.setAttribute("aria-describedby", "next-action-guide");
+    }
+  }
+}
+
+function render(state) {
+  currentState = state;
+  submitting = false;
+  const currentLifecycleStage =
+    state.lifecycle?.currentStage || "requirements";
+  if (currentLifecycleStage !== lastLifecycleStage) {
+    if (currentLifecycleStage === "prototype") {
+      activeOutputTab = "preview";
+    } else if (currentLifecycleStage === "design") {
+      activeOutputTab = "design-review";
+    } else if (currentLifecycleStage === "plan") {
+      activeOutputTab = "plan";
+    } else if (currentLifecycleStage === "implement") {
+      activeOutputTab = "implementation";
+    } else if (currentLifecycleStage === "test") {
+      activeOutputTab = "test";
+    } else if (activeOutputTab === "design-review") {
+      activeOutputTab = "content";
+    } else if (activeOutputTab === "plan") {
+      activeOutputTab = "content";
+    } else if (activeOutputTab === "implementation") {
+      activeOutputTab = "content";
+    } else if (activeOutputTab === "test") {
+      activeOutputTab = "content";
+    }
+    lastLifecycleStage = currentLifecycleStage;
+  }
+  renderLifecycle(state);
+  renderRequirementsSubstage(state);
+  elements.phase.textContent = state.phase || "discovery";
+  elements.goal.textContent = state.goal || "Waiting for a prototype goal...";
+  elements.goal.classList.toggle("muted", !state.goal);
+  elements.status.textContent = state.status || "";
+  setList(elements.confirmed, state.confirmed);
+  setList(elements.assumed, state.assumed);
+  setList(elements.deferred, state.deferred);
+  renderArtifacts(state.artifacts);
+  renderDesignTree(state);
+  renderPreview(state);
+  renderPrototypeReview(state);
+  renderDesignReview(state);
+  renderPlan(state);
+  renderImplementation(state);
+  renderTest(state);
+  renderReload(state);
+  activateOutputTab(activeOutputTab);
+  void continueApplyingAllRecommended(state);
+}
+
+function renderIfChanged(state) {
+  const implementationRuntimeSignature =
+    JSON.stringify(state.implementationRuntime || null);
+  const testRuntimeSignature = JSON.stringify(state.testRuntime || null);
+  if (
+    currentState &&
+    currentState.prototypeId === state.prototypeId &&
+    currentState.updatedAt === state.updatedAt &&
+    currentState.provider?.extensionId === state.provider?.extensionId &&
+    currentState.provider?.canSubmitAnswers ===
+      state.provider?.canSubmitAnswers &&
+    implementationRuntimeSignature === lastImplementationRuntimeSignature &&
+    testRuntimeSignature === lastTestRuntimeSignature
+  ) {
+    return;
+  }
+  lastImplementationRuntimeSignature = implementationRuntimeSignature;
+  lastTestRuntimeSignature = testRuntimeSignature;
+  render(state);
+}
+
+function refreshSharedState() {
+  const endpoint =
+    (currentState?.lifecycle?.currentStage || "") === "implement"
+      ? "/api/implementation/status"
+      : (currentState?.lifecycle?.currentStage || "") === "test"
+        ? "/api/test/status"
+        : "/api/state";
+  return fetch(endpoint)
+    .then((response) => response.json())
+    .then(renderIfChanged);
+}
+
+refreshSharedState()
+  .catch(() => {
+    elements.status.textContent = "Could not load the studio state.";
+  });
+setInterval(() => refreshSharedState().catch(() => undefined), 2000);
+
+const events = new EventSource("/events");
+events.onmessage = (event) => {
+  try { renderIfChanged(JSON.parse(event.data)); } catch { /* wait for next update */ }
+};
+events.onerror = () => {
+  elements.status.textContent = "Reconnecting to the studio...";
+};

@@ -1,0 +1,8667 @@
+import {
+    execFileSync,
+    type ExecFileSyncOptionsWithStringEncoding,
+} from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { createServer } from "node:http";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
+import {
+    CanvasError,
+    createCanvas,
+    defineFactory,
+    isFactoryRunTerminal,
+    joinSession,
+} from "@github/copilot-sdk/extension";
+import { renderTandemHtml } from "./renderer.js";
+import type { TandemState } from "./types.js";
+
+const CANVAS_ID = "tandem";
+const DEFAULT_PROTOTYPE_ID = "active";
+const USER_EXTENSION_ID = "user:tandem";
+const PROJECT_EXTENSION_ID = "project:tandem";
+const MAX_REQUEST_BYTES = 32 * 1024;
+const PROCESS_STARTED_AT = Date.now();
+const WORKSPACE_ROOT = process.cwd();
+const SHARED_PROJECT_ROOT = resolveSharedProjectRoot();
+const STATE_DIRECTORY = join(SHARED_PROJECT_ROOT, ".tandem");
+const CURRENT_STATE_PATH = join(STATE_DIRECTORY, "current.json");
+const LEGACY_STATE_DIRECTORY = join(
+    SHARED_PROJECT_ROOT,
+    [".intent", "studio"].join(""),
+);
+const LEGACY_CURRENT_STATE_PATH = join(LEGACY_STATE_DIRECTORY, "current.json");
+const PREVIEW_IDENTITY_MARKERS = new Set([
+    "tandem-prototype-id",
+    ["fast", "prototype", "id"].join("-"),
+]);
+const LIFECYCLE_STAGES = [
+    { id: "requirements", label: "Requirements" },
+    { id: "prototype", label: "Prototype" },
+    { id: "design", label: "Design" },
+    { id: "plan", label: "Plan" },
+    { id: "implement", label: "Implement" },
+    { id: "test", label: "Test" },
+];
+const PROVIDER_SCOPE = providerScopeFromModuleUrl(import.meta.url);
+const ANSWER_FACTORY_NAME = `tandem-process-answer-${PROVIDER_SCOPE}`;
+const SUGGESTION_FACTORY_NAME =
+    `tandem-generate-usage-suggestions-${PROVIDER_SCOPE}`;
+const DESIGN_REVIEW_FACTORY_NAME =
+    `tandem-design-review-${PROVIDER_SCOPE}`;
+const PLANNING_FACTORY_NAME =
+    `tandem-execution-planning-${PROVIDER_SCOPE}`;
+const IMPLEMENTATION_FACTORY_NAME =
+    `tandem-implementation-orchestrator-${PROVIDER_SCOPE}`;
+const TEST_FACTORY_NAME =
+    `tandem-integration-interaction-tests-${PROVIDER_SCOPE}`;
+const USAGE_QUESTION_ID = "usage-intake";
+const ANSWER_ACTIONS = new Set([
+    "add-usage",
+    "generate-dag",
+    "answer-decision",
+    "change-answer",
+    "submit-revision",
+    "clarify-revision",
+    "generate-design-spec",
+]);
+const PROCESSING_MESSAGES = {
+    "add-usage": "Saving the usage and generating complementary suggestions.",
+    "generate-dag": "Analyzing usages and building the dependency-aware requirements DAG.",
+    "answer-decision": "Recording the answer and recomputing dependent decisions.",
+    "change-answer": "Regenerating every downstream decision affected by this answer.",
+    "submit-revision": "Reviewing the requested prototype behavior and interaction changes.",
+    "clarify-revision": "Applying the clarification to the active prototype revision.",
+    "generate-design-spec": "Synthesizing confirmed requirements and prototype evidence.",
+};
+const DEFAULT_PRODUCT_DESIGN_REQUESTS = [
+    {
+        id: "default-project-architecture",
+        artifactKind: "diagram",
+        prompt:
+            "Inspect this project and generate the architecture and primary interaction-flow diagrams required for implementation. Tailor them to the accepted requirements, runnable prototype, draft feature specification, and existing repository; omit diagrams that do not add value for this project.",
+    },
+    {
+        id: "default-project-contracts",
+        artifactKind: "contract",
+        prompt:
+            "Inspect this project and generate the implementation-facing UI, state, data, and integration contracts it actually requires. Capture boundaries, inputs and outputs, events, validation, and failure behavior without inventing unnecessary infrastructure.",
+    },
+    {
+        id: "default-project-decisions",
+        artifactKind: "decision-record",
+        prompt:
+            "Inspect this project and record its implementation-critical design decisions, alternatives, tradeoffs, and risks. Include only decisions that should be reviewed before execution planning.",
+    },
+];
+const PROVIDER_EXTENSION_ID =
+    PROVIDER_SCOPE === "user"
+        ? USER_EXTENSION_ID
+        : PROVIDER_SCOPE === "project"
+          ? PROJECT_EXTENSION_ID
+          : `session:tandem`;
+const servers = new Map<string, any>();
+const instancePrototypeIds = new Map<string, string>();
+const stateCache = new Map<string, any>();
+const writeQueues = new Map<string, Promise<any>>();
+const activeAnswerRuns = new Map<string, Promise<any>>();
+const activeSuggestionRuns = new Map<string, Promise<any>>();
+const activeDesignReviewRuns = new Map<string, Promise<any>>();
+const activePlanningRuns = new Map<string, Promise<any>>();
+const activeImplementationRuns = new Map<string, Promise<any>>();
+const activeTestRuns = new Map<string, Promise<any>>();
+const activePrototypeCompletions = new Set();
+const answerClaims = new Map<string, Promise<any>>();
+
+let session;
+
+function isObject(value: unknown): value is Record<string, any> {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+class AnswerRequestError extends Error {
+    readonly statusCode: number;
+
+    constructor(statusCode: number, message: string) {
+        super(message);
+        this.statusCode = statusCode;
+    }
+}
+
+async function logSafely(message, level = "error") {
+    try {
+        await session.log(message, { level });
+    } catch (error) {
+        console.error(
+            `${message} Logging also failed: ${
+                error instanceof Error ? error.message : String(error)
+            }`,
+        );
+    }
+}
+
+function resolveSharedProjectRoot() {
+    const cwd = process.cwd();
+    const options: ExecFileSyncOptionsWithStringEncoding = {
+        cwd,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
+    };
+
+    try {
+        const commonValue = execFileSync(
+            "git",
+            ["rev-parse", "--git-common-dir"],
+            options,
+        ).trim();
+        const commonDirectory = resolve(cwd, commonValue);
+        if (basename(commonDirectory).toLowerCase() === ".git") {
+            return dirname(commonDirectory);
+        }
+
+        return execFileSync(
+            "git",
+            ["rev-parse", "--show-toplevel"],
+            options,
+        ).trim() || cwd;
+    } catch {
+        return cwd;
+    }
+}
+
+function providerScopeFromModuleUrl(moduleUrl) {
+    const normalized = moduleUrl.toLowerCase();
+    if (normalized.includes("/.github/extensions/")) return "project";
+    if (normalized.includes("/.copilot/extensions/")) return "user";
+    return "session";
+}
+
+function normalizePrototypeId(value) {
+    const normalized = String(value || DEFAULT_PROTOTYPE_ID)
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9._-]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 80);
+    return normalized || DEFAULT_PROTOTYPE_ID;
+}
+
+function createState(prototypeId: string, goal = ""): TandemState {
+    return {
+        version: 1,
+        prototypeId,
+        stage: "requirements",
+        lifecycle: {
+            currentStage: "requirements",
+            completedStages: [],
+            outputs: [],
+        },
+        goal,
+        phase: "discovery",
+        status: "Describe how you want to use the app, one usage per sentence.",
+        requirements: {
+            substage: "usage",
+            usageItems: [],
+            suggestions: [],
+        },
+        question: usageQuestion([]),
+        decisionGraph: { nodes: [] },
+        confirmed: [],
+        assumed: [],
+        deferred: [],
+        artifacts: [],
+        previewUrl: null,
+        previewStatus: "waiting",
+        prototypeReview: {
+            revisions: [],
+            activeRevisionId: null,
+            question: null,
+            evidence: [],
+            designSpecArtifactId: null,
+        },
+        designReview: {
+            threads: [],
+            processing: null,
+            finalizeRequested: false,
+            finalizedArtifactId: null,
+        },
+        design: {
+            substage: "product",
+        },
+        testDesignReview: {
+            threads: [],
+            processing: null,
+            finalizeRequested: false,
+            finalizedArtifactId: null,
+            scenarios: [],
+        },
+        planning: {
+            status: "idle",
+            summary: "",
+            strategy: "",
+            maxAgents: 4,
+            workItems: [],
+            waves: [],
+            agents: [],
+            risks: [],
+            revisionHistory: [],
+            metrics: {
+                totalEffortHours: 0,
+                scheduledHours: 0,
+                criticalPathHours: 0,
+                parallelismSavingsHours: 0,
+                maxParallelism: 0,
+            },
+            processing: null,
+            finalizedArtifactId: null,
+            error: "",
+        },
+        implementation: {
+            status: "idle",
+            runId: null,
+            currentWaveIndex: 0,
+            workItems: [],
+            agents: [],
+            strategySuggestions: [],
+            events: [],
+            startedAt: null,
+            completedAt: null,
+            finalizedArtifactId: null,
+            error: "",
+        },
+        testing: {
+            status: "idle",
+            runId: null,
+            currentWaveIndex: 0,
+            scenarios: [],
+            agents: [],
+            events: [],
+            startedAt: null,
+            completedAt: null,
+            finalizedArtifactId: null,
+            error: "",
+        },
+        processing: null,
+        suggestionProcessing: null,
+        reloadReceipt: null,
+        updatedAt: new Date().toISOString(),
+    };
+}
+
+function stateFilePath(prototypeId) {
+    return join(
+        STATE_DIRECTORY,
+        `${normalizePrototypeId(prototypeId)}.json`,
+    );
+}
+
+function legacyStateFilePaths(prototypeId) {
+    const fileName = `${normalizePrototypeId(prototypeId)}.json`;
+    const paths = [join(LEGACY_STATE_DIRECTORY, fileName)];
+    if (session?.workspacePath) {
+        paths.push(
+            join(session.workspacePath, "files", "tandem", fileName),
+            join(
+                session.workspacePath,
+                "files",
+                ["fast", "prototyping"].join("-"),
+                fileName,
+            ),
+        );
+    }
+    return paths;
+}
+
+async function writeJsonAtomically(path, value) {
+    const temporaryPath = `${path}.${process.pid}.${Date.now()}.tmp`;
+    await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+    await rename(temporaryPath, path);
+}
+
+async function loadCurrentPrototypeId() {
+    for (const path of [CURRENT_STATE_PATH, LEGACY_CURRENT_STATE_PATH]) {
+        try {
+            const value = JSON.parse(await readFile(path, "utf8"));
+            if (typeof value.prototypeId === "string") {
+                return normalizePrototypeId(value.prototypeId);
+            }
+        } catch {
+            // Try the next durable location.
+        }
+    }
+    return null;
+}
+
+async function persistCurrentPrototypeId(prototypeId) {
+    await mkdir(STATE_DIRECTORY, { recursive: true });
+    await writeJsonAtomically(CURRENT_STATE_PATH, {
+        version: 1,
+        prototypeId: normalizePrototypeId(prototypeId),
+        updatedAt: new Date().toISOString(),
+    });
+}
+
+function normalizeStringList(value) {
+    if (!Array.isArray(value)) return [];
+    return value
+        .filter((item) => typeof item === "string")
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .slice(0, 50);
+}
+
+function inferArtifactStage(artifact, fallbackStage = "requirements") {
+    if (
+        LIFECYCLE_STAGES.some((stage) => stage.id === artifact.stage)
+    ) {
+        return artifact.stage;
+    }
+    const id = String(artifact.id || "").toLowerCase();
+    const kind = String(artifact.kind || "").toLowerCase();
+    if (
+        id === "draft-feature-spec" ||
+        ["feature-spec", "prototype", "prototype-evidence"].includes(kind)
+    ) {
+        return "prototype";
+    }
+    if (
+        id === "design-review" ||
+        id === "design-spec" ||
+        id === "test-spec" ||
+        [
+            "design-review",
+            "design-spec",
+            "test-spec",
+            "test-scenario",
+            "architecture",
+            "contract",
+        ].includes(kind)
+    ) {
+        return "design";
+    }
+    if (
+        id === "implementation-plan" ||
+        ["implementation-plan", "execution-plan"].includes(kind)
+    ) {
+        return "plan";
+    }
+    if (
+        id === "final-code" ||
+        ["final-code", "implementation-result", "code"].includes(kind)
+    ) {
+        return "implement";
+    }
+    if (
+        id === "test-results" ||
+        ["test-results", "integration-test-results", "interaction-test-results"].includes(
+            kind,
+        )
+    ) {
+        return "test";
+    }
+    if (
+        id === "user-intents" ||
+        id === "design-tree" ||
+        ["intent", "requirements", "data-model", "interaction-flow"].includes(kind)
+    ) {
+        return "requirements";
+    }
+    return LIFECYCLE_STAGES.some((stage) => stage.id === fallbackStage)
+        ? fallbackStage
+        : "requirements";
+}
+
+function normalizeRequirements(value, decisionGraph = { nodes: [] }) {
+    const fallbackSubstage =
+        Array.isArray(decisionGraph.nodes) && decisionGraph.nodes.length > 0
+            ? "dag"
+            : "usage";
+    const substage =
+        isObject(value) && ["usage", "dag"].includes(value.substage)
+            ? value.substage
+            : fallbackSubstage;
+    const usageItems = normalizeStringList(
+        isObject(value) ? value.usageItems : [],
+    )
+        .map((item) => item.slice(0, 500))
+        .slice(0, 30);
+    const normalizedUsage = new Set(usageItems.map((item) => item.toLowerCase()));
+    const suggestions = normalizeStringList(
+        isObject(value) ? value.suggestions : [],
+    )
+        .map((item) => item.slice(0, 500))
+        .filter((item) => !normalizedUsage.has(item.toLowerCase()))
+        .slice(0, 6);
+
+    return { substage, usageItems, suggestions };
+}
+
+function usageQuestion(suggestions) {
+    return {
+        id: USAGE_QUESTION_ID,
+        text: "How do you want to use this app?",
+        rationale:
+            "Add one sentence for each usage. Suggestions adapt as you add more.",
+        choices: normalizeStringList(suggestions).slice(0, 6),
+        recommended: null,
+        allowFreeText: true,
+        answerPlaceholder: "For example: I want to triage incoming requests.",
+    };
+}
+
+function normalizeArtifacts(value, fallbackStage = "requirements") {
+    if (!Array.isArray(value)) return [];
+
+    return value
+        .slice(0, 30)
+        .map((artifact, index) => {
+            if (!isObject(artifact)) return null;
+
+            const path = String(artifact.path || "").trim().slice(0, 500);
+            const id = String(artifact.id || path || `artifact-${index + 1}`)
+                .trim()
+                .slice(0, 120);
+            const title = String(artifact.title || path || id).trim().slice(0, 200);
+            if (!id || !title) return null;
+            const kind = String(artifact.kind || "artifact").trim().slice(0, 80);
+            const stage = inferArtifactStage(artifact, fallbackStage);
+
+            return {
+                id,
+                title,
+                kind,
+                stage,
+                path:
+                    !path &&
+                    stage === "implement" &&
+                    (id === "final-code" || kind === "final-code")
+                        ? "."
+                        : path,
+                language: String(artifact.language || "markdown").trim().slice(0, 80),
+                content: String(artifact.content || "").slice(0, 200_000),
+                mermaid: String(artifact.mermaid || "").trim().slice(0, 50_000),
+                sourceThreadIds: normalizeStringList(
+                    artifact.sourceThreadIds,
+                ).slice(0, 50),
+                reviewStatus: ["current", "stale"].includes(
+                    artifact.reviewStatus,
+                )
+                    ? artifact.reviewStatus
+                    : "current",
+            };
+        })
+        .filter(Boolean);
+}
+
+function normalizeTestScenarios(value) {
+    if (!Array.isArray(value)) return [];
+    const scenarios = [];
+    const ids = new Set();
+    for (const [index, candidate] of value.slice(0, 30).entries()) {
+        if (!isObject(candidate)) continue;
+        const id = String(candidate.id || `test-${index + 1}`)
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-+|-+$/g, "")
+            .slice(0, 120);
+        const title = String(candidate.title || "").trim().slice(0, 300);
+        const description = String(candidate.description || "")
+            .trim()
+            .slice(0, 4000);
+        if (!id || ids.has(id) || !title || !description) continue;
+        ids.add(id);
+        scenarios.push({
+            id,
+            title,
+            type: ["integration", "interaction"].includes(candidate.type)
+                ? candidate.type
+                : "interaction",
+            description,
+            dependencies: normalizeStringList(candidate.dependencies).slice(0, 20),
+            steps: normalizeStringList(candidate.steps).slice(0, 30),
+            expectedOutcome: String(candidate.expectedOutcome || "")
+                .trim()
+                .slice(0, 4000),
+            validation: normalizeStringList(candidate.validation).slice(0, 30),
+        });
+    }
+    return scenarios.map((scenario) => ({
+        ...scenario,
+        dependencies: scenario.dependencies.filter(
+            (dependency) => dependency !== scenario.id && ids.has(dependency),
+        ),
+    }));
+}
+
+function normalizeDesignReview(value) {
+    const threads = isObject(value) && Array.isArray(value.threads)
+        ? value.threads
+              .slice(-100)
+              .map((thread, index) => {
+                  if (!isObject(thread)) return null;
+                  const id = String(thread.id || `design-thread-${index + 1}`)
+                      .trim()
+                      .slice(0, 120);
+                  const prompt = String(thread.prompt || "").trim().slice(0, 4000);
+                  if (!id || !prompt) return null;
+                  const type = ["question", "artifact"].includes(thread.type)
+                      ? thread.type
+                      : "question";
+                  return {
+                      id,
+                      type,
+                      artifactKind: [
+                          "diagram",
+                          "contract",
+                          "decision-record",
+                          "test-scenario",
+                      ].includes(thread.artifactKind)
+                          ? thread.artifactKind
+                          : null,
+                      prompt,
+                      answer: String(thread.answer || "").trim().slice(0, 20_000),
+                      status: [
+                          "queued",
+                          "processing",
+                          "answered",
+                          "resolved",
+                          "failed",
+                      ].includes(thread.status)
+                          ? thread.status
+                          : "queued",
+                      artifactIds: normalizeStringList(thread.artifactIds).slice(
+                          0,
+                          20,
+                      ),
+                      reviewArtifactId:
+                          typeof thread.reviewArtifactId === "string"
+                              ? thread.reviewArtifactId.trim().slice(0, 120) || null
+                              : null,
+                      createdAt: String(thread.createdAt || ""),
+                      completedAt: thread.completedAt
+                          ? String(thread.completedAt)
+                          : null,
+                      error: String(thread.error || "").trim().slice(0, 1000),
+                  };
+              })
+              .filter(Boolean)
+        : [];
+    const threadIds = new Set(threads.map((thread) => thread.id));
+    const processing =
+        isObject(value) &&
+        isObject(value.processing) &&
+        typeof value.processing.requestId === "string"
+            ? {
+                  requestId: value.processing.requestId.trim().slice(0, 120),
+                  action:
+                      value.processing.action === "finalize"
+                          ? "finalize"
+                          : "process-thread",
+                  threadId: threadIds.has(value.processing.threadId)
+                      ? value.processing.threadId
+                      : null,
+                  runId: value.processing.runId
+                      ? String(value.processing.runId).trim().slice(0, 200)
+                      : null,
+                  requestedAt: String(value.processing.requestedAt || ""),
+              }
+            : null;
+    return {
+        threads,
+        processing:
+            processing?.requestId &&
+            (processing.action === "finalize" || processing.threadId)
+                ? processing
+                : null,
+        finalizeRequested:
+            isObject(value) && value.finalizeRequested === true,
+        finalizedArtifactId:
+            isObject(value) && typeof value.finalizedArtifactId === "string"
+                ? value.finalizedArtifactId.trim().slice(0, 120) || null
+                : null,
+        scenarios: normalizeTestScenarios(
+            isObject(value) ? value.scenarios : [],
+        ),
+    };
+}
+
+function normalizeDesign(value, designReview) {
+    const productComplete = ["design-spec", "design-review"].includes(
+        designReview.finalizedArtifactId,
+    );
+    return {
+        substage:
+            isObject(value) && ["product", "test"].includes(value.substage)
+                ? value.substage
+                : productComplete
+                  ? "test"
+                  : "product",
+    };
+}
+
+function scheduleTestScenarios(scenarios, maxAgents = 4) {
+    const scheduled = new Set();
+    const remaining = new Set(scenarios.map((scenario) => scenario.id));
+    const waves = [];
+    while (remaining.size > 0) {
+        const ready = scenarios.filter(
+            (scenario) =>
+                remaining.has(scenario.id) &&
+                scenario.dependencies.every((dependency) =>
+                    scheduled.has(dependency),
+                ),
+        );
+        if (ready.length === 0) {
+            return {
+                waves: [],
+                error: "The test scenario dependency graph contains a cycle.",
+            };
+        }
+        const batch = ready.slice(0, maxAgents);
+        waves.push({
+            index: waves.length + 1,
+            scenarioIds: batch.map((scenario) => scenario.id),
+        });
+        for (const scenario of batch) {
+            remaining.delete(scenario.id);
+            scheduled.add(scenario.id);
+        }
+    }
+    return { waves, error: "" };
+}
+
+function normalizeTesting(value, testDesignReview) {
+    const source = isObject(value) ? value : {};
+    const runtimeById = new Map<string, any>(
+        (Array.isArray(source.scenarios) ? source.scenarios : [])
+            .filter((scenario) => isObject(scenario))
+            .map((scenario) => [String(scenario.id || ""), scenario]),
+    );
+    const scenarios = testDesignReview.scenarios.map((spec) => {
+        const runtime = runtimeById.get(spec.id) || {};
+        return {
+            id: spec.id,
+            status: ["pending", "running", "passed", "failed", "blocked"].includes(
+                runtime.status,
+            )
+                ? runtime.status
+                : "pending",
+            summary: String(runtime.summary || "").trim().slice(0, 12_000),
+            evidence: normalizeStringList(runtime.evidence).slice(0, 50),
+            startedAt: runtime.startedAt ? String(runtime.startedAt) : null,
+            completedAt: runtime.completedAt
+                ? String(runtime.completedAt)
+                : null,
+        };
+    });
+    const scenarioIds = new Set(scenarios.map((scenario) => scenario.id));
+    const agents = (Array.isArray(source.agents) ? source.agents : [])
+        .slice(0, 30)
+        .map((agent) => {
+            if (!isObject(agent)) return null;
+            const scenarioId = String(agent.scenarioId || "").trim().slice(0, 120);
+            if (!scenarioIds.has(scenarioId)) return null;
+            return {
+                id: String(agent.id || `test:${scenarioId}`).trim().slice(0, 120),
+                scenarioId,
+                status: String(agent.status || "pending").trim().slice(0, 80),
+                activity: String(agent.activity || "").trim().slice(0, 1000),
+                summary: String(agent.summary || "").trim().slice(0, 8000),
+            };
+        })
+        .filter(Boolean);
+    const events = (Array.isArray(source.events) ? source.events : [])
+        .slice(-200)
+        .map((event, index) => {
+            if (!isObject(event)) return null;
+            const message = String(event.message || "").trim().slice(0, 2000);
+            if (!message) return null;
+            return {
+                id: String(event.id || `test-event-${index + 1}`)
+                    .trim()
+                    .slice(0, 120),
+                type: String(event.type || "info").trim().slice(0, 80),
+                message,
+                at: String(event.at || ""),
+            };
+        })
+        .filter(Boolean);
+    return {
+        status: ["idle", "starting", "running", "completed", "failed"].includes(
+            source.status,
+        )
+            ? source.status
+            : "idle",
+        runId:
+            typeof source.runId === "string"
+                ? source.runId.trim().slice(0, 200) || null
+                : null,
+        currentWaveIndex: Math.max(
+            0,
+            Number.parseInt(source.currentWaveIndex, 10) || 0,
+        ),
+        scenarios,
+        agents,
+        events,
+        startedAt: source.startedAt ? String(source.startedAt) : null,
+        completedAt: source.completedAt ? String(source.completedAt) : null,
+        finalizedArtifactId:
+            typeof source.finalizedArtifactId === "string"
+                ? source.finalizedArtifactId.trim().slice(0, 120) || null
+                : null,
+        error: String(source.error || "").trim().slice(0, 2000),
+    };
+}
+
+function normalizePlanWorkItems(value) {
+    if (!Array.isArray(value)) return [];
+    const items = [];
+    const ids = new Set();
+    for (const [index, candidate] of value.slice(0, 30).entries()) {
+        if (!isObject(candidate)) continue;
+        const id = String(candidate.id || `work-${index + 1}`)
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9._-]+/g, "-")
+            .replace(/^-+|-+$/g, "")
+            .slice(0, 120);
+        const title = String(candidate.title || "").trim().slice(0, 200);
+        const description = String(candidate.description || "")
+            .trim()
+            .slice(0, 4000);
+        if (!id || !title || !description || ids.has(id)) continue;
+        ids.add(id);
+        items.push({
+            id,
+            title,
+            description,
+            dependencies: normalizeStringList(candidate.dependencies).slice(0, 30),
+            agentRole:
+                String(candidate.agentRole || "Implementation engineer")
+                    .trim()
+                    .slice(0, 120) || "Implementation engineer",
+            agentId: String(candidate.agentId || "").trim().slice(0, 80),
+            estimatedHours: Math.max(
+                0.5,
+                Math.min(80, Number(candidate.estimatedHours) || 1),
+            ),
+            files: normalizeStringList(candidate.files)
+                .map((path) => path.slice(0, 500))
+                .slice(0, 50),
+            skills: normalizeStringList(candidate.skills)
+                .map((skill) => skill.slice(0, 120))
+                .slice(0, 20),
+            acceptanceCriteria: normalizeStringList(candidate.acceptanceCriteria)
+                .map((criterion) => criterion.slice(0, 1000))
+                .slice(0, 30),
+            validation: normalizeStringList(candidate.validation)
+                .map((step) => step.slice(0, 1000))
+                .slice(0, 20),
+        });
+    }
+    const validIds = new Set(items.map((item) => item.id));
+    return items.map((item) => ({
+        ...item,
+        dependencies: item.dependencies.filter(
+            (dependency) =>
+                dependency !== item.id && validIds.has(dependency),
+        ),
+    }));
+}
+
+function schedulePlanWorkItems(workItems, maxAgents) {
+    const itemMap = new Map<string, any>(
+        workItems.map((item) => [item.id, { ...item, agentId: "" }]),
+    );
+    const remaining = new Set(itemMap.keys());
+    const completed = new Set();
+    const waves = [];
+    const agents = new Map<string, any>();
+    let startHour = 0;
+
+    while (remaining.size > 0) {
+        const ready = [...remaining]
+            .map((id) => itemMap.get(id))
+            .filter((item) =>
+                item.dependencies.every((dependency) => completed.has(dependency)),
+            )
+            .sort(
+                (left, right) =>
+                    right.estimatedHours - left.estimatedHours ||
+                    left.id.localeCompare(right.id),
+            );
+        if (ready.length === 0) {
+            throw new Error("The execution plan contains a dependency cycle.");
+        }
+
+        const selected = [];
+        const claimedFiles = new Set();
+        for (const item of ready) {
+            if (selected.length >= maxAgents) break;
+            const conflicts = item.files.some((path) => claimedFiles.has(path));
+            if (conflicts) continue;
+            selected.push(item);
+            for (const path of item.files) claimedFiles.add(path);
+        }
+        if (selected.length === 0) selected.push(ready[0]);
+
+        selected.forEach((item, index) => {
+            const agentId = `agent-${index + 1}`;
+            item.agentId = agentId;
+            const current = agents.get(agentId) || {
+                id: agentId,
+                workItemIds: [],
+                roles: [],
+                estimatedHours: 0,
+            };
+            current.workItemIds.push(item.id);
+            if (!current.roles.includes(item.agentRole)) {
+                current.roles.push(item.agentRole);
+            }
+            current.estimatedHours += item.estimatedHours;
+            agents.set(agentId, current);
+        });
+
+        const durationHours = Math.max(
+            ...selected.map((item) => item.estimatedHours),
+        );
+        waves.push({
+            id: `wave-${waves.length + 1}`,
+            index: waves.length + 1,
+            workItemIds: selected.map((item) => item.id),
+            startHour,
+            endHour: startHour + durationHours,
+            durationHours,
+        });
+        startHour += durationHours;
+        for (const item of selected) {
+            remaining.delete(item.id);
+            completed.add(item.id);
+        }
+    }
+
+    const orderedItems = waves.flatMap((wave) =>
+        wave.workItemIds.map((id) => itemMap.get(id)),
+    );
+    const criticalFinish = new Map();
+    for (const item of orderedItems) {
+        const dependencyFinish = item.dependencies.length > 0
+            ? Math.max(
+                  ...item.dependencies.map(
+                      (dependency) => criticalFinish.get(dependency) || 0,
+                  ),
+              )
+            : 0;
+        criticalFinish.set(
+            item.id,
+            dependencyFinish + item.estimatedHours,
+        );
+    }
+    const totalEffortHours = orderedItems.reduce(
+        (total, item) => total + item.estimatedHours,
+        0,
+    );
+    const criticalPathHours =
+        criticalFinish.size > 0 ? Math.max(...criticalFinish.values()) : 0;
+    return {
+        workItems: orderedItems,
+        waves,
+        agents: [...agents.values()],
+        metrics: {
+            totalEffortHours,
+            scheduledHours: startHour,
+            criticalPathHours,
+            parallelismSavingsHours: Math.max(0, totalEffortHours - startHour),
+            maxParallelism:
+                waves.length > 0
+                    ? Math.max(...waves.map((wave) => wave.workItemIds.length))
+                    : 0,
+        },
+    };
+}
+
+function normalizePlanning(value) {
+    const source = isObject(value) ? value : {};
+    const maxAgents = Math.max(
+        1,
+        Math.min(30, Number.parseInt(source.maxAgents, 10) || 4),
+    );
+    const rawItems = normalizePlanWorkItems(source.workItems);
+    let schedule = {
+        workItems: rawItems,
+        waves: [],
+        agents: [],
+        metrics: {
+            totalEffortHours: 0,
+            scheduledHours: 0,
+            criticalPathHours: 0,
+            parallelismSavingsHours: 0,
+            maxParallelism: 0,
+        },
+    };
+    let scheduleError = "";
+    try {
+        schedule = schedulePlanWorkItems(rawItems, maxAgents);
+    } catch (error) {
+        scheduleError = error instanceof Error ? error.message : String(error);
+    }
+    const processing =
+        isObject(source.processing) &&
+        typeof source.processing.requestId === "string" &&
+        source.processing.requestId.trim()
+            ? {
+                  requestId: source.processing.requestId.trim().slice(0, 120),
+                  action: source.processing.action === "revise"
+                      ? "revise"
+                      : "generate",
+                  instruction: String(source.processing.instruction || "")
+                      .trim()
+                      .slice(0, 4000),
+                  runId: source.processing.runId
+                      ? String(source.processing.runId).trim().slice(0, 200)
+                      : null,
+                  requestedAt: String(source.processing.requestedAt || ""),
+              }
+            : null;
+    return {
+        status: [
+            "idle",
+            "generating",
+            "revising",
+            "ready",
+            "complete",
+            "failed",
+        ].includes(source.status)
+            ? source.status
+            : rawItems.length > 0
+              ? "ready"
+              : "idle",
+        summary: String(source.summary || "").trim().slice(0, 8000),
+        strategy: String(source.strategy || "").trim().slice(0, 8000),
+        maxAgents,
+        ...schedule,
+        risks: normalizeStringList(source.risks)
+            .map((risk) => risk.slice(0, 1000))
+            .slice(0, 50),
+        revisionHistory: normalizeStringList(source.revisionHistory)
+            .map((entry) => entry.slice(0, 4000))
+            .slice(-30),
+        processing,
+        finalizedArtifactId:
+            typeof source.finalizedArtifactId === "string"
+                ? source.finalizedArtifactId.trim().slice(0, 120) || null
+                : null,
+        error: (scheduleError || String(source.error || "").trim()).slice(
+            0,
+            1000,
+        ),
+    };
+}
+
+function normalizeImplementation(value, planning) {
+    const source = isObject(value) ? value : {};
+    const planItemIds = new Set(planning.workItems.map((item) => item.id));
+    const rawWorkItems = Array.isArray(source.workItems)
+        ? source.workItems
+        : [];
+    const runtimeById = new Map<string, any>(
+        rawWorkItems
+            .filter(
+                (item) =>
+                    isObject(item) && planItemIds.has(String(item.id || "")),
+            )
+            .map((item) => [String(item.id), item]),
+    );
+    const workItems = planning.workItems.map((planItem) => {
+        const runtime = runtimeById.get(planItem.id) || {};
+        return {
+            id: planItem.id,
+            status: [
+                "pending",
+                "running",
+                "completed",
+                "failed",
+                "blocked",
+                "cancelled",
+            ].includes(runtime.status)
+                ? runtime.status
+                : "pending",
+            agentId: String(runtime.agentId || planItem.agentId || "")
+                .trim()
+                .slice(0, 120),
+            summary: String(runtime.summary || "").trim().slice(0, 12_000),
+            filesChanged: normalizeStringList(runtime.filesChanged)
+                .map((path) => path.slice(0, 500))
+                .slice(0, 100),
+            validation: normalizeStringList(runtime.validation)
+                .map((entry) => entry.slice(0, 2000))
+                .slice(0, 50),
+            blockers: normalizeStringList(runtime.blockers)
+                .map((entry) => entry.slice(0, 2000))
+                .slice(0, 50),
+            startedAt: runtime.startedAt ? String(runtime.startedAt) : null,
+            completedAt: runtime.completedAt
+                ? String(runtime.completedAt)
+                : null,
+        };
+    });
+    const agents = Array.isArray(source.agents)
+        ? source.agents
+              .slice(0, 100)
+              .map((agent) => {
+                  if (!isObject(agent)) return null;
+                  const id = String(agent.id || "").trim().slice(0, 120);
+                  const workItemId = String(agent.workItemId || "")
+                      .trim()
+                      .slice(0, 120);
+                  if (!id || !planItemIds.has(workItemId)) return null;
+                  return {
+                      id,
+                      workItemId,
+                      role: String(agent.role || "").trim().slice(0, 120),
+                      status: String(agent.status || "pending")
+                          .trim()
+                          .slice(0, 80),
+                      activity: String(agent.activity || "").trim().slice(0, 1000),
+                      activeMs: Math.max(0, Number(agent.activeMs) || 0),
+                      model: String(agent.model || "").trim().slice(0, 120),
+                      summary: String(agent.summary || "").trim().slice(0, 8000),
+                  };
+              })
+              .filter(Boolean)
+        : [];
+    const strategySuggestions = Array.isArray(source.strategySuggestions)
+        ? source.strategySuggestions
+              .slice(-50)
+              .map((suggestion, index) => {
+                  if (!isObject(suggestion)) return null;
+                  const id = String(suggestion.id || `strategy-${index + 1}`)
+                      .trim()
+                      .slice(0, 120);
+                  const text = String(suggestion.text || "").trim().slice(0, 4000);
+                  if (!id || !text) return null;
+                  return {
+                      id,
+                      text,
+                      status: ["queued", "applied"].includes(suggestion.status)
+                          ? suggestion.status
+                          : "queued",
+                      submittedAt: String(suggestion.submittedAt || ""),
+                      appliedAt: suggestion.appliedAt
+                          ? String(suggestion.appliedAt)
+                          : null,
+                      waveIndex: Number.isInteger(suggestion.waveIndex)
+                          ? suggestion.waveIndex
+                          : null,
+                  };
+              })
+              .filter(Boolean)
+        : [];
+    const events = Array.isArray(source.events)
+        ? source.events
+              .slice(-200)
+              .map((event, index) => {
+                  if (!isObject(event)) return null;
+                  const message = String(event.message || "").trim().slice(0, 2000);
+                  if (!message) return null;
+                  return {
+                      id: String(event.id || `event-${index + 1}`)
+                          .trim()
+                          .slice(0, 120),
+                      type: String(event.type || "info").trim().slice(0, 80),
+                      message,
+                      at: String(event.at || ""),
+                  };
+              })
+              .filter(Boolean)
+        : [];
+    return {
+        status: [
+            "idle",
+            "starting",
+            "running",
+            "completed",
+            "failed",
+            "cancelled",
+        ].includes(source.status)
+            ? source.status
+            : "idle",
+        runId:
+            typeof source.runId === "string"
+                ? source.runId.trim().slice(0, 200) || null
+                : null,
+        currentWaveIndex: Math.max(
+            0,
+            Number.parseInt(source.currentWaveIndex, 10) || 0,
+        ),
+        workItems,
+        agents,
+        strategySuggestions,
+        events,
+        startedAt: source.startedAt ? String(source.startedAt) : null,
+        completedAt: source.completedAt ? String(source.completedAt) : null,
+        finalizedArtifactId:
+            typeof source.finalizedArtifactId === "string"
+                ? source.finalizedArtifactId.trim().slice(0, 120) || null
+                : null,
+        error: String(source.error || "").trim().slice(0, 2000),
+    };
+}
+
+function normalizeQuestion(value) {
+    if (value === null) return null;
+    if (!isObject(value)) return null;
+
+    const id = String(value.id || "").trim().slice(0, 120);
+    const text = String(value.text || "").trim().slice(0, 2000);
+    if (!id || !text) return null;
+
+    const choices = normalizeStringList(value.choices).slice(0, 6);
+    const recommended = choices.includes(value.recommended)
+        ? value.recommended
+        : null;
+
+    return {
+        id,
+        text,
+        rationale: String(value.rationale || "").trim().slice(0, 1200),
+        choices,
+        recommended,
+        allowFreeText: value.allowFreeText !== false,
+        answerPlaceholder: String(value.answerPlaceholder || "")
+            .trim()
+            .slice(0, 200),
+    };
+}
+
+function normalizePrototypeReview(value) {
+    const revisions = isObject(value) && Array.isArray(value.revisions)
+        ? value.revisions
+              .slice(-50)
+              .map((revision, index) => {
+                  if (!isObject(revision)) return null;
+                  const id = String(revision.id || `revision-${index + 1}`)
+                      .trim()
+                      .slice(0, 120);
+                  const suggestion = String(revision.suggestion || "")
+                      .trim()
+                      .slice(0, 4000);
+                  if (!id || !suggestion) return null;
+                  const status = [
+                      "processing",
+                      "clarifying",
+                      "applied",
+                      "failed",
+                  ].includes(revision.status)
+                      ? revision.status
+                      : "processing";
+                  const clarifications = Array.isArray(revision.clarifications)
+                      ? revision.clarifications
+                            .slice(0, 20)
+                            .map((clarification) => {
+                                if (!isObject(clarification)) return null;
+                                const question = String(
+                                    clarification.question || "",
+                                ).trim().slice(0, 2000);
+                                const answer = String(
+                                    clarification.answer || "",
+                                ).trim().slice(0, 4000);
+                                return question && answer
+                                    ? { question, answer }
+                                    : null;
+                            })
+                            .filter(Boolean)
+                      : [];
+                  return {
+                      id,
+                      suggestion,
+                      status,
+                      summary: String(revision.summary || "")
+                          .trim()
+                          .slice(0, 4000),
+                      clarifications,
+                      submittedAt: String(revision.submittedAt || ""),
+                      completedAt: revision.completedAt
+                          ? String(revision.completedAt)
+                          : null,
+                  };
+              })
+              .filter(Boolean)
+        : [];
+    const revisionIds = new Set(revisions.map((revision) => revision.id));
+    const activeRevisionId =
+        isObject(value) && revisionIds.has(value.activeRevisionId)
+            ? value.activeRevisionId
+            : null;
+    const evidence = isObject(value) && Array.isArray(value.evidence)
+        ? value.evidence
+              .slice(-100)
+              .map((entry, index) => {
+                  if (!isObject(entry)) return null;
+                  const id = String(entry.id || `evidence-${index + 1}`)
+                      .trim()
+                      .slice(0, 120);
+                  const content = String(entry.content || "")
+                      .trim()
+                      .slice(0, 8000);
+                  if (!id || !content) return null;
+                  return {
+                      id,
+                      type: String(entry.type || "observation")
+                          .trim()
+                          .slice(0, 80),
+                      content,
+                      recordedAt: String(entry.recordedAt || ""),
+                  };
+              })
+              .filter(Boolean)
+        : [];
+    return {
+        revisions,
+        activeRevisionId,
+        question: isObject(value) ? normalizeQuestion(value.question) : null,
+        evidence,
+        designSpecArtifactId:
+            isObject(value) && typeof value.designSpecArtifactId === "string"
+                ? value.designSpecArtifactId.trim().slice(0, 120) || null
+                : null,
+    };
+}
+
+function normalizeDecisionGraph(value, legacyQuestion = null) {
+    const rawNodes = isObject(value) && Array.isArray(value.nodes) ? value.nodes : [];
+    const nodes = [];
+    const ids = new Set();
+
+    for (const rawNode of rawNodes.slice(0, 50)) {
+        if (!isObject(rawNode)) continue;
+        const id = String(rawNode.id || "")
+            .trim()
+            .replace(/[^A-Za-z0-9._-]+/g, "-")
+            .replace(/^-+|-+$/g, "")
+            .slice(0, 120);
+        if (!id || ids.has(id)) continue;
+
+        const normalizedQuestion = normalizeQuestion(rawNode.question);
+        const question = normalizedQuestion
+            ? { ...normalizedQuestion, id }
+            : null;
+        const title = String(rawNode.title || question?.text || id)
+            .trim()
+            .slice(0, 240);
+        if (!title) continue;
+
+        ids.add(id);
+        nodes.push({
+            id,
+            title,
+            dependencies: normalizeStringList(rawNode.dependencies).slice(0, 20),
+            question,
+            answer:
+                typeof rawNode.answer === "string" && rawNode.answer.trim()
+                    ? rawNode.answer.trim().slice(0, 4000)
+                    : null,
+            status: "toAnswer",
+        });
+    }
+
+    if (nodes.length === 0) {
+        const question = normalizeQuestion(legacyQuestion);
+        if (question) {
+            nodes.push({
+                id: question.id,
+                title: question.text,
+                dependencies: [],
+                question,
+                answer: null,
+                status: "active",
+            });
+        }
+    }
+
+    const nodesById = new Map(nodes.map((node) => [node.id, node]));
+    for (const node of nodes) {
+        node.dependencies = [
+            ...new Set(
+                node.dependencies.filter(
+                    (dependencyId) =>
+                        dependencyId !== node.id && nodesById.has(dependencyId),
+                ),
+            ),
+        ];
+    }
+    let activeAssigned = false;
+    for (const node of nodes) {
+        const dependenciesAnswered = node.dependencies.every(
+            (dependencyId) => nodesById.get(dependencyId)?.answer,
+        );
+        if (node.answer) {
+            node.status = "answered";
+        } else if (!activeAssigned && dependenciesAnswered && node.question) {
+            node.status = "active";
+            activeAssigned = true;
+        } else {
+            node.status = "toAnswer";
+        }
+    }
+
+    return { nodes };
+}
+
+function revisionQuestionError(question) {
+    if (!question) return null;
+    const choices = question.choices || [];
+    if (choices.length < 3 || choices.length > 5) {
+        return "Prototype clarification questions must provide 3 to 5 options.";
+    }
+    if (
+        new Set(choices.map((choice) => choice.toLowerCase())).size !==
+        choices.length
+    ) {
+        return "Prototype clarification options must be distinct.";
+    }
+    return null;
+}
+
+function firstActiveQuestion(decisionGraph) {
+    return (
+        decisionGraph.nodes.find((node) => node.status === "active")?.question ||
+        null
+    );
+}
+
+function generatedDecisionGraphError(decisionGraph) {
+    if (decisionGraph.nodes.length === 0) {
+        return "The generated requirements DAG did not contain any decisions.";
+    }
+    if (decisionGraph.nodes.some((node) => !node.question)) {
+        return "Every generated requirements node must include a complete question.";
+    }
+
+    const indegrees = new Map<string, number>(
+        decisionGraph.nodes.map((node) => [node.id, node.dependencies.length]),
+    );
+    const dependents = new Map<string, string[]>(
+        decisionGraph.nodes.map((node) => [node.id, []]),
+    );
+    for (const node of decisionGraph.nodes) {
+        for (const dependencyId of node.dependencies) {
+            dependents.get(dependencyId)?.push(node.id);
+        }
+    }
+    const ready = [...indegrees]
+        .filter(([, indegree]) => indegree === 0)
+        .map(([id]) => id);
+    let visited = 0;
+    while (ready.length > 0) {
+        const id = ready.pop();
+        visited += 1;
+        for (const dependentId of dependents.get(id) || []) {
+            const nextIndegree = indegrees.get(dependentId) - 1;
+            indegrees.set(dependentId, nextIndegree);
+            if (nextIndegree === 0) ready.push(dependentId);
+        }
+    }
+    if (visited !== decisionGraph.nodes.length) {
+        return "The generated requirements graph contains a dependency cycle.";
+    }
+    if (!decisionGraph.nodes.some((node) => node.status === "active")) {
+        return "The generated requirements DAG did not expose an active decision.";
+    }
+    return null;
+}
+
+function dependentNodeIds(decisionGraph, changedNodeId) {
+    const invalidated = new Set();
+    let changed = true;
+    while (changed) {
+        changed = false;
+        for (const node of decisionGraph.nodes) {
+            if (
+                node.id !== changedNodeId &&
+                !invalidated.has(node.id) &&
+                node.dependencies.some(
+                    (dependencyId) =>
+                        dependencyId === changedNodeId ||
+                        invalidated.has(dependencyId),
+                )
+            ) {
+                invalidated.add(node.id);
+                changed = true;
+            }
+        }
+    }
+    return invalidated;
+}
+
+function invalidateDependentNodes(decisionGraph, changedNodeId) {
+    const nodes = decisionGraph.nodes.map((node) => ({
+        ...node,
+        dependencies: [...node.dependencies],
+        question: node.question ? { ...node.question } : null,
+    }));
+    const invalidated = dependentNodeIds(decisionGraph, changedNodeId);
+    for (const node of nodes) {
+        if (invalidated.has(node.id)) {
+            node.answer = null;
+            node.status = "toAnswer";
+        }
+    }
+    return normalizeDecisionGraph({ nodes });
+}
+
+function normalizeLifecycle(value) {
+    const completedInput = new Set(
+        isObject(value) ? normalizeStringList(value.completedStages) : [],
+    );
+    const completedStages = [];
+    for (const stage of LIFECYCLE_STAGES) {
+        if (!completedInput.has(stage.id)) break;
+        completedStages.push(stage.id);
+    }
+
+    const outputs = isObject(value) && Array.isArray(value.outputs)
+        ? value.outputs
+              .filter(
+                  (output) =>
+                      isObject(output) &&
+                      LIFECYCLE_STAGES.some((stage) => stage.id === output.stageId),
+              )
+              .map((output) => {
+                  const path = String(output.path || "").slice(0, 500);
+                  const legacyPrefix = [".intent", "studio"].join("");
+                  return {
+                      stageId: String(output.stageId),
+                      path: path.startsWith(legacyPrefix)
+                          ? `.tandem${path.slice(legacyPrefix.length)}`
+                          : path,
+                      completedAt: String(output.completedAt || ""),
+                  };
+              })
+        : [];
+    const currentStage =
+        LIFECYCLE_STAGES[Math.min(completedStages.length, LIFECYCLE_STAGES.length - 1)]
+            .id;
+
+    return { currentStage, completedStages, outputs };
+}
+
+function normalizeReloadReceipt(value) {
+    if (!isObject(value)) return null;
+    if (!["reloading", "success", "error"].includes(value.status)) return null;
+
+    return {
+        status: value.status,
+        message: String(value.message || "").trim().slice(0, 500),
+        requestedAt: String(value.requestedAt || ""),
+        completedAt: value.completedAt ? String(value.completedAt) : null,
+        extensionId: USER_EXTENSION_ID,
+    };
+}
+
+function normalizeProcessing(value) {
+    if (!isObject(value)) return null;
+    if (!["running", "success", "error"].includes(value.status)) return null;
+
+    const requestId = String(value.requestId || "").trim().slice(0, 120);
+    if (!requestId) return null;
+
+    return {
+        status: value.status,
+        action: ANSWER_ACTIONS.has(value.action)
+            ? value.action
+            : "answer-decision",
+        message: String(value.message || "").trim().slice(0, 500),
+        requestId,
+        factoryName: value.factoryName
+            ? String(value.factoryName).trim().slice(0, 200)
+            : null,
+        answer:
+            typeof value.answer === "string"
+                ? value.answer.trim().slice(0, 4000)
+                : null,
+        runId: value.runId ? String(value.runId).trim().slice(0, 200) : null,
+        requestedAt: String(value.requestedAt || ""),
+        completedAt: value.completedAt ? String(value.completedAt) : null,
+        question: normalizeQuestion(value.question),
+        originalDecisionGraph:
+            value.action === "change-answer"
+                ? normalizeDecisionGraph(value.originalDecisionGraph)
+                : null,
+    };
+}
+
+function normalizeSuggestionProcessing(value) {
+    if (!isObject(value)) return null;
+    if (!["running", "success", "error"].includes(value.status)) return null;
+    const requestId = String(value.requestId || "").trim().slice(0, 120);
+    if (!requestId) return null;
+
+    return {
+        status: value.status,
+        message: String(value.message || "").trim().slice(0, 500),
+        requestId,
+        factoryName: String(
+            value.factoryName || SUGGESTION_FACTORY_NAME,
+        ).trim().slice(0, 200),
+        runId: value.runId ? String(value.runId).trim().slice(0, 200) : null,
+        usageItems: normalizeStringList(value.usageItems)
+            .map((item) => item.slice(0, 500))
+            .slice(0, 30),
+        requestedAt: String(value.requestedAt || ""),
+        completedAt: value.completedAt ? String(value.completedAt) : null,
+    };
+}
+
+function normalizeStoredState(value, prototypeId) {
+    if (!isObject(value) || value.version !== 1) {
+        return createState(prototypeId);
+    }
+
+    const phase = ["discovery", "building", "iterating", "complete"].includes(value.phase)
+        ? value.phase
+        : "discovery";
+    const previewStatus = ["waiting", "starting", "ready", "error"].includes(value.previewStatus)
+        ? value.previewStatus
+        : "waiting";
+
+    const lifecycle = normalizeLifecycle(value.lifecycle);
+    const isUsageSubstage =
+        isObject(value.requirements) && value.requirements.substage === "usage";
+    const decisionGraph = normalizeDecisionGraph(
+        value.decisionGraph,
+        isUsageSubstage ? null : value.question,
+    );
+    const requirements = normalizeRequirements(value.requirements, decisionGraph);
+    const planning = normalizePlanning(value.planning);
+    const designReview = normalizeDesignReview(value.designReview);
+    const testDesignReview = normalizeDesignReview(value.testDesignReview);
+    return {
+        ...createState(prototypeId),
+        stage: lifecycle.currentStage,
+        lifecycle,
+        goal: String(value.goal || "").slice(0, 4000),
+        phase,
+        status: String(value.status || "").slice(0, 1000),
+        requirements,
+        question:
+            requirements.substage === "usage"
+                ? usageQuestion(requirements.suggestions)
+                : firstActiveQuestion(decisionGraph),
+        decisionGraph,
+        confirmed: normalizeStringList(value.confirmed),
+        assumed: normalizeStringList(value.assumed),
+        deferred: normalizeStringList(value.deferred),
+        artifacts: normalizeArtifacts(value.artifacts),
+        previewUrl: normalizePreviewUrl(value.previewUrl, true),
+        previewStatus,
+        prototypeReview: normalizePrototypeReview(value.prototypeReview),
+        design: normalizeDesign(value.design, designReview),
+        designReview,
+        testDesignReview,
+        planning,
+        implementation: normalizeImplementation(value.implementation, planning),
+        testing: normalizeTesting(value.testing, testDesignReview),
+        processing: normalizeProcessing(value.processing),
+        suggestionProcessing: normalizeSuggestionProcessing(
+            value.suggestionProcessing,
+        ),
+        reloadReceipt: normalizeReloadReceipt(value.reloadReceipt),
+        updatedAt: String(value.updatedAt || new Date().toISOString()),
+    };
+}
+
+function normalizePreviewUrl(value, allowInvalidAsNull = false) {
+    if (value === null || value === undefined || value === "") return null;
+
+    try {
+        const parsed = new URL(String(value));
+        const allowedHost = ["127.0.0.1", "localhost", "[::1]"].includes(parsed.hostname);
+        if (!["http:", "https:"].includes(parsed.protocol) || !allowedHost) {
+            throw new Error("Preview URL must use HTTP on a loopback host.");
+        }
+        return parsed.href;
+    } catch (error) {
+        if (allowInvalidAsNull) return null;
+        throw new CanvasError(
+            "invalid_preview_url",
+            error instanceof Error ? error.message : "Invalid preview URL.",
+        );
+    }
+}
+
+function readHtmlAttribute(tag, attribute) {
+    const match = tag.match(
+        new RegExp(`\\b${attribute}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "i"),
+    );
+    return match ? match[1] ?? match[2] ?? "" : null;
+}
+
+async function verifyPreviewIdentity(url, prototypeId) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5_000);
+    let response;
+
+    try {
+        response = await fetch(url, {
+            signal: controller.signal,
+            redirect: "error",
+        });
+    } catch (error) {
+        throw new CanvasError(
+            "preview_unreachable",
+            `The prototype URL is not reachable: ${
+                error instanceof Error ? error.message : String(error)
+            }`,
+        );
+    } finally {
+        clearTimeout(timeout);
+    }
+
+    if (!response.ok) {
+        throw new CanvasError(
+            "preview_unreachable",
+            `The prototype URL returned HTTP ${response.status}.`,
+        );
+    }
+
+    const html = (await response.text()).slice(0, 256 * 1024);
+    const markerTag = (html.match(/<meta\b[^>]*>/gi) || []).find((tag) =>
+        PREVIEW_IDENTITY_MARKERS.has(readHtmlAttribute(tag, "name")),
+    );
+    const markerValue = markerTag
+        ? readHtmlAttribute(markerTag, "content")
+        : null;
+    const actualId = markerValue ? normalizePrototypeId(markerValue) : null;
+
+    if (!actualId) {
+        throw new CanvasError(
+            "preview_identity_missing",
+            `The page at ${url} does not declare <meta name="tandem-prototype-id" content="${prototypeId}">.`,
+        );
+    }
+    if (actualId !== prototypeId) {
+        throw new CanvasError(
+            "preview_identity_mismatch",
+            `The page at ${url} belongs to prototype "${actualId}", not "${prototypeId}".`,
+        );
+    }
+}
+
+async function loadState(prototypeId) {
+    const id = normalizePrototypeId(prototypeId);
+    const path = stateFilePath(id);
+    try {
+        const stored = JSON.parse(await readFile(path, "utf8"));
+        const state = normalizeStoredState(stored, id);
+        stateCache.set(id, state);
+        return state;
+    } catch (error) {
+        if (error?.code !== "ENOENT") {
+            await logSafely(
+                "Could not restore Tandem state.",
+                "warning",
+            );
+            if (stateCache.has(id)) return stateCache.get(id);
+        }
+    }
+
+    for (const legacyPath of legacyStateFilePaths(id)) {
+        try {
+            const stored = JSON.parse(await readFile(legacyPath, "utf8"));
+            const state = normalizeStoredState(stored, id);
+            await persistState(state);
+            return state;
+        } catch (error) {
+            if (error?.code !== "ENOENT") {
+                await logSafely(
+                    "Could not migrate legacy Tandem state.",
+                    "warning",
+                );
+            }
+        }
+    }
+
+    const state = createState(id);
+    stateCache.set(id, state);
+    return state;
+}
+
+async function persistState(state) {
+    stateCache.set(state.prototypeId, state);
+    const path = stateFilePath(state.prototypeId);
+    if (!path) return;
+
+    const previous = writeQueues.get(state.prototypeId) || Promise.resolve();
+    const next = previous
+        .catch(() => undefined)
+        .then(async () => {
+            await mkdir(STATE_DIRECTORY, { recursive: true });
+            await writeJsonAtomically(path, state);
+        });
+    writeQueues.set(state.prototypeId, next);
+    await next;
+}
+
+async function withAnswerClaim(
+    prototypeId,
+    operation,
+    rejectIfBusy = false,
+) {
+    let release;
+    while (!release) {
+        const existing = answerClaims.get(prototypeId);
+        if (existing) {
+            if (rejectIfBusy) {
+                throw new AnswerRequestError(
+                    409,
+                    "Another answer is being accepted. Try again.",
+                );
+            }
+            await existing;
+            continue;
+        }
+
+        let resolveClaim;
+        const claim = new Promise((resolve) => {
+            resolveClaim = resolve;
+        });
+        answerClaims.set(prototypeId, claim);
+        release = () => {
+            if (answerClaims.get(prototypeId) === claim) {
+                answerClaims.delete(prototypeId);
+            }
+            resolveClaim();
+        };
+    }
+
+    try {
+        return await operation();
+    } finally {
+        release();
+    }
+}
+
+async function isPreferredAnswerProvider(extensionId) {
+    const extensionList = await session.rpc.extensions.list();
+    const runningIds = new Set(
+        extensionList.extensions
+            .filter((extension) => extension.status === "running")
+            .map((extension) => extension.id),
+    );
+    if (runningIds.has(USER_EXTENSION_ID)) {
+        return extensionId === USER_EXTENSION_ID;
+    }
+    return (
+        runningIds.has(PROJECT_EXTENSION_ID) &&
+        extensionId === PROJECT_EXTENSION_ID
+    );
+}
+
+async function refreshEntryAnswerCapability(entry) {
+    const wasEnabled = entry.canSubmitAnswers;
+    entry.canSubmitAnswers = await isPreferredAnswerProvider(entry.extensionId);
+    if (entry.canSubmitAnswers) {
+        let state = await loadState(entry.prototypeId);
+        if (!wasEnabled) {
+            recoverAnswerFactory(state, true);
+            recoverSuggestionFactory(state, true);
+            state = await ensureUsageSuggestionsStarted(state, true);
+        }
+        recoverPrototypeCompletion(state, true);
+    }
+}
+
+function publicState(entry, state) {
+    const source = String(entry.extensionId || "").split(":", 1)[0] || "unknown";
+    return {
+        ...state,
+        provider: {
+            extensionId: entry.extensionId,
+            source,
+            canReload: entry.extensionId === USER_EXTENSION_ID,
+            canSubmitAnswers: entry.canSubmitAnswers,
+        },
+    };
+}
+
+function publishState(prototypeId) {
+    const state = stateCache.get(prototypeId);
+    if (!state) return;
+
+    for (const entry of servers.values()) {
+        if (entry.prototypeId !== prototypeId) continue;
+        const event = `data: ${JSON.stringify(publicState(entry, state))}\n\n`;
+        for (const client of entry.clients) {
+            client.write(event);
+        }
+    }
+}
+
+async function resolvePrototypeId(instanceId, requestedId) {
+    const explicitId = requestedId || instancePrototypeIds.get(instanceId);
+    if (explicitId) return normalizePrototypeId(explicitId);
+    return (await loadCurrentPrototypeId()) || DEFAULT_PROTOTYPE_ID;
+}
+
+async function updateTandem(ctx) {
+    const input = isObject(ctx.input) ? ctx.input : {};
+    const prototypeId = await resolvePrototypeId(ctx.instanceId, input.prototypeId);
+    if (!(await isPreferredAnswerProvider(ctx.extensionId))) {
+        throw new CanvasError(
+            "read_only_provider",
+            "Update Tandem through the installed user-scoped provider.",
+        );
+    }
+
+    return withAnswerClaim(prototypeId, async () => {
+        const stored = await loadState(prototypeId);
+        if (stored.processing?.status === "running") {
+            throw new CanvasError(
+                "processing_in_progress",
+                "Wait for the hidden Tandem agent to finish.",
+            );
+        }
+        const current = input.reset ? createState(prototypeId) : stored;
+        const next = { ...current };
+
+        if (typeof input.goal === "string") {
+            next.goal = input.goal.trim().slice(0, 4000);
+        }
+        if (typeof input.stage === "string" && input.stage.trim()) {
+            next.stage = input.stage.trim().slice(0, 80);
+        }
+        if (["discovery", "building", "iterating", "complete"].includes(input.phase)) {
+            next.phase = input.phase;
+        }
+        if (typeof input.status === "string") {
+            next.status = input.status.trim().slice(0, 1000);
+        }
+        if (Object.prototype.hasOwnProperty.call(input, "question")) {
+            next.question = normalizeQuestion(input.question);
+        }
+        if (Object.prototype.hasOwnProperty.call(input, "requirements")) {
+            next.requirements = normalizeRequirements(
+                input.requirements,
+                next.decisionGraph,
+            );
+        }
+        if (Object.prototype.hasOwnProperty.call(input, "decisionGraph")) {
+            next.decisionGraph = normalizeDecisionGraph(
+                input.decisionGraph,
+                null,
+            );
+            const requirementsInput = Object.prototype.hasOwnProperty.call(
+                input,
+                "requirements",
+            )
+                ? next.requirements
+                : {
+                      ...next.requirements,
+                      substage:
+                          next.decisionGraph.nodes.length > 0
+                              ? "dag"
+                              : next.requirements.substage,
+                  };
+            next.requirements = normalizeRequirements(
+                requirementsInput,
+                next.decisionGraph,
+            );
+            next.question =
+                next.requirements.substage === "usage"
+                    ? usageQuestion(next.requirements.suggestions)
+                    : firstActiveQuestion(next.decisionGraph);
+        }
+        if (Array.isArray(input.confirmed)) {
+            next.confirmed = normalizeStringList(input.confirmed);
+        }
+        if (Array.isArray(input.assumed)) {
+            next.assumed = normalizeStringList(input.assumed);
+        }
+        if (Array.isArray(input.deferred)) {
+            next.deferred = normalizeStringList(input.deferred);
+        }
+        if (Array.isArray(input.artifacts)) {
+            next.artifacts = normalizeArtifacts(
+                input.artifacts,
+                next.lifecycle.currentStage,
+            );
+        }
+        if (Object.prototype.hasOwnProperty.call(input, "prototypeReview")) {
+            next.prototypeReview = normalizePrototypeReview(input.prototypeReview);
+        }
+        if (Object.prototype.hasOwnProperty.call(input, "designReview")) {
+            next.designReview = normalizeDesignReview(input.designReview);
+        }
+        if (Object.prototype.hasOwnProperty.call(input, "planning")) {
+            next.planning = normalizePlanning(input.planning);
+        }
+        if (Object.prototype.hasOwnProperty.call(input, "previewUrl")) {
+            const previewUrl = normalizePreviewUrl(input.previewUrl);
+            if (previewUrl) {
+                await verifyPreviewIdentity(previewUrl, prototypeId);
+            }
+            next.previewUrl = previewUrl;
+        }
+        if (["waiting", "starting", "ready", "error"].includes(input.previewStatus)) {
+            next.previewStatus = input.previewStatus;
+        }
+
+        next.lifecycle = normalizeLifecycle(next.lifecycle);
+        next.stage = next.lifecycle.currentStage;
+        next.updatedAt = new Date().toISOString();
+        await persistState(next);
+        instancePrototypeIds.set(ctx.instanceId, prototypeId);
+        await persistCurrentPrototypeId(prototypeId);
+        publishState(prototypeId);
+        return next;
+    });
+}
+
+function stageCompletionError(
+    state,
+    stageId,
+    { requirePrototypeSpec = true } = {},
+) {
+    if (stageId === "requirements") {
+        if (state.requirements.substage !== "dag") {
+            return "Generate the requirements DAG from at least one usage first.";
+        }
+        if (state.decisionGraph.nodes.length === 0) {
+            return "Generate at least one requirement decision before finishing.";
+        }
+        const remaining = state.decisionGraph.nodes.filter((node) => !node.answer);
+        if (remaining.length > 0) {
+            return `${remaining.length} requirement decision${
+                remaining.length === 1 ? "" : "s"
+            } remain unanswered.`;
+        }
+        if (
+            state.artifacts.length >= 30 &&
+            !state.artifacts.some(
+                (artifact) => artifact.id === "requirements-result",
+            )
+        ) {
+            return "Remove one artifact before finishing so the Requirements result can be captured.";
+        }
+    }
+    if (stageId === "prototype" && state.previewStatus !== "ready") {
+        return "The runnable prototype must be ready before this stage can finish.";
+    }
+    if (stageId === "prototype" && state.prototypeReview.question) {
+        return "Answer the open prototype clarification before finishing.";
+    }
+    if (
+        stageId === "prototype" &&
+        requirePrototypeSpec &&
+        !["draft-feature-spec", "design-spec"].includes(
+            state.prototypeReview.designSpecArtifactId,
+        )
+    ) {
+        return "Finish Prototype in Tandem to generate its draft feature specification.";
+    }
+    if (
+        stageId === "design" &&
+        (
+            state.designReview.processing ||
+            state.designReview.finalizeRequested ||
+            state.designReview.threads.some((thread) =>
+                ["queued", "processing", "answered", "failed"].includes(
+                    thread.status,
+                ),
+            ) ||
+            state.testDesignReview.processing ||
+            state.testDesignReview.finalizeRequested ||
+            state.testDesignReview.threads.some((thread) =>
+                ["queued", "processing", "answered", "failed"].includes(
+                    thread.status,
+                ),
+            )
+        )
+    ) {
+        return "Resolve every product and test design thread before completing Design.";
+    }
+    if (
+        stageId === "design" &&
+        (
+            !["design-spec", "design-review"].includes(
+                state.designReview.finalizedArtifactId,
+            ) ||
+            state.testDesignReview.finalizedArtifactId !== "test-spec" ||
+            !state.artifacts.some(
+                (artifact) =>
+                    artifact.stage === "design" &&
+                    ["design-spec", "design-review"].includes(artifact.id) &&
+                    artifact.reviewStatus !== "stale",
+            ) ||
+            !state.artifacts.some(
+                (artifact) =>
+                    artifact.stage === "design" &&
+                    artifact.id === "test-spec" &&
+                    artifact.kind === "test-spec" &&
+                    artifact.reviewStatus !== "stale",
+            )
+        )
+    ) {
+        return "Finish both Product design and Test design to capture design-spec and test-spec.";
+    }
+    if (
+        stageId === "plan" &&
+        (
+            state.planning.processing ||
+            state.planning.status !== "complete" ||
+            state.planning.finalizedArtifactId !== "execution-plan" ||
+            !state.artifacts.some(
+                (artifact) =>
+                    artifact.stage === "plan" &&
+                    artifact.id === "execution-plan" &&
+                    artifact.kind === "execution-plan" &&
+                    artifact.reviewStatus !== "stale",
+            )
+        )
+    ) {
+        return "Generate and finalize the execution plan before finishing Plan.";
+    }
+    if (
+        stageId === "implement" &&
+        (
+            state.implementation.status !== "completed" ||
+            state.implementation.workItems.some(
+                (item) => item.status !== "completed",
+            ) ||
+            state.implementation.finalizedArtifactId !== "final-code" ||
+            !state.artifacts.some(
+                (artifact) =>
+                    artifact.stage === "implement" &&
+                    artifact.id === "final-code" &&
+                    artifact.kind === "final-code" &&
+                    artifact.path &&
+                    artifact.reviewStatus !== "stale",
+            )
+        )
+    ) {
+        return "Run every planned work item successfully before finishing Implement.";
+    }
+    if (
+        stageId === "test" &&
+        (
+            state.testing.status !== "completed" ||
+            state.testing.scenarios.some(
+                (scenario) => scenario.status !== "passed",
+            ) ||
+            state.testing.finalizedArtifactId !== "test-results" ||
+            !state.artifacts.some(
+                (artifact) =>
+                    artifact.stage === "test" &&
+                    artifact.id === "test-results" &&
+                    artifact.kind === "test-results" &&
+                    artifact.reviewStatus !== "stale",
+            )
+        )
+    ) {
+        return "Run every integration and interaction test successfully before finishing Test.";
+    }
+    return null;
+}
+
+function requirementsResultArtifact(state) {
+    const section = (heading, items) => [
+        `## ${heading}`,
+        "",
+        ...(items.length > 0 ? items.map((item) => `- ${item}`) : ["- None"]),
+        "",
+    ];
+    return {
+        id: "requirements-result",
+        title: "Requirements",
+        kind: "requirements",
+        stage: "requirements",
+        path: "",
+        language: "markdown",
+        content: [
+            "# Requirements",
+            "",
+            ...section("Usage", state.requirements.usageItems),
+            ...section("Confirmed", state.confirmed),
+            ...section("Assumed", state.assumed),
+            ...section("Deferred", state.deferred),
+        ].join("\n").trim(),
+        mermaid: "",
+    };
+}
+
+async function completeLifecycleStage(prototypeId, requestedStageId, extensionId) {
+    if (!(await isPreferredAnswerProvider(extensionId))) {
+        throw new CanvasError(
+            "read_only_provider",
+            "Complete stages through the installed user-scoped provider.",
+        );
+    }
+
+    const completed = await withAnswerClaim(prototypeId, async () => {
+        const state = await loadState(prototypeId);
+        if (state.processing?.status === "running") {
+            throw new CanvasError(
+                "processing_in_progress",
+                "Wait for the hidden Tandem agent to finish.",
+            );
+        }
+
+        const lifecycle = normalizeLifecycle(state.lifecycle);
+        const stageId = requestedStageId || lifecycle.currentStage;
+        if (stageId !== lifecycle.currentStage) {
+            throw new CanvasError(
+                "stage_not_active",
+                `Only the active ${lifecycle.currentStage} stage can be completed.`,
+            );
+        }
+        if (lifecycle.completedStages.includes(stageId)) {
+            return state;
+        }
+
+        const blocker = stageCompletionError(state, stageId);
+        if (blocker) {
+            throw new CanvasError("stage_not_ready", blocker);
+        }
+
+        const completedAt = new Date().toISOString();
+        const artifacts =
+            stageId === "requirements"
+                ? normalizeArtifacts([
+                      requirementsResultArtifact(state),
+                      ...state.artifacts.filter(
+                          (artifact) => artifact.id !== "requirements-result",
+                      ),
+                  ])
+                : state.artifacts;
+        const relativeOutputPath = join(
+            ".tandem",
+            prototypeId,
+            "stages",
+            `${stageId}.json`,
+        );
+        const outputPath = join(
+            STATE_DIRECTORY,
+            prototypeId,
+            "stages",
+            `${stageId}.json`,
+        );
+        await mkdir(dirname(outputPath), { recursive: true });
+        await writeJsonAtomically(outputPath, {
+            version: 1,
+            prototypeId,
+            stageId,
+            completedAt,
+            result: {
+                goal: state.goal,
+                requirements: state.requirements,
+                confirmed: state.confirmed,
+                assumed: state.assumed,
+                deferred: state.deferred,
+                decisionGraph: state.decisionGraph,
+                artifacts,
+                previewUrl: state.previewUrl,
+                previewStatus: state.previewStatus,
+                prototypeReview: state.prototypeReview,
+                designReview: state.designReview,
+                design: state.design,
+                testDesignReview: state.testDesignReview,
+                planning: state.planning,
+                implementation: state.implementation,
+                testing: state.testing,
+            },
+        });
+
+        const completedStages = [...lifecycle.completedStages, stageId];
+        const currentStage =
+            LIFECYCLE_STAGES[
+                Math.min(completedStages.length, LIFECYCLE_STAGES.length - 1)
+            ].id;
+        let next = {
+            ...state,
+            artifacts,
+            stage: currentStage,
+            lifecycle: {
+                currentStage,
+                completedStages,
+                outputs: [
+                    ...lifecycle.outputs.filter(
+                        (output) => output.stageId !== stageId,
+                    ),
+                    { stageId, path: relativeOutputPath, completedAt },
+                ],
+            },
+            phase:
+                completedStages.length === LIFECYCLE_STAGES.length
+                    ? "complete"
+                    : currentStage === "requirements"
+                      ? "discovery"
+                      : "building",
+            status:
+                completedStages.length === LIFECYCLE_STAGES.length
+                    ? "All lifecycle stages are complete."
+                    : `${LIFECYCLE_STAGES.find((stage) => stage.id === stageId).label} completed. ${LIFECYCLE_STAGES.find((stage) => stage.id === currentStage).label} is now enabled.`,
+            updatedAt: completedAt,
+        };
+        next = seedDefaultProductDesignReview(next, completedAt);
+        await persistState(next);
+        publishState(prototypeId);
+        return next;
+    });
+    if (
+        completed.lifecycle.currentStage === "design" &&
+        completed.designReview.threads.some((thread) => thread.status === "queued")
+    ) {
+        startDesignReviewQueue(prototypeId);
+    }
+    return completed;
+}
+
+async function completeStage(ctx) {
+    const input = isObject(ctx.input) ? ctx.input : {};
+    const prototypeId = await resolvePrototypeId(ctx.instanceId, input.prototypeId);
+    return completeLifecycleStage(
+        prototypeId,
+        typeof input.stageId === "string" ? input.stageId : "",
+        ctx.extensionId,
+    );
+}
+
+function recoverPrototypeCompletion(state, canSubmitAnswers) {
+    if (
+        !canSubmitAnswers ||
+        state.lifecycle.currentStage !== "prototype" ||
+        state.processing?.status !== "success" ||
+        state.processing.action !== "generate-design-spec" ||
+        !["draft-feature-spec", "design-spec"].includes(
+            state.prototypeReview.designSpecArtifactId,
+        ) ||
+        activePrototypeCompletions.has(state.prototypeId)
+    ) {
+        return;
+    }
+    activePrototypeCompletions.add(state.prototypeId);
+    completeLifecycleStage(
+        state.prototypeId,
+        "prototype",
+        PROVIDER_EXTENSION_ID,
+    )
+        .catch((error) =>
+            logSafely(
+                `Tandem could not resume Prototype completion: ${
+                    error instanceof Error ? error.message : String(error)
+                }`,
+            ),
+        )
+        .finally(() => activePrototypeCompletions.delete(state.prototypeId));
+}
+
+async function readRequestBody(req) {
+    let body = "";
+    for await (const chunk of req) {
+        body += chunk;
+        if (Buffer.byteLength(body, "utf8") > MAX_REQUEST_BYTES) {
+            throw new Error("Request is too large.");
+        }
+    }
+    return JSON.parse(body || "{}");
+}
+
+function sendJson(res, statusCode, value) {
+    res.writeHead(statusCode, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+    });
+    res.end(JSON.stringify(value));
+}
+
+function factoryStateSnapshot(state) {
+    let remainingArtifactCharacters = 120_000;
+    const artifacts = state.artifacts.map((artifact) => {
+        const content = artifact.content.slice(
+            0,
+            Math.max(0, Math.min(20_000, remainingArtifactCharacters)),
+        );
+        remainingArtifactCharacters -= content.length;
+        const mermaid = artifact.mermaid.slice(
+            0,
+            Math.max(0, Math.min(12_000, remainingArtifactCharacters)),
+        );
+        remainingArtifactCharacters -= mermaid.length;
+        return {
+            ...artifact,
+            content,
+            mermaid,
+            contentTruncated: content.length < artifact.content.length,
+            mermaidTruncated: mermaid.length < artifact.mermaid.length,
+        };
+    });
+
+    return {
+        version: state.version,
+        prototypeId: state.prototypeId,
+        stage: state.stage,
+        goal: state.goal,
+        phase: state.phase,
+        status: state.status,
+        lifecycle: state.lifecycle,
+        requirements: state.requirements,
+        question: state.question,
+        decisionGraph: state.decisionGraph,
+        confirmed: state.confirmed,
+        assumed: state.assumed,
+        deferred: state.deferred,
+        artifacts,
+        previewUrl: state.previewUrl,
+        previewStatus: state.previewStatus,
+        prototypeReview: state.prototypeReview,
+        designReview: state.designReview,
+        design: state.design,
+        testDesignReview: state.testDesignReview,
+        planning: state.planning,
+        implementation: state.implementation,
+        testing: state.testing,
+    };
+}
+
+function answerFactoryPrompt(args) {
+    const actionInstructions = {
+        "add-usage": [
+            "The submitted answer is one new usage sentence. Append it exactly once to",
+            "requirements.usageItems, keep requirements.substage as usage, and return an",
+            "empty decision graph. Generate 3 to 5 concise, non-overlapping usage",
+            "suggestions that complement everything already listed. Each suggestion must",
+            "be one clickable sentence describing how the user could use the app.",
+        ],
+        "generate-dag": [
+            "Switch requirements.substage to dag and generate the complete requirements",
+            "decision DAG from requirements.usageItems. Cover every listed usage while",
+            "sharing common prerequisites. Give every node its complete question and",
+            "choices now, including toAnswer nodes, so dependents can be regenerated.",
+            "Return no usage suggestions.",
+        ],
+        "answer-decision": [
+            "Apply the submitted answer to the active DAG node. Recompute every transitive",
+            "dependent node whose content is affected by the answer; do not carry forward",
+            "static downstream wording that assumed a different answer. Promote the next",
+            "eligible toAnswer node to active.",
+        ],
+        "change-answer": [
+            "The user changed an answered DAG node. Apply the new answer to that",
+            "node and regenerate every transitive dependent node from the changed frontier.",
+            "All descendant answers have already been cleared in the supplied state. Keep",
+            "them unanswered and rewrite their titles, questions, choices, and dependencies",
+            "to match the changed answer. Never preserve stale downstream decisions.",
+        ],
+        "submit-revision": [
+            "The answer is a prototype revision suggestion. First decide whether a",
+            "material product or interaction detail is unclear. If clarification is",
+            "required, do not edit files: set prototypeReview.question to one focused",
+            "question with 3 to 5 options and mark the active revision clarifying.",
+            "Otherwise implement the revision in the existing prototype, validate the",
+            "running preview, mark the active revision applied, summarize the change,",
+            "clear the question, and append concrete interaction evidence.",
+        ],
+        "clarify-revision": [
+            "The answer resolves prototypeReview.question for the active revision.",
+            "Append the question and answer to that revision's clarifications. Apply the",
+            "revision to the existing prototype and validate it. Ask one more focused",
+            "question only if a material ambiguity remains; otherwise mark the revision",
+            "applied, clear the question, summarize the result, and append evidence.",
+        ],
+        "generate-design-spec": [
+            "The user has finished prototype iteration. Do not edit prototype files and",
+            "do not ask another question. Collect evidence from requirements, the answered",
+            "DAG, prototypeReview revisions and clarifications, preview verification, and",
+            "existing artifacts. Upsert one complete artifact with id draft-feature-spec,",
+            "title Draft feature specification, kind feature-spec, stage prototype,",
+            "language markdown, and no path or",
+            "Mermaid source. Its content must cover goals, users, workflows, screens,",
+            "interaction states, UI contracts, accepted revisions, accessibility,",
+            "evidence, unresolved constraints, and a clear handoff for Design and Plan.",
+            "Set prototypeReview.designSpecArtifactId to draft-feature-spec and clear its",
+            "question.",
+        ],
+    };
+    return [
+        "You are the hidden execution worker for one Tandem decision.",
+        "Process the answer without sending a message to the parent chat, opening a",
+        "canvas, or editing .tandem files. The extension owns Tandem persistence.",
+        "",
+        `Target project root: ${args.projectRoot}`,
+        `Prototype ID: ${args.prototypeId}`,
+        `Question ID: ${args.question.id}`,
+        `Question: ${args.question.text}`,
+        `Answer: ${args.answer}`,
+        `Action: ${args.action}`,
+        "",
+        "Current Tandem state:",
+        JSON.stringify(args.state, null, 2),
+        "",
+        ...actionInstructions[args.action],
+        "",
+        "Treat the answer as an authoritative product decision. Update project files",
+        "only when the decision requires a prototype change, following the existing",
+        "stack and keeping production integrations, tests, and polish out of scope.",
+        "Perform a targeted validation after code changes.",
+        "Do not advance or complete lifecycle stages. Stage completion is explicit and",
+        "owned by Tandem after the active stage meets its completion criteria.",
+        "While lifecycle.currentStage is requirements, do not edit prototype files or",
+        "publish a preview. Preserve and return the complete requirements object. During",
+        "usage intake, the extension creates the intake question from suggestions. Once",
+        "the DAG is fully answered, leave question null and report that requirements are",
+        "ready to be completed.",
+        "",
+        "Return the complete prototypeReview, ledger, and lifecycle state matching the",
+        "output schema. Return only changed or new artifacts in artifactChanges.upsert",
+        "and IDs intentionally removed in artifactChanges.remove; leave both arrays",
+        "empty when artifacts are unchanged. Each upsert must contain the complete",
+        "replacement artifact even when the input snapshot was marked as truncated.",
+        "Artifacts must be concise synthesized intents, models, contracts, or Mermaid",
+        "workflows rather than pasted source. Ask exactly one next high-impact question,",
+        "or return null when implementation/iteration can proceed without another",
+        "decision. Preserve the current preview URL and status unless you have verified",
+        "a replacement.",
+        "Every artifact upsert must set stage to requirements, prototype, design, plan,",
+        "or implement according to the lifecycle stage that owns the result.",
+        "Preserve all prior prototypeReview revisions, clarifications, and evidence.",
+        "Every question must offer 3 to 5 carefully selected, mutually distinct choices",
+        "that span the important decision space without a generic catch-all. Put the",
+        "recommended default first and set recommended to that exact choice so the user",
+        "can submit it without entering text. Keep free text available for overrides.",
+        "Return a complete decisionGraph whose nodes are the source of truth for question",
+        "selection. Each node id is also its question id. dependencies contains parent",
+        "node ids that must be answered first. Include the submitted answer on its node.",
+        "A node with every dependency answered must include its question and curated",
+        "choices so it can be promoted. Keep independent decisions as separate nodes.",
+        "Exactly one unanswered eligible node is active at a time; all other unanswered",
+        "nodes are toAnswer. Set question to the active node only; after it is answered,",
+        "promote the next eligible toAnswer node to active.",
+        "",
+        "Always maintain a single artifact with id design-tree, title Design tree,",
+        "kind design-tree, stage requirements, and language mermaid. Model decisions as",
+        "a prerequisite DAG using flowchart LR: preserve answered branches, shared",
+        "prerequisites, the active decision, and known downstream decisions. Style nodes",
+        "with Mermaid classes answered, active, and toAnswer. Use solid green styling",
+        "for answered, solid blue styling for active, and amber styling for toAnswer.",
+        "Exactly one node may be active. Its content must briefly explain the user's",
+        "current location. Update this artifact after every answer, including when the",
+        "design is confirmed and implementation becomes current.",
+    ].join("\n");
+}
+
+function designReviewFactoryPrompt(args) {
+    const thread = args.thread;
+    const isTestDesign = args.reviewKind === "test";
+    const task =
+        args.action === "finalize"
+            ? [
+                  isTestDesign
+                      ? "Synthesize the integration and interaction test specification from the resolved discussion and current design."
+                      : "Synthesize the product design specification from the resolved discussion and current Design artifacts.",
+                  "Return exactly one artifact with id",
+                  isTestDesign
+                      ? "test-spec, title Test specification, kind test-spec, stage design,"
+                      : "design-spec, title Design specification, kind design-spec, stage design,",
+                  "language markdown, empty path and Mermaid, reviewStatus current, and",
+                  "sourceThreadIds containing every resolved thread ID. Cover accepted",
+                  isTestDesign
+                      ? "integration boundaries, interaction journeys, fixtures, setup, test data, observable outcomes, failure evidence, and coverage risks."
+                      : "decisions, architecture, contracts, interaction behavior, risks, tradeoffs, validation expectations, and remaining constraints.",
+                  isTestDesign
+                      ? "Also return structured testScenarios. Include both integration and interaction scenarios where applicable, stable IDs, true dependencies, executable steps, expected outcomes, and concrete validation guidance."
+                      : "Return an empty testScenarios array.",
+              ]
+            : [
+                  `Request type: ${thread.type}`,
+                  `Requested artifact kind: ${thread.artifactKind || "none"}`,
+                  `Artifact under review: ${thread.reviewArtifactId || "none"}`,
+                  `User request: ${thread.prompt}`,
+                  "",
+                  "Inspect the existing project when useful. Answer the request directly using",
+                  "the draft feature specification, resolved discussion, repository structure,",
+                  "and existing artifacts as evidence. If the request",
+                  isTestDesign
+                      ? "asks for a test-design artifact, return one or more useful artifacts. An"
+                      : "asks for a design artifact, return one or more useful artifacts. An",
+                  "artifact request must return at least one artifact of the requested",
+                  "kind. A normal question may also return an artifact when it materially",
+                  "improves the explanation.",
+              ];
+    return [
+        `You are the hidden ${isTestDesign ? "Test Design" : "Product Design"} Review worker for Tandem.`,
+        "Do not message the parent chat, open canvases, edit project files, or advance",
+        "the lifecycle. Return only the structured output required by the schema.",
+        "",
+        `Prototype ID: ${args.prototypeId}`,
+        `Project root: ${args.projectRoot}`,
+        `Action: ${args.action}`,
+        `Design substage: ${args.reviewKind}`,
+        "",
+        "Current Tandem state:",
+        JSON.stringify(args.state, null, 2),
+        "",
+        ...task,
+        "",
+        "Every returned artifact must use stage design, reviewStatus current, and a",
+        "complete stable ID. For a thread request, sourceThreadIds must contain that",
+        "thread ID. Use Mermaid for requested diagrams and put valid diagram source in",
+        "mermaid. Use concise Markdown content to explain every artifact. Contracts",
+        "should capture typed boundaries without inventing production infrastructure.",
+        "Decision records should state context, decision, alternatives, and consequences.",
+        "For non-finalization requests, return an empty testScenarios array.",
+        "The answer should explain the result and name any generated artifacts.",
+    ].join("\n");
+}
+
+function planningFactoryPrompt(args) {
+    return [
+        "You are the hidden execution-planning worker for Tandem.",
+        "Do not implement code, edit files, message the parent chat, open canvases, or",
+        "advance the lifecycle. Return only the structured output required by the schema.",
+        "",
+        `Prototype ID: ${args.prototypeId}`,
+        `Maximum parallel agents: ${args.maxAgents}`,
+        `Action: ${args.action}`,
+        `Revision instruction: ${args.instruction || "Create the initial execution plan."}`,
+        "",
+        "Current Tandem state:",
+        JSON.stringify(args.state, null, 2),
+        "",
+        "Create an efficient implementation plan grounded in the accepted design-spec,",
+        "test-spec, draft feature specification, contracts, architecture, and repository.",
+        "Divide the work into the smallest independently implementable units that still",
+        "produce coherent, reviewable changes. Minimize dependencies and expose the widest",
+        "safe frontier without inventing artificial parallelism.",
+        "",
+        "For each work item provide a stable kebab-case ID, precise outcome, prerequisite",
+        "IDs, one agent role, realistic effort hours, owned workspace-relative files or",
+        "directories, required skills, observable acceptance criteria, and existing",
+        "validation commands or checks. Reserve execution of integration and interaction",
+        "scenarios from test-spec for the post-implementation Test stage; implementation",
+        "work may still create required harnesses or testability seams. Work items that can run together should not claim",
+        "the same files. Use dependencies only when one item truly consumes another's",
+        "output. Include integration and final validation work where necessary.",
+        "",
+        "The extension computes dependency waves, file-conflict scheduling, agent slots,",
+        "critical path, and parallelism savings from your work items. Ensure every",
+        "dependency names another returned item, the graph is acyclic, and all required",
+        "implementation scope is covered. The strategy must explain orchestration, merge",
+        "order, integration points, and how agents coordinate handoffs.",
+    ].join("\n");
+}
+
+function factoryErrorMessage(run) {
+    if (run.error) return run.error;
+    if (run.failure?.message) return run.failure.message;
+    if (run.reason) return run.reason;
+    return `Factory run ended with status "${run.status}".`;
+}
+
+function factoryErrorCode(error) {
+    return error?.code || error?.data?.code || null;
+}
+
+async function recordFactoryRunId(
+    prototypeId,
+    requestId,
+    runId,
+    factoryName = ANSWER_FACTORY_NAME,
+) {
+    return withAnswerClaim(prototypeId, async () => {
+        if (!(await isPreferredAnswerProvider(PROVIDER_EXTENSION_ID))) {
+            return false;
+        }
+        const current = await loadState(prototypeId);
+        if (
+            current.processing?.status !== "running" ||
+            current.processing.requestId !== requestId
+        ) {
+            return false;
+        }
+
+        const next = {
+            ...current,
+            processing: {
+                ...current.processing,
+                factoryName,
+                runId,
+            },
+            updatedAt: new Date().toISOString(),
+        };
+        await persistState(next);
+        publishState(prototypeId);
+        return true;
+    });
+}
+
+async function applyFactoryResult(prototypeId, requestId, run) {
+    if (run.status !== "completed" || !isObject(run.result)) {
+        throw new Error(factoryErrorMessage(run));
+    }
+
+    let completePrototype = false;
+    await withAnswerClaim(prototypeId, async () => {
+        if (!(await isPreferredAnswerProvider(PROVIDER_EXTENSION_ID))) {
+            return;
+        }
+        const current = await loadState(prototypeId);
+        if (
+            current.processing?.status !== "running" ||
+            current.processing.requestId !== requestId
+        ) {
+            return;
+        }
+
+        const result = run.result;
+        const previewUrl = normalizePreviewUrl(result.previewUrl);
+        if (previewUrl && previewUrl !== current.previewUrl) {
+            await verifyPreviewIdentity(previewUrl, prototypeId);
+        }
+
+        const phase = ["discovery", "building", "iterating", "complete"].includes(
+            result.phase,
+        )
+            ? result.phase
+            : current.phase;
+        const previewStatus = ["waiting", "starting", "ready", "error"].includes(
+            result.previewStatus,
+        )
+            ? result.previewStatus
+            : current.previewStatus;
+        const completedAt = new Date().toISOString();
+        let decisionGraph = normalizeDecisionGraph(
+            result.decisionGraph,
+            result.question,
+        );
+        const action = current.processing.action || "answer-decision";
+        if (action === "generate-dag") {
+            const graphError = generatedDecisionGraphError(decisionGraph);
+            if (graphError) throw new Error(graphError);
+        }
+        const answeredQuestionId = current.processing.question?.id;
+        if (
+            ["answer-decision", "change-answer"].includes(action) &&
+            answeredQuestionId
+        ) {
+            const descendants =
+                action === "change-answer"
+                    ? dependentNodeIds(current.decisionGraph, answeredQuestionId)
+                    : new Set();
+            decisionGraph = normalizeDecisionGraph({
+                nodes: decisionGraph.nodes.map((node) => ({
+                    ...node,
+                    answer:
+                        node.id === answeredQuestionId
+                            ? current.processing.answer
+                            : descendants.has(node.id)
+                              ? null
+                              : node.answer,
+                })),
+            });
+        }
+        let requirements = normalizeRequirements(
+            result.requirements,
+            decisionGraph,
+        );
+        if (action === "add-usage" && current.processing.answer) {
+            requirements = normalizeRequirements(
+                {
+                    ...requirements,
+                    substage: "usage",
+                    usageItems: [
+                        ...current.requirements.usageItems,
+                        current.processing.answer,
+                    ],
+                },
+                { nodes: [] },
+            );
+            decisionGraph = { nodes: [] };
+        } else if (action === "generate-dag") {
+            requirements = normalizeRequirements(
+                {
+                    ...requirements,
+                    substage: "dag",
+                    usageItems: current.requirements.usageItems,
+                    suggestions: [],
+                },
+                decisionGraph,
+            );
+        }
+        let prototypeReview = normalizePrototypeReview(result.prototypeReview);
+        prototypeReview.revisions = [
+            ...current.prototypeReview.revisions.filter(
+                (revision) =>
+                    !prototypeReview.revisions.some(
+                        (candidate) => candidate.id === revision.id,
+                    ),
+            ),
+            ...prototypeReview.revisions,
+        ].slice(-50);
+        prototypeReview.evidence = [
+            ...current.prototypeReview.evidence.filter(
+                (entry) =>
+                    !prototypeReview.evidence.some(
+                        (candidate) => candidate.id === entry.id,
+                    ),
+            ),
+            ...prototypeReview.evidence,
+        ].slice(-100);
+        if (["submit-revision", "clarify-revision"].includes(action)) {
+            const questionError = revisionQuestionError(prototypeReview.question);
+            if (questionError) throw new Error(questionError);
+            const activeRevisionId = current.prototypeReview.activeRevisionId;
+            const revision = prototypeReview.revisions.find(
+                (candidate) => candidate.id === activeRevisionId,
+            );
+            if (!revision) {
+                throw new Error(
+                    "The hidden agent did not return the active prototype revision.",
+                );
+            }
+            if (action === "clarify-revision" && current.processing.question) {
+                const clarification = {
+                    question: current.processing.question.text,
+                    answer: current.processing.answer,
+                };
+                if (
+                    !revision.clarifications.some(
+                        (entry) =>
+                            entry.question === clarification.question &&
+                            entry.answer === clarification.answer,
+                    )
+                ) {
+                    revision.clarifications.push(clarification);
+                }
+            }
+            if (prototypeReview.question) {
+                revision.status = "clarifying";
+                prototypeReview.activeRevisionId = revision.id;
+                revision.completedAt = null;
+            } else {
+                revision.status = "applied";
+                prototypeReview.activeRevisionId = null;
+                revision.completedAt = completedAt;
+                if (!revision.summary) {
+                    revision.summary = "Applied the requested prototype revision.";
+                }
+                if (
+                    prototypeReview.evidence.length <=
+                        current.prototypeReview.evidence.length &&
+                    !prototypeReview.evidence.some(
+                        (entry) => entry.id === `revision-${revision.id}`,
+                    )
+                ) {
+                    prototypeReview.evidence.push({
+                        id: `revision-${revision.id}`,
+                        type: "revision",
+                        content: revision.summary,
+                        recordedAt: completedAt,
+                    });
+                }
+            }
+        }
+        const artifacts = applyArtifactChanges(
+            current.artifacts,
+            result.artifactChanges,
+        );
+        if (action === "generate-design-spec") {
+            const designSpec = artifacts.find(
+                (artifact) =>
+                    artifact.id === "draft-feature-spec" &&
+                    artifact.kind === "feature-spec" &&
+                    artifact.stage === "prototype" &&
+                    artifact.content.trim(),
+            );
+            if (!designSpec) {
+                throw new Error(
+                    "Prototype completion did not produce a valid draft feature specification.",
+                );
+            }
+            prototypeReview = {
+                ...prototypeReview,
+                question: null,
+                activeRevisionId: null,
+                designSpecArtifactId: designSpec.id,
+            };
+            completePrototype = true;
+        }
+        const next = {
+            ...current,
+            goal:
+                typeof result.goal === "string"
+                    ? result.goal.trim().slice(0, 4000)
+                    : current.goal,
+            phase,
+            status:
+                typeof result.status === "string"
+                    ? result.status.trim().slice(0, 1000)
+                    : "The hidden agent processed the latest decision.",
+            requirements,
+            question:
+                requirements.substage === "usage"
+                    ? usageQuestion(requirements.suggestions)
+                    : firstActiveQuestion(decisionGraph) ||
+                      normalizeQuestion(result.question),
+            decisionGraph,
+            prototypeReview,
+            confirmed: normalizeStringList(result.confirmed),
+            assumed: normalizeStringList(result.assumed),
+            deferred: normalizeStringList(result.deferred),
+            artifacts,
+            previewUrl,
+            previewStatus,
+            suggestionProcessing:
+                action === "generate-dag" ? null : current.suggestionProcessing,
+            processing: {
+                ...current.processing,
+                status: "success",
+                message: "Processed by a hidden Tandem agent.",
+                runId: run.runId,
+                completedAt,
+                question: null,
+                answer: null,
+            },
+            updatedAt: completedAt,
+        };
+        await persistState(next);
+        publishState(prototypeId);
+    });
+    if (completePrototype) {
+        activePrototypeCompletions.add(prototypeId);
+        try {
+            await completeLifecycleStage(
+                prototypeId,
+                "prototype",
+                PROVIDER_EXTENSION_ID,
+            );
+        } finally {
+            activePrototypeCompletions.delete(prototypeId);
+        }
+    }
+}
+
+async function recordFactoryFailure(prototypeId, requestId, error) {
+    await withAnswerClaim(prototypeId, async () => {
+        if (!(await isPreferredAnswerProvider(PROVIDER_EXTENSION_ID))) {
+            return;
+        }
+        const current = await loadState(prototypeId);
+        if (
+            current.processing?.status !== "running" ||
+            current.processing.requestId !== requestId
+        ) {
+            return;
+        }
+
+        const completedAt = new Date().toISOString();
+        const restoredDecisionGraph =
+            current.processing.action === "change-answer" &&
+            current.processing.originalDecisionGraph
+                ? current.processing.originalDecisionGraph
+                : current.decisionGraph;
+        const action = current.processing.action;
+        const prototypeReview = normalizePrototypeReview(current.prototypeReview);
+        if (["submit-revision", "clarify-revision"].includes(action)) {
+            const revision = prototypeReview.revisions.find(
+                (candidate) =>
+                    candidate.id === prototypeReview.activeRevisionId,
+            );
+            if (revision) {
+                revision.status =
+                    action === "clarify-revision" ? "clarifying" : "failed";
+                revision.summary =
+                    "The prototype revision could not be processed. Retry explicitly.";
+                revision.completedAt =
+                    action === "submit-revision" ? completedAt : null;
+            }
+            prototypeReview.question =
+                action === "clarify-revision"
+                    ? current.processing.question
+                    : null;
+            if (action === "submit-revision") {
+                prototypeReview.activeRevisionId = null;
+            }
+        }
+        const failed = {
+            ...current,
+            decisionGraph: restoredDecisionGraph,
+            question:
+                current.requirements.substage === "usage"
+                    ? usageQuestion(current.requirements.suggestions)
+                    : firstActiveQuestion(restoredDecisionGraph),
+            prototypeReview,
+            status: "Hidden processing failed. Review the answer and try again.",
+            processing: {
+                ...current.processing,
+                status: "error",
+                message: "The hidden agent could not process this answer.",
+                completedAt,
+                answer: null,
+            },
+            updatedAt: completedAt,
+        };
+        await persistState(failed);
+        publishState(prototypeId);
+    });
+    await logSafely(
+        `Tandem hidden processing failed: ${
+            error instanceof Error ? error.message : String(error)
+        }`,
+    );
+}
+
+async function settleAnswerRun(prototypeId, requestId, run) {
+    let terminalRun = run;
+    if (!isFactoryRunTerminal(terminalRun.status)) {
+        terminalRun = await session.factory.waitForRun(terminalRun.runId);
+    }
+    if (terminalRun.status === "halted") {
+        terminalRun = await resumeHaltedRun(terminalRun.runId);
+    }
+    await applyFactoryResult(prototypeId, requestId, terminalRun);
+}
+
+async function resumeHaltedRun(runId) {
+    for (let attempt = 0; attempt < 305; attempt += 1) {
+        if (!(await isPreferredAnswerProvider(PROVIDER_EXTENSION_ID))) {
+            throw new Error(
+                "This provider no longer owns hidden answer processing.",
+            );
+        }
+        try {
+            return await session.factory.resume(runId);
+        } catch (error) {
+            if (error?.code === "already_active") {
+                return session.factory.waitForRun(runId);
+            }
+            if (error?.code !== "factory_already_running") {
+                throw error;
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, 1_000));
+            const current = await session.factory.getRun(runId);
+            if (current.status === "running") {
+                return session.factory.waitForRun(runId);
+            }
+            if (current.status !== "halted") {
+                return current;
+            }
+        }
+    }
+    throw new Error("Timed out waiting to resume the hidden factory run.");
+}
+
+function trackAnswerRun(prototypeId, requestId, work) {
+    const tracked = work
+        .catch(async (error) => {
+            try {
+                await recordFactoryFailure(prototypeId, requestId, error);
+            } catch (recordError) {
+                await logSafely(
+                    `Tandem could not persist a hidden-processing failure: ${
+                        recordError instanceof Error
+                            ? recordError.message
+                            : String(recordError)
+                    }`,
+                );
+            }
+        })
+        .finally(() => {
+            if (activeAnswerRuns.get(prototypeId) === tracked) {
+                activeAnswerRuns.delete(prototypeId);
+            }
+        });
+    activeAnswerRuns.set(prototypeId, tracked);
+}
+
+function startAnswerFactory(
+    prototypeId,
+    requestId,
+    question,
+    answer,
+    action,
+    state,
+) {
+    const work = runAnswerFactory(
+        prototypeId,
+        requestId,
+        question,
+        answer,
+        action,
+        state,
+    );
+    trackAnswerRun(prototypeId, requestId, work);
+}
+
+async function runAnswerFactory(
+    prototypeId,
+    requestId,
+    question,
+    answer,
+    action,
+    state,
+) {
+    if (!(await isPreferredAnswerProvider(PROVIDER_EXTENSION_ID))) {
+        return;
+    }
+    const run = await session.rpc.factory.run({
+        name: ANSWER_FACTORY_NAME,
+        args: {
+            prototypeId,
+            projectRoot: WORKSPACE_ROOT,
+            requestId,
+            question,
+            answer,
+            action,
+            state: factoryStateSnapshot(state),
+        },
+    });
+    const currentRequest = await recordFactoryRunId(
+        prototypeId,
+        requestId,
+        run.runId,
+        ANSWER_FACTORY_NAME,
+    );
+    if (!currentRequest) {
+        if (!isFactoryRunTerminal(run.status)) {
+            await session.factory.cancel(run.runId);
+        }
+        return;
+    }
+    await settleAnswerRun(prototypeId, requestId, run);
+}
+
+function recoverAnswerFactory(state, canSubmitAnswers) {
+    const processing = state.processing;
+    if (
+        !canSubmitAnswers ||
+        processing?.status !== "running" ||
+        activeAnswerRuns.has(state.prototypeId)
+    ) {
+        return;
+    }
+
+    const work = (async () => {
+        const current = await loadState(state.prototypeId);
+        const currentProcessing = current.processing;
+        if (
+            currentProcessing?.status !== "running" ||
+            currentProcessing.requestId !== processing.requestId
+        ) {
+            return;
+        }
+
+        let run;
+        if (currentProcessing.runId) {
+            try {
+                run = await session.factory.getRun(currentProcessing.runId);
+            } catch (error) {
+                if (
+                    ["not_found", "non_resumable"].includes(
+                        factoryErrorCode(error),
+                    ) &&
+                    currentProcessing.factoryName !== ANSWER_FACTORY_NAME &&
+                    currentProcessing.question &&
+                    currentProcessing.answer
+                ) {
+                    await runAnswerFactory(
+                        state.prototypeId,
+                        currentProcessing.requestId,
+                        currentProcessing.question,
+                        currentProcessing.answer,
+                        currentProcessing.action,
+                        current,
+                    );
+                    return;
+                }
+                throw error;
+            }
+        } else {
+            run = await findAnswerFactoryRun(currentProcessing);
+            if (!run) {
+                throw new Error(
+                    "The durable factory run could not be correlated after reload.",
+                );
+            }
+            const currentRequest = await recordFactoryRunId(
+                state.prototypeId,
+                currentProcessing.requestId,
+                run.runId,
+                currentProcessing.factoryName,
+            );
+            if (!currentRequest) return;
+        }
+
+        if (currentProcessing.factoryName !== ANSWER_FACTORY_NAME) {
+            if (!isFactoryRunTerminal(run.status)) {
+                run = await session.factory.waitForRun(run.runId);
+            }
+            if (["halted", "cancelled"].includes(run.status)) {
+                if (!currentProcessing.question || !currentProcessing.answer) {
+                    throw new Error(
+                        "The prior provider stopped before its hidden run could be resumed.",
+                    );
+                }
+                await runAnswerFactory(
+                    state.prototypeId,
+                    currentProcessing.requestId,
+                    currentProcessing.question,
+                    currentProcessing.answer,
+                    currentProcessing.action,
+                    current,
+                );
+                return;
+            }
+        }
+
+        await settleAnswerRun(
+            state.prototypeId,
+            currentProcessing.requestId,
+            run,
+        );
+    })();
+    trackAnswerRun(state.prototypeId, processing.requestId, work);
+}
+
+async function findAnswerFactoryRun(processing) {
+    const requestedAt = Date.parse(processing.requestedAt);
+    if (!Number.isFinite(requestedAt)) return null;
+
+    const marker = `Request ${processing.requestId};`;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+        const runs = await session.factory.listRuns();
+        const candidates = runs.filter(
+            (run) =>
+                run.factoryName === processing.factoryName &&
+                run.createdAt >= requestedAt - 1_000 &&
+                run.createdAt <= requestedAt + 30_000,
+        );
+        for (const candidate of candidates) {
+            const progress = await session.factory.getRunProgress(
+                candidate.runId,
+                { limit: 500 },
+            );
+            if (progress.records.some((record) => record.text.includes(marker))) {
+                return session.factory.getRun(candidate.runId);
+            }
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+    }
+    return null;
+}
+
+function trackSuggestionRun(prototypeId, requestId, work) {
+    const tracked = work
+        .catch(async (error) => {
+            await recordSuggestionFailure(prototypeId, requestId, error);
+        })
+        .finally(() => {
+            if (activeSuggestionRuns.get(prototypeId) === tracked) {
+                activeSuggestionRuns.delete(prototypeId);
+            }
+        });
+    activeSuggestionRuns.set(prototypeId, tracked);
+}
+
+function startSuggestionFactory(prototypeId, requestId, goal, usageItems) {
+    trackSuggestionRun(
+        prototypeId,
+        requestId,
+        runSuggestionFactory(prototypeId, requestId, goal, usageItems),
+    );
+}
+
+async function ensureUsageSuggestionsStarted(state, canSubmitAnswers) {
+    if (
+        !canSubmitAnswers ||
+        state.lifecycle.currentStage !== "requirements" ||
+        state.requirements.substage !== "usage" ||
+        state.requirements.suggestions.length > 0 ||
+        state.suggestionProcessing ||
+        activeSuggestionRuns.has(state.prototypeId)
+    ) {
+        return state;
+    }
+
+    let request = null;
+    const nextState = await withAnswerClaim(state.prototypeId, async () => {
+        const current = await loadState(state.prototypeId);
+        if (
+            current.lifecycle.currentStage !== "requirements" ||
+            current.requirements.substage !== "usage" ||
+            current.requirements.suggestions.length > 0 ||
+            current.suggestionProcessing ||
+            current.processing?.status === "running"
+        ) {
+            return current;
+        }
+
+        const requestedAt = new Date().toISOString();
+        const requestId = randomUUID();
+        const usageItems = [...current.requirements.usageItems];
+        const next = {
+            ...current,
+            status: usageItems.length === 0
+                ? "Generating starter usage suggestions in the background..."
+                : "Generating usage suggestions in the background...",
+            suggestionProcessing: {
+                status: "running",
+                message:
+                    "Generating suggestions without blocking usage entry.",
+                requestId,
+                factoryName: SUGGESTION_FACTORY_NAME,
+                runId: null,
+                usageItems,
+                requestedAt,
+                completedAt: null,
+            },
+            updatedAt: requestedAt,
+        };
+        await persistState(next);
+        publishState(current.prototypeId);
+        request = {
+            prototypeId: current.prototypeId,
+            requestId,
+            goal: current.goal,
+            usageItems,
+        };
+        return next;
+    });
+
+    if (request) {
+        startSuggestionFactory(
+            request.prototypeId,
+            request.requestId,
+            request.goal,
+            request.usageItems,
+        );
+    }
+    return nextState;
+}
+
+async function runSuggestionFactory(prototypeId, requestId, goal, usageItems) {
+    if (!(await isPreferredAnswerProvider(PROVIDER_EXTENSION_ID))) return;
+    const run = await session.rpc.factory.run({
+        name: SUGGESTION_FACTORY_NAME,
+        args: {
+            prototypeId,
+            requestId,
+            goal,
+            usageItems,
+        },
+    });
+    const currentRequest = await withAnswerClaim(prototypeId, async () => {
+        const current = await loadState(prototypeId);
+        if (
+            current.suggestionProcessing?.status !== "running" ||
+            current.suggestionProcessing.requestId !== requestId
+        ) {
+            return false;
+        }
+        const next = {
+            ...current,
+            suggestionProcessing: {
+                ...current.suggestionProcessing,
+                runId: run.runId,
+            },
+            updatedAt: new Date().toISOString(),
+        };
+        await persistState(next);
+        publishState(prototypeId);
+        return true;
+    });
+    if (!currentRequest) {
+        if (!isFactoryRunTerminal(run.status)) {
+            await session.factory.cancel(run.runId);
+        }
+        return;
+    }
+
+    let terminalRun = run;
+    if (!isFactoryRunTerminal(terminalRun.status)) {
+        terminalRun = await session.factory.waitForRun(terminalRun.runId);
+    }
+    if (terminalRun.status === "halted") {
+        terminalRun = await resumeHaltedRun(terminalRun.runId);
+    }
+    if (terminalRun.status !== "completed" || !isObject(terminalRun.result)) {
+        throw new Error(factoryErrorMessage(terminalRun));
+    }
+
+    await withAnswerClaim(prototypeId, async () => {
+        const current = await loadState(prototypeId);
+        if (
+            current.suggestionProcessing?.status !== "running" ||
+            current.suggestionProcessing.requestId !== requestId ||
+            current.requirements.substage !== "usage"
+        ) {
+            return;
+        }
+        const requirements = normalizeRequirements(
+            {
+                ...current.requirements,
+                suggestions: terminalRun.result.suggestions,
+            },
+            current.decisionGraph,
+        );
+        const completedAt = new Date().toISOString();
+        const next = {
+            ...current,
+            requirements,
+            question: usageQuestion(requirements.suggestions),
+            status: "Suggestions are ready. Keep adding usages or generate the DAG.",
+            suggestionProcessing: {
+                ...current.suggestionProcessing,
+                status: "success",
+                message: "Suggestions updated.",
+                completedAt,
+            },
+            updatedAt: completedAt,
+        };
+        await persistState(next);
+        publishState(prototypeId);
+    });
+}
+
+async function recordSuggestionFailure(prototypeId, requestId, error) {
+    await withAnswerClaim(prototypeId, async () => {
+        const current = await loadState(prototypeId);
+        if (
+            current.suggestionProcessing?.status !== "running" ||
+            current.suggestionProcessing.requestId !== requestId
+        ) {
+            return;
+        }
+        const completedAt = new Date().toISOString();
+        const hasUsages = current.requirements.usageItems.length > 0;
+        const next = {
+            ...current,
+            status: hasUsages
+                ? "Usage saved, but suggestions could not be refreshed."
+                : "Starter suggestions could not be generated. Add a usage to continue.",
+            suggestionProcessing: {
+                ...current.suggestionProcessing,
+                status: "error",
+                message: hasUsages
+                    ? "Suggestion generation failed. Add another usage to retry."
+                    : "Suggestion generation failed. Add a usage to retry.",
+                completedAt,
+            },
+            updatedAt: completedAt,
+        };
+        await persistState(next);
+        publishState(prototypeId);
+    });
+    await logSafely(
+        `Tandem suggestion generation failed: ${
+            error instanceof Error ? error.message : String(error)
+        }`,
+    );
+}
+
+function recoverSuggestionFactory(state, canSubmitAnswers) {
+    const processing = state.suggestionProcessing;
+    if (
+        !canSubmitAnswers ||
+        processing?.status !== "running" ||
+        activeSuggestionRuns.has(state.prototypeId)
+    ) {
+        return;
+    }
+    const work = (async () => {
+        if (processing.runId) {
+            try {
+                let run = await session.factory.getRun(processing.runId);
+                if (!isFactoryRunTerminal(run.status)) {
+                    run = await session.factory.waitForRun(run.runId);
+                }
+                if (run.status === "halted") {
+                    run = await resumeHaltedRun(run.runId);
+                }
+                if (run.status !== "completed" || !isObject(run.result)) {
+                    throw new Error(factoryErrorMessage(run));
+                }
+                await withAnswerClaim(state.prototypeId, async () => {
+                    const current = await loadState(state.prototypeId);
+                    if (
+                        current.suggestionProcessing?.requestId !==
+                        processing.requestId
+                    ) {
+                        return;
+                    }
+                    const requirements = normalizeRequirements(
+                        {
+                            ...current.requirements,
+                            suggestions: run.result.suggestions,
+                        },
+                        current.decisionGraph,
+                    );
+                    const completedAt = new Date().toISOString();
+                    const next = {
+                        ...current,
+                        requirements,
+                        question: usageQuestion(requirements.suggestions),
+                        status:
+                            "Suggestions are ready. Keep adding usages or generate the DAG.",
+                        suggestionProcessing: {
+                            ...current.suggestionProcessing,
+                            status: "success",
+                            message: "Suggestions updated.",
+                            completedAt,
+                        },
+                        updatedAt: completedAt,
+                    };
+                    await persistState(next);
+                    publishState(state.prototypeId);
+                });
+                return;
+            } catch (error) {
+                if (!["not_found", "non_resumable"].includes(factoryErrorCode(error))) {
+                    throw error;
+                }
+            }
+        }
+        await runSuggestionFactory(
+            state.prototypeId,
+            processing.requestId,
+            state.goal,
+            processing.usageItems,
+        );
+    })();
+    trackSuggestionRun(state.prototypeId, processing.requestId, work);
+}
+
+function applyArtifactChanges(currentArtifacts, value) {
+    if (!isObject(value)) {
+        throw new Error("The hidden agent returned invalid artifact changes.");
+    }
+    if (!Array.isArray(value.upsert) || value.upsert.length > 30) {
+        throw new Error("The hidden agent returned too many artifact upserts.");
+    }
+    if (!Array.isArray(value.remove) || value.remove.length > 50) {
+        throw new Error("The hidden agent returned invalid artifact removals.");
+    }
+
+    const upsertIds = new Set();
+    for (const artifact of value.upsert) {
+        if (!isValidFactoryArtifact(artifact) || upsertIds.has(artifact.id)) {
+            throw new Error("The hidden agent returned an invalid artifact upsert.");
+        }
+        upsertIds.add(artifact.id);
+    }
+    for (const id of value.remove) {
+        if (
+            typeof id !== "string" ||
+            id !== id.trim() ||
+            !id ||
+            id.length > 120
+        ) {
+            throw new Error("The hidden agent returned an invalid artifact removal.");
+        }
+    }
+
+    const removedIds = new Set(normalizeStringList(value.remove));
+    const merged = currentArtifacts.filter(
+        (artifact) => !removedIds.has(artifact.id),
+    );
+    const upserts = normalizeArtifacts(value.upsert);
+    if (upserts.length !== value.upsert.length) {
+        throw new Error("The hidden agent returned an invalid artifact upsert.");
+    }
+    for (const artifact of upserts) {
+        const index = merged.findIndex((candidate) => candidate.id === artifact.id);
+        if (index === -1) {
+            if (merged.length >= 30) {
+                throw new Error(
+                    "The hidden agent must remove an artifact before adding another.",
+                );
+            }
+            merged.push(artifact);
+        } else {
+            merged[index] = artifact;
+        }
+    }
+    return merged;
+}
+
+function isValidFactoryArtifact(value) {
+    if (!isObject(value)) return false;
+    const limits = {
+        id: 120,
+        title: 200,
+        kind: 80,
+        stage: 20,
+        path: 500,
+        language: 80,
+        content: 200_000,
+        mermaid: 50_000,
+    };
+    for (const [field, limit] of Object.entries(limits)) {
+        if (typeof value[field] !== "string" || value[field].length > limit) {
+            return false;
+        }
+    }
+    for (const field of [
+        "id",
+        "title",
+        "kind",
+        "stage",
+        "path",
+        "language",
+        "mermaid",
+    ]) {
+        if (value[field] !== value[field].trim()) return false;
+    }
+    return Boolean(
+        value.id &&
+        value.title &&
+        value.kind &&
+        LIFECYCLE_STAGES.some((stage) => stage.id === value.stage) &&
+        value.language,
+    );
+}
+
+function designReviewContext(state) {
+    const productReview = normalizeDesignReview(state.designReview);
+    const design = normalizeDesign(state.design, productReview);
+    const reviewKind = design.substage === "test" ? "test" : "product";
+    const reviewKey =
+        reviewKind === "test" ? "testDesignReview" : "designReview";
+    return {
+        design,
+        reviewKind,
+        reviewKey,
+        review: normalizeDesignReview(state[reviewKey]),
+    };
+}
+
+function seedDefaultProductDesignReview(state, createdAt = new Date().toISOString()) {
+    if (
+        state.lifecycle.currentStage !== "design" ||
+        state.design?.substage === "test"
+    ) {
+        return state;
+    }
+    const review = normalizeDesignReview(state.designReview);
+    if (
+        review.threads.length > 0 ||
+        review.processing ||
+        review.finalizeRequested ||
+        review.finalizedArtifactId
+    ) {
+        return state;
+    }
+    return {
+        ...state,
+        designReview: {
+            ...review,
+            threads: DEFAULT_PRODUCT_DESIGN_REQUESTS.map((request) => ({
+                id: request.id,
+                type: "artifact",
+                artifactKind: request.artifactKind,
+                prompt: request.prompt,
+                answer: "",
+                status: "queued",
+                artifactIds: [],
+                reviewArtifactId: null,
+                createdAt,
+                completedAt: null,
+                error: "",
+            })),
+        },
+        status: "Generating required project-specific design artifacts for review...",
+        updatedAt: createdAt,
+    };
+}
+
+async function ensureDefaultProductDesignReview(state, canSubmitAnswers) {
+    if (!canSubmitAnswers) return state;
+    return withAnswerClaim(state.prototypeId, async () => {
+        const current = await loadState(state.prototypeId);
+        const next = seedDefaultProductDesignReview(current);
+        if (next === current) return current;
+        await persistState(next);
+        publishState(state.prototypeId);
+        return next;
+    });
+}
+
+function markDesignArtifactsStale(
+    artifacts,
+    threadId = null,
+    reviewKind = "product",
+) {
+    return artifacts.map((artifact) => {
+        const dependsOnThread =
+            threadId && artifact.sourceThreadIds.includes(threadId);
+        const isFinalArtifact =
+            reviewKind === "test"
+                ? artifact.id === "test-spec"
+                : ["design-spec", "design-review", "test-spec"].includes(
+                      artifact.id,
+                  );
+        if (
+            artifact.stage !== "design" ||
+            (!isFinalArtifact && !dependsOnThread)
+        ) {
+            return artifact;
+        }
+        return { ...artifact, reviewStatus: "stale" };
+    });
+}
+
+async function applyDesignReviewFactoryResult(prototypeId, requestId, run) {
+    if (run.status !== "completed" || !isObject(run.result)) {
+        throw new Error(factoryErrorMessage(run));
+    }
+    await withAnswerClaim(prototypeId, async () => {
+        const state = await loadState(prototypeId);
+        const context = designReviewContext(state);
+        const review = context.review;
+        if (
+            !review.processing ||
+            review.processing.requestId !== requestId
+        ) {
+            return;
+        }
+        const result = run.result;
+        const answer = String(result.answer || "").trim().slice(0, 20_000);
+        if (!answer || !Array.isArray(result.artifacts)) {
+            throw new Error("The Design Review worker returned an invalid result.");
+        }
+        for (const artifact of result.artifacts) {
+            if (
+                !isValidFactoryArtifact(artifact) ||
+                artifact.stage !== "design" ||
+                !Array.isArray(artifact.sourceThreadIds) ||
+                artifact.reviewStatus !== "current"
+            ) {
+                throw new Error(
+                    "The Design Review worker returned an invalid artifact.",
+                );
+            }
+        }
+        const artifacts = applyArtifactChanges(state.artifacts, {
+            upsert: result.artifacts,
+            remove: [],
+        });
+        const completedAt = new Date().toISOString();
+        let finalizedArtifactId = review.finalizedArtifactId;
+        let finalizeRequested = review.finalizeRequested;
+        const threads = review.threads.map((thread) => ({ ...thread }));
+        let status;
+        if (review.processing.action === "finalize") {
+            const unresolved = threads.some((thread) => thread.status !== "resolved");
+            if (!finalizeRequested || unresolved) {
+                const next = {
+                    ...state,
+                    [context.reviewKey]: {
+                        ...review,
+                        processing: null,
+                        finalizeRequested: false,
+                        finalizedArtifactId: null,
+                    },
+                    status:
+                        "The final review was superseded by a newer design question.",
+                    updatedAt: completedAt,
+                };
+                await persistState(next);
+                publishState(prototypeId);
+                return;
+            }
+            const finalArtifact = artifacts.find(
+                (artifact) =>
+                    artifact.id ===
+                        (context.reviewKind === "test"
+                            ? "test-spec"
+                            : "design-spec") &&
+                    artifact.kind ===
+                        (context.reviewKind === "test"
+                            ? "test-spec"
+                            : "design-spec") &&
+                    artifact.stage === "design" &&
+                    artifact.reviewStatus === "current" &&
+                    artifact.content.trim(),
+            );
+            if (!finalArtifact) {
+                throw new Error(
+                    `The ${context.reviewKind} design worker did not produce its final specification.`,
+                );
+            }
+            const scenarios =
+                context.reviewKind === "test"
+                    ? normalizeTestScenarios(result.testScenarios)
+                    : review.scenarios;
+            if (context.reviewKind === "test" && scenarios.length === 0) {
+                throw new Error(
+                    "The Test Design worker did not return executable test scenarios.",
+                );
+            }
+            finalizedArtifactId = finalArtifact.id;
+            finalizeRequested = false;
+            status =
+                context.reviewKind === "test"
+                    ? "Test specification captured. Design can now be completed."
+                    : "Design specification captured. Continue with Test design.";
+            review.scenarios = scenarios;
+        } else {
+            const threadId = review.processing.threadId;
+            const thread = threads.find((candidate) => candidate.id === threadId);
+            if (!thread) {
+                throw new Error("The active Design Review thread no longer exists.");
+            }
+            const generatedArtifacts = artifacts.filter(
+                (artifact) =>
+                    result.artifacts.some(
+                        (candidate) => candidate.id === artifact.id,
+                    ) && artifact.sourceThreadIds.includes(thread.id),
+            );
+            if (thread.type === "artifact" && generatedArtifacts.length === 0) {
+                throw new Error(
+                    "The Design Review worker did not generate the requested artifact.",
+                );
+            }
+            thread.answer = answer;
+            thread.status = "answered";
+            thread.artifactIds = generatedArtifacts.map((artifact) => artifact.id);
+            thread.completedAt = completedAt;
+            thread.error = "";
+            status =
+                generatedArtifacts.length > 0
+                    ? `Design answer ready with ${generatedArtifacts.length} artifact${
+                          generatedArtifacts.length === 1 ? "" : "s"
+                      }.`
+                    : "Design answer ready for review.";
+        }
+        const next = {
+            ...state,
+            artifacts,
+            design:
+                review.processing.action === "finalize" &&
+                context.reviewKind === "product"
+                    ? { substage: "test" }
+                    : context.design,
+            [context.reviewKey]: {
+                threads,
+                processing: null,
+                finalizeRequested,
+                finalizedArtifactId,
+                scenarios: review.scenarios,
+            },
+            testing:
+                review.processing.action === "finalize" &&
+                context.reviewKind === "test"
+                    ? normalizeTesting(
+                          { status: "idle" },
+                          { ...review, scenarios: review.scenarios },
+                      )
+                    : state.testing,
+            status,
+            updatedAt: completedAt,
+        };
+        await persistState(next);
+        publishState(prototypeId);
+    });
+}
+
+async function recordDesignReviewFailure(prototypeId, requestId, error) {
+    await withAnswerClaim(prototypeId, async () => {
+        const state = await loadState(prototypeId);
+        const context = designReviewContext(state);
+        const review = context.review;
+        if (
+            !review.processing ||
+            review.processing.requestId !== requestId
+        ) {
+            return;
+        }
+        const message =
+            error instanceof Error ? error.message : String(error);
+        const threads = review.threads.map((thread) =>
+            thread.id === review.processing.threadId
+                ? {
+                      ...thread,
+                      status: "failed",
+                      error: message.slice(0, 1000),
+                      completedAt: new Date().toISOString(),
+                  }
+                : thread,
+        );
+        const next = {
+            ...state,
+            [context.reviewKey]: {
+                threads,
+                processing: null,
+                finalizeRequested: false,
+                finalizedArtifactId: review.finalizedArtifactId,
+                scenarios: review.scenarios,
+            },
+            status: `${context.reviewKind === "test" ? "Test Design" : "Product Design"} processing failed: ${message}`,
+            updatedAt: new Date().toISOString(),
+        };
+        await persistState(next);
+        publishState(prototypeId);
+    });
+}
+
+async function claimNextDesignReviewJob(prototypeId) {
+    return withAnswerClaim(prototypeId, async () => {
+        const state = await loadState(prototypeId);
+        const context = designReviewContext(state);
+        const review = context.review;
+        if (
+            state.lifecycle.currentStage !== "design" ||
+            review.processing
+        ) {
+            return null;
+        }
+        const queuedThread = review.threads.find(
+            (thread) => thread.status === "queued",
+        );
+        const action = queuedThread
+            ? "process-thread"
+            : review.finalizeRequested
+              ? "finalize"
+              : null;
+        if (!action) return null;
+
+        const requestedAt = new Date().toISOString();
+        const requestId = randomUUID();
+        const threads = review.threads.map((thread) =>
+            thread.id === queuedThread?.id
+                ? { ...thread, status: "processing", error: "" }
+                : thread,
+        );
+        const processing = {
+            requestId,
+            action,
+            threadId: queuedThread?.id || null,
+            runId: null,
+            requestedAt,
+        };
+        const pending = {
+            ...state,
+            [context.reviewKey]: {
+                ...review,
+                threads,
+                processing,
+            },
+            status:
+                action === "finalize"
+                    ? `Synthesizing the final ${context.reviewKind} design specification...`
+                    : `Answering a ${context.reviewKind} design request...`,
+            updatedAt: requestedAt,
+        };
+        await persistState(pending);
+        publishState(prototypeId);
+        return {
+            requestId,
+            action,
+            thread: queuedThread
+                ? threads.find((thread) => thread.id === queuedThread.id)
+                : null,
+            state: pending,
+            reviewKind: context.reviewKind,
+        };
+    });
+}
+
+async function runDesignReviewJob(prototypeId, job) {
+    const run = await session.rpc.factory.run({
+        name: DESIGN_REVIEW_FACTORY_NAME,
+        args: {
+            prototypeId,
+            projectRoot: WORKSPACE_ROOT,
+            requestId: job.requestId,
+            action: job.action,
+            reviewKind: job.reviewKind,
+            thread: job.thread,
+            state: factoryStateSnapshot(job.state),
+        },
+    });
+    const accepted = await withAnswerClaim(prototypeId, async () => {
+        const state = await loadState(prototypeId);
+        const context = designReviewContext(state);
+        if (context.reviewKind !== job.reviewKind) return false;
+        const review = context.review;
+        if (review.processing?.requestId !== job.requestId) return false;
+        const next = {
+            ...state,
+            [context.reviewKey]: {
+                ...review,
+                processing: {
+                    ...review.processing,
+                    runId: run.runId,
+                },
+            },
+            updatedAt: new Date().toISOString(),
+        };
+        await persistState(next);
+        publishState(prototypeId);
+        return true;
+    });
+    if (!accepted) {
+        if (!isFactoryRunTerminal(run.status)) {
+            await session.factory.cancel(run.runId);
+        }
+        return;
+    }
+    const terminalRun = isFactoryRunTerminal(run.status)
+        ? run
+        : await session.factory.waitForRun(run.runId);
+    await applyDesignReviewFactoryResult(
+        prototypeId,
+        job.requestId,
+        terminalRun,
+    );
+}
+
+async function processDesignReviewQueue(prototypeId) {
+    while (await isPreferredAnswerProvider(PROVIDER_EXTENSION_ID)) {
+        const job = await claimNextDesignReviewJob(prototypeId);
+        if (!job) return;
+        try {
+            await runDesignReviewJob(prototypeId, job);
+        } catch (error) {
+            await recordDesignReviewFailure(
+                prototypeId,
+                job.requestId,
+                error,
+            );
+        }
+    }
+}
+
+function startDesignReviewQueue(prototypeId) {
+    if (activeDesignReviewRuns.has(prototypeId)) return;
+    const work = processDesignReviewQueue(prototypeId)
+        .catch((error) =>
+            logSafely(
+                `Tandem Design Review queue failed: ${
+                    error instanceof Error ? error.message : String(error)
+                }`,
+            ),
+        )
+        .finally(() => {
+            if (activeDesignReviewRuns.get(prototypeId) === work) {
+                activeDesignReviewRuns.delete(prototypeId);
+                void loadState(prototypeId)
+                    .then((state) => {
+                        const review = designReviewContext(state).review;
+                        if (
+                            state.lifecycle.currentStage === "design" &&
+                            (
+                                review.finalizeRequested ||
+                                review.threads.some(
+                                    (thread) => thread.status === "queued",
+                                )
+                            )
+                        ) {
+                            startDesignReviewQueue(prototypeId);
+                        }
+                    })
+                    .catch((error) =>
+                        logSafely(
+                            `Tandem could not inspect the Design Review queue: ${
+                                error instanceof Error
+                                    ? error.message
+                                    : String(error)
+                            }`,
+                        ),
+                    );
+            }
+        });
+    activeDesignReviewRuns.set(prototypeId, work);
+}
+
+function recoverDesignReviewFactory(state, canSubmitAnswers) {
+    if (
+        !canSubmitAnswers ||
+        state.lifecycle.currentStage !== "design" ||
+        activeDesignReviewRuns.has(state.prototypeId)
+    ) {
+        return;
+    }
+    const work = (async () => {
+        const current = await loadState(state.prototypeId);
+        let context = designReviewContext(current);
+        let review = context.review;
+        if (review.processing?.runId) {
+            try {
+                let run = await session.factory.getRun(review.processing.runId);
+                if (!isFactoryRunTerminal(run.status)) {
+                    run = await session.factory.waitForRun(run.runId);
+                }
+                await applyDesignReviewFactoryResult(
+                    state.prototypeId,
+                    review.processing.requestId,
+                    run,
+                );
+            } catch (error) {
+                await recordDesignReviewFailure(
+                    state.prototypeId,
+                    review.processing.requestId,
+                    error,
+                );
+            }
+        } else if (review.processing) {
+            await withAnswerClaim(state.prototypeId, async () => {
+                const latest = await loadState(state.prototypeId);
+                context = designReviewContext(latest);
+                const latestReview = context.review;
+                if (
+                    latestReview.processing?.requestId !==
+                    review.processing.requestId
+                ) {
+                    return;
+                }
+                const threads = latestReview.threads.map((thread) =>
+                    thread.id === latestReview.processing.threadId
+                        ? { ...thread, status: "queued" }
+                        : thread,
+                );
+                const next = {
+                    ...latest,
+                    [context.reviewKey]: {
+                        ...latestReview,
+                        threads,
+                        processing: null,
+                    },
+                    updatedAt: new Date().toISOString(),
+                };
+                await persistState(next);
+                publishState(state.prototypeId);
+            });
+        }
+        await processDesignReviewQueue(state.prototypeId);
+    })()
+        .catch((error) =>
+            logSafely(
+                `Tandem could not recover Design Review: ${
+                    error instanceof Error ? error.message : String(error)
+                }`,
+            ),
+        )
+        .finally(() => {
+            if (activeDesignReviewRuns.get(state.prototypeId) === work) {
+                activeDesignReviewRuns.delete(state.prototypeId);
+            }
+        });
+    activeDesignReviewRuns.set(state.prototypeId, work);
+}
+
+function markExecutionPlanStale(artifacts) {
+    return artifacts.map((artifact) =>
+        artifact.stage === "plan" && artifact.id === "execution-plan"
+            ? { ...artifact, reviewStatus: "stale" }
+            : artifact,
+    );
+}
+
+function markFinalCodeStale(artifacts) {
+    return artifacts.map((artifact) =>
+        artifact.stage === "implement" && artifact.id === "final-code"
+            ? { ...artifact, reviewStatus: "stale" }
+            : artifact,
+    );
+}
+
+function resetImplementationForPlan(planning, previous: any = {}) {
+    return normalizeImplementation(
+        {
+            status: "idle",
+            strategySuggestions: Array.isArray(previous.strategySuggestions)
+                ? previous.strategySuggestions.filter(
+                      (suggestion) => suggestion.status === "queued",
+                  )
+                : [],
+        },
+        planning,
+    );
+}
+
+function validatePlanningFactoryResult(result) {
+    if (
+        !isObject(result) ||
+        !String(result.summary || "").trim() ||
+        !String(result.strategy || "").trim() ||
+        !Array.isArray(result.workItems) ||
+        result.workItems.length === 0
+    ) {
+        throw new Error("The planning worker returned an incomplete execution plan.");
+    }
+    const ids = new Set();
+    for (const item of result.workItems) {
+        if (
+            !isObject(item) ||
+            !String(item.id || "").trim() ||
+            ids.has(item.id) ||
+            !String(item.title || "").trim() ||
+            !String(item.description || "").trim() ||
+            !Array.isArray(item.dependencies) ||
+            !Array.isArray(item.acceptanceCriteria) ||
+            item.acceptanceCriteria.length === 0 ||
+            !Array.isArray(item.validation) ||
+            item.validation.length === 0
+        ) {
+            throw new Error(
+                "The planning worker returned an invalid implementation work item.",
+            );
+        }
+        ids.add(item.id);
+    }
+    for (const item of result.workItems) {
+        if (
+            item.dependencies.some(
+                (dependency) =>
+                    dependency === item.id || !ids.has(dependency),
+            )
+        ) {
+            throw new Error(
+                `Work item ${item.id} contains an invalid dependency.`,
+            );
+        }
+    }
+}
+
+async function applyPlanningFactoryResult(prototypeId, requestId, run) {
+    if (run.status !== "completed" || !isObject(run.result)) {
+        throw new Error(factoryErrorMessage(run));
+    }
+    validatePlanningFactoryResult(run.result);
+    await withAnswerClaim(prototypeId, async () => {
+        const state = await loadState(prototypeId);
+        const planning = normalizePlanning(state.planning);
+        if (planning.processing?.requestId !== requestId) return;
+        const completedAt = new Date().toISOString();
+        const normalized = normalizePlanning({
+            ...planning,
+            status: "ready",
+            summary: run.result.summary,
+            strategy: run.result.strategy,
+            workItems: run.result.workItems,
+            risks: run.result.risks,
+            revisionHistory:
+                planning.processing.action === "revise" &&
+                planning.processing.instruction
+                    ? [
+                          ...planning.revisionHistory,
+                          planning.processing.instruction,
+                      ]
+                    : planning.revisionHistory,
+            processing: null,
+            finalizedArtifactId: null,
+            error: "",
+        });
+        if (normalized.error || normalized.waves.length === 0) {
+            throw new Error(
+                normalized.error || "The execution plan could not be scheduled.",
+            );
+        }
+        const next = {
+            ...state,
+            artifacts: markFinalCodeStale(
+                markExecutionPlanStale(state.artifacts),
+            ),
+            planning: normalized,
+            implementation: resetImplementationForPlan(
+                normalized,
+                state.implementation,
+            ),
+            status: `Execution plan ready: ${normalized.workItems.length} work items across ${normalized.waves.length} wave${
+                normalized.waves.length === 1 ? "" : "s"
+            }.`,
+            updatedAt: completedAt,
+        };
+        await persistState(next);
+        publishState(prototypeId);
+    });
+}
+
+async function recordPlanningFailure(prototypeId, requestId, error) {
+    await withAnswerClaim(prototypeId, async () => {
+        const state = await loadState(prototypeId);
+        const planning = normalizePlanning(state.planning);
+        if (planning.processing?.requestId !== requestId) return;
+        const message = error instanceof Error ? error.message : String(error);
+        const next = {
+            ...state,
+            planning: {
+                ...planning,
+                status: "failed",
+                processing: null,
+                error: message.slice(0, 1000),
+            },
+            status: `Execution planning failed: ${message}`,
+            updatedAt: new Date().toISOString(),
+        };
+        await persistState(next);
+        publishState(prototypeId);
+    });
+}
+
+async function runPlanningFactory(prototypeId, requestId, state) {
+    const planning = normalizePlanning(state.planning);
+    const processing = planning.processing;
+    if (!processing || processing.requestId !== requestId) return;
+    const run = await session.rpc.factory.run({
+        name: PLANNING_FACTORY_NAME,
+        args: {
+            prototypeId,
+            projectRoot: WORKSPACE_ROOT,
+            requestId,
+            action: processing.action,
+            instruction: processing.instruction,
+            maxAgents: planning.maxAgents,
+            state: factoryStateSnapshot(state),
+        },
+    });
+    const accepted = await withAnswerClaim(prototypeId, async () => {
+        const current = await loadState(prototypeId);
+        const currentPlanning = normalizePlanning(current.planning);
+        if (currentPlanning.processing?.requestId !== requestId) return false;
+        const next = {
+            ...current,
+            planning: {
+                ...currentPlanning,
+                processing: {
+                    ...currentPlanning.processing,
+                    runId: run.runId,
+                },
+            },
+            updatedAt: new Date().toISOString(),
+        };
+        await persistState(next);
+        publishState(prototypeId);
+        return true;
+    });
+    if (!accepted) {
+        if (!isFactoryRunTerminal(run.status)) {
+            await session.factory.cancel(run.runId);
+        }
+        return;
+    }
+    const terminalRun = isFactoryRunTerminal(run.status)
+        ? run
+        : await session.factory.waitForRun(run.runId);
+    await applyPlanningFactoryResult(prototypeId, requestId, terminalRun);
+}
+
+function startPlanningFactory(prototypeId, requestId, state) {
+    if (activePlanningRuns.has(prototypeId)) return;
+    const work = runPlanningFactory(prototypeId, requestId, state)
+        .catch(async (error) => {
+            try {
+                await recordPlanningFailure(prototypeId, requestId, error);
+            } catch (recordError) {
+                await logSafely(
+                    `Tandem could not persist the planning failure: ${
+                        recordError instanceof Error
+                            ? recordError.message
+                            : String(recordError)
+                    }`,
+                );
+            }
+        })
+        .finally(() => {
+            if (activePlanningRuns.get(prototypeId) === work) {
+                activePlanningRuns.delete(prototypeId);
+            }
+        });
+    activePlanningRuns.set(prototypeId, work);
+}
+
+function recoverPlanningFactory(state, canSubmitAnswers) {
+    const planning = normalizePlanning(state.planning);
+    if (
+        !canSubmitAnswers ||
+        state.lifecycle.currentStage !== "plan" ||
+        !planning.processing ||
+        activePlanningRuns.has(state.prototypeId)
+    ) {
+        return;
+    }
+    const work = (async () => {
+        if (planning.processing.runId) {
+            try {
+                let run = await session.factory.getRun(planning.processing.runId);
+                if (!isFactoryRunTerminal(run.status)) {
+                    run = await session.factory.waitForRun(run.runId);
+                }
+                await applyPlanningFactoryResult(
+                    state.prototypeId,
+                    planning.processing.requestId,
+                    run,
+                );
+                return;
+            } catch (error) {
+                if (!["not_found", "non_resumable"].includes(factoryErrorCode(error))) {
+                    throw error;
+                }
+            }
+        }
+        await runPlanningFactory(
+            state.prototypeId,
+            planning.processing.requestId,
+            state,
+        );
+    })()
+        .catch((error) =>
+            recordPlanningFailure(
+                state.prototypeId,
+                planning.processing.requestId,
+                error,
+            ),
+        )
+        .finally(() => {
+            if (activePlanningRuns.get(state.prototypeId) === work) {
+                activePlanningRuns.delete(state.prototypeId);
+            }
+        });
+    activePlanningRuns.set(state.prototypeId, work);
+}
+
+function executionPlanArtifact(state) {
+    const planning = normalizePlanning(state.planning);
+    const aliases = new Map(
+        planning.workItems.map((item, index) => [item.id, `Work${index + 1}`]),
+    );
+    const mermaid = ["flowchart LR"];
+    for (const item of planning.workItems) {
+        mermaid.push(
+            `  ${aliases.get(item.id)}["${item.title.replace(/"/g, "'")}<br/>${item.agentId}"]`,
+        );
+    }
+    for (const item of planning.workItems) {
+        for (const dependency of item.dependencies) {
+            mermaid.push(
+                `  ${aliases.get(dependency)} --> ${aliases.get(item.id)}`,
+            );
+        }
+    }
+    const lines = [
+        "# Execution plan",
+        "",
+        planning.summary,
+        "",
+        "## Orchestration strategy",
+        "",
+        planning.strategy,
+        "",
+        "## Schedule",
+        "",
+        `- Work items: ${planning.workItems.length}`,
+        `- Agents: ${planning.agents.length}`,
+        `- Parallel waves: ${planning.waves.length}`,
+        `- Total effort: ${planning.metrics.totalEffortHours} hours`,
+        `- Scheduled elapsed time: ${planning.metrics.scheduledHours} hours`,
+        `- Critical path: ${planning.metrics.criticalPathHours} hours`,
+        `- Parallelism saved: ${planning.metrics.parallelismSavingsHours} hours`,
+        "",
+    ];
+    for (const wave of planning.waves) {
+        lines.push(
+            `### Wave ${wave.index} · hours ${wave.startHour}-${wave.endHour}`,
+            "",
+            ...wave.workItemIds.map((id) => {
+                const item = planning.workItems.find(
+                    (candidate) => candidate.id === id,
+                );
+                return `- **${item.title}** (${item.agentId}, ${item.agentRole}, ${item.estimatedHours}h)`;
+            }),
+            "",
+        );
+    }
+    lines.push("## Work items", "");
+    for (const item of planning.workItems) {
+        lines.push(
+            `### ${item.id}: ${item.title}`,
+            "",
+            item.description,
+            "",
+            `- Agent: ${item.agentId} (${item.agentRole})`,
+            `- Estimate: ${item.estimatedHours} hours`,
+            `- Dependencies: ${item.dependencies.join(", ") || "None"}`,
+            `- Files: ${item.files.join(", ") || "To be discovered within owned scope"}`,
+            `- Skills: ${item.skills.join(", ") || "General implementation"}`,
+            "- Acceptance criteria:",
+            ...item.acceptanceCriteria.map((criterion) => `  - ${criterion}`),
+            "- Validation:",
+            ...item.validation.map((step) => `  - ${step}`),
+            "",
+        );
+    }
+    lines.push(
+        "## Agent workload",
+        "",
+        ...planning.agents.map(
+            (agent) =>
+                `- **${agent.id}**: ${agent.estimatedHours}h across ${agent.workItemIds.join(", ")}; roles: ${agent.roles.join(", ")}`,
+        ),
+        "",
+        "## Risks",
+        "",
+        ...(planning.risks.length > 0
+            ? planning.risks.map((risk) => `- ${risk}`)
+            : ["- No additional planning risks recorded."]),
+    );
+    return {
+        id: "execution-plan",
+        title: "Execution plan",
+        kind: "execution-plan",
+        stage: "plan",
+        path: "",
+        language: "markdown",
+        content: lines.join("\n").trim(),
+        mermaid: mermaid.join("\n"),
+        sourceThreadIds: [],
+        reviewStatus: "current",
+    };
+}
+
+function implementationEvent(type, message) {
+    return {
+        id: randomUUID(),
+        type,
+        message,
+        at: new Date().toISOString(),
+    };
+}
+
+function implementationPrompt(args, item, strategy, completedHandoffs) {
+    return [
+        `Implement work item "${item.id}: ${item.title}" in the active workspace.`,
+        "",
+        `Project root: ${args.projectRoot}`,
+        `Assigned role: ${item.agentRole}`,
+        `Description: ${item.description}`,
+        `Owned files or paths: ${item.files.join(", ") || "Discover the smallest necessary scope."}`,
+        `Dependencies: ${item.dependencies.join(", ") || "None"}`,
+        "",
+        "Acceptance criteria:",
+        ...item.acceptanceCriteria.map((criterion) => `- ${criterion}`),
+        "",
+        "Validation:",
+        ...item.validation.map((step) => `- ${step}`),
+        "",
+        strategy.length > 0
+            ? `Execution strategy updates:\n${strategy.map((entry) => `- ${entry}`).join("\n")}`
+            : "Execution strategy updates: none.",
+        completedHandoffs.length > 0
+            ? `Completed dependency handoffs:\n${completedHandoffs.map((entry) => `- ${entry}`).join("\n")}`
+            : "Completed dependency handoffs: none.",
+        "",
+        "Work directly in the active workspace and fully implement this item. Respect the",
+        "owned file scope and avoid editing files assigned to concurrent work items unless",
+        "the change is strictly required; report any unavoidable overlap. Preserve existing",
+        "user changes. Do not create branches, commits, stashes, or pull requests. Run the",
+        "smallest existing validation that proves the acceptance criteria. Return a concise",
+        "structured result with every changed file and validation outcome.",
+    ].join("\n");
+}
+
+async function prepareImplementationWave(prototypeId, waveIndex, workItemIds) {
+    return withAnswerClaim(prototypeId, async () => {
+        const state = await loadState(prototypeId);
+        const planning = normalizePlanning(state.planning);
+        const implementation = normalizeImplementation(
+            state.implementation,
+            planning,
+        );
+        if (!["starting", "running"].includes(implementation.status)) {
+            return { runnable: [], strategy: [], stopped: true };
+        }
+        const now = new Date().toISOString();
+        const queued = implementation.strategySuggestions.filter(
+            (suggestion) => suggestion.status === "queued",
+        );
+        const strategy = implementation.strategySuggestions.map(
+            (suggestion) => suggestion.text,
+        );
+        let maxConcurrency = planning.maxAgents;
+        for (const text of strategy) {
+            if (/\b(serial|one at a time|single agent)\b/i.test(text)) {
+                maxConcurrency = 1;
+                continue;
+            }
+            const match = text.match(
+                /\b(?:max(?:imum)?|limit|use|reduce(?:\s+parallelism)?\s+to)\s*(?:to\s*)?(\d{1,2})\s*(?:agents?)?\b/i,
+            );
+            if (match) {
+                maxConcurrency = Math.max(
+                    1,
+                    Math.min(planning.maxAgents, Number(match[1])),
+                );
+            }
+        }
+        const workById = new Map<string, any>(
+            implementation.workItems.map((item) => [item.id, item]),
+        );
+        const runnable = [];
+        for (const id of workItemIds) {
+            const planItem = planning.workItems.find((item) => item.id === id);
+            const runtime = workById.get(id);
+            if (!planItem || !runtime || runtime.status === "completed") continue;
+            const dependencyStates = planItem.dependencies.map(
+                (dependency) => workById.get(dependency)?.status || "pending",
+            );
+            if (
+                dependencyStates.some((status) =>
+                    ["failed", "blocked", "cancelled"].includes(status),
+                )
+            ) {
+                runtime.status = "blocked";
+                runtime.blockers = [
+                    "A prerequisite work item did not complete successfully.",
+                ];
+                runtime.completedAt = now;
+                continue;
+            }
+            if (dependencyStates.some((status) => status !== "completed")) {
+                runtime.status = "pending";
+                continue;
+            }
+            runtime.status = "running";
+            runtime.startedAt = now;
+            runtime.completedAt = null;
+            runtime.summary = "";
+            runtime.blockers = [];
+            runnable.push(planItem);
+        }
+        runnable.sort((left, right) => {
+            const priorityScore = (item) =>
+                strategy.filter(
+                    (text) =>
+                        /\b(prioritize|first|earlier|urgent)\b/i.test(text) &&
+                        (
+                            text.toLowerCase().includes(item.id.toLowerCase()) ||
+                            text.toLowerCase().includes(item.title.toLowerCase())
+                        ),
+                ).length;
+            return priorityScore(right) - priorityScore(left);
+        });
+        const runnableIds = new Set(runnable.map((item) => item.id));
+        const agents = implementation.agents.filter(
+            (agent) => !runnableIds.has(agent.workItemId),
+        );
+        for (const item of runnable) {
+            agents.push({
+                id: `work:${item.id}`,
+                workItemId: item.id,
+                role: item.agentRole,
+                status: "running",
+                activity: `Implementing ${item.title}`,
+                activeMs: 0,
+                model: "",
+                summary: "",
+            });
+        }
+        const events = [...implementation.events];
+        if (queued.length > 0) {
+            events.push(
+                implementationEvent(
+                    "strategy",
+                    `${queued.length} strategy suggestion${queued.length === 1 ? "" : "s"} applied to wave ${waveIndex}.`,
+                ),
+            );
+        }
+        if (runnable.length > 0) {
+            events.push(
+                implementationEvent(
+                    "wave",
+                    `Wave ${waveIndex} started with ${runnable.length} work item${runnable.length === 1 ? "" : "s"}.`,
+                ),
+            );
+        }
+        const nextImplementation = normalizeImplementation(
+            {
+                ...implementation,
+                status: "running",
+                currentWaveIndex: waveIndex,
+                workItems: [...workById.values()],
+                agents,
+                strategySuggestions: implementation.strategySuggestions.map(
+                    (suggestion) =>
+                        suggestion.status === "queued"
+                            ? {
+                                  ...suggestion,
+                                  status: "applied",
+                                  appliedAt: now,
+                                  waveIndex,
+                              }
+                            : suggestion,
+                ),
+                events,
+                error: "",
+            },
+            planning,
+        );
+        const next = {
+            ...state,
+            implementation: nextImplementation,
+            status:
+                runnable.length > 0
+                    ? `Implementation wave ${waveIndex} is running.`
+                    : state.status,
+            updatedAt: now,
+        };
+        await persistState(next);
+        publishState(prototypeId);
+        const completedHandoffs = nextImplementation.workItems
+            .filter(
+                (item) =>
+                    item.status === "completed" &&
+                    runnable.some((candidate) =>
+                        candidate.dependencies.includes(item.id),
+                    ),
+            )
+            .map((item) => `${item.id}: ${item.summary || "completed"}`);
+        return {
+            runnable,
+            strategy,
+            completedHandoffs,
+            maxConcurrency,
+            stopped: false,
+        };
+    });
+}
+
+async function recordImplementationWaveResults(
+    prototypeId,
+    waveIndex,
+    planItems,
+    results,
+) {
+    await withAnswerClaim(prototypeId, async () => {
+        const state = await loadState(prototypeId);
+        const planning = normalizePlanning(state.planning);
+        const implementation = normalizeImplementation(
+            state.implementation,
+            planning,
+        );
+        const now = new Date().toISOString();
+        const workById = new Map<string, any>(
+            implementation.workItems.map((item) => [item.id, item]),
+        );
+        const agentByItem = new Map<string, any>(
+            implementation.agents.map((agent) => [agent.workItemId, agent]),
+        );
+        let failedCount = 0;
+        for (let index = 0; index < planItems.length; index += 1) {
+            const item = planItems[index];
+            const result = isObject(results[index]) ? results[index] : null;
+            const succeeded = result?.status === "completed";
+            const runtime = workById.get(item.id);
+            if (!runtime) continue;
+            runtime.status = succeeded ? "completed" : "failed";
+            runtime.summary = String(
+                result?.summary ||
+                    (succeeded
+                        ? "Work item completed."
+                        : "The implementation agent returned no successful result."),
+            )
+                .trim()
+                .slice(0, 12_000);
+            runtime.filesChanged = normalizeStringList(result?.filesChanged);
+            runtime.validation = normalizeStringList(result?.validation);
+            runtime.blockers = normalizeStringList(
+                result?.blockers ||
+                    (succeeded ? [] : ["Implementation agent failed."]),
+            );
+            runtime.completedAt = now;
+            if (!succeeded) failedCount += 1;
+            const agent = agentByItem.get(item.id);
+            if (agent) {
+                agent.status = succeeded ? "completed" : "failed";
+                agent.activity = succeeded
+                    ? "Work item complete"
+                    : "Work item failed";
+                agent.summary = runtime.summary;
+            }
+        }
+        const events = [
+            ...implementation.events,
+            implementationEvent(
+                failedCount > 0 ? "error" : "wave",
+                `Wave ${waveIndex} finished: ${planItems.length - failedCount} completed, ${failedCount} failed.`,
+            ),
+        ];
+        const next = {
+            ...state,
+            implementation: normalizeImplementation(
+                {
+                    ...implementation,
+                    workItems: [...workById.values()],
+                    agents: [...agentByItem.values()],
+                    events,
+                },
+                planning,
+            ),
+            status:
+                failedCount > 0
+                    ? `Wave ${waveIndex} completed with failures.`
+                    : `Wave ${waveIndex} completed.`,
+            updatedAt: now,
+        };
+        await persistState(next);
+        publishState(prototypeId);
+    });
+}
+
+function finalCodeArtifact(state) {
+    const implementation = normalizeImplementation(
+        state.implementation,
+        normalizePlanning(state.planning),
+    );
+    const changedFiles = [
+        ...new Set(
+            implementation.workItems.flatMap((item) => item.filesChanged),
+        ),
+    ];
+    const lines = [
+        "# Final code",
+        "",
+        `Implementation completed ${implementation.completedAt || "successfully"}.`,
+        "",
+        "## Work items",
+        "",
+        ...implementation.workItems.map(
+            (item) => `- **${item.id}**: ${item.summary || "Completed"}`,
+        ),
+        "",
+        "## Changed files",
+        "",
+        ...(changedFiles.length > 0
+            ? changedFiles.map((path) => `- \`${path}\``)
+            : ["- Changes are contained in the active workspace."]),
+        "",
+        "## Validation",
+        "",
+        ...implementation.workItems.flatMap((item) =>
+            item.validation.map((entry) => `- ${item.id}: ${entry}`),
+        ),
+    ];
+    return {
+        id: "final-code",
+        title: "Final code",
+        kind: "final-code",
+        stage: "implement",
+        path: ".",
+        language: "markdown",
+        content: lines.join("\n").trim(),
+        mermaid: "",
+        sourceThreadIds: [],
+        reviewStatus: "current",
+    };
+}
+
+async function settleImplementationRun(prototypeId, run) {
+    await withAnswerClaim(prototypeId, async () => {
+        const state = await loadState(prototypeId);
+        const planning = normalizePlanning(state.planning);
+        const implementation = normalizeImplementation(
+            state.implementation,
+            planning,
+        );
+        if (implementation.runId && implementation.runId !== run.runId) return;
+        const result = isObject(run.result) ? run.result : {};
+        const allCompleted =
+            implementation.workItems.length > 0 &&
+            implementation.workItems.every(
+                (item) => item.status === "completed",
+            );
+        const succeeded =
+            run.status === "completed" &&
+            result.status === "completed" &&
+            allCompleted;
+        const now = new Date().toISOString();
+        let artifacts = state.artifacts;
+        let finalizedArtifactId = null;
+        if (succeeded) {
+            const completedImplementation = {
+                ...implementation,
+                status: "completed",
+                completedAt: now,
+            };
+            const artifact = finalCodeArtifact({
+                ...state,
+                implementation: completedImplementation,
+            });
+            artifacts = normalizeArtifacts([
+                artifact,
+                ...state.artifacts.filter(
+                    (candidate) => candidate.id !== artifact.id,
+                ),
+            ]);
+            finalizedArtifactId = artifact.id;
+        } else {
+            artifacts = markFinalCodeStale(state.artifacts);
+        }
+        const status =
+            run.status === "cancelled"
+                ? "cancelled"
+                : succeeded
+                  ? "completed"
+                  : "failed";
+        const error = succeeded
+            ? ""
+            : String(
+                  result.summary ||
+                      (run.status === "completed"
+                          ? "One or more implementation work items did not complete."
+                          : factoryErrorMessage(run)),
+              ).slice(0, 2000);
+        const next = {
+            ...state,
+            artifacts,
+            implementation: normalizeImplementation(
+                {
+                    ...implementation,
+                    status,
+                    completedAt: now,
+                    finalizedArtifactId,
+                    error,
+                    events: [
+                        ...implementation.events,
+                        implementationEvent(
+                            succeeded ? "complete" : "error",
+                            succeeded
+                                ? "Implementation completed and final code was captured."
+                                : status === "cancelled"
+                                  ? "Implementation was stopped."
+                                  : `Implementation stopped: ${error}`,
+                        ),
+                    ],
+                },
+                planning,
+            ),
+            status: succeeded
+                ? "Implementation complete. Final code is ready."
+                : status === "cancelled"
+                  ? "Implementation stopped."
+                  : `Implementation needs attention: ${error}`,
+            updatedAt: now,
+        };
+        await persistState(next);
+        publishState(prototypeId);
+    });
+}
+
+async function runImplementationFactory(prototypeId, state, resumeFromRunId = null) {
+    const planning = normalizePlanning(state.planning);
+    const request = {
+        name: IMPLEMENTATION_FACTORY_NAME,
+        args: {
+            prototypeId,
+            projectRoot: WORKSPACE_ROOT,
+            plan: planning,
+        },
+        options: {
+            limits: {
+                maxConcurrentSubagents: planning.maxAgents,
+                maxTotalSubagents: 30,
+                timeoutSeconds: 3600,
+                maxAiCredits: 1024000,
+            },
+            ...(resumeFromRunId ? { resumeFromRunId } : {}),
+        },
+    };
+    const run = await session.rpc.factory.run(request);
+    const accepted = await withAnswerClaim(prototypeId, async () => {
+        const current = await loadState(prototypeId);
+        const currentPlanning = normalizePlanning(current.planning);
+        const implementation = normalizeImplementation(
+            current.implementation,
+            currentPlanning,
+        );
+        if (!["starting", "running"].includes(implementation.status)) {
+            return false;
+        }
+        const next = {
+            ...current,
+            implementation: {
+                ...implementation,
+                status: "running",
+                runId: run.runId,
+            },
+            status: "Implementation agents are running.",
+            updatedAt: new Date().toISOString(),
+        };
+        await persistState(next);
+        publishState(prototypeId);
+        return true;
+    });
+    if (!accepted) {
+        if (!isFactoryRunTerminal(run.status)) {
+            await session.factory.cancel(run.runId);
+        }
+        return;
+    }
+    const terminalRun = isFactoryRunTerminal(run.status)
+        ? run
+        : await session.factory.waitForRun(run.runId);
+    await settleImplementationRun(prototypeId, terminalRun);
+}
+
+function startImplementationFactory(prototypeId, state, resumeFromRunId = null) {
+    if (activeImplementationRuns.has(prototypeId)) return;
+    const work = runImplementationFactory(prototypeId, state, resumeFromRunId)
+        .catch(async (error) => {
+            const failedRun = {
+                runId:
+                    (await loadState(prototypeId)).implementation.runId ||
+                    resumeFromRunId ||
+                    "unavailable",
+                status: "error",
+                error: error instanceof Error ? error.message : String(error),
+            };
+            await settleImplementationRun(prototypeId, failedRun);
+        })
+        .finally(() => {
+            if (activeImplementationRuns.get(prototypeId) === work) {
+                activeImplementationRuns.delete(prototypeId);
+            }
+        });
+    activeImplementationRuns.set(prototypeId, work);
+}
+
+function recoverImplementationFactory(state, canSubmitAnswers) {
+    const implementation = normalizeImplementation(
+        state.implementation,
+        normalizePlanning(state.planning),
+    );
+    if (
+        !canSubmitAnswers ||
+        state.lifecycle.currentStage !== "implement" ||
+        !["starting", "running"].includes(implementation.status) ||
+        activeImplementationRuns.has(state.prototypeId)
+    ) {
+        return;
+    }
+    const work = (async () => {
+        if (!implementation.runId) {
+            await runImplementationFactory(state.prototypeId, state);
+            return;
+        }
+        let run = await session.factory.getRun(implementation.runId);
+        if (run.status === "halted") {
+            await runImplementationFactory(
+                state.prototypeId,
+                state,
+                implementation.runId,
+            );
+            return;
+        }
+        if (!isFactoryRunTerminal(run.status)) {
+            run = await session.factory.waitForRun(run.runId);
+        }
+        await settleImplementationRun(state.prototypeId, run);
+    })()
+        .catch(async (error) => {
+            await settleImplementationRun(state.prototypeId, {
+                runId: implementation.runId || "unavailable",
+                status: "error",
+                error: error instanceof Error ? error.message : String(error),
+            });
+        })
+        .finally(() => {
+            if (activeImplementationRuns.get(state.prototypeId) === work) {
+                activeImplementationRuns.delete(state.prototypeId);
+            }
+        });
+    activeImplementationRuns.set(state.prototypeId, work);
+}
+
+function testEvent(type, message) {
+    return {
+        id: randomUUID(),
+        type,
+        message,
+        at: new Date().toISOString(),
+    };
+}
+
+function markTestResultsStale(artifacts) {
+    return artifacts.map((artifact) =>
+        artifact.stage === "test" && artifact.id === "test-results"
+            ? { ...artifact, reviewStatus: "stale" }
+            : artifact,
+    );
+}
+
+function testScenarioPrompt(args, scenario, dependencyEvidence) {
+    return [
+        `Execute ${scenario.type} test scenario "${scenario.id}: ${scenario.title}".`,
+        "",
+        `Project root: ${args.projectRoot}`,
+        `Description: ${scenario.description}`,
+        `Expected outcome: ${scenario.expectedOutcome}`,
+        "",
+        "Steps:",
+        ...scenario.steps.map((step) => `- ${step}`),
+        "",
+        "Validation guidance:",
+        ...scenario.validation.map((step) => `- ${step}`),
+        "",
+        dependencyEvidence.length > 0
+            ? `Dependency evidence:\n${dependencyEvidence.map((entry) => `- ${entry}`).join("\n")}`
+            : "Dependency evidence: none.",
+        "",
+        "Exercise the implemented application and its real integration boundaries using",
+        "the existing repository tooling. Add or update integration/interaction test code",
+        "only when the test specification requires it. Preserve user changes. Do not create",
+        "branches, commits, stashes, or pull requests. Return passed only when the expected",
+        "outcome is observed; otherwise return failed with concrete evidence.",
+    ].join("\n");
+}
+
+async function prepareTestWave(prototypeId, wave) {
+    return withAnswerClaim(prototypeId, async () => {
+        const state = await loadState(prototypeId);
+        const review = normalizeDesignReview(state.testDesignReview);
+        const testing = normalizeTesting(state.testing, review);
+        if (!["starting", "running"].includes(testing.status)) return [];
+        const now = new Date().toISOString();
+        const runtimeById = new Map<string, any>(
+            testing.scenarios.map((scenario) => [scenario.id, scenario]),
+        );
+        const runnable = [];
+        for (const id of wave.scenarioIds) {
+            const spec = review.scenarios.find((scenario) => scenario.id === id);
+            const runtime = runtimeById.get(id);
+            if (!spec || !runtime || runtime.status === "passed") continue;
+            const dependencyStates = spec.dependencies.map(
+                (dependency) => runtimeById.get(dependency)?.status || "pending",
+            );
+            if (dependencyStates.some((status) => status !== "passed")) {
+                runtime.status = dependencyStates.some((status) =>
+                    ["failed", "blocked"].includes(status),
+                )
+                    ? "blocked"
+                    : "pending";
+                continue;
+            }
+            runtime.status = "running";
+            runtime.startedAt = now;
+            runtime.completedAt = null;
+            runtime.summary = "";
+            runtime.evidence = [];
+            runnable.push(spec);
+        }
+        const runnableIds = new Set(runnable.map((scenario) => scenario.id));
+        const agents = testing.agents.filter(
+            (agent) => !runnableIds.has(agent.scenarioId),
+        );
+        for (const scenario of runnable) {
+            agents.push({
+                id: `test:${scenario.id}`,
+                scenarioId: scenario.id,
+                status: "running",
+                activity: `Running ${scenario.title}`,
+                summary: "",
+            });
+        }
+        const next = {
+            ...state,
+            testing: normalizeTesting(
+                {
+                    ...testing,
+                    status: "running",
+                    currentWaveIndex: wave.index,
+                    scenarios: [...runtimeById.values()],
+                    agents,
+                    events: [
+                        ...testing.events,
+                        testEvent(
+                            "wave",
+                            `Test wave ${wave.index} started with ${runnable.length} scenario${runnable.length === 1 ? "" : "s"}.`,
+                        ),
+                    ],
+                },
+                review,
+            ),
+            status: `Test wave ${wave.index} is running.`,
+            updatedAt: now,
+        };
+        await persistState(next);
+        publishState(prototypeId);
+        return runnable;
+    });
+}
+
+async function recordTestWaveResults(prototypeId, wave, specs, results) {
+    await withAnswerClaim(prototypeId, async () => {
+        const state = await loadState(prototypeId);
+        const review = normalizeDesignReview(state.testDesignReview);
+        const testing = normalizeTesting(state.testing, review);
+        const runtimeById = new Map<string, any>(
+            testing.scenarios.map((scenario) => [scenario.id, scenario]),
+        );
+        const agentsById = new Map<string, any>(
+            testing.agents.map((agent) => [agent.scenarioId, agent]),
+        );
+        const now = new Date().toISOString();
+        let failed = 0;
+        for (let index = 0; index < specs.length; index += 1) {
+            const spec = specs[index];
+            const result = isObject(results[index]) ? results[index] : null;
+            const passed = result?.status === "passed";
+            const runtime = runtimeById.get(spec.id);
+            if (!runtime) continue;
+            runtime.status = passed ? "passed" : "failed";
+            runtime.summary = String(
+                result?.summary ||
+                    (passed
+                        ? "Scenario passed."
+                        : "The test agent returned no passing result."),
+            )
+                .trim()
+                .slice(0, 12_000);
+            runtime.evidence = normalizeStringList(
+                result?.evidence ||
+                    (passed ? [] : ["No passing evidence was returned."]),
+            );
+            runtime.completedAt = now;
+            if (!passed) failed += 1;
+            const agent = agentsById.get(spec.id);
+            if (agent) {
+                agent.status = passed ? "passed" : "failed";
+                agent.activity = passed ? "Scenario passed" : "Scenario failed";
+                agent.summary = runtime.summary;
+            }
+        }
+        const next = {
+            ...state,
+            testing: normalizeTesting(
+                {
+                    ...testing,
+                    scenarios: [...runtimeById.values()],
+                    agents: [...agentsById.values()],
+                    events: [
+                        ...testing.events,
+                        testEvent(
+                            failed > 0 ? "error" : "wave",
+                            `Test wave ${wave.index} finished: ${specs.length - failed} passed, ${failed} failed.`,
+                        ),
+                    ],
+                },
+                review,
+            ),
+            status:
+                failed > 0
+                    ? `Test wave ${wave.index} completed with failures.`
+                    : `Test wave ${wave.index} passed.`,
+            updatedAt: now,
+        };
+        await persistState(next);
+        publishState(prototypeId);
+    });
+}
+
+function testResultsArtifact(state) {
+    const review = normalizeDesignReview(state.testDesignReview);
+    const testing = normalizeTesting(state.testing, review);
+    return {
+        id: "test-results",
+        title: "Integration and interaction test results",
+        kind: "test-results",
+        stage: "test",
+        path: ".",
+        language: "markdown",
+        content: [
+            "# Integration and interaction test results",
+            "",
+            `Completed ${testing.completedAt || "successfully"}.`,
+            "",
+            ...testing.scenarios.flatMap((runtime) => {
+                const spec = review.scenarios.find(
+                    (scenario) => scenario.id === runtime.id,
+                );
+                return [
+                    `## ${spec?.title || runtime.id}`,
+                    "",
+                    `- Type: ${spec?.type || "test"}`,
+                    `- Status: ${runtime.status}`,
+                    `- Summary: ${runtime.summary || "Passed"}`,
+                    ...runtime.evidence.map((entry) => `- Evidence: ${entry}`),
+                    "",
+                ];
+            }),
+        ].join("\n").trim(),
+        mermaid: "",
+        sourceThreadIds: [],
+        reviewStatus: "current",
+    };
+}
+
+async function settleTestRun(prototypeId, run) {
+    await withAnswerClaim(prototypeId, async () => {
+        const state = await loadState(prototypeId);
+        const review = normalizeDesignReview(state.testDesignReview);
+        const testing = normalizeTesting(state.testing, review);
+        if (testing.runId && testing.runId !== run.runId) return;
+        const result = isObject(run.result) ? run.result : {};
+        const passed =
+            run.status === "completed" &&
+            result.status === "passed" &&
+            testing.scenarios.length > 0 &&
+            testing.scenarios.every((scenario) => scenario.status === "passed");
+        const now = new Date().toISOString();
+        let artifacts = markTestResultsStale(state.artifacts);
+        let finalizedArtifactId = null;
+        if (passed) {
+            const completedTesting = {
+                ...testing,
+                status: "completed",
+                completedAt: now,
+            };
+            const artifact = testResultsArtifact({
+                ...state,
+                testing: completedTesting,
+            });
+            artifacts = normalizeArtifacts([
+                artifact,
+                ...state.artifacts.filter(
+                    (candidate) => candidate.id !== artifact.id,
+                ),
+            ]);
+            finalizedArtifactId = artifact.id;
+        }
+        const error = passed
+            ? ""
+            : String(
+                  result.summary ||
+                      (run.status === "completed"
+                          ? "One or more test scenarios failed."
+                          : factoryErrorMessage(run)),
+              ).slice(0, 2000);
+        const next = {
+            ...state,
+            artifacts,
+            testing: normalizeTesting(
+                {
+                    ...testing,
+                    status: passed ? "completed" : "failed",
+                    completedAt: now,
+                    finalizedArtifactId,
+                    error,
+                    events: [
+                        ...testing.events,
+                        testEvent(
+                            passed ? "complete" : "error",
+                            passed
+                                ? "All integration and interaction tests passed."
+                                : `Test execution stopped: ${error}`,
+                        ),
+                    ],
+                },
+                review,
+            ),
+            status: passed
+                ? "All integration and interaction tests passed."
+                : `Tests need attention: ${error}`,
+            updatedAt: now,
+        };
+        await persistState(next);
+        publishState(prototypeId);
+    });
+}
+
+async function runTestFactory(prototypeId, state, resumeFromRunId = null) {
+    const review = normalizeDesignReview(state.testDesignReview);
+    const run = await session.rpc.factory.run({
+        name: TEST_FACTORY_NAME,
+        args: {
+            prototypeId,
+            projectRoot: WORKSPACE_ROOT,
+            scenarios: review.scenarios,
+        },
+        options: {
+            limits: {
+                maxConcurrentSubagents: 4,
+                maxTotalSubagents: 30,
+                timeoutSeconds: 3600,
+                maxAiCredits: 1024000,
+            },
+            ...(resumeFromRunId ? { resumeFromRunId } : {}),
+        },
+    });
+    const accepted = await withAnswerClaim(prototypeId, async () => {
+        const current = await loadState(prototypeId);
+        const currentReview = normalizeDesignReview(current.testDesignReview);
+        const testing = normalizeTesting(current.testing, currentReview);
+        if (!["starting", "running"].includes(testing.status)) return false;
+        const next = {
+            ...current,
+            testing: { ...testing, status: "running", runId: run.runId },
+            status: "Integration and interaction tests are running.",
+            updatedAt: new Date().toISOString(),
+        };
+        await persistState(next);
+        publishState(prototypeId);
+        return true;
+    });
+    if (!accepted) {
+        if (!isFactoryRunTerminal(run.status)) {
+            await session.factory.cancel(run.runId);
+        }
+        return;
+    }
+    const terminal = isFactoryRunTerminal(run.status)
+        ? run
+        : await session.factory.waitForRun(run.runId);
+    await settleTestRun(prototypeId, terminal);
+}
+
+function startTestFactory(prototypeId, state, resumeFromRunId = null) {
+    if (activeTestRuns.has(prototypeId)) return;
+    const work = runTestFactory(prototypeId, state, resumeFromRunId)
+        .catch(async (error) => {
+            const latest = await loadState(prototypeId);
+            await settleTestRun(prototypeId, {
+                runId:
+                    latest.testing.runId || resumeFromRunId || "unavailable",
+                status: "error",
+                error: error instanceof Error ? error.message : String(error),
+            });
+        })
+        .finally(() => {
+            if (activeTestRuns.get(prototypeId) === work) {
+                activeTestRuns.delete(prototypeId);
+            }
+        });
+    activeTestRuns.set(prototypeId, work);
+}
+
+function recoverTestFactory(state, canSubmitAnswers) {
+    const review = normalizeDesignReview(state.testDesignReview);
+    const testing = normalizeTesting(state.testing, review);
+    if (
+        !canSubmitAnswers ||
+        state.lifecycle.currentStage !== "test" ||
+        !["starting", "running"].includes(testing.status) ||
+        activeTestRuns.has(state.prototypeId)
+    ) {
+        return;
+    }
+    const work = (async () => {
+        if (!testing.runId) {
+            await runTestFactory(state.prototypeId, state);
+            return;
+        }
+        let run = await session.factory.getRun(testing.runId);
+        if (run.status === "halted") {
+            await runTestFactory(state.prototypeId, state, testing.runId);
+            return;
+        }
+        if (!isFactoryRunTerminal(run.status)) {
+            run = await session.factory.waitForRun(run.runId);
+        }
+        await settleTestRun(state.prototypeId, run);
+    })()
+        .catch(async (error) => {
+            await settleTestRun(state.prototypeId, {
+                runId: testing.runId || "unavailable",
+                status: "error",
+                error: error instanceof Error ? error.message : String(error),
+            });
+        })
+        .finally(() => {
+            if (activeTestRuns.get(state.prototypeId) === work) {
+                activeTestRuns.delete(state.prototypeId);
+            }
+        });
+    activeTestRuns.set(state.prototypeId, work);
+}
+
+async function submitUsage(entry, answer, res) {
+    let accepted;
+    try {
+        accepted = await withAnswerClaim(entry.prototypeId, async () => {
+            const state = await loadState(entry.prototypeId);
+            if (
+                state.lifecycle.currentStage !== "requirements" ||
+                state.requirements.substage !== "usage"
+            ) {
+                throw new AnswerRequestError(409, "Usage intake is no longer active.");
+            }
+            if (
+                state.processing?.status === "running" ||
+                activeAnswerRuns.has(entry.prototypeId)
+            ) {
+                throw new AnswerRequestError(
+                    409,
+                    "The requirements DAG is currently being updated.",
+                );
+            }
+            if (answer.length > 500 || /[\r\n]/.test(answer)) {
+                throw new AnswerRequestError(
+                    400,
+                    "Enter one usage sentence of 500 characters or fewer.",
+                );
+            }
+            if (state.requirements.usageItems.length >= 30) {
+                throw new AnswerRequestError(
+                    409,
+                    "Usage intake supports up to 30 items.",
+                );
+            }
+            if (
+                state.requirements.usageItems.some(
+                    (item) => item.toLowerCase() === answer.toLowerCase(),
+                )
+            ) {
+                throw new AnswerRequestError(409, "That usage is already listed.");
+            }
+
+            const requestedAt = new Date().toISOString();
+            const requestId = randomUUID();
+            const usageItems = [...state.requirements.usageItems, answer];
+            const next = {
+                ...state,
+                requirements: {
+                    ...state.requirements,
+                    usageItems,
+                },
+                status: "Usage added. Generating fresh suggestions in the background...",
+                suggestionProcessing: {
+                    status: "running",
+                    message: "Generating suggestions without blocking usage entry.",
+                    requestId,
+                    factoryName: SUGGESTION_FACTORY_NAME,
+                    runId: null,
+                    usageItems,
+                    requestedAt,
+                    completedAt: null,
+                },
+                updatedAt: requestedAt,
+            };
+            await persistState(next);
+            publishState(entry.prototypeId);
+            return { requestId, state: next, usageItems };
+        }, true);
+    } catch (error) {
+        if (error instanceof AnswerRequestError) {
+            sendJson(res, error.statusCode, { error: error.message });
+            return;
+        }
+        throw error;
+    }
+
+    sendJson(res, 202, { accepted: true, usageItems: accepted.usageItems });
+    startSuggestionFactory(
+        entry.prototypeId,
+        accepted.requestId,
+        accepted.state.goal,
+        accepted.usageItems,
+    );
+}
+
+async function submitPrototypeRevision(entry, req, res) {
+    let body;
+    try {
+        body = await readRequestBody(req);
+    } catch (error) {
+        sendJson(res, 400, {
+            error: error instanceof Error ? error.message : "Invalid request.",
+        });
+        return;
+    }
+    const suggestion = String(body.suggestion || "").trim().slice(0, 4000);
+    if (!suggestion) {
+        sendJson(res, 400, { error: "Enter a prototype revision suggestion." });
+        return;
+    }
+    if (!(await isPreferredAnswerProvider(entry.extensionId))) {
+        sendJson(res, 409, {
+            error:
+                "Submit revisions from the installed user-scoped Tandem.",
+        });
+        return;
+    }
+
+    let accepted;
+    try {
+        accepted = await withAnswerClaim(entry.prototypeId, async () => {
+            const state = await loadState(entry.prototypeId);
+            if (state.lifecycle.currentStage !== "prototype") {
+                throw new AnswerRequestError(
+                    409,
+                    "Prototype revisions are only available during Prototype.",
+                );
+            }
+            if (state.previewStatus !== "ready") {
+                throw new AnswerRequestError(
+                    409,
+                    "Wait for the runnable preview before suggesting a revision.",
+                );
+            }
+            if (
+                state.processing?.status === "running" ||
+                activeAnswerRuns.has(entry.prototypeId)
+            ) {
+                throw new AnswerRequestError(
+                    409,
+                    "A previous prototype revision is still being processed.",
+                );
+            }
+            if (state.prototypeReview.question) {
+                throw new AnswerRequestError(
+                    409,
+                    "Answer the open clarification before adding another revision.",
+                );
+            }
+
+            const requestedAt = new Date().toISOString();
+            const requestId = randomUUID();
+            const revisionId = randomUUID();
+            const question = {
+                id: `prototype-revision-${revisionId}`,
+                text: "Apply this prototype revision, asking for clarification only if needed.",
+                rationale: "",
+                choices: [],
+                recommended: null,
+                allowFreeText: true,
+                answerPlaceholder: "",
+            };
+            const prototypeReview = normalizePrototypeReview({
+                ...state.prototypeReview,
+                revisions: [
+                    ...state.prototypeReview.revisions,
+                    {
+                        id: revisionId,
+                        suggestion,
+                        status: "processing",
+                        summary: "",
+                        clarifications: [],
+                        submittedAt: requestedAt,
+                        completedAt: null,
+                    },
+                ],
+                activeRevisionId: revisionId,
+                question: null,
+            });
+            const pending = {
+                ...state,
+                phase: "iterating",
+                status: "Reviewing the revision and updating the prototype...",
+                prototypeReview,
+                processing: {
+                    status: "running",
+                    action: "submit-revision",
+                    message: "A hidden agent is reviewing the prototype revision.",
+                    requestId,
+                    factoryName: ANSWER_FACTORY_NAME,
+                    answer: suggestion,
+                    runId: null,
+                    requestedAt,
+                    completedAt: null,
+                    question,
+                    originalDecisionGraph: null,
+                },
+                updatedAt: requestedAt,
+            };
+            await persistState(pending);
+            publishState(entry.prototypeId);
+            return { pending, question, requestId };
+        }, true);
+    } catch (error) {
+        if (error instanceof AnswerRequestError) {
+            sendJson(res, error.statusCode, { error: error.message });
+            return;
+        }
+        throw error;
+    }
+
+    sendJson(res, 202, { accepted: true });
+    startAnswerFactory(
+        entry.prototypeId,
+        accepted.requestId,
+        accepted.question,
+        suggestion,
+        "submit-revision",
+        accepted.pending,
+    );
+}
+
+async function submitRevisionClarification(
+    entry,
+    questionId,
+    answer,
+    res,
+) {
+    let accepted;
+    try {
+        accepted = await withAnswerClaim(entry.prototypeId, async () => {
+            const state = await loadState(entry.prototypeId);
+            const question = state.prototypeReview.question;
+            if (
+                state.lifecycle.currentStage !== "prototype" ||
+                !state.prototypeReview.activeRevisionId ||
+                !question ||
+                question.id !== questionId
+            ) {
+                throw new AnswerRequestError(
+                    409,
+                    "This prototype clarification is no longer active.",
+                );
+            }
+            if (
+                state.processing?.status === "running" ||
+                activeAnswerRuns.has(entry.prototypeId)
+            ) {
+                throw new AnswerRequestError(
+                    409,
+                    "A previous prototype revision is still being processed.",
+                );
+            }
+
+            const requestedAt = new Date().toISOString();
+            const requestId = randomUUID();
+            const pending = {
+                ...state,
+                phase: "iterating",
+                status: "Applying the clarified prototype revision...",
+                processing: {
+                    status: "running",
+                    action: "clarify-revision",
+                    message: "A hidden agent is applying the clarification.",
+                    requestId,
+                    factoryName: ANSWER_FACTORY_NAME,
+                    answer,
+                    runId: null,
+                    requestedAt,
+                    completedAt: null,
+                    question,
+                    originalDecisionGraph: null,
+                },
+                prototypeReview: {
+                    ...state.prototypeReview,
+                    question: null,
+                },
+                updatedAt: requestedAt,
+            };
+            await persistState(pending);
+            publishState(entry.prototypeId);
+            return { pending, question, requestId };
+        }, true);
+    } catch (error) {
+        if (error instanceof AnswerRequestError) {
+            sendJson(res, error.statusCode, { error: error.message });
+            return;
+        }
+        throw error;
+    }
+
+    sendJson(res, 202, { accepted: true });
+    startAnswerFactory(
+        entry.prototypeId,
+        accepted.requestId,
+        accepted.question,
+        answer,
+        "clarify-revision",
+        accepted.pending,
+    );
+}
+
+async function beginPrototypeCompletion(entry, res) {
+    if (!(await isPreferredAnswerProvider(entry.extensionId))) {
+        throw new CanvasError(
+            "read_only_provider",
+            "Finish Prototype from the installed user-scoped Tandem.",
+        );
+    }
+    const accepted = await withAnswerClaim(entry.prototypeId, async () => {
+        const state = await loadState(entry.prototypeId);
+        if (state.lifecycle.currentStage !== "prototype") {
+            throw new CanvasError(
+                "stage_not_active",
+                "Only the active Prototype stage can be completed.",
+            );
+        }
+        if (
+            state.processing?.status === "running" ||
+            activeAnswerRuns.has(entry.prototypeId)
+        ) {
+            throw new CanvasError(
+                "processing_in_progress",
+                "Wait for the active prototype revision to finish.",
+            );
+        }
+        const blocker = stageCompletionError(state, "prototype", {
+            requirePrototypeSpec: false,
+        });
+        if (blocker) throw new CanvasError("stage_not_ready", blocker);
+
+        const requestedAt = new Date().toISOString();
+        const requestId = randomUUID();
+        const question = {
+            id: "generate-design-spec",
+            text: "Generate the evidence-backed draft feature specification.",
+            rationale: "",
+            choices: [],
+            recommended: null,
+            allowFreeText: false,
+            answerPlaceholder: "",
+        };
+        const pending = {
+            ...state,
+            status:
+                "Collecting prototype evidence and generating the draft feature specification...",
+            processing: {
+                status: "running",
+                action: "generate-design-spec",
+                message: "A hidden agent is preparing the draft feature specification.",
+                requestId,
+                factoryName: ANSWER_FACTORY_NAME,
+                answer: "Finish Prototype and generate the draft feature specification.",
+                runId: null,
+                requestedAt,
+                completedAt: null,
+                question,
+                originalDecisionGraph: null,
+            },
+            updatedAt: requestedAt,
+        };
+        await persistState(pending);
+        publishState(entry.prototypeId);
+        return { pending, question, requestId };
+    }, true);
+
+    sendJson(res, 202, { accepted: true });
+    startAnswerFactory(
+        entry.prototypeId,
+        accepted.requestId,
+        accepted.question,
+        accepted.pending.processing.answer,
+        "generate-design-spec",
+        accepted.pending,
+    );
+}
+
+async function submitAnswer(entry, req, res) {
+    let body;
+    try {
+        body = await readRequestBody(req);
+    } catch (error) {
+        sendJson(res, 400, {
+            error: error instanceof Error ? error.message : "Invalid request.",
+        });
+        return;
+    }
+
+    const questionId = String(body.questionId || "").trim();
+    const answer = String(body.answer || "").trim().slice(0, 4000);
+    const requestedAction = String(body.action || "").trim();
+
+    if (!answer) {
+        sendJson(res, 400, { error: "Choose or enter an answer." });
+        return;
+    }
+    if (requestedAction && !ANSWER_ACTIONS.has(requestedAction)) {
+        sendJson(res, 400, { error: "This requirements action is not supported." });
+        return;
+    }
+    if (!(await isPreferredAnswerProvider(entry.extensionId))) {
+        sendJson(res, 409, {
+            error:
+                "Submit this answer from the installed user-scoped Tandem.",
+        });
+        return;
+    }
+    if (requestedAction === "add-usage") {
+        await submitUsage(entry, answer, res);
+        return;
+    }
+    if (requestedAction === "clarify-revision") {
+        await submitRevisionClarification(entry, questionId, answer, res);
+        return;
+    }
+
+    let accepted;
+    try {
+        accepted = await withAnswerClaim(entry.prototypeId, async () => {
+            const state = await loadState(entry.prototypeId);
+            if (state.lifecycle.currentStage !== "requirements") {
+                throw new AnswerRequestError(
+                    409,
+                    "Requirement decisions can only change during requirements collection.",
+                );
+            }
+            const decisionGraph = normalizeDecisionGraph(
+                state.decisionGraph,
+                state.question,
+            );
+            const decisionNode = decisionGraph.nodes.find(
+                (node) => node.id === questionId,
+            );
+            const isUsageIntake =
+                state.requirements.substage === "usage" &&
+                questionId === USAGE_QUESTION_ID;
+            const action =
+                requestedAction ||
+                (isUsageIntake ? "add-usage" : "answer-decision");
+            const canChangeDecision =
+                action === "change-answer" && decisionNode?.status === "answered";
+            const canAnswerDecision =
+                action === "answer-decision" && decisionNode?.status === "active";
+            const question = isUsageIntake
+                ? usageQuestion(state.requirements.suggestions)
+                : canAnswerDecision || canChangeDecision
+                  ? decisionNode.question
+                  : null;
+            if (
+                state.processing?.status === "running" ||
+                activeAnswerRuns.has(entry.prototypeId)
+            ) {
+                throw new AnswerRequestError(
+                    409,
+                    "A previous answer is still being processed.",
+                );
+            }
+            if (
+                isUsageIntake &&
+                action !== "generate-dag"
+            ) {
+                throw new AnswerRequestError(409, "This usage action is not active.");
+            }
+            if (
+                action === "generate-dag" &&
+                state.requirements.usageItems.length === 0
+            ) {
+                throw new AnswerRequestError(
+                    409,
+                    "Add at least one usage before generating the DAG.",
+                );
+            }
+            if (!question || question.id !== questionId) {
+                throw new AnswerRequestError(
+                    409,
+                    "This question is no longer active.",
+                );
+            }
+
+            const requestedAt = new Date().toISOString();
+            const requestId = randomUUID();
+            const pendingDecisionGraph =
+                action === "change-answer"
+                    ? invalidateDependentNodes(decisionGraph, questionId)
+                    : decisionGraph;
+            const pending = {
+                ...state,
+                question: null,
+                decisionGraph: pendingDecisionGraph,
+                status:
+                    action === "add-usage"
+                        ? "Adding the usage and generating fresh suggestions..."
+                        : action === "generate-dag"
+                          ? "Generating the requirements DAG from your usages..."
+                          : action === "change-answer"
+                            ? "Updating this frontier and all dependent decisions..."
+                            : "Applying the answer and preparing the next active decision...",
+                processing: {
+                    status: "running",
+                    message:
+                        PROCESSING_MESSAGES[action] ||
+                        "Applying the requested Tandem update.",
+                    action,
+                    requestId,
+                    factoryName: ANSWER_FACTORY_NAME,
+                    answer,
+                    runId: null,
+                    requestedAt,
+                    completedAt: null,
+                    question,
+                    originalDecisionGraph:
+                        action === "change-answer" ? decisionGraph : null,
+                },
+                updatedAt: requestedAt,
+            };
+            await persistState(pending);
+            publishState(entry.prototypeId);
+            return { pending, question, requestId, action };
+        }, true);
+    } catch (error) {
+        if (error instanceof AnswerRequestError) {
+            sendJson(res, error.statusCode, { error: error.message });
+            return;
+        }
+        throw error;
+    }
+
+    sendJson(res, 202, { accepted: true });
+    startAnswerFactory(
+        entry.prototypeId,
+        accepted.requestId,
+        accepted.question,
+        answer,
+        accepted.action,
+        accepted.pending,
+    );
+}
+
+async function markReloadComplete(state, extensionId) {
+    if (extensionId !== USER_EXTENSION_ID) return state;
+
+    return withAnswerClaim(state.prototypeId, async () => {
+        const current = await loadState(state.prototypeId);
+        const receipt = current.reloadReceipt;
+        if (receipt?.status !== "reloading") return current;
+
+        const requestedAt = Date.parse(receipt.requestedAt);
+        if (!Number.isFinite(requestedAt) || PROCESS_STARTED_AT <= requestedAt) {
+            return current;
+        }
+
+        const completed = {
+            ...current,
+            reloadReceipt: {
+                ...receipt,
+                status: "success",
+                message: "Reloaded the latest installed user extension.",
+                completedAt: new Date().toISOString(),
+            },
+            updatedAt: new Date().toISOString(),
+        };
+        await persistState(completed);
+        return completed;
+    });
+}
+
+async function recordReloadError(prototypeId, error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await withAnswerClaim(prototypeId, async () => {
+        const state = await loadState(prototypeId);
+        const failed = {
+            ...state,
+            reloadReceipt: {
+                status: "error",
+                message,
+                requestedAt:
+                    state.reloadReceipt?.requestedAt || new Date().toISOString(),
+                completedAt: new Date().toISOString(),
+                extensionId: USER_EXTENSION_ID,
+            },
+            updatedAt: new Date().toISOString(),
+        };
+        await persistState(failed);
+        publishState(prototypeId);
+    });
+    await logSafely(`Tandem extension reload failed: ${message}`);
+}
+
+async function submitReload(entry, res) {
+    if (entry.extensionId !== USER_EXTENSION_ID) {
+        sendJson(res, 409, {
+            error:
+                "Reload is available only from the installed user-scoped Tandem.",
+        });
+        return;
+    }
+
+    let extensionList;
+    try {
+        extensionList = await session.rpc.extensions.list();
+    } catch (error) {
+        sendJson(res, 500, {
+            error: `Could not check the installed extension: ${
+                error instanceof Error ? error.message : String(error)
+            }`,
+        });
+        return;
+    }
+
+    const installed = extensionList.extensions.find(
+        (extension) => extension.id === USER_EXTENSION_ID,
+    );
+    if (!installed || installed.status !== "running") {
+        sendJson(res, 409, {
+            error: installed
+                ? `The installed user extension is ${installed.status}.`
+                : "The installed user extension is not available in this session.",
+        });
+        return;
+    }
+
+    const requestedAt = new Date().toISOString();
+    await withAnswerClaim(entry.prototypeId, async () => {
+        const state = await loadState(entry.prototypeId);
+        const reloading = {
+            ...state,
+            reloadReceipt: {
+                status: "reloading",
+                message: "Reloading the latest installed user extension...",
+                requestedAt,
+                completedAt: null,
+                extensionId: USER_EXTENSION_ID,
+            },
+            updatedAt: requestedAt,
+        };
+        await persistState(reloading);
+        publishState(entry.prototypeId);
+    });
+    sendJson(res, 202, { accepted: true, requestedAt });
+
+    setTimeout(() => {
+        session.rpc.extensions.reload().catch((error) => {
+            recordReloadError(entry.prototypeId, error).catch((recordError) => {
+                console.error(
+                    `Tandem could not record a reload failure: ${
+                        recordError instanceof Error
+                            ? recordError.message
+                            : String(recordError)
+                    }`,
+                );
+            });
+        });
+    }, 150);
+}
+
+async function submitStageCompletion(entry, req, res) {
+    let body;
+    try {
+        body = await readRequestBody(req);
+        const stageId = String(body.stageId || "");
+        if (stageId === "prototype") {
+            await beginPrototypeCompletion(entry, res);
+            return;
+        }
+        const state = await completeLifecycleStage(
+            entry.prototypeId,
+            stageId,
+            entry.extensionId,
+        );
+        sendJson(res, 200, publicState(entry, state));
+    } catch (error) {
+        if (error instanceof CanvasError) {
+            sendJson(res, 409, { error: error.message, code: error.code });
+            return;
+        }
+        throw error;
+    }
+}
+
+async function submitDesignReviewRequest(entry, req, res) {
+    let body;
+    try {
+        body = await readRequestBody(req);
+    } catch (error) {
+        sendJson(res, 400, {
+            error: error instanceof Error ? error.message : "Invalid request.",
+        });
+        return;
+    }
+    const prompt = String(body.prompt || "").trim().slice(0, 4000);
+    const type = body.type === "artifact" ? "artifact" : "question";
+    const artifactKind = type === "artifact" &&
+        ["diagram", "contract", "decision-record", "test-scenario"].includes(
+            body.artifactKind,
+        )
+        ? body.artifactKind
+        : null;
+    const reviewArtifactId = String(body.artifactId || "").trim().slice(0, 120);
+    if (!prompt) {
+        sendJson(res, 400, { error: "Enter a design question or artifact request." });
+        return;
+    }
+    if (type === "artifact" && !artifactKind) {
+        sendJson(res, 400, { error: "Choose the design artifact to generate." });
+        return;
+    }
+    if (!(await isPreferredAnswerProvider(entry.extensionId))) {
+        sendJson(res, 409, {
+            error: "Use the installed user-scoped Tandem for Design Review.",
+        });
+        return;
+    }
+
+    try {
+        await withAnswerClaim(entry.prototypeId, async () => {
+            const state = await loadState(entry.prototypeId);
+            if (state.lifecycle.currentStage !== "design") {
+                throw new AnswerRequestError(
+                    409,
+                    "Design Review is available only during Design.",
+                );
+            }
+            const context = designReviewContext(state);
+            const review = context.review;
+            if (
+                reviewArtifactId &&
+                !state.artifacts.some(
+                    (artifact) =>
+                        artifact.id === reviewArtifactId &&
+                        artifact.stage === "design",
+                )
+            ) {
+                throw new AnswerRequestError(
+                    409,
+                    "The selected design artifact is no longer available.",
+                );
+            }
+            if (review.threads.length >= 100) {
+                throw new AnswerRequestError(
+                    409,
+                    "Resolve the current review before adding more questions.",
+                );
+            }
+            const createdAt = new Date().toISOString();
+            const thread = {
+                id: randomUUID(),
+                type,
+                artifactKind,
+                prompt,
+                answer: "",
+                status: "queued",
+                artifactIds: [],
+                reviewArtifactId: reviewArtifactId || null,
+                createdAt,
+                completedAt: null,
+                error: "",
+            };
+            const next = {
+                ...state,
+                artifacts: markDesignArtifactsStale(
+                    state.artifacts,
+                    null,
+                    context.reviewKind,
+                ),
+                [context.reviewKey]: {
+                    ...review,
+                    threads: [...review.threads, thread],
+                    finalizeRequested: false,
+                    finalizedArtifactId: null,
+                },
+                status:
+                    type === "artifact"
+                        ? `${context.reviewKind === "test" ? "Test design" : "Product design"} artifact request queued.`
+                        : `${context.reviewKind === "test" ? "Test design" : "Product design"} question queued.`,
+                updatedAt: createdAt,
+            };
+            await persistState(next);
+            publishState(entry.prototypeId);
+        });
+    } catch (error) {
+        if (error instanceof AnswerRequestError) {
+            sendJson(res, error.statusCode, { error: error.message });
+            return;
+        }
+        throw error;
+    }
+    sendJson(res, 202, { accepted: true });
+    startDesignReviewQueue(entry.prototypeId);
+}
+
+async function submitDesignThreadAction(entry, req, res) {
+    let body;
+    try {
+        body = await readRequestBody(req);
+    } catch (error) {
+        sendJson(res, 400, {
+            error: error instanceof Error ? error.message : "Invalid request.",
+        });
+        return;
+    }
+    const threadId = String(body.threadId || "").trim();
+    const action = String(body.action || "").trim();
+    if (!threadId || !["resolve", "reopen", "retry"].includes(action)) {
+        sendJson(res, 400, { error: "Invalid Design Review thread action." });
+        return;
+    }
+    if (!(await isPreferredAnswerProvider(entry.extensionId))) {
+        sendJson(res, 409, {
+            error: "Use the installed user-scoped Tandem for Design Review.",
+        });
+        return;
+    }
+
+    let shouldStartQueue = false;
+    try {
+        const state = await withAnswerClaim(entry.prototypeId, async () => {
+            const current = await loadState(entry.prototypeId);
+            if (current.lifecycle.currentStage !== "design") {
+                throw new AnswerRequestError(
+                    409,
+                    "Design Review is available only during Design.",
+                );
+            }
+            const context = designReviewContext(current);
+            const review = context.review;
+            const thread = review.threads.find(
+                (candidate) => candidate.id === threadId,
+            );
+            if (!thread) {
+                throw new AnswerRequestError(404, "Design Review thread not found.");
+            }
+            let nextStatus;
+            if (action === "resolve" && thread.status === "answered") {
+                nextStatus = "resolved";
+            } else if (action === "reopen" && thread.status === "resolved") {
+                nextStatus = "answered";
+            } else if (action === "retry" && thread.status === "failed") {
+                nextStatus = "queued";
+                shouldStartQueue = true;
+            } else {
+                throw new AnswerRequestError(
+                    409,
+                    `The ${action} action is not available for this thread.`,
+                );
+            }
+            const threads = review.threads.map((candidate) =>
+                candidate.id === threadId
+                    ? {
+                          ...candidate,
+                          status: nextStatus,
+                          error: action === "retry" ? "" : candidate.error,
+                      }
+                    : candidate,
+            );
+            const invalidatesReview = action !== "resolve";
+            const next = {
+                ...current,
+                artifacts: invalidatesReview
+                    ? markDesignArtifactsStale(
+                          current.artifacts,
+                          threadId,
+                          context.reviewKind,
+                      )
+                    : current.artifacts,
+                [context.reviewKey]: {
+                    ...review,
+                    threads,
+                    finalizeRequested: invalidatesReview
+                        ? false
+                        : review.finalizeRequested,
+                    finalizedArtifactId: invalidatesReview
+                        ? null
+                        : review.finalizedArtifactId,
+                },
+                status:
+                    action === "resolve"
+                        ? `${context.reviewKind === "test" ? "Test design" : "Product design"} answer resolved.`
+                        : action === "reopen"
+                          ? `${context.reviewKind === "test" ? "Test design" : "Product design"} answer reopened for follow-up.`
+                          : `${context.reviewKind === "test" ? "Test design" : "Product design"} request queued for retry.`,
+                updatedAt: new Date().toISOString(),
+            };
+            await persistState(next);
+            publishState(entry.prototypeId);
+            return next;
+        });
+        sendJson(res, 200, publicState(entry, state));
+    } catch (error) {
+        if (error instanceof AnswerRequestError) {
+            sendJson(res, error.statusCode, { error: error.message });
+            return;
+        }
+        throw error;
+    }
+    if (shouldStartQueue) startDesignReviewQueue(entry.prototypeId);
+}
+
+async function submitDesignReviewFinalization(entry, res) {
+    if (!(await isPreferredAnswerProvider(entry.extensionId))) {
+        sendJson(res, 409, {
+            error: "Use the installed user-scoped Tandem for Design Review.",
+        });
+        return;
+    }
+    try {
+        await withAnswerClaim(entry.prototypeId, async () => {
+            const state = await loadState(entry.prototypeId);
+            if (state.lifecycle.currentStage !== "design") {
+                throw new AnswerRequestError(
+                    409,
+                    "Only the active Design stage can be reviewed.",
+                );
+            }
+            const context = designReviewContext(state);
+            const review = context.review;
+            if (
+                review.processing ||
+                review.threads.some((thread) => thread.status !== "resolved")
+            ) {
+                throw new AnswerRequestError(
+                    409,
+                    "Resolve every answered question and wait for queued work before finishing the review.",
+                );
+            }
+            const next = {
+                ...state,
+                artifacts: markDesignArtifactsStale(
+                    state.artifacts,
+                    null,
+                    context.reviewKind,
+                ),
+                [context.reviewKey]: {
+                    ...review,
+                    finalizeRequested: true,
+                    finalizedArtifactId: null,
+                },
+                status: `Final ${context.reviewKind} design specification requested.`,
+                updatedAt: new Date().toISOString(),
+            };
+            await persistState(next);
+            publishState(entry.prototypeId);
+        });
+    } catch (error) {
+        if (error instanceof AnswerRequestError) {
+            sendJson(res, error.statusCode, { error: error.message });
+            return;
+        }
+        throw error;
+    }
+    sendJson(res, 202, { accepted: true });
+    startDesignReviewQueue(entry.prototypeId);
+}
+
+async function submitPlanningRequest(entry, req, res) {
+    let body;
+    try {
+        body = await readRequestBody(req);
+    } catch (error) {
+        sendJson(res, 400, {
+            error: error instanceof Error ? error.message : "Invalid request.",
+        });
+        return;
+    }
+    const requestedAction = body.action === "revise" ? "revise" : "generate";
+    const instruction = String(body.instruction || "").trim().slice(0, 4000);
+    const maxAgents = Math.max(
+        1,
+        Math.min(30, Number.parseInt(body.maxAgents, 10) || 4),
+    );
+    if (requestedAction === "revise" && !instruction) {
+        sendJson(res, 400, { error: "Describe how the execution plan should change." });
+        return;
+    }
+    if (!(await isPreferredAnswerProvider(entry.extensionId))) {
+        sendJson(res, 409, {
+            error: "Use the installed user-scoped Tandem for execution planning.",
+        });
+        return;
+    }
+
+    let pending;
+    try {
+        pending = await withAnswerClaim(entry.prototypeId, async () => {
+            const state = await loadState(entry.prototypeId);
+            if (state.lifecycle.currentStage !== "plan") {
+                throw new AnswerRequestError(
+                    409,
+                    "Execution planning is available only during Plan.",
+                );
+            }
+            const planning = normalizePlanning(state.planning);
+            if (planning.processing || activePlanningRuns.has(entry.prototypeId)) {
+                throw new AnswerRequestError(
+                    409,
+                    "Wait for the active execution-planning request to finish.",
+                );
+            }
+            if (requestedAction === "revise" && planning.workItems.length === 0) {
+                throw new AnswerRequestError(
+                    409,
+                    "Generate the initial execution plan before revising it.",
+                );
+            }
+            const requestedAt = new Date().toISOString();
+            const requestId = randomUUID();
+            const next = {
+                ...state,
+                artifacts: markExecutionPlanStale(state.artifacts),
+                planning: {
+                    ...planning,
+                    status:
+                        requestedAction === "revise" ? "revising" : "generating",
+                    maxAgents,
+                    processing: {
+                        requestId,
+                        action: requestedAction,
+                        instruction:
+                            instruction ||
+                            "Generate an efficient implementation execution plan.",
+                        runId: null,
+                        requestedAt,
+                    },
+                    finalizedArtifactId: null,
+                    error: "",
+                },
+                status:
+                    requestedAction === "revise"
+                        ? "Revising the execution plan..."
+                        : "Generating the execution plan...",
+                updatedAt: requestedAt,
+            };
+            await persistState(next);
+            publishState(entry.prototypeId);
+            return next;
+        });
+    } catch (error) {
+        if (error instanceof AnswerRequestError) {
+            sendJson(res, error.statusCode, { error: error.message });
+            return;
+        }
+        throw error;
+    }
+    sendJson(res, 202, { accepted: true });
+    startPlanningFactory(
+        entry.prototypeId,
+        pending.planning.processing.requestId,
+        pending,
+    );
+}
+
+async function submitPlanningFinalization(entry, res) {
+    if (!(await isPreferredAnswerProvider(entry.extensionId))) {
+        sendJson(res, 409, {
+            error: "Use the installed user-scoped Tandem for execution planning.",
+        });
+        return;
+    }
+    try {
+        const state = await withAnswerClaim(entry.prototypeId, async () => {
+            const current = await loadState(entry.prototypeId);
+            if (current.lifecycle.currentStage !== "plan") {
+                throw new AnswerRequestError(
+                    409,
+                    "Only the active Plan stage can be finalized.",
+                );
+            }
+            const planning = normalizePlanning(current.planning);
+            if (
+                planning.processing ||
+                planning.status !== "ready" ||
+                planning.workItems.length === 0 ||
+                planning.waves.length === 0
+            ) {
+                throw new AnswerRequestError(
+                    409,
+                    "Generate a valid execution plan before finalizing it.",
+                );
+            }
+            if (
+                current.artifacts.length >= 30 &&
+                !current.artifacts.some(
+                    (artifact) => artifact.id === "execution-plan",
+                )
+            ) {
+                throw new AnswerRequestError(
+                    409,
+                    "Remove one artifact before capturing the execution plan.",
+                );
+            }
+            const artifact = executionPlanArtifact(current);
+            const artifacts = normalizeArtifacts([
+                artifact,
+                ...current.artifacts.filter(
+                    (candidate) => candidate.id !== artifact.id,
+                ),
+            ]);
+            const completedAt = new Date().toISOString();
+            const next = {
+                ...current,
+                artifacts,
+                planning: {
+                    ...planning,
+                    status: "complete",
+                    processing: null,
+                    finalizedArtifactId: artifact.id,
+                    error: "",
+                },
+                implementation: resetImplementationForPlan(
+                    planning,
+                    current.implementation,
+                ),
+                status:
+                    "Execution plan captured. Plan can now be completed.",
+                updatedAt: completedAt,
+            };
+            await persistState(next);
+            publishState(entry.prototypeId);
+            return next;
+        });
+        sendJson(res, 200, publicState(entry, state));
+    } catch (error) {
+        if (error instanceof AnswerRequestError) {
+            sendJson(res, error.statusCode, { error: error.message });
+            return;
+        }
+        throw error;
+    }
+}
+
+async function submitImplementationStart(entry, res) {
+    if (!(await isPreferredAnswerProvider(entry.extensionId))) {
+        sendJson(res, 409, {
+            error: "Use the installed user-scoped Tandem to run implementation.",
+        });
+        return;
+    }
+    let pending;
+    try {
+        pending = await withAnswerClaim(entry.prototypeId, async () => {
+            const state = await loadState(entry.prototypeId);
+            const planning = normalizePlanning(state.planning);
+            if (state.lifecycle.currentStage !== "implement") {
+                throw new AnswerRequestError(
+                    409,
+                    "Implementation can start only during the Implement stage.",
+                );
+            }
+            if (
+                planning.status !== "complete" ||
+                planning.finalizedArtifactId !== "execution-plan"
+            ) {
+                throw new AnswerRequestError(
+                    409,
+                    "Finalize the execution plan before starting implementation.",
+                );
+            }
+            const implementation = normalizeImplementation(
+                state.implementation,
+                planning,
+            );
+            if (
+                ["starting", "running"].includes(implementation.status) ||
+                activeImplementationRuns.has(entry.prototypeId)
+            ) {
+                throw new AnswerRequestError(
+                    409,
+                    "Implementation agents are already running.",
+                );
+            }
+            if (implementation.status === "completed") {
+                throw new AnswerRequestError(
+                    409,
+                    "Implementation is already complete.",
+                );
+            }
+            const startedAt = new Date().toISOString();
+            const retrying = implementation.workItems.some(
+                (item) =>
+                    item.status === "completed" ||
+                    ["failed", "blocked", "cancelled"].includes(item.status),
+            );
+            const nextImplementation = normalizeImplementation(
+                {
+                    ...implementation,
+                    status: "starting",
+                    runId: null,
+                    currentWaveIndex: 0,
+                    workItems: implementation.workItems.map((item) =>
+                        item.status === "completed"
+                            ? item
+                            : {
+                                  ...item,
+                                  status: "pending",
+                                  agentId: "",
+                                  summary: "",
+                                  filesChanged: [],
+                                  validation: [],
+                                  blockers: [],
+                                  startedAt: null,
+                                  completedAt: null,
+                              },
+                    ),
+                    agents: implementation.agents.filter(
+                        (agent) =>
+                            implementation.workItems.find(
+                                (item) => item.id === agent.workItemId,
+                            )?.status === "completed",
+                    ),
+                    startedAt,
+                    completedAt: null,
+                    finalizedArtifactId: null,
+                    error: "",
+                    events: [
+                        ...implementation.events,
+                        implementationEvent(
+                            "start",
+                            retrying
+                                ? "Retrying incomplete implementation work."
+                                : "Implementation run requested.",
+                        ),
+                    ],
+                },
+                planning,
+            );
+            const next = {
+                ...state,
+                artifacts: markFinalCodeStale(state.artifacts),
+                implementation: nextImplementation,
+                status: retrying
+                    ? "Retrying incomplete implementation work..."
+                    : "Starting implementation agents...",
+                updatedAt: startedAt,
+            };
+            await persistState(next);
+            publishState(entry.prototypeId);
+            return next;
+        });
+    } catch (error) {
+        if (error instanceof AnswerRequestError) {
+            sendJson(res, error.statusCode, { error: error.message });
+            return;
+        }
+        throw error;
+    }
+    sendJson(res, 202, { accepted: true });
+    startImplementationFactory(entry.prototypeId, pending);
+}
+
+async function submitImplementationStrategy(entry, req, res) {
+    let body;
+    try {
+        body = await readRequestBody(req);
+    } catch (error) {
+        sendJson(res, 400, {
+            error: error instanceof Error ? error.message : "Invalid request.",
+        });
+        return;
+    }
+    const text = String(body.text || "").trim().slice(0, 4000);
+    if (!text) {
+        sendJson(res, 400, {
+            error: "Describe the execution strategy adjustment.",
+        });
+        return;
+    }
+    if (!(await isPreferredAnswerProvider(entry.extensionId))) {
+        sendJson(res, 409, {
+            error: "Use the installed user-scoped Tandem to adjust implementation.",
+        });
+        return;
+    }
+    try {
+        const state = await withAnswerClaim(entry.prototypeId, async () => {
+            const current = await loadState(entry.prototypeId);
+            const planning = normalizePlanning(current.planning);
+            const implementation = normalizeImplementation(
+                current.implementation,
+                planning,
+            );
+            if (current.lifecycle.currentStage !== "implement") {
+                throw new AnswerRequestError(
+                    409,
+                    "Strategy adjustments are available only during Implement.",
+                );
+            }
+            if (implementation.status === "completed") {
+                throw new AnswerRequestError(
+                    409,
+                    "Implementation is already complete.",
+                );
+            }
+            if (implementation.status === "running") {
+                const hasFutureWave = planning.waves.some(
+                    (wave) =>
+                        wave.index > implementation.currentWaveIndex &&
+                        wave.workItemIds.some(
+                            (id) =>
+                                implementation.workItems.find(
+                                    (item) => item.id === id,
+                                )?.status !== "completed",
+                        ),
+                );
+                if (!hasFutureWave) {
+                    throw new AnswerRequestError(
+                        409,
+                        "No later wave is available for a safe adjustment. Stop the run and retry incomplete work to apply new guidance.",
+                    );
+                }
+            }
+            const submittedAt = new Date().toISOString();
+            const next = {
+                ...current,
+                implementation: normalizeImplementation(
+                    {
+                        ...implementation,
+                        strategySuggestions: [
+                            ...implementation.strategySuggestions,
+                            {
+                                id: randomUUID(),
+                                text,
+                                status: "queued",
+                                submittedAt,
+                                appliedAt: null,
+                                waveIndex: null,
+                            },
+                        ],
+                        events: [
+                            ...implementation.events,
+                            implementationEvent(
+                                "strategy",
+                                "A strategy adjustment was queued for the next wave.",
+                            ),
+                        ],
+                    },
+                    planning,
+                ),
+                status:
+                    implementation.status === "running"
+                        ? "Strategy adjustment queued for the next wave."
+                        : "Strategy adjustment saved for the next implementation run.",
+                updatedAt: submittedAt,
+            };
+            await persistState(next);
+            publishState(entry.prototypeId);
+            return next;
+        });
+        sendJson(res, 200, publicState(entry, state));
+    } catch (error) {
+        if (error instanceof AnswerRequestError) {
+            sendJson(res, error.statusCode, { error: error.message });
+            return;
+        }
+        throw error;
+    }
+}
+
+async function submitImplementationStop(entry, res) {
+    if (!(await isPreferredAnswerProvider(entry.extensionId))) {
+        sendJson(res, 409, {
+            error: "Use the installed user-scoped Tandem to stop implementation.",
+        });
+        return;
+    }
+    let runId = null;
+    try {
+        await withAnswerClaim(entry.prototypeId, async () => {
+            const state = await loadState(entry.prototypeId);
+            const planning = normalizePlanning(state.planning);
+            const implementation = normalizeImplementation(
+                state.implementation,
+                planning,
+            );
+            if (!["starting", "running"].includes(implementation.status)) {
+                throw new AnswerRequestError(
+                    409,
+                    "No implementation run is active.",
+                );
+            }
+            runId = implementation.runId;
+            const now = new Date().toISOString();
+            const next = {
+                ...state,
+                implementation: normalizeImplementation(
+                    {
+                        ...implementation,
+                        status: "cancelled",
+                        completedAt: now,
+                        workItems: implementation.workItems.map((item) =>
+                            item.status === "running"
+                                ? { ...item, status: "cancelled", completedAt: now }
+                                : item,
+                        ),
+                        events: [
+                            ...implementation.events,
+                            implementationEvent(
+                                "cancel",
+                                "Stop requested for the active implementation run.",
+                            ),
+                        ],
+                    },
+                    planning,
+                ),
+                status: "Implementation stopped.",
+                updatedAt: now,
+            };
+            await persistState(next);
+            publishState(entry.prototypeId);
+        });
+        if (runId) await session.factory.cancel(runId);
+        sendJson(res, 202, { accepted: true });
+    } catch (error) {
+        if (error instanceof AnswerRequestError) {
+            sendJson(res, error.statusCode, { error: error.message });
+            return;
+        }
+        throw error;
+    }
+}
+
+async function implementationRuntimeState(entry) {
+    const state = await loadState(entry.prototypeId);
+    const payload = publicState(entry, state);
+    const runId = state.implementation.runId;
+    if (!runId) return { ...payload, implementationRuntime: null };
+    try {
+        const detail = await session.factory.getRunDetail(runId);
+        return {
+            ...payload,
+            implementationRuntime: {
+                runId: detail.runId,
+                status: detail.status,
+                currentPhase: detail.currentPhase?.id || null,
+                liveAgentCount: detail.liveAgentCount,
+                totalSpawnedAgentCount: detail.totalSpawnedAgentCount,
+                consumed: detail.consumed,
+                agents: detail.agents
+                    .filter((agent) => agent.label.startsWith("work:"))
+                    .map((agent) => ({
+                        id: agent.agentId,
+                        label: agent.label,
+                        status: agent.status,
+                        model: agent.resolvedModel || agent.requestedModel || "",
+                        activity: agent.activity || "",
+                        activeMs: agent.activeMs,
+                        startedAt: agent.startedAt || null,
+                        completedAt: agent.completedAt || null,
+                    })),
+                progress: detail.progress.records.slice(-50).map((record) => ({
+                    seq: record.seq,
+                    text: record.text,
+                    kind: record.kind,
+                    recordedAt: record.recordedAt,
+                })),
+            },
+        };
+    } catch (error) {
+        const message =
+            error instanceof Error
+                ? error.message
+                : "Factory observability is unavailable.";
+        await logSafely(
+            `Tandem could not read implementation runtime details: ${message}`,
+            "warning",
+        );
+        return {
+            ...payload,
+            implementationRuntime: {
+                runId,
+                status: "unavailable",
+                currentPhase: null,
+                liveAgentCount: 0,
+                totalSpawnedAgentCount: 0,
+                consumed: null,
+                agents: [],
+                progress: [],
+                error: message,
+            },
+        };
+    }
+}
+
+async function submitTestStart(entry, res) {
+    if (!(await isPreferredAnswerProvider(entry.extensionId))) {
+        sendJson(res, 409, {
+            error: "Use the installed user-scoped Tandem to run tests.",
+        });
+        return;
+    }
+    let pending;
+    try {
+        pending = await withAnswerClaim(entry.prototypeId, async () => {
+            const state = await loadState(entry.prototypeId);
+            if (state.lifecycle.currentStage !== "test") {
+                throw new AnswerRequestError(
+                    409,
+                    "Integration and interaction tests run only during Test.",
+                );
+            }
+            const review = normalizeDesignReview(state.testDesignReview);
+            if (
+                review.finalizedArtifactId !== "test-spec" ||
+                review.scenarios.length === 0
+            ) {
+                throw new AnswerRequestError(
+                    409,
+                    "Finalize Test design before running tests.",
+                );
+            }
+            const testing = normalizeTesting(state.testing, review);
+            if (
+                ["starting", "running"].includes(testing.status) ||
+                activeTestRuns.has(entry.prototypeId)
+            ) {
+                throw new AnswerRequestError(409, "Tests are already running.");
+            }
+            if (testing.status === "completed") {
+                throw new AnswerRequestError(409, "All tests already passed.");
+            }
+            const startedAt = new Date().toISOString();
+            const next = {
+                ...state,
+                artifacts: markTestResultsStale(state.artifacts),
+                testing: normalizeTesting(
+                    {
+                        ...testing,
+                        status: "starting",
+                        runId: null,
+                        currentWaveIndex: 0,
+                        scenarios: testing.scenarios.map((scenario) =>
+                            scenario.status === "passed"
+                                ? scenario
+                                : {
+                                      ...scenario,
+                                      status: "pending",
+                                      summary: "",
+                                      evidence: [],
+                                      startedAt: null,
+                                      completedAt: null,
+                                  },
+                        ),
+                        agents: testing.agents.filter(
+                            (agent) =>
+                                testing.scenarios.find(
+                                    (scenario) =>
+                                        scenario.id === agent.scenarioId,
+                                )?.status === "passed",
+                        ),
+                        events: [
+                            ...testing.events,
+                            testEvent("start", "Test execution requested."),
+                        ],
+                        startedAt,
+                        completedAt: null,
+                        finalizedArtifactId: null,
+                        error: "",
+                    },
+                    review,
+                ),
+                status: "Starting integration and interaction tests...",
+                updatedAt: startedAt,
+            };
+            await persistState(next);
+            publishState(entry.prototypeId);
+            return next;
+        });
+    } catch (error) {
+        if (error instanceof AnswerRequestError) {
+            sendJson(res, error.statusCode, { error: error.message });
+            return;
+        }
+        throw error;
+    }
+    sendJson(res, 202, { accepted: true });
+    startTestFactory(entry.prototypeId, pending);
+}
+
+async function testRuntimeState(entry) {
+    const state = await loadState(entry.prototypeId);
+    const payload = publicState(entry, state);
+    const runId = state.testing.runId;
+    if (!runId) return { ...payload, testRuntime: null };
+    try {
+        const detail = await session.factory.getRunDetail(runId);
+        return {
+            ...payload,
+            testRuntime: {
+                runId,
+                status: detail.status,
+                currentPhase: detail.currentPhase?.id || null,
+                liveAgentCount: detail.liveAgentCount,
+                consumed: detail.consumed,
+                agents: detail.agents
+                    .filter((agent) => agent.label.startsWith("test:"))
+                    .map((agent) => ({
+                        label: agent.label,
+                        status: agent.status,
+                        model: agent.resolvedModel || agent.requestedModel || "",
+                        activity: agent.activity || "",
+                        activeMs: agent.activeMs,
+                    })),
+                progress: detail.progress.records.slice(-50).map((record) => ({
+                    seq: record.seq,
+                    text: record.text,
+                    kind: record.kind,
+                    recordedAt: record.recordedAt,
+                })),
+            },
+        };
+    } catch (error) {
+        const message =
+            error instanceof Error
+                ? error.message
+                : "Test observability is unavailable.";
+        await logSafely(
+            `Tandem could not read test runtime details: ${message}`,
+            "warning",
+        );
+        return {
+            ...payload,
+            testRuntime: {
+                runId,
+                status: "unavailable",
+                liveAgentCount: 0,
+                consumed: null,
+                agents: [],
+                progress: [],
+                error: message,
+            },
+        };
+    }
+}
+
+async function handleRequest(entry, req, res) {
+    const requestUrl = new URL(req.url || "/", "http://127.0.0.1");
+
+    if (req.method === "GET" && requestUrl.pathname === "/") {
+        res.writeHead(200, {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-store",
+        });
+        res.end(renderTandemHtml());
+        return;
+    }
+
+    if (req.method === "GET" && requestUrl.pathname === "/api/state") {
+        await refreshEntryAnswerCapability(entry);
+        sendJson(
+            res,
+            200,
+            publicState(entry, await loadState(entry.prototypeId)),
+        );
+        return;
+    }
+
+    if (
+        req.method === "GET" &&
+        requestUrl.pathname === "/api/implementation/status"
+    ) {
+        await refreshEntryAnswerCapability(entry);
+        sendJson(res, 200, await implementationRuntimeState(entry));
+        return;
+    }
+
+    if (req.method === "GET" && requestUrl.pathname === "/api/test/status") {
+        await refreshEntryAnswerCapability(entry);
+        sendJson(res, 200, await testRuntimeState(entry));
+        return;
+    }
+
+    if (req.method === "GET" && requestUrl.pathname === "/events") {
+        await refreshEntryAnswerCapability(entry);
+        res.writeHead(200, {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-store",
+            Connection: "keep-alive",
+        });
+        entry.clients.add(res);
+        const state = await loadState(entry.prototypeId);
+        res.write(`data: ${JSON.stringify(publicState(entry, state))}\n\n`);
+        req.on("close", () => entry.clients.delete(res));
+        return;
+    }
+
+    if (req.method === "POST" && requestUrl.pathname === "/api/answer") {
+        await submitAnswer(entry, req, res);
+        return;
+    }
+
+    if (req.method === "POST" && requestUrl.pathname === "/api/revision") {
+        await submitPrototypeRevision(entry, req, res);
+        return;
+    }
+
+    if (req.method === "POST" && requestUrl.pathname === "/api/design-review") {
+        await submitDesignReviewRequest(entry, req, res);
+        return;
+    }
+
+    if (
+        req.method === "POST" &&
+        requestUrl.pathname === "/api/design-review/thread"
+    ) {
+        await submitDesignThreadAction(entry, req, res);
+        return;
+    }
+
+    if (
+        req.method === "POST" &&
+        requestUrl.pathname === "/api/design-review/finalize"
+    ) {
+        await submitDesignReviewFinalization(entry, res);
+        return;
+    }
+
+    if (req.method === "POST" && requestUrl.pathname === "/api/plan/generate") {
+        await submitPlanningRequest(entry, req, res);
+        return;
+    }
+
+    if (req.method === "POST" && requestUrl.pathname === "/api/plan/finalize") {
+        await submitPlanningFinalization(entry, res);
+        return;
+    }
+
+    if (
+        req.method === "POST" &&
+        requestUrl.pathname === "/api/implementation/start"
+    ) {
+        await submitImplementationStart(entry, res);
+        return;
+    }
+
+    if (
+        req.method === "POST" &&
+        requestUrl.pathname === "/api/implementation/strategy"
+    ) {
+        await submitImplementationStrategy(entry, req, res);
+        return;
+    }
+
+    if (
+        req.method === "POST" &&
+        requestUrl.pathname === "/api/implementation/stop"
+    ) {
+        await submitImplementationStop(entry, res);
+        return;
+    }
+
+    if (req.method === "POST" && requestUrl.pathname === "/api/test/start") {
+        await submitTestStart(entry, res);
+        return;
+    }
+
+    if (req.method === "POST" && requestUrl.pathname === "/api/reload") {
+        await submitReload(entry, res);
+        return;
+    }
+
+    if (req.method === "POST" && requestUrl.pathname === "/api/stage/complete") {
+        await submitStageCompletion(entry, req, res);
+        return;
+    }
+
+    sendJson(res, 404, { error: "Not found." });
+}
+
+async function startServer(
+    instanceId,
+    prototypeId,
+    extensionId,
+    canSubmitAnswers,
+) {
+    const entry: any = {
+        instanceId,
+        prototypeId,
+        extensionId,
+        canSubmitAnswers,
+        clients: new Set(),
+        server: null,
+        heartbeat: null,
+        url: "",
+    };
+    const server = createServer((req, res) => {
+        handleRequest(entry, req, res).catch(async (error) => {
+            if (!res.headersSent) {
+                sendJson(res, 500, { error: "Tandem request failed." });
+            } else {
+                res.end();
+            }
+            await logSafely(
+                `Tandem request failed: ${
+                    error instanceof Error ? error.message : String(error)
+                }`,
+            );
+        });
+    });
+
+    await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", () => resolve());
+    });
+
+    const address = server.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+    entry.server = server;
+    entry.url = `http://127.0.0.1:${port}/`;
+    entry.heartbeat = setInterval(() => {
+        for (const client of entry.clients) client.write(": keepalive\n\n");
+    }, 20_000);
+    return entry;
+}
+
+const questionSchema = {
+    anyOf: [
+        { type: "null" },
+        {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+                id: { type: "string", minLength: 1 },
+                text: { type: "string", minLength: 1 },
+                rationale: { type: "string" },
+                choices: {
+                    type: "array",
+                    maxItems: 6,
+                    items: { type: "string", minLength: 1 },
+                },
+                recommended: { type: ["string", "null"] },
+                allowFreeText: { type: "boolean" },
+                answerPlaceholder: { type: "string" },
+            },
+            required: ["id", "text"],
+        },
+    ],
+};
+
+const decisionNodeSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        id: { type: "string", minLength: 1 },
+        title: { type: "string", minLength: 1 },
+        dependencies: {
+            type: "array",
+            maxItems: 20,
+            items: { type: "string", minLength: 1 },
+        },
+        question: questionSchema,
+        answer: { type: ["string", "null"] },
+        status: {
+            type: "string",
+            enum: ["answered", "active", "toAnswer"],
+        },
+    },
+    required: ["id", "title", "dependencies", "question", "answer"],
+};
+
+const decisionGraphSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        nodes: {
+            type: "array",
+            maxItems: 50,
+            items: decisionNodeSchema,
+        },
+    },
+    required: ["nodes"],
+};
+
+const requirementsSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        substage: {
+            type: "string",
+            enum: ["usage", "dag"],
+        },
+        usageItems: {
+            type: "array",
+            maxItems: 30,
+            items: { type: "string", minLength: 1 },
+        },
+        suggestions: {
+            type: "array",
+            maxItems: 6,
+            items: { type: "string", minLength: 1 },
+        },
+    },
+    required: ["substage", "usageItems", "suggestions"],
+};
+
+const revisionSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        id: { type: "string", minLength: 1 },
+        suggestion: { type: "string", minLength: 1 },
+        status: {
+            type: "string",
+            enum: ["processing", "clarifying", "applied", "failed"],
+        },
+        summary: { type: "string" },
+        clarifications: {
+            type: "array",
+            maxItems: 20,
+            items: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                    question: { type: "string", minLength: 1 },
+                    answer: { type: "string", minLength: 1 },
+                },
+                required: ["question", "answer"],
+            },
+        },
+        submittedAt: { type: "string" },
+        completedAt: { type: ["string", "null"] },
+    },
+    required: [
+        "id",
+        "suggestion",
+        "status",
+        "summary",
+        "clarifications",
+        "submittedAt",
+        "completedAt",
+    ],
+};
+
+const evidenceSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        id: { type: "string", minLength: 1 },
+        type: { type: "string", minLength: 1 },
+        content: { type: "string", minLength: 1 },
+        recordedAt: { type: "string" },
+    },
+    required: ["id", "type", "content", "recordedAt"],
+};
+
+const prototypeReviewSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        revisions: {
+            type: "array",
+            maxItems: 50,
+            items: revisionSchema,
+        },
+        activeRevisionId: { type: ["string", "null"] },
+        question: questionSchema,
+        evidence: {
+            type: "array",
+            maxItems: 100,
+            items: evidenceSchema,
+        },
+        designSpecArtifactId: { type: ["string", "null"] },
+    },
+    required: [
+        "revisions",
+        "activeRevisionId",
+        "question",
+        "evidence",
+        "designSpecArtifactId",
+    ],
+};
+
+const designReviewThreadSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        id: { type: "string", minLength: 1 },
+        type: { type: "string", enum: ["question", "artifact"] },
+        artifactKind: {
+            type: ["string", "null"],
+            enum: [
+                "diagram",
+                "contract",
+                "decision-record",
+                "test-scenario",
+                null,
+            ],
+        },
+        prompt: { type: "string", minLength: 1 },
+        answer: { type: "string" },
+        status: {
+            type: "string",
+            enum: ["queued", "processing", "answered", "resolved", "failed"],
+        },
+        artifactIds: {
+            type: "array",
+            maxItems: 20,
+            items: { type: "string", minLength: 1 },
+        },
+        reviewArtifactId: { type: ["string", "null"] },
+        createdAt: { type: "string" },
+        completedAt: { type: ["string", "null"] },
+        error: { type: "string" },
+    },
+    required: [
+        "id",
+        "type",
+        "artifactKind",
+        "prompt",
+        "answer",
+        "status",
+        "artifactIds",
+        "createdAt",
+        "completedAt",
+        "error",
+    ],
+};
+
+const testScenarioSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        id: { type: "string", minLength: 1 },
+        title: { type: "string", minLength: 1 },
+        type: { type: "string", enum: ["integration", "interaction"] },
+        description: { type: "string", minLength: 1 },
+        dependencies: {
+            type: "array",
+            maxItems: 20,
+            items: { type: "string", minLength: 1 },
+        },
+        steps: {
+            type: "array",
+            minItems: 1,
+            maxItems: 30,
+            items: { type: "string", minLength: 1 },
+        },
+        expectedOutcome: { type: "string", minLength: 1 },
+        validation: {
+            type: "array",
+            minItems: 1,
+            maxItems: 30,
+            items: { type: "string", minLength: 1 },
+        },
+    },
+    required: [
+        "id",
+        "title",
+        "type",
+        "description",
+        "dependencies",
+        "steps",
+        "expectedOutcome",
+        "validation",
+    ],
+};
+
+const designReviewSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        threads: {
+            type: "array",
+            maxItems: 100,
+            items: designReviewThreadSchema,
+        },
+        processing: {
+            anyOf: [
+                { type: "null" },
+                {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                        requestId: { type: "string", minLength: 1 },
+                        action: {
+                            type: "string",
+                            enum: ["process-thread", "finalize"],
+                        },
+                        threadId: { type: ["string", "null"] },
+                        runId: { type: ["string", "null"] },
+                        requestedAt: { type: "string" },
+                    },
+                    required: [
+                        "requestId",
+                        "action",
+                        "threadId",
+                        "runId",
+                        "requestedAt",
+                    ],
+                },
+            ],
+        },
+        finalizeRequested: { type: "boolean" },
+        finalizedArtifactId: { type: ["string", "null"] },
+        scenarios: {
+            type: "array",
+            maxItems: 30,
+            items: testScenarioSchema,
+        },
+    },
+    required: [
+        "threads",
+        "processing",
+        "finalizeRequested",
+        "finalizedArtifactId",
+    ],
+};
+
+const planWorkItemSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        id: { type: "string", minLength: 1 },
+        title: { type: "string", minLength: 1 },
+        description: { type: "string", minLength: 1 },
+        dependencies: {
+            type: "array",
+            maxItems: 30,
+            items: { type: "string", minLength: 1 },
+        },
+        agentRole: { type: "string", minLength: 1 },
+        agentId: { type: "string" },
+        estimatedHours: { type: "number", minimum: 0.5, maximum: 80 },
+        files: {
+            type: "array",
+            maxItems: 50,
+            items: { type: "string", minLength: 1 },
+        },
+        skills: {
+            type: "array",
+            maxItems: 20,
+            items: { type: "string", minLength: 1 },
+        },
+        acceptanceCriteria: {
+            type: "array",
+            maxItems: 30,
+            items: { type: "string", minLength: 1 },
+        },
+        validation: {
+            type: "array",
+            maxItems: 20,
+            items: { type: "string", minLength: 1 },
+        },
+    },
+    required: [
+        "id",
+        "title",
+        "description",
+        "dependencies",
+        "agentRole",
+        "estimatedHours",
+        "files",
+        "skills",
+        "acceptanceCriteria",
+        "validation",
+    ],
+};
+
+const planningSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        status: {
+            type: "string",
+            enum: ["idle", "generating", "revising", "ready", "complete", "failed"],
+        },
+        summary: { type: "string" },
+        strategy: { type: "string" },
+        maxAgents: { type: "integer", minimum: 1, maximum: 30 },
+        workItems: {
+            type: "array",
+            maxItems: 30,
+            items: planWorkItemSchema,
+        },
+        waves: { type: "array" },
+        agents: { type: "array" },
+        risks: {
+            type: "array",
+            maxItems: 50,
+            items: { type: "string" },
+        },
+        revisionHistory: {
+            type: "array",
+            maxItems: 30,
+            items: { type: "string" },
+        },
+        metrics: { type: "object" },
+        processing: {
+            anyOf: [
+                { type: "null" },
+                {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                        requestId: { type: "string", minLength: 1 },
+                        action: {
+                            type: "string",
+                            enum: ["generate", "revise"],
+                        },
+                        instruction: { type: "string" },
+                        runId: { type: ["string", "null"] },
+                        requestedAt: { type: "string" },
+                    },
+                    required: [
+                        "requestId",
+                        "action",
+                        "instruction",
+                        "runId",
+                        "requestedAt",
+                    ],
+                },
+            ],
+        },
+        finalizedArtifactId: { type: ["string", "null"] },
+        error: { type: "string" },
+    },
+    required: [
+        "status",
+        "summary",
+        "strategy",
+        "maxAgents",
+        "workItems",
+        "waves",
+        "agents",
+        "risks",
+        "revisionHistory",
+        "metrics",
+        "processing",
+        "finalizedArtifactId",
+        "error",
+    ],
+};
+
+const planningFactoryOutputSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        summary: { type: "string", minLength: 1 },
+        strategy: { type: "string", minLength: 1 },
+        workItems: {
+            type: "array",
+            minItems: 1,
+            maxItems: 30,
+            items: planWorkItemSchema,
+        },
+        risks: {
+            type: "array",
+            maxItems: 50,
+            items: { type: "string", minLength: 1 },
+        },
+    },
+    required: ["summary", "strategy", "workItems", "risks"],
+};
+
+const implementationAgentOutputSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        status: { type: "string", enum: ["completed", "failed"] },
+        summary: { type: "string", minLength: 1 },
+        filesChanged: {
+            type: "array",
+            maxItems: 100,
+            items: { type: "string", minLength: 1 },
+        },
+        validation: {
+            type: "array",
+            maxItems: 50,
+            items: { type: "string", minLength: 1 },
+        },
+        blockers: {
+            type: "array",
+            maxItems: 50,
+            items: { type: "string", minLength: 1 },
+        },
+    },
+    required: [
+        "status",
+        "summary",
+        "filesChanged",
+        "validation",
+        "blockers",
+    ],
+};
+
+const testAgentOutputSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        status: { type: "string", enum: ["passed", "failed"] },
+        summary: { type: "string", minLength: 1 },
+        evidence: {
+            type: "array",
+            maxItems: 50,
+            items: { type: "string", minLength: 1 },
+        },
+    },
+    required: ["status", "summary", "evidence"],
+};
+
+const artifactSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        id: { type: "string", minLength: 1 },
+        title: { type: "string", minLength: 1 },
+        kind: { type: "string" },
+        stage: {
+            type: "string",
+            enum: [
+                "requirements",
+                "prototype",
+                "design",
+                "plan",
+                "implement",
+                "test",
+            ],
+        },
+        path: { type: "string" },
+        language: { type: "string" },
+        content: { type: "string" },
+        mermaid: { type: "string" },
+        sourceThreadIds: {
+            type: "array",
+            maxItems: 50,
+            items: { type: "string", minLength: 1 },
+        },
+        reviewStatus: {
+            type: "string",
+            enum: ["current", "stale"],
+        },
+    },
+    required: ["id", "title", "content"],
+};
+
+const answerFactoryArtifactSchema = {
+    ...artifactSchema,
+    required: [
+        "id",
+        "title",
+        "kind",
+        "stage",
+        "path",
+        "language",
+        "content",
+        "mermaid",
+    ],
+};
+
+const designReviewArtifactSchema = {
+    ...artifactSchema,
+    required: [
+        "id",
+        "title",
+        "kind",
+        "stage",
+        "path",
+        "language",
+        "content",
+        "mermaid",
+        "sourceThreadIds",
+        "reviewStatus",
+    ],
+};
+
+const designReviewFactoryOutputSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        answer: { type: "string", minLength: 1 },
+        artifacts: {
+            type: "array",
+            maxItems: 5,
+            items: designReviewArtifactSchema,
+        },
+        testScenarios: {
+            type: "array",
+            maxItems: 30,
+            items: testScenarioSchema,
+        },
+    },
+    required: ["answer", "artifacts", "testScenarios"],
+};
+
+const answerFactoryOutputSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        goal: { type: "string" },
+        phase: {
+            type: "string",
+            enum: ["discovery", "building", "iterating", "complete"],
+        },
+        status: { type: "string" },
+        requirements: requirementsSchema,
+        prototypeReview: prototypeReviewSchema,
+        question: questionSchema,
+        decisionGraph: decisionGraphSchema,
+        confirmed: {
+            type: "array",
+            items: { type: "string" },
+        },
+        assumed: {
+            type: "array",
+            items: { type: "string" },
+        },
+        deferred: {
+            type: "array",
+            items: { type: "string" },
+        },
+        artifactChanges: {
+            type: "object",
+            properties: {
+                upsert: {
+                    type: "array",
+                    items: answerFactoryArtifactSchema,
+                },
+                remove: {
+                    type: "array",
+                    items: { type: "string" },
+                },
+            },
+            required: ["upsert", "remove"],
+        },
+        previewUrl: {
+            type: ["string", "null"],
+        },
+        previewStatus: {
+            type: "string",
+            enum: ["waiting", "starting", "ready", "error"],
+        },
+    },
+    required: [
+        "goal",
+        "phase",
+        "status",
+        "requirements",
+        "prototypeReview",
+        "question",
+        "decisionGraph",
+        "confirmed",
+        "assumed",
+        "deferred",
+        "artifactChanges",
+        "previewUrl",
+        "previewStatus",
+    ],
+};
+
+const usageSuggestionFactory = defineFactory({
+    meta: {
+        name: SUGGESTION_FACTORY_NAME,
+        description:
+            "Generate complementary one-sentence usage suggestions without blocking usage entry.",
+        phases: [
+            {
+                title: "Generate suggestions",
+                detail: "Find useful app usages not already captured.",
+            },
+        ],
+        argsSchema: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+                prototypeId: { type: "string" },
+                requestId: { type: "string" },
+                goal: { type: "string" },
+                usageItems: {
+                    type: "array",
+                    maxItems: 30,
+                    items: { type: "string", minLength: 1 },
+                },
+            },
+            required: ["prototypeId", "requestId", "goal", "usageItems"],
+        },
+        limits: {
+            maxConcurrentSubagents: 1,
+            maxTotalSubagents: 1,
+            timeoutSeconds: 120,
+            maxAiCredits: 1024000,
+        },
+    },
+    run: async (ctx) => {
+        const args: any = ctx.args;
+        if (
+            !isObject(args) ||
+            !String(args.prototypeId || "").trim() ||
+            !String(args.requestId || "").trim() ||
+            !Array.isArray(args.usageItems)
+        ) {
+            throw new Error("Usage suggestion factory arguments are invalid.");
+        }
+        ctx.phase("Generate suggestions");
+        ctx.log(`Request ${args.requestId}; prototype ${args.prototypeId}.`);
+        return ctx.agent(
+            [
+                "Generate 3 to 5 concise suggestions for ways the user could use this app.",
+                "Each suggestion must be one standalone sentence written",
+                "in the first person, actionable, and suitable for a one-click add button.",
+                "Do not repeat, paraphrase, combine, or contradict an existing usage.",
+                "When no usages exist yet, provide diverse starter suggestions grounded in",
+                "the app goal. If the goal is empty, provide broadly useful starter usages",
+                "that help the user describe the product they want.",
+                "Return only the structured output required by the schema.",
+                "",
+                `App goal: ${String(args.goal || "").trim()}`,
+                "Existing usages:",
+                ...(args.usageItems.length > 0
+                    ? args.usageItems.map((item) => `- ${item}`)
+                    : ["- None yet"]),
+            ].join("\n"),
+            {
+                label: "Generate usage suggestions",
+                schema: {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                        suggestions: {
+                            type: "array",
+                            minItems: 3,
+                            maxItems: 5,
+                            items: { type: "string", minLength: 1 },
+                        },
+                    },
+                    required: ["suggestions"],
+                },
+                reasoningEffort: "low",
+            },
+        ) as Promise<any>;
+    },
+});
+
+const designReviewFactory = defineFactory({
+    meta: {
+        name: DESIGN_REVIEW_FACTORY_NAME,
+        description:
+            "Answer one queued Design Review request or synthesize its final review artifact.",
+        phases: [
+            {
+                title: "Review design",
+                detail: "Answer the question and produce any requested design artifacts.",
+            },
+        ],
+        argsSchema: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+                prototypeId: { type: "string" },
+                projectRoot: { type: "string" },
+                requestId: { type: "string" },
+                action: {
+                    type: "string",
+                    enum: ["process-thread", "finalize"],
+                },
+                reviewKind: {
+                    type: "string",
+                    enum: ["product", "test"],
+                },
+                thread: {
+                    anyOf: [{ type: "null" }, designReviewThreadSchema],
+                },
+                state: { type: "object" },
+            },
+            required: [
+                "prototypeId",
+                "projectRoot",
+                "requestId",
+                "action",
+                "reviewKind",
+                "thread",
+                "state",
+            ],
+        },
+        limits: {
+            maxConcurrentSubagents: 1,
+            maxTotalSubagents: 30,
+            timeoutSeconds: 300,
+            maxAiCredits: 1024000,
+        },
+    },
+    run: async (ctx) => {
+        const args: any = ctx.args;
+        if (
+            !isObject(args) ||
+            !isObject(args.state) ||
+            !String(args.prototypeId || "").trim() ||
+            !String(args.projectRoot || "").trim() ||
+            !String(args.requestId || "").trim() ||
+            !["product", "test"].includes(args.reviewKind) ||
+            !["process-thread", "finalize"].includes(args.action) ||
+            (args.action === "process-thread" && !isObject(args.thread))
+        ) {
+            throw new Error("Design Review factory arguments are invalid.");
+        }
+        ctx.phase("Review design");
+        ctx.log(`Request ${args.requestId}; prototype ${args.prototypeId}.`);
+        return ctx.agent(designReviewFactoryPrompt(args), {
+            label:
+                args.action === "finalize"
+                    ? `Finalize ${args.reviewKind} design`
+                    : `Process ${args.reviewKind} design request`,
+            schema: designReviewFactoryOutputSchema,
+            reasoningEffort: "high",
+        }) as Promise<any>;
+    },
+});
+
+const planningFactory = defineFactory({
+    meta: {
+        name: PLANNING_FACTORY_NAME,
+        description:
+            "Generate or revise a dependency-aware implementation plan optimized for safe parallel execution.",
+        phases: [
+            {
+                title: "Design execution plan",
+                detail: "Divide implementation into parallel work items and agent roles.",
+            },
+        ],
+        argsSchema: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+                prototypeId: { type: "string" },
+                projectRoot: { type: "string" },
+                requestId: { type: "string" },
+                action: { type: "string", enum: ["generate", "revise"] },
+                instruction: { type: "string" },
+                maxAgents: { type: "integer", minimum: 1, maximum: 30 },
+                state: { type: "object" },
+            },
+            required: [
+                "prototypeId",
+                "projectRoot",
+                "requestId",
+                "action",
+                "instruction",
+                "maxAgents",
+                "state",
+            ],
+        },
+        limits: {
+            maxConcurrentSubagents: 1,
+            maxTotalSubagents: 30,
+            timeoutSeconds: 600,
+            maxAiCredits: 1024000,
+        },
+    },
+    run: async (ctx) => {
+        const args: any = ctx.args;
+        if (
+            !isObject(args) ||
+            !isObject(args.state) ||
+            !String(args.prototypeId || "").trim() ||
+            !String(args.projectRoot || "").trim() ||
+            !String(args.requestId || "").trim() ||
+            !["generate", "revise"].includes(args.action) ||
+            !Number.isInteger(args.maxAgents)
+        ) {
+            throw new Error("Execution-planning factory arguments are invalid.");
+        }
+        ctx.phase("Design execution plan");
+        ctx.log(`Request ${args.requestId}; prototype ${args.prototypeId}.`);
+        return ctx.agent(planningFactoryPrompt(args), {
+            label:
+                args.action === "revise"
+                    ? "Revise execution plan"
+                    : "Generate execution plan",
+            schema: planningFactoryOutputSchema,
+            reasoningEffort: "high",
+        }) as Promise<any>;
+    },
+});
+
+const implementationFactory = defineFactory({
+    meta: {
+        name: IMPLEMENTATION_FACTORY_NAME,
+        description:
+            "Execute a finalized implementation plan in dependency waves with live agent observability.",
+        phases: [
+            {
+                title: "Execute work items",
+                detail: "Run dependency-ready work items concurrently in the active workspace.",
+            },
+            {
+                title: "Summarize implementation",
+                detail: "Reconcile work-item outcomes and publish the final result.",
+            },
+        ],
+        argsSchema: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+                prototypeId: { type: "string", minLength: 1 },
+                projectRoot: { type: "string", minLength: 1 },
+                plan: { type: "object" },
+            },
+            required: ["prototypeId", "projectRoot", "plan"],
+        },
+        limits: {
+            maxConcurrentSubagents: 30,
+            maxTotalSubagents: 30,
+            timeoutSeconds: 3600,
+            maxAiCredits: 1024000,
+        },
+    },
+    run: async (ctx) => {
+        const args: any = ctx.args;
+        if (
+            !isObject(args) ||
+            !String(args.prototypeId || "").trim() ||
+            !String(args.projectRoot || "").trim() ||
+            !isObject(args.plan) ||
+            !Array.isArray(args.plan.workItems) ||
+            !Array.isArray(args.plan.waves)
+        ) {
+            throw new Error("Implementation factory arguments are invalid.");
+        }
+        ctx.phase("Execute work items");
+        ctx.log(
+            `Starting ${args.plan.workItems.length} planned work items for ${args.prototypeId}.`,
+        );
+        for (const wave of args.plan.waves) {
+            const boundary = await prepareImplementationWave(
+                args.prototypeId,
+                wave.index,
+                wave.workItemIds,
+            );
+            if (boundary.stopped) {
+                return {
+                    status: "failed",
+                    summary: "Implementation was stopped before the next wave.",
+                };
+            }
+            if (boundary.runnable.length === 0) continue;
+            ctx.log(
+                `Wave ${wave.index}: launching ${boundary.runnable.length} agent${boundary.runnable.length === 1 ? "" : "s"}.`,
+            );
+            const results = [];
+            for (
+                let offset = 0;
+                offset < boundary.runnable.length;
+                offset += boundary.maxConcurrency
+            ) {
+                const batch = boundary.runnable.slice(
+                    offset,
+                    offset + boundary.maxConcurrency,
+                );
+                const batchNumber = Math.floor(offset / boundary.maxConcurrency) + 1;
+                const batchResults = await ctx.step(
+                    `wave-${wave.index}-batch-${batchNumber}`,
+                    () =>
+                        ctx.parallel(
+                            batch.map(
+                                (item) => () =>
+                                    ctx.agent(
+                                        implementationPrompt(
+                                            args,
+                                            item,
+                                            boundary.strategy,
+                                            boundary.completedHandoffs,
+                                        ),
+                                        {
+                                            label: `work:${item.id}`,
+                                            schema: implementationAgentOutputSchema,
+                                            reasoningEffort: "high",
+                                        },
+                                    ),
+                            ),
+                        ),
+                );
+                results.push(
+                    ...(Array.isArray(batchResults) ? batchResults : []),
+                );
+            }
+            await recordImplementationWaveResults(
+                args.prototypeId,
+                wave.index,
+                boundary.runnable,
+                Array.isArray(results) ? results : [],
+            );
+        }
+        ctx.phase("Summarize implementation");
+        const finalState = await loadState(args.prototypeId);
+        const implementation = normalizeImplementation(
+            finalState.implementation,
+            normalizePlanning(finalState.planning),
+        );
+        const failed = implementation.workItems.filter((item) =>
+            ["failed", "blocked", "cancelled"].includes(item.status),
+        );
+        const incomplete = implementation.workItems.filter(
+            (item) => item.status !== "completed",
+        );
+        if (incomplete.length > 0) {
+            ctx.log(
+                `${incomplete.length} work item${incomplete.length === 1 ? "" : "s"} remain incomplete.`,
+            );
+            return {
+                status: "failed",
+                summary:
+                    failed.length > 0
+                        ? `${failed.length} work item${failed.length === 1 ? "" : "s"} failed or were blocked.`
+                        : `${incomplete.length} work item${incomplete.length === 1 ? "" : "s"} remain incomplete.`,
+            };
+        }
+        ctx.log("All planned work items completed.");
+        return {
+            status: "completed",
+            summary: `Completed all ${implementation.workItems.length} planned work items.`,
+        };
+    },
+});
+
+const testFactory = defineFactory({
+    meta: {
+        name: TEST_FACTORY_NAME,
+        description:
+            "Execute the finalized integration and interaction test specification in dependency waves.",
+        phases: [
+            {
+                title: "Run test scenarios",
+                detail: "Exercise integration boundaries and user interactions.",
+            },
+            {
+                title: "Summarize test evidence",
+                detail: "Reconcile scenario results and publish test evidence.",
+            },
+        ],
+        argsSchema: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+                prototypeId: { type: "string", minLength: 1 },
+                projectRoot: { type: "string", minLength: 1 },
+                scenarios: {
+                    type: "array",
+                    minItems: 1,
+                    maxItems: 30,
+                    items: testScenarioSchema,
+                },
+            },
+            required: ["prototypeId", "projectRoot", "scenarios"],
+        },
+        limits: {
+            maxConcurrentSubagents: 4,
+            maxTotalSubagents: 30,
+            timeoutSeconds: 3600,
+            maxAiCredits: 1024000,
+        },
+    },
+    run: async (ctx) => {
+        const args: any = ctx.args;
+        if (
+            !isObject(args) ||
+            !String(args.prototypeId || "").trim() ||
+            !String(args.projectRoot || "").trim() ||
+            !Array.isArray(args.scenarios) ||
+            args.scenarios.length === 0
+        ) {
+            throw new Error("Test factory arguments are invalid.");
+        }
+        const scenarios = normalizeTestScenarios(args.scenarios);
+        const schedule = scheduleTestScenarios(scenarios, 4);
+        if (schedule.error || schedule.waves.length === 0) {
+            throw new Error(schedule.error || "No test scenarios could be scheduled.");
+        }
+        ctx.phase("Run test scenarios");
+        for (const wave of schedule.waves) {
+            const runnable = await prepareTestWave(args.prototypeId, wave);
+            if (runnable.length === 0) continue;
+            const current = await loadState(args.prototypeId);
+            const dependencyEvidence = normalizeTesting(
+                current.testing,
+                normalizeDesignReview(current.testDesignReview),
+            ).scenarios
+                .filter(
+                    (scenario) =>
+                        scenario.status === "passed" &&
+                        runnable.some((candidate) =>
+                            candidate.dependencies.includes(scenario.id),
+                        ),
+                )
+                .map(
+                    (scenario) =>
+                        `${scenario.id}: ${scenario.summary || "passed"}`,
+                );
+            const results = await ctx.step(`test-wave-${wave.index}`, () =>
+                ctx.parallel(
+                    runnable.map(
+                        (scenario) => () =>
+                            ctx.agent(
+                                testScenarioPrompt(
+                                    args,
+                                    scenario,
+                                    dependencyEvidence,
+                                ),
+                                {
+                                    label: `test:${scenario.id}`,
+                                    schema: testAgentOutputSchema,
+                                    reasoningEffort: "high",
+                                },
+                            ),
+                    ),
+                ),
+            );
+            await recordTestWaveResults(
+                args.prototypeId,
+                wave,
+                runnable,
+                Array.isArray(results) ? results : [],
+            );
+        }
+        ctx.phase("Summarize test evidence");
+        const finalState = await loadState(args.prototypeId);
+        const testing = normalizeTesting(
+            finalState.testing,
+            normalizeDesignReview(finalState.testDesignReview),
+        );
+        const passed =
+            testing.scenarios.length > 0 &&
+            testing.scenarios.every((scenario) => scenario.status === "passed");
+        return {
+            status: passed ? "passed" : "failed",
+            summary: passed
+                ? `All ${testing.scenarios.length} integration and interaction scenarios passed.`
+                : `${
+                      testing.scenarios.filter(
+                          (scenario) => scenario.status !== "passed",
+                      ).length
+                  } test scenarios failed or were blocked.`,
+        };
+    },
+});
+
+const answerFactory = defineFactory({
+    meta: {
+        name: ANSWER_FACTORY_NAME,
+        description:
+            "Process one Tandem answer in a hidden agent and return the complete next Tandem state.",
+        phases: [
+            {
+                title: "Interpret decision",
+                detail: "Apply the selected product intent to the current prototype.",
+            },
+            {
+                title: "Return Tandem update",
+                detail: "Synthesize the next ledger, artifacts, and question.",
+            },
+        ],
+        argsSchema: {
+            type: "object",
+            properties: {
+                prototypeId: { type: "string" },
+                projectRoot: { type: "string" },
+                requestId: { type: "string" },
+                question: {
+                    type: "object",
+                    properties: {
+                        id: { type: "string" },
+                        text: { type: "string" },
+                    },
+                    required: ["id", "text"],
+                },
+                answer: { type: "string" },
+                action: {
+                    type: "string",
+                    enum: [
+                        "add-usage",
+                        "generate-dag",
+                        "answer-decision",
+                        "change-answer",
+                        "submit-revision",
+                        "clarify-revision",
+                        "generate-design-spec",
+                    ],
+                },
+                state: { type: "object" },
+            },
+            required: [
+                "prototypeId",
+                "projectRoot",
+                "requestId",
+                "question",
+                "answer",
+                "action",
+                "state",
+            ],
+        },
+        limits: {
+            maxConcurrentSubagents: 1,
+            maxTotalSubagents: 30,
+            timeoutSeconds: 300,
+            maxAiCredits: 1024000,
+        },
+    },
+    run: async (ctx) => {
+        const args: any = ctx.args;
+        if (
+            !isObject(args) ||
+            !isObject(args.question) ||
+            !isObject(args.state) ||
+            !String(args.prototypeId || "").trim() ||
+            !String(args.projectRoot || "").trim() ||
+            !String(args.requestId || "").trim() ||
+            !String(args.question.id || "").trim() ||
+            !String(args.question.text || "").trim() ||
+            !String(args.answer || "").trim() ||
+            !ANSWER_ACTIONS.has(args.action)
+        ) {
+            throw new Error("Tandem factory arguments are invalid.");
+        }
+
+        ctx.phase("Interpret decision");
+        if (!(await isPreferredAnswerProvider(PROVIDER_EXTENSION_ID))) {
+            throw new Error(
+                "This provider no longer owns hidden answer processing.",
+            );
+        }
+        ctx.log(
+            `Request ${args.requestId}; prototype ${args.prototypeId}; question ${args.question.id}.`,
+        );
+        const result: any = await ctx.step("process-answer", () =>
+            ctx.agent(answerFactoryPrompt(args), {
+                label: "Process Tandem answer",
+                schema: answerFactoryOutputSchema,
+                reasoningEffort: "medium",
+            }) as Promise<any>,
+        );
+        if (!isObject(result)) {
+            throw new Error("The hidden agent returned an invalid Tandem update.");
+        }
+
+        ctx.phase("Return Tandem update");
+        ctx.log("Returning the complete Tandem state.");
+        return result;
+    },
+});
+
+session = await joinSession({
+    factories: [
+        usageSuggestionFactory,
+        designReviewFactory,
+        planningFactory,
+        implementationFactory,
+        testFactory,
+        answerFactory,
+    ],
+    hooks: {
+        onUserPromptSubmitted: async (input) => {
+            if (!/^\/tandem(?:\s|$)/i.test(input.prompt.trim())) {
+                return undefined;
+            }
+            return {
+                additionalContext: [
+                    "The user supplied only the prototype goal, which is expected.",
+                    "Open Tandem canvas immediately and conduct",
+                    "requirement discovery through its update_tandem action.",
+                    "Do not ask the user to write a more detailed invocation prompt.",
+                ].join(" "),
+            };
+        },
+    },
+    canvases: [
+        createCanvas({
+            id: CANVAS_ID,
+            displayName: "Tandem",
+            description:
+                "Capture software intent and lifecycle artifacts through staged workflows, starting with prototyping.",
+            inputSchema: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                    prototypeId: { type: "string", minLength: 1 },
+                    goal: { type: "string" },
+                },
+            },
+            actions: [
+                {
+                    name: "update_tandem",
+                    description:
+                        "Update usage intake, the dynamic decision DAG, prototype review evidence, captured artifacts, workflow phase, or embedded preview.",
+                    inputSchema: {
+                        type: "object",
+                        additionalProperties: false,
+                        properties: {
+                            prototypeId: { type: "string", minLength: 1 },
+                            reset: { type: "boolean" },
+                            stage: { type: "string", minLength: 1 },
+                            goal: { type: "string" },
+                            phase: {
+                                type: "string",
+                                enum: ["discovery", "building", "iterating", "complete"],
+                            },
+                            status: { type: "string" },
+                            requirements: requirementsSchema,
+                            prototypeReview: prototypeReviewSchema,
+                            designReview: designReviewSchema,
+                            planning: planningSchema,
+                            question: questionSchema,
+                            decisionGraph: decisionGraphSchema,
+                            confirmed: {
+                                type: "array",
+                                items: { type: "string" },
+                            },
+                            assumed: {
+                                type: "array",
+                                items: { type: "string" },
+                            },
+                            deferred: {
+                                type: "array",
+                                items: { type: "string" },
+                            },
+                            artifacts: {
+                                type: "array",
+                                maxItems: 30,
+                                items: artifactSchema,
+                            },
+                            previewUrl: {
+                                anyOf: [
+                                    { type: "string" },
+                                    { type: "null" },
+                                ],
+                            },
+                            previewStatus: {
+                                type: "string",
+                                enum: ["waiting", "starting", "ready", "error"],
+                            },
+                        },
+                    },
+                    handler: updateTandem,
+                },
+                {
+                    name: "complete_stage",
+                    description:
+                        "Persist the active stage result and unlock the next stage. Prototype must be finished in Tandem so its draft feature spec is generated first.",
+                    inputSchema: {
+                        type: "object",
+                        additionalProperties: false,
+                        properties: {
+                            prototypeId: { type: "string", minLength: 1 },
+                            stageId: {
+                                type: "string",
+                                enum: [
+                                    "requirements",
+                                    "prototype",
+                                    "design",
+                                    "plan",
+                                    "implement",
+                                    "test",
+                                ],
+                            },
+                        },
+                    },
+                    handler: completeStage,
+                },
+                {
+                    name: "get_tandem_state",
+                    description:
+                        "Read lifecycle, requirements, prototype revisions, Design Review threads, evidence, artifacts, phase, and preview state.",
+                    inputSchema: {
+                        type: "object",
+                        additionalProperties: false,
+                        properties: {
+                            prototypeId: { type: "string", minLength: 1 },
+                        },
+                    },
+                    handler: async (ctx) => {
+                        const input: any = isObject(ctx.input) ? ctx.input : {};
+                        const prototypeId = await resolvePrototypeId(
+                            ctx.instanceId,
+                            input.prototypeId,
+                        );
+                        return loadState(prototypeId);
+                    },
+                },
+            ],
+            open: async (ctx) => {
+                const input: any = isObject(ctx.input) ? ctx.input : {};
+                const prototypeId = await resolvePrototypeId(
+                    ctx.instanceId,
+                    input.prototypeId,
+                );
+                instancePrototypeIds.set(ctx.instanceId, prototypeId);
+
+                const canSubmitAnswers = await isPreferredAnswerProvider(
+                    ctx.extensionId,
+                );
+                if (canSubmitAnswers) {
+                    await persistCurrentPrototypeId(prototypeId);
+                }
+                let state = await loadState(prototypeId);
+                state = await markReloadComplete(state, ctx.extensionId);
+                state = await ensureDefaultProductDesignReview(
+                    state,
+                    canSubmitAnswers,
+                );
+                recoverAnswerFactory(state, canSubmitAnswers);
+                recoverSuggestionFactory(state, canSubmitAnswers);
+                recoverPrototypeCompletion(state, canSubmitAnswers);
+                recoverDesignReviewFactory(state, canSubmitAnswers);
+                recoverPlanningFactory(state, canSubmitAnswers);
+                recoverImplementationFactory(state, canSubmitAnswers);
+                recoverTestFactory(state, canSubmitAnswers);
+                if (
+                    canSubmitAnswers &&
+                    typeof input.goal === "string" &&
+                    input.goal.trim() &&
+                    !state.goal
+                ) {
+                    state = await withAnswerClaim(prototypeId, async () => {
+                        const current = await loadState(prototypeId);
+                        if (current.goal || current.processing?.status === "running") {
+                            return current;
+                        }
+                        const next = {
+                            ...current,
+                            goal: input.goal.trim().slice(0, 4000),
+                            updatedAt: new Date().toISOString(),
+                        };
+                        await persistState(next);
+                        publishState(prototypeId);
+                        return next;
+                    });
+                }
+                state = await ensureUsageSuggestionsStarted(
+                    state,
+                    canSubmitAnswers,
+                );
+
+                let entry = servers.get(ctx.instanceId);
+                if (!entry) {
+                    entry = await startServer(
+                        ctx.instanceId,
+                        prototypeId,
+                        ctx.extensionId,
+                        canSubmitAnswers,
+                    );
+                    servers.set(ctx.instanceId, entry);
+                } else {
+                    entry.prototypeId = prototypeId;
+                    entry.extensionId = ctx.extensionId;
+                    entry.canSubmitAnswers = canSubmitAnswers;
+                }
+
+                return {
+                    title: "Tandem",
+                    status: state.status,
+                    url: entry.url,
+                };
+            },
+            onClose: async (ctx) => {
+                const entry = servers.get(ctx.instanceId);
+                if (!entry) return;
+
+                servers.delete(ctx.instanceId);
+                instancePrototypeIds.delete(ctx.instanceId);
+                clearInterval(entry.heartbeat);
+                for (const client of entry.clients) client.end();
+                await new Promise((resolve) => entry.server.close(resolve));
+            },
+        }),
+    ],
+});
