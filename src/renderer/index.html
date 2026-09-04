@@ -26,9 +26,9 @@
         <div class="lifecycle" aria-label="Development lifecycle">
           <span id="current-stage" class="stage" aria-label="Current lifecycle stage">
             <span id="current-stage-index" class="stage-index" aria-hidden="true">1</span>
-            <span id="stage">Requirements</span>
+            <span id="stage">Preparation</span>
           </span>
-          <span id="phase" class="phase">Discovery</span>
+          <span id="phase" class="phase">Building</span>
         </div>
         <div class="reload-control">
           <button id="reload-extension" class="reload-button" type="button">
@@ -42,18 +42,6 @@
 
     <main id="studio-workspace" class="workspace">
       <aside id="requirements-pane" class="requirements" aria-label="Prototype requirements">
-        <section id="preparation-section" class="section preparation-section">
-          <div class="preparation-heading">
-            <p class="eyebrow">Preparation</p>
-            <span id="preparation-status" class="preparation-status">Not started</span>
-          </div>
-          <p id="preparation-summary" class="preparation-summary muted">
-            Environment readiness and authoritative sources will appear here.
-          </p>
-          <ul id="preparation-checks" class="preparation-checks"></ul>
-          <div id="preparation-sources" class="preparation-sources"></div>
-        </section>
-
         <section class="section">
           <p class="eyebrow">Goal</p>
           <p id="goal" class="goal muted">Waiting for a prototype goal...</p>
@@ -110,6 +98,15 @@
         <div class="previewbar">
           <div class="preview-tabs" role="tablist" aria-label="Prototype output">
             <button
+              id="preparation-tab"
+              class="preview-tab"
+              type="button"
+              role="tab"
+              aria-selected="true"
+              aria-controls="preparation-panel"
+              data-tab="preparation"
+            >Preparation</button>
+            <button
               id="design-tree-tab"
               class="preview-tab"
               type="button"
@@ -124,7 +121,7 @@
               class="preview-tab"
               type="button"
               role="tab"
-              aria-selected="true"
+              aria-selected="false"
               aria-controls="live-preview-panel"
               data-tab="preview"
             >Live prototype</button>
@@ -186,6 +183,53 @@
             <span id="preview-status" class="preview-status">Waiting</span>
             <a id="open-preview" class="open-preview" target="_blank" rel="noreferrer">Open separately</a>
           </div>
+        </div>
+        <div
+          id="preparation-panel"
+          class="preparation-panel"
+          role="tabpanel"
+          aria-labelledby="preparation-tab"
+          tabindex="0"
+        >
+          <section class="preparation-stage-card">
+            <div class="preparation-stage-heading">
+              <div>
+                <p class="eyebrow">Environment preparation</p>
+                <strong id="preparation-stage-title">Preparing Tandem context</strong>
+                <p id="preparation-stage-progress" class="muted">
+                  The preparation worker will inspect the workspace and analyze authoritative sources.
+                </p>
+              </div>
+              <span id="preparation-stage-status" class="preparation-status">Not started</span>
+            </div>
+            <div class="preparation-stage-grid">
+              <div class="preparation-stage-main">
+                <section class="plan-section">
+                  <h3>Work items</h3>
+                  <div id="preparation-work-items" class="implementation-list"></div>
+                </section>
+                <section class="plan-section">
+                  <h3>Results</h3>
+                  <p id="preparation-result-summary" class="muted">
+                    Results will appear as preparation completes.
+                  </p>
+                  <div id="preparation-result-suggestions" class="preparation-result-suggestions"></div>
+                  <div id="preparation-result-checks" class="preparation-result-list"></div>
+                  <div id="preparation-result-sources" class="preparation-result-sources"></div>
+                </section>
+              </div>
+              <aside class="preparation-stage-sidebar">
+                <section class="plan-section">
+                  <h3>Progress</h3>
+                  <div id="preparation-messages" class="implementation-events"></div>
+                  <button id="retry-preparation" class="retry-preparation" type="button" hidden>
+                    Retry preparation
+                  </button>
+                  <p id="preparation-stage-message" class="implementation-status" role="status" aria-live="polite"></p>
+                </section>
+              </aside>
+            </div>
+          </section>
         </div>
         <div
           id="live-preview-panel"

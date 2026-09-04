@@ -28,6 +28,20 @@ const elements: AnyRecord = {
   diagramSourceDetails: document.getElementById("diagram-source-details"),
   contentCard: document.getElementById("content-card"),
   contentEmpty: document.getElementById("content-empty"),
+  preparationTab: document.getElementById("preparation-tab"),
+  preparationPanel: document.getElementById("preparation-panel"),
+  requirementsTab: document.getElementById("design-tree-tab"),
+  preparationStageTitle: document.getElementById("preparation-stage-title"),
+  preparationStageProgress: document.getElementById("preparation-stage-progress"),
+  preparationStageStatus: document.getElementById("preparation-stage-status"),
+  preparationWorkItems: document.getElementById("preparation-work-items"),
+  preparationResultSummary: document.getElementById("preparation-result-summary"),
+  preparationResultSuggestions: document.getElementById("preparation-result-suggestions"),
+  preparationResultChecks: document.getElementById("preparation-result-checks"),
+  preparationResultSources: document.getElementById("preparation-result-sources"),
+  preparationMessages: document.getElementById("preparation-messages"),
+  preparationStageMessage: document.getElementById("preparation-stage-message"),
+  retryPreparation: document.getElementById("retry-preparation"),
   designTreePanel: document.getElementById("design-tree-panel"),
   designTreeCard: document.getElementById("design-tree-card"),
   designTreeEmpty: document.getElementById("design-tree-empty"),
@@ -121,10 +135,6 @@ const elements: AnyRecord = {
   splitter: document.getElementById("studio-splitter"),
   reloadButton: document.getElementById("reload-extension"),
   reloadStatus: document.getElementById("reload-status"),
-  preparationStatus: document.getElementById("preparation-status"),
-  preparationSummary: document.getElementById("preparation-summary"),
-  preparationChecks: document.getElementById("preparation-checks"),
-  preparationSources: document.getElementById("preparation-sources"),
   stageList: document.getElementById("stage-list"),
   completeStage: document.getElementById("complete-stage"),
   stageMessage: document.getElementById("stage-message"),
@@ -160,6 +170,7 @@ const MIN_PREVIEW_WIDTH = 360;
 const DEFAULT_REQUIREMENTS_RATIO = 0.24;
 const KEYBOARD_RESIZE_STEP = 24;
 const LIFECYCLE_STAGES = [
+  { id: "prepare", label: "Preparation" },
   { id: "requirements", label: "Requirements" },
   { id: "prototype", label: "Prototype" },
   { id: "design", label: "Design" },
@@ -174,7 +185,7 @@ let appliedRecommendedCount = 0;
 let completingStage = false;
 let activePointerId = null;
 let reloadRequestError = "";
-let activeOutputTab = "design-tree";
+let activeOutputTab = "preparation";
 let selectedArtifactId = null;
 let selectedDecisionId = null;
 let mermaidModulePromise = null;
@@ -182,6 +193,8 @@ let diagramRenderId = 0;
 let designTreeRenderId = 0;
 let planRenderId = 0;
 let lastLifecycleStage = null;
+let preparationSubmitting = false;
+let lastPreparationRuntimeSignature = "";
 let implementationSubmitting = false;
 let lastImplementationRuntimeSignature = "";
 let testSubmitting = false;
@@ -815,9 +828,37 @@ elements.testErrorToggle.addEventListener("click", () => {
   if (testErrorDetailsExpanded) elements.testErrorDetails.focus();
 });
 
+elements.retryPreparation.addEventListener("click", async () => {
+  if (preparationSubmitting || !currentState) return;
+  preparationSubmitting = true;
+  elements.retryPreparation.disabled = true;
+  elements.retryPreparation.textContent = "Retrying...";
+  elements.preparationStageMessage.textContent = "";
+  try {
+    const response = await fetch("/api/preparation/retry", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error || "Could not retry preparation.");
+    }
+    elements.preparationStageMessage.textContent = "Preparation retry started.";
+  } catch (error) {
+    elements.preparationStageMessage.textContent = error instanceof Error
+      ? error.message
+      : "Could not retry preparation.";
+    elements.preparationStageMessage.dataset.status = "error";
+  } finally {
+    preparationSubmitting = false;
+    if (currentState) renderPreparation(currentState);
+  }
+});
+
 elements.completeStage.addEventListener("click", async () => {
   if (elements.completeStage.disabled || !currentState) return;
-  const stageId = currentState.lifecycle?.currentStage || "requirements";
+  const stageId = currentState.lifecycle?.currentStage || "prepare";
   completingStage = true;
   elements.completeStage.disabled = true;
   elements.completeStage.textContent = "Saving stage output...";
@@ -855,6 +896,7 @@ elements.completeStage.addEventListener("click", async () => {
 
 function activateOutputTab(tabName, focusTab = false) {
   const requestedTab = [
+    "preparation",
     "preview",
     "design-tree",
     "design-review",
@@ -864,17 +906,21 @@ function activateOutputTab(tabName, focusTab = false) {
     "content",
   ].includes(tabName)
     ? tabName
-    : "preview";
+    : "preparation";
   const requestedElement = elements.previewTabs.find(
     (tab) => tab.dataset.tab === requestedTab,
   );
-  activeOutputTab = requestedElement?.disabled ? "design-tree" : requestedTab;
+  activeOutputTab = requestedElement?.disabled
+    ? elements.previewTabs.find((tab) => !tab.hidden && !tab.disabled)?.dataset.tab
+      || "preparation"
+    : requestedTab;
   for (const tab of elements.previewTabs) {
     const isActive = tab.dataset.tab === activeOutputTab;
     tab.setAttribute("aria-selected", String(isActive));
     tab.tabIndex = isActive ? 0 : -1;
     if (isActive && focusTab) tab.focus();
   }
+  elements.preparationPanel.hidden = activeOutputTab !== "preparation";
   elements.previewPanel.hidden = activeOutputTab !== "preview";
   elements.designTreePanel.hidden = activeOutputTab !== "design-tree";
   elements.designReviewPanel.hidden = activeOutputTab !== "design-review";
@@ -890,7 +936,7 @@ for (const tab of elements.previewTabs) {
   tab.addEventListener("click", () => activateOutputTab(tab.dataset.tab));
   tab.addEventListener("keydown", (event) => {
     const visibleTabs = elements.previewTabs.filter(
-      (candidate) => !candidate.hidden,
+      (candidate) => !candidate.hidden && !candidate.disabled,
     );
     const currentIndex = visibleTabs.indexOf(tab);
     let nextIndex = null;
@@ -911,7 +957,7 @@ for (const tab of elements.previewTabs) {
 
 function renderLifecycle(state, preserveMessage = false) {
   const lifecycle = state.lifecycle || {
-    currentStage: "requirements",
+    currentStage: "prepare",
     completedStages: [],
     outputs: [],
     skippedStages: [],
@@ -936,7 +982,7 @@ function renderLifecycle(state, preserveMessage = false) {
       artifact.reviewStatus !== "stale",
   );
   const allComplete = LIFECYCLE_STAGES.every((stage) => completed.has(stage.id));
-  const currentStageId = lifecycle.currentStage || "requirements";
+  const currentStageId = lifecycle.currentStage || "prepare";
   const currentIndex = Math.max(
     0,
     LIFECYCLE_STAGES.findIndex((stage) => stage.id === currentStageId),
@@ -1016,6 +1062,7 @@ function renderLifecycle(state, preserveMessage = false) {
   );
   elements.completeStage.disabled = completingStage
     || allComplete
+    || currentStageId === "prepare"
     || state.provider?.canSubmitAnswers === false
     || state.processing?.status === "running"
     || (
@@ -1088,6 +1135,8 @@ function renderLifecycle(state, preserveMessage = false) {
     ? "All stages complete"
     : completingStage
       ? "Saving stage output..."
+      : currentStageId === "prepare"
+        ? "Preparation runs automatically"
       : state.processing?.status === "running"
           && state.processing?.action === "generate-design-spec"
         ? "Generating draft feature spec..."
@@ -1106,7 +1155,9 @@ function renderLifecycle(state, preserveMessage = false) {
       ? "Prototype disabled: " + prototypeSkip.reason
       : latestOutput
         ? "Saved " + latestOutput.path
-        : "Complete the active stage to unlock the next.";
+        : currentStageId === "prepare"
+          ? "Preparation advances automatically when analysis completes."
+          : "Complete the active stage to unlock the next.";
     elements.stageMessage.dataset.status = "idle";
   }
 }
@@ -1115,26 +1166,104 @@ function renderPreparation(state) {
   const preparation = state.preparation || {
     status: "not-started",
     summary: "",
+    workItems: [],
+    messages: [],
     checks: [],
     sources: [],
+    suggestedUsages: [],
+    error: "",
   };
-  elements.preparationStatus.textContent = preparation.status.replace("-", " ");
-  elements.preparationStatus.dataset.status = preparation.status;
-  elements.preparationSummary.textContent = preparation.summary
-    || "Environment readiness and authoritative sources have not been recorded.";
-  elements.preparationSummary.classList.toggle("muted", !preparation.summary);
-  elements.preparationChecks.replaceChildren();
+  const runtime = state.preparationRuntime || null;
+  const isPreparing = ["not-started", "starting", "running"].includes(
+    preparation.status,
+  );
+  const currentStage = state.lifecycle?.currentStage || "prepare";
+  elements.requirementsTab.disabled = currentStage === "prepare";
+  elements.requirementsTab.title = currentStage === "prepare"
+    ? "Requirements unlock when preparation completes."
+    : "";
+  elements.preparationStageStatus.textContent =
+    preparation.status.replace("-", " ");
+  elements.preparationStageStatus.dataset.status = preparation.status;
+  elements.preparationStageTitle.textContent = isPreparing
+    ? "Preparing Tandem context"
+    : preparation.status === "failed"
+      ? "Preparation needs attention"
+      : "Preparation results";
+  elements.preparationStageProgress.textContent = runtime?.currentPhase
+    ? "Current phase: " + runtime.currentPhase.split("-").join(" ")
+    : isPreparing
+      ? state.status || "Preparation is starting."
+      : preparation.summary || "Preparation has completed.";
+
+  const liveByWorkItem = new Map<string, AnyRecord>(
+    (runtime?.agents || []).map(
+      (agent): [string, AnyRecord] => [
+        String(agent.label || "").replace(/^prepare:/, ""),
+        agent,
+      ],
+    ),
+  );
+  elements.preparationWorkItems.replaceChildren();
+  for (const workItem of preparation.workItems || []) {
+    const live = liveByWorkItem.get(workItem.id) || {};
+    const status = live.status === "running" ? "running" : workItem.status;
+    const card = document.createElement("div");
+    card.className = "implementation-card";
+    card.dataset.status = status;
+    const heading = document.createElement("div");
+    heading.className = "implementation-card-heading";
+    const title = document.createElement("strong");
+    title.textContent = workItem.title;
+    const badge = document.createElement("span");
+    badge.className = "implementation-badge";
+    badge.textContent = status;
+    heading.append(title, badge);
+    const detail = document.createElement("p");
+    detail.className = "implementation-meta";
+    detail.textContent = workItem.detail;
+    card.append(heading, detail);
+    if (live.activity || workItem.result) {
+      const result = document.createElement("p");
+      result.textContent = live.activity || workItem.result;
+      card.append(result);
+    }
+    elements.preparationWorkItems.append(card);
+  }
+  if ((preparation.workItems || []).length === 0) {
+    appendImplementationEmpty(
+      elements.preparationWorkItems,
+      "Preparation work items will appear when analysis starts.",
+    );
+  }
+
+  elements.preparationResultSummary.textContent = preparation.summary
+    || "Results will appear as preparation completes.";
+  elements.preparationResultSummary.classList.toggle(
+    "muted",
+    !preparation.summary,
+  );
+  elements.preparationResultChecks.replaceChildren();
+  elements.preparationResultSuggestions.replaceChildren();
+  if ((preparation.suggestedUsages || []).length > 0) {
+    const heading = document.createElement("strong");
+    heading.textContent = "Passed to Requirements";
+    const list = document.createElement("ul");
+    appendPlanList(list, preparation.suggestedUsages, "No suggestions generated.");
+    elements.preparationResultSuggestions.append(heading, list);
+  }
   for (const check of preparation.checks || []) {
-    const item = document.createElement("li");
+    const item = document.createElement("div");
+    item.className = "preparation-result-item";
     item.dataset.status = check.status;
     const label = document.createElement("strong");
-    label.textContent = check.label;
+    label.textContent = check.label + " · " + check.status;
     const detail = document.createElement("span");
     detail.textContent = check.detail;
     item.append(label, detail);
-    elements.preparationChecks.append(item);
+    elements.preparationResultChecks.append(item);
   }
-  elements.preparationSources.replaceChildren();
+  elements.preparationResultSources.replaceChildren();
   for (const source of preparation.sources || []) {
     const link = document.createElement("a");
     link.href = source.url;
@@ -1142,8 +1271,64 @@ function renderPreparation(state) {
     link.rel = "noreferrer";
     link.textContent = source.title;
     link.title = source.purpose || source.url;
-    elements.preparationSources.append(link);
+    elements.preparationResultSources.append(link);
   }
+
+  const progressMessages = [
+    ...(preparation.messages || []).map((message) => ({
+      id: message.id,
+      text: message.text,
+      kind: message.kind,
+      at: Date.parse(message.at) || 0,
+    })),
+    ...(runtime?.progress || []).map((message) => ({
+      id: "runtime-" + message.seq,
+      text: message.text,
+      kind: message.kind || "info",
+      at: Number(message.recordedAt) || 0,
+    })),
+  ].sort((left, right) => right.at - left.at).slice(0, 30);
+  elements.preparationMessages.replaceChildren();
+  for (const message of progressMessages) {
+    const card = document.createElement("div");
+    card.className = "implementation-event";
+    card.dataset.status = message.kind;
+    const heading = document.createElement("div");
+    heading.className = "implementation-event-heading";
+    const text = document.createElement("p");
+    text.textContent = message.text;
+    const time = document.createElement("time");
+    time.textContent = message.at
+      ? new Date(message.at).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : "";
+    heading.append(text, time);
+    card.append(heading);
+    elements.preparationMessages.append(card);
+  }
+  if (progressMessages.length === 0) {
+    appendImplementationEmpty(
+      elements.preparationMessages,
+      "Preparation progress will appear here.",
+    );
+  }
+
+  const canSubmit = state.provider?.canSubmitAnswers !== false;
+  elements.retryPreparation.hidden = preparation.status !== "failed";
+  elements.retryPreparation.disabled = preparationSubmitting || !canSubmit;
+  elements.retryPreparation.textContent = preparationSubmitting
+    ? "Retrying..."
+    : "Retry preparation";
+  elements.preparationStageMessage.textContent = preparation.error
+    || (preparation.status === "needs-attention"
+      ? "Preparation completed with blockers. Requirements suggestions are still available."
+      : preparation.status === "ready"
+        ? "Preparation completed and its suggestions were passed to Requirements."
+        : "");
+  elements.preparationStageMessage.dataset.status =
+    preparation.status === "failed" ? "error" : "idle";
 }
 
 function renderRequirementsSubstage(state, preserveMessage = false) {
@@ -3480,7 +3665,7 @@ function renderTest(state, preserveMessage = false) {
 }
 
 function renderPreview(state) {
-  const currentStage = state.lifecycle?.currentStage || "requirements";
+  const currentStage = state.lifecycle?.currentStage || "prepare";
   const previewStatus = state.previewStatus || "waiting";
   const prototypeUnavailable =
     state.prototypeApproach?.mode === "not-applicable";
@@ -3579,6 +3764,7 @@ function nextActionForState(state) {
   if (
     completingStage ||
     submitting ||
+    preparationSubmitting ||
     implementationSubmitting ||
     testSubmitting ||
     state.provider?.canSubmitAnswers === false
@@ -3586,7 +3772,17 @@ function nextActionForState(state) {
     return null;
   }
 
-  const stage = state.lifecycle?.currentStage || "requirements";
+  const stage = state.lifecycle?.currentStage || "prepare";
+  if (stage === "prepare") {
+    if (state.preparation?.status === "failed" && !elements.retryPreparation.disabled) {
+      return {
+        tab: "preparation",
+        target: elements.retryPreparation,
+        label: "Retry preparation",
+      };
+    }
+    return null;
+  }
   if (stage === "requirements") {
     if (state.processing?.status === "running") return null;
     if (state.requirements?.substage !== "dag") {
@@ -3600,7 +3796,7 @@ function nextActionForState(state) {
         : {
             tab: "design-tree",
             target: elements.addUsage,
-            label: "Add the first app usage",
+            label: "Add the first usage",
           };
     }
     if ((state.decisionGraph?.nodes || []).some((node) => node.status === "active")) {
@@ -3803,9 +3999,13 @@ function render(state) {
   currentState = state;
   submitting = false;
   const currentLifecycleStage =
-    state.lifecycle?.currentStage || "requirements";
+    state.lifecycle?.currentStage || "prepare";
   if (currentLifecycleStage !== lastLifecycleStage) {
-    if (currentLifecycleStage === "prototype") {
+    if (currentLifecycleStage === "prepare") {
+      activeOutputTab = "preparation";
+    } else if (currentLifecycleStage === "requirements") {
+      activeOutputTab = "design-tree";
+    } else if (currentLifecycleStage === "prototype") {
       activeOutputTab = "preview";
     } else if (currentLifecycleStage === "design") {
       activeOutputTab = "design-review";
@@ -3853,6 +4053,8 @@ function renderIfChanged(state) {
   const implementationRuntimeSignature =
     JSON.stringify(state.implementationRuntime || null);
   const testRuntimeSignature = JSON.stringify(state.testRuntime || null);
+  const preparationRuntimeSignature =
+    JSON.stringify(state.preparationRuntime || null);
   if (
     currentState &&
     currentState.prototypeId === state.prototypeId &&
@@ -3860,11 +4062,13 @@ function renderIfChanged(state) {
     currentState.provider?.extensionId === state.provider?.extensionId &&
     currentState.provider?.canSubmitAnswers ===
       state.provider?.canSubmitAnswers &&
+    preparationRuntimeSignature === lastPreparationRuntimeSignature &&
     implementationRuntimeSignature === lastImplementationRuntimeSignature &&
     testRuntimeSignature === lastTestRuntimeSignature
   ) {
     return;
   }
+  lastPreparationRuntimeSignature = preparationRuntimeSignature;
   lastImplementationRuntimeSignature = implementationRuntimeSignature;
   lastTestRuntimeSignature = testRuntimeSignature;
   render(state);
@@ -3872,7 +4076,9 @@ function renderIfChanged(state) {
 
 function refreshSharedState() {
   const endpoint =
-    (currentState?.lifecycle?.currentStage || "") === "implement"
+    (currentState?.lifecycle?.currentStage || "") === "prepare"
+      ? "/api/preparation/status"
+      : (currentState?.lifecycle?.currentStage || "") === "implement"
       ? "/api/implementation/status"
       : (currentState?.lifecycle?.currentStage || "") === "test"
         ? "/api/test/status"

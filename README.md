@@ -40,25 +40,25 @@ Open a Git repository in Copilot and enter:
 /tandem Build an app that helps my team triage customer requests.
 ```
 
-Copilot first performs a bounded preflight: it inspects the workspace and researches
-authoritative sources for named external concepts that affect the requested flow.
-It also chooses whether to build a new GUI, validate an existing GUI, or bypass
-Prototype for work with no graphical interface. It then opens **Tandem** with that
-context. Work through the stages in order:
+Copilot opens **Tandem** immediately. Its automatic Preparation stage then inspects
+the workspace, analyzes authoritative sources for named concepts, and chooses
+whether to build a new GUI, validate an existing GUI, bypass Prototype, or ask
+Requirements to decide. Work through the stages in order:
 
-The Preparation card records source links, environment checks, and blockers. A
-fresh `/tandem` invocation initializes this state atomically, so stale discovery
-content is not displayed before the new goal is ready.
+The Preparation tab shows live work-item and factory progress, source links,
+environment checks, blockers, and final results. When analysis completes, Tandem
+passes its usage suggestions, assumptions, and deferred work into Requirements.
 
-1. Add one usage sentence at a time, then generate and resolve the requirements
+1. Review Preparation results and its suggested usages.
+2. Add one usage sentence at a time, then generate and resolve the requirements
    DAG.
-2. Review the new or existing live interface and submit revisions until it is
+3. Review the new or existing live interface and submit revisions until it is
    ready. For no-GUI work, Prototype is disabled with an explanation and Design
    opens after Requirements.
-3. Complete Product design and Test design.
-4. Generate and finalize the execution plan.
-5. Start implementation agents and monitor their work.
-6. Run integration and interaction tests, then finish the lifecycle.
+4. Complete Product design and Test design.
+5. Generate and finalize the execution plan.
+6. Start implementation agents and monitor their work.
+7. Run integration and interaction tests, then finish the lifecycle.
 
 Failed test runs provide a **Show error details** button with the run status,
 failed scenarios, agent summaries, captured evidence, and error events.

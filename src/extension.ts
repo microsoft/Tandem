@@ -38,6 +38,7 @@ const PREVIEW_IDENTITY_MARKERS = new Set([
     ["fast", "prototype", "id"].join("-"),
 ]);
 const LIFECYCLE_STAGES = [
+    { id: "prepare", label: "Preparation" },
     { id: "requirements", label: "Requirements" },
     { id: "prototype", label: "Prototype" },
     { id: "design", label: "Design" },
@@ -47,6 +48,8 @@ const LIFECYCLE_STAGES = [
 ];
 const PROVIDER_SCOPE = providerScopeFromModuleUrl(import.meta.url);
 const ANSWER_FACTORY_NAME = `tandem-process-answer-${PROVIDER_SCOPE}`;
+const PREPARATION_FACTORY_NAME =
+    `tandem-prepare-environment-${PROVIDER_SCOPE}`;
 const SUGGESTION_FACTORY_NAME =
     `tandem-generate-usage-suggestions-${PROVIDER_SCOPE}`;
 const DESIGN_REVIEW_FACTORY_NAME =
@@ -107,6 +110,7 @@ const instancePrototypeIds = new Map<string, string>();
 const stateCache = new Map<string, any>();
 const writeQueues = new Map<string, Promise<any>>();
 const activeAnswerRuns = new Map<string, Promise<any>>();
+const activePreparationRuns = new Map<string, Promise<any>>();
 const activeSuggestionRuns = new Map<string, Promise<any>>();
 const activeDesignReviewRuns = new Map<string, Promise<any>>();
 const activePlanningRuns = new Map<string, Promise<any>>();
@@ -226,12 +230,89 @@ function normalizeSourceUrl(value) {
     }
 }
 
+function preparationWorkItems() {
+    return [
+        {
+            id: "workspace",
+            title: "Inspect workspace",
+            status: "pending",
+            detail: "Identify repository structure, guidance, runtimes, and execution constraints.",
+            result: "",
+        },
+        {
+            id: "sources",
+            title: "Analyze authoritative sources",
+            status: "pending",
+            detail: "Ground named products, methods, and benchmarks in primary sources.",
+            result: "",
+        },
+        {
+            id: "requirements-handoff",
+            title: "Prepare requirements handoff",
+            status: "pending",
+            detail: "Synthesize usages, assumptions, deferred work, and prototype guidance.",
+            result: "",
+        },
+    ];
+}
+
 function normalizePreparation(value) {
     const status =
         isObject(value) &&
-        ["not-started", "ready", "needs-attention"].includes(value.status)
+        [
+            "not-started",
+            "starting",
+            "running",
+            "ready",
+            "needs-attention",
+            "failed",
+        ].includes(value.status)
             ? value.status
             : "not-started";
+    const workItems =
+        isObject(value) && Array.isArray(value.workItems)
+            ? value.workItems
+                  .filter((entry) => isObject(entry))
+                  .map((entry, index) => ({
+                      id: String(entry.id || `preparation-${index + 1}`)
+                          .trim()
+                          .slice(0, 120),
+                      title: String(entry.title || "Preparation work")
+                          .trim()
+                          .slice(0, 160),
+                      status: [
+                          "pending",
+                          "running",
+                          "completed",
+                          "failed",
+                      ].includes(entry.status)
+                          ? entry.status
+                          : "pending",
+                      detail: String(entry.detail || "").trim().slice(0, 1000),
+                      result: String(entry.result || "").trim().slice(0, 4000),
+                  }))
+                  .filter((entry) => entry.id && entry.title)
+                  .slice(0, 20)
+            : [];
+    const messages =
+        isObject(value) && Array.isArray(value.messages)
+            ? value.messages
+                  .filter((entry) => isObject(entry))
+                  .map((entry, index) => ({
+                      id: String(entry.id || `preparation-message-${index + 1}`)
+                          .trim()
+                          .slice(0, 120),
+                      text: String(entry.text || "").trim().slice(0, 2000),
+                      kind: ["info", "success", "warning", "error"].includes(
+                          entry.kind,
+                      )
+                          ? entry.kind
+                          : "info",
+                      at: String(entry.at || ""),
+                  }))
+                  .filter((entry) => entry.text)
+                  .slice(-100)
+            : [];
     const checks =
         isObject(value) && Array.isArray(value.checks)
             ? value.checks
@@ -265,8 +346,34 @@ function normalizePreparation(value) {
         summary: String(isObject(value) ? value.summary || "" : "")
             .trim()
             .slice(0, 2000),
+        workItems:
+            workItems.length > 0 ||
+            ["ready", "needs-attention", "failed"].includes(status)
+                ? workItems
+                : preparationWorkItems(),
+        messages,
         checks,
         sources,
+        suggestedUsages: normalizeStringList(
+            isObject(value) ? value.suggestedUsages : [],
+        )
+            .map((item) => item.slice(0, 500))
+            .slice(0, 6),
+        processing:
+            isObject(value) && isObject(value.processing)
+                ? {
+                      runId: value.processing.runId
+                          ? String(value.processing.runId).slice(0, 200)
+                          : null,
+                      requestedAt: String(value.processing.requestedAt || ""),
+                      completedAt: value.processing.completedAt
+                          ? String(value.processing.completedAt)
+                          : null,
+                  }
+                : null,
+        error: String(isObject(value) ? value.error || "" : "")
+            .trim()
+            .slice(0, 4000),
     };
 }
 
@@ -274,16 +381,16 @@ function createState(prototypeId: string, goal = ""): TandemState {
     return {
         version: 1,
         prototypeId,
-        stage: "requirements",
+        stage: "prepare",
         lifecycle: {
-            currentStage: "requirements",
+            currentStage: "prepare",
             completedStages: [],
             outputs: [],
             skippedStages: [],
         },
         goal,
-        phase: "discovery",
-        status: "Describe how you want to use this deliverable, one usage per sentence.",
+        phase: "building",
+        status: "Preparing the workspace and analyzing the goal...",
         preparation: normalizePreparation(null),
         prototypeApproach: normalizePrototypeApproach(null),
         requirements: {
@@ -1552,6 +1659,14 @@ function normalizeLifecycle(value) {
     const completedInput = new Set(
         isObject(value) ? normalizeStringList(value.completedStages) : [],
     );
+    if (
+        isObject(value) &&
+        value.currentStage &&
+        value.currentStage !== "prepare" &&
+        !completedInput.has("prepare")
+    ) {
+        completedInput.add("prepare");
+    }
     const completedStages = [];
     for (const stage of LIFECYCLE_STAGES) {
         if (!completedInput.has(stage.id)) break;
@@ -1928,9 +2043,13 @@ async function refreshEntryAnswerCapability(entry) {
     if (entry.canSubmitAnswers) {
         let state = await loadState(entry.prototypeId);
         if (!wasEnabled) {
+            recoverPreparationFactory(state, true);
             recoverAnswerFactory(state, true);
             recoverSuggestionFactory(state, true);
-            state = await ensureUsageSuggestionsStarted(state, true);
+            state =
+                state.lifecycle.currentStage === "prepare"
+                    ? await ensurePreparationStarted(state, true)
+                    : await ensureUsageSuggestionsStarted(state, true);
         }
         recoverPrototypeCompletion(state, true);
     }
@@ -1960,6 +2079,436 @@ function publishState(prototypeId) {
             client.write(event);
         }
     }
+}
+
+function preparationMessage(text, kind = "info") {
+    return {
+        id: randomUUID(),
+        text,
+        kind,
+        at: new Date().toISOString(),
+    };
+}
+
+async function recordPreparationWorkItem(
+    prototypeId,
+    workItemId,
+    status,
+    result = "",
+) {
+    await withAnswerClaim(prototypeId, async () => {
+        const current = await loadState(prototypeId);
+        if (
+            current.lifecycle.currentStage !== "prepare" ||
+            !["starting", "running"].includes(current.preparation.status)
+        ) {
+            return;
+        }
+        const workItems = current.preparation.workItems.map((item) =>
+            item.id === workItemId
+                ? {
+                      ...item,
+                      status,
+                      result: String(result || "").trim().slice(0, 4000),
+                  }
+                : item,
+        );
+        const item = workItems.find((candidate) => candidate.id === workItemId);
+        const message =
+            status === "running"
+                ? `${item?.title || "Preparation work"} started.`
+                : status === "completed"
+                  ? `${item?.title || "Preparation work"} completed.`
+                  : `${item?.title || "Preparation work"} failed.`;
+        const next = {
+            ...current,
+            preparation: normalizePreparation({
+                ...current.preparation,
+                status: status === "failed" ? "failed" : "running",
+                workItems,
+                messages: [
+                    ...current.preparation.messages,
+                    preparationMessage(
+                        message,
+                        status === "failed"
+                            ? "error"
+                            : status === "completed"
+                              ? "success"
+                              : "info",
+                    ),
+                ],
+            }),
+            status: message,
+            updatedAt: new Date().toISOString(),
+        };
+        await persistState(next);
+        publishState(prototypeId);
+    });
+}
+
+function preparationWorkspacePrompt(args) {
+    return [
+        "Inspect the target workspace for Tandem preparation.",
+        "Do not edit files, install dependencies, start servers, or create branches.",
+        "Inspect only repository structure, guidance files, manifests, package managers,",
+        "run commands, version-control state, and availability of runtimes or container",
+        "tools that materially affect the goal. Report concrete readiness checks.",
+        "",
+        `Project root: ${args.projectRoot}`,
+        `Goal: ${args.goal}`,
+    ].join("\n");
+}
+
+function preparationSourcesPrompt(args, workspaceAnalysis) {
+    return [
+        "Analyze the named products, repositories, methods, benchmarks, and domain",
+        "terms in this Tandem goal. Use authoritative repositories, official docs, or",
+        "primary papers only. Use at most four source calls total. Do not edit files,",
+        "install dependencies, or start servers. Identify the implementation target,",
+        "important inputs and outputs, integration boundaries, and execution workflow.",
+        "Return source URLs and any additional readiness checks.",
+        "",
+        `Project root: ${args.projectRoot}`,
+        `Goal: ${args.goal}`,
+        "Workspace analysis:",
+        JSON.stringify(workspaceAnalysis, null, 2),
+    ].join("\n");
+}
+
+function preparationHandoffPrompt(
+    args,
+    workspaceAnalysis,
+    sourceAnalysis,
+) {
+    return [
+        "Synthesize the completed Tandem preparation analysis. Do not use tools or",
+        "perform more research. Produce a concise requirements handoff.",
+        "Suggested usages must be distinct first-person sentences beginning with",
+        "'I want to'. Infer assumptions and explicitly defer missing runtime,",
+        "credential, platform, or expensive execution work.",
+        "Choose prototypeApproach build for a new GUI, validate-existing when an",
+        "existing GUI materially helps evaluate the flow, not-applicable only when",
+        "no graphical validation adds value, and undecided when the evidence does",
+        "not justify choosing yet.",
+        "",
+        `Goal: ${args.goal}`,
+        "Workspace analysis:",
+        JSON.stringify(workspaceAnalysis, null, 2),
+        "Authoritative source analysis:",
+        JSON.stringify(sourceAnalysis, null, 2),
+    ].join("\n");
+}
+
+async function settlePreparationRun(prototypeId, run) {
+    await withAnswerClaim(prototypeId, async () => {
+        const current = await loadState(prototypeId);
+        if (current.lifecycle.currentStage !== "prepare") return;
+        if (
+            current.preparation.processing?.runId &&
+            run.runId &&
+            current.preparation.processing.runId !== run.runId
+        ) {
+            return;
+        }
+        const completedAt = new Date().toISOString();
+        if (run.status !== "completed" || !isObject(run.result)) {
+            const error = factoryErrorMessage(run).slice(0, 4000);
+            const next = {
+                ...current,
+                preparation: normalizePreparation({
+                    ...current.preparation,
+                    status: "failed",
+                    workItems: current.preparation.workItems.map((item) =>
+                        item.status === "running"
+                            ? { ...item, status: "failed", result: error }
+                            : item,
+                    ),
+                    messages: [
+                        ...current.preparation.messages,
+                        preparationMessage(
+                            `Preparation failed: ${error}`,
+                            "error",
+                        ),
+                    ],
+                    processing: current.preparation.processing
+                        ? {
+                              ...current.preparation.processing,
+                              completedAt,
+                          }
+                        : null,
+                    error,
+                }),
+                status: `Preparation failed: ${error}`,
+                updatedAt: completedAt,
+            };
+            await persistState(next);
+            publishState(prototypeId);
+            return;
+        }
+
+        const result = run.result;
+        const preparation = normalizePreparation({
+            ...current.preparation,
+            status: result.status,
+            summary: result.summary,
+            workItems: current.preparation.workItems.map((item) => ({
+                ...item,
+                status: "completed",
+            })),
+            messages: [
+                ...current.preparation.messages,
+                preparationMessage(
+                    result.status === "ready"
+                        ? "Preparation completed. Requirements are ready."
+                        : "Preparation completed with items requiring attention.",
+                    result.status === "ready" ? "success" : "warning",
+                ),
+            ],
+            checks: result.checks,
+            sources: result.sources,
+            suggestedUsages: result.suggestedUsages,
+            processing: current.preparation.processing
+                ? { ...current.preparation.processing, completedAt }
+                : null,
+            error: "",
+        });
+        const requirements = normalizeRequirements(
+            {
+                ...current.requirements,
+                substage: "usage",
+                suggestions: result.suggestedUsages,
+            },
+            { nodes: [] },
+        );
+        const relativeOutputPath = join(
+            ".tandem",
+            prototypeId,
+            "stages",
+            "prepare.json",
+        );
+        const outputPath = join(
+            STATE_DIRECTORY,
+            prototypeId,
+            "stages",
+            "prepare.json",
+        );
+        await mkdir(dirname(outputPath), { recursive: true });
+        await writeJsonAtomically(outputPath, {
+            version: 1,
+            prototypeId,
+            stageId: "prepare",
+            completedAt,
+            result: {
+                goal: current.goal,
+                preparation,
+                prototypeApproach: result.prototypeApproach,
+                requirements,
+                assumed: result.assumed,
+                deferred: result.deferred,
+            },
+        });
+        const lifecycle = normalizeLifecycle({
+            ...current.lifecycle,
+            currentStage: "requirements",
+            completedStages: ["prepare"],
+            outputs: [
+                ...current.lifecycle.outputs.filter(
+                    (output) => output.stageId !== "prepare",
+                ),
+                {
+                    stageId: "prepare",
+                    path: relativeOutputPath,
+                    completedAt,
+                },
+            ],
+        });
+        const next = {
+            ...current,
+            stage: "requirements",
+            lifecycle,
+            phase: "discovery",
+            status:
+                "Preparation complete. Review the analysis suggestions and add the usages you want.",
+            preparation,
+            prototypeApproach: normalizePrototypeApproach(
+                result.prototypeApproach,
+            ),
+            requirements,
+            question: usageQuestion(requirements.suggestions),
+            assumed: normalizeStringList(result.assumed),
+            deferred: normalizeStringList(result.deferred),
+            updatedAt: completedAt,
+        };
+        await persistState(next);
+        publishState(prototypeId);
+    });
+}
+
+async function runPreparationFactory(prototypeId, state, resumeFromRunId = null) {
+    const run = await session.rpc.factory.run({
+        name: PREPARATION_FACTORY_NAME,
+        args: {
+            prototypeId,
+            projectRoot: WORKSPACE_ROOT,
+            goal: state.goal,
+        },
+        options: {
+            limits: {
+                maxConcurrentSubagents: 1,
+                maxTotalSubagents: 3,
+                timeoutSeconds: 240,
+                maxAiCredits: 1024000,
+            },
+            ...(resumeFromRunId ? { resumeFromRunId } : {}),
+        },
+    });
+    await withAnswerClaim(prototypeId, async () => {
+        const current = await loadState(prototypeId);
+        if (
+            current.lifecycle.currentStage !== "prepare" ||
+            !["starting", "running"].includes(current.preparation.status)
+        ) {
+            if (!isFactoryRunTerminal(run.status)) {
+                await session.factory.cancel(run.runId);
+            }
+            return;
+        }
+        const next = {
+            ...current,
+            preparation: normalizePreparation({
+                ...current.preparation,
+                status: "running",
+                processing: {
+                    ...(current.preparation.processing || {
+                        requestedAt: new Date().toISOString(),
+                        completedAt: null,
+                    }),
+                    runId: run.runId,
+                },
+            }),
+            updatedAt: new Date().toISOString(),
+        };
+        await persistState(next);
+        publishState(prototypeId);
+    });
+    const terminal = isFactoryRunTerminal(run.status)
+        ? run
+        : await session.factory.waitForRun(run.runId);
+    await settlePreparationRun(prototypeId, terminal);
+}
+
+function startPreparationFactory(prototypeId, state, resumeFromRunId = null) {
+    if (activePreparationRuns.has(prototypeId)) return;
+    const work = runPreparationFactory(prototypeId, state, resumeFromRunId)
+        .catch(async (error) => {
+            const latest = await loadState(prototypeId);
+            await settlePreparationRun(prototypeId, {
+                runId:
+                    latest.preparation.processing?.runId ||
+                    resumeFromRunId ||
+                    "unavailable",
+                status: "error",
+                error: error instanceof Error ? error.message : String(error),
+            });
+        })
+        .finally(() => {
+            if (activePreparationRuns.get(prototypeId) === work) {
+                activePreparationRuns.delete(prototypeId);
+            }
+        });
+    activePreparationRuns.set(prototypeId, work);
+}
+
+async function ensurePreparationStarted(state, canSubmitAnswers) {
+    if (
+        !canSubmitAnswers ||
+        state.lifecycle.currentStage !== "prepare" ||
+        state.preparation.status !== "not-started" ||
+        activePreparationRuns.has(state.prototypeId)
+    ) {
+        return state;
+    }
+    const requestedAt = new Date().toISOString();
+    const next = await withAnswerClaim(state.prototypeId, async () => {
+        const current = await loadState(state.prototypeId);
+        if (
+            current.lifecycle.currentStage !== "prepare" ||
+            current.preparation.status !== "not-started"
+        ) {
+            return current;
+        }
+        const updated = {
+            ...current,
+            preparation: normalizePreparation({
+                status: "starting",
+                summary: "",
+                workItems: preparationWorkItems(),
+                messages: [
+                    preparationMessage(
+                        "Preparation requested. Inspecting the workspace first.",
+                    ),
+                ],
+                checks: [],
+                sources: [],
+                suggestedUsages: [],
+                processing: {
+                    runId: null,
+                    requestedAt,
+                    completedAt: null,
+                },
+                error: "",
+            }),
+            status: "Starting preparation...",
+            updatedAt: requestedAt,
+        };
+        await persistState(updated);
+        publishState(state.prototypeId);
+        return updated;
+    });
+    if (next.preparation.status === "starting") {
+        startPreparationFactory(next.prototypeId, next);
+    }
+    return next;
+}
+
+function recoverPreparationFactory(state, canSubmitAnswers) {
+    if (
+        !canSubmitAnswers ||
+        state.lifecycle.currentStage !== "prepare" ||
+        !["starting", "running"].includes(state.preparation.status) ||
+        activePreparationRuns.has(state.prototypeId)
+    ) {
+        return;
+    }
+    const runId = state.preparation.processing?.runId || null;
+    if (!runId) {
+        startPreparationFactory(state.prototypeId, state);
+        return;
+    }
+    const work = (async () => {
+        let run = await session.factory.getRun(runId);
+        if (run.status === "halted") {
+            await runPreparationFactory(state.prototypeId, state, runId);
+            return;
+        }
+        if (!isFactoryRunTerminal(run.status)) {
+            run = await session.factory.waitForRun(run.runId);
+        }
+        await settlePreparationRun(state.prototypeId, run);
+    })()
+        .catch(async (error) => {
+            await settlePreparationRun(state.prototypeId, {
+                runId,
+                status: "error",
+                error: error instanceof Error ? error.message : String(error),
+            });
+        })
+        .finally(() => {
+            if (activePreparationRuns.get(state.prototypeId) === work) {
+                activePreparationRuns.delete(state.prototypeId);
+            }
+        });
+    activePreparationRuns.set(state.prototypeId, work);
 }
 
 async function resolvePrototypeId(instanceId, requestedId) {
@@ -2101,10 +2650,10 @@ function stageCompletionError(
     stageId,
     { requirePrototypeSpec = true } = {},
 ) {
+    if (stageId === "prepare") {
+        return "Preparation completes automatically when its worker finishes.";
+    }
     if (stageId === "requirements") {
-        if (state.preparation.status === "not-started") {
-            return "Complete and record the preparation preflight before finishing Requirements.";
-        }
         if (state.prototypeApproach.mode === "undecided") {
             return "Resolve whether Prototype should build, validate, or be bypassed.";
         }
@@ -7369,6 +7918,100 @@ async function testRuntimeState(entry) {
     }
 }
 
+async function preparationRuntimeState(entry) {
+    const state = await loadState(entry.prototypeId);
+    const payload = publicState(entry, state);
+    const runId = state.preparation.processing?.runId;
+    if (!runId) return { ...payload, preparationRuntime: null };
+    try {
+        const detail = await session.factory.getRunDetail(runId);
+        return {
+            ...payload,
+            preparationRuntime: {
+                runId,
+                status: detail.status,
+                currentPhase: detail.currentPhase?.id || null,
+                liveAgentCount: detail.liveAgentCount,
+                agents: detail.agents
+                    .filter((agent) => agent.label.startsWith("prepare:"))
+                    .map((agent) => ({
+                        label: agent.label,
+                        status: agent.status,
+                        model: agent.resolvedModel || agent.requestedModel || "",
+                        activity: agent.activity || "",
+                        activeMs: agent.activeMs,
+                    })),
+                progress: detail.progress.records.slice(-50).map((record) => ({
+                    seq: record.seq,
+                    text: record.text,
+                    kind: record.kind,
+                    recordedAt: record.recordedAt,
+                })),
+            },
+        };
+    } catch (error) {
+        const message =
+            error instanceof Error
+                ? error.message
+                : "Preparation observability is unavailable.";
+        await logSafely(
+            `Tandem could not read preparation runtime details: ${message}`,
+            "warning",
+        );
+        return {
+            ...payload,
+            preparationRuntime: {
+                runId,
+                status: "unavailable",
+                currentPhase: null,
+                liveAgentCount: 0,
+                agents: [],
+                progress: [],
+                error: message,
+            },
+        };
+    }
+}
+
+async function submitPreparationRetry(entry, res) {
+    if (!(await isPreferredAnswerProvider(entry.extensionId))) {
+        sendJson(res, 409, {
+            error: "Use the installed user-scoped Tandem to retry preparation.",
+        });
+        return;
+    }
+    const state = await withAnswerClaim(entry.prototypeId, async () => {
+        const current = await loadState(entry.prototypeId);
+        if (
+            current.lifecycle.currentStage !== "prepare" ||
+            current.preparation.status !== "failed"
+        ) {
+            throw new AnswerRequestError(
+                409,
+                "Preparation can be retried only after a failed preparation run.",
+            );
+        }
+        const next = {
+            ...current,
+            preparation: normalizePreparation(null),
+            status: "Retrying preparation...",
+            updatedAt: new Date().toISOString(),
+        };
+        await persistState(next);
+        publishState(entry.prototypeId);
+        return next;
+    }).catch((error) => {
+        if (error instanceof AnswerRequestError) {
+            sendJson(res, error.statusCode, { error: error.message });
+            return null;
+        }
+        throw error;
+    });
+    if (!state) return;
+    sendJson(res, 202, { accepted: true });
+    await ensurePreparationStarted(state, true);
+}
+
 async function handleRequest(entry, req, res) {
     const requestUrl = new URL(req.url || "/", "http://127.0.0.1");
 
@@ -7388,6 +8031,15 @@ async function handleRequest(entry, req, res) {
             200,
             publicState(entry, await loadState(entry.prototypeId)),
         );
+        return;
+    }
+
+    if (
+        req.method === "GET" &&
+        requestUrl.pathname === "/api/preparation/status"
+    ) {
+        await refreshEntryAnswerCapability(entry);
+        sendJson(res, 200, await preparationRuntimeState(entry));
         return;
     }
 
@@ -7487,6 +8139,14 @@ async function handleRequest(entry, req, res) {
 
     if (req.method === "POST" && requestUrl.pathname === "/api/test/start") {
         await submitTestStart(entry, res);
+        return;
+    }
+
+    if (
+        req.method === "POST" &&
+        requestUrl.pathname === "/api/preparation/retry"
+    ) {
+        await submitPreparationRetry(entry, res);
         return;
     }
 
@@ -7635,9 +8295,53 @@ const preparationSchema = {
     properties: {
         status: {
             type: "string",
-            enum: ["not-started", "ready", "needs-attention"],
+            enum: [
+                "not-started",
+                "starting",
+                "running",
+                "ready",
+                "needs-attention",
+                "failed",
+            ],
         },
         summary: { type: "string", maxLength: 2000 },
+        workItems: {
+            type: "array",
+            maxItems: 20,
+            items: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                    id: { type: "string", minLength: 1, maxLength: 120 },
+                    title: { type: "string", minLength: 1, maxLength: 160 },
+                    status: {
+                        type: "string",
+                        enum: ["pending", "running", "completed", "failed"],
+                    },
+                    detail: { type: "string", maxLength: 1000 },
+                    result: { type: "string", maxLength: 4000 },
+                },
+                required: ["id", "title", "status", "detail", "result"],
+            },
+        },
+        messages: {
+            type: "array",
+            maxItems: 100,
+            items: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                    id: { type: "string", minLength: 1, maxLength: 120 },
+                    text: { type: "string", minLength: 1, maxLength: 2000 },
+                    kind: {
+                        type: "string",
+                        enum: ["info", "success", "warning", "error"],
+                    },
+                    at: { type: "string" },
+                },
+                required: ["id", "text", "kind", "at"],
+            },
+        },
         checks: {
             type: "array",
             maxItems: 20,
@@ -7669,8 +8373,140 @@ const preparationSchema = {
                 required: ["title", "url", "purpose"],
             },
         },
+        suggestedUsages: {
+            type: "array",
+            maxItems: 6,
+            items: { type: "string", minLength: 1, maxLength: 500 },
+        },
+        processing: {
+            anyOf: [
+                { type: "null" },
+                {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                        runId: { type: ["string", "null"] },
+                        requestedAt: { type: "string" },
+                        completedAt: { type: ["string", "null"] },
+                    },
+                    required: ["runId", "requestedAt", "completedAt"],
+                },
+            ],
+        },
+        error: { type: "string", maxLength: 4000 },
     },
-    required: ["status", "summary", "checks", "sources"],
+    required: [
+        "status",
+        "summary",
+        "workItems",
+        "messages",
+        "checks",
+        "sources",
+        "suggestedUsages",
+        "processing",
+        "error",
+    ],
+};
+
+const preparationCheckSchema = preparationSchema.properties.checks.items;
+const preparationSourceSchema = preparationSchema.properties.sources.items;
+
+const preparationWorkspaceOutputSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        summary: { type: "string", minLength: 1, maxLength: 4000 },
+        checks: {
+            type: "array",
+            maxItems: 20,
+            items: preparationCheckSchema,
+        },
+    },
+    required: ["summary", "checks"],
+};
+
+const preparationSourcesOutputSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        summary: { type: "string", minLength: 1, maxLength: 4000 },
+        sources: {
+            type: "array",
+            maxItems: 20,
+            items: preparationSourceSchema,
+        },
+        checks: {
+            type: "array",
+            maxItems: 20,
+            items: preparationCheckSchema,
+        },
+    },
+    required: ["summary", "sources", "checks"],
+};
+
+const preparationFactoryOutputSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        status: {
+            type: "string",
+            enum: ["ready", "needs-attention"],
+        },
+        summary: { type: "string", minLength: 1, maxLength: 2000 },
+        checks: {
+            type: "array",
+            maxItems: 20,
+            items: preparationCheckSchema,
+        },
+        sources: {
+            type: "array",
+            maxItems: 20,
+            items: preparationSourceSchema,
+        },
+        suggestedUsages: {
+            type: "array",
+            minItems: 1,
+            maxItems: 5,
+            items: { type: "string", minLength: 1, maxLength: 500 },
+        },
+        assumed: {
+            type: "array",
+            maxItems: 20,
+            items: { type: "string", minLength: 1, maxLength: 500 },
+        },
+        deferred: {
+            type: "array",
+            maxItems: 20,
+            items: { type: "string", minLength: 1, maxLength: 500 },
+        },
+        prototypeApproach: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+                mode: {
+                    type: "string",
+                    enum: [
+                        "undecided",
+                        "build",
+                        "validate-existing",
+                        "not-applicable",
+                    ],
+                },
+                reason: { type: "string", minLength: 1, maxLength: 500 },
+            },
+            required: ["mode", "reason"],
+        },
+    },
+    required: [
+        "status",
+        "summary",
+        "checks",
+        "sources",
+        "suggestedUsages",
+        "assumed",
+        "deferred",
+        "prototypeApproach",
+    ],
 };
 
 const prototypeApproachSchema = {
@@ -8106,6 +8942,7 @@ const artifactSchema = {
         stage: {
             type: "string",
             enum: [
+                "prepare",
                 "requirements",
                 "prototype",
                 "design",
@@ -8246,6 +9083,145 @@ const answerFactoryOutputSchema = {
         "previewStatus",
     ],
 };
+
+const preparationFactory = defineFactory({
+    meta: {
+        name: PREPARATION_FACTORY_NAME,
+        description:
+            "Inspect the workspace and authoritative sources, then prepare the Requirements handoff.",
+        phases: [
+            {
+                title: "Inspect workspace",
+                detail: "Identify repository structure, tooling, and execution constraints.",
+            },
+            {
+                title: "Analyze sources",
+                detail: "Ground named products, methods, and benchmarks in authoritative sources.",
+            },
+            {
+                title: "Prepare requirements",
+                detail: "Synthesize usages, assumptions, and prototype guidance.",
+            },
+        ],
+        argsSchema: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+                prototypeId: { type: "string", minLength: 1 },
+                projectRoot: { type: "string", minLength: 1 },
+                goal: { type: "string" },
+            },
+            required: ["prototypeId", "projectRoot", "goal"],
+        },
+        limits: {
+            maxConcurrentSubagents: 1,
+            maxTotalSubagents: 3,
+            timeoutSeconds: 240,
+            maxAiCredits: 1024000,
+        },
+    },
+    run: async (ctx) => {
+        const args: any = ctx.args;
+        if (
+            !isObject(args) ||
+            !String(args.prototypeId || "").trim() ||
+            !String(args.projectRoot || "").trim()
+        ) {
+            throw new Error("Preparation factory arguments are invalid.");
+        }
+
+        ctx.phase("Inspect workspace");
+        ctx.log("Inspecting repository structure and required tooling.");
+        await recordPreparationWorkItem(
+            args.prototypeId,
+            "workspace",
+            "running",
+        );
+        const workspaceAnalysis: any = await ctx.step("inspect-workspace", () =>
+            ctx.agent(preparationWorkspacePrompt(args), {
+                label: "prepare:workspace",
+                schema: preparationWorkspaceOutputSchema,
+                reasoningEffort: "low",
+            }) as Promise<any>,
+        );
+        await recordPreparationWorkItem(
+            args.prototypeId,
+            "workspace",
+            "completed",
+            workspaceAnalysis.summary,
+        );
+
+        ctx.phase("Analyze sources");
+        ctx.log("Reading authoritative sources for named concepts.");
+        await recordPreparationWorkItem(
+            args.prototypeId,
+            "sources",
+            "running",
+        );
+        const sourceAnalysis: any = await ctx.step("analyze-sources", () =>
+            ctx.agent(preparationSourcesPrompt(args, workspaceAnalysis), {
+                label: "prepare:sources",
+                schema: preparationSourcesOutputSchema,
+                reasoningEffort: "medium",
+            }) as Promise<any>,
+        );
+        await recordPreparationWorkItem(
+            args.prototypeId,
+            "sources",
+            "completed",
+            sourceAnalysis.summary,
+        );
+
+        ctx.phase("Prepare requirements");
+        ctx.log("Synthesizing preparation findings into Requirements suggestions.");
+        await recordPreparationWorkItem(
+            args.prototypeId,
+            "requirements-handoff",
+            "running",
+        );
+        const handoff: any = await ctx.step("prepare-requirements", () =>
+            ctx.agent(
+                preparationHandoffPrompt(
+                    args,
+                    workspaceAnalysis,
+                    sourceAnalysis,
+                ),
+                {
+                    label: "prepare:requirements",
+                    schema: preparationFactoryOutputSchema,
+                    reasoningEffort: "medium",
+                },
+            ) as Promise<any>,
+        );
+        const checks = [
+            ...workspaceAnalysis.checks,
+            ...sourceAnalysis.checks,
+        ].filter(
+            (entry, index, entries) =>
+                entries.findIndex(
+                    (candidate) =>
+                        String(candidate.label).toLowerCase() ===
+                        String(entry.label).toLowerCase(),
+                ) === index,
+        );
+        const result = {
+            ...handoff,
+            status: checks.some((check) => check.status === "missing")
+                ? "needs-attention"
+                : handoff.status,
+            checks,
+            sources: sourceAnalysis.sources,
+        };
+        await recordPreparationWorkItem(
+            args.prototypeId,
+            "requirements-handoff",
+            "completed",
+            result.summary,
+        );
+        ctx.log("Preparation handoff is ready.");
+        return result;
+    },
+});
 
 const usageSuggestionFactory = defineFactory({
     meta: {
@@ -8839,6 +9815,7 @@ const answerFactory = defineFactory({
 
 session = await joinSession({
     factories: [
+        preparationFactory,
         usageSuggestionFactory,
         designReviewFactory,
         planningFactory,
@@ -8864,14 +9841,10 @@ session = await joinSession({
                     skillAlreadyLoaded
                         ? "The Tandem skill is already loaded; do not invoke it again."
                         : "Load the Tandem skill once, then follow it.",
-                    "Complete its bounded workspace and authoritative-source preflight.",
-                    "Use at most four source calls and target one minute; prefer direct",
-                    "official repository reads and do not duplicate web and code searches.",
-                    "Record environment checks, blockers, and sources in preparation.",
-                    "Use prototypeApproach undecided when a named product has a GUI but",
-                    "the requested change does not clearly need graphical validation.",
-                    "Then initialize Tandem atomically through open_canvas with reset true;",
-                    "do not open stale state and reset it with a later action.",
+                    "Open Tandem immediately with reset true, the goal, and a stable",
+                    "prototypeId. Do not inspect the workspace or research sources first.",
+                    "Tandem owns the automatic Preparation stage and will pass its",
+                    "analysis suggestions into Requirements when preparation finishes.",
                     "Do not ask the user to write a more detailed invocation prompt.",
                 ].join(" "),
             };
@@ -8973,6 +9946,7 @@ session = await joinSession({
                             stageId: {
                                 type: "string",
                                 enum: [
+                                    "prepare",
                                     "requirements",
                                     "prototype",
                                     "design",
@@ -9027,27 +10001,6 @@ session = await joinSession({
                               if (typeof input.goal === "string") {
                                   next.goal = input.goal.trim().slice(0, 4000);
                               }
-                              if (typeof input.status === "string") {
-                                  next.status = input.status
-                                      .trim()
-                                      .slice(0, 1000);
-                              }
-                              next.preparation = normalizePreparation(
-                                  input.preparation,
-                              );
-                              next.prototypeApproach =
-                                  normalizePrototypeApproach(
-                                      input.prototypeApproach,
-                                  );
-                              next.requirements = normalizeRequirements(
-                                  input.requirements,
-                                  { nodes: [] },
-                              );
-                              next.question = usageQuestion(
-                                  next.requirements.suggestions,
-                              );
-                              next.assumed = normalizeStringList(input.assumed);
-                              next.deferred = normalizeStringList(input.deferred);
                               next.updatedAt = new Date().toISOString();
                               await persistState(next);
                               return next;
@@ -9058,6 +10011,7 @@ session = await joinSession({
                     state,
                     canSubmitAnswers,
                 );
+                recoverPreparationFactory(state, canSubmitAnswers);
                 recoverAnswerFactory(state, canSubmitAnswers);
                 recoverSuggestionFactory(state, canSubmitAnswers);
                 recoverPrototypeCompletion(state, canSubmitAnswers);
@@ -9086,11 +10040,6 @@ session = await joinSession({
                         return next;
                     });
                 }
-                state = await ensureUsageSuggestionsStarted(
-                    state,
-                    canSubmitAnswers,
-                );
-
                 let entry = servers.get(ctx.instanceId);
                 if (!entry) {
                     entry = await startServer(
@@ -9105,6 +10054,16 @@ session = await joinSession({
                     entry.extensionId = ctx.extensionId;
                     entry.canSubmitAnswers = canSubmitAnswers;
                 }
+                state =
+                    state.lifecycle.currentStage === "prepare"
+                        ? await ensurePreparationStarted(
+                              state,
+                              canSubmitAnswers,
+                          )
+                        : await ensureUsageSuggestionsStarted(
+                              state,
+                              canSubmitAnswers,
+                          );
 
                 return {
                     title: "Tandem",

@@ -1,4 +1,5 @@
 export type LifecycleStageId =
+    | "prepare"
     | "requirements"
     | "prototype"
     | "design"
@@ -32,10 +33,36 @@ export interface PreparationSource {
 }
 
 export interface PreparationState {
-    status: "not-started" | "ready" | "needs-attention";
+    status:
+        | "not-started"
+        | "starting"
+        | "running"
+        | "ready"
+        | "needs-attention"
+        | "failed";
     summary: string;
+    workItems: Array<{
+        id: string;
+        title: string;
+        status: "pending" | "running" | "completed" | "failed";
+        detail: string;
+        result: string;
+    }>;
+    messages: Array<{
+        id: string;
+        text: string;
+        kind: "info" | "success" | "warning" | "error";
+        at: string;
+    }>;
     checks: PreparationCheck[];
     sources: PreparationSource[];
+    suggestedUsages: string[];
+    processing: {
+        runId: string | null;
+        requestedAt: string;
+        completedAt: string | null;
+    } | null;
+    error: string;
 }
 
 export interface LifecycleOutput {
