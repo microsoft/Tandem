@@ -18,6 +18,9 @@ const extensionRoot = join(
 );
 const clientEntry = join(repositoryRoot, "src", "renderer", "client.ts");
 const stylesEntry = join(repositoryRoot, "src", "renderer", "styles.css");
+const packageMetadata = JSON.parse(
+    await readFile(join(repositoryRoot, "package.json"), "utf8"),
+);
 
 const rendererAssetsPlugin: Plugin = {
     name: "tandem-renderer-assets",
@@ -75,6 +78,9 @@ const options: BuildOptions = {
     external: ["@github/copilot-sdk/*"],
     loader: { ".html": "text" },
     plugins: [rendererAssetsPlugin],
+    define: {
+        __TANDEM_VERSION__: JSON.stringify(packageMetadata.version),
+    },
     sourcemap: false,
     banner: {
         js: "// Generated from the project-root src/ directory by npm run build. Do not edit directly.",

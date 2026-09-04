@@ -101,6 +101,8 @@ const elements: AnyRecord = {
   testAgents: document.getElementById("test-agents"),
   testEvents: document.getElementById("test-events"),
   testStatus: document.getElementById("test-status"),
+  testErrorToggle: document.getElementById("test-error-toggle"),
+  testErrorDetails: document.getElementById("test-error-details"),
   startTests: document.getElementById("start-tests"),
   previewTabs: Array.from(document.querySelectorAll('[role="tab"]')),
   previewPanel: document.getElementById("live-preview-panel"),
@@ -111,6 +113,7 @@ const elements: AnyRecord = {
   prototypeBuilding: document.getElementById("prototype-building"),
   prototypeBuildingMessage: document.getElementById("prototype-building-message"),
   previewEmpty: document.getElementById("preview-empty"),
+  previewEmptyMessage: document.getElementById("preview-empty-message"),
   previewFrame: document.getElementById("preview-frame"),
   openPreview: document.getElementById("open-preview"),
   workspace: document.getElementById("studio-workspace"),
@@ -118,6 +121,10 @@ const elements: AnyRecord = {
   splitter: document.getElementById("studio-splitter"),
   reloadButton: document.getElementById("reload-extension"),
   reloadStatus: document.getElementById("reload-status"),
+  preparationStatus: document.getElementById("preparation-status"),
+  preparationSummary: document.getElementById("preparation-summary"),
+  preparationChecks: document.getElementById("preparation-checks"),
+  preparationSources: document.getElementById("preparation-sources"),
   stageList: document.getElementById("stage-list"),
   completeStage: document.getElementById("complete-stage"),
   stageMessage: document.getElementById("stage-message"),
@@ -178,6 +185,8 @@ let lastLifecycleStage = null;
 let implementationSubmitting = false;
 let lastImplementationRuntimeSignature = "";
 let testSubmitting = false;
+let testErrorDetailsExpanded = false;
+let testErrorDetailsSignature = "";
 let lastTestRuntimeSignature = "";
 let processingMessageTimer = null;
 let prototypeBuildMessageTimer = null;
@@ -793,6 +802,19 @@ elements.startTests.addEventListener("click", async () => {
   }
 });
 
+elements.testErrorToggle.addEventListener("click", () => {
+  testErrorDetailsExpanded = !testErrorDetailsExpanded;
+  elements.testErrorToggle.setAttribute(
+    "aria-expanded",
+    String(testErrorDetailsExpanded),
+  );
+  elements.testErrorToggle.textContent = testErrorDetailsExpanded
+    ? "Hide error details"
+    : "Show error details";
+  elements.testErrorDetails.hidden = !testErrorDetailsExpanded;
+  if (testErrorDetailsExpanded) elements.testErrorDetails.focus();
+});
+
 elements.completeStage.addEventListener("click", async () => {
   if (elements.completeStage.disabled || !currentState) return;
   const stageId = currentState.lifecycle?.currentStage || "requirements";
@@ -832,7 +854,7 @@ elements.completeStage.addEventListener("click", async () => {
 });
 
 function activateOutputTab(tabName, focusTab = false) {
-  activeOutputTab = [
+  const requestedTab = [
     "preview",
     "design-tree",
     "design-review",
@@ -843,6 +865,10 @@ function activateOutputTab(tabName, focusTab = false) {
   ].includes(tabName)
     ? tabName
     : "preview";
+  const requestedElement = elements.previewTabs.find(
+    (tab) => tab.dataset.tab === requestedTab,
+  );
+  activeOutputTab = requestedElement?.disabled ? "design-tree" : requestedTab;
   for (const tab of elements.previewTabs) {
     const isActive = tab.dataset.tab === activeOutputTab;
     tab.setAttribute("aria-selected", String(isActive));
@@ -888,8 +914,14 @@ function renderLifecycle(state, preserveMessage = false) {
     currentStage: "requirements",
     completedStages: [],
     outputs: [],
+    skippedStages: [],
   };
   const completed = new Set(lifecycle.completedStages || []);
+  const skipped = new Map<string, AnyRecord>(
+    (lifecycle.skippedStages || []).map(
+      (entry): [string, AnyRecord] => [entry.stageId, entry],
+    ),
+  );
   const outputs = new Map<string, AnyRecord>(
     (lifecycle.outputs || []).map(
       (output): [string, AnyRecord] => [output.stageId, output],
@@ -914,15 +946,39 @@ function renderLifecycle(state, preserveMessage = false) {
   elements.stageList.replaceChildren();
   LIFECYCLE_STAGES.forEach((stage, index) => {
     const isComplete = completed.has(stage.id);
+    const configuredSkip = stage.id === "prototype"
+      && state.prototypeApproach?.mode === "not-applicable";
+    const skippedEntry = skipped.get(stage.id)
+      || (configuredSkip
+        ? {
+            stageId: "prototype",
+            reason: state.prototypeApproach?.reason
+              || "No graphical interface needs prototype validation.",
+          }
+        : null);
+    const isSkipped = Boolean(skippedEntry);
     const isActive = stage.id === currentStageId && !allComplete;
-    const status = isComplete ? "complete" : isActive ? "active" : "locked";
+    const status = isSkipped
+      ? "not applicable"
+      : isComplete
+        ? "complete"
+        : isActive
+          ? "active"
+          : "locked";
     const item = document.createElement("li");
     const button = document.createElement("button");
     button.className = "stage-step";
     button.type = "button";
     button.dataset.status = status;
-    button.disabled = status === "locked";
+    button.disabled = status === "locked" || isSkipped;
     button.setAttribute("aria-current", String(isActive));
+    if (isSkipped) {
+      button.title = skippedEntry.reason;
+      button.setAttribute(
+        "aria-label",
+        `${stage.label}, not applicable. ${skippedEntry.reason}`,
+      );
+    }
 
     const number = document.createElement("span");
     number.className = "stage-step-index";
@@ -943,6 +999,12 @@ function renderLifecycle(state, preserveMessage = false) {
       });
     }
     item.append(button);
+    if (isSkipped) {
+      const hint = document.createElement("p");
+      hint.className = "stage-step-hint";
+      hint.textContent = skippedEntry.reason;
+      item.append(hint);
+    }
     elements.stageList.append(item);
   });
 
@@ -966,7 +1028,9 @@ function renderLifecycle(state, preserveMessage = false) {
     || (
       currentStageId === "requirements"
       && (
-        state.requirements?.substage !== "dag"
+        state.preparation?.status === "not-started"
+        || state.prototypeApproach?.mode === "undecided"
+        || state.requirements?.substage !== "dag"
         || !Array.isArray(state.decisionGraph?.nodes)
         || state.decisionGraph.nodes.length === 0
         || state.decisionGraph.nodes.some((node) => !node.answer)
@@ -1031,10 +1095,54 @@ function renderLifecycle(state, preserveMessage = false) {
 
   if (!preserveMessage) {
     const latestOutput = [...(lifecycle.outputs || [])].pop();
-    elements.stageMessage.textContent = latestOutput
-      ? "Saved " + latestOutput.path
-      : "Complete the active stage to unlock the next.";
+    const prototypeSkip = skipped.get("prototype")
+      || (
+        state.prototypeApproach?.mode === "not-applicable"
+          ? state.prototypeApproach
+          : null
+      );
+    elements.stageMessage.textContent = prototypeSkip
+        && (!latestOutput || latestOutput.stageId === "prototype")
+      ? "Prototype disabled: " + prototypeSkip.reason
+      : latestOutput
+        ? "Saved " + latestOutput.path
+        : "Complete the active stage to unlock the next.";
     elements.stageMessage.dataset.status = "idle";
+  }
+}
+
+function renderPreparation(state) {
+  const preparation = state.preparation || {
+    status: "not-started",
+    summary: "",
+    checks: [],
+    sources: [],
+  };
+  elements.preparationStatus.textContent = preparation.status.replace("-", " ");
+  elements.preparationStatus.dataset.status = preparation.status;
+  elements.preparationSummary.textContent = preparation.summary
+    || "Environment readiness and authoritative sources have not been recorded.";
+  elements.preparationSummary.classList.toggle("muted", !preparation.summary);
+  elements.preparationChecks.replaceChildren();
+  for (const check of preparation.checks || []) {
+    const item = document.createElement("li");
+    item.dataset.status = check.status;
+    const label = document.createElement("strong");
+    label.textContent = check.label;
+    const detail = document.createElement("span");
+    detail.textContent = check.detail;
+    item.append(label, detail);
+    elements.preparationChecks.append(item);
+  }
+  elements.preparationSources.replaceChildren();
+  for (const source of preparation.sources || []) {
+    const link = document.createElement("a");
+    link.href = source.url;
+    link.target = "_blank";
+    link.rel = "noreferrer";
+    link.textContent = source.title;
+    link.title = source.purpose || source.url;
+    elements.preparationSources.append(link);
   }
 }
 
@@ -3295,6 +3403,61 @@ function renderTest(state, preserveMessage = false) {
     );
   }
 
+  const failedResults = results.filter((scenario) =>
+    ["failed", "blocked"].includes(scenario.status)
+  );
+  const errorDetails = testing.errorDetails || JSON.stringify(
+    {
+      summary: testing.error || runtime?.error || "Test execution failed.",
+      run: {
+        id: testing.runId || runtime?.runId || "unavailable",
+        status: testing.status || runtime?.status || "failed",
+      },
+      failedScenarios: failedResults.map((scenario) => ({
+        id: scenario.id,
+        status: scenario.status,
+        summary: scenario.summary,
+        evidence: scenario.evidence || [],
+      })),
+      failedAgents: (testing.agents || [])
+        .filter((agent) => ["failed", "blocked"].includes(agent.status))
+        .map((agent) => ({
+          id: agent.id,
+          scenarioId: agent.scenarioId,
+          status: agent.status,
+          activity: agent.activity,
+          summary: agent.summary,
+        })),
+      errorEvents: (testing.events || []).filter((event) => event.type === "error"),
+    },
+    null,
+    2,
+  );
+  const hasErrorDetails = Boolean(
+    testing.status === "failed"
+    || testing.error
+    || runtime?.error
+    || failedResults.length > 0
+  );
+  const errorSignature = hasErrorDetails
+    ? [testing.runId, testing.completedAt, errorDetails].join("|")
+    : "";
+  if (errorSignature !== testErrorDetailsSignature) {
+    testErrorDetailsSignature = errorSignature;
+    testErrorDetailsExpanded = false;
+  }
+  elements.testErrorToggle.hidden = !hasErrorDetails;
+  elements.testErrorToggle.textContent = testErrorDetailsExpanded
+    ? "Hide error details"
+    : "Show error details";
+  elements.testErrorToggle.setAttribute(
+    "aria-expanded",
+    String(testErrorDetailsExpanded),
+  );
+  elements.testErrorDetails.hidden =
+    !hasErrorDetails || !testErrorDetailsExpanded;
+  elements.testErrorDetails.textContent = hasErrorDetails ? errorDetails : "";
+
   if (!preserveMessage) {
     elements.testStatus.textContent = !canSubmit
       ? "Open the installed user-scoped Tandem to run tests."
@@ -3319,13 +3482,39 @@ function renderTest(state, preserveMessage = false) {
 function renderPreview(state) {
   const currentStage = state.lifecycle?.currentStage || "requirements";
   const previewStatus = state.previewStatus || "waiting";
-  const building = currentStage === "prototype"
+  const prototypeUnavailable =
+    state.prototypeApproach?.mode === "not-applicable";
+  const prototypeReason = state.prototypeApproach?.reason
+    || "No graphical interface needs prototype validation.";
+  elements.previewTab.disabled = prototypeUnavailable;
+  elements.previewTab.title = prototypeUnavailable ? prototypeReason : "";
+  elements.previewTab.setAttribute(
+    "aria-label",
+    prototypeUnavailable
+      ? "Live prototype, not applicable. " + prototypeReason
+      : "Live prototype",
+  );
+  elements.previewEmptyMessage.textContent = prototypeUnavailable
+    ? "Live prototype is not applicable. " + prototypeReason
+    : "The runnable prototype will appear here after the essential interaction decisions are captured.";
+  if (prototypeUnavailable && activeOutputTab === "preview") {
+    activeOutputTab = "design-tree";
+  }
+  const building = !prototypeUnavailable && currentStage === "prototype"
     && !["ready", "error"].includes(previewStatus);
-  elements.previewStatus.textContent = building ? "building" : previewStatus;
+  elements.previewStatus.textContent = prototypeUnavailable
+    ? "not applicable"
+    : building
+      ? "building"
+      : previewStatus;
   elements.previewTab.classList.toggle("prototype-building-tab", building);
   elements.previewTab.setAttribute(
     "aria-label",
-    building ? "Live prototype, building" : "Live prototype",
+    prototypeUnavailable
+      ? "Live prototype, not applicable. " + prototypeReason
+      : building
+        ? "Live prototype, building"
+        : "Live prototype",
   );
   elements.prototypeBuilding.hidden = !building;
 
@@ -3638,6 +3827,7 @@ function render(state) {
     lastLifecycleStage = currentLifecycleStage;
   }
   renderLifecycle(state);
+  renderPreparation(state);
   renderRequirementsSubstage(state);
   elements.phase.textContent = state.phase || "discovery";
   elements.goal.textContent = state.goal || "Waiting for a prototype goal...";

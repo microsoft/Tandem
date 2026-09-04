@@ -34,6 +34,9 @@ implementation, but production engineering is outside this skill.
 
 ## Invocation
 
+This document is the loaded Tandem skill context. Do not invoke the `tandem` skill
+tool again when this context is already present.
+
 The end-user command is intentionally small:
 
 ```text
@@ -46,12 +49,14 @@ model, or implementation prompt. The skill owns discovery.
 
 On activation:
 
-1. Open the `tandem` canvas, displayed as **Tandem**, using a
-   stable instance such as `tandem`. Pass the initial goal and a short, stable
-   `prototypeId`.
-2. Invoke `update_tandem` with `reset: true`, stage `requirements`, the goal,
-   phase `discovery`, and `requirements.substage` set to `usage`. Do not create a
-   decision graph yet.
+1. Complete the bounded preparation preflight below.
+2. Open the `tandem` canvas, displayed as **Tandem**, using stable instance
+   `tandem`. Initialize it atomically by passing `reset: true`, the initial goal,
+   short stable `prototypeId`, completed `preparation`, `prototypeApproach`,
+   requirements usage list, assumptions, and deferred items in the open input.
+   Do not open stale state and reset it in a later action. Do not call
+   `list_canvas_capabilities` unless opening fails because the declared schema has
+   changed.
 3. End the turn and let the user add one-sentence usage item inside Tandem.
    Persist each item immediately. A separate background hidden agent generates
    complementary suggestions that the user can add with one click; suggestion
@@ -67,11 +72,90 @@ On activation:
 Tandem is the lifecycle orchestration UI. It advances sequentially through
 **Requirements**, **Prototype**, **Design**, **Plan**, **Implement**, and
 **Test**.
-Each stage must be completed explicitly, which persists its JSON result under
-`.tandem/<prototypeId>/stages/` before enabling the next stage. Tandem
+Each applicable stage must be completed explicitly, which persists its JSON result
+under `.tandem/<prototypeId>/stages/` before enabling the next stage. A Prototype
+that is not applicable is disabled and bypassed automatically after Requirements,
+with its reason and feature-spec handoff still persisted. Tandem
 owns Q&A, assumptions, scope, progress, prototype revisions, evidence, and the
 live output area. The website being prototyped is a separate artifact rendered
 inside Tandem; never mix discovery controls into the prototype itself.
+
+## Preparation preflight
+
+Preparation is a short agent preflight whose durable result is visible in Tandem.
+Finish it before calling `open_canvas` so Requirements opens with grounded context
+and a concrete environment-readiness report.
+
+1. Parse the goal and identify named products, repositories, methods, benchmarks,
+   standards, or domain terms whose meaning affects the intended workflow.
+2. In one parallel workspace batch, inspect the repository root, guidance files,
+   manifests, relevant entry points, package manager, run commands, and the
+   availability of runtimes or container tools required by the named workflow.
+3. In one parallel source batch, inspect only the authoritative repository,
+   documentation, or paper for each named external concept. Prefer direct GitHub
+   repository reads and official documentation over broad synthesized web search.
+   Confirm identity, inputs, outputs, integration boundary, and execution workflow.
+   Use at most four source calls total and do not run both broad web search and code
+   search for the same concept. When the official repository is known, read it
+   directly. When it is unknown, use one discovery search, then one direct read.
+   Stop after these two batches unless a failed or contradictory source requires
+   one focused follow-up.
+4. Build the initial intent brief from that evidence: primary actor and job, likely
+   happy path, required regions or screens, core entities and states, and observable
+   success result.
+5. Establish a usable workspace baseline when the user explicitly asked to work in
+   a named existing codebase. If the workspace is empty and the primary target
+   repository is unambiguous, materialize that official source without overwriting
+   user work. Restore its normal dependencies only when the documented bootstrap is
+   bounded and required for discovery; otherwise record the exact missing step.
+   Do not implement product behavior or start a development server during
+   preparation.
+6. Select one `prototypeApproach`:
+   - `build` when a new GUI is needed to evaluate the primary interaction;
+   - `validate-existing` when the repository already has a GUI that can be run,
+     exercised, and revised directly;
+   - `not-applicable` when the requested result has no GUI, such as a library,
+     API, CLI, automation, or infrastructure-only change.
+
+Use `undecided` when a named product has a GUI but the requested change does not
+clearly require graphical validation. The Requirements DAG must then include one
+interface-validation decision and let the hidden processor update the approach
+from its answer. Never silently choose `not-applicable` in that case.
+
+Record preparation as:
+
+```json
+{
+  "status": "ready",
+  "summary": "The primary source is available and required runtimes were checked.",
+  "checks": [
+    {
+      "label": "Primary source",
+      "status": "ready",
+      "detail": "Official repository is materialized in the workspace."
+    }
+  ],
+  "sources": [
+    {
+      "title": "Official repository",
+      "url": "https://github.com/owner/repo",
+      "purpose": "Primary implementation target."
+    }
+  ]
+}
+```
+
+Use `needs-attention` when a missing runtime, credential, platform, source, or
+bootstrap step will affect later execution. Preparation evidence must be persisted
+in the atomic canvas open input; do not bury it only in chat or concatenate it
+into `goal`.
+
+Keep the preflight bounded to information that changes discovery or prototype
+feasibility. Do not turn it into implementation planning. Open Tandem with
+`needs-attention` when discovery can resolve the blocker; report it in chat instead
+only when meaningful discovery cannot proceed. Target one minute for the preflight;
+when a network call or setup step would exceed that budget, record it as deferred or
+missing and open Tandem rather than continuing to search.
 
 ## Instructions
 
@@ -82,8 +166,9 @@ inside Tandem; never mix discovery controls into the prototype itself.
   to five curated choices, put the recommended default first, and allow custom
   text as a mutually exclusive override. Ask through Tandem, not in the
   prototype website.
-- Produce a runnable first draft quickly. Do not stop at a plan, architecture
-  description, or static mockup.
+- When `prototypeApproach` is `build` or `validate-existing`, produce a runnable
+  first draft quickly. Do not stop at a plan, architecture description, or static
+  mockup.
 - Reuse an existing frontend stack and conventions. For a greenfield prototype,
   use React, TypeScript, Vite, plain CSS, and deterministic mock data.
 - Keep UI code behind typed interfaces. Components must not import mock data
@@ -110,7 +195,7 @@ the user. Build a small intent brief containing:
 
 Capture requirements in two substages:
 
-1. **Usage list** asks how the user wants to use the app. Each item must be one
+1. **Usage list** asks how the user wants to use the deliverable. Each item must be one
    concise sentence describing one usage. Save additions synchronously, then
    generate three to five complementary, non-duplicate suggestions asynchronously
    with latest-request-wins semantics. Users can keep adding while suggestions run.
@@ -140,7 +225,12 @@ their titles, questions, choices, and dependencies, and leave their answers empt
 
 Use one Tandem canvas as the shared requirements and output surface:
 
-1. Open `tandem` immediately with the user's short goal.
+1. Complete the preparation preflight, then atomically open `tandem` with
+   `reset: true`, the user's goal, preparation evidence, prototype approach,
+   assumptions, deferred work, and initial usage state. Seed one to three concise
+   `I want to...` usages that are explicit in a detailed goal so the user does not
+   have to re-enter information already supplied; leave the list empty only when
+   the goal truly contains no concrete usage.
 2. Initialize the usage-list substage and wait while the user adds usages and
    accepts any useful AI suggestions.
 3. After the user clicks **Generate requirements DAG**, build the complete DAG from
@@ -153,11 +243,15 @@ Use one Tandem canvas as the shared requirements and output surface:
    user intents and interaction flows so the user can inspect the accumulated
    requirements from the Content tab.
 6. When every requirements node is answered, invoke `complete_stage` for
-   `requirements`. Do not create or edit the runnable prototype before this.
-7. In the enabled Prototype stage, add a unique preview identity marker to the
-   prototype's HTML, start its
-   hot-reload server on an available port, and capture the exact URL reported by
-   that server.
+   `requirements`. Do not create or edit a runnable interface before this. When
+   `prototypeApproach.mode` is `not-applicable`, Tandem disables and bypasses
+   Prototype, persists the reason, creates the non-GUI `draft-feature-spec`, and
+   enables Design.
+7. For `build`, create the minimum runnable prototype. For `validate-existing`,
+   run and revise the repository's existing GUI instead of creating a separate
+   prototype app. In either mode, add the unique preview identity marker to the
+   served HTML, start the hot-reload server on an available port, and capture the
+   exact URL reported by that server.
 8. Confirm the exact URL responds with the current identity marker, then call
    `update_tandem` with that URL and `previewStatus: ready`; Tandem verifies
    the identity before embedding it.
@@ -206,9 +300,19 @@ Use a payload shaped like this for a discovery turn:
 ```json
 {
   "prototypeId": "workflow-demo",
-  "stage": "requirements",
-  "phase": "discovery",
-  "status": "Describe how you want to use the app, one usage per sentence.",
+  "reset": true,
+  "goal": "Build an app that helps my team triage customer requests.",
+  "status": "Describe how you want to use this deliverable, one usage per sentence.",
+  "preparation": {
+    "status": "ready",
+    "summary": "The workspace and authoritative product context are ready.",
+    "checks": [],
+    "sources": []
+  },
+  "prototypeApproach": {
+    "mode": "build",
+    "reason": "A new GUI is needed to evaluate the primary interaction."
+  },
   "requirements": {
     "substage": "usage",
     "usageItems": [],
@@ -301,18 +405,28 @@ prototype at a time. Failures restore the original question for an explicit
 retry. Continuity comes from `.tandem`, not from a long-lived hidden
 conversation.
 
+The activation payload above is the `open_canvas` input, not a later
+`update_tandem` action. Later updates use `update_tandem` without `reset`.
+
 ## Sequential lifecycle
 
 Stages are gated and cannot be skipped:
 
+The preparation preflight happens before this lifecycle begins. It has no
+completion control or persisted stage result because it requires no user decision;
+Requirements remains the first interactive stage.
+
 1. **Requirements** captures at least one usage, generates the DAG, and records an
    answer for every decision-graph node. Hidden workers may update Tandem state and
    artifacts but must not edit prototype files.
-2. **Prototype** produces a verified runnable preview and iterates from user
-   suggestions. Keep the revision input enabled while no worker or clarification
-   is active. Prototype completion is owned by Tandem button: it gathers all
-   interaction evidence and generates a complete `draft-feature-spec` artifact
-   with `kind: "feature-spec"` before advancing.
+2. **Prototype** follows the selected approach. `build` produces a new runnable
+   preview. `validate-existing` runs and revises the repository's existing GUI.
+   Keep the revision input enabled while no worker or clarification is active.
+   Prototype completion is owned by Tandem button: it gathers interaction evidence
+   and generates a complete `draft-feature-spec` artifact with
+   `kind: "feature-spec"` before advancing. For `not-applicable`, the stage and
+   Live prototype tab are disabled with the recorded reason; completing Requirements
+   automatically persists a non-GUI `draft-feature-spec` and enables Design.
 3. **Design** has two ordered substages in the Design Review UI. Product design
    reconciles the draft feature specification into `design-spec`, architecture,
    contracts, and other product-design artifacts. Test design converts the accepted
@@ -339,8 +453,8 @@ enables the next one. Keep the Goal above the Stages control in Tandem, and
 keep the Design tree tab before Live prototype so requirement navigation remains
 the primary discovery surface.
 
-Every prototype must put its normalized `prototypeId` in the document served at
-the preview root:
+Every `build` or `validate-existing` preview must put its normalized `prototypeId`
+in the document served at the preview root:
 
 ```html
 <meta name="tandem-prototype-id" content="workflow-demo">
@@ -494,13 +608,15 @@ scenarios only when they help evaluate an important UI decision.
 
 ## Implementation loop
 
-1. Inspect only the files needed to understand the current UI entry point,
-   scripts, styles, state, and data boundary.
+1. Reuse the workspace and domain context collected during preparation; inspect
+   additional files only when a settled requirement makes them relevant.
 2. Settle the requirements DAG through Tandem and explicitly complete the
    requirements stage.
-3. Establish the minimum runnable shell in the Prototype stage and start its
-   hot-reload development
-   server on a verified, prototype-specific URL as early as possible.
+3. For `build`, establish the minimum runnable shell in Prototype. For
+   `validate-existing`, use the existing GUI entry point. Start its hot-reload
+   development server on a verified, prototype-specific URL as early as possible.
+   For `not-applicable`, continue directly to Design using the generated non-GUI
+   feature specification.
 4. Define the UI contracts, mock port, and representative sample data.
 5. Implement one complete primary interaction from entry to visible result.
 6. Verify the running page's `tandem-prototype-id`, set Tandem's `previewUrl`
@@ -599,15 +715,18 @@ The Tests tab is the authoritative Test-stage execution surface:
    and passed dependency evidence. Agents inspect and exercise the implemented
    system without changing its intended behavior.
 4. Persist every scenario outcome, evidence list, agent summary, and run event.
-   Failed prerequisites block only dependent scenarios.
+   Failed prerequisites block only dependent scenarios. When execution fails,
+   preserve detailed run, scenario, agent, event, and evidence information so the
+   Tests UI can expose it through **Show error details**.
 5. On retry, preserve passed scenarios and rerun only failed, blocked, or pending
    scenarios. Recover an active test run after provider reload without duplication.
 6. When every scenario passes, synthesize a current `test-results` artifact and
    enable **Finish Test**.
 
-During Prototype, use browser interaction as the primary validation. Do not create
-test files or run test suites in prototype mode. A fast existing type check is
-acceptable when it completes quickly and does not interrupt the feedback loop.
+During an applicable Prototype stage, use browser interaction as the primary
+validation. Do not create test files or run test suites in prototype mode. A fast
+existing type check is acceptable when it completes quickly and does not interrupt
+the feedback loop.
 Avoid broad builds, linters, audits, reviews, and dependency upgrades while
 prototyping; Implement follows the finalized plan's explicit validation steps.
 
