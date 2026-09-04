@@ -36,11 +36,24 @@
           </button>
           <span id="reload-status" class="reload-status" role="status" aria-live="polite"></span>
         </div>
+        <span class="build-version" title="Tandem extension version">v__TANDEM_VERSION__</span>
       </div>
     </header>
 
     <main id="studio-workspace" class="workspace">
       <aside id="requirements-pane" class="requirements" aria-label="Prototype requirements">
+        <section id="preparation-section" class="section preparation-section">
+          <div class="preparation-heading">
+            <p class="eyebrow">Preparation</p>
+            <span id="preparation-status" class="preparation-status">Not started</span>
+          </div>
+          <p id="preparation-summary" class="preparation-summary muted">
+            Environment readiness and authoritative sources will appear here.
+          </p>
+          <ul id="preparation-checks" class="preparation-checks"></ul>
+          <div id="preparation-sources" class="preparation-sources"></div>
+        </section>
+
         <section class="section">
           <p class="eyebrow">Goal</p>
           <p id="goal" class="goal muted">Waiting for a prototype goal...</p>
@@ -201,7 +214,7 @@
               </div>
             </div>
             <div id="preview-empty" class="preview-empty">
-              <p>The runnable prototype will appear here after the essential interaction decisions are captured.</p>
+              <p id="preview-empty-message">The runnable prototype will appear here after the essential interaction decisions are captured.</p>
             </div>
             <iframe
               id="preview-frame"
@@ -441,6 +454,22 @@
                   <h3>Recent test activity</h3>
                   <div id="test-events" class="implementation-events"></div>
                   <p id="test-status" class="implementation-status" role="status" aria-live="polite"></p>
+                  <button
+                    id="test-error-toggle"
+                    class="test-error-toggle"
+                    type="button"
+                    aria-expanded="false"
+                    aria-controls="test-error-details"
+                    hidden
+                  >
+                    Show error details
+                  </button>
+                  <pre
+                    id="test-error-details"
+                    class="test-error-details"
+                    tabindex="0"
+                    hidden
+                  ></pre>
                 </section>
               </aside>
             </div>

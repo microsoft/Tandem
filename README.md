@@ -40,15 +40,28 @@ Open a Git repository in Copilot and enter:
 /tandem Build an app that helps my team triage customer requests.
 ```
 
-Copilot opens **Tandem**. Work through the stages in order:
+Copilot first performs a bounded preflight: it inspects the workspace and researches
+authoritative sources for named external concepts that affect the requested flow.
+It also chooses whether to build a new GUI, validate an existing GUI, or bypass
+Prototype for work with no graphical interface. It then opens **Tandem** with that
+context. Work through the stages in order:
+
+The Preparation card records source links, environment checks, and blockers. A
+fresh `/tandem` invocation initializes this state atomically, so stale discovery
+content is not displayed before the new goal is ready.
 
 1. Add one usage sentence at a time, then generate and resolve the requirements
    DAG.
-2. Review the live prototype and submit revisions until it is ready.
+2. Review the new or existing live interface and submit revisions until it is
+   ready. For no-GUI work, Prototype is disabled with an explanation and Design
+   opens after Requirements.
 3. Complete Product design and Test design.
 4. Generate and finalize the execution plan.
 5. Start implementation agents and monitor their work.
 6. Run integration and interaction tests, then finish the lifecycle.
+
+Failed test runs provide a **Show error details** button with the run status,
+failed scenarios, agent summaries, captured evidence, and error events.
 
 Tandem stores durable project state under `.tandem`. Add that
 directory to `.gitignore` unless you intentionally want to version the state.
@@ -87,3 +100,11 @@ npm run pack
 - `npm run pack` type-checks, builds, and writes
   `dist/tandem-extension.zip` with the deployable extension, project source
   under `source/`, companion skill, and this guide.
+
+## Release
+
+The version shown in Tandem's top-right corner comes from `package.json`. Before
+publishing or deploying a release, bump that package version with
+`npm version patch --no-git-tag-version` (or the intended minor/major increment),
+then run `npm run pack`. Deploy both the generated extension and companion skill
+so the user-scoped provider does not override the release with stale files.

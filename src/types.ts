@@ -8,16 +8,53 @@ export type LifecycleStageId =
 
 export type TandemPhase = "discovery" | "building" | "iterating" | "complete";
 
+export type PrototypeApproachMode =
+    | "undecided"
+    | "build"
+    | "validate-existing"
+    | "not-applicable";
+
+export interface PrototypeApproach {
+    mode: PrototypeApproachMode;
+    reason: string;
+}
+
+export interface PreparationCheck {
+    label: string;
+    status: "ready" | "missing" | "deferred";
+    detail: string;
+}
+
+export interface PreparationSource {
+    title: string;
+    url: string;
+    purpose: string;
+}
+
+export interface PreparationState {
+    status: "not-started" | "ready" | "needs-attention";
+    summary: string;
+    checks: PreparationCheck[];
+    sources: PreparationSource[];
+}
+
 export interface LifecycleOutput {
     stageId: LifecycleStageId;
     path: string;
     completedAt: string;
 }
 
+export interface SkippedLifecycleStage {
+    stageId: LifecycleStageId;
+    reason: string;
+    skippedAt: string;
+}
+
 export interface LifecycleState {
     currentStage: LifecycleStageId;
     completedStages: LifecycleStageId[];
     outputs: LifecycleOutput[];
+    skippedStages: SkippedLifecycleStage[];
 }
 
 export interface TandemArtifact {
@@ -41,6 +78,8 @@ export interface TandemState {
     goal: string;
     phase: TandemPhase;
     status: string;
+    preparation: PreparationState;
+    prototypeApproach: PrototypeApproach;
     requirements: {
         substage: "usage" | "dag";
         usageItems: string[];

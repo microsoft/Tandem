@@ -16,6 +16,8 @@ import {
 import { renderTandemHtml } from "./renderer.js";
 import type { TandemState } from "./types.js";
 
+declare const __TANDEM_VERSION__: string;
+
 const CANVAS_ID = "tandem";
 const DEFAULT_PROTOTYPE_ID = "active";
 const USER_EXTENSION_ID = "user:tandem";
@@ -79,7 +81,7 @@ const DEFAULT_PRODUCT_DESIGN_REQUESTS = [
         id: "default-project-architecture",
         artifactKind: "diagram",
         prompt:
-            "Inspect this project and generate the architecture and primary interaction-flow diagrams required for implementation. Tailor them to the accepted requirements, runnable prototype, draft feature specification, and existing repository; omit diagrams that do not add value for this project.",
+            "Inspect this project and generate the architecture and primary interaction-flow diagrams required for implementation. Tailor them to the accepted requirements, applicable runnable interface, draft feature specification, and existing repository; omit diagrams that do not add value for this project.",
     },
     {
         id: "default-project-contracts",
@@ -187,6 +189,87 @@ function normalizePrototypeId(value) {
     return normalized || DEFAULT_PROTOTYPE_ID;
 }
 
+function normalizePrototypeApproach(value) {
+    const mode =
+        isObject(value) &&
+        ["undecided", "build", "validate-existing", "not-applicable"].includes(
+            value.mode,
+        )
+            ? value.mode
+            : "undecided";
+    const defaultReason = {
+        undecided:
+            "Requirements must determine whether graphical validation adds value.",
+        build: "A new graphical interface is needed to validate the primary flow.",
+        "validate-existing":
+            "The existing graphical interface will be used for prototype validation.",
+        "not-applicable":
+            "This work has no graphical interface to prototype or review.",
+    }[mode];
+    return {
+        mode,
+        reason:
+            String(isObject(value) ? value.reason || "" : "")
+                .trim()
+                .slice(0, 500) || defaultReason,
+    };
+}
+
+function normalizeSourceUrl(value) {
+    try {
+        const url = new URL(String(value || "").trim());
+        return ["http:", "https:"].includes(url.protocol)
+            ? url.href.slice(0, 1000)
+            : "";
+    } catch {
+        return "";
+    }
+}
+
+function normalizePreparation(value) {
+    const status =
+        isObject(value) &&
+        ["not-started", "ready", "needs-attention"].includes(value.status)
+            ? value.status
+            : "not-started";
+    const checks =
+        isObject(value) && Array.isArray(value.checks)
+            ? value.checks
+                  .filter((entry) => isObject(entry))
+                  .map((entry) => ({
+                      label: String(entry.label || "").trim().slice(0, 120),
+                      status: ["ready", "missing", "deferred"].includes(
+                          entry.status,
+                      )
+                          ? entry.status
+                          : "missing",
+                      detail: String(entry.detail || "").trim().slice(0, 500),
+                  }))
+                  .filter((entry) => entry.label)
+                  .slice(0, 20)
+            : [];
+    const sources =
+        isObject(value) && Array.isArray(value.sources)
+            ? value.sources
+                  .filter((entry) => isObject(entry))
+                  .map((entry) => ({
+                      title: String(entry.title || "").trim().slice(0, 160),
+                      url: normalizeSourceUrl(entry.url),
+                      purpose: String(entry.purpose || "").trim().slice(0, 500),
+                  }))
+                  .filter((entry) => entry.title && entry.url)
+                  .slice(0, 20)
+            : [];
+    return {
+        status,
+        summary: String(isObject(value) ? value.summary || "" : "")
+            .trim()
+            .slice(0, 2000),
+        checks,
+        sources,
+    };
+}
+
 function createState(prototypeId: string, goal = ""): TandemState {
     return {
         version: 1,
@@ -196,10 +279,13 @@ function createState(prototypeId: string, goal = ""): TandemState {
             currentStage: "requirements",
             completedStages: [],
             outputs: [],
+            skippedStages: [],
         },
         goal,
         phase: "discovery",
-        status: "Describe how you want to use the app, one usage per sentence.",
+        status: "Describe how you want to use this deliverable, one usage per sentence.",
+        preparation: normalizePreparation(null),
+        prototypeApproach: normalizePrototypeApproach(null),
         requirements: {
             substage: "usage",
             usageItems: [],
@@ -440,13 +526,13 @@ function normalizeRequirements(value, decisionGraph = { nodes: [] }) {
 function usageQuestion(suggestions) {
     return {
         id: USAGE_QUESTION_ID,
-        text: "How do you want to use this app?",
+        text: "How do you want to use this deliverable?",
         rationale:
             "Add one sentence for each usage. Suggestions adapt as you add more.",
         choices: normalizeStringList(suggestions).slice(0, 6),
         recommended: null,
         allowFreeText: true,
-        answerPlaceholder: "For example: I want to triage incoming requests.",
+        answerPlaceholder: "For example: I want to run one reproducible evaluation.",
     };
 }
 
@@ -752,6 +838,7 @@ function normalizeTesting(value, testDesignReview) {
                 ? source.finalizedArtifactId.trim().slice(0, 120) || null
                 : null,
         error: String(source.error || "").trim().slice(0, 2000),
+        errorDetails: String(source.errorDetails || "").trim().slice(0, 50_000),
     };
 }
 
@@ -1372,7 +1459,10 @@ function firstActiveQuestion(decisionGraph) {
     );
 }
 
-function generatedDecisionGraphError(decisionGraph) {
+function generatedDecisionGraphError(
+    decisionGraph,
+    requirePrototypeApproach = false,
+) {
     if (decisionGraph.nodes.length === 0) {
         return "The generated requirements DAG did not contain any decisions.";
     }
@@ -1409,6 +1499,12 @@ function generatedDecisionGraphError(decisionGraph) {
     }
     if (!decisionGraph.nodes.some((node) => node.status === "active")) {
         return "The generated requirements DAG did not expose an active decision.";
+    }
+    if (
+        requirePrototypeApproach &&
+        !decisionGraph.nodes.some((node) => node.id === "prototype-approach")
+    ) {
+        return "The requirements DAG must include the prototype-approach decision.";
     }
     return null;
 }
@@ -1481,11 +1577,35 @@ function normalizeLifecycle(value) {
                   };
               })
         : [];
+    const skippedStages =
+        isObject(value) && Array.isArray(value.skippedStages)
+            ? value.skippedStages
+                  .filter(
+                      (entry) =>
+                          isObject(entry) &&
+                          completedStages.includes(entry.stageId) &&
+                          LIFECYCLE_STAGES.some(
+                              (stage) => stage.id === entry.stageId,
+                          ),
+                  )
+                  .map((entry) => ({
+                      stageId: String(entry.stageId),
+                      reason: String(entry.reason || "").trim().slice(0, 500),
+                      skippedAt: String(entry.skippedAt || ""),
+                  }))
+                  .filter(
+                      (entry, index, entries) =>
+                          entries.findIndex(
+                              (candidate) =>
+                                  candidate.stageId === entry.stageId,
+                          ) === index,
+                  )
+            : [];
     const currentStage =
         LIFECYCLE_STAGES[Math.min(completedStages.length, LIFECYCLE_STAGES.length - 1)]
             .id;
 
-    return { currentStage, completedStages, outputs };
+    return { currentStage, completedStages, outputs, skippedStages };
 }
 
 function normalizeReloadReceipt(value) {
@@ -1585,6 +1705,8 @@ function normalizeStoredState(value, prototypeId) {
         goal: String(value.goal || "").slice(0, 4000),
         phase,
         status: String(value.status || "").slice(0, 1000),
+        preparation: normalizePreparation(value.preparation),
+        prototypeApproach: normalizePrototypeApproach(value.prototypeApproach),
         requirements,
         question:
             requirements.substage === "usage"
@@ -1879,6 +2001,20 @@ async function updateTandem(ctx) {
         if (typeof input.status === "string") {
             next.status = input.status.trim().slice(0, 1000);
         }
+        if (Object.prototype.hasOwnProperty.call(input, "preparation")) {
+            next.preparation = normalizePreparation(input.preparation);
+        }
+        if (Object.prototype.hasOwnProperty.call(input, "prototypeApproach")) {
+            if (next.lifecycle.currentStage !== "requirements") {
+                throw new CanvasError(
+                    "prototype_approach_locked",
+                    "Choose the prototype approach before completing Requirements.",
+                );
+            }
+            next.prototypeApproach = normalizePrototypeApproach(
+                input.prototypeApproach,
+            );
+        }
         if (Object.prototype.hasOwnProperty.call(input, "question")) {
             next.question = normalizeQuestion(input.question);
         }
@@ -1966,6 +2102,12 @@ function stageCompletionError(
     { requirePrototypeSpec = true } = {},
 ) {
     if (stageId === "requirements") {
+        if (state.preparation.status === "not-started") {
+            return "Complete and record the preparation preflight before finishing Requirements.";
+        }
+        if (state.prototypeApproach.mode === "undecided") {
+            return "Resolve whether Prototype should build, validate, or be bypassed.";
+        }
         if (state.requirements.substage !== "dag") {
             return "Generate the requirements DAG from at least one usage first.";
         }
@@ -1978,13 +2120,19 @@ function stageCompletionError(
                 remaining.length === 1 ? "" : "s"
             } remain unanswered.`;
         }
-        if (
-            state.artifacts.length >= 30 &&
-            !state.artifacts.some(
-                (artifact) => artifact.id === "requirements-result",
-            )
-        ) {
-            return "Remove one artifact before finishing so the Requirements result can be captured.";
+        const requiredArtifactIds = [
+            "requirements-result",
+            ...(state.prototypeApproach.mode === "not-applicable"
+                ? ["draft-feature-spec"]
+                : []),
+        ];
+        const missingArtifactCount = requiredArtifactIds.filter(
+            (id) => !state.artifacts.some((artifact) => artifact.id === id),
+        ).length;
+        if (state.artifacts.length + missingArtifactCount > 30) {
+            return `Remove ${state.artifacts.length + missingArtifactCount - 30} artifact${
+                state.artifacts.length + missingArtifactCount - 30 === 1 ? "" : "s"
+            } before finishing so the lifecycle handoff can be captured.`;
         }
     }
     if (stageId === "prototype" && state.previewStatus !== "ready") {
@@ -2132,6 +2280,49 @@ function requirementsResultArtifact(state) {
     };
 }
 
+function skippedPrototypeSpecArtifact(state) {
+    const section = (heading, items) => [
+        `## ${heading}`,
+        "",
+        ...(items.length > 0 ? items.map((item) => `- ${item}`) : ["- None"]),
+        "",
+    ];
+    const decisions = state.decisionGraph.nodes
+        .filter((node) => node.answer)
+        .map((node) => `${node.title}: ${node.answer}`);
+    return {
+        id: "draft-feature-spec",
+        title: "Draft feature specification",
+        kind: "feature-spec",
+        stage: "prototype",
+        path: "",
+        language: "markdown",
+        content: [
+            "# Draft feature specification",
+            "",
+            "## Goal",
+            "",
+            state.goal || "No goal provided.",
+            "",
+            "## Experience validation",
+            "",
+            "Runtime UI prototyping is not applicable.",
+            state.prototypeApproach.reason,
+            "Design should validate the command, API, library, automation, or other non-graphical contract that exposes the requested behavior.",
+            "",
+            ...section("Usage", state.requirements.usageItems),
+            ...section("Confirmed behavior", state.confirmed),
+            ...section("Requirement decisions", decisions),
+            ...section("Assumptions", state.assumed),
+            ...section("Deferred work", state.deferred),
+            "## Design handoff",
+            "",
+            "Define the externally observable contract, inputs, outputs, state transitions, failure behavior, and validation evidence without inventing a graphical interface.",
+        ].join("\n").trim(),
+        mermaid: "",
+    };
+}
+
 async function completeLifecycleStage(prototypeId, requestedStageId, extensionId) {
     if (!(await isPreferredAnswerProvider(extensionId))) {
         throw new CanvasError(
@@ -2167,54 +2358,104 @@ async function completeLifecycleStage(prototypeId, requestedStageId, extensionId
         }
 
         const completedAt = new Date().toISOString();
+        const skipPrototype =
+            stageId === "requirements" &&
+            state.prototypeApproach.mode === "not-applicable";
         const artifacts =
             stageId === "requirements"
                 ? normalizeArtifacts([
                       requirementsResultArtifact(state),
+                      ...(skipPrototype
+                          ? [skippedPrototypeSpecArtifact(state)]
+                          : []),
                       ...state.artifacts.filter(
-                          (artifact) => artifact.id !== "requirements-result",
+                          (artifact) =>
+                              artifact.id !== "requirements-result" &&
+                              (!skipPrototype ||
+                                  artifact.id !== "draft-feature-spec"),
                       ),
                   ])
                 : state.artifacts;
-        const relativeOutputPath = join(
-            ".tandem",
-            prototypeId,
-            "stages",
-            `${stageId}.json`,
-        );
-        const outputPath = join(
-            STATE_DIRECTORY,
-            prototypeId,
-            "stages",
-            `${stageId}.json`,
-        );
-        await mkdir(dirname(outputPath), { recursive: true });
-        await writeJsonAtomically(outputPath, {
-            version: 1,
-            prototypeId,
+        const prototypeReview = skipPrototype
+            ? normalizePrototypeReview({
+                  ...state.prototypeReview,
+                  question: null,
+                  activeRevisionId: null,
+                  designSpecArtifactId: "draft-feature-spec",
+                  evidence: [
+                      ...state.prototypeReview.evidence.filter(
+                          (entry) => entry.id !== "prototype-not-applicable",
+                      ),
+                      {
+                          id: "prototype-not-applicable",
+                          type: "prototype-disposition",
+                          content: state.prototypeApproach.reason,
+                          recordedAt: completedAt,
+                      },
+                  ],
+              })
+            : state.prototypeReview;
+        const completedStageIds = [
             stageId,
-            completedAt,
-            result: {
-                goal: state.goal,
-                requirements: state.requirements,
-                confirmed: state.confirmed,
-                assumed: state.assumed,
-                deferred: state.deferred,
-                decisionGraph: state.decisionGraph,
-                artifacts,
-                previewUrl: state.previewUrl,
-                previewStatus: state.previewStatus,
-                prototypeReview: state.prototypeReview,
-                designReview: state.designReview,
-                design: state.design,
-                testDesignReview: state.testDesignReview,
-                planning: state.planning,
-                implementation: state.implementation,
-                testing: state.testing,
-            },
-        });
+            ...(skipPrototype ? ["prototype"] : []),
+        ];
+        const outputEntries = [];
+        for (const completedStageId of completedStageIds) {
+            const relativeOutputPath = join(
+                ".tandem",
+                prototypeId,
+                "stages",
+                `${completedStageId}.json`,
+            );
+            const outputPath = join(
+                STATE_DIRECTORY,
+                prototypeId,
+                "stages",
+                `${completedStageId}.json`,
+            );
+            await mkdir(dirname(outputPath), { recursive: true });
+            await writeJsonAtomically(outputPath, {
+                version: 1,
+                prototypeId,
+                stageId: completedStageId,
+                completedAt,
+                skipped: skipPrototype && completedStageId === "prototype",
+                skipReason:
+                    skipPrototype && completedStageId === "prototype"
+                        ? state.prototypeApproach.reason
+                        : null,
+                result: {
+                    goal: state.goal,
+                    preparation: state.preparation,
+                    prototypeApproach: state.prototypeApproach,
+                    requirements: state.requirements,
+                    confirmed: state.confirmed,
+                    assumed: state.assumed,
+                    deferred: state.deferred,
+                    decisionGraph: state.decisionGraph,
+                    artifacts,
+                    previewUrl: state.previewUrl,
+                    previewStatus: state.previewStatus,
+                    prototypeReview,
+                    designReview: state.designReview,
+                    design: state.design,
+                    testDesignReview: state.testDesignReview,
+                    planning: state.planning,
+                    implementation: state.implementation,
+                    testing: state.testing,
+                },
+            });
+            outputEntries.push({
+                stageId: completedStageId,
+                path: relativeOutputPath,
+                completedAt,
+            });
+        }
 
-        const completedStages = [...lifecycle.completedStages, stageId];
+        const completedStages = [
+            ...lifecycle.completedStages,
+            ...completedStageIds,
+        ];
         const currentStage =
             LIFECYCLE_STAGES[
                 Math.min(completedStages.length, LIFECYCLE_STAGES.length - 1)
@@ -2222,16 +2463,29 @@ async function completeLifecycleStage(prototypeId, requestedStageId, extensionId
         let next = {
             ...state,
             artifacts,
+            prototypeReview,
             stage: currentStage,
             lifecycle: {
                 currentStage,
                 completedStages,
                 outputs: [
                     ...lifecycle.outputs.filter(
-                        (output) => output.stageId !== stageId,
+                        (output) => !completedStageIds.includes(output.stageId),
                     ),
-                    { stageId, path: relativeOutputPath, completedAt },
+                    ...outputEntries,
                 ],
+                skippedStages: skipPrototype
+                    ? [
+                          ...lifecycle.skippedStages.filter(
+                              (entry) => entry.stageId !== "prototype",
+                          ),
+                          {
+                              stageId: "prototype",
+                              reason: state.prototypeApproach.reason,
+                              skippedAt: completedAt,
+                          },
+                      ]
+                    : lifecycle.skippedStages,
             },
             phase:
                 completedStages.length === LIFECYCLE_STAGES.length
@@ -2242,6 +2496,8 @@ async function completeLifecycleStage(prototypeId, requestedStageId, extensionId
             status:
                 completedStages.length === LIFECYCLE_STAGES.length
                     ? "All lifecycle stages are complete."
+                    : skipPrototype
+                      ? `Requirements completed. Prototype is not applicable: ${state.prototypeApproach.reason} Design is now enabled.`
                     : `${LIFECYCLE_STAGES.find((stage) => stage.id === stageId).label} completed. ${LIFECYCLE_STAGES.find((stage) => stage.id === currentStage).label} is now enabled.`,
             updatedAt: completedAt,
         };
@@ -2347,6 +2603,8 @@ function factoryStateSnapshot(state) {
         phase: state.phase,
         status: state.status,
         lifecycle: state.lifecycle,
+        preparation: state.preparation,
+        prototypeApproach: state.prototypeApproach,
         requirements: state.requirements,
         question: state.question,
         decisionGraph: state.decisionGraph,
@@ -2373,13 +2631,19 @@ function answerFactoryPrompt(args) {
             "requirements.usageItems, keep requirements.substage as usage, and return an",
             "empty decision graph. Generate 3 to 5 concise, non-overlapping usage",
             "suggestions that complement everything already listed. Each suggestion must",
-            "be one clickable sentence describing how the user could use the app.",
+            "be one clickable first-person sentence describing how the user wants to",
+            "use the deliverable. Start with 'I want to', not 'I can'.",
         ],
         "generate-dag": [
             "Switch requirements.substage to dag and generate the complete requirements",
             "decision DAG from requirements.usageItems. Cover every listed usage while",
             "sharing common prerequisites. Give every node its complete question and",
             "choices now, including toAnswer nodes, so dependents can be regenerated.",
+            "If prototypeApproach.mode is undecided, include an interface-validation",
+            "decision with id prototype-approach whose choices map clearly to building",
+            "a new GUI, validating an",
+            "existing GUI, or bypassing Prototype. Keep the approach undecided until",
+            "that node is answered.",
             "Return no usage suggestions.",
         ],
         "answer-decision": [
@@ -2448,6 +2712,11 @@ function answerFactoryPrompt(args) {
         "Perform a targeted validation after code changes.",
         "Do not advance or complete lifecycle stages. Stage completion is explicit and",
         "owned by Tandem after the active stage meets its completion criteria.",
+        "Return prototypeApproach unchanged unless the latest requirement answer",
+        "changes whether Tandem should build a new GUI, validate an existing GUI,",
+        "or bypass runtime prototyping because no GUI is needed. Use mode undecided,",
+        "build, validate-existing, or not-applicable and provide a concise",
+        "user-facing reason.",
         "While lifecycle.currentStage is requirements, do not edit prototype files or",
         "publish a preview. Preserve and return the complete requirements object. During",
         "usage intake, the extension creates the intake question from suggestions. Once",
@@ -2678,7 +2947,10 @@ async function applyFactoryResult(prototypeId, requestId, run) {
         );
         const action = current.processing.action || "answer-decision";
         if (action === "generate-dag") {
-            const graphError = generatedDecisionGraphError(decisionGraph);
+            const graphError = generatedDecisionGraphError(
+                decisionGraph,
+                current.prototypeApproach.mode === "undecided",
+            );
             if (graphError) throw new Error(graphError);
         }
         const answeredQuestionId = current.processing.question?.id;
@@ -2828,6 +3100,19 @@ async function applyFactoryResult(prototypeId, requestId, run) {
             };
             completePrototype = true;
         }
+        const prototypeApproach =
+            current.lifecycle.currentStage === "requirements"
+                ? normalizePrototypeApproach(result.prototypeApproach)
+                : current.prototypeApproach;
+        if (
+            ["answer-decision", "change-answer"].includes(action) &&
+            answeredQuestionId === "prototype-approach" &&
+            prototypeApproach.mode === "undecided"
+        ) {
+            throw new Error(
+                "The prototype-approach answer did not resolve the interface-validation mode.",
+            );
+        }
         const next = {
             ...current,
             goal:
@@ -2839,6 +3124,7 @@ async function applyFactoryResult(prototypeId, requestId, run) {
                 typeof result.status === "string"
                     ? result.status.trim().slice(0, 1000)
                     : "The hidden agent processed the latest decision.",
+            prototypeApproach,
             requirements,
             question:
                 requirements.substage === "usage"
@@ -5237,6 +5523,47 @@ function testResultsArtifact(state) {
     };
 }
 
+function testRunErrorDetails(run, result, testing, summary) {
+    const failedScenarios = testing.scenarios
+        .filter((scenario) => ["failed", "blocked"].includes(scenario.status))
+        .map((scenario) => ({
+            id: scenario.id,
+            status: scenario.status,
+            summary: scenario.summary,
+            evidence: scenario.evidence,
+        }));
+    const failedAgents = testing.agents
+        .filter((agent) => ["failed", "blocked"].includes(agent.status))
+        .map((agent) => ({
+            id: agent.id,
+            scenarioId: agent.scenarioId,
+            status: agent.status,
+            activity: agent.activity,
+            summary: agent.summary,
+        }));
+    const errorEvents = testing.events
+        .filter((event) => event.type === "error")
+        .slice(-20);
+    return JSON.stringify(
+        {
+            summary,
+            run: {
+                id: String(run.runId || testing.runId || "unavailable"),
+                status: String(run.status || "unknown"),
+                error: run.error || null,
+                failure: run.failure || null,
+                reason: run.reason || null,
+                resultSummary: result.summary || null,
+            },
+            failedScenarios,
+            failedAgents,
+            errorEvents,
+        },
+        null,
+        2,
+    ).slice(0, 50_000);
+}
+
 async function settleTestRun(prototypeId, run) {
     await withAnswerClaim(prototypeId, async () => {
         const state = await loadState(prototypeId);
@@ -5278,6 +5605,9 @@ async function settleTestRun(prototypeId, run) {
                           ? "One or more test scenarios failed."
                           : factoryErrorMessage(run)),
               ).slice(0, 2000);
+        const errorDetails = passed
+            ? ""
+            : testRunErrorDetails(run, result, testing, error);
         const next = {
             ...state,
             artifacts,
@@ -5288,6 +5618,7 @@ async function settleTestRun(prototypeId, run) {
                     completedAt: now,
                     finalizedArtifactId,
                     error,
+                    errorDetails,
                     events: [
                         ...testing.events,
                         testEvent(
@@ -6960,6 +7291,7 @@ async function submitTestStart(entry, res) {
                         completedAt: null,
                         finalizedArtifactId: null,
                         error: "",
+                        errorDetails: "",
                     },
                     review,
                 ),
@@ -7045,7 +7377,7 @@ async function handleRequest(entry, req, res) {
             "Content-Type": "text/html; charset=utf-8",
             "Cache-Control": "no-store",
         });
-        res.end(renderTandemHtml());
+        res.end(renderTandemHtml(__TANDEM_VERSION__));
         return;
     }
 
@@ -7295,6 +7627,68 @@ const requirementsSchema = {
         },
     },
     required: ["substage", "usageItems", "suggestions"],
+};
+
+const preparationSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        status: {
+            type: "string",
+            enum: ["not-started", "ready", "needs-attention"],
+        },
+        summary: { type: "string", maxLength: 2000 },
+        checks: {
+            type: "array",
+            maxItems: 20,
+            items: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                    label: { type: "string", minLength: 1, maxLength: 120 },
+                    status: {
+                        type: "string",
+                        enum: ["ready", "missing", "deferred"],
+                    },
+                    detail: { type: "string", maxLength: 500 },
+                },
+                required: ["label", "status", "detail"],
+            },
+        },
+        sources: {
+            type: "array",
+            maxItems: 20,
+            items: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                    title: { type: "string", minLength: 1, maxLength: 160 },
+                    url: { type: "string", minLength: 1, maxLength: 1000 },
+                    purpose: { type: "string", maxLength: 500 },
+                },
+                required: ["title", "url", "purpose"],
+            },
+        },
+    },
+    required: ["status", "summary", "checks", "sources"],
+};
+
+const prototypeApproachSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        mode: {
+            type: "string",
+            enum: [
+                "undecided",
+                "build",
+                "validate-existing",
+                "not-applicable",
+            ],
+        },
+        reason: { type: "string", minLength: 1, maxLength: 500 },
+    },
+    required: ["mode", "reason"],
 };
 
 const revisionSchema = {
@@ -7796,6 +8190,7 @@ const answerFactoryOutputSchema = {
             enum: ["discovery", "building", "iterating", "complete"],
         },
         status: { type: "string" },
+        prototypeApproach: prototypeApproachSchema,
         requirements: requirementsSchema,
         prototypeReview: prototypeReviewSchema,
         question: questionSchema,
@@ -7838,6 +8233,7 @@ const answerFactoryOutputSchema = {
         "goal",
         "phase",
         "status",
+        "prototypeApproach",
         "requirements",
         "prototypeReview",
         "question",
@@ -7898,16 +8294,17 @@ const usageSuggestionFactory = defineFactory({
         ctx.log(`Request ${args.requestId}; prototype ${args.prototypeId}.`);
         return ctx.agent(
             [
-                "Generate 3 to 5 concise suggestions for ways the user could use this app.",
+                "Generate 3 to 5 concise suggestions for ways the user wants to use",
+                "this deliverable. Start every suggestion with 'I want to'.",
                 "Each suggestion must be one standalone sentence written",
                 "in the first person, actionable, and suitable for a one-click add button.",
                 "Do not repeat, paraphrase, combine, or contradict an existing usage.",
                 "When no usages exist yet, provide diverse starter suggestions grounded in",
-                "the app goal. If the goal is empty, provide broadly useful starter usages",
+                "the goal. If the goal is empty, provide broadly useful starter usages",
                 "that help the user describe the product they want.",
                 "Return only the structured output required by the schema.",
                 "",
-                `App goal: ${String(args.goal || "").trim()}`,
+                `Goal: ${String(args.goal || "").trim()}`,
                 "Existing usages:",
                 ...(args.usageItems.length > 0
                     ? args.usageItems.map((item) => `- ${item}`)
@@ -8451,14 +8848,30 @@ session = await joinSession({
     ],
     hooks: {
         onUserPromptSubmitted: async (input) => {
-            if (!/^\/tandem(?:\s|$)/i.test(input.prompt.trim())) {
+            const prompt = input.prompt.trim();
+            const skillAlreadyLoaded = prompt.includes(
+                'explicitly invoked the "/tandem" skill',
+            );
+            if (
+                !/(?:^|\n)\/tandem(?:\s|$)/i.test(prompt) &&
+                !skillAlreadyLoaded
+            ) {
                 return undefined;
             }
             return {
                 additionalContext: [
                     "The user supplied only the prototype goal, which is expected.",
-                    "Open Tandem canvas immediately and conduct",
-                    "requirement discovery through its update_tandem action.",
+                    skillAlreadyLoaded
+                        ? "The Tandem skill is already loaded; do not invoke it again."
+                        : "Load the Tandem skill once, then follow it.",
+                    "Complete its bounded workspace and authoritative-source preflight.",
+                    "Use at most four source calls and target one minute; prefer direct",
+                    "official repository reads and do not duplicate web and code searches.",
+                    "Record environment checks, blockers, and sources in preparation.",
+                    "Use prototypeApproach undecided when a named product has a GUI but",
+                    "the requested change does not clearly need graphical validation.",
+                    "Then initialize Tandem atomically through open_canvas with reset true;",
+                    "do not open stale state and reset it with a later action.",
                     "Do not ask the user to write a more detailed invocation prompt.",
                 ].join(" "),
             };
@@ -8475,7 +8888,20 @@ session = await joinSession({
                 additionalProperties: false,
                 properties: {
                     prototypeId: { type: "string", minLength: 1 },
+                    reset: { type: "boolean" },
                     goal: { type: "string" },
+                    status: { type: "string" },
+                    preparation: preparationSchema,
+                    prototypeApproach: prototypeApproachSchema,
+                    requirements: requirementsSchema,
+                    assumed: {
+                        type: "array",
+                        items: { type: "string" },
+                    },
+                    deferred: {
+                        type: "array",
+                        items: { type: "string" },
+                    },
                 },
             },
             actions: [
@@ -8496,6 +8922,8 @@ session = await joinSession({
                                 enum: ["discovery", "building", "iterating", "complete"],
                             },
                             status: { type: "string" },
+                            preparation: preparationSchema,
+                            prototypeApproach: prototypeApproachSchema,
                             requirements: requirementsSchema,
                             prototypeReview: prototypeReviewSchema,
                             designReview: designReviewSchema,
@@ -8592,7 +9020,39 @@ session = await joinSession({
                 if (canSubmitAnswers) {
                     await persistCurrentPrototypeId(prototypeId);
                 }
-                let state = await loadState(prototypeId);
+                let state =
+                    canSubmitAnswers && input.reset
+                        ? await withAnswerClaim(prototypeId, async () => {
+                              const next = createState(prototypeId);
+                              if (typeof input.goal === "string") {
+                                  next.goal = input.goal.trim().slice(0, 4000);
+                              }
+                              if (typeof input.status === "string") {
+                                  next.status = input.status
+                                      .trim()
+                                      .slice(0, 1000);
+                              }
+                              next.preparation = normalizePreparation(
+                                  input.preparation,
+                              );
+                              next.prototypeApproach =
+                                  normalizePrototypeApproach(
+                                      input.prototypeApproach,
+                                  );
+                              next.requirements = normalizeRequirements(
+                                  input.requirements,
+                                  { nodes: [] },
+                              );
+                              next.question = usageQuestion(
+                                  next.requirements.suggestions,
+                              );
+                              next.assumed = normalizeStringList(input.assumed);
+                              next.deferred = normalizeStringList(input.deferred);
+                              next.updatedAt = new Date().toISOString();
+                              await persistState(next);
+                              return next;
+                          })
+                        : await loadState(prototypeId);
                 state = await markReloadComplete(state, ctx.extensionId);
                 state = await ensureDefaultProductDesignReview(
                     state,
