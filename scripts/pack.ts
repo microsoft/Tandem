@@ -40,10 +40,12 @@ archive.file(join(repositoryRoot, "skills", "tandem", "SKILL.md"), {
 });
 archive.glob("src/**/*", { cwd: repositoryRoot }, { prefix: "source" });
 archive.glob("scripts/**/*", { cwd: repositoryRoot }, { prefix: "source" });
+archive.glob("tests/**/*", { cwd: repositoryRoot }, { prefix: "source" });
 for (const fileName of [
     "package.json",
     "package-lock.json",
     "tsconfig.json",
+    "tsconfig.core.json",
 ]) {
     archive.file(join(repositoryRoot, fileName), {
         name: `source/${fileName}`,

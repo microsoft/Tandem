@@ -8,6 +8,7 @@ import {
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const extensionRoot = join(
@@ -21,6 +22,20 @@ const stylesEntry = join(repositoryRoot, "src", "renderer", "styles.css");
 const packageMetadata = JSON.parse(
     await readFile(join(repositoryRoot, "package.json"), "utf8"),
 );
+const bundledNotices: string[] = [];
+const dependencyRequire = createRequire(
+    createRequire(import.meta.url).resolve("proper-lockfile/package.json"),
+);
+for (const [name, licenseFile] of [
+    ["proper-lockfile", "LICENSE"],
+    ["graceful-fs", "LICENSE"],
+    ["retry", "License"],
+    ["signal-exit", "LICENSE.txt"],
+]) {
+    const packageRoot = dirname(dependencyRequire.resolve(`${name}/package.json`));
+    const license = await readFile(join(packageRoot, licenseFile), "utf8");
+    bundledNotices.push(`/* ${name}\n${license.replaceAll("*/", "* /")}\n*/`);
+}
 
 const rendererAssetsPlugin: Plugin = {
     name: "tandem-renderer-assets",
@@ -83,7 +98,12 @@ const options: BuildOptions = {
     },
     sourcemap: false,
     banner: {
-        js: "// Generated from the project-root src/ directory by npm run build. Do not edit directly.",
+        js: [
+            "// Generated from the project-root src/ directory by npm run build. Do not edit directly.",
+            ...bundledNotices,
+            'import { createRequire as createBundledRequire } from "node:module";',
+            "const require = createBundledRequire(import.meta.url);",
+        ].join("\n"),
     },
 };
 

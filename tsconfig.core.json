@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "strict": true
+  },
+  "include": [
+    "src/project-store.ts",
+    "src/workflow.ts",
+    "src/agent-runner.ts",
+    "src/canvas-transport.ts",
+    "src/execution.ts",
+    "src/scheduling.ts",
+    "src/types.ts"
+  ]
+}
