@@ -9,6 +9,7 @@ const elements: AnyRecord = {
   phase: document.getElementById("phase"),
   goal: document.getElementById("goal"),
   status: document.getElementById("status"),
+  connectionStatus: document.getElementById("connection-status"),
   nextActionGuide: document.getElementById("next-action-guide"),
   questionHost: document.getElementById("question-host"),
   confirmed: document.getElementById("confirmed"),
@@ -28,12 +29,27 @@ const elements: AnyRecord = {
   diagramSourceDetails: document.getElementById("diagram-source-details"),
   contentCard: document.getElementById("content-card"),
   contentEmpty: document.getElementById("content-empty"),
+  preparationTab: document.getElementById("preparation-tab"),
+  preparationPanel: document.getElementById("preparation-panel"),
+  requirementsTab: document.getElementById("design-tree-tab"),
+  preparationStageTitle: document.getElementById("preparation-stage-title"),
+  preparationStageProgress: document.getElementById("preparation-stage-progress"),
+  preparationStageStatus: document.getElementById("preparation-stage-status"),
+  preparationWorkItems: document.getElementById("preparation-work-items"),
+  preparationResultSummary: document.getElementById("preparation-result-summary"),
+  preparationResultSuggestions: document.getElementById("preparation-result-suggestions"),
+  preparationResultChecks: document.getElementById("preparation-result-checks"),
+  preparationResultSources: document.getElementById("preparation-result-sources"),
+  preparationMessages: document.getElementById("preparation-messages"),
+  preparationStageMessage: document.getElementById("preparation-stage-message"),
+  retryPreparation: document.getElementById("retry-preparation"),
   designTreePanel: document.getElementById("design-tree-panel"),
   designTreeCard: document.getElementById("design-tree-card"),
   designTreeEmpty: document.getElementById("design-tree-empty"),
   designTreeCurrent: document.getElementById("design-tree-current"),
   designTreePhase: document.getElementById("design-tree-phase"),
   designTreeHost: document.getElementById("design-tree-host"),
+  decisionList: document.getElementById("decision-list"),
   designTreeStatus: document.getElementById("design-tree-status"),
   designTreeSource: document.getElementById("design-tree-source"),
   designTreeSourceDetails: document.getElementById("design-tree-source-details"),
@@ -50,6 +66,7 @@ const elements: AnyRecord = {
   reviewRequestKind: document.getElementById("review-request-kind"),
   designReviewInput: document.getElementById("design-review-input"),
   designReviewStatus: document.getElementById("design-review-status"),
+  designReviewStageStatus: document.getElementById("design-review-stage-status"),
   reviewSubmit: document.getElementById("review-submit"),
   planTab: document.getElementById("plan-tab"),
   planPanel: document.getElementById("plan-panel"),
@@ -112,6 +129,10 @@ const elements: AnyRecord = {
   previewTab: document.getElementById("live-preview-tab"),
   prototypeBuilding: document.getElementById("prototype-building"),
   prototypeBuildingMessage: document.getElementById("prototype-building-message"),
+  prototypeBuildingTitle: document.getElementById("prototype-building-title"),
+  prototypeBuildingElapsed: document.getElementById("prototype-building-elapsed"),
+  prototypeBuildStatus: document.getElementById("prototype-build-status"),
+  startPrototype: document.getElementById("start-prototype"),
   previewEmpty: document.getElementById("preview-empty"),
   previewEmptyMessage: document.getElementById("preview-empty-message"),
   previewFrame: document.getElementById("preview-frame"),
@@ -121,13 +142,11 @@ const elements: AnyRecord = {
   splitter: document.getElementById("studio-splitter"),
   reloadButton: document.getElementById("reload-extension"),
   reloadStatus: document.getElementById("reload-status"),
-  preparationStatus: document.getElementById("preparation-status"),
-  preparationSummary: document.getElementById("preparation-summary"),
-  preparationChecks: document.getElementById("preparation-checks"),
-  preparationSources: document.getElementById("preparation-sources"),
   stageList: document.getElementById("stage-list"),
   completeStage: document.getElementById("complete-stage"),
   stageMessage: document.getElementById("stage-message"),
+  stageBrowsing: document.getElementById("stage-browsing"),
+  reopenStage: document.getElementById("reopen-stage"),
   requirementsSubstageSection: document.getElementById("requirements-substage-section"),
   usageSubstage: document.getElementById("usage-substage"),
   dagSubstage: document.getElementById("dag-substage"),
@@ -160,6 +179,7 @@ const MIN_PREVIEW_WIDTH = 360;
 const DEFAULT_REQUIREMENTS_RATIO = 0.24;
 const KEYBOARD_RESIZE_STEP = 24;
 const LIFECYCLE_STAGES = [
+  { id: "prepare", label: "Preparation" },
   { id: "requirements", label: "Requirements" },
   { id: "prototype", label: "Prototype" },
   { id: "design", label: "Design" },
@@ -172,28 +192,274 @@ let submitting = false;
 let applyingAllRecommended = false;
 let appliedRecommendedCount = 0;
 let completingStage = false;
+let reopeningStage = false;
+let prototypeSubmitting = false;
+let viewedStageId = null;
 let activePointerId = null;
 let reloadRequestError = "";
-let activeOutputTab = "design-tree";
+let activeOutputTab = "preparation";
 let selectedArtifactId = null;
 let selectedDecisionId = null;
+let followingActiveDecision = true;
+let recommendedPendingId = null;
 let mermaidModulePromise = null;
 let diagramRenderId = 0;
 let designTreeRenderId = 0;
 let planRenderId = 0;
 let lastLifecycleStage = null;
+let preparationSubmitting = false;
+let lastPreparationRuntimeSignature = "";
 let implementationSubmitting = false;
 let lastImplementationRuntimeSignature = "";
+let lastProviderSignature = "";
 let testSubmitting = false;
 let testErrorDetailsExpanded = false;
 let testErrorDetailsSignature = "";
 let lastTestRuntimeSignature = "";
 let processingMessageTimer = null;
 let prototypeBuildMessageTimer = null;
-let prototypeBuildKey = "";
-let prototypeBuildStartedAt = 0;
-const diagramScales = new WeakMap<HTMLElement, number>();
+let transportSequence = 0;
+let lastTransportSequence = 0;
+let sharedStateRequest = null;
+let sharedStateSequence = 0;
+let lastQuestionSignature = "";
+const diagramViews = new Map<string, { mode: "fit" | "scale"; scale: number }>();
+const diagramSignatures = new WeakMap<HTMLElement, string>();
+const formDrafts = new Map<string, { values: AnyRecord; version: number }>();
+const draftForms = new WeakSet<HTMLElement>();
+const questionErrors = new Map<string, string>();
+const expandedViews = new Map<string, boolean>();
+const inputVersions = new WeakMap<HTMLElement, number>();
 let lastNextActionLabel = "";
+
+function currentStage(state = currentState) {
+  return state?.lifecycle?.currentStage || "prepare";
+}
+
+function hasPendingRequest() {
+  return submitting || completingStage || reopeningStage || prototypeSubmitting
+    || preparationSubmitting || implementationSubmitting || testSubmitting;
+}
+
+function skippedStage(state, stage) {
+  return (state?.lifecycle?.skippedStages || []).find((entry) => entry.stageId === stage)
+    || (stage === "prototype" && state?.prototypeApproach?.mode === "not-applicable"
+      ? { stageId: stage, reason: state.prototypeApproach.reason || "No graphical interface needs prototype validation." }
+      : null);
+}
+
+function canEditStage(stage, state = currentState, allowCompleted = false) {
+  return Boolean(state)
+    && !reopeningStage && !completingStage
+    && currentStage(state) === stage
+    && !skippedStage(state, stage)
+    && (stage !== "prototype" || state.prototypeApproach?.mode !== "undecided")
+    && (allowCompleted || !(state.lifecycle?.completedStages || []).includes(stage))
+    && state.provider?.canSubmitAnswers !== false;
+}
+
+function hasActiveJobs(state) {
+  return ["running", "starting"].includes(state.processing?.status)
+    || ["starting", "running"].includes(state.preparation?.status)
+    || Boolean(state.preparation?.processing && !state.preparation.processing.completedAt)
+    || state.suggestionProcessing?.status === "running"
+    || Boolean(state.planning?.processing)
+    || ["starting", "running"].includes(state.implementation?.status)
+    || ["starting", "running"].includes(state.testing?.status)
+    || state.previewStatus === "starting"
+    || [state.designReview, state.testDesignReview].some((review) =>
+      review?.processing || review?.finalizeRequested
+      || (review?.threads || []).some((thread) =>
+        ["queued", "processing"].includes(thread.status)
+      )
+    );
+}
+
+function hasStageData(state, stage) {
+  return currentStage(state) === stage
+    || (state.lifecycle?.completedStages || []).includes(stage)
+    || (state.lifecycle?.history || []).some((output) => output.stageId === stage)
+    || (state.artifacts || []).some((artifact) => artifact.stage === stage)
+    || (stage === "plan" && (state.planning?.workItems || []).length > 0)
+    || (stage === "implement" && (state.implementation?.workItems || []).length > 0)
+    || (stage === "test" && (state.testing?.scenarios || []).length > 0);
+}
+
+function stageTab(stage) {
+  return {
+    prepare: "preparation", requirements: "design-tree", prototype: "preview", design: "design-review",
+    plan: "plan", implement: "implementation", test: "test",
+  }[stage] || "content";
+}
+
+function browseStage(stage) {
+  if (!currentState || !hasStageData(currentState, stage) || skippedStage(currentState, stage)) return;
+  viewedStageId = stage;
+  activateOutputTab(stageTab(stage), true);
+}
+
+function uiKey(element) {
+  return element?.dataset?.uiKey || element?.id || "";
+}
+
+function captureView(root = document.body) {
+  for (const details of root.querySelectorAll("details[data-ui-key]")) {
+    if (details instanceof HTMLDetailsElement) expandedViews.set(uiKey(details), details.open);
+  }
+  const active = document.activeElement as HTMLInputElement | null;
+  return {
+    focus: root.contains(active) ? uiKey(active) : "",
+    original: active,
+    start: active?.selectionStart,
+    end: active?.selectionEnd,
+    scroll: Array.from(root.querySelectorAll("[id], [data-ui-key]"))
+      .filter((element: HTMLElement) => element.scrollTop || element.scrollLeft)
+      .map((element: HTMLElement) => ({
+        key: uiKey(element), top: element.scrollTop, left: element.scrollLeft,
+      })),
+  };
+}
+
+function restoreView(snapshot, root = document.body) {
+  const nodes = Array.from(root.querySelectorAll("[id], [data-ui-key]")) as HTMLElement[];
+  for (const details of root.querySelectorAll("details[data-ui-key]")) {
+    if (details instanceof HTMLDetailsElement && expandedViews.has(uiKey(details))) {
+      details.open = expandedViews.get(uiKey(details))!;
+    }
+  }
+  for (const scroll of snapshot.scroll) {
+    const element = nodes.find((node) => uiKey(node) === scroll.key);
+    if (element) {
+      element.scrollTop = scroll.top;
+      element.scrollLeft = scroll.left;
+    }
+  }
+  const target = nodes.find((node) => uiKey(node) === snapshot.focus) as HTMLInputElement;
+  if (
+    target && !target.disabled && !target.closest("[hidden]")
+    && (!snapshot.original?.isConnected || document.activeElement === snapshot.original)
+  ) {
+    if (document.activeElement !== target) target.focus({ preventScroll: true });
+    if (typeof snapshot.start === "number" && typeof target.setSelectionRange === "function") {
+      try { target.setSelectionRange(snapshot.start, snapshot.end); } catch { /* Non-text input. */ }
+    }
+  }
+}
+
+function formValues(form) {
+  const values: AnyRecord = {};
+  for (const input of form.querySelectorAll("input, textarea, select")) {
+    const key = input.name || input.id;
+    if (!key) continue;
+    if (input.type === "radio") {
+      values[key + ":" + input.value] = input.checked;
+    } else {
+      values[key] = input.value;
+    }
+  }
+  return values;
+}
+
+function saveFormDraft(form, edited = false) {
+  const key = form?.dataset?.draftKey;
+  if (!key) return;
+  const previous = formDrafts.get(key);
+  formDrafts.set(key, {
+    values: formValues(form),
+    version: (previous?.version || 0) + (edited ? 1 : 0),
+  });
+}
+
+function bindFormDraft(form, key) {
+  const previousKey = form.dataset.draftKey;
+  if (previousKey && previousKey !== key) {
+    saveFormDraft(form);
+    for (const input of form.querySelectorAll("textarea, input:not([type=radio])")) {
+      input.value = "";
+    }
+    for (const select of form.querySelectorAll("select")) select.selectedIndex = 0;
+  }
+  form.dataset.draftKey = key;
+  const draft = formDrafts.get(key);
+  if (draft) {
+    for (const input of form.querySelectorAll("input, textarea, select")) {
+      const name = input.name || input.id;
+      const field = input.type === "radio" ? name + ":" + input.value : name;
+      if (!(field in draft.values)) continue;
+      if (input.type === "radio") input.checked = draft.values[field];
+      else input.value = draft.values[field];
+    }
+  }
+  if (!draftForms.has(form)) {
+    form.addEventListener("input", () => saveFormDraft(form, true));
+    form.addEventListener("change", () => saveFormDraft(form, true));
+    draftForms.add(form);
+  }
+  saveFormDraft(form);
+}
+
+function draftKey(kind, id, definition = null) {
+  return JSON.stringify([currentState?.prototypeId || "", kind, id, definition]);
+}
+
+function clearAcceptedDraft(key, version) {
+  const draft = formDrafts.get(key);
+  if (!draft || draft.version !== version) return;
+  const values = Object.fromEntries(Object.entries(draft.values).map(([field, value]) => [
+    field, typeof value === "boolean" ? false : field === "review-request-kind" ? "question" : "",
+  ]));
+  formDrafts.set(key, { values, version: version + 1 });
+  for (const form of document.querySelectorAll("form[data-draft-key]")) {
+    if ((form as HTMLElement).dataset.draftKey === key) bindFormDraft(form, key);
+  }
+}
+
+function captureInput(input) {
+  return { value: input.value, version: inputVersions.get(input) || 0 };
+}
+
+function clearAcceptedInput(input, snapshot) {
+  if (input.value === snapshot.value && (inputVersions.get(input) || 0) === snapshot.version) {
+    input.value = "";
+  }
+}
+
+for (const event of ["input", "change"]) {
+  document.addEventListener(event, (event) => {
+    const input = event.target as HTMLElement;
+    inputVersions.set(input, (inputVersions.get(input) || 0) + 1);
+  }, true);
+}
+
+function elapsedLabel(requestedAt) {
+  const start = Date.parse(requestedAt || "");
+  if (!Number.isFinite(start)) return "";
+  const seconds = Math.max(0, Math.floor((Date.now() - start) / 1000));
+  return "Elapsed: " + Math.floor(seconds / 60) + "m " + (seconds % 60) + "s";
+}
+
+async function postJson(endpoint, body) {
+  const sequence = ++transportSequence;
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(60000),
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || "The request failed.");
+  if (isStateSnapshot(result)) renderIfChanged(result, sequence);
+  else await refreshSharedState(sequence).catch(() => undefined);
+  return result;
+}
+
+function finishSubmission() {
+  submitting = false;
+  if (currentState) {
+    render(currentState, true);
+    void continueApplyingAllRecommended(currentState);
+  }
+}
 
 function splitterBounds() {
   const workspaceRect = elements.workspace.getBoundingClientRect();
@@ -362,11 +628,11 @@ elements.reloadButton.addEventListener("click", async () => {
 
 async function submitRequirementAction(action, answer) {
   if (
-    submitting ||
-    !currentState ||
+    hasPendingRequest() ||
+    !canEditStage("requirements") ||
     currentState.processing?.status === "running"
   ) {
-    return;
+    return false;
   }
   submitting = true;
   elements.usageMessage.textContent =
@@ -376,39 +642,35 @@ async function submitRequirementAction(action, answer) {
   elements.usageMessage.dataset.status = "idle";
   renderRequirementsSubstage(currentState);
   try {
-    const response = await fetch("/api/answer", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    await postJson("/api/answer", {
         questionId: "usage-intake",
         answer,
         action,
-      }),
     });
-    const result = await response.json();
-    if (!response.ok) {
-      throw new Error(result.error || "Could not update requirements.");
-    }
+    return true;
   } catch (error) {
-    submitting = false;
     elements.usageMessage.textContent = error instanceof Error
       ? error.message
       : "Could not update requirements.";
     elements.usageMessage.dataset.status = "error";
-    renderRequirementsSubstage(currentState, true);
+    return false;
+  } finally {
+    finishSubmission();
   }
 }
 
-elements.usageForm.addEventListener("submit", (event) => {
+elements.usageForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const usage = elements.usageInput.value.trim();
+  const draft = captureInput(elements.usageInput);
+  const usage = draft.value.trim();
   if (!usage) {
     elements.usageMessage.textContent = "Enter one usage sentence.";
     elements.usageMessage.dataset.status = "error";
     return;
   }
-  elements.usageInput.value = "";
-  submitRequirementAction("add-usage", usage);
+  if (await submitRequirementAction("add-usage", usage)) {
+    clearAcceptedInput(elements.usageInput, draft);
+  }
 });
 
 elements.generateDag.addEventListener("click", () => {
@@ -420,8 +682,9 @@ elements.generateDag.addEventListener("click", () => {
 
 elements.revisionForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (submitting || !currentState) return;
-  const suggestion = elements.revisionInput.value.trim();
+  if (hasPendingRequest() || !canEditStage("prototype") || elements.submitRevision.disabled) return;
+  const draft = captureInput(elements.revisionInput);
+  const suggestion = draft.value.trim();
   if (!suggestion) {
     elements.revisionStatus.textContent = "Enter a revision suggestion.";
     elements.revisionStatus.dataset.status = "error";
@@ -432,29 +695,21 @@ elements.revisionForm.addEventListener("submit", async (event) => {
   elements.submitRevision.textContent = "Sending...";
   elements.revisionStatus.textContent = "";
   try {
-    const response = await fetch("/api/revision", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ suggestion }),
-    });
-    const result = await response.json();
-    if (!response.ok) {
-      throw new Error(result.error || "Could not submit the revision.");
-    }
-    elements.revisionInput.value = "";
+    await postJson("/api/revision", { suggestion });
+    clearAcceptedInput(elements.revisionInput, draft);
   } catch (error) {
-    submitting = false;
     elements.revisionStatus.textContent = error instanceof Error
       ? error.message
       : "Could not submit the revision.";
     elements.revisionStatus.dataset.status = "error";
-    if (currentState) renderPrototypeReview(currentState, true);
+  } finally {
+    finishSubmission();
   }
 });
 
 elements.revisionQuestionForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (submitting || !currentState) return;
+  if (hasPendingRequest() || !canEditStage("prototype") || elements.submitClarification.disabled) return;
   const question = currentState.prototypeReview?.question;
   if (!question) return;
   const selected = elements.revisionQuestionChoices.querySelector(
@@ -462,6 +717,9 @@ elements.revisionQuestionForm.addEventListener("submit", async (event) => {
   );
   const detail = elements.revisionQuestionDetail.value.trim();
   const answer = detail || selected?.value || "";
+  const key = elements.revisionQuestionForm.dataset.draftKey;
+  saveFormDraft(elements.revisionQuestionForm);
+  const version = formDrafts.get(key)?.version;
   if (!answer) {
     elements.revisionStatus.textContent =
       "Choose an option or enter clarification.";
@@ -473,26 +731,19 @@ elements.revisionQuestionForm.addEventListener("submit", async (event) => {
   elements.submitClarification.textContent = "Sending...";
   elements.revisionStatus.textContent = "";
   try {
-    const response = await fetch("/api/answer", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    await postJson("/api/answer", {
         questionId: question.id,
         answer,
         action: "clarify-revision",
-      }),
     });
-    const result = await response.json();
-    if (!response.ok) {
-      throw new Error(result.error || "Could not submit clarification.");
-    }
+    clearAcceptedDraft(key, version);
   } catch (error) {
-    submitting = false;
     elements.revisionStatus.textContent = error instanceof Error
       ? error.message
       : "Could not submit clarification.";
     elements.revisionStatus.dataset.status = "error";
-    if (currentState) renderPrototypeReview(currentState, true);
+  } finally {
+    finishSubmission();
   }
 });
 
@@ -519,8 +770,12 @@ elements.reviewRequestKind.addEventListener("change", () => {
 
 elements.designReviewForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (submitting || !currentState) return;
-  const prompt = elements.designReviewInput.value.trim();
+  if (hasPendingRequest() || !canEditStage("design")) return;
+  const draft = captureInput(elements.designReviewInput);
+  const prompt = draft.value.trim();
+  const key = elements.designReviewForm.dataset.draftKey;
+  saveFormDraft(elements.designReviewForm);
+  const version = formDrafts.get(key)?.version;
   const artifact = (currentState.artifacts || []).find(
     (candidate) => candidate.id === selectedArtifactId,
   );
@@ -542,85 +797,65 @@ elements.designReviewForm.addEventListener("submit", async (event) => {
   elements.reviewSubmit.textContent = "Queueing...";
   elements.designReviewStatus.textContent = "";
   try {
-    const response = await fetch("/api/design-review", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    await postJson("/api/design-review", {
         prompt,
         type: request.type,
         artifactKind: request.artifactKind,
         artifactId: artifact.id,
-      }),
     });
-    const result = await response.json();
-    if (!response.ok) {
-      throw new Error(result.error || "Could not queue this review request.");
+    clearAcceptedDraft(key, version);
+    if (elements.designReviewForm.dataset.draftKey === key) {
+      clearAcceptedInput(elements.designReviewInput, draft);
     }
-    elements.designReviewInput.value = "";
-    submitting = false;
   } catch (error) {
-    submitting = false;
     elements.designReviewStatus.textContent = error instanceof Error
       ? error.message
       : "Could not queue this review request.";
     elements.designReviewStatus.dataset.status = "error";
-    if (currentState) renderDesignReview(currentState, true);
+  } finally {
+    finishSubmission();
   }
 });
 
 elements.finishReview.addEventListener("click", async () => {
-  if (elements.finishReview.disabled || !currentState) return;
+  if (hasPendingRequest() || elements.finishReview.disabled || !canEditStage("design")) return;
   submitting = true;
   elements.finishReview.disabled = true;
   elements.finishReview.textContent = "Capturing review...";
   elements.designReviewStatus.textContent = "";
   try {
-    const response = await fetch("/api/design-review/finalize", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-    });
-    const result = await response.json();
-    if (!response.ok) {
-      throw new Error(result.error || "Could not finish the design review.");
-    }
-    submitting = false;
+    await postJson("/api/design-review/finalize", {});
   } catch (error) {
-    submitting = false;
     elements.designReviewStatus.textContent = error instanceof Error
       ? error.message
       : "Could not finish the design review.";
     elements.designReviewStatus.dataset.status = "error";
-    if (currentState) renderDesignReview(currentState, true);
+  } finally {
+    finishSubmission();
   }
 });
 
 async function submitPlanRequest(action, instruction) {
-  if (submitting || !currentState) return;
+  if (hasPendingRequest() || !canEditStage("plan") || currentState.planning?.processing) return false;
   const maxAgents = Math.max(
     1,
     Math.min(30, Number.parseInt(elements.planMaxAgents.value, 10) || 4),
   );
   submitting = true;
   elements.planStatus.textContent = "";
-  renderPlan(currentState);
+  elements.planStatus.dataset.status = "idle";
+  render(currentState, true);
   try {
-    const response = await fetch("/api/plan/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, instruction, maxAgents }),
-    });
-    const result = await response.json();
-    if (!response.ok) {
-      throw new Error(result.error || "Could not generate the execution plan.");
-    }
+    await postJson("/api/plan/generate", { action, instruction, maxAgents });
+    return true;
   } catch (error) {
-    submitting = false;
     elements.planStatus.textContent = error instanceof Error
       ? error.message
       : "Could not generate the execution plan.";
     elements.planStatus.dataset.status = "error";
-    if (currentState) renderPlan(currentState, true);
+    return false;
+  } finally {
+    finishSubmission();
   }
 }
 
@@ -641,62 +876,46 @@ elements.optimizePlan.addEventListener("click", () => {
   );
 });
 
-elements.planRevisionForm.addEventListener("submit", (event) => {
+elements.planRevisionForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const instruction = elements.planRevisionInput.value.trim();
+  const draft = captureInput(elements.planRevisionInput);
+  const instruction = draft.value.trim();
   if (!instruction) {
     elements.planStatus.textContent = "Describe how the plan should change.";
     elements.planStatus.dataset.status = "error";
     return;
   }
-  elements.planRevisionInput.value = "";
-  submitPlanRequest("revise", instruction);
+  if (await submitPlanRequest("revise", instruction)) {
+    clearAcceptedInput(elements.planRevisionInput, draft);
+  }
 });
 
 elements.finalizePlan.addEventListener("click", async () => {
-  if (elements.finalizePlan.disabled || !currentState) return;
+  if (hasPendingRequest() || elements.finalizePlan.disabled || !canEditStage("plan")) return;
   submitting = true;
   elements.finalizePlan.disabled = true;
   elements.finalizePlan.textContent = "Finalizing...";
   elements.planStatus.textContent = "";
   try {
-    const response = await fetch("/api/plan/finalize", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-    });
-    const result = await response.json();
-    if (!response.ok) {
-      throw new Error(result.error || "Could not finalize the execution plan.");
-    }
-    submitting = false;
-    render(result);
+    await postJson("/api/plan/finalize", {});
   } catch (error) {
-    submitting = false;
     elements.planStatus.textContent = error instanceof Error
       ? error.message
       : "Could not finalize the execution plan.";
     elements.planStatus.dataset.status = "error";
-    if (currentState) renderPlan(currentState, true);
+  } finally {
+    finishSubmission();
   }
 });
 
 elements.startImplementation.addEventListener("click", async () => {
-  if (implementationSubmitting || !currentState) return;
+  if (hasPendingRequest() || !canEditStage("implement") || elements.startImplementation.disabled) return;
   implementationSubmitting = true;
   elements.implementationStatus.textContent = "Starting agents...";
   elements.implementationStatus.dataset.status = "idle";
-  renderImplementation(currentState, true);
+  render(currentState, true);
   try {
-    const response = await fetch("/api/implementation/start", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-    });
-    const result = await response.json();
-    if (!response.ok) {
-      throw new Error(result.error || "Could not start implementation.");
-    }
+    await postJson("/api/implementation/start", {});
     elements.implementationStatus.textContent =
       "Implementation agents are starting.";
   } catch (error) {
@@ -706,26 +925,18 @@ elements.startImplementation.addEventListener("click", async () => {
     elements.implementationStatus.dataset.status = "error";
   } finally {
     implementationSubmitting = false;
-    if (currentState) renderImplementation(currentState, true);
+    if (currentState) render(currentState, true);
   }
 });
 
 elements.stopImplementation.addEventListener("click", async () => {
-  if (implementationSubmitting || !currentState) return;
+  if (hasPendingRequest() || !canEditStage("implement") || elements.stopImplementation.disabled) return;
   implementationSubmitting = true;
   elements.implementationStatus.textContent = "Stopping agents...";
   elements.implementationStatus.dataset.status = "idle";
-  renderImplementation(currentState, true);
+  render(currentState, true);
   try {
-    const response = await fetch("/api/implementation/stop", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-    });
-    const result = await response.json();
-    if (!response.ok) {
-      throw new Error(result.error || "Could not stop implementation.");
-    }
+    await postJson("/api/implementation/stop", {});
   } catch (error) {
     elements.implementationStatus.textContent = error instanceof Error
       ? error.message
@@ -733,14 +944,15 @@ elements.stopImplementation.addEventListener("click", async () => {
     elements.implementationStatus.dataset.status = "error";
   } finally {
     implementationSubmitting = false;
-    if (currentState) renderImplementation(currentState, true);
+    if (currentState) render(currentState, true);
   }
 });
 
 elements.implementationStrategyForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (implementationSubmitting || !currentState) return;
-  const text = elements.implementationStrategyInput.value.trim();
+  if (hasPendingRequest() || !canEditStage("implement") || elements.submitImplementationStrategy.disabled) return;
+  const draft = captureInput(elements.implementationStrategyInput);
+  const text = draft.value.trim();
   if (!text) {
     elements.implementationStatus.textContent =
       "Describe how the execution strategy should change.";
@@ -752,17 +964,8 @@ elements.implementationStrategyForm.addEventListener("submit", async (event) => 
   elements.submitImplementationStrategy.textContent = "Queueing...";
   elements.implementationStatus.textContent = "";
   try {
-    const response = await fetch("/api/implementation/strategy", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-    });
-    const result = await response.json();
-    if (!response.ok) {
-      throw new Error(result.error || "Could not queue this adjustment.");
-    }
-    elements.implementationStrategyInput.value = "";
-    render(result);
+    await postJson("/api/implementation/strategy", { text });
+    clearAcceptedInput(elements.implementationStrategyInput, draft);
   } catch (error) {
     elements.implementationStatus.textContent = error instanceof Error
       ? error.message
@@ -770,26 +973,18 @@ elements.implementationStrategyForm.addEventListener("submit", async (event) => 
     elements.implementationStatus.dataset.status = "error";
   } finally {
     implementationSubmitting = false;
-    if (currentState) renderImplementation(currentState, true);
+    if (currentState) render(currentState, true);
   }
 });
 
 elements.startTests.addEventListener("click", async () => {
-  if (testSubmitting || !currentState) return;
+  if (hasPendingRequest() || !canEditStage("test", currentState, true) || elements.startTests.disabled) return;
   testSubmitting = true;
   elements.testStatus.textContent = "Starting test agents...";
   elements.testStatus.dataset.status = "idle";
-  renderTest(currentState, true);
+  render(currentState, true);
   try {
-    const response = await fetch("/api/test/start", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-    });
-    const result = await response.json();
-    if (!response.ok) {
-      throw new Error(result.error || "Could not start tests.");
-    }
+    await postJson("/api/test/start", {});
     elements.testStatus.textContent = "Test agents are starting.";
   } catch (error) {
     elements.testStatus.textContent = error instanceof Error
@@ -798,7 +993,7 @@ elements.startTests.addEventListener("click", async () => {
     elements.testStatus.dataset.status = "error";
   } finally {
     testSubmitting = false;
-    if (currentState) renderTest(currentState, true);
+    if (currentState) render(currentState, true);
   }
 });
 
@@ -815,46 +1010,103 @@ elements.testErrorToggle.addEventListener("click", () => {
   if (testErrorDetailsExpanded) elements.testErrorDetails.focus();
 });
 
+elements.retryPreparation.addEventListener("click", async () => {
+  if (hasPendingRequest() || !canEditStage("prepare") || currentState.preparation?.status !== "failed" || hasActiveJobs(currentState)) return;
+  preparationSubmitting = true;
+  elements.retryPreparation.disabled = true;
+  elements.retryPreparation.textContent = "Retrying...";
+  elements.preparationStageMessage.textContent = "";
+  elements.preparationStageMessage.dataset.status = "idle";
+  try {
+    await postJson("/api/preparation/retry", {});
+    elements.preparationStageMessage.textContent = "Preparation retry started.";
+  } catch (error) {
+    elements.preparationStageMessage.textContent = error instanceof Error
+      ? error.message
+      : "Could not retry preparation.";
+    elements.preparationStageMessage.dataset.status = "error";
+  } finally {
+    preparationSubmitting = false;
+    if (currentState) render(currentState, true);
+  }
+});
+
 elements.completeStage.addEventListener("click", async () => {
-  if (elements.completeStage.disabled || !currentState) return;
-  const stageId = currentState.lifecycle?.currentStage || "requirements";
+  if (hasPendingRequest() || elements.completeStage.disabled || !currentState) return;
+  const stageId = currentStage();
+  if (stageId === "prepare" || skippedStage(currentState, stageId)) return;
   completingStage = true;
   elements.completeStage.disabled = true;
   elements.completeStage.textContent = "Saving stage output...";
   elements.stageMessage.textContent = "";
   elements.stageMessage.dataset.status = "idle";
   try {
-    const response = await fetch("/api/stage/complete", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ stageId }),
-    });
-    const result = await response.json();
-    if (!response.ok) {
-      throw new Error(result.error || "Could not complete this stage.");
-    }
-    if (response.status === 202 && result.accepted) {
-      completingStage = false;
+    const result = await postJson("/api/stage/complete", { stageId });
+    if (result.accepted) {
       elements.stageMessage.textContent =
         "Collecting evidence and generating the draft feature specification...";
       elements.stageMessage.dataset.status = "idle";
-      if (currentState) renderLifecycle(currentState, true);
-      return;
     }
-    completingStage = false;
-    render(result);
   } catch (error) {
-    completingStage = false;
     elements.stageMessage.textContent = error instanceof Error
       ? error.message
       : "Could not complete this stage.";
     elements.stageMessage.dataset.status = "error";
-    if (currentState) renderLifecycle(currentState, true);
+  } finally {
+    completingStage = false;
+    if (currentState) render(currentState, true);
+  }
+});
+
+elements.startPrototype.addEventListener("click", async () => {
+  if (hasPendingRequest() || !canEditStage("prototype") || hasActiveJobs(currentState)) return;
+  prototypeSubmitting = true;
+  elements.prototypeBuildStatus.textContent = currentState.prototypeApproach?.mode === "validate-existing"
+    ? "Requesting validation of the existing prototype..."
+    : "Requesting prototype build...";
+  elements.prototypeBuildStatus.dataset.status = "idle";
+  render(currentState, true);
+  try {
+    await postJson("/api/prototype/start", {});
+  } catch (error) {
+    elements.prototypeBuildStatus.textContent = error instanceof Error ? error.message : "Could not start the prototype.";
+    elements.prototypeBuildStatus.dataset.status = "error";
+  } finally {
+    prototypeSubmitting = false;
+    if (currentState) render(currentState, true);
+  }
+});
+
+elements.reopenStage.addEventListener("click", async () => {
+  if (hasPendingRequest() || !currentState || elements.reopenStage.disabled || elements.reopenStage.hidden) return;
+  const stageId = viewedStageId;
+  if (skippedStage(currentState, stageId)) return;
+  const label = LIFECYCLE_STAGES.find((stage) => stage.id === stageId)?.label;
+  if (!window.confirm(
+    `Reopen ${label}? Its outputs and dependent stage outputs will be marked stale. `
+      + "Saved evidence is retained, but affected stages must be completed again.",
+  )) return;
+  if (hasActiveJobs(currentState)) return;
+  reopeningStage = true;
+  elements.stageMessage.textContent = "Reopening " + label + "...";
+  elements.stageMessage.dataset.status = "idle";
+  render(currentState, true);
+  try {
+    await postJson("/api/stage/reopen", { stageId });
+    viewedStageId = stageId;
+    activeOutputTab = stageTab(stageId);
+  } catch (error) {
+    elements.stageMessage.textContent = error instanceof Error ? error.message : "Could not reopen this stage.";
+    elements.stageMessage.dataset.status = "error";
+  } finally {
+    reopeningStage = false;
+    if (currentState) render(currentState, true);
   }
 });
 
 function activateOutputTab(tabName, focusTab = false) {
   const requestedTab = [
+    "preparation",
     "preview",
     "design-tree",
     "design-review",
@@ -864,17 +1116,27 @@ function activateOutputTab(tabName, focusTab = false) {
     "content",
   ].includes(tabName)
     ? tabName
-    : "preview";
+    : "preparation";
   const requestedElement = elements.previewTabs.find(
     (tab) => tab.dataset.tab === requestedTab,
   );
-  activeOutputTab = requestedElement?.disabled ? "design-tree" : requestedTab;
+  activeOutputTab = requestedElement?.disabled || requestedElement?.hidden
+    ? elements.previewTabs.find((tab) => !tab.hidden && !tab.disabled)?.dataset.tab
+      || "preparation"
+    : requestedTab;
+  viewedStageId = {
+    preparation: "prepare", preview: "prototype", "design-tree": "requirements", "design-review": "design",
+    plan: "plan", implementation: "implement", test: "test",
+  }[activeOutputTab] || (currentState?.artifacts || []).find(
+    (artifact) => artifact.id === selectedArtifactId,
+  )?.stage || currentStage();
   for (const tab of elements.previewTabs) {
     const isActive = tab.dataset.tab === activeOutputTab;
     tab.setAttribute("aria-selected", String(isActive));
     tab.tabIndex = isActive ? 0 : -1;
     if (isActive && focusTab) tab.focus();
   }
+  elements.preparationPanel.hidden = activeOutputTab !== "preparation";
   elements.previewPanel.hidden = activeOutputTab !== "preview";
   elements.designTreePanel.hidden = activeOutputTab !== "design-tree";
   elements.designReviewPanel.hidden = activeOutputTab !== "design-review";
@@ -883,14 +1145,17 @@ function activateOutputTab(tabName, focusTab = false) {
   elements.testPanel.hidden = activeOutputTab !== "test";
   elements.contentPanel.hidden = activeOutputTab !== "content";
   elements.previewTools.hidden = activeOutputTab !== "preview";
-  if (currentState) renderNextAction(currentState);
+  if (currentState) {
+    renderBrowsingState(currentState);
+    renderNextAction(currentState);
+  }
 }
 
 for (const tab of elements.previewTabs) {
   tab.addEventListener("click", () => activateOutputTab(tab.dataset.tab));
   tab.addEventListener("keydown", (event) => {
     const visibleTabs = elements.previewTabs.filter(
-      (candidate) => !candidate.hidden,
+      (candidate) => !candidate.hidden && !candidate.disabled,
     );
     const currentIndex = visibleTabs.indexOf(tab);
     let nextIndex = null;
@@ -909,9 +1174,33 @@ for (const tab of elements.previewTabs) {
   });
 }
 
+function renderBrowsingState(state) {
+  const active = currentStage(state);
+  const viewed = viewedStageId || active;
+  const label = LIFECYCLE_STAGES.find((stage) => stage.id === viewed)?.label || viewed;
+  const skipped = skippedStage(state, viewed);
+  const readOnly = Boolean(skipped) || viewed !== active || (state.lifecycle?.completedStages || []).includes(viewed);
+  elements.stageBrowsing.textContent = skipped
+    ? `${label} is not applicable. ${skipped.reason} Reopen Requirements to change prototype applicability.`
+    : readOnly
+    ? `Viewing ${label} · read only. Reopen explicitly to change its scope.`
+    : "";
+  elements.completeStage.hidden = viewed !== active || Boolean(skipped);
+  elements.reopenStage.hidden = Boolean(skipped) || !readOnly
+    || LIFECYCLE_STAGES.findIndex((stage) => stage.id === viewed)
+      > LIFECYCLE_STAGES.findIndex((stage) => stage.id === active);
+  elements.reopenStage.textContent = reopeningStage ? "Reopening..." : "Reopen " + label;
+  elements.reopenStage.disabled = reopeningStage || completingStage || submitting
+    || prototypeSubmitting || preparationSubmitting || implementationSubmitting || testSubmitting
+    || state.provider?.canSubmitAnswers === false || hasActiveJobs(state);
+  for (const button of elements.stageList.querySelectorAll("button")) {
+    button.setAttribute("aria-pressed", String(button.dataset.stageId === viewed));
+  }
+}
+
 function renderLifecycle(state, preserveMessage = false) {
   const lifecycle = state.lifecycle || {
-    currentStage: "requirements",
+    currentStage: "prepare",
     completedStages: [],
     outputs: [],
     skippedStages: [],
@@ -923,7 +1212,7 @@ function renderLifecycle(state, preserveMessage = false) {
     ),
   );
   const outputs = new Map<string, AnyRecord>(
-    (lifecycle.outputs || []).map(
+    [...(lifecycle.history || []), ...(lifecycle.outputs || [])].map(
       (output): [string, AnyRecord] => [output.stageId, output],
     ),
   );
@@ -935,8 +1224,8 @@ function renderLifecycle(state, preserveMessage = false) {
       artifact.path &&
       artifact.reviewStatus !== "stale",
   );
-  const allComplete = LIFECYCLE_STAGES.every((stage) => completed.has(stage.id));
-  const currentStageId = lifecycle.currentStage || "requirements";
+  const allComplete = LIFECYCLE_STAGES.every((stage) => completed.has(stage.id) || Boolean(skippedStage(state, stage.id)));
+  const currentStageId = lifecycle.currentStage || "prepare";
   const currentIndex = Math.max(
     0,
     LIFECYCLE_STAGES.findIndex((stage) => stage.id === currentStageId),
@@ -969,8 +1258,10 @@ function renderLifecycle(state, preserveMessage = false) {
     const button = document.createElement("button");
     button.className = "stage-step";
     button.type = "button";
+    button.dataset.uiKey = "stage:" + stage.id;
+    button.dataset.stageId = stage.id;
     button.dataset.status = status;
-    button.disabled = status === "locked" || isSkipped;
+    button.disabled = isSkipped || (status === "locked" && !hasStageData(state, stage.id));
     button.setAttribute("aria-current", String(isActive));
     if (isSkipped) {
       button.title = skippedEntry.reason;
@@ -992,12 +1283,8 @@ function renderLifecycle(state, preserveMessage = false) {
     button.append(number, label, statusLabel);
 
     const output = outputs.get(stage.id);
-    if (output) {
-      button.addEventListener("click", () => {
-        elements.stageMessage.textContent = output.path;
-        elements.stageMessage.dataset.status = "idle";
-      });
-    }
+    if (output && !isSkipped) button.title = output.path;
+    button.addEventListener("click", () => browseStage(stage.id));
     item.append(button);
     if (isSkipped) {
       const hint = document.createElement("p");
@@ -1015,13 +1302,18 @@ function renderLifecycle(state, preserveMessage = false) {
     "Current lifecycle stage: " + currentDefinition.label,
   );
   elements.completeStage.disabled = completingStage
+    || reopeningStage || submitting || prototypeSubmitting
+    || preparationSubmitting || implementationSubmitting || testSubmitting
     || allComplete
+    || currentStageId === "prepare"
     || state.provider?.canSubmitAnswers === false
     || state.processing?.status === "running"
     || (
       currentStageId === "prototype"
       && (
         state.previewStatus !== "ready"
+        || state.prototypeApproach?.mode === "undecided"
+        || Boolean(skippedStage(state, "prototype"))
         || Boolean(state.prototypeReview?.question)
       )
     )
@@ -1088,6 +1380,8 @@ function renderLifecycle(state, preserveMessage = false) {
     ? "All stages complete"
     : completingStage
       ? "Saving stage output..."
+      : currentStageId === "prepare"
+        ? "Preparation runs automatically"
       : state.processing?.status === "running"
           && state.processing?.action === "generate-design-spec"
         ? "Generating draft feature spec..."
@@ -1106,43 +1400,183 @@ function renderLifecycle(state, preserveMessage = false) {
       ? "Prototype disabled: " + prototypeSkip.reason
       : latestOutput
         ? "Saved " + latestOutput.path
-        : "Complete the active stage to unlock the next.";
+        : currentStageId === "prepare"
+          ? "Preparation advances automatically when analysis completes."
+          : "Complete the active stage to unlock the next.";
     elements.stageMessage.dataset.status = "idle";
   }
+  renderBrowsingState(state);
 }
 
-function renderPreparation(state) {
+function renderPreparation(state, preserveMessage = false) {
   const preparation = state.preparation || {
     status: "not-started",
     summary: "",
+    workItems: [],
+    messages: [],
     checks: [],
     sources: [],
+    suggestedUsages: [],
+    error: "",
   };
-  elements.preparationStatus.textContent = preparation.status.replace("-", " ");
-  elements.preparationStatus.dataset.status = preparation.status;
-  elements.preparationSummary.textContent = preparation.summary
-    || "Environment readiness and authoritative sources have not been recorded.";
-  elements.preparationSummary.classList.toggle("muted", !preparation.summary);
-  elements.preparationChecks.replaceChildren();
+  const runtime = state.preparationRuntime || null;
+  const isPreparing = ["not-started", "starting", "running"].includes(
+    preparation.status,
+  );
+  const currentStage = state.lifecycle?.currentStage || "prepare";
+  elements.requirementsTab.disabled = currentStage === "prepare";
+  elements.requirementsTab.title = currentStage === "prepare"
+    ? "Requirements unlock when preparation completes."
+    : "";
+  elements.preparationStageStatus.textContent =
+    preparation.status.replace("-", " ");
+  elements.preparationStageStatus.dataset.status = preparation.status;
+  elements.preparationStageTitle.textContent = isPreparing
+    ? "Preparing Tandem context"
+    : preparation.status === "failed"
+      ? "Preparation needs attention"
+      : "Preparation results";
+  elements.preparationStageProgress.textContent = runtime?.currentPhase
+    ? "Current phase: " + runtime.currentPhase.split("-").join(" ")
+    : isPreparing
+      ? state.status || "Preparation is starting."
+      : preparation.summary || "Preparation has completed.";
+
+  const liveByWorkItem = new Map<string, AnyRecord>(
+    (runtime?.agents || []).map(
+      (agent): [string, AnyRecord] => [
+        String(agent.label || "").replace(/^prepare:/, ""),
+        agent,
+      ],
+    ),
+  );
+  elements.preparationWorkItems.replaceChildren();
+  for (const workItem of preparation.workItems || []) {
+    const live = liveByWorkItem.get(workItem.id) || {};
+    const status = live.status === "running" ? "running" : workItem.status;
+    const card = document.createElement("div");
+    card.className = "implementation-card";
+    card.dataset.status = status;
+    const heading = document.createElement("div");
+    heading.className = "implementation-card-heading";
+    const title = document.createElement("strong");
+    title.textContent = workItem.title;
+    const badge = document.createElement("span");
+    badge.className = "implementation-badge";
+    badge.textContent = status;
+    heading.append(title, badge);
+    const detail = document.createElement("p");
+    detail.className = "implementation-meta";
+    detail.textContent = workItem.detail;
+    card.append(heading, detail);
+    if (live.activity || workItem.result) {
+      const result = document.createElement("p");
+      result.textContent = live.activity || workItem.result;
+      card.append(result);
+    }
+    elements.preparationWorkItems.append(card);
+  }
+  if ((preparation.workItems || []).length === 0) {
+    appendImplementationEmpty(
+      elements.preparationWorkItems,
+      "Preparation work items will appear when analysis starts.",
+    );
+  }
+
+  elements.preparationResultSummary.textContent = preparation.summary
+    || "Results will appear as preparation completes.";
+  elements.preparationResultSummary.classList.toggle(
+    "muted",
+    !preparation.summary,
+  );
+  elements.preparationResultChecks.replaceChildren();
+  elements.preparationResultSuggestions.replaceChildren();
+  if ((preparation.suggestedUsages || []).length > 0) {
+    const heading = document.createElement("strong");
+    heading.textContent = "Passed to Requirements";
+    const list = document.createElement("ul");
+    appendPlanList(list, preparation.suggestedUsages, "No suggestions generated.");
+    elements.preparationResultSuggestions.append(heading, list);
+  }
   for (const check of preparation.checks || []) {
-    const item = document.createElement("li");
+    const item = document.createElement("div");
+    item.className = "preparation-result-item";
     item.dataset.status = check.status;
     const label = document.createElement("strong");
-    label.textContent = check.label;
+    label.textContent = check.label + " · " + check.status;
     const detail = document.createElement("span");
     detail.textContent = check.detail;
     item.append(label, detail);
-    elements.preparationChecks.append(item);
+    elements.preparationResultChecks.append(item);
   }
-  elements.preparationSources.replaceChildren();
+  elements.preparationResultSources.replaceChildren();
   for (const source of preparation.sources || []) {
     const link = document.createElement("a");
     link.href = source.url;
     link.target = "_blank";
     link.rel = "noreferrer";
     link.textContent = source.title;
+    link.dataset.uiKey = "preparation-source:" + source.url;
     link.title = source.purpose || source.url;
-    elements.preparationSources.append(link);
+    elements.preparationResultSources.append(link);
+  }
+
+  const progressMessages = [
+    ...(preparation.messages || []).map((message) => ({
+      id: message.id,
+      text: message.text,
+      kind: message.kind,
+      at: Date.parse(message.at) || 0,
+    })),
+    ...(runtime?.progress || []).map((message) => ({
+      id: "runtime-" + message.seq,
+      text: message.text,
+      kind: message.kind || "info",
+      at: Number(message.recordedAt) || 0,
+    })),
+  ].sort((left, right) => right.at - left.at).slice(0, 30);
+  elements.preparationMessages.replaceChildren();
+  for (const message of progressMessages) {
+    const card = document.createElement("div");
+    card.className = "implementation-event";
+    card.dataset.status = message.kind;
+    const heading = document.createElement("div");
+    heading.className = "implementation-event-heading";
+    const text = document.createElement("p");
+    text.textContent = message.text;
+    const time = document.createElement("time");
+    time.textContent = message.at
+      ? new Date(message.at).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : "";
+    heading.append(text, time);
+    card.append(heading);
+    elements.preparationMessages.append(card);
+  }
+  if (progressMessages.length === 0) {
+    appendImplementationEmpty(
+      elements.preparationMessages,
+      "Preparation progress will appear here.",
+    );
+  }
+
+  const canSubmit = canEditStage("prepare", state);
+  elements.retryPreparation.hidden = preparation.status !== "failed" || currentStage !== "prepare";
+  elements.retryPreparation.disabled = hasPendingRequest() || !canSubmit || hasActiveJobs(state);
+  elements.retryPreparation.textContent = preparationSubmitting
+    ? "Retrying..."
+    : "Retry preparation";
+  if (!preserveMessage) {
+    elements.preparationStageMessage.textContent = preparation.error
+    || (preparation.status === "needs-attention"
+      ? "Preparation completed with blockers. Requirements suggestions are still available."
+      : preparation.status === "ready"
+        ? "Preparation completed and its suggestions were passed to Requirements."
+        : "");
+    elements.preparationStageMessage.dataset.status =
+      preparation.status === "failed" ? "error" : "idle";
   }
 }
 
@@ -1195,7 +1629,7 @@ function renderRequirementsSubstage(state, preserveMessage = false) {
     loading.textContent = "Generating AI suggestions...";
     elements.usageSuggestions.append(loading);
   }
-  const canSubmit = state.provider?.canSubmitAnswers !== false;
+  const canSubmit = canEditStage("requirements", state);
   for (const suggestion of suggestions) {
     const item = document.createElement("li");
     const button = document.createElement("button");
@@ -1307,7 +1741,7 @@ function updateDiagramToolbar(host, label) {
 function setDiagramFit(host) {
   const svg = host.querySelector("svg") as SVGSVGElement | null;
   if (!svg) return;
-  diagramScales.set(host, 1);
+  diagramViews.set(host.dataset.diagramKey || host.id, { mode: "fit", scale: 1 });
   svg.style.width = "100%";
   svg.style.minWidth = "0";
   svg.style.maxWidth = "none";
@@ -1319,7 +1753,7 @@ function setDiagramScale(host, scale) {
   const svg = host.querySelector("svg") as SVGSVGElement | null;
   if (!svg) return;
   const nextScale = Math.min(4, Math.max(0.25, scale));
-  diagramScales.set(host, nextScale);
+  diagramViews.set(host.dataset.diagramKey || host.id, { mode: "scale", scale: nextScale });
   svg.style.width = `${diagramNaturalWidth(svg) * nextScale}px`;
   svg.style.minWidth = "0";
   svg.style.maxWidth = "none";
@@ -1328,9 +1762,14 @@ function setDiagramScale(host, scale) {
 }
 
 function ensureDiagramControls(host) {
+  const restore = () => {
+    const view = diagramViews.get(host.dataset.diagramKey || host.id);
+    if (view?.mode === "scale") setDiagramScale(host, view.scale);
+    else setDiagramFit(host);
+  };
   if (host.previousElementSibling?.classList.contains("diagram-toolbar")) {
     host.previousElementSibling.hidden = false;
-    setDiagramFit(host);
+    restore();
     return;
   }
   const toolbar = document.createElement("div");
@@ -1347,6 +1786,7 @@ function ensureDiagramControls(host) {
   for (const control of controls) {
     const button = document.createElement("button");
     button.type = "button";
+    button.dataset.uiKey = host.id + ":zoom:" + control.action;
     button.textContent = control.label;
     button.title = control.title;
     button.setAttribute("aria-label", control.title);
@@ -1359,7 +1799,11 @@ function ensureDiagramControls(host) {
         setDiagramScale(host, 1);
         return;
       }
-      const current = diagramScales.get(host) || 1;
+      const view = diagramViews.get(host.dataset.diagramKey || host.id);
+      const svg = host.querySelector("svg");
+      const current = view?.mode === "scale" ? view.scale
+        : svg ? (svg.getBoundingClientRect().width || diagramNaturalWidth(svg)) / diagramNaturalWidth(svg)
+        : 1;
       setDiagramScale(host, current * (control.action === "in" ? 1.25 : 0.8));
     });
     toolbar.append(button);
@@ -1369,7 +1813,7 @@ function ensureDiagramControls(host) {
   output.setAttribute("aria-live", "polite");
   toolbar.append(output);
   host.before(toolbar);
-  setDiagramFit(host);
+  restore();
 }
 
 function hideDiagramControls(host) {
@@ -1381,6 +1825,15 @@ function hideDiagramControls(host) {
 
 async function renderMermaidArtifact(artifact) {
   const source = String(artifact?.mermaid || "").trim();
+  const key = "artifact:" + (artifact?.id || "");
+  const signature = JSON.stringify([key, source, document.documentElement.dataset.colorMode]);
+  if (diagramSignatures.get(elements.mermaidHost) === signature) return;
+  diagramSignatures.set(elements.mermaidHost, signature);
+  elements.mermaidHost.dataset.diagramKey = key;
+  if (elements.diagramSourceDetails.dataset.uiKey !== key + ":source") {
+    elements.diagramSourceDetails.open = expandedViews.get(key + ":source") ?? false;
+  }
+  elements.diagramSourceDetails.dataset.uiKey = key + ":source";
   const renderId = ++diagramRenderId;
   elements.artifactDiagram.hidden = !source;
   elements.mermaidSource.textContent = source;
@@ -1388,7 +1841,6 @@ async function renderMermaidArtifact(artifact) {
   hideDiagramControls(elements.mermaidHost);
   elements.diagramStatus.textContent = "";
   elements.diagramStatus.dataset.status = "idle";
-  elements.diagramSourceDetails.open = false;
   if (!source) return;
 
   elements.mermaidHost.setAttribute(
@@ -1403,14 +1855,17 @@ async function renderMermaidArtifact(artifact) {
       source,
     );
     if (renderId !== diagramRenderId) return;
+    const view = captureView();
     elements.mermaidHost.innerHTML = result.svg;
     if (typeof result.bindFunctions === "function") {
       result.bindFunctions(elements.mermaidHost);
     }
     ensureDiagramControls(elements.mermaidHost);
+    restoreView(view);
     elements.diagramStatus.textContent = "";
   } catch {
     if (renderId !== diagramRenderId) return;
+    diagramSignatures.delete(elements.mermaidHost);
     elements.diagramStatus.textContent =
       "Mermaid could not render this diagram. The source is available below.";
     elements.diagramStatus.dataset.status = "error";
@@ -1480,6 +1935,9 @@ function showDecisionQuestion(state, nodes, nodeId) {
   const node = nodes.find((candidate) => candidate.id === nodeId) || null;
   if (!node || node.status === "toAnswer") return;
   selectedDecisionId = node.id;
+  for (const button of elements.decisionList.querySelectorAll("button")) {
+    button.setAttribute("aria-pressed", String(button.dataset.decisionId === node.id));
+  }
   for (
     const group of elements.designTreeHost.querySelectorAll(
       "g.node",
@@ -1494,8 +1952,8 @@ function showDecisionQuestion(state, nodes, nodeId) {
   renderQuestion(
     node.question,
     processing,
-    state.provider?.canSubmitAnswers !== false
-      && (state.lifecycle?.currentStage || "requirements") === "requirements",
+    canEditStage("requirements", state)
+      && state.processing?.status !== "running",
     node,
   );
   const toAnswerCount = nodes.filter(
@@ -1508,21 +1966,12 @@ function showDecisionQuestion(state, nodes, nodeId) {
 }
 
 async function postDecisionAnswer(questionId, answer, action = "answer-decision") {
-  const response = await fetch("/api/answer", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ questionId, answer, action }),
-  });
-  const result = await response.json();
-  if (!response.ok) {
-    throw new Error(result.error || "Could not send answer.");
-  }
-  return result;
+  return postJson("/api/answer", { questionId, answer, action });
 }
 
 function stopApplyingAllRecommended(message = "", isError = false) {
   applyingAllRecommended = false;
-  submitting = false;
+  recommendedPendingId = null;
   if (message) {
     elements.designTreeStatus.textContent = message;
     elements.designTreeStatus.dataset.status = isError ? "error" : "success";
@@ -1567,6 +2016,7 @@ async function continueApplyingAllRecommended(state) {
     );
     return;
   }
+  if (recommendedPendingId === activeNode.id) return;
 
   const recommendation = String(activeNode.question?.recommended || "").trim();
   if (!recommendation) {
@@ -1578,6 +2028,7 @@ async function continueApplyingAllRecommended(state) {
   }
 
   submitting = true;
+  recommendedPendingId = activeNode.id;
   renderNextAction(state);
   const bulkButton = elements.questionHost.querySelector(
     ".all-recommended",
@@ -1601,6 +2052,8 @@ async function continueApplyingAllRecommended(state) {
         : "Could not apply all recommended answers.",
       true,
     );
+  } finally {
+    finishSubmission();
   }
 }
 
@@ -1608,31 +2061,68 @@ async function renderDesignTree(state) {
   const nodes = decisionNodesForState(state);
   const graph = buildDecisionGraphMermaid(nodes);
   const source = graph.source;
-  const renderId = ++designTreeRenderId;
   elements.designTreeCard.hidden = nodes.length === 0;
   elements.designTreeEmpty.hidden = nodes.length > 0;
-  elements.designTreeHost.replaceChildren();
-  hideDiagramControls(elements.designTreeHost);
-  elements.designTreeSource.textContent = source;
-  elements.designTreeStatus.textContent = "";
-  elements.designTreeStatus.dataset.status = "idle";
-  elements.designTreeSourceDetails.open = false;
   elements.designTreePhase.textContent = state.phase || "discovery";
 
   if (nodes.length === 0) {
+    ++designTreeRenderId;
+    diagramSignatures.delete(elements.designTreeHost);
+    elements.designTreeHost.replaceChildren();
+    elements.decisionList.replaceChildren();
+    hideDiagramControls(elements.designTreeHost);
     renderQuestion(null, state.processing, false, null);
     return;
   }
   const activeNode = nodes.find((node) => node.status === "active") || null;
   const selectedNode = nodes.find(
-    (node) => node.id === selectedDecisionId && node.status === "answered",
+    (node) => node.id === selectedDecisionId && node.status !== "toAnswer",
   );
-  const defaultNode = activeNode
-    || selectedNode
+  const defaultNode = (followingActiveDecision ? activeNode : selectedNode)
+    || selectedNode || activeNode
     || nodes.find((node) => node.status === "answered")
     || null;
   selectedDecisionId = defaultNode?.id || null;
 
+  if (defaultNode) showDecisionQuestion(state, nodes, defaultNode.id);
+  const selectDecision = (id) => {
+    const view = captureView();
+    const latest = decisionNodesForState(currentState);
+    followingActiveDecision = latest.find((node) => node.id === id)?.status === "active";
+    showDecisionQuestion(currentState, latest, id);
+    restoreView(view);
+    renderNextAction(currentState);
+  };
+  const signature = JSON.stringify([source, document.documentElement.dataset.colorMode]);
+  if (diagramSignatures.get(elements.designTreeHost) === signature) {
+    for (const button of elements.decisionList.querySelectorAll("button")) {
+      const node = nodes.find((node) => node.id === button.dataset.decisionId);
+      button.disabled = !node || node.status === "toAnswer";
+    }
+    return;
+  }
+  diagramSignatures.set(elements.designTreeHost, signature);
+  const renderId = ++designTreeRenderId;
+  elements.designTreeHost.dataset.diagramKey = "requirements:" + state.prototypeId;
+  elements.designTreeHost.replaceChildren();
+  hideDiagramControls(elements.designTreeHost);
+  elements.designTreeSource.textContent = source;
+  elements.designTreeStatus.dataset.status = "idle";
+  elements.decisionList.replaceChildren();
+  elements.decisionList.hidden = false;
+  for (const node of nodes) {
+    const item = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.uiKey = "decision-text:" + node.id;
+    button.dataset.decisionId = node.id;
+    button.textContent = node.title + " · " + (node.status === "toAnswer" ? "To answer" : node.status);
+    button.disabled = node.status === "toAnswer";
+    button.setAttribute("aria-pressed", String(node.id === selectedDecisionId));
+    button.addEventListener("click", () => selectDecision(node.id));
+    item.append(button);
+    elements.decisionList.append(item);
+  }
   elements.designTreeStatus.textContent = "Rendering requirements DAG...";
   try {
     const mermaid = await loadMermaid();
@@ -1641,6 +2131,7 @@ async function renderDesignTree(state) {
       source,
     );
     if (renderId !== designTreeRenderId) return;
+    const view = captureView();
     elements.designTreeHost.innerHTML = result.svg;
     if (typeof result.bindFunctions === "function") {
       result.bindFunctions(elements.designTreeHost);
@@ -1654,11 +2145,12 @@ async function renderDesignTree(state) {
       ).find((candidate) => candidate.id.includes("-" + alias + "-"));
       if (!group) continue;
 
-      const canAnswer = node.status === "active"
-        && state.processing?.status !== "running";
+      const canAnswer = node.status === "active";
       const canReview = node.status === "answered";
       const selectable = canAnswer || canReview;
       group.dataset.decisionId = node.id;
+      group.dataset.uiKey = "decision:" + node.id;
+      group.dataset.status = node.status;
       group.dataset.selectable = String(selectable);
       group.dataset.selected = String(node.id === selectedDecisionId);
       group.setAttribute(
@@ -1675,7 +2167,7 @@ async function renderDesignTree(state) {
 
       group.setAttribute("role", "button");
       group.setAttribute("tabindex", "0");
-      const select = () => showDecisionQuestion(state, nodes, node.id);
+      const select = () => selectDecision(node.id);
       group.addEventListener("click", select);
       group.addEventListener("keydown", (event) => {
         if (event.key !== "Enter" && event.key !== " ") return;
@@ -1683,15 +2175,16 @@ async function renderDesignTree(state) {
         select();
       });
     }
-    if (defaultNode) {
-      showDecisionQuestion(state, nodes, defaultNode.id);
-    }
-    renderNextAction(state);
+    // Keep the text controls available to assistive technology and as an alternate view.
+    elements.decisionList.hidden = false;
+    restoreView(view);
+    renderNextAction(currentState);
     elements.designTreeStatus.textContent = "";
   } catch {
     if (renderId !== designTreeRenderId) return;
+    diagramSignatures.delete(elements.designTreeHost);
     elements.designTreeStatus.textContent =
-      "Mermaid could not render this requirements DAG. The source is available below.";
+      "The diagram is unavailable. Select a decision from the list to continue.";
     elements.designTreeStatus.dataset.status = "error";
     elements.designTreeSourceDetails.open = true;
   }
@@ -1730,9 +2223,9 @@ function renderArtifactReview(state, artifact) {
   const isDesignArtifact = artifact?.stage === "design";
   elements.artifactReview.hidden = !isDesignArtifact;
   if (!isDesignArtifact) return;
-  const canReview =
-    (state.lifecycle?.currentStage || "requirements") === "design";
+  const canReview = canEditStage("design", state);
   elements.designReviewForm.hidden = !canReview;
+  bindFormDraft(elements.designReviewForm, draftKey("artifact-review", artifact.id, state.design?.substage || "product"));
   if (elements.reviewRequestKind.value === "question") {
     elements.designReviewInput.placeholder =
       `Ask about ${artifact.title}, its tradeoffs, behavior, or risks.`;
@@ -1805,6 +2298,7 @@ function renderArtifactReview(state, artifact) {
       button.type = "button";
       button.className = "thread-action";
       button.dataset.threadAction = actionName;
+      button.dataset.uiKey = "artifact-thread:" + thread.id + ":" + actionName;
       button.textContent = actionName === "resolve"
         ? "Mark resolved"
         : actionName === "reopen"
@@ -1895,6 +2389,7 @@ function renderArtifacts(value) {
       button.className = "artifact-button";
       button.type = "button";
       button.dataset.artifactId = artifact.id;
+      button.dataset.uiKey = "artifact:" + artifact.id;
       button.setAttribute(
         "aria-current",
         String(artifact.id === selectedArtifactId),
@@ -1919,13 +2414,7 @@ function renderArtifacts(value) {
 
       button.addEventListener("click", () => {
         selectedArtifactId = artifact.id;
-        for (const candidate of elements.artifactList.querySelectorAll("button")) {
-          candidate.setAttribute(
-            "aria-current",
-            String(candidate.dataset.artifactId === selectedArtifactId),
-          );
-        }
-        renderArtifactContent(artifacts);
+        render(currentState, true);
         activateOutputTab("content");
       });
       item.append(button);
@@ -1938,66 +2427,25 @@ function renderArtifacts(value) {
   renderArtifactContent(artifacts);
 }
 
-const PROCESSING_PRESENTATIONS = {
-  "add-usage": {
-    title: "Updating usage guidance",
-    steps: [
-      "Saving the new usage without blocking further input.",
-      "Comparing it with the existing usage list.",
-      "Generating complementary suggestions.",
-    ],
-  },
-  "generate-dag": {
-    title: "Building requirements DAG",
-    steps: [
-      "Analyzing usages and shared prerequisites.",
-      "Creating decision nodes, questions, and dependency edges.",
-      "Validating the graph and selecting the first active decision.",
-    ],
-  },
-  "answer-decision": {
-    title: "Applying your decision",
-    steps: [
-      "Recording the answer in the requirements ledger.",
-      "Recomputing dependent questions and assumptions.",
-      "Promoting the next eligible decision to active.",
-    ],
-  },
-  "change-answer": {
-    title: "Revising dependent decisions",
-    steps: [
-      "Updating the selected answer.",
-      "Regenerating every affected downstream decision.",
-      "Validating dependencies and selecting the next active decision.",
-    ],
-  },
-  "submit-revision": {
-    title: "Reviewing prototype revision",
-    steps: [
-      "Checking the requested behavior against the current prototype.",
-      "Resolving interaction details and applying the revision.",
-      "Validating the updated preview and recording evidence.",
-    ],
-  },
-  "clarify-revision": {
-    title: "Applying your clarification",
-    steps: [
-      "Adding the clarification to the active revision.",
-      "Updating the affected prototype interactions.",
-      "Validating the preview and recording the result.",
-    ],
-  },
-  "generate-design-spec": {
-    title: "Preparing design specification",
-    steps: [
-      "Collecting confirmed requirements and prototype evidence.",
-      "Synthesizing workflows, contracts, and interaction states.",
-      "Validating the specification for the Design handoff.",
-    ],
-  },
+const PROCESSING_TITLES = {
+  "add-usage": "Updating usage guidance",
+  "generate-dag": "Building requirements DAG",
+  "answer-decision": "Applying your decision",
+  "change-answer": "Revising dependent decisions",
+  "submit-revision": "Reviewing prototype revision",
+  "clarify-revision": "Applying your clarification",
+  "generate-design-spec": "Preparing design specification",
 };
 
 function renderQuestion(question, processing, canSubmitAnswers, decisionNode = null) {
+  const key = draftKey("decision", question?.id, [question, decisionNode?.answer || null]);
+  const signature = JSON.stringify([
+    key, processing, canSubmitAnswers, decisionNode?.status,
+    submitting, applyingAllRecommended, questionErrors.get(key),
+  ]);
+  if (lastQuestionSignature === signature) return;
+  lastQuestionSignature = signature;
+  saveFormDraft(elements.questionHost.querySelector("form"));
   if (processingMessageTimer !== null) {
     window.clearInterval(processingMessageTimer);
     processingMessageTimer = null;
@@ -2044,25 +2492,19 @@ function renderQuestion(question, processing, canSubmitAnswers, decisionNode = n
     }
     const detail = document.createElement("span");
     detail.className = "muted";
-    const presentation = PROCESSING_PRESENTATIONS[processing.action] || {
-      title: "Processing Tandem update",
-      steps: [processing.message || "Applying the requested change."],
-    };
-    title.textContent = presentation.title;
+    const elapsed = document.createElement("span");
+    elapsed.className = "muted";
+    elapsed.setAttribute("role", "timer");
+    elapsed.setAttribute("aria-live", "off");
+    title.textContent = PROCESSING_TITLES[processing.action] || "Processing Tandem update";
     heading.append(title, dots);
-    copy.append(heading, detail);
+    copy.append(heading, detail, elapsed);
     state.append(indicator, copy);
     elements.questionHost.append(state);
 
-    const requestedAt = Date.parse(processing.requestedAt || "");
-    const startedAt = Number.isFinite(requestedAt) ? requestedAt : Date.now();
     const updateMessage = () => {
-      const elapsed = Math.max(0, Date.now() - startedAt);
-      const index = Math.min(
-        presentation.steps.length - 1,
-        Math.floor(elapsed / 4500),
-      );
-      detail.textContent = presentation.steps[index];
+      detail.textContent = processing.message || "Waiting for a progress update.";
+      elapsed.textContent = elapsedLabel(processing.requestedAt);
     };
     updateMessage();
     processingMessageTimer = window.setInterval(updateMessage, 1000);
@@ -2119,6 +2561,8 @@ function renderQuestion(question, processing, canSubmitAnswers, decisionNode = n
     radio.type = "radio";
     radio.name = "prototype-choice";
     radio.value = value;
+    radio.dataset.uiKey = "decision:" + question.id + ":choice:" + value;
+    radio.disabled = submitting || !canSubmitAnswers;
     radio.checked = !isChangingAnswer && value === question.recommended;
 
     const text = document.createElement("span");
@@ -2139,6 +2583,8 @@ function renderQuestion(question, processing, canSubmitAnswers, decisionNode = n
   if (question.allowFreeText !== false) {
     detail = document.createElement("textarea");
     detail.name = "prototype-detail";
+    detail.dataset.uiKey = "decision:" + question.id + ":detail";
+    detail.disabled = submitting || !canSubmitAnswers;
     detail.placeholder = question.answerPlaceholder || (
       choices.childElementCount > 0
         ? "Optional context"
@@ -2182,6 +2628,7 @@ function renderQuestion(question, processing, canSubmitAnswers, decisionNode = n
   const send = document.createElement("button");
   send.className = "send";
   send.type = "submit";
+  send.dataset.uiKey = "decision:" + question.id + ":send";
   send.textContent = canSubmitAnswers
     ? isChangingAnswer
       ? "Update answer and dependents"
@@ -2193,6 +2640,7 @@ function renderQuestion(question, processing, canSubmitAnswers, decisionNode = n
     allRecommended = document.createElement("button");
     allRecommended.className = "all-recommended";
     allRecommended.type = "button";
+    allRecommended.dataset.uiKey = "decision:" + question.id + ":recommended";
     allRecommended.textContent = applyingAllRecommended
       ? "Applying recommendations..."
       : "All as Recommended";
@@ -2200,7 +2648,7 @@ function renderQuestion(question, processing, canSubmitAnswers, decisionNode = n
       "Use each active recommendation, updating dependent decisions as the DAG changes.";
     allRecommended.disabled = submitting || applyingAllRecommended;
     allRecommended.addEventListener("click", () => {
-      if (submitting || applyingAllRecommended || !currentState) return;
+      if (hasPendingRequest() || applyingAllRecommended || !canEditStage("requirements")) return;
       applyingAllRecommended = true;
       appliedRecommendedCount = 0;
       void continueApplyingAllRecommended(currentState);
@@ -2209,26 +2657,31 @@ function renderQuestion(question, processing, canSubmitAnswers, decisionNode = n
   const error = document.createElement("p");
   error.className = "error";
   error.setAttribute("role", "alert");
+  error.textContent = questionErrors.get(key) || "";
   actions.append(send);
   if (allRecommended) actions.append(allRecommended);
   actions.append(error);
   form.append(actions);
+  bindFormDraft(form, key);
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (submitting) return;
+    if (hasPendingRequest() || !canEditStage("requirements") || currentState.processing?.status === "running") return;
 
     const selected = form.querySelector<HTMLInputElement>(
       'input[name="prototype-choice"]:checked',
     );
     const note = detail ? detail.value.trim() : "";
     const answer = note || selected?.value || "";
+    saveFormDraft(form);
+    const version = formDrafts.get(key)?.version;
     if (!answer) {
       error.textContent = "Choose an option or enter an answer.";
       return;
     }
 
     submitting = true;
+    questionErrors.delete(key);
     send.disabled = true;
     send.textContent = "Sending...";
     error.textContent = "";
@@ -2238,15 +2691,15 @@ function renderQuestion(question, processing, canSubmitAnswers, decisionNode = n
         answer,
         isChangingAnswer ? "change-answer" : "answer-decision",
       );
+      clearAcceptedDraft(key, version);
+      followingActiveDecision = true;
     } catch (requestError) {
-      submitting = false;
-      send.disabled = false;
-      send.textContent = isChangingAnswer
-        ? "Update answer and dependents"
-        : "Use this answer";
-      error.textContent = requestError instanceof Error
+      const message = requestError instanceof Error
         ? requestError.message
         : "Could not send answer.";
+      questionErrors.set(key, message);
+    } finally {
+      finishSubmission();
     }
   });
 
@@ -2256,8 +2709,8 @@ function renderQuestion(question, processing, canSubmitAnswers, decisionNode = n
 function renderPrototypeReview(state, preserveMessage = false) {
   const isPrototype =
     (state.lifecycle?.currentStage || "requirements") === "prototype";
-  elements.prototypeReview.hidden = !isPrototype;
-  if (!isPrototype) return;
+  elements.prototypeReview.hidden = !hasStageData(state, "prototype") || Boolean(skippedStage(state, "prototype"));
+  if (elements.prototypeReview.hidden) return;
 
   const review = state.prototypeReview || {
     revisions: [],
@@ -2266,7 +2719,7 @@ function renderPrototypeReview(state, preserveMessage = false) {
     evidence: [],
   };
   const processing = state.processing?.status === "running";
-  const canSubmit = state.provider?.canSubmitAnswers !== false;
+  const canSubmit = canEditStage("prototype", state);
   const previewReady = state.previewStatus === "ready";
   const question = review.question || null;
   const revisionDisabled =
@@ -2278,8 +2731,12 @@ function renderPrototypeReview(state, preserveMessage = false) {
     : "Send revision";
 
   elements.revisionQuestion.hidden = !question;
+  saveFormDraft(elements.revisionQuestionForm);
+  const previousKey = elements.revisionQuestionForm.dataset.draftKey;
+  const key = question ? draftKey("clarification", question.id, question) : "";
+  elements.revisionQuestionForm.dataset.draftKey = "";
   elements.revisionQuestionChoices.replaceChildren();
-  elements.revisionQuestionDetail.value = "";
+  if (key !== previousKey) elements.revisionQuestionDetail.value = "";
   if (question) {
     elements.revisionQuestionTitle.textContent = question.text;
     elements.revisionQuestionRationale.textContent = question.rationale || "";
@@ -2291,6 +2748,7 @@ function renderPrototypeReview(state, preserveMessage = false) {
       radio.type = "radio";
       radio.name = "revision-clarification";
       radio.value = choice;
+      radio.dataset.uiKey = "clarification:" + question.id + ":" + choice;
       radio.checked = choice === question.recommended;
       const text = document.createElement("span");
       text.textContent = choice;
@@ -2324,6 +2782,7 @@ function renderPrototypeReview(state, preserveMessage = false) {
     elements.submitClarification.textContent = processing
       ? "Applying..."
       : "Use this answer";
+    bindFormDraft(elements.revisionQuestionForm, key);
   }
 
   const revisions = Array.isArray(review.revisions) ? review.revisions : [];
@@ -2339,7 +2798,9 @@ function renderPrototypeReview(state, preserveMessage = false) {
   }
 
   if (!preserveMessage) {
-    elements.revisionStatus.textContent = !canSubmit
+    elements.revisionStatus.textContent = !isPrototype
+      ? "Prototype history is read only. Reopen the stage to make changes."
+      : !canSubmit
       ? "Open the installed user-scoped Tandem to submit revisions."
       : !previewReady
         ? "The revision box will enable when the preview is ready."
@@ -2356,27 +2817,17 @@ function renderPrototypeReview(state, preserveMessage = false) {
 }
 
 async function submitDesignThreadAction(threadId, action) {
-  if (submitting) return;
+  if (hasPendingRequest() || !canEditStage("design")) return;
   submitting = true;
   try {
-    const response = await fetch("/api/design-review/thread", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ threadId, action }),
-    });
-    const result = await response.json();
-    if (!response.ok) {
-      throw new Error(result.error || "Could not update this review thread.");
-    }
-    submitting = false;
-    render(result);
+    await postJson("/api/design-review/thread", { threadId, action });
   } catch (error) {
-    submitting = false;
     elements.designReviewStatus.textContent = error instanceof Error
       ? error.message
       : "Could not update this review thread.";
     elements.designReviewStatus.dataset.status = "error";
-    if (currentState) renderDesignReview(currentState, true);
+  } finally {
+    finishSubmission();
   }
 }
 
@@ -2394,7 +2845,7 @@ function renderDesignReview(state, preserveMessage = false) {
     finalizedArtifactId: null,
   };
   const threads = Array.isArray(review.threads) ? review.threads : [];
-  const canSubmit = isDesign && state.provider?.canSubmitAnswers !== false;
+  const canSubmit = canEditStage("design", state);
   const selectedArtifact = (state.artifacts || []).find(
     (artifact) => artifact.id === selectedArtifactId,
   );
@@ -2480,11 +2931,12 @@ function renderDesignReview(state, preserveMessage = false) {
         link.type = "button";
         link.className = "review-artifact-link";
         link.dataset.threadId = thread.id;
+        link.dataset.uiKey = "review-link:" + thread.id + ":" + artifactId;
         link.textContent = artifact.title
           + (artifact.reviewStatus === "stale" ? " · stale" : "");
         link.addEventListener("click", () => {
           selectedArtifactId = artifact.id;
-          renderArtifacts(state.artifacts);
+          render(currentState, true);
           activateOutputTab("content");
         });
         artifactLinks.append(link);
@@ -2499,6 +2951,7 @@ function renderDesignReview(state, preserveMessage = false) {
       button.type = "button";
       button.className = "thread-action";
       button.dataset.threadAction = "retry";
+      button.dataset.uiKey = "review-retry:" + thread.id;
       button.textContent = "Retry";
       button.disabled = submitting || !canSubmit;
       button.addEventListener("click", () =>
@@ -2565,6 +3018,8 @@ function renderDesignReview(state, preserveMessage = false) {
               : "Ask another question or finish the review.";
     elements.designReviewStatus.dataset.status = failed ? "error" : "idle";
   }
+  elements.designReviewStageStatus.textContent = elements.designReviewStatus.textContent;
+  elements.designReviewStageStatus.dataset.status = elements.designReviewStatus.dataset.status;
 }
 
 function buildPlanMermaid(workItems) {
@@ -2609,6 +3064,10 @@ function appendPlanList(host, items, emptyText) {
 
 async function renderPlanDag(workItems) {
   const source = buildPlanMermaid(workItems);
+  const signature = JSON.stringify([source, document.documentElement.dataset.colorMode]);
+  if (diagramSignatures.get(elements.planDag) === signature) return;
+  diagramSignatures.set(elements.planDag, signature);
+  elements.planDag.dataset.diagramKey = "plan:" + currentState?.prototypeId;
   const renderId = ++planRenderId;
   elements.planDag.replaceChildren();
   hideDiagramControls(elements.planDag);
@@ -2621,14 +3080,17 @@ async function renderPlanDag(workItems) {
       source,
     );
     if (renderId !== planRenderId) return;
+    const view = captureView();
     elements.planDag.innerHTML = result.svg;
     if (typeof result.bindFunctions === "function") {
       result.bindFunctions(elements.planDag);
     }
     ensureDiagramControls(elements.planDag);
+    restoreView(view);
     elements.planDagStatus.textContent = "";
   } catch {
     if (renderId !== planRenderId) return;
+    diagramSignatures.delete(elements.planDag);
     elements.planDagStatus.textContent =
       "The execution DAG could not be rendered.";
     elements.planDagStatus.dataset.status = "error";
@@ -2638,8 +3100,8 @@ async function renderPlanDag(workItems) {
 function renderPlan(state, preserveMessage = false) {
   const isPlan =
     (state.lifecycle?.currentStage || "requirements") === "plan";
-  elements.planTab.hidden = !isPlan;
-  if (!isPlan) return;
+  elements.planTab.hidden = !hasStageData(state, "plan");
+  if (elements.planTab.hidden) return;
 
   const planning = state.planning || {
     status: "idle",
@@ -2664,9 +3126,9 @@ function renderPlan(state, preserveMessage = false) {
   const processing = Boolean(planning.processing);
   const finalized = planning.finalizedArtifactId === "execution-plan"
     && planning.status === "complete";
-  const canSubmit = state.provider?.canSubmitAnswers !== false;
+  const canSubmit = canEditStage("plan", state);
 
-  if (document.activeElement !== elements.planMaxAgents) {
+  if (!inputVersions.get(elements.planMaxAgents) && document.activeElement !== elements.planMaxAgents) {
     elements.planMaxAgents.value = String(planning.maxAgents || 4);
   }
   elements.planMaxAgents.disabled = processing || submitting || !canSubmit;
@@ -2754,7 +3216,9 @@ function renderPlan(state, preserveMessage = false) {
   for (const item of workItems) {
     const details = document.createElement("details");
     details.className = "plan-work-item";
+    details.dataset.uiKey = "plan-work:" + item.id;
     const summary = document.createElement("summary");
+    summary.dataset.uiKey = "plan-work:" + item.id + ":summary";
     const heading = document.createElement("span");
     heading.className = "plan-work-item-heading";
     const title = document.createElement("strong");
@@ -2822,7 +3286,9 @@ function renderPlan(state, preserveMessage = false) {
   elements.revisePlan.textContent = processing ? "Revising..." : "Revise plan";
 
   if (!preserveMessage) {
-    elements.planStatus.textContent = !canSubmit
+    elements.planStatus.textContent = !isPlan
+      ? "Execution plan is read only. Reopen Plan to change it."
+      : !canSubmit
       ? "Open the installed user-scoped Tandem to generate the plan."
       : planning.error
         ? planning.error
@@ -2858,8 +3324,8 @@ function appendImplementationEmpty(host, message) {
 function renderImplementation(state, preserveMessage = false) {
   const isImplementation =
     (state.lifecycle?.currentStage || "requirements") === "implement";
-  elements.implementationTab.hidden = !isImplementation;
-  if (!isImplementation) return;
+  elements.implementationTab.hidden = !hasStageData(state, "implement");
+  if (elements.implementationTab.hidden) return;
 
   const planning = state.planning || { workItems: [], waves: [] };
   const implementation = state.implementation || {
@@ -2891,14 +3357,14 @@ function renderImplementation(state, preserveMessage = false) {
     ["failed", "blocked", "cancelled"].includes(item.status),
   ).length;
   const active = ["starting", "running"].includes(implementation.status);
-  const canSubmit = state.provider?.canSubmitAnswers !== false;
+  const canSubmit = canEditStage("implement", state);
   const progress = workItems.length > 0
     ? Math.round((completed / workItems.length) * 100)
     : 0;
 
   elements.implementationProgress.textContent = active
     ? "Wave " + (implementation.currentWaveIndex || 1)
-      + " is active · " + (runtime?.liveAgentCount || running) + " live agents"
+      + " is active · " + (runtime?.liveAgentCount ?? running) + " live agents"
     : implementation.status === "completed"
       ? "All planned work completed and final code was captured."
       : failed > 0
@@ -2933,7 +3399,7 @@ function renderImplementation(state, preserveMessage = false) {
 
   const metrics = [
     [completed + "/" + workItems.length, "Completed"],
-    [runtime?.liveAgentCount || running, "Live agents"],
+    [runtime?.liveAgentCount ?? running, "Live agents"],
     [implementation.currentWaveIndex || 0, "Current wave"],
     [failed, "Needs attention"],
     [
@@ -3008,9 +3474,11 @@ function renderImplementation(state, preserveMessage = false) {
     };
     const card = document.createElement("details");
     card.className = "implementation-card";
+    card.dataset.uiKey = "implementation-work:" + planItem.id;
     card.dataset.status = item.status;
     if (["running", "failed", "blocked"].includes(item.status)) card.open = true;
     const summary = document.createElement("summary");
+    summary.dataset.uiKey = "implementation-work:" + planItem.id + ":summary";
     summary.className = "implementation-card-heading";
     const title = document.createElement("strong");
     title.textContent = planItem.title;
@@ -3166,7 +3634,9 @@ function renderImplementation(state, preserveMessage = false) {
   }
 
   if (!preserveMessage) {
-    elements.implementationStatus.textContent = !canSubmit
+    elements.implementationStatus.textContent = !isImplementation
+      ? "Implementation evidence is read only."
+      : !canSubmit
       ? "Open the installed user-scoped Tandem to run implementation."
       : runtime?.error
         ? "Live agent details are unavailable: " + runtime.error
@@ -3188,8 +3658,8 @@ function renderImplementation(state, preserveMessage = false) {
 
 function renderTest(state, preserveMessage = false) {
   const isTest = (state.lifecycle?.currentStage || "requirements") === "test";
-  elements.testTab.hidden = !isTest;
-  if (!isTest) return;
+  elements.testTab.hidden = !hasStageData(state, "test");
+  if (elements.testTab.hidden) return;
 
   const specs = Array.isArray(state.testDesignReview?.scenarios)
     ? state.testDesignReview.scenarios
@@ -3214,14 +3684,14 @@ function renderTest(state, preserveMessage = false) {
   ).length;
   const active = ["starting", "running"].includes(testing.status);
   const complete = testing.status === "completed";
-  const canSubmit = state.provider?.canSubmitAnswers !== false;
+  const canSubmit = canEditStage("test", state, true);
   const progress = results.length > 0
     ? Math.round((passed / results.length) * 100)
     : 0;
 
   elements.testProgress.textContent = active
     ? "Wave " + (testing.currentWaveIndex || 1) + " is active · "
-      + (runtime?.liveAgentCount || running) + " live agents"
+      + (runtime?.liveAgentCount ?? running) + " live agents"
     : complete
       ? "All approved scenarios passed and test evidence was captured."
       : failed > 0
@@ -3231,9 +3701,9 @@ function renderTest(state, preserveMessage = false) {
     passed + " of " + results.length + " passed · " + progress + "%";
   elements.testProgressBar.style.width = progress + "%";
   elements.startTests.disabled =
-    testSubmitting || active || complete || !canSubmit || specs.length === 0;
+    hasPendingRequest() || active || !canSubmit || specs.length === 0 || hasActiveJobs(state);
   elements.startTests.textContent = complete
-    ? "Tests complete"
+    ? "Run tests again"
     : active
       ? "Tests running..."
       : failed > 0
@@ -3242,7 +3712,7 @@ function renderTest(state, preserveMessage = false) {
 
   const metrics = [
     [passed + "/" + results.length, "Passed"],
-    [runtime?.liveAgentCount || running, "Live agents"],
+    [runtime?.liveAgentCount ?? running, "Live agents"],
     [testing.currentWaveIndex || 0, "Current wave"],
     [failed, "Needs attention"],
     [implementationElapsed(testing.startedAt, testing.completedAt), "Elapsed"],
@@ -3268,9 +3738,11 @@ function renderTest(state, preserveMessage = false) {
     };
     const card = document.createElement("details");
     card.className = "implementation-card";
+    card.dataset.uiKey = "test-scenario:" + spec.id;
     card.dataset.status = result.status;
     if (["running", "failed", "blocked"].includes(result.status)) card.open = true;
     const summary = document.createElement("summary");
+    summary.dataset.uiKey = "test-scenario:" + spec.id + ":summary";
     summary.className = "implementation-card-heading";
     const title = document.createElement("strong");
     title.textContent = spec.title;
@@ -3440,7 +3912,7 @@ function renderTest(state, preserveMessage = false) {
     || failedResults.length > 0
   );
   const errorSignature = hasErrorDetails
-    ? [testing.runId, testing.completedAt, errorDetails].join("|")
+    ? [testing.requestId || testing.runId || runtime?.runId || "legacy", testing.startedAt].join("|")
     : "";
   if (errorSignature !== testErrorDetailsSignature) {
     testErrorDetailsSignature = errorSignature;
@@ -3459,7 +3931,9 @@ function renderTest(state, preserveMessage = false) {
   elements.testErrorDetails.textContent = hasErrorDetails ? errorDetails : "";
 
   if (!preserveMessage) {
-    elements.testStatus.textContent = !canSubmit
+    elements.testStatus.textContent = !isTest
+      ? "Test evidence is read only."
+      : !canSubmit
       ? "Open the installed user-scoped Tandem to run tests."
       : runtime?.error
         ? "Live agent details are unavailable: " + runtime.error
@@ -3470,7 +3944,7 @@ function renderTest(state, preserveMessage = false) {
             : complete
               ? "Test results are available under Artifacts → Test."
               : failed > 0
-                ? "Retry preserves passing scenarios and reruns only incomplete tests."
+                ? "Retry preserves passes only when source and specification are unchanged; otherwise all scenarios run again."
                 : "Run the approved integration and interaction scenarios.";
     elements.testStatus.dataset.status =
       testing.status === "failed" || testing.error || runtime?.error
@@ -3479,29 +3953,22 @@ function renderTest(state, preserveMessage = false) {
   }
 }
 
-function renderPreview(state) {
-  const currentStage = state.lifecycle?.currentStage || "requirements";
+function renderPreview(state, preserveMessage = false) {
+  const stage = currentStage(state);
   const previewStatus = state.previewStatus || "waiting";
-  const prototypeUnavailable =
-    state.prototypeApproach?.mode === "not-applicable";
-  const prototypeReason = state.prototypeApproach?.reason
+  const prototypeUnavailable = Boolean(skippedStage(state, "prototype"));
+  const prototypeReason = skippedStage(state, "prototype")?.reason
     || "No graphical interface needs prototype validation.";
+  const validateExisting = state.prototypeApproach?.mode === "validate-existing";
+  const undecided = state.prototypeApproach?.mode === "undecided";
+  const build = state.processing?.action === "build-prototype" ? state.processing : null;
+  const building = !prototypeUnavailable && !undecided && stage === "prototype"
+    && (previewStatus === "starting" || build?.status === "running");
   elements.previewTab.disabled = prototypeUnavailable;
   elements.previewTab.title = prototypeUnavailable ? prototypeReason : "";
-  elements.previewTab.setAttribute(
-    "aria-label",
-    prototypeUnavailable
-      ? "Live prototype, not applicable. " + prototypeReason
-      : "Live prototype",
-  );
-  elements.previewEmptyMessage.textContent = prototypeUnavailable
-    ? "Live prototype is not applicable. " + prototypeReason
-    : "The runnable prototype will appear here after the essential interaction decisions are captured.";
   if (prototypeUnavailable && activeOutputTab === "preview") {
-    activeOutputTab = "design-tree";
+    activeOutputTab = stageTab(stage === "prototype" ? "requirements" : stage);
   }
-  const building = !prototypeUnavailable && currentStage === "prototype"
-    && !["ready", "error"].includes(previewStatus);
   elements.previewStatus.textContent = prototypeUnavailable
     ? "not applicable"
     : building
@@ -3513,9 +3980,12 @@ function renderPreview(state) {
     prototypeUnavailable
       ? "Live prototype, not applicable. " + prototypeReason
       : building
-        ? "Live prototype, building"
+        ? validateExisting ? "Live prototype, validating existing app" : "Live prototype, building"
         : "Live prototype",
   );
+  elements.prototypeBuildingTitle.textContent = validateExisting
+    ? "Validating existing prototype"
+    : "Building runnable prototype";
   elements.prototypeBuilding.hidden = !building;
 
   if (prototypeBuildMessageTimer !== null) {
@@ -3523,31 +3993,43 @@ function renderPreview(state) {
     prototypeBuildMessageTimer = null;
   }
   if (building) {
-    const key = state.prototypeId || "prototype";
-    if (key !== prototypeBuildKey) {
-      prototypeBuildKey = key;
-      prototypeBuildStartedAt = Date.now();
-    }
-    const steps = [
-      "Preparing the prototype workspace and app structure.",
-      "Building the primary interaction flow from confirmed requirements.",
-      "Connecting screens, states, and representative sample data.",
-      "Starting and verifying the runnable preview.",
-    ];
+    elements.prototypeBuildingMessage.textContent =
+      build?.message || state.status || (validateExisting ? "Existing prototype validation is running." : "Prototype build is running.");
     const updateMessage = () => {
-      const elapsed = Math.max(0, Date.now() - prototypeBuildStartedAt);
-      const index = Math.min(steps.length - 1, Math.floor(elapsed / 4500));
-      elements.prototypeBuildingMessage.textContent = steps[index];
+      elements.prototypeBuildingElapsed.textContent = elapsedLabel(build?.requestedAt);
     };
     updateMessage();
     prototypeBuildMessageTimer = window.setInterval(updateMessage, 1000);
   } else {
-    prototypeBuildKey = "";
-    prototypeBuildStartedAt = 0;
+    elements.prototypeBuildingElapsed.textContent = "";
   }
 
+  elements.startPrototype.hidden = prototypeUnavailable || building || previewStatus === "ready" || stage !== "prototype";
+  elements.startPrototype.disabled = hasPendingRequest()
+    || !canEditStage("prototype", state) || hasActiveJobs(state);
+  elements.startPrototype.textContent = prototypeSubmitting ? "Requesting..."
+    : validateExisting
+      ? previewStatus === "error" ? "Retry existing prototype validation" : "Validate existing prototype"
+      : previewStatus === "error" ? "Retry prototype build" : "Start prototype";
+  elements.previewEmptyMessage.textContent = prototypeUnavailable
+    ? "Live prototype is not applicable. " + prototypeReason
+    : undecided
+      ? "Choose the prototype approach in Requirements before starting prototype work."
+    : previewStatus === "error"
+      ? "Prototype " + (validateExisting ? "validation" : "build") + " failed. Review the error, then retry."
+    : stage === "prototype"
+      ? validateExisting
+        ? "No prototype validation is running. Validate the existing app without replacing it."
+        : "No prototype build is running. Start a build to create the runnable preview."
+      : "The runnable prototype will appear after Requirements are completed.";
+  if (!preserveMessage) {
+    elements.prototypeBuildStatus.textContent = previewStatus === "error"
+      ? build?.message || state.status || "The preview is unavailable."
+      : "";
+    elements.prototypeBuildStatus.dataset.status = previewStatus === "error" ? "error" : "idle";
+  }
   const url = state.previewUrl;
-  if (!url || building) {
+  if (prototypeUnavailable || undecided || !url || building || previewStatus !== "ready") {
     elements.previewEmpty.style.display = building ? "none" : "grid";
     elements.previewFrame.style.display = "none";
     elements.openPreview.style.display = "none";
@@ -3571,7 +4053,10 @@ function clearNextAction() {
     element.classList.remove("next-action-target", "next-action-tab");
     element.removeAttribute("data-next-action-label");
     element.removeAttribute("aria-describedby");
-    element.removeAttribute("title");
+    const original = (element as HTMLElement).dataset.originalTitle;
+    if (original) element.setAttribute("title", original);
+    else element.removeAttribute("title");
+    delete (element as HTMLElement).dataset.originalTitle;
   }
 }
 
@@ -3579,14 +4064,27 @@ function nextActionForState(state) {
   if (
     completingStage ||
     submitting ||
+    preparationSubmitting ||
     implementationSubmitting ||
     testSubmitting ||
+    preparationSubmitting ||
+    prototypeSubmitting || reopeningStage ||
     state.provider?.canSubmitAnswers === false
   ) {
     return null;
   }
 
-  const stage = state.lifecycle?.currentStage || "requirements";
+  const stage = state.lifecycle?.currentStage || "prepare";
+  if (stage === "prepare") {
+    if (state.preparation?.status === "failed" && !elements.retryPreparation.disabled) {
+      return {
+        tab: "preparation",
+        target: elements.retryPreparation,
+        label: "Retry preparation",
+      };
+    }
+    return null;
+  }
   if (stage === "requirements") {
     if (state.processing?.status === "running") return null;
     if (state.requirements?.substage !== "dag") {
@@ -3600,7 +4098,7 @@ function nextActionForState(state) {
         : {
             tab: "design-tree",
             target: elements.addUsage,
-            label: "Add the first app usage",
+            label: "Add the first usage",
           };
     }
     if ((state.decisionGraph?.nodes || []).some((node) => node.status === "active")) {
@@ -3621,6 +4119,15 @@ function nextActionForState(state) {
 
   if (stage === "prototype") {
     if (state.processing?.status === "running") return null;
+    if (state.previewStatus !== "ready" && !elements.startPrototype.disabled) {
+      return {
+        tab: "preview",
+        target: elements.startPrototype,
+        label: state.prototypeApproach?.mode === "validate-existing"
+          ? "Validate the existing prototype"
+          : state.previewStatus === "error" ? "Retry the prototype build" : "Start the prototype build",
+      };
+    }
     if (state.prototypeReview?.question) {
       return {
         tab: "preview",
@@ -3779,6 +4286,7 @@ function renderNextAction(state) {
 
   action.target.classList.add("next-action-target");
   action.target.dataset.nextActionLabel = "Next";
+  action.target.dataset.originalTitle = action.target.title || "";
   action.target.title = "Next action: " + action.label;
   action.target.setAttribute("aria-describedby", "next-action-guide");
   if (action.label !== lastNextActionLabel) {
@@ -3799,36 +4307,21 @@ function renderNextAction(state) {
   }
 }
 
-function render(state) {
+function render(state, preserveMessages = false) {
+  const view = captureView();
   currentState = state;
-  submitting = false;
   const currentLifecycleStage =
-    state.lifecycle?.currentStage || "requirements";
+    state.lifecycle?.currentStage || "prepare";
   if (currentLifecycleStage !== lastLifecycleStage) {
-    if (currentLifecycleStage === "prototype") {
-      activeOutputTab = "preview";
-    } else if (currentLifecycleStage === "design") {
-      activeOutputTab = "design-review";
-    } else if (currentLifecycleStage === "plan") {
-      activeOutputTab = "plan";
-    } else if (currentLifecycleStage === "implement") {
-      activeOutputTab = "implementation";
-    } else if (currentLifecycleStage === "test") {
-      activeOutputTab = "test";
-    } else if (activeOutputTab === "design-review") {
-      activeOutputTab = "content";
-    } else if (activeOutputTab === "plan") {
-      activeOutputTab = "content";
-    } else if (activeOutputTab === "implementation") {
-      activeOutputTab = "content";
-    } else if (activeOutputTab === "test") {
-      activeOutputTab = "content";
+    if (!lastLifecycleStage || viewedStageId === lastLifecycleStage) {
+      activeOutputTab = stageTab(currentLifecycleStage);
+      viewedStageId = currentLifecycleStage;
     }
     lastLifecycleStage = currentLifecycleStage;
   }
-  renderLifecycle(state);
-  renderPreparation(state);
-  renderRequirementsSubstage(state);
+  renderLifecycle(state, preserveMessages);
+  renderPreparation(state, preserveMessages);
+  renderRequirementsSubstage(state, preserveMessages);
   elements.phase.textContent = state.phase || "discovery";
   elements.goal.textContent = state.goal || "Waiting for a prototype goal...";
   elements.goal.classList.toggle("muted", !state.goal);
@@ -3838,60 +4331,120 @@ function render(state) {
   setList(elements.deferred, state.deferred);
   renderArtifacts(state.artifacts);
   renderDesignTree(state);
-  renderPreview(state);
-  renderPrototypeReview(state);
-  renderDesignReview(state);
-  renderPlan(state);
-  renderImplementation(state);
-  renderTest(state);
+  renderPreview(state, preserveMessages);
+  renderPrototypeReview(state, preserveMessages);
+  renderDesignReview(state, preserveMessages);
+  renderPlan(state, preserveMessages);
+  renderImplementation(state, preserveMessages);
+  renderTest(state, preserveMessages);
   renderReload(state);
   activateOutputTab(activeOutputTab);
+  restoreView(view);
   void continueApplyingAllRecommended(state);
 }
 
-function renderIfChanged(state) {
-  const implementationRuntimeSignature =
-    JSON.stringify(state.implementationRuntime || null);
-  const testRuntimeSignature = JSON.stringify(state.testRuntime || null);
-  if (
-    currentState &&
-    currentState.prototypeId === state.prototypeId &&
-    currentState.updatedAt === state.updatedAt &&
-    currentState.provider?.extensionId === state.provider?.extensionId &&
-    currentState.provider?.canSubmitAnswers ===
-      state.provider?.canSubmitAnswers &&
-    implementationRuntimeSignature === lastImplementationRuntimeSignature &&
-    testRuntimeSignature === lastTestRuntimeSignature
-  ) {
-    return;
-  }
-  lastImplementationRuntimeSignature = implementationRuntimeSignature;
-  lastTestRuntimeSignature = testRuntimeSignature;
-  render(state);
+function isStateSnapshot(state) {
+  return state && typeof state === "object" && typeof state.prototypeId === "string"
+    && LIFECYCLE_STAGES.some((stage) => stage.id === state.lifecycle?.currentStage)
+    && (state.revision === undefined || (Number.isSafeInteger(state.revision) && state.revision >= 0));
 }
 
-function refreshSharedState() {
+function renderIfChanged(state, sequence = ++transportSequence) {
+  if (!isStateSnapshot(state)) throw new Error("The studio returned an invalid state.");
+  const revision = state.revision ?? 0;
+  const previousRevision = currentState?.revision ?? 0;
+  if (currentState && (
+    state.prototypeId !== currentState.prototypeId
+    || revision < previousRevision
+    || (revision === 0 && previousRevision === 0
+      && Date.parse(state.updatedAt) < Date.parse(currentState.updatedAt))
+  )) return false;
+
+  const domainChanged = !currentState || revision > previousRevision
+    || (revision === 0 && state.updatedAt !== currentState.updatedAt);
+  const next = domainChanged ? { ...state, revision } : { ...currentState };
+  for (const field of ["provider", "preparationRuntime", "implementationRuntime", "testRuntime"]) {
+    if (sequence >= lastTransportSequence && Object.hasOwn(state, field)) next[field] = state[field];
+    else if (currentState && Object.hasOwn(currentState, field)) next[field] = currentState[field];
+  }
+  lastTransportSequence = Math.max(lastTransportSequence, sequence);
+  const providerSignature = JSON.stringify(next.provider || null);
+  const preparationRuntimeSignature = JSON.stringify(next.preparationRuntime || null);
+  const implementationRuntimeSignature = JSON.stringify(next.implementationRuntime || null);
+  const testRuntimeSignature = JSON.stringify(next.testRuntime || null);
+  const providerChanged = providerSignature !== lastProviderSignature;
+  const preparationChanged = preparationRuntimeSignature !== lastPreparationRuntimeSignature;
+  const implementationChanged = implementationRuntimeSignature !== lastImplementationRuntimeSignature;
+  const testChanged = testRuntimeSignature !== lastTestRuntimeSignature;
+  lastProviderSignature = providerSignature;
+  lastPreparationRuntimeSignature = preparationRuntimeSignature;
+  lastImplementationRuntimeSignature = implementationRuntimeSignature;
+  lastTestRuntimeSignature = testRuntimeSignature;
+  currentState = next;
+  if (domainChanged || providerChanged) {
+    render(next);
+  } else if (preparationChanged || implementationChanged || testChanged) {
+    const view = captureView();
+    if (preparationChanged) renderPreparation(next);
+    if (implementationChanged) renderImplementation(next);
+    if (testChanged) renderTest(next);
+    restoreView(view);
+  }
+  return domainChanged || providerChanged || preparationChanged || implementationChanged || testChanged;
+}
+
+function refreshSharedState(afterSequence = 0) {
+  if (sharedStateRequest) {
+    if (sharedStateSequence <= afterSequence) {
+      return sharedStateRequest.catch(() => undefined).then(() => refreshSharedState(afterSequence));
+    }
+    return sharedStateRequest;
+  }
+  const sequence = ++transportSequence;
+  sharedStateSequence = sequence;
   const endpoint =
-    (currentState?.lifecycle?.currentStage || "") === "implement"
+    (currentState?.lifecycle?.currentStage || "") === "prepare"
+      ? "/api/preparation/status"
+      : (currentState?.lifecycle?.currentStage || "") === "implement"
       ? "/api/implementation/status"
       : (currentState?.lifecycle?.currentStage || "") === "test"
         ? "/api/test/status"
         : "/api/state";
-  return fetch(endpoint)
-    .then((response) => response.json())
-    .then(renderIfChanged);
+  sharedStateRequest = fetch(endpoint, { cache: "no-store", signal: AbortSignal.timeout(15000) })
+    .then(async (response) => {
+      if (!response.ok) throw new Error("Could not load studio state.");
+      const state = await response.json();
+      renderIfChanged(state, sequence);
+      elements.connectionStatus.textContent = "";
+    })
+    .catch((error) => {
+      elements.connectionStatus.textContent = "Connection interrupted. Retrying...";
+      throw error;
+    })
+    .finally(() => { sharedStateRequest = null; });
+  return sharedStateRequest;
 }
 
 refreshSharedState()
   .catch(() => {
-    elements.status.textContent = "Could not load the studio state.";
+    elements.connectionStatus.textContent = "Could not load the studio state. Retrying...";
   });
 setInterval(() => refreshSharedState().catch(() => undefined), 2000);
 
 const events = new EventSource("/events");
 events.onmessage = (event) => {
-  try { renderIfChanged(JSON.parse(event.data)); } catch { /* wait for next update */ }
+  try {
+    renderIfChanged(JSON.parse(event.data));
+    elements.connectionStatus.textContent = "";
+  } catch {
+    elements.connectionStatus.textContent = "Could not read the studio update. Retrying...";
+  }
 };
 events.onerror = () => {
-  elements.status.textContent = "Reconnecting to the studio...";
+  elements.connectionStatus.textContent = "Reconnecting to the studio...";
 };
+
+new MutationObserver(() => {
+  mermaidModulePromise = null;
+  if (currentState) render(currentState, true);
+}).observe(document.documentElement, { attributes: true, attributeFilter: ["data-color-mode"] });

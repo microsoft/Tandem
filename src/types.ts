@@ -1,4 +1,7 @@
+import type { DecisionGraph, DecisionQuestion, JobOwner } from "./workflow.js";
+
 export type LifecycleStageId =
+    | "prepare"
     | "requirements"
     | "prototype"
     | "design"
@@ -32,10 +35,38 @@ export interface PreparationSource {
 }
 
 export interface PreparationState {
-    status: "not-started" | "ready" | "needs-attention";
+    status:
+        | "not-started"
+        | "starting"
+        | "running"
+        | "ready"
+        | "needs-attention"
+        | "failed";
     summary: string;
+    workItems: Array<{
+        id: string;
+        title: string;
+        status: "pending" | "running" | "completed" | "failed";
+        detail: string;
+        result: string;
+    }>;
+    messages: Array<{
+        id: string;
+        text: string;
+        kind: "info" | "success" | "warning" | "error";
+        at: string;
+    }>;
     checks: PreparationCheck[];
     sources: PreparationSource[];
+    suggestedUsages: string[];
+    processing: {
+        requestId: string | null;
+        generation: string | null;
+        runId: string | null;
+        requestedAt: string;
+        completedAt: string | null;
+    } | null;
+    error: string;
 }
 
 export interface LifecycleOutput {
@@ -55,6 +86,7 @@ export interface LifecycleState {
     completedStages: LifecycleStageId[];
     outputs: LifecycleOutput[];
     skippedStages: SkippedLifecycleStage[];
+    history: LifecycleOutput[];
 }
 
 export interface TandemArtifact {
@@ -68,10 +100,15 @@ export interface TandemArtifact {
     mermaid: string;
     sourceThreadIds?: string[];
     reviewStatus?: "current" | "stale";
+    sourceRevision?: number;
 }
 
 export interface TandemState {
     version: 1;
+    revision: number;
+    generation: string;
+    jobOwner: JobOwner | null;
+    openResetRequestId: string | null;
     prototypeId: string;
     stage: LifecycleStageId;
     lifecycle: LifecycleState;
@@ -85,8 +122,8 @@ export interface TandemState {
         usageItems: string[];
         suggestions: string[];
     };
-    question: any;
-    decisionGraph: { nodes: any[] };
+    question: DecisionQuestion | null;
+    decisionGraph: DecisionGraph;
     confirmed: string[];
     assumed: string[];
     deferred: string[];

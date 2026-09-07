@@ -4,8 +4,8 @@ import {
 } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { mkdir } from "node:fs/promises";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import {
     CanvasError,
     createCanvas,
@@ -14,7 +14,28 @@ import {
     joinSession,
 } from "@github/copilot-sdk/extension";
 import { renderTandemHtml } from "./renderer.js";
-import type { TandemState } from "./types.js";
+import type { LifecycleStageId, LifecycleState, TandemState } from "./types.js";
+import { ProjectStore, ProjectStoreError, normalizeProjectId, writeJsonAtomically } from "./project-store.js";
+import { jsonResult, type PreparationToken } from "./agent-runner.js";
+import { executionGraph, ownershipConflicts, ownershipContains, ownershipPath } from "./scheduling.js";
+import {
+    assertExecutionRequest, assertExecutionSources, executionDigest, executionToken,
+    executionWorkspace, ExecutionCancellationPendingError, ExecutionSourceChangedError, ExecutionSupersededError,
+    fingerprintWorkspace, newExecution, normalizeExecutionFields, workerOutcome,
+    type ExecutionToken,
+} from "./execution.js";
+import { readJsonRequest, sendJsonResponse } from "./canvas-transport.js";
+import {
+    applyAuthoritativeAnswer,
+    hasActiveWork,
+    hasUnconfirmedExecution,
+    invalidateArtifacts,
+    lifecycleStages,
+    normalizeDecisionId,
+    sameOwner,
+    reopenTestLifecycle,
+    validateDecisionGraph,
+} from "./workflow.js";
 
 declare const __TANDEM_VERSION__: string;
 
@@ -37,16 +58,11 @@ const PREVIEW_IDENTITY_MARKERS = new Set([
     "tandem-prototype-id",
     ["fast", "prototype", "id"].join("-"),
 ]);
-const LIFECYCLE_STAGES = [
-    { id: "requirements", label: "Requirements" },
-    { id: "prototype", label: "Prototype" },
-    { id: "design", label: "Design" },
-    { id: "plan", label: "Plan" },
-    { id: "implement", label: "Implement" },
-    { id: "test", label: "Test" },
-];
+const LIFECYCLE_STAGES = lifecycleStages;
 const PROVIDER_SCOPE = providerScopeFromModuleUrl(import.meta.url);
 const ANSWER_FACTORY_NAME = `tandem-process-answer-${PROVIDER_SCOPE}`;
+const PREPARATION_FACTORY_NAME =
+    `tandem-prepare-environment-${PROVIDER_SCOPE}`;
 const SUGGESTION_FACTORY_NAME =
     `tandem-generate-usage-suggestions-${PROVIDER_SCOPE}`;
 const DESIGN_REVIEW_FACTORY_NAME =
@@ -66,8 +82,10 @@ const ANSWER_ACTIONS = new Set([
     "submit-revision",
     "clarify-revision",
     "generate-design-spec",
+    "build-prototype",
 ]);
 const PROCESSING_MESSAGES = {
+    "build-prototype": "Building the initial runnable prototype from the accepted requirements.",
     "add-usage": "Saving the usage and generating complementary suggestions.",
     "generate-dag": "Analyzing usages and building the dependency-aware requirements DAG.",
     "answer-decision": "Recording the answer and recomputing dependent decisions.",
@@ -105,15 +123,20 @@ const PROVIDER_EXTENSION_ID =
 const servers = new Map<string, any>();
 const instancePrototypeIds = new Map<string, string>();
 const stateCache = new Map<string, any>();
-const writeQueues = new Map<string, Promise<any>>();
 const activeAnswerRuns = new Map<string, Promise<any>>();
+const activePreparationRuns = new Map<string, Promise<any>>();
 const activeSuggestionRuns = new Map<string, Promise<any>>();
 const activeDesignReviewRuns = new Map<string, Promise<any>>();
 const activePlanningRuns = new Map<string, Promise<any>>();
 const activeImplementationRuns = new Map<string, Promise<any>>();
 const activeTestRuns = new Map<string, Promise<any>>();
 const activePrototypeCompletions = new Set();
-const answerClaims = new Map<string, Promise<any>>();
+const projectStore = new ProjectStore<TandemState>({
+    root: STATE_DIRECTORY,
+    create: createState,
+    normalize: normalizeStoredState,
+    legacyPaths: legacyStateFilePaths,
+});
 
 let session;
 
@@ -180,13 +203,7 @@ function providerScopeFromModuleUrl(moduleUrl) {
 }
 
 function normalizePrototypeId(value) {
-    const normalized = String(value || DEFAULT_PROTOTYPE_ID)
-        .trim()
-        .toLowerCase()
-        .replace(/[^a-z0-9._-]+/g, "-")
-        .replace(/^-+|-+$/g, "")
-        .slice(0, 80);
-    return normalized || DEFAULT_PROTOTYPE_ID;
+    return normalizeProjectId(value || DEFAULT_PROTOTYPE_ID);
 }
 
 function normalizePrototypeApproach(value) {
@@ -226,12 +243,89 @@ function normalizeSourceUrl(value) {
     }
 }
 
+function preparationWorkItems() {
+    return [
+        {
+            id: "workspace",
+            title: "Inspect workspace",
+            status: "pending",
+            detail: "Identify repository structure, guidance, runtimes, and execution constraints.",
+            result: "",
+        },
+        {
+            id: "sources",
+            title: "Analyze authoritative sources",
+            status: "pending",
+            detail: "Ground named products, methods, and benchmarks in primary sources.",
+            result: "",
+        },
+        {
+            id: "requirements-handoff",
+            title: "Prepare requirements handoff",
+            status: "pending",
+            detail: "Synthesize usages, assumptions, deferred work, and prototype guidance.",
+            result: "",
+        },
+    ];
+}
+
 function normalizePreparation(value) {
     const status =
         isObject(value) &&
-        ["not-started", "ready", "needs-attention"].includes(value.status)
+        [
+            "not-started",
+            "starting",
+            "running",
+            "ready",
+            "needs-attention",
+            "failed",
+        ].includes(value.status)
             ? value.status
             : "not-started";
+    const workItems =
+        isObject(value) && Array.isArray(value.workItems)
+            ? value.workItems
+                  .filter((entry) => isObject(entry))
+                  .map((entry, index) => ({
+                      id: String(entry.id || `preparation-${index + 1}`)
+                          .trim()
+                          .slice(0, 120),
+                      title: String(entry.title || "Preparation work")
+                          .trim()
+                          .slice(0, 160),
+                      status: [
+                          "pending",
+                          "running",
+                          "completed",
+                          "failed",
+                      ].includes(entry.status)
+                          ? entry.status
+                          : "pending",
+                      detail: String(entry.detail || "").trim().slice(0, 1000),
+                      result: String(entry.result || "").trim().slice(0, 4000),
+                  }))
+                  .filter((entry) => entry.id && entry.title)
+                  .slice(0, 20)
+            : [];
+    const messages =
+        isObject(value) && Array.isArray(value.messages)
+            ? value.messages
+                  .filter((entry) => isObject(entry))
+                  .map((entry, index) => ({
+                      id: String(entry.id || `preparation-message-${index + 1}`)
+                          .trim()
+                          .slice(0, 120),
+                      text: String(entry.text || "").trim().slice(0, 2000),
+                      kind: ["info", "success", "warning", "error"].includes(
+                          entry.kind,
+                      )
+                          ? entry.kind
+                          : "info",
+                      at: String(entry.at || ""),
+                  }))
+                  .filter((entry) => entry.text)
+                  .slice(-100)
+            : [];
     const checks =
         isObject(value) && Array.isArray(value.checks)
             ? value.checks
@@ -265,25 +359,58 @@ function normalizePreparation(value) {
         summary: String(isObject(value) ? value.summary || "" : "")
             .trim()
             .slice(0, 2000),
+        workItems:
+            workItems.length > 0 ||
+            ["ready", "needs-attention", "failed"].includes(status)
+                ? workItems
+                : preparationWorkItems(),
+        messages,
         checks,
         sources,
+        suggestedUsages: normalizeStringList(
+            isObject(value) ? value.suggestedUsages : [],
+        )
+            .map((item) => item.slice(0, 500))
+            .slice(0, 6),
+        processing:
+            isObject(value) && isObject(value.processing)
+                ? {
+                      requestId: typeof value.processing.requestId === "string" ? value.processing.requestId : null,
+                      generation: typeof value.processing.generation === "string" ? value.processing.generation : null,
+                      runId: value.processing.runId
+                          ? String(value.processing.runId).slice(0, 200)
+                          : null,
+                      requestedAt: String(value.processing.requestedAt || ""),
+                      completedAt: value.processing.completedAt
+                          ? String(value.processing.completedAt)
+                          : null,
+                  }
+                : null,
+        error: String(isObject(value) ? value.error || "" : "")
+            .trim()
+            .slice(0, 4000),
     };
 }
 
 function createState(prototypeId: string, goal = ""): TandemState {
     return {
         version: 1,
+        revision: 0,
+        generation: randomUUID(),
+        jobOwner: null,
+        openResetRequestId: null,
         prototypeId,
-        stage: "requirements",
+        stage: "prepare",
         lifecycle: {
-            currentStage: "requirements",
+            currentStage: "prepare",
             completedStages: [],
             outputs: [],
             skippedStages: [],
+            history: [],
         },
         goal,
-        phase: "discovery",
-        status: "Describe how you want to use this deliverable, one usage per sentence.",
+        phase: "building",
+        status: "Preparing the workspace and analyzing the goal...",
         preparation: normalizePreparation(null),
         prototypeApproach: normalizePrototypeApproach(null),
         requirements: {
@@ -376,15 +503,12 @@ function createState(prototypeId: string, goal = ""): TandemState {
 }
 
 function stateFilePath(prototypeId) {
-    return join(
-        STATE_DIRECTORY,
-        `${normalizePrototypeId(prototypeId)}.json`,
-    );
+    return projectStore.statePath(prototypeId);
 }
 
 function legacyStateFilePaths(prototypeId) {
     const fileName = `${normalizePrototypeId(prototypeId)}.json`;
-    const paths = [join(LEGACY_STATE_DIRECTORY, fileName)];
+    const paths = [join(STATE_DIRECTORY, fileName), join(LEGACY_STATE_DIRECTORY, fileName)];
     if (session?.workspacePath) {
         paths.push(
             join(session.workspacePath, "files", "tandem", fileName),
@@ -399,33 +523,12 @@ function legacyStateFilePaths(prototypeId) {
     return paths;
 }
 
-async function writeJsonAtomically(path, value) {
-    const temporaryPath = `${path}.${process.pid}.${Date.now()}.tmp`;
-    await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-    await rename(temporaryPath, path);
-}
-
 async function loadCurrentPrototypeId() {
-    for (const path of [CURRENT_STATE_PATH, LEGACY_CURRENT_STATE_PATH]) {
-        try {
-            const value = JSON.parse(await readFile(path, "utf8"));
-            if (typeof value.prototypeId === "string") {
-                return normalizePrototypeId(value.prototypeId);
-            }
-        } catch {
-            // Try the next durable location.
-        }
-    }
-    return null;
+    return projectStore.current([CURRENT_STATE_PATH, LEGACY_CURRENT_STATE_PATH]);
 }
 
 async function persistCurrentPrototypeId(prototypeId) {
-    await mkdir(STATE_DIRECTORY, { recursive: true });
-    await writeJsonAtomically(CURRENT_STATE_PATH, {
-        version: 1,
-        prototypeId: normalizePrototypeId(prototypeId),
-        updatedAt: new Date().toISOString(),
-    });
+    await projectStore.setCurrent(prototypeId);
 }
 
 function normalizeStringList(value) {
@@ -575,29 +678,24 @@ function normalizeArtifacts(value, fallbackStage = "requirements") {
                 )
                     ? artifact.reviewStatus
                     : "current",
+                sourceRevision: Number.isSafeInteger(artifact.sourceRevision) ? artifact.sourceRevision : undefined,
             };
         })
         .filter(Boolean);
 }
 
 function normalizeTestScenarios(value) {
-    if (!Array.isArray(value)) return [];
     const scenarios = [];
-    const ids = new Set();
-    for (const [index, candidate] of value.slice(0, 30).entries()) {
-        if (!isObject(candidate)) continue;
-        const id = String(candidate.id || `test-${index + 1}`)
-            .trim()
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, "-")
-            .replace(/^-+|-+$/g, "")
-            .slice(0, 120);
+    for (const candidate of executionGraph(value)) {
+        const id = candidate.id;
         const title = String(candidate.title || "").trim().slice(0, 300);
         const description = String(candidate.description || "")
             .trim()
             .slice(0, 4000);
-        if (!id || ids.has(id) || !title || !description) continue;
-        ids.add(id);
+        if (!title || !description || !normalizeStringList(candidate.steps).length ||
+            !String(candidate.expectedOutcome || "").trim() || !normalizeStringList(candidate.validation).length) {
+            throw new Error(`Test scenario ${id} requires a title, description, steps, expected outcome, and validation.`);
+        }
         scenarios.push({
             id,
             title,
@@ -605,7 +703,7 @@ function normalizeTestScenarios(value) {
                 ? candidate.type
                 : "interaction",
             description,
-            dependencies: normalizeStringList(candidate.dependencies).slice(0, 20),
+            dependencies: candidate.dependencies,
             steps: normalizeStringList(candidate.steps).slice(0, 30),
             expectedOutcome: String(candidate.expectedOutcome || "")
                 .trim()
@@ -613,12 +711,7 @@ function normalizeTestScenarios(value) {
             validation: normalizeStringList(candidate.validation).slice(0, 30),
         });
     }
-    return scenarios.map((scenario) => ({
-        ...scenario,
-        dependencies: scenario.dependencies.filter(
-            (dependency) => dependency !== scenario.id && ids.has(dependency),
-        ),
-    }));
+    return scenarios;
 }
 
 function normalizeDesignReview(value) {
@@ -728,6 +821,7 @@ function normalizeDesign(value, designReview) {
 }
 
 function scheduleTestScenarios(scenarios, maxAgents = 4) {
+    if (!Number.isInteger(maxAgents) || maxAgents < 1 || maxAgents > 30) throw new Error("Invalid test concurrency.");
     const scheduled = new Set();
     const remaining = new Set(scenarios.map((scenario) => scenario.id));
     const waves = [];
@@ -815,6 +909,7 @@ function normalizeTesting(value, testDesignReview) {
         })
         .filter(Boolean);
     return {
+        ...normalizeExecutionFields(source),
         status: ["idle", "starting", "running", "completed", "failed"].includes(
             source.status,
         )
@@ -843,28 +938,23 @@ function normalizeTesting(value, testDesignReview) {
 }
 
 function normalizePlanWorkItems(value) {
-    if (!Array.isArray(value)) return [];
     const items = [];
-    const ids = new Set();
-    for (const [index, candidate] of value.slice(0, 30).entries()) {
-        if (!isObject(candidate)) continue;
-        const id = String(candidate.id || `work-${index + 1}`)
-            .trim()
-            .toLowerCase()
-            .replace(/[^a-z0-9._-]+/g, "-")
-            .replace(/^-+|-+$/g, "")
-            .slice(0, 120);
+    for (const candidate of executionGraph(value)) {
+        const id = candidate.id;
         const title = String(candidate.title || "").trim().slice(0, 200);
         const description = String(candidate.description || "")
             .trim()
             .slice(0, 4000);
-        if (!id || !title || !description || ids.has(id)) continue;
-        ids.add(id);
+        if (!title || !description || !normalizeStringList(candidate.acceptanceCriteria).length ||
+            !normalizeStringList(candidate.validation).length) {
+            throw new Error(`Work item ${id} requires a title, description, acceptance criteria, and validation.`);
+        }
+        normalizeStringList(candidate.files).forEach(ownershipPath);
         items.push({
             id,
             title,
             description,
-            dependencies: normalizeStringList(candidate.dependencies).slice(0, 30),
+            dependencies: candidate.dependencies,
             agentRole:
                 String(candidate.agentRole || "Implementation engineer")
                     .trim()
@@ -888,17 +978,11 @@ function normalizePlanWorkItems(value) {
                 .slice(0, 20),
         });
     }
-    const validIds = new Set(items.map((item) => item.id));
-    return items.map((item) => ({
-        ...item,
-        dependencies: item.dependencies.filter(
-            (dependency) =>
-                dependency !== item.id && validIds.has(dependency),
-        ),
-    }));
+    return items;
 }
 
 function schedulePlanWorkItems(workItems, maxAgents) {
+    if (!Number.isInteger(maxAgents) || maxAgents < 1 || maxAgents > 30) throw new Error("Invalid implementation concurrency.");
     const itemMap = new Map<string, any>(
         workItems.map((item) => [item.id, { ...item, agentId: "" }]),
     );
@@ -924,13 +1008,11 @@ function schedulePlanWorkItems(workItems, maxAgents) {
         }
 
         const selected = [];
-        const claimedFiles = new Set();
         for (const item of ready) {
             if (selected.length >= maxAgents) break;
-            const conflicts = item.files.some((path) => claimedFiles.has(path));
+            const conflicts = selected.some((other) => ownershipConflicts(item.files, other.files));
             if (conflicts) continue;
             selected.push(item);
-            for (const path of item.files) claimedFiles.add(path);
         }
         if (selected.length === 0) selected.push(ready[0]);
 
@@ -1205,6 +1287,7 @@ function normalizeImplementation(value, planning) {
               .filter(Boolean)
         : [];
     return {
+        ...normalizeExecutionFields(source),
         status: [
             "idle",
             "starting",
@@ -1364,12 +1447,8 @@ function normalizeDecisionGraph(value, legacyQuestion = null) {
 
     for (const rawNode of rawNodes.slice(0, 50)) {
         if (!isObject(rawNode)) continue;
-        const id = String(rawNode.id || "")
-            .trim()
-            .replace(/[^A-Za-z0-9._-]+/g, "-")
-            .replace(/^-+|-+$/g, "")
-            .slice(0, 120);
-        if (!id || ids.has(id)) continue;
+        const id = normalizeDecisionId(rawNode.id);
+        if (!id || ids.has(id)) throw new Error("Decision IDs must be nonempty and unique after normalization.");
 
         const normalizedQuestion = normalizeQuestion(rawNode.question);
         const question = normalizedQuestion
@@ -1384,7 +1463,7 @@ function normalizeDecisionGraph(value, legacyQuestion = null) {
         nodes.push({
             id,
             title,
-            dependencies: normalizeStringList(rawNode.dependencies).slice(0, 20),
+            dependencies: normalizeStringList(rawNode.dependencies).slice(0, 20).map(normalizeDecisionId),
             question,
             answer:
                 typeof rawNode.answer === "string" && rawNode.answer.trim()
@@ -1413,12 +1492,12 @@ function normalizeDecisionGraph(value, legacyQuestion = null) {
         node.dependencies = [
             ...new Set(
                 node.dependencies.filter(
-                    (dependencyId) =>
-                        dependencyId !== node.id && nodesById.has(dependencyId),
+                    (dependencyId) => Boolean(dependencyId),
                 ),
             ),
         ];
     }
+    validateDecisionGraph({ nodes });
     let activeAssigned = false;
     for (const node of nodes) {
         const dependenciesAnswered = node.dependencies.every(
@@ -1548,11 +1627,19 @@ function invalidateDependentNodes(decisionGraph, changedNodeId) {
     return normalizeDecisionGraph({ nodes });
 }
 
-function normalizeLifecycle(value) {
+function normalizeLifecycle(value): LifecycleState {
     const completedInput = new Set(
         isObject(value) ? normalizeStringList(value.completedStages) : [],
     );
-    const completedStages = [];
+    if (
+        isObject(value) &&
+        value.currentStage &&
+        value.currentStage !== "prepare" &&
+        !completedInput.has("prepare")
+    ) {
+        completedInput.add("prepare");
+    }
+    const completedStages: LifecycleStageId[] = [];
     for (const stage of LIFECYCLE_STAGES) {
         if (!completedInput.has(stage.id)) break;
         completedStages.push(stage.id);
@@ -1569,7 +1656,7 @@ function normalizeLifecycle(value) {
                   const path = String(output.path || "").slice(0, 500);
                   const legacyPrefix = [".intent", "studio"].join("");
                   return {
-                      stageId: String(output.stageId),
+                      stageId: LIFECYCLE_STAGES.find((stage) => stage.id === output.stageId)!.id,
                       path: path.startsWith(legacyPrefix)
                           ? `.tandem${path.slice(legacyPrefix.length)}`
                           : path,
@@ -1589,7 +1676,7 @@ function normalizeLifecycle(value) {
                           ),
                   )
                   .map((entry) => ({
-                      stageId: String(entry.stageId),
+                      stageId: LIFECYCLE_STAGES.find((stage) => stage.id === entry.stageId)!.id,
                       reason: String(entry.reason || "").trim().slice(0, 500),
                       skippedAt: String(entry.skippedAt || ""),
                   }))
@@ -1605,7 +1692,12 @@ function normalizeLifecycle(value) {
         LIFECYCLE_STAGES[Math.min(completedStages.length, LIFECYCLE_STAGES.length - 1)]
             .id;
 
-    return { currentStage, completedStages, outputs, skippedStages };
+    const history = isObject(value) && Array.isArray(value.history)
+        ? value.history.filter((output) => isObject(output) &&
+            LIFECYCLE_STAGES.some((stage) => stage.id === output.stageId) &&
+            typeof output.path === "string" && typeof output.completedAt === "string")
+        : [];
+    return { currentStage, completedStages, outputs, skippedStages, history };
 }
 
 function normalizeReloadReceipt(value) {
@@ -1675,9 +1767,10 @@ function normalizeSuggestionProcessing(value) {
     };
 }
 
-function normalizeStoredState(value, prototypeId) {
-    if (!isObject(value) || value.version !== 1) {
-        return createState(prototypeId);
+function normalizeStoredState(value, prototypeId): TandemState {
+    if (!isObject(value) || value.version !== 1 || !isObject(value.lifecycle) ||
+        !isObject(value.requirements) || !Array.isArray(value.artifacts) || typeof value.goal !== "string") {
+        throw new ProjectStoreError("state_schema_invalid", `Saved state for "${prototypeId}" is incomplete or unsupported. Restore the original file before continuing.`, 422);
     }
 
     const phase = ["discovery", "building", "iterating", "complete"].includes(value.phase)
@@ -1700,6 +1793,13 @@ function normalizeStoredState(value, prototypeId) {
     const testDesignReview = normalizeDesignReview(value.testDesignReview);
     return {
         ...createState(prototypeId),
+        revision: value.revision ?? 0,
+        generation: typeof value.generation === "string" && value.generation ? value.generation : `legacy-${prototypeId}`,
+        openResetRequestId: typeof value.openResetRequestId === "string" ? value.openResetRequestId : null,
+        jobOwner: isObject(value.jobOwner) && typeof value.jobOwner.sessionId === "string" &&
+            typeof value.jobOwner.workspaceRoot === "string" ? {
+                sessionId: value.jobOwner.sessionId, workspaceRoot: value.jobOwner.workspaceRoot,
+            } : null,
         stage: lifecycle.currentStage,
         lifecycle,
         goal: String(value.goal || "").slice(0, 4000),
@@ -1764,14 +1864,33 @@ function readHtmlAttribute(tag, attribute) {
 async function verifyPreviewIdentity(url, prototypeId) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5_000);
-    let response;
-
+    let html = "";
     try {
-        response = await fetch(url, {
+        const response = await fetch(url, {
             signal: controller.signal,
             redirect: "error",
         });
+        if (!response.ok) throw new CanvasError("preview_unreachable", `The prototype URL returned HTTP ${response.status}.`);
+        if (response.body) {
+            const reader = response.body.getReader();
+            const chunks: Uint8Array[] = [];
+            let bytes = 0;
+            try {
+                while (bytes < 256 * 1024) {
+                    const chunk = await reader.read();
+                    if (chunk.done) break;
+                    const remaining = 256 * 1024 - bytes;
+                    const value = chunk.value.slice(0, remaining);
+                    chunks.push(value);
+                    bytes += value.length;
+                }
+            } finally {
+                await reader.cancel();
+            }
+            html = Buffer.concat(chunks).toString("utf8");
+        }
     } catch (error) {
+        if (error instanceof CanvasError) throw error;
         throw new CanvasError(
             "preview_unreachable",
             `The prototype URL is not reachable: ${
@@ -1782,14 +1901,6 @@ async function verifyPreviewIdentity(url, prototypeId) {
         clearTimeout(timeout);
     }
 
-    if (!response.ok) {
-        throw new CanvasError(
-            "preview_unreachable",
-            `The prototype URL returned HTTP ${response.status}.`,
-        );
-    }
-
-    const html = (await response.text()).slice(0, 256 * 1024);
     const markerTag = (html.match(/<meta\b[^>]*>/gi) || []).find((tag) =>
         PREVIEW_IDENTITY_MARKERS.has(readHtmlAttribute(tag, "name")),
     );
@@ -1814,95 +1925,38 @@ async function verifyPreviewIdentity(url, prototypeId) {
 
 async function loadState(prototypeId) {
     const id = normalizePrototypeId(prototypeId);
-    const path = stateFilePath(id);
-    try {
-        const stored = JSON.parse(await readFile(path, "utf8"));
-        const state = normalizeStoredState(stored, id);
-        stateCache.set(id, state);
-        return state;
-    } catch (error) {
-        if (error?.code !== "ENOENT") {
-            await logSafely(
-                "Could not restore Tandem state.",
-                "warning",
-            );
-            if (stateCache.has(id)) return stateCache.get(id);
-        }
-    }
-
-    for (const legacyPath of legacyStateFilePaths(id)) {
-        try {
-            const stored = JSON.parse(await readFile(legacyPath, "utf8"));
-            const state = normalizeStoredState(stored, id);
-            await persistState(state);
-            return state;
-        } catch (error) {
-            if (error?.code !== "ENOENT") {
-                await logSafely(
-                    "Could not migrate legacy Tandem state.",
-                    "warning",
-                );
-            }
-        }
-    }
-
-    const state = createState(id);
-    stateCache.set(id, state);
+    const state = await projectStore.load(id);
+    if (!stateCache.has(id) || stateCache.get(id).revision <= state.revision) stateCache.set(id, state);
     return state;
 }
 
 async function persistState(state) {
+    state.jobOwner = hasActiveWork(state)
+        ? state.jobOwner || { sessionId: session.sessionId, workspaceRoot: WORKSPACE_ROOT }
+        : null;
+    await projectStore.save(state);
     stateCache.set(state.prototypeId, state);
-    const path = stateFilePath(state.prototypeId);
-    if (!path) return;
-
-    const previous = writeQueues.get(state.prototypeId) || Promise.resolve();
-    const next = previous
-        .catch(() => undefined)
-        .then(async () => {
-            await mkdir(STATE_DIRECTORY, { recursive: true });
-            await writeJsonAtomically(path, state);
-        });
-    writeQueues.set(state.prototypeId, next);
-    await next;
 }
 
-async function withAnswerClaim(
-    prototypeId,
-    operation,
+async function withAnswerClaim<R>(
+    prototypeId: string,
+    operation: () => Promise<R>,
     rejectIfBusy = false,
 ) {
-    let release;
-    while (!release) {
-        const existing = answerClaims.get(prototypeId);
-        if (existing) {
-            if (rejectIfBusy) {
-                throw new AnswerRequestError(
-                    409,
-                    "Another answer is being accepted. Try again.",
-                );
-            }
-            await existing;
-            continue;
-        }
-
-        let resolveClaim;
-        const claim = new Promise((resolve) => {
-            resolveClaim = resolve;
-        });
-        answerClaims.set(prototypeId, claim);
-        release = () => {
-            if (answerClaims.get(prototypeId) === claim) {
-                answerClaims.delete(prototypeId);
-            }
-            resolveClaim();
-        };
-    }
-
     try {
-        return await operation();
-    } finally {
-        release();
+        return await projectStore.transaction(prototypeId, async () => {
+            const current = await loadState(prototypeId);
+            if (hasActiveWork(current) && current.jobOwner &&
+                !sameOwner(current.jobOwner, { sessionId: session.sessionId, workspaceRoot: WORKSPACE_ROOT })) {
+                throw new AnswerRequestError(409, "This project has active work owned by another session/workspace. Return to its owning session before changing it.");
+            }
+            return operation();
+        }, rejectIfBusy);
+    } catch (error) {
+        if (error instanceof ProjectStoreError && error.statusCode === 409) {
+            throw new AnswerRequestError(409, error.message);
+        }
+        throw error;
     }
 }
 
@@ -1924,13 +1978,19 @@ async function isPreferredAnswerProvider(extensionId) {
 
 async function refreshEntryAnswerCapability(entry) {
     const wasEnabled = entry.canSubmitAnswers;
-    entry.canSubmitAnswers = await isPreferredAnswerProvider(entry.extensionId);
+    let state = await loadState(entry.prototypeId);
+    entry.canSubmitAnswers = await isPreferredAnswerProvider(entry.extensionId) &&
+        (!hasActiveWork(state) || !state.jobOwner ||
+            sameOwner(state.jobOwner, { sessionId: session.sessionId, workspaceRoot: WORKSPACE_ROOT }));
     if (entry.canSubmitAnswers) {
-        let state = await loadState(entry.prototypeId);
         if (!wasEnabled) {
+            recoverPreparationFactory(state, true);
             recoverAnswerFactory(state, true);
             recoverSuggestionFactory(state, true);
-            state = await ensureUsageSuggestionsStarted(state, true);
+            state =
+                state.lifecycle.currentStage === "prepare"
+                    ? await ensurePreparationStarted(state, true)
+                    : await ensureUsageSuggestionsStarted(state, true);
         }
         recoverPrototypeCompletion(state, true);
     }
@@ -1944,7 +2004,8 @@ function publicState(entry, state) {
             extensionId: entry.extensionId,
             source,
             canReload: entry.extensionId === USER_EXTENSION_ID,
-            canSubmitAnswers: entry.canSubmitAnswers,
+            canSubmitAnswers: entry.canSubmitAnswers && (!hasActiveWork(state) || !state.jobOwner ||
+                sameOwner(state.jobOwner, { sessionId: session.sessionId, workspaceRoot: WORKSPACE_ROOT })),
         },
     };
 }
@@ -1962,10 +2023,516 @@ function publishState(prototypeId) {
     }
 }
 
+function preparationMessage(text, kind = "info") {
+    return {
+        id: randomUUID(),
+        text,
+        kind,
+        at: new Date().toISOString(),
+    };
+}
+
+function preparationToken(state): PreparationToken {
+    const processing = state.preparation.processing;
+    if (!processing?.requestId || processing.generation !== state.generation) {
+        throw new CanvasError("legacy_preparation", "This preparation job predates durable request identity. Inspect its prior run and retry explicitly.");
+    }
+    return { requestId: processing.requestId, generation: processing.generation, runId: processing.runId };
+}
+
+function preparationMatches(state, token: PreparationToken, binding = false) {
+    const processing = state.preparation.processing;
+    return state.lifecycle.currentStage === "prepare" &&
+        ["starting", "running"].includes(state.preparation.status) &&
+        state.generation === token.generation &&
+        processing?.requestId === token.requestId && processing.generation === token.generation &&
+        (processing.runId === token.runId || (binding && !processing.runId));
+}
+
+async function bindPreparationRun(prototypeId, token: PreparationToken) {
+    if (!token.runId || !(await isPreferredAnswerProvider(PROVIDER_EXTENSION_ID))) return false;
+    return withAnswerClaim(prototypeId, async () => {
+        const current = await loadState(prototypeId);
+        if (!preparationMatches(current, token, true)) return false;
+        if (current.preparation.processing.runId === token.runId) return true;
+        const next = {
+            ...current,
+            preparation: normalizePreparation({
+                ...current.preparation, status: "running",
+                processing: { ...current.preparation.processing, runId: token.runId },
+            }),
+            updatedAt: new Date().toISOString(),
+        };
+        await persistState(next);
+        publishState(prototypeId);
+        return true;
+    });
+}
+
+async function recordPreparationWorkItem(
+    prototypeId,
+    workItemId,
+    status,
+    token: PreparationToken,
+    result = "",
+) {
+    await withAnswerClaim(prototypeId, async () => {
+        const current = await loadState(prototypeId);
+        if (!preparationMatches(current, token)) throw new CanvasError("preparation_superseded", "This preparation job no longer owns the effort.");
+        if (!current.preparation.workItems.some((item) => item.id === workItemId) ||
+            !["running", "completed", "failed"].includes(status) || (status === "completed" && !String(result).trim())) {
+            throw new Error("Preparation returned an invalid work-item result.");
+        }
+        const workItems = current.preparation.workItems.map((item) =>
+            item.id === workItemId
+                ? {
+                      ...item,
+                      status,
+                      result: String(result || "").trim().slice(0, 4000),
+                  }
+                : item,
+        );
+        const item = workItems.find((candidate) => candidate.id === workItemId);
+        const message =
+            status === "running"
+                ? `${item?.title || "Preparation work"} started.`
+                : status === "completed"
+                  ? `${item?.title || "Preparation work"} completed.`
+                  : `${item?.title || "Preparation work"} failed.`;
+        const next = {
+            ...current,
+            preparation: normalizePreparation({
+                ...current.preparation,
+                status: status === "failed" ? "failed" : "running",
+                workItems,
+                messages: [
+                    ...current.preparation.messages,
+                    preparationMessage(
+                        message,
+                        status === "failed"
+                            ? "error"
+                            : status === "completed"
+                              ? "success"
+                              : "info",
+                    ),
+                ],
+            }),
+            status: message,
+            updatedAt: new Date().toISOString(),
+        };
+        await persistState(next);
+        publishState(prototypeId);
+    });
+}
+
+function preparationWorkspacePrompt(args) {
+    return [
+        "Inspect the target workspace for Tandem preparation.",
+        "Do not edit files, install dependencies, start servers, or create branches.",
+        "Inspect only repository structure, guidance files, manifests, package managers,",
+        "run commands, version-control state, and availability of runtimes or container",
+        "tools that materially affect the goal. Report concrete readiness checks.",
+        "Return at most ten readiness checks.",
+        "",
+        `Project root: ${args.projectRoot}`,
+        `Goal: ${args.goal}`,
+    ].join("\n");
+}
+
+function preparationSourcesPrompt(args, workspaceAnalysis) {
+    return [
+        "Analyze the named products, repositories, methods, benchmarks, and domain",
+        "terms in this Tandem goal. Use authoritative repositories, official docs, or",
+        "primary papers only. Use at most four source calls total. Do not edit files,",
+        "install dependencies, or start servers. Identify the implementation target,",
+        "important inputs and outputs, integration boundaries, and execution workflow.",
+        "Return source URLs and any additional readiness checks.",
+        "Return at most ten additional checks and twenty source references.",
+        "",
+        `Project root: ${args.projectRoot}`,
+        `Goal: ${args.goal}`,
+        "Workspace analysis:",
+        JSON.stringify(workspaceAnalysis, null, 2),
+    ].join("\n");
+}
+
+function preparationHandoffPrompt(
+    args,
+    workspaceAnalysis,
+    sourceAnalysis,
+) {
+    return [
+        "Synthesize the completed Tandem preparation analysis. Do not use tools or",
+        "perform more research. Produce a concise requirements handoff.",
+        "Suggested usages must be distinct first-person sentences beginning with",
+        "'I want to'. Infer assumptions and explicitly defer missing runtime,",
+        "credential, platform, or expensive execution work.",
+        "Choose prototypeApproach build for a new GUI, validate-existing when an",
+        "existing GUI materially helps evaluate the flow, not-applicable only when",
+        "no graphical validation adds value, and undecided when the evidence does",
+        "not justify choosing yet.",
+        "",
+        `Goal: ${args.goal}`,
+        "Workspace analysis:",
+        JSON.stringify(workspaceAnalysis, null, 2),
+        "Authoritative source analysis:",
+        JSON.stringify(sourceAnalysis, null, 2),
+    ].join("\n");
+}
+
+async function settlePreparationRun(prototypeId, run, token: PreparationToken) {
+    await withAnswerClaim(prototypeId, async () => {
+        const current = await loadState(prototypeId);
+        if (!preparationMatches(current, token) || (run.runId || null) !== token.runId) {
+            await logSafely("Ignored a superseded preparation result.", "warning");
+            return;
+        }
+        const completedAt = new Date().toISOString();
+        if (run.status !== "completed" || !isObject(run.result)) {
+            const error = factoryErrorMessage(run).slice(0, 4000);
+            const next = {
+                ...current,
+                preparation: normalizePreparation({
+                    ...current.preparation,
+                    status: "failed",
+                    workItems: current.preparation.workItems.map((item) =>
+                        item.status === "running"
+                            ? { ...item, status: "failed", result: error }
+                            : item,
+                    ),
+                    messages: [
+                        ...current.preparation.messages,
+                        preparationMessage(
+                            `Preparation failed: ${error}`,
+                            "error",
+                        ),
+                    ],
+                    processing: current.preparation.processing
+                        ? {
+                              ...current.preparation.processing,
+                              completedAt,
+                          }
+                        : null,
+                    error,
+                }),
+                status: `Preparation failed: ${error}`,
+                updatedAt: completedAt,
+            };
+            await persistState(next);
+            publishState(prototypeId);
+            return;
+        }
+
+        const result = run.result;
+        if (!["ready", "needs-attention"].includes(result.status) ||
+            typeof result.summary !== "string" || !result.summary.trim() || result.summary.length > 2000 ||
+            !Array.isArray(result.checks) || !Array.isArray(result.sources) ||
+            result.checks.length > 20 || result.sources.length > 20 ||
+            result.checks.some((check) => !isObject(check) ||
+                typeof check.label !== "string" || !check.label.trim() ||
+                !["ready", "missing", "deferred"].includes(check.status) || typeof check.detail !== "string") ||
+            result.sources.some((source) => !isObject(source) ||
+                typeof source.title !== "string" || !source.title.trim() ||
+                !normalizeSourceUrl(source.url) || typeof source.purpose !== "string") ||
+            !Array.isArray(result.suggestedUsages) || result.suggestedUsages.length === 0 ||
+            result.suggestedUsages.length > 5 ||
+            result.suggestedUsages.some((usage) => typeof usage !== "string" || !usage.trim() || usage.length > 500) ||
+            !Array.isArray(result.assumed) || !Array.isArray(result.deferred) ||
+            result.assumed.length > 20 || result.deferred.length > 20 ||
+            [...result.assumed, ...result.deferred].some((item) => typeof item !== "string" || !item.trim() || item.length > 500) ||
+            !isObject(result.prototypeApproach) ||
+            !["undecided", "build", "validate-existing", "not-applicable"].includes(result.prototypeApproach.mode) ||
+            typeof result.prototypeApproach.reason !== "string" ||
+            current.preparation.workItems.length !== 3 ||
+            current.preparation.workItems.some((item) => item.status !== "completed")) {
+            throw new Error("Preparation did not produce a complete, evidenced Requirements handoff.");
+        }
+        const preparation = normalizePreparation({
+            ...current.preparation,
+            status: result.status,
+            summary: result.summary,
+            workItems: current.preparation.workItems.map((item) => ({
+                ...item,
+                status: "completed",
+            })),
+            messages: [
+                ...current.preparation.messages,
+                preparationMessage(
+                    result.status === "ready"
+                        ? "Preparation completed. Requirements are ready."
+                        : "Preparation completed with items requiring attention.",
+                    result.status === "ready" ? "success" : "warning",
+                ),
+            ],
+            checks: result.checks,
+            sources: result.sources,
+            suggestedUsages: result.suggestedUsages,
+            processing: current.preparation.processing
+                ? { ...current.preparation.processing, completedAt }
+                : null,
+            error: "",
+        });
+        const requirements = normalizeRequirements(
+            {
+                ...current.requirements,
+                substage: "usage",
+                suggestions: result.suggestedUsages,
+            },
+            { nodes: [] },
+        );
+        const outputPath = projectStore.stagePath(prototypeId, "prepare", current.revision + 1);
+        const relativeOutputPath = relative(SHARED_PROJECT_ROOT, outputPath);
+        await mkdir(dirname(outputPath), { recursive: true });
+        await writeJsonAtomically(outputPath, {
+            version: 1,
+            prototypeId,
+            stageId: "prepare",
+            revision: current.revision + 1,
+            completedAt,
+            result: {
+                goal: current.goal,
+                preparation,
+                prototypeApproach: result.prototypeApproach,
+                requirements,
+                assumed: result.assumed,
+                deferred: result.deferred,
+            },
+        });
+        const lifecycle = normalizeLifecycle({
+            ...current.lifecycle,
+            currentStage: "requirements",
+            completedStages: ["prepare"],
+            outputs: [
+                ...current.lifecycle.outputs.filter(
+                    (output) => output.stageId !== "prepare",
+                ),
+                {
+                    stageId: "prepare",
+                    path: relativeOutputPath,
+                    completedAt,
+                },
+            ],
+        });
+        const next = {
+            ...current,
+            stage: "requirements",
+            lifecycle,
+            phase: "discovery",
+            status:
+                "Preparation complete. Review the analysis suggestions and add the usages you want.",
+            preparation,
+            prototypeApproach: normalizePrototypeApproach(
+                result.prototypeApproach,
+            ),
+            requirements,
+            question: usageQuestion(requirements.suggestions),
+            assumed: normalizeStringList(result.assumed),
+            deferred: normalizeStringList(result.deferred),
+            updatedAt: completedAt,
+        };
+        await persistState(next);
+        publishState(prototypeId);
+    });
+}
+
+async function runPreparationFactory(prototypeId, state, resumeFromRunId = null) {
+    const token = preparationToken(state);
+    const run = resumeFromRunId ? await resumeHaltedRun(resumeFromRunId) : await session.rpc.factory.run({
+        name: PREPARATION_FACTORY_NAME,
+        args: {
+            prototypeId,
+            projectRoot: WORKSPACE_ROOT,
+            goal: state.goal,
+            requestId: token.requestId,
+            generation: token.generation,
+        },
+        options: {
+            limits: {
+                maxConcurrentSubagents: 1,
+                maxTotalSubagents: 3,
+                timeoutSeconds: 240,
+                maxAiCredits: 1024000,
+            },
+        },
+    });
+    token.runId = run.runId;
+    if (!(await bindPreparationRun(prototypeId, token))) {
+        if (!isFactoryRunTerminal(run.status) && !resumeFromRunId) await session.factory.cancel(run.runId);
+        return;
+    }
+    const terminal = isFactoryRunTerminal(run.status)
+        ? run
+        : await session.factory.waitForRun(run.runId);
+    await settlePreparationRun(prototypeId, terminal, token);
+}
+
+function startPreparationFactory(prototypeId, state, resumeFromRunId = null) {
+    if (activePreparationRuns.has(prototypeId)) return;
+    const work = runPreparationFactory(prototypeId, state, resumeFromRunId)
+        .catch(async (error) => {
+            const latest = await loadState(prototypeId);
+            const token = preparationToken(state);
+            if (latest.generation !== token.generation ||
+                latest.preparation.processing?.requestId !== token.requestId) {
+                await logSafely("Preparation failed after its request was replaced.", "warning");
+                return;
+            }
+            token.runId = latest.preparation.processing.runId;
+            await settlePreparationRun(prototypeId, {
+                runId: token.runId,
+                status: "error",
+                error: error instanceof Error ? error.message : String(error),
+            }, token);
+        })
+        .finally(() => {
+            if (activePreparationRuns.get(prototypeId) === work) {
+                activePreparationRuns.delete(prototypeId);
+            }
+        });
+    activePreparationRuns.set(prototypeId, work);
+}
+
+async function ensurePreparationStarted(state, canSubmitAnswers) {
+    if (
+        !canSubmitAnswers ||
+        state.lifecycle.currentStage !== "prepare" ||
+        state.preparation.status !== "not-started" ||
+        activePreparationRuns.has(state.prototypeId)
+    ) {
+        return state;
+    }
+    const requestedAt = new Date().toISOString();
+    const next = await withAnswerClaim(state.prototypeId, async () => {
+        const current = await loadState(state.prototypeId);
+        if (
+            current.lifecycle.currentStage !== "prepare" ||
+            current.preparation.status !== "not-started"
+        ) {
+            return current;
+        }
+        const updated = {
+            ...current,
+            preparation: normalizePreparation({
+                status: "starting",
+                summary: "",
+                workItems: preparationWorkItems(),
+                messages: [
+                    preparationMessage(
+                        "Preparation requested. Inspecting the workspace first.",
+                    ),
+                ],
+                checks: [],
+                sources: [],
+                suggestedUsages: [],
+                processing: {
+                    requestId: randomUUID(),
+                    generation: current.generation,
+                    runId: null,
+                    requestedAt,
+                    completedAt: null,
+                },
+                error: "",
+            }),
+            status: "Starting preparation...",
+            updatedAt: requestedAt,
+        };
+        await persistState(updated);
+        publishState(state.prototypeId);
+        return updated;
+    });
+    if (next.preparation.status === "starting") {
+        startPreparationFactory(next.prototypeId, next);
+    }
+    return next;
+}
+
+function recoverPreparationFactory(state, canSubmitAnswers) {
+    if (
+        !canSubmitAnswers ||
+        state.lifecycle.currentStage !== "prepare" ||
+        !["starting", "running"].includes(state.preparation.status) ||
+        activePreparationRuns.has(state.prototypeId)
+    ) {
+        return;
+    }
+    const work = (async () => {
+        const processing = state.preparation.processing;
+        if (!processing?.requestId || processing.generation !== state.generation || !processing.runId) {
+            await withAnswerClaim(state.prototypeId, async () => {
+                const current = await loadState(state.prototypeId);
+                if (current.generation !== state.generation ||
+                    current.preparation.processing?.requestedAt !== processing?.requestedAt) return;
+                const error = "The interrupted preparation run cannot be correlated safely. Inspect the previous run, then retry explicitly.";
+                await persistState({
+                    ...current,
+                    preparation: normalizePreparation({
+                        ...current.preparation, status: "failed", error,
+                        workItems: current.preparation.workItems.map((item) => item.status === "running" ? { ...item, status: "failed", result: error } : item),
+                    }),
+                    status: error, updatedAt: new Date().toISOString(),
+                });
+                publishState(state.prototypeId);
+            });
+            return;
+        }
+        const token = preparationToken(state);
+        const runId = token.runId;
+        let run = await session.factory.getRun(runId);
+        if (run.status === "halted") {
+            await runPreparationFactory(state.prototypeId, state, runId);
+            return;
+        }
+        if (!isFactoryRunTerminal(run.status)) {
+            run = await session.factory.waitForRun(run.runId);
+        }
+        await settlePreparationRun(state.prototypeId, run, token);
+    })()
+        .catch(async (error) => {
+            if (!state.preparation.processing?.requestId) {
+                await logSafely(`Preparation recovery failed: ${error instanceof Error ? error.message : String(error)}`);
+                return;
+            }
+            const token = preparationToken(state);
+            await settlePreparationRun(state.prototypeId, {
+                runId: token.runId,
+                status: "error",
+                error: error instanceof Error ? error.message : String(error),
+            }, token);
+        })
+        .finally(() => {
+            if (activePreparationRuns.get(state.prototypeId) === work) {
+                activePreparationRuns.delete(state.prototypeId);
+            }
+        });
+    activePreparationRuns.set(state.prototypeId, work);
+}
+
 async function resolvePrototypeId(instanceId, requestedId) {
     const explicitId = requestedId || instancePrototypeIds.get(instanceId);
     if (explicitId) return normalizePrototypeId(explicitId);
     return (await loadCurrentPrototypeId()) || DEFAULT_PROTOTYPE_ID;
+}
+
+async function applyCanvasReset(state, input, requestId: string, rehydrating: boolean, writable: boolean) {
+    if (!input.reset || rehydrating || state.openResetRequestId === requestId) return state;
+    if (!writable) throw new CanvasError("read_only_provider", "Reset the effort from its writable provider and owning session.");
+    return withAnswerClaim(state.prototypeId, async () => {
+        const current = await loadState(state.prototypeId);
+        if (current.openResetRequestId === requestId) return current;
+        if (hasActiveWork(current)) throw new CanvasError("processing_in_progress", "Finish or stop active work before resetting the effort.");
+        const next = {
+            ...createState(state.prototypeId), revision: current.revision, openResetRequestId: requestId,
+            goal: typeof input.goal === "string" ? input.goal.trim().slice(0, 4000) : "",
+        };
+        await persistState(next);
+        publishState(state.prototypeId);
+        return next;
+    });
+}
+
+function isCanvasRehydration(ctx: { instanceId: string; reason?: unknown }) {
+    return ctx.reason === "rehydrate" ||
+        session.openCanvases.some((canvas) => canvas.instanceId === ctx.instanceId);
 }
 
 async function updateTandem(ctx) {
@@ -1980,20 +2547,32 @@ async function updateTandem(ctx) {
 
     return withAnswerClaim(prototypeId, async () => {
         const stored = await loadState(prototypeId);
-        if (stored.processing?.status === "running") {
+        if (hasActiveWork(stored)) {
             throw new CanvasError(
                 "processing_in_progress",
-                "Wait for the hidden Tandem agent to finish.",
+                "Wait for active Tandem work to finish before replacing project state.",
             );
         }
-        const current = input.reset ? createState(prototypeId) : stored;
+        if (!input.reset && typeof input.goal === "string" && input.goal.trim() !== stored.goal &&
+            stored.lifecycle.currentStage !== "prepare") {
+            throw new CanvasError("goal_locked", "Use a new effort or an explicit reset for a different goal.");
+        }
+        if (!input.reset && (
+            (["requirements", "decisionGraph", "confirmed", "assumed", "deferred"].some((key) => key in input) &&
+                stored.lifecycle.currentStage !== "requirements") ||
+            ("planning" in input && stored.lifecycle.currentStage !== "plan") ||
+            ("designReview" in input && stored.lifecycle.currentStage !== "design")
+        )) {
+            throw new CanvasError("stage_locked", "Reopen the owning stage explicitly before changing its accepted inputs.");
+        }
+        const current = input.reset ? { ...createState(prototypeId), revision: stored.revision } : stored;
         const next = { ...current };
 
         if (typeof input.goal === "string") {
             next.goal = input.goal.trim().slice(0, 4000);
         }
-        if (typeof input.stage === "string" && input.stage.trim()) {
-            next.stage = input.stage.trim().slice(0, 80);
+        if (typeof input.stage === "string" && input.stage !== next.lifecycle.currentStage) {
+            throw new CanvasError("stage_locked", "Use stage completion or reopening to change lifecycle stages.");
         }
         if (["discovery", "building", "iterating", "complete"].includes(input.phase)) {
             next.phase = input.phase;
@@ -2029,6 +2608,10 @@ async function updateTandem(ctx) {
                 input.decisionGraph,
                 null,
             );
+            if (!input.reset && current.decisionGraph.nodes.some((node) => node.answer) &&
+                JSON.stringify(next.decisionGraph) !== JSON.stringify(current.decisionGraph)) {
+                throw new CanvasError("authoritative_decisions", "Change confirmed answers through the decision controls; bulk updates cannot replace user decisions.");
+            }
             const requirementsInput = Object.prototype.hasOwnProperty.call(
                 input,
                 "requirements",
@@ -2101,10 +2684,10 @@ function stageCompletionError(
     stageId,
     { requirePrototypeSpec = true } = {},
 ) {
+    if (stageId === "prepare") {
+        return "Preparation completes automatically when its worker finishes.";
+    }
     if (stageId === "requirements") {
-        if (state.preparation.status === "not-started") {
-            return "Complete and record the preparation preflight before finishing Requirements.";
-        }
         if (state.prototypeApproach.mode === "undecided") {
             return "Resolve whether Prototype should build, validate, or be bypassed.";
         }
@@ -2333,7 +2916,7 @@ async function completeLifecycleStage(prototypeId, requestedStageId, extensionId
 
     const completed = await withAnswerClaim(prototypeId, async () => {
         const state = await loadState(prototypeId);
-        if (state.processing?.status === "running") {
+        if (hasActiveWork(state)) {
             throw new CanvasError(
                 "processing_in_progress",
                 "Wait for the hidden Tandem agent to finish.",
@@ -2348,6 +2931,7 @@ async function completeLifecycleStage(prototypeId, requestedStageId, extensionId
                 `Only the active ${lifecycle.currentStage} stage can be completed.`,
             );
         }
+        if (stageId === "test") await assertCurrentTestEvidence(state);
         if (lifecycle.completedStages.includes(stageId)) {
             return state;
         }
@@ -2401,23 +2985,14 @@ async function completeLifecycleStage(prototypeId, requestedStageId, extensionId
         ];
         const outputEntries = [];
         for (const completedStageId of completedStageIds) {
-            const relativeOutputPath = join(
-                ".tandem",
-                prototypeId,
-                "stages",
-                `${completedStageId}.json`,
-            );
-            const outputPath = join(
-                STATE_DIRECTORY,
-                prototypeId,
-                "stages",
-                `${completedStageId}.json`,
-            );
+            const outputPath = projectStore.stagePath(prototypeId, completedStageId, state.revision + 1);
+            const relativeOutputPath = relative(SHARED_PROJECT_ROOT, outputPath);
             await mkdir(dirname(outputPath), { recursive: true });
             await writeJsonAtomically(outputPath, {
                 version: 1,
                 prototypeId,
                 stageId: completedStageId,
+                revision: state.revision + 1,
                 completedAt,
                 skipped: skipPrototype && completedStageId === "prototype",
                 skipReason:
@@ -2468,6 +3043,7 @@ async function completeLifecycleStage(prototypeId, requestedStageId, extensionId
             lifecycle: {
                 currentStage,
                 completedStages,
+                history: lifecycle.history,
                 outputs: [
                     ...lifecycle.outputs.filter(
                         (output) => !completedStageIds.includes(output.stageId),
@@ -2507,12 +3083,122 @@ async function completeLifecycleStage(prototypeId, requestedStageId, extensionId
         return next;
     });
     if (
+        completed.lifecycle.currentStage === "prototype" &&
+        completed.previewStatus !== "ready" &&
+        completed.processing?.status !== "running"
+    ) {
+        return beginPrototypeBuild(prototypeId, extensionId);
+    }
+    if (
         completed.lifecycle.currentStage === "design" &&
         completed.designReview.threads.some((thread) => thread.status === "queued")
     ) {
         startDesignReviewQueue(prototypeId);
     }
     return completed;
+}
+
+async function reopenLifecycleStage(prototypeId, stageId, extensionId) {
+    if (!(await isPreferredAnswerProvider(extensionId))) {
+        throw new CanvasError("read_only_provider", "Reopen stages through the active Tandem provider.");
+    }
+    const index = LIFECYCLE_STAGES.findIndex((stage) => stage.id === stageId);
+    if (index < 0) throw new CanvasError("invalid_stage", "Select a valid lifecycle stage.");
+    const reopened = await withAnswerClaim(prototypeId, async () => {
+        const state = await loadState(prototypeId);
+        if (hasActiveWork(state)) throw new CanvasError("processing_in_progress", "Finish or stop active work before reopening a stage.");
+        if (state.lifecycle.skippedStages.some((stage) => stage.stageId === stageId)) {
+            throw new CanvasError("stage_not_applicable", "Reopen Requirements and change the prototype approach before enabling a skipped stage.");
+        }
+        if (!state.lifecycle.completedStages.includes(stageId)) {
+            throw new CanvasError("stage_not_complete", "Only a completed stage can be reopened.");
+        }
+        const fresh = createState(prototypeId);
+        const affected = (id: LifecycleStageId) => LIFECYCLE_STAGES.findIndex((stage) => stage.id === id) >= index;
+        const next = {
+            ...state,
+            generation: randomUUID(),
+            stage: LIFECYCLE_STAGES[index].id,
+            lifecycle: {
+                currentStage: LIFECYCLE_STAGES[index].id,
+                completedStages: state.lifecycle.completedStages.slice(0, index),
+                outputs: state.lifecycle.outputs.filter((output) => !affected(output.stageId)),
+                history: [...state.lifecycle.history, ...state.lifecycle.outputs.filter((output) => affected(output.stageId))],
+                skippedStages: state.lifecycle.skippedStages.filter((stage) => !affected(stage.stageId)),
+            },
+            preparation: stageId === "prepare" ? fresh.preparation : state.preparation,
+            prototypeApproach: stageId === "prepare" ? fresh.prototypeApproach : state.prototypeApproach,
+            requirements: stageId === "prepare" ? fresh.requirements : state.requirements,
+            decisionGraph: stageId === "prepare" ? fresh.decisionGraph : state.decisionGraph,
+            question: stageId === "prepare" ? fresh.question : state.question,
+            confirmed: stageId === "prepare" ? [] : state.confirmed,
+            artifacts: invalidateArtifacts(state.artifacts, LIFECYCLE_STAGES[index].id),
+            previewUrl: affected("requirements") ? null : state.previewUrl,
+            previewStatus: affected("requirements") ? "waiting" : state.previewStatus,
+            prototypeReview: affected("prototype") ? {
+                ...state.prototypeReview, designSpecArtifactId: null, question: null, activeRevisionId: null,
+            } : state.prototypeReview,
+            design: affected("design") ? { substage: "product" } : state.design,
+            designReview: affected("design") ? {
+                ...state.designReview, processing: null, finalizedArtifactId: null, finalizeRequested: false,
+            } : state.designReview,
+            testDesignReview: affected("design") ? {
+                ...state.testDesignReview, processing: null, finalizedArtifactId: null, finalizeRequested: false,
+            } : state.testDesignReview,
+            planning: affected("plan") ? {
+                ...state.planning, processing: null, status: stageId === "plan" ? "ready" : "idle", finalizedArtifactId: null,
+            } : state.planning,
+            implementation: affected("implement") ? fresh.implementation : state.implementation,
+            testing: affected("test") ? fresh.testing : state.testing,
+            processing: null,
+            suggestionProcessing: null,
+            phase: stageId === "prepare" ? fresh.phase : stageId === "requirements" ? "discovery" : "iterating",
+            status: `${LIFECYCLE_STAGES[index].label} reopened. Dependent outputs are stale until reviewed and regenerated.`,
+            updatedAt: new Date().toISOString(),
+        };
+        await persistState(next);
+        publishState(prototypeId);
+        return next;
+    });
+    return stageId === "prepare" ? ensurePreparationStarted(reopened, true) : reopened;
+}
+
+async function beginPrototypeBuild(prototypeId, extensionId) {
+    if (!(await isPreferredAnswerProvider(extensionId))) {
+        throw new CanvasError("read_only_provider", "Start the prototype through the active Tandem provider.");
+    }
+    const pending = await withAnswerClaim(prototypeId, async () => {
+        const state = await loadState(prototypeId);
+        if (state.lifecycle.currentStage !== "prototype") throw new CanvasError("stage_not_active", "Prototype creation requires the Prototype stage.");
+        if (!["build", "validate-existing"].includes(state.prototypeApproach.mode)) {
+            throw new CanvasError("prototype_approach_required", "Choose an applicable prototype approach in Requirements before starting a preview.");
+        }
+        if (hasActiveWork(state)) throw new CanvasError("processing_in_progress", "A Tandem job is already active.");
+        if (state.previewStatus === "ready") throw new CanvasError("preview_ready", "The prototype is already ready. Submit a revision instead.");
+        const now = new Date().toISOString();
+        const question = {
+            id: "build-prototype", text: "Build the initial runnable prototype from the accepted requirements.",
+            rationale: "", choices: [], recommended: null, allowFreeText: false, answerPlaceholder: "",
+        };
+        const next = {
+            ...state, phase: "building", previewStatus: "starting",
+            status: "Scheduling the initial prototype build.",
+            processing: {
+                status: "running", action: "build-prototype", requestId: randomUUID(),
+                factoryName: ANSWER_FACTORY_NAME, runId: null,
+                answer: "Build and launch the initial prototype using the accepted requirements.",
+                question, requestedAt: now, completedAt: null, originalDecisionGraph: null,
+                message: "The initial prototype build has been requested.",
+            },
+            updatedAt: now,
+        };
+        await persistState(next);
+        publishState(prototypeId);
+        return next;
+    }, true);
+    startAnswerFactory(prototypeId, pending.processing.requestId, pending.processing.question,
+        pending.processing.answer, "build-prototype", pending);
+    return pending;
 }
 
 async function completeStage(ctx) {
@@ -2554,23 +3240,12 @@ function recoverPrototypeCompletion(state, canSubmitAnswers) {
         .finally(() => activePrototypeCompletions.delete(state.prototypeId));
 }
 
-async function readRequestBody(req) {
-    let body = "";
-    for await (const chunk of req) {
-        body += chunk;
-        if (Buffer.byteLength(body, "utf8") > MAX_REQUEST_BYTES) {
-            throw new Error("Request is too large.");
-        }
-    }
-    return JSON.parse(body || "{}");
+async function readRequestBody(req): Promise<Record<string, any>> {
+    return readJsonRequest(req, MAX_REQUEST_BYTES);
 }
 
 function sendJson(res, statusCode, value) {
-    res.writeHead(statusCode, {
-        "Content-Type": "application/json; charset=utf-8",
-        "Cache-Control": "no-store",
-    });
-    res.end(JSON.stringify(value));
+    sendJsonResponse(res, statusCode, value);
 }
 
 function factoryStateSnapshot(state) {
@@ -2595,8 +3270,22 @@ function factoryStateSnapshot(state) {
         };
     });
 
+    const reviewSnapshot = (review) => {
+        let budget = 20_000;
+        return {
+            ...review,
+            threads: review.threads.map((thread) => {
+                const answer = thread.answer.slice(0, Math.max(0, Math.min(4000, budget)));
+                budget -= answer.length;
+                return { ...thread, answer, answerTruncated: answer.length < thread.answer.length };
+            }),
+        };
+    };
     return {
         version: state.version,
+        revision: state.revision,
+        generation: state.generation,
+        durableStatePath: projectStore.statePath(state.prototypeId),
         prototypeId: state.prototypeId,
         stage: state.stage,
         goal: state.goal,
@@ -2614,10 +3303,22 @@ function factoryStateSnapshot(state) {
         artifacts,
         previewUrl: state.previewUrl,
         previewStatus: state.previewStatus,
-        prototypeReview: state.prototypeReview,
-        designReview: state.designReview,
+        prototypeReview: {
+            ...state.prototypeReview,
+            revisions: state.prototypeReview.revisions.slice(-4).map((revision) => ({
+                ...revision, clarifications: revision.clarifications.slice(-3),
+                omittedClarificationCount: Math.max(0, revision.clarifications.length - 3),
+            })),
+            evidence: state.prototypeReview.evidence.slice(-12).map((entry) => ({
+                ...entry, content: entry.content.slice(0, 2000),
+                contentTruncated: entry.content.length > 2000,
+            })),
+            omittedRevisionCount: Math.max(0, state.prototypeReview.revisions.length - 4),
+            omittedEvidenceCount: Math.max(0, state.prototypeReview.evidence.length - 12),
+        },
+        designReview: reviewSnapshot(state.designReview),
         design: state.design,
-        testDesignReview: state.testDesignReview,
+        testDesignReview: reviewSnapshot(state.testDesignReview),
         planning: state.planning,
         implementation: state.implementation,
         testing: state.testing,
@@ -2626,6 +3327,18 @@ function factoryStateSnapshot(state) {
 
 function answerFactoryPrompt(args) {
     const actionInstructions = {
+        "build-prototype": [
+            args.state.prototypeApproach.mode === "validate-existing"
+                ? "Run and revise the repository's existing GUI to validate the accepted requirements. Do not create a separate prototype app."
+                : "Build the initial runnable prototype from the accepted requirements and answered DAG.",
+            "Inspect the active repository and reuse its stack. Implement a working mock-driven UI, not only a plan.",
+            "Start its development server through the available session-managed tools and capture its actual URL.",
+            `Add <meta name="tandem-prototype-id" content="${args.prototypeId}"> to the served HTML.`,
+            "Verify that URL responds with the identity marker and exercise the primary flow.",
+            "Return previewUrl and previewStatus ready only after the running page is available.",
+            "Do not alter accepted requirements or answers. Append concise prototype evidence and artifacts.",
+            "If creation or startup fails, report the failure explicitly; do not claim a ready preview.",
+        ],
         "add-usage": [
             "The submitted answer is one new usage sentence. Append it exactly once to",
             "requirements.usageItems, keep requirements.substage as usage, and return an",
@@ -2703,6 +3416,8 @@ function answerFactoryPrompt(args) {
         "",
         "Current Tandem state:",
         JSON.stringify(args.state, null, 2),
+        "The snapshot may omit historical discussion or mark content truncated.",
+        "Read durableStatePath when more evidence is needed; do not write that file.",
         "",
         ...actionInstructions[args.action],
         "",
@@ -2723,7 +3438,9 @@ function answerFactoryPrompt(args) {
         "the DAG is fully answered, leave question null and report that requirements are",
         "ready to be completed.",
         "",
-        "Return the complete prototypeReview, ledger, and lifecycle state matching the",
+        "Return prototypeReview matching the schema, including only the active revision",
+        "and newly collected evidence. The extension preserves all earlier history.",
+        "Return the ledger and lifecycle state matching the",
         "output schema. Return only changed or new artifacts in artifactChanges.upsert",
         "and IDs intentionally removed in artifactChanges.remove; leave both arrays",
         "empty when artifacts are unchanged. Each upsert must contain the complete",
@@ -2741,6 +3458,9 @@ function answerFactoryPrompt(args) {
         "recommended default first and set recommended to that exact choice so the user",
         "can submit it without entering text. Keep free text available for overrides.",
         "Return a complete decisionGraph whose nodes are the source of truth for question",
+        "selection during Requirements only. Outside Requirements preserve it unchanged.",
+        "Never omit an existing node or invent an answer. Only the extension applies the submitted answer;",
+        "independent and previously confirmed decisions must retain their IDs, answers, and prerequisites.",
         "selection. Each node id is also its question id. dependencies contains parent",
         "node ids that must be answered first. Include the submitted answer on its node.",
         "A node with every dependency answered must include its question and curated",
@@ -2749,7 +3469,7 @@ function answerFactoryPrompt(args) {
         "nodes are toAnswer. Set question to the active node only; after it is answered,",
         "promote the next eligible toAnswer node to active.",
         "",
-        "Always maintain a single artifact with id design-tree, title Design tree,",
+        "During Requirements maintain a single artifact with id design-tree, title Design tree,",
         "kind design-tree, stage requirements, and language mermaid. Model decisions as",
         "a prerequisite DAG using flowchart LR: preserve answered branches, shared",
         "prerequisites, the active decision, and known downstream decisions. Style nodes",
@@ -2878,6 +3598,7 @@ async function recordFactoryRunId(
     requestId,
     runId,
     factoryName = ANSWER_FACTORY_NAME,
+    generation?: string,
 ) {
     return withAnswerClaim(prototypeId, async () => {
         if (!(await isPreferredAnswerProvider(PROVIDER_EXTENSION_ID))) {
@@ -2886,7 +3607,10 @@ async function recordFactoryRunId(
         const current = await loadState(prototypeId);
         if (
             current.processing?.status !== "running" ||
-            current.processing.requestId !== requestId
+            current.processing.requestId !== requestId ||
+            (generation !== undefined && current.generation !== generation) ||
+            (current.processing.runId && current.processing.runId !== runId &&
+                current.processing.factoryName === factoryName)
         ) {
             return false;
         }
@@ -2897,6 +3621,9 @@ async function recordFactoryRunId(
                 ...current.processing,
                 factoryName,
                 runId,
+                message: current.processing.action === "build-prototype"
+                    ? "The prototype worker is building and launching the runnable preview."
+                    : current.processing.message,
             },
             updatedAt: new Date().toISOString(),
         };
@@ -2919,8 +3646,10 @@ async function applyFactoryResult(prototypeId, requestId, run) {
         const current = await loadState(prototypeId);
         if (
             current.processing?.status !== "running" ||
-            current.processing.requestId !== requestId
+            current.processing.requestId !== requestId ||
+            !current.processing.runId || current.processing.runId !== run.runId
         ) {
+            await logSafely("Ignored a result that does not own the active Tandem request.", "warning");
             return;
         }
 
@@ -2941,38 +3670,36 @@ async function applyFactoryResult(prototypeId, requestId, run) {
             ? result.previewStatus
             : current.previewStatus;
         const completedAt = new Date().toISOString();
-        let decisionGraph = normalizeDecisionGraph(
-            result.decisionGraph,
-            result.question,
-        );
+        let decisionGraph = current.lifecycle.currentStage === "requirements"
+            ? normalizeDecisionGraph(result.decisionGraph, result.question)
+            : current.decisionGraph;
         const action = current.processing.action || "answer-decision";
+        if (action === "build-prototype") {
+            if (!previewUrl || previewStatus !== "ready") throw new Error("Prototype creation did not return a running preview. Retry the build to continue.");
+            await verifyPreviewIdentity(previewUrl, prototypeId);
+        }
         if (action === "generate-dag") {
             const graphError = generatedDecisionGraphError(
                 decisionGraph,
                 current.prototypeApproach.mode === "undecided",
             );
             if (graphError) throw new Error(graphError);
+            if (decisionGraph.nodes.some((node) => node.answer)) {
+                throw new Error("New requirements must be answered by the user, not by the worker.");
+            }
         }
         const answeredQuestionId = current.processing.question?.id;
         if (
             ["answer-decision", "change-answer"].includes(action) &&
             answeredQuestionId
         ) {
-            const descendants =
-                action === "change-answer"
-                    ? dependentNodeIds(current.decisionGraph, answeredQuestionId)
-                    : new Set();
-            decisionGraph = normalizeDecisionGraph({
-                nodes: decisionGraph.nodes.map((node) => ({
-                    ...node,
-                    answer:
-                        node.id === answeredQuestionId
-                            ? current.processing.answer
-                            : descendants.has(node.id)
-                              ? null
-                              : node.answer,
-                })),
-            });
+            decisionGraph = normalizeDecisionGraph(applyAuthoritativeAnswer(
+                current.decisionGraph,
+                decisionGraph,
+                answeredQuestionId,
+                current.processing.answer,
+                action === "change-answer",
+            ));
         }
         let requirements = normalizeRequirements(
             result.requirements,
@@ -3001,25 +3728,29 @@ async function applyFactoryResult(prototypeId, requestId, run) {
                 },
                 decisionGraph,
             );
+        } else {
+            requirements = current.requirements;
         }
+        if (current.lifecycle.currentStage !== "requirements") decisionGraph = current.decisionGraph;
         let prototypeReview = normalizePrototypeReview(result.prototypeReview);
-        prototypeReview.revisions = [
-            ...current.prototypeReview.revisions.filter(
-                (revision) =>
-                    !prototypeReview.revisions.some(
-                        (candidate) => candidate.id === revision.id,
-                    ),
-            ),
-            ...prototypeReview.revisions,
-        ].slice(-50);
+        const returnedRevisions = prototypeReview.revisions;
+        prototypeReview.revisions = current.prototypeReview.revisions.map((revision) => {
+            const update = returnedRevisions.find((candidate) => candidate.id === revision.id);
+            if (!update || revision.id !== current.prototypeReview.activeRevisionId) return revision;
+            return {
+                ...revision, ...update,
+                suggestion: revision.suggestion,
+                submittedAt: revision.submittedAt,
+                clarifications: [
+                    ...revision.clarifications,
+                    ...update.clarifications.filter((entry) => !revision.clarifications.some(
+                        (previous) => previous.question === entry.question && previous.answer === entry.answer)),
+                ],
+            };
+        });
         prototypeReview.evidence = [
-            ...current.prototypeReview.evidence.filter(
-                (entry) =>
-                    !prototypeReview.evidence.some(
-                        (candidate) => candidate.id === entry.id,
-                    ),
-            ),
-            ...prototypeReview.evidence,
+            ...current.prototypeReview.evidence,
+            ...prototypeReview.evidence.filter((entry) => !current.prototypeReview.evidence.some((previous) => previous.id === entry.id)),
         ].slice(-100);
         if (["submit-revision", "clarify-revision"].includes(action)) {
             const questionError = revisionQuestionError(prototypeReview.question);
@@ -3077,7 +3808,12 @@ async function applyFactoryResult(prototypeId, requestId, run) {
         }
         const artifacts = applyArtifactChanges(
             current.artifacts,
-            result.artifactChanges,
+            isObject(result.artifactChanges) ? {
+                ...result.artifactChanges,
+                upsert: Array.isArray(result.artifactChanges.upsert)
+                    ? result.artifactChanges.upsert.map((artifact) => ({ ...artifact, sourceRevision: current.revision }))
+                    : result.artifactChanges.upsert,
+            } : result.artifactChanges,
         );
         if (action === "generate-design-spec") {
             const designSpec = artifacts.find(
@@ -3101,7 +3837,8 @@ async function applyFactoryResult(prototypeId, requestId, run) {
             completePrototype = true;
         }
         const prototypeApproach =
-            current.lifecycle.currentStage === "requirements"
+            current.lifecycle.currentStage === "requirements" &&
+            ["answer-decision", "change-answer"].includes(action) && answeredQuestionId === "prototype-approach"
                 ? normalizePrototypeApproach(result.prototypeApproach)
                 : current.prototypeApproach;
         if (
@@ -3115,13 +3852,10 @@ async function applyFactoryResult(prototypeId, requestId, run) {
         }
         const next = {
             ...current,
-            goal:
-                typeof result.goal === "string"
-                    ? result.goal.trim().slice(0, 4000)
-                    : current.goal,
-            phase,
+            goal: current.goal,
+            phase: action === "build-prototype" ? "iterating" : phase,
             status:
-                typeof result.status === "string"
+                action === "build-prototype" ? "The prototype is ready for review." : typeof result.status === "string"
                     ? result.status.trim().slice(0, 1000)
                     : "The hidden agent processed the latest decision.",
             prototypeApproach,
@@ -3133,9 +3867,11 @@ async function applyFactoryResult(prototypeId, requestId, run) {
                       normalizeQuestion(result.question),
             decisionGraph,
             prototypeReview,
-            confirmed: normalizeStringList(result.confirmed),
-            assumed: normalizeStringList(result.assumed),
-            deferred: normalizeStringList(result.deferred),
+            confirmed: current.lifecycle.currentStage === "requirements"
+                ? decisionGraph.nodes.filter((node) => node.answer).map((node) => `${node.title}: ${node.answer}`)
+                : current.confirmed,
+            assumed: current.lifecycle.currentStage === "requirements" ? normalizeStringList(result.assumed) : current.assumed,
+            deferred: current.lifecycle.currentStage === "requirements" ? normalizeStringList(result.deferred) : current.deferred,
             artifacts,
             previewUrl,
             previewStatus,
@@ -3213,17 +3949,18 @@ async function recordFactoryFailure(prototypeId, requestId, error) {
         }
         const failed = {
             ...current,
+            previewStatus: action === "build-prototype" ? "error" : current.previewStatus,
             decisionGraph: restoredDecisionGraph,
             question:
                 current.requirements.substage === "usage"
                     ? usageQuestion(current.requirements.suggestions)
                     : firstActiveQuestion(restoredDecisionGraph),
             prototypeReview,
-            status: "Hidden processing failed. Review the answer and try again.",
+            status: `Processing failed: ${error instanceof Error ? error.message : String(error)}`,
             processing: {
                 ...current.processing,
                 status: "error",
-                message: "The hidden agent could not process this answer.",
+                message: error instanceof Error ? error.message : String(error),
                 completedAt,
                 answer: null,
             },
@@ -3350,6 +4087,7 @@ async function runAnswerFactory(
         requestId,
         run.runId,
         ANSWER_FACTORY_NAME,
+        state.generation,
     );
     if (!currentRequest) {
         if (!isFactoryRunTerminal(run.status)) {
@@ -4396,6 +5134,9 @@ function markFinalCodeStale(artifacts) {
 }
 
 function resetImplementationForPlan(planning, previous: any = {}) {
+    if (hasUnconfirmedExecution(previous) || ["starting", "running"].includes(previous.status)) {
+        throw new Error("Confirm termination of the previous implementation before replacing its plan or run identity.");
+    }
     return normalizeImplementation(
         {
             status: "idle",
@@ -4757,6 +5498,214 @@ function implementationEvent(type, message) {
     };
 }
 
+function executionInputRevision(state, kind: "implementation" | "testing") {
+    const planning = normalizePlanning(state.planning);
+    const artifactId = kind === "implementation" ? "execution-plan" : "test-spec";
+    return executionDigest({
+        generation: state.generation,
+        input: kind === "implementation"
+            ? { workItems: planning.workItems, maxAgents: planning.maxAgents, strategy: planning.strategy }
+            : { scenarios: normalizeDesignReview(state.testDesignReview).scenarios },
+        artifact: state.artifacts.find((artifact) => artifact.id === artifactId) || null,
+    });
+}
+
+type ExecutionRuntime<K extends "implementation" | "testing"> = K extends "implementation"
+    ? ReturnType<typeof normalizeImplementation> : ReturnType<typeof normalizeTesting>;
+
+function executionRuntime<K extends "implementation" | "testing">(state, kind: K): ExecutionRuntime<K> {
+    return (kind === "implementation"
+        ? normalizeImplementation(state.implementation, normalizePlanning(state.planning))
+        : normalizeTesting(state.testing, normalizeDesignReview(state.testDesignReview))) as ExecutionRuntime<K>;
+}
+
+function assertCurrentExecution<K extends "implementation" | "testing">(state, kind: K,
+    token: ExecutionToken, allowUnbound = false, requireActive = true, allowCancellation = false) {
+    const runtime = executionRuntime(state, kind);
+    if (state.lifecycle.currentStage !== (kind === "implementation" ? "implement" : "test") ||
+        (requireActive && !["starting", "running"].includes(runtime.status)) ||
+        (!allowCancellation && runtime.cancellation && !runtime.cancellation.confirmedAt)) {
+        throw new ExecutionSupersededError();
+    }
+    assertExecutionRequest(runtime, token, executionInputRevision(state, kind),
+        WORKSPACE_ROOT, session.sessionId, allowUnbound);
+    return runtime;
+}
+
+async function bindExecutionRun(prototypeId, kind: "implementation" | "testing", token: ExecutionToken) {
+    if (!token.runId) throw new Error("The SDK did not supply a durable execution run ID.");
+    await withAnswerClaim(prototypeId, async () => {
+        const state = await loadState(prototypeId);
+        const runtime = assertCurrentExecution(state, kind, token, true, false, true);
+        if (runtime.runId === token.runId) return;
+        if (!["starting", "running"].includes(runtime.status)) throw new ExecutionSupersededError();
+        await persistState({ ...state, [kind]: { ...runtime, runId: token.runId, status: "running", launchState: "bound",
+            cancellation: runtime.cancellation && !runtime.cancellation.confirmedAt
+                ? { ...runtime.cancellation, runId: token.runId } : runtime.cancellation },
+            updatedAt: new Date().toISOString() });
+        publishState(prototypeId);
+    });
+}
+
+async function recordExecutionFailure(prototypeId, kind: "implementation" | "testing",
+    expected: ExecutionToken, error: unknown) {
+    if (error instanceof ExecutionSupersededError || error instanceof ExecutionCancellationPendingError) return;
+    const message = error instanceof Error ? error.message : String(error);
+    const request = await requestExecutionCancellation(prototypeId, kind, expected, message, "failed", error);
+    await performExecutionCancellation(prototypeId, kind, request.token, request.cancellationId);
+}
+
+async function requestExecutionCancellation(prototypeId, kind: "implementation" | "testing",
+    expected: ExecutionToken | null, reason: string, outcome: "cancelled" | "failed", failure?: unknown) {
+    return withAnswerClaim(prototypeId, async () => {
+        const state = await loadState(prototypeId);
+        const bound = executionToken(executionRuntime(state, kind));
+        // Resolve a late SDK binding only after matching the immutable originating request.
+        if (expected && (bound.requestId !== expected.requestId || bound.inputRevision !== expected.inputRevision ||
+            bound.ownerSessionId !== expected.ownerSessionId || bound.workspaceRoot !== expected.workspaceRoot ||
+            (expected.runId && bound.runId !== expected.runId))) throw new ExecutionSupersededError();
+        const token = expected ? { ...expected, runId: expected.runId || bound.runId } : bound;
+        const runtime = assertCurrentExecution(state, kind, token, true, false, true);
+        if (!["starting", "running"].includes(runtime.status) && !hasUnconfirmedExecution(runtime)) {
+            throw new AnswerRequestError(409, "No unconfirmed execution is active.");
+        }
+        const now = new Date().toISOString();
+        const cancellation = runtime.cancellation && !runtime.cancellation.confirmedAt ? runtime.cancellation : {
+            requestId: randomUUID(), runId: token.runId, requestedAt: now, confirmedAt: null,
+            outcome, reason, error: "",
+        };
+        const nextRuntime = { ...runtime, status: "running", cancellation, error: reason, completedAt: null,
+            finalizedArtifactId: null,
+            ...(failure && kind === "testing" ? {
+                scenarios: executionRuntime(state, "testing").scenarios.map((item) =>
+                    failure instanceof ExecutionSourceChangedError
+                        ? { ...item, status: "pending", summary: "", evidence: [], startedAt: null, completedAt: null }
+                        : item.status === "running" ? { ...item, status: "failed", summary: reason, completedAt: now } : item),
+            } : failure ? {
+                workItems: executionRuntime(state, "implementation").workItems.map((item) => item.status === "running"
+                    ? { ...item, status: "failed", blockers: [reason], completedAt: now } : item),
+            } : {}),
+        };
+        const failedRuntime = kind === "testing" ? {
+            ...nextRuntime,
+            errorDetails: testRunErrorDetails(testFailureEnvelope(token.runId, failure, reason), {},
+                normalizeTesting(nextRuntime, normalizeDesignReview(state.testDesignReview)), reason),
+        } : nextRuntime;
+        await persistState({ ...state, [kind]: failedRuntime,
+            artifacts: kind === "testing" ? markTestResultsStale(state.artifacts) : markFinalCodeStale(state.artifacts),
+            status: `Termination requested; awaiting SDK confirmation. ${reason}`, updatedAt: now });
+        publishState(prototypeId);
+        return { token, cancellationId: cancellation.requestId };
+    });
+}
+
+function cancellationRuntime(state, kind: "implementation" | "testing", token: ExecutionToken, cancellationId: string) {
+    const runtime = assertCurrentExecution(state, kind, token, !token.runId, false, true);
+    if (runtime.cancellation?.requestId !== cancellationId || runtime.cancellation.runId !== token.runId) {
+        throw new ExecutionSupersededError();
+    }
+    return runtime;
+}
+
+async function finishExecutionCancellation(prototypeId, kind: "implementation" | "testing",
+    token: ExecutionToken, run, cancellationId?: string) {
+    return withAnswerClaim(prototypeId, async () => {
+        const state = await loadState(prototypeId);
+        const current = assertCurrentExecution(state, kind, token, !token.runId, false, true);
+        if (!current.cancellation) return false;
+        const runtime = cancellationRuntime(state, kind, token, cancellationId || current.cancellation.requestId);
+        if (runtime.cancellation.confirmedAt) return true;
+        if (token.runId ? !run || run.runId !== token.runId || !isFactoryRunTerminal(run.status)
+            : run !== null || runtime.launchState !== "unrequested") {
+            throw new ExecutionCancellationPendingError("SDK termination has not been confirmed. Retry stopping the run.");
+        }
+        const now = new Date().toISOString();
+        const status = kind === "implementation" ? runtime.cancellation.outcome : "failed";
+        const stopped = runtime.cancellation.outcome === "cancelled";
+        const message = stopped ? "Execution stopped after termination was confirmed." : runtime.cancellation.reason;
+        const nextRuntime = {
+            ...runtime, status, completedAt: now, terminalConfirmedAt: now, launchState: "settled", error: message,
+            cancellation: { ...runtime.cancellation, confirmedAt: now, error: "" },
+            agents: runtime.agents.map((agent) => agent.status === "running"
+                ? { ...agent, status: kind === "implementation" && stopped ? "cancelled" : "failed", activity: message } : agent),
+            ...(kind === "implementation" ? {
+                workItems: executionRuntime(state, "implementation").workItems.map((item) => item.status === "running"
+                    ? { ...item, status: stopped ? "cancelled" : "failed", blockers: [message], completedAt: now } : item),
+            } : {
+                scenarios: executionRuntime(state, "testing").scenarios.map((item) => item.status === "running"
+                    ? { ...item, status: "failed", summary: message, completedAt: now } : item),
+            }),
+        };
+        await persistState({ ...state, [kind]: nextRuntime, status: message, updatedAt: now });
+        publishState(prototypeId);
+        return true;
+    });
+}
+
+async function performExecutionCancellation(prototypeId, kind: "implementation" | "testing",
+    token: ExecutionToken, cancellationId: string) {
+    const read = () => withAnswerClaim(prototypeId, async () =>
+        cancellationRuntime(await loadState(prototypeId), kind, token, cancellationId));
+    try {
+        const runtime = await read();
+        if (runtime.cancellation.confirmedAt) return;
+        if (!token.runId) {
+            if (runtime.launchState !== "unrequested") {
+                throw new Error("The SDK run ID is unavailable; termination cannot yet be confirmed. Retry stopping after its identity is recovered.");
+            }
+            await finishExecutionCancellation(prototypeId, kind, token, null, cancellationId);
+            return;
+        }
+        let run = await session.factory.getRun(token.runId);
+        if (run.runId !== token.runId) throw new ExecutionSupersededError();
+        if (!isFactoryRunTerminal(run.status)) {
+            await read();
+            run = await session.factory.cancel(token.runId);
+        }
+        await finishExecutionCancellation(prototypeId, kind, token, run, cancellationId);
+    } catch (error) {
+        if (error instanceof ExecutionSupersededError) throw error;
+        const message = `Termination is unconfirmed: ${error instanceof Error ? error.message : String(error)}`;
+        const confirmed = await withAnswerClaim(prototypeId, async () => {
+            const state = await loadState(prototypeId);
+            const runtime = cancellationRuntime(state, kind, token, cancellationId);
+            if (runtime.cancellation.confirmedAt) return true;
+            await persistState({ ...state, [kind]: {
+                ...runtime, status: "running", completedAt: null, error: message,
+                cancellation: { ...runtime.cancellation, error: message },
+            }, status: `${message} Retry Stop; reset and reopening remain blocked.`, updatedAt: new Date().toISOString() });
+            publishState(prototypeId);
+            return false;
+        });
+        if (!confirmed) throw new ExecutionCancellationPendingError(message);
+    }
+}
+
+async function assertPreviousExecutionStopped(runtime) {
+    if (hasUnconfirmedExecution(runtime)) throw new AnswerRequestError(409,
+        "The previous SDK run has no confirmed termination. Stop or recover it before retrying.");
+}
+
+async function assertExecutionDispatch(prototypeId, kind: "implementation" | "testing", token: ExecutionToken) {
+    await withAnswerClaim(prototypeId, async () => {
+        assertCurrentExecution(await loadState(prototypeId), kind, token);
+        if (kind === "testing") await assertExecutionSources(token);
+    });
+}
+
+async function assertCurrentTestEvidence(state) {
+    const testing = executionRuntime(state, "testing");
+    if (testing.status !== "completed" || testing.finalizedArtifactId !== "test-results" ||
+        !testing.runId || testing.scenarios.length === 0 ||
+        testing.scenarios.some((scenario) => scenario.status !== "passed" || !scenario.summary || scenario.evidence.length === 0) ||
+        !state.artifacts.some((artifact) => artifact.id === "test-results" && artifact.reviewStatus === "current") ||
+        testing.inputRevision !== executionInputRevision(state, "testing") ||
+        testing.workspaceRoot !== executionWorkspace(WORKSPACE_ROOT)) {
+        throw new Error("Test evidence does not match the current specification and workspace.");
+    }
+    await assertExecutionSources(executionToken(testing));
+}
+
 function implementationPrompt(args, item, strategy, completedHandoffs) {
     return [
         `Implement work item "${item.id}: ${item.title}" in the active workspace.`,
@@ -4785,20 +5734,32 @@ function implementationPrompt(args, item, strategy, completedHandoffs) {
         "the change is strictly required; report any unavoidable overlap. Preserve existing",
         "user changes. Do not create branches, commits, stashes, or pull requests. Run the",
         "smallest existing validation that proves the acceptance criteria. Return a concise",
-        "structured result with every changed file and validation outcome.",
+        "structured result with every changed workspace-relative file and validation outcome. For EACH listed",
+        "validation requirement return { requirement, status, evidence }; copy the exact",
+        "requirement text, use passed/failed/skipped, and include concrete observed evidence.",
+        "Return completed only with a nonempty summary, all validations passed, and no blockers.",
     ].join("\n");
 }
 
-async function prepareImplementationWave(prototypeId, waveIndex, workItemIds) {
+async function prepareImplementationWave(prototypeId, waveIndex, workItemIds, token: ExecutionToken) {
+    await bindExecutionRun(prototypeId, "implementation", token);
     return withAnswerClaim(prototypeId, async () => {
         const state = await loadState(prototypeId);
         const planning = normalizePlanning(state.planning);
-        const implementation = normalizeImplementation(
-            state.implementation,
-            planning,
-        );
-        if (!["starting", "running"].includes(implementation.status)) {
-            return { runnable: [], strategy: [], stopped: true };
+        const implementation = assertCurrentExecution(state, "implementation", token);
+        const scheduled = planning.waves.find((wave) => wave.index === waveIndex);
+        if (!scheduled || executionDigest(scheduled.workItemIds) !== executionDigest(workItemIds)) {
+            throw new Error("The implementation wave does not match its accepted plan.");
+        }
+        const saved = implementation.waveManifests.find((wave) => wave.index === waveIndex);
+        if (saved) {
+            return {
+                runnable: saved.itemIds.filter((id) =>
+                    implementation.workItems.find((item) => item.id === id)?.status !== "completed")
+                    .map((id) => planning.workItems.find((item) => item.id === id)),
+                strategy: saved.strategy, completedHandoffs: saved.handoffs,
+                maxConcurrency: saved.maxConcurrency, stopped: false,
+            };
         }
         const now = new Date().toISOString();
         const queued = implementation.strategySuggestions.filter(
@@ -4869,6 +5830,12 @@ async function prepareImplementationWave(prototypeId, waveIndex, workItemIds) {
                 ).length;
             return priorityScore(right) - priorityScore(left);
         });
+        const completedHandoffs = implementation.workItems
+            .filter((item) => item.status === "completed" &&
+                runnable.some((candidate) => candidate.dependencies.includes(item.id)))
+            .map((item) => `${item.id}: ${item.summary || "completed"}`);
+        const manifest = { index: waveIndex, itemIds: runnable.map((item) => item.id),
+            strategy, handoffs: completedHandoffs, maxConcurrency };
         const runnableIds = new Set(runnable.map((item) => item.id));
         const agents = implementation.agents.filter(
             (agent) => !runnableIds.has(agent.workItemId),
@@ -4907,6 +5874,7 @@ async function prepareImplementationWave(prototypeId, waveIndex, workItemIds) {
                 ...implementation,
                 status: "running",
                 currentWaveIndex: waveIndex,
+                waveManifests: [...implementation.waveManifests, manifest],
                 workItems: [...workById.values()],
                 agents,
                 strategySuggestions: implementation.strategySuggestions.map(
@@ -4936,15 +5904,6 @@ async function prepareImplementationWave(prototypeId, waveIndex, workItemIds) {
         };
         await persistState(next);
         publishState(prototypeId);
-        const completedHandoffs = nextImplementation.workItems
-            .filter(
-                (item) =>
-                    item.status === "completed" &&
-                    runnable.some((candidate) =>
-                        candidate.dependencies.includes(item.id),
-                    ),
-            )
-            .map((item) => `${item.id}: ${item.summary || "completed"}`);
         return {
             runnable,
             strategy,
@@ -4958,16 +5917,17 @@ async function prepareImplementationWave(prototypeId, waveIndex, workItemIds) {
 async function recordImplementationWaveResults(
     prototypeId,
     waveIndex,
-    planItems,
-    results,
+    entries,
+    token: ExecutionToken,
 ) {
     await withAnswerClaim(prototypeId, async () => {
         const state = await loadState(prototypeId);
         const planning = normalizePlanning(state.planning);
-        const implementation = normalizeImplementation(
-            state.implementation,
-            planning,
-        );
+        const implementation = assertCurrentExecution(state, "implementation", token);
+        const manifest = implementation.waveManifests.find((wave) => wave.index === waveIndex);
+        if (!manifest || entries.some((entry) => !manifest.itemIds.includes(entry.itemId))) {
+            throw new Error("Implementation results do not belong to the dispatched wave.");
+        }
         const now = new Date().toISOString();
         const workById = new Map<string, any>(
             implementation.workItems.map((item) => [item.id, item]),
@@ -4976,12 +5936,19 @@ async function recordImplementationWaveResults(
             implementation.agents.map((agent) => [agent.workItemId, agent]),
         );
         let failedCount = 0;
-        for (let index = 0; index < planItems.length; index += 1) {
-            const item = planItems[index];
-            const result = isObject(results[index]) ? results[index] : null;
+        for (const entry of entries) {
+            const item = planning.workItems.find((item) => item.id === entry.itemId);
+            const result = workerOutcome(entry.result, item.validation);
+            const outside = result.filesChanged.filter((path) => !ownershipContains(item.files, path));
+            if (outside.length) {
+                result.status = "failed";
+                result.blockers.push(`Changed paths outside this item's ownership: ${outside.join(", ")}`);
+                result.summary = `${result.summary} ${result.blockers.join(" ")}`;
+            }
             const succeeded = result?.status === "completed";
             const runtime = workById.get(item.id);
             if (!runtime) continue;
+            if (runtime.status === "completed") continue;
             runtime.status = succeeded ? "completed" : "failed";
             runtime.summary = String(
                 result?.summary ||
@@ -5012,7 +5979,7 @@ async function recordImplementationWaveResults(
             ...implementation.events,
             implementationEvent(
                 failedCount > 0 ? "error" : "wave",
-                `Wave ${waveIndex} finished: ${planItems.length - failedCount} completed, ${failedCount} failed.`,
+                `Wave ${waveIndex} recorded: ${entries.length - failedCount} completed, ${failedCount} failed.`,
             ),
         ];
         const next = {
@@ -5051,6 +6018,8 @@ function finalCodeArtifact(state) {
         "# Final code",
         "",
         `Implementation completed ${implementation.completedAt || "successfully"}.`,
+        `Plan revision: ${implementation.inputRevision || "unavailable"}.`,
+        `Execution request: ${implementation.requestId || "unavailable"}; SDK run: ${implementation.runId || "unavailable"}.`,
         "",
         "## Work items",
         "",
@@ -5084,20 +6053,20 @@ function finalCodeArtifact(state) {
     };
 }
 
-async function settleImplementationRun(prototypeId, run) {
+async function settleImplementationRun(prototypeId, run, token: ExecutionToken) {
+    if (!token?.runId || run.runId !== token.runId) throw new ExecutionSupersededError();
+    if (!isFactoryRunTerminal(run.status)) throw new Error("Implementation termination is not confirmed.");
+    if (await finishExecutionCancellation(prototypeId, "implementation", token, run)) return;
     await withAnswerClaim(prototypeId, async () => {
         const state = await loadState(prototypeId);
         const planning = normalizePlanning(state.planning);
-        const implementation = normalizeImplementation(
-            state.implementation,
-            planning,
-        );
-        if (implementation.runId && implementation.runId !== run.runId) return;
+        const implementation = assertCurrentExecution(state, "implementation", token);
         const result = isObject(run.result) ? run.result : {};
         const allCompleted =
             implementation.workItems.length > 0 &&
             implementation.workItems.every(
-                (item) => item.status === "completed",
+                (item) => item.status === "completed" && item.summary &&
+                    item.validation.length > 0 && item.blockers.length === 0,
             );
         const succeeded =
             run.status === "completed" &&
@@ -5147,6 +6116,13 @@ async function settleImplementationRun(prototypeId, run) {
                 {
                     ...implementation,
                     status,
+                    terminalConfirmedAt: now,
+                    launchState: "settled",
+                    workItems: implementation.workItems.map((item) => item.status === "running"
+                        ? { ...item, status: status === "cancelled" ? "cancelled" : "failed",
+                            blockers: [error], completedAt: now } : item),
+                    agents: implementation.agents.map((agent) => agent.status === "running"
+                        ? { ...agent, status: status === "cancelled" ? "cancelled" : "failed", activity: error } : agent),
                     completedAt: now,
                     finalizedArtifactId,
                     error,
@@ -5177,128 +6153,200 @@ async function settleImplementationRun(prototypeId, run) {
 }
 
 async function runImplementationFactory(prototypeId, state, resumeFromRunId = null) {
-    const planning = normalizePlanning(state.planning);
-    const request = {
-        name: IMPLEMENTATION_FACTORY_NAME,
-        args: {
-            prototypeId,
-            projectRoot: WORKSPACE_ROOT,
-            plan: planning,
-        },
-        options: {
-            limits: {
-                maxConcurrentSubagents: planning.maxAgents,
-                maxTotalSubagents: 30,
-                timeoutSeconds: 3600,
-                maxAiCredits: 1024000,
-            },
-            ...(resumeFromRunId ? { resumeFromRunId } : {}),
-        },
-    };
-    const run = await session.rpc.factory.run(request);
-    const accepted = await withAnswerClaim(prototypeId, async () => {
+    return runExecutionFactory(prototypeId, state, "implementation", resumeFromRunId);
+}
+
+async function resumeExecutionRun(prototypeId, kind: "implementation" | "testing", token: ExecutionToken) {
+    const check = () => withAnswerClaim(prototypeId, async () =>
+        assertCurrentExecution(await loadState(prototypeId), kind, token));
+    await check();
+    try {
+        return await session.factory.resume(token.runId);
+    } catch (error) {
+        if (!["already_active", "factory_already_running"].includes(factoryErrorCode(error))) throw error;
+        await check();
+        const existing = await session.factory.getRun(token.runId);
+        if (existing.runId !== token.runId) throw new ExecutionSupersededError();
+        if (existing.status === "halted") throw error;
+        if (isFactoryRunTerminal(existing.status)) return existing;
+        await check();
+        return session.factory.waitForRun(token.runId);
+    }
+}
+
+async function runExecutionFactory(prototypeId, state, kind: "implementation" | "testing", resumeFromRunId = null) {
+    let token = executionToken(state[kind]);
+    if (!resumeFromRunId && token.runId) throw new Error("An existing execution run must be recovered or resumed, not started again.");
+    await withAnswerClaim(prototypeId, async () => {
         const current = await loadState(prototypeId);
-        const currentPlanning = normalizePlanning(current.planning);
-        const implementation = normalizeImplementation(
-            current.implementation,
-            currentPlanning,
-        );
-        if (!["starting", "running"].includes(implementation.status)) {
-            return false;
+        const runtime = assertCurrentExecution(current, kind, token, !resumeFromRunId);
+        if (resumeFromRunId && token.runId !== resumeFromRunId) throw new ExecutionSupersededError();
+        if (kind === "testing") await assertExecutionSources(token);
+        if (!resumeFromRunId) {
+            await persistState({ ...current, [kind]: { ...runtime, launchState: "requested" },
+                updatedAt: new Date().toISOString() });
         }
-        const next = {
-            ...current,
-            implementation: {
-                ...implementation,
-                status: "running",
-                runId: run.runId,
-            },
-            status: "Implementation agents are running.",
-            updatedAt: new Date().toISOString(),
-        };
-        await persistState(next);
-        publishState(prototypeId);
-        return true;
     });
-    if (!accepted) {
-        if (!isFactoryRunTerminal(run.status)) {
-            await session.factory.cancel(run.runId);
+    const run = resumeFromRunId
+        ? await resumeExecutionRun(prototypeId, kind, token)
+        : await session.rpc.factory.run({
+            name: kind === "implementation" ? IMPLEMENTATION_FACTORY_NAME : TEST_FACTORY_NAME,
+            args: {
+                prototypeId, projectRoot: WORKSPACE_ROOT, execution: token,
+                ...(kind === "implementation"
+                    ? { plan: normalizePlanning(state.planning) }
+                    : { scenarios: normalizeDesignReview(state.testDesignReview).scenarios }),
+            },
+            options: { limits: { maxConcurrentSubagents: kind === "implementation" ? state.planning.maxAgents : 4 } },
+        });
+    token = { ...token, runId: run.runId };
+    try {
+        await bindExecutionRun(prototypeId, kind, token);
+    } catch (error) {
+        // This receipt belongs to the immutable launch request, never a replacement state's run.
+        if (!isFactoryRunTerminal(run.status) && token.runId === run.runId &&
+            token.ownerSessionId === session.sessionId && token.workspaceRoot === executionWorkspace(WORKSPACE_ROOT)) {
+            await session.factory.cancel(token.runId);
         }
+        throw error;
+    }
+    const pendingCancellation = await withAnswerClaim(prototypeId, async () => {
+        const runtime = assertCurrentExecution(await loadState(prototypeId), kind, token, false, false, true);
+        return runtime.cancellation && !runtime.cancellation.confirmedAt ? runtime.cancellation.requestId : null;
+    });
+    if (pendingCancellation) {
+        if (isFactoryRunTerminal(run.status)) await finishExecutionCancellation(prototypeId, kind, token, run, pendingCancellation);
+        else await performExecutionCancellation(prototypeId, kind, token, pendingCancellation);
         return;
     }
-    const terminalRun = isFactoryRunTerminal(run.status)
-        ? run
-        : await session.factory.waitForRun(run.runId);
-    await settleImplementationRun(prototypeId, terminalRun);
+    await withAnswerClaim(prototypeId, async () => assertCurrentExecution(await loadState(prototypeId), kind, token));
+    const terminal = isFactoryRunTerminal(run.status) ? run : await session.factory.waitForRun(run.runId);
+    if (terminal.status === "halted") return;
+    if (kind === "implementation") await settleImplementationRun(prototypeId, terminal, token);
+    else await settleTestRun(prototypeId, terminal, token);
+}
+
+function trackExecution(prototypeId, state, kind: "implementation" | "testing", operation: () => Promise<void>) {
+    const active = kind === "implementation" ? activeImplementationRuns : activeTestRuns;
+    if (active.has(prototypeId)) return;
+    const token = executionToken(state[kind]);
+    const work = operation()
+        .catch((error) => recordExecutionFailure(prototypeId, kind, token, error))
+        .catch((error) => {
+            if (!(error instanceof ExecutionSupersededError)) {
+                return logSafely(`Tandem could not record execution failure: ${error instanceof Error ? error.message : String(error)}`);
+            }
+        })
+        .finally(() => {
+            if (active.get(prototypeId) === work) active.delete(prototypeId);
+        });
+    active.set(prototypeId, work);
 }
 
 function startImplementationFactory(prototypeId, state, resumeFromRunId = null) {
-    if (activeImplementationRuns.has(prototypeId)) return;
-    const work = runImplementationFactory(prototypeId, state, resumeFromRunId)
-        .catch(async (error) => {
-            const failedRun = {
-                runId:
-                    (await loadState(prototypeId)).implementation.runId ||
-                    resumeFromRunId ||
-                    "unavailable",
-                status: "error",
-                error: error instanceof Error ? error.message : String(error),
-            };
-            await settleImplementationRun(prototypeId, failedRun);
-        })
-        .finally(() => {
-            if (activeImplementationRuns.get(prototypeId) === work) {
-                activeImplementationRuns.delete(prototypeId);
-            }
-        });
-    activeImplementationRuns.set(prototypeId, work);
+    trackExecution(prototypeId, state, "implementation",
+        () => runImplementationFactory(prototypeId, state, resumeFromRunId));
 }
 
-function recoverImplementationFactory(state, canSubmitAnswers) {
-    const implementation = normalizeImplementation(
-        state.implementation,
-        normalizePlanning(state.planning),
-    );
-    if (
-        !canSubmitAnswers ||
-        state.lifecycle.currentStage !== "implement" ||
-        !["starting", "running"].includes(implementation.status) ||
-        activeImplementationRuns.has(state.prototypeId)
-    ) {
+function hasExecutionIdentity(runtime) {
+    return Boolean(runtime.requestId && runtime.inputRevision && runtime.ownerSessionId && runtime.workspaceRoot);
+}
+
+async function failLegacyExecutions(observed) {
+    await withAnswerClaim(observed.prototypeId, async () => {
+        const current = await loadState(observed.prototypeId);
+        if (current.generation !== observed.generation ||
+            (current.jobOwner && !sameOwner(current.jobOwner, { sessionId: session.sessionId, workspaceRoot: WORKSPACE_ROOT }))) return;
+        const next = { ...current };
+        const now = new Date().toISOString();
+        let changed = false;
+        for (const kind of ["implementation", "testing"] as const) {
+            const runtime = executionRuntime(current, kind);
+            if (!["starting", "running"].includes(runtime.status) || hasExecutionIdentity(runtime) ||
+                executionDigest(runtime) !== executionDigest(executionRuntime(observed, kind)) ||
+                (runtime.ownerSessionId && runtime.ownerSessionId !== session.sessionId) ||
+                (runtime.workspaceRoot && runtime.workspaceRoot !== executionWorkspace(WORKSPACE_ROOT))) continue;
+            const message = `Legacy ${kind} execution has no durable request/owner identity. Automatic recovery was stopped. ${
+                runtime.runId ? `Inspect SDK run ${runtime.runId} and confirm it has stopped before retrying.` :
+                    "Confirm previous agents have stopped, then explicitly retry to create a new request."}`;
+            next[kind] = { ...runtime, status: "failed", error: message, completedAt: now,
+                finalizedArtifactId: null,
+                agents: runtime.agents.map((agent) => ({ ...agent, status: "failed", activity: message })),
+                ...(kind === "implementation" ? {
+                    workItems: executionRuntime(current, "implementation").workItems.map((item) => item.status === "running"
+                        ? { ...item, status: "failed", blockers: [message], completedAt: now } : item),
+                } : {
+                    scenarios: executionRuntime(current, "testing").scenarios.map((item) => item.status === "running"
+                        ? { ...item, status: "failed", summary: message, completedAt: now } : item),
+                }),
+            };
+            if (kind === "testing") {
+                next.testing.errorDetails = testRunErrorDetails(testFailureEnvelope(runtime.runId, null, message), {},
+                    normalizeTesting(next.testing, normalizeDesignReview(current.testDesignReview)), message);
+            }
+            next.artifacts = kind === "implementation" ? markFinalCodeStale(next.artifacts) : markTestResultsStale(next.artifacts);
+            next.status = message;
+            changed = true;
+        }
+        if (!changed) return;
+        if (!current.jobOwner && hasActiveWork(next)) {
+            throw new Error("Other ownerless legacy jobs also require recovery; execution migration will not claim their ownership.");
+        }
+        next.updatedAt = now;
+        await persistState(next);
+        publishState(current.prototypeId);
+    });
+}
+
+function recoverExecutionFactory(state, canSubmitAnswers, kind: "implementation" | "testing") {
+    const runtime = executionRuntime(state, kind);
+    const active = kind === "implementation" ? activeImplementationRuns : activeTestRuns;
+    if (!canSubmitAnswers || state.lifecycle.currentStage !== (kind === "implementation" ? "implement" : "test") ||
+        (!["starting", "running"].includes(runtime.status) && !hasUnconfirmedExecution(runtime)) ||
+        active.has(state.prototypeId)) return;
+    if (!hasExecutionIdentity(runtime)) {
+        const work = (hasUnconfirmedExecution(runtime)
+            ? logSafely(`Unconfirmed legacy ${kind} termination retains SDK run ${runtime.runId || "(unknown)"}. Return to the originating session and confirm termination; reset and reopening remain blocked.`)
+            : failLegacyExecutions(state))
+            .catch((error) => logSafely(`Legacy execution recovery needs attention: ${error instanceof Error ? error.message : String(error)}`))
+            .finally(() => { if (active.get(state.prototypeId) === work) active.delete(state.prototypeId); });
+        active.set(state.prototypeId, work);
         return;
     }
-    const work = (async () => {
-        if (!implementation.runId) {
-            await runImplementationFactory(state.prototypeId, state);
+    const token = executionToken(runtime);
+    if (token.ownerSessionId !== session.sessionId || token.workspaceRoot !== executionWorkspace(WORKSPACE_ROOT)) return;
+    trackExecution(state.prototypeId, state, kind, async () => {
+        if (hasUnconfirmedExecution(runtime)) {
+            const request = await requestExecutionCancellation(state.prototypeId, kind, token,
+                runtime.cancellation?.reason || "Confirm termination of the interrupted execution.",
+                runtime.status === "cancelled" ? "cancelled" : "failed");
+            await performExecutionCancellation(state.prototypeId, kind, request.token, request.cancellationId);
             return;
         }
-        let run = await session.factory.getRun(implementation.runId);
+        await withAnswerClaim(state.prototypeId, async () => {
+            assertCurrentExecution(await loadState(state.prototypeId), kind, token, !token.runId);
+            if (kind === "testing") await assertExecutionSources(token);
+        });
+        if (!token.runId) {
+            throw new Error("The previous execution has no durable SDK run ID. Inspect its status before explicitly retrying; automatic restart is unsafe.");
+        }
+        let run = await session.factory.getRun(token.runId);
+        if (run.runId !== token.runId) throw new ExecutionSupersededError();
         if (run.status === "halted") {
-            await runImplementationFactory(
-                state.prototypeId,
-                state,
-                implementation.runId,
-            );
+            await runExecutionFactory(state.prototypeId, state, kind, token.runId);
             return;
         }
         if (!isFactoryRunTerminal(run.status)) {
-            run = await session.factory.waitForRun(run.runId);
+            await withAnswerClaim(state.prototypeId, async () => assertCurrentExecution(await loadState(state.prototypeId), kind, token));
+            run = await session.factory.waitForRun(token.runId);
         }
-        await settleImplementationRun(state.prototypeId, run);
-    })()
-        .catch(async (error) => {
-            await settleImplementationRun(state.prototypeId, {
-                runId: implementation.runId || "unavailable",
-                status: "error",
-                error: error instanceof Error ? error.message : String(error),
-            });
-        })
-        .finally(() => {
-            if (activeImplementationRuns.get(state.prototypeId) === work) {
-                activeImplementationRuns.delete(state.prototypeId);
-            }
-        });
-    activeImplementationRuns.set(state.prototypeId, work);
+        if (kind === "implementation") await settleImplementationRun(state.prototypeId, run, token);
+        else await settleTestRun(state.prototypeId, run, token);
+    });
+}
+
+function recoverImplementationFactory(state, canSubmitAnswers) {
+    recoverExecutionFactory(state, canSubmitAnswers, "implementation");
 }
 
 function testEvent(type, message) {
@@ -5340,16 +6388,33 @@ function testScenarioPrompt(args, scenario, dependencyEvidence) {
         "the existing repository tooling. Add or update integration/interaction test code",
         "only when the test specification requires it. Preserve user changes. Do not create",
         "branches, commits, stashes, or pull requests. Return passed only when the expected",
-        "outcome is observed; otherwise return failed with concrete evidence.",
+        "outcome is observed; otherwise return failed with concrete evidence. Include a",
+        "nonempty summary and outcome evidence. For EACH validation requirement return",
+        "{ requirement, status, evidence }, copying the exact requirement text and using",
+        "passed/failed/skipped with concrete observed evidence. Source changes invalidate",
+        "this test run and require a fresh retry against the updated workspace.",
     ].join("\n");
 }
 
-async function prepareTestWave(prototypeId, wave) {
+async function prepareTestWave(prototypeId, wave, token: ExecutionToken) {
+    await bindExecutionRun(prototypeId, "testing", token);
     return withAnswerClaim(prototypeId, async () => {
         const state = await loadState(prototypeId);
         const review = normalizeDesignReview(state.testDesignReview);
-        const testing = normalizeTesting(state.testing, review);
-        if (!["starting", "running"].includes(testing.status)) return [];
+        const testing = assertCurrentExecution(state, "testing", token);
+        await assertExecutionSources(token);
+        const scheduled = scheduleTestScenarios(review.scenarios, 4).waves.find((entry) => entry.index === wave.index);
+        if (!scheduled || executionDigest(scheduled.scenarioIds) !== executionDigest(wave.scenarioIds)) {
+            throw new Error("The test wave does not match its accepted specification.");
+        }
+        const saved = testing.waveManifests.find((entry) => entry.index === wave.index);
+        if (saved) {
+            return {
+                runnable: saved.itemIds.filter((id) => testing.scenarios.find((item) => item.id === id)?.status !== "passed")
+                    .map((id) => review.scenarios.find((item) => item.id === id)),
+                dependencyEvidence: saved.handoffs,
+            };
+        }
         const now = new Date().toISOString();
         const runtimeById = new Map<string, any>(
             testing.scenarios.map((scenario) => [scenario.id, scenario]),
@@ -5390,6 +6455,12 @@ async function prepareTestWave(prototypeId, wave) {
                 summary: "",
             });
         }
+        const dependencyEvidence = testing.scenarios
+            .filter((scenario) => scenario.status === "passed" &&
+                runnable.some((candidate) => candidate.dependencies.includes(scenario.id)))
+            .flatMap((scenario) => [`${scenario.id}: ${scenario.summary}`, ...scenario.evidence]);
+        const manifest = { index: wave.index, itemIds: runnable.map((scenario) => scenario.id),
+            handoffs: dependencyEvidence, strategy: [], maxConcurrency: 4 };
         const next = {
             ...state,
             testing: normalizeTesting(
@@ -5397,6 +6468,7 @@ async function prepareTestWave(prototypeId, wave) {
                     ...testing,
                     status: "running",
                     currentWaveIndex: wave.index,
+                    waveManifests: [...testing.waveManifests, manifest],
                     scenarios: [...runtimeById.values()],
                     agents,
                     events: [
@@ -5414,15 +6486,20 @@ async function prepareTestWave(prototypeId, wave) {
         };
         await persistState(next);
         publishState(prototypeId);
-        return runnable;
+        return { runnable, dependencyEvidence };
     });
 }
 
-async function recordTestWaveResults(prototypeId, wave, specs, results) {
+async function recordTestWaveResults(prototypeId, wave, entries, token: ExecutionToken) {
     await withAnswerClaim(prototypeId, async () => {
         const state = await loadState(prototypeId);
         const review = normalizeDesignReview(state.testDesignReview);
-        const testing = normalizeTesting(state.testing, review);
+        const testing = assertCurrentExecution(state, "testing", token);
+        await assertExecutionSources(token);
+        const manifest = testing.waveManifests.find((entry) => entry.index === wave.index);
+        if (!manifest || entries.some((entry) => !manifest.itemIds.includes(entry.itemId))) {
+            throw new Error("Test results do not belong to the dispatched wave.");
+        }
         const runtimeById = new Map<string, any>(
             testing.scenarios.map((scenario) => [scenario.id, scenario]),
         );
@@ -5431,12 +6508,13 @@ async function recordTestWaveResults(prototypeId, wave, specs, results) {
         );
         const now = new Date().toISOString();
         let failed = 0;
-        for (let index = 0; index < specs.length; index += 1) {
-            const spec = specs[index];
-            const result = isObject(results[index]) ? results[index] : null;
+        for (const entry of entries) {
+            const spec = review.scenarios.find((item) => item.id === entry.itemId);
+            const result = workerOutcome(entry.result, spec.validation, true);
             const passed = result?.status === "passed";
             const runtime = runtimeById.get(spec.id);
             if (!runtime) continue;
+            if (runtime.status === "passed") continue;
             runtime.status = passed ? "passed" : "failed";
             runtime.summary = String(
                 result?.summary ||
@@ -5470,7 +6548,7 @@ async function recordTestWaveResults(prototypeId, wave, specs, results) {
                         ...testing.events,
                         testEvent(
                             failed > 0 ? "error" : "wave",
-                            `Test wave ${wave.index} finished: ${specs.length - failed} passed, ${failed} failed.`,
+                            `Test wave ${wave.index} recorded: ${entries.length - failed} passed, ${failed} failed.`,
                         ),
                     ],
                 },
@@ -5501,6 +6579,9 @@ function testResultsArtifact(state) {
             "# Integration and interaction test results",
             "",
             `Completed ${testing.completedAt || "successfully"}.`,
+            `Source fingerprint: ${testing.sourceFingerprint || "unavailable"}.`,
+            `Specification revision: ${testing.inputRevision || "unavailable"}.`,
+            `Execution request: ${testing.requestId || "unavailable"}; SDK run: ${testing.runId || "unavailable"}.`,
             "",
             ...testing.scenarios.flatMap((runtime) => {
                 const spec = review.scenarios.find(
@@ -5520,6 +6601,18 @@ function testResultsArtifact(state) {
         mermaid: "",
         sourceThreadIds: [],
         reviewStatus: "current",
+    };
+}
+
+function testFailureEnvelope(runId, error, summary) {
+    const source = isObject(error) ? error : {};
+    const cause = isObject(source.cause) ? source.cause.stack || source.cause.message : source.cause;
+    return {
+        runId,
+        status: "error",
+        error: typeof source.stack === "string" ? source.stack : summary,
+        failure: source.data || (source.code !== undefined ? { code: source.code } : null),
+        reason: cause || null,
     };
 }
 
@@ -5564,18 +6657,21 @@ function testRunErrorDetails(run, result, testing, summary) {
     ).slice(0, 50_000);
 }
 
-async function settleTestRun(prototypeId, run) {
+async function settleTestRun(prototypeId, run, token: ExecutionToken) {
+    if (!token?.runId || run.runId !== token.runId) throw new ExecutionSupersededError();
+    if (!isFactoryRunTerminal(run.status)) throw new Error("Test termination is not confirmed.");
+    if (await finishExecutionCancellation(prototypeId, "testing", token, run)) return;
     await withAnswerClaim(prototypeId, async () => {
         const state = await loadState(prototypeId);
         const review = normalizeDesignReview(state.testDesignReview);
-        const testing = normalizeTesting(state.testing, review);
-        if (testing.runId && testing.runId !== run.runId) return;
+        const testing = assertCurrentExecution(state, "testing", token);
+        await assertExecutionSources(token);
         const result = isObject(run.result) ? run.result : {};
         const passed =
             run.status === "completed" &&
             result.status === "passed" &&
             testing.scenarios.length > 0 &&
-            testing.scenarios.every((scenario) => scenario.status === "passed");
+            testing.scenarios.every((scenario) => scenario.status === "passed" && scenario.summary && scenario.evidence.length > 0);
         const now = new Date().toISOString();
         let artifacts = markTestResultsStale(state.artifacts);
         let finalizedArtifactId = null;
@@ -5605,9 +6701,13 @@ async function settleTestRun(prototypeId, run) {
                           ? "One or more test scenarios failed."
                           : factoryErrorMessage(run)),
               ).slice(0, 2000);
+        const settledScenarios = testing.scenarios.map((scenario) => scenario.status === "running"
+            ? { ...scenario, status: "failed", summary: error, completedAt: now } : scenario);
+        const settledAgents = testing.agents.map((agent) => agent.status === "running"
+            ? { ...agent, status: "failed", activity: error } : agent);
         const errorDetails = passed
             ? ""
-            : testRunErrorDetails(run, result, testing, error);
+            : testRunErrorDetails(run, result, { ...testing, scenarios: settledScenarios, agents: settledAgents }, error);
         const next = {
             ...state,
             artifacts,
@@ -5615,6 +6715,10 @@ async function settleTestRun(prototypeId, run) {
                 {
                     ...testing,
                     status: passed ? "completed" : "failed",
+                    terminalConfirmedAt: now,
+                    launchState: "settled",
+                    scenarios: settledScenarios,
+                    agents: settledAgents,
                     completedAt: now,
                     finalizedArtifactId,
                     error,
@@ -5642,110 +6746,16 @@ async function settleTestRun(prototypeId, run) {
 }
 
 async function runTestFactory(prototypeId, state, resumeFromRunId = null) {
-    const review = normalizeDesignReview(state.testDesignReview);
-    const run = await session.rpc.factory.run({
-        name: TEST_FACTORY_NAME,
-        args: {
-            prototypeId,
-            projectRoot: WORKSPACE_ROOT,
-            scenarios: review.scenarios,
-        },
-        options: {
-            limits: {
-                maxConcurrentSubagents: 4,
-                maxTotalSubagents: 30,
-                timeoutSeconds: 3600,
-                maxAiCredits: 1024000,
-            },
-            ...(resumeFromRunId ? { resumeFromRunId } : {}),
-        },
-    });
-    const accepted = await withAnswerClaim(prototypeId, async () => {
-        const current = await loadState(prototypeId);
-        const currentReview = normalizeDesignReview(current.testDesignReview);
-        const testing = normalizeTesting(current.testing, currentReview);
-        if (!["starting", "running"].includes(testing.status)) return false;
-        const next = {
-            ...current,
-            testing: { ...testing, status: "running", runId: run.runId },
-            status: "Integration and interaction tests are running.",
-            updatedAt: new Date().toISOString(),
-        };
-        await persistState(next);
-        publishState(prototypeId);
-        return true;
-    });
-    if (!accepted) {
-        if (!isFactoryRunTerminal(run.status)) {
-            await session.factory.cancel(run.runId);
-        }
-        return;
-    }
-    const terminal = isFactoryRunTerminal(run.status)
-        ? run
-        : await session.factory.waitForRun(run.runId);
-    await settleTestRun(prototypeId, terminal);
+    return runExecutionFactory(prototypeId, state, "testing", resumeFromRunId);
 }
 
 function startTestFactory(prototypeId, state, resumeFromRunId = null) {
-    if (activeTestRuns.has(prototypeId)) return;
-    const work = runTestFactory(prototypeId, state, resumeFromRunId)
-        .catch(async (error) => {
-            const latest = await loadState(prototypeId);
-            await settleTestRun(prototypeId, {
-                runId:
-                    latest.testing.runId || resumeFromRunId || "unavailable",
-                status: "error",
-                error: error instanceof Error ? error.message : String(error),
-            });
-        })
-        .finally(() => {
-            if (activeTestRuns.get(prototypeId) === work) {
-                activeTestRuns.delete(prototypeId);
-            }
-        });
-    activeTestRuns.set(prototypeId, work);
+    trackExecution(prototypeId, state, "testing",
+        () => runTestFactory(prototypeId, state, resumeFromRunId));
 }
 
 function recoverTestFactory(state, canSubmitAnswers) {
-    const review = normalizeDesignReview(state.testDesignReview);
-    const testing = normalizeTesting(state.testing, review);
-    if (
-        !canSubmitAnswers ||
-        state.lifecycle.currentStage !== "test" ||
-        !["starting", "running"].includes(testing.status) ||
-        activeTestRuns.has(state.prototypeId)
-    ) {
-        return;
-    }
-    const work = (async () => {
-        if (!testing.runId) {
-            await runTestFactory(state.prototypeId, state);
-            return;
-        }
-        let run = await session.factory.getRun(testing.runId);
-        if (run.status === "halted") {
-            await runTestFactory(state.prototypeId, state, testing.runId);
-            return;
-        }
-        if (!isFactoryRunTerminal(run.status)) {
-            run = await session.factory.waitForRun(run.runId);
-        }
-        await settleTestRun(state.prototypeId, run);
-    })()
-        .catch(async (error) => {
-            await settleTestRun(state.prototypeId, {
-                runId: testing.runId || "unavailable",
-                status: "error",
-                error: error instanceof Error ? error.message : String(error),
-            });
-        })
-        .finally(() => {
-            if (activeTestRuns.get(state.prototypeId) === work) {
-                activeTestRuns.delete(state.prototypeId);
-            }
-        });
-    activeTestRuns.set(state.prototypeId, work);
+    recoverExecutionFactory(state, canSubmitAnswers, "testing");
 }
 
 async function submitUsage(entry, answer, res) {
@@ -6896,6 +7906,9 @@ async function submitImplementationStart(entry, res) {
                 state.implementation,
                 planning,
             );
+            const inputRevision = executionInputRevision(state, "implementation");
+            const retainCompleted = implementation.inputRevision === inputRevision &&
+                implementation.workspaceRoot === executionWorkspace(WORKSPACE_ROOT);
             if (
                 ["starting", "running"].includes(implementation.status) ||
                 activeImplementationRuns.has(entry.prototypeId)
@@ -6905,12 +7918,13 @@ async function submitImplementationStart(entry, res) {
                     "Implementation agents are already running.",
                 );
             }
-            if (implementation.status === "completed") {
+            if (implementation.status === "completed" && retainCompleted) {
                 throw new AnswerRequestError(
                     409,
                     "Implementation is already complete.",
                 );
             }
+            await assertPreviousExecutionStopped(implementation);
             const startedAt = new Date().toISOString();
             const retrying = implementation.workItems.some(
                 (item) =>
@@ -6920,11 +7934,14 @@ async function submitImplementationStart(entry, res) {
             const nextImplementation = normalizeImplementation(
                 {
                     ...implementation,
+                    ...newExecution(inputRevision, WORKSPACE_ROOT, session.sessionId),
+                    waveManifests: [],
                     status: "starting",
                     runId: null,
                     currentWaveIndex: 0,
                     workItems: implementation.workItems.map((item) =>
-                        item.status === "completed"
+                        retainCompleted && item.status === "completed" && item.summary &&
+                            item.validation.length > 0 && item.blockers.length === 0
                             ? item
                             : {
                                   ...item,
@@ -6940,7 +7957,7 @@ async function submitImplementationStart(entry, res) {
                     ),
                     agents: implementation.agents.filter(
                         (agent) =>
-                            implementation.workItems.find(
+                            retainCompleted && implementation.workItems.find(
                                 (item) => item.id === agent.workItemId,
                             )?.status === "completed",
                     ),
@@ -7027,6 +8044,9 @@ async function submitImplementationStrategy(entry, req, res) {
                     "Implementation is already complete.",
                 );
             }
+            if (["starting", "running"].includes(implementation.status)) {
+                assertCurrentExecution(current, "implementation", executionToken(implementation), !implementation.runId);
+            }
             if (implementation.status === "running") {
                 const hasFutureWave = planning.waves.some(
                     (wave) =>
@@ -7093,62 +8113,32 @@ async function submitImplementationStrategy(entry, req, res) {
 }
 
 async function submitImplementationStop(entry, res) {
+    return submitExecutionStop(entry, res, "implementation");
+}
+
+async function submitTestStop(entry, res) {
+    return submitExecutionStop(entry, res, "testing");
+}
+
+async function submitExecutionStop(entry, res, kind: "implementation" | "testing") {
     if (!(await isPreferredAnswerProvider(entry.extensionId))) {
         sendJson(res, 409, {
-            error: "Use the installed user-scoped Tandem to stop implementation.",
+            error: "Use the installed user-scoped Tandem to stop execution.",
         });
         return;
     }
-    let runId = null;
     try {
-        await withAnswerClaim(entry.prototypeId, async () => {
-            const state = await loadState(entry.prototypeId);
-            const planning = normalizePlanning(state.planning);
-            const implementation = normalizeImplementation(
-                state.implementation,
-                planning,
-            );
-            if (!["starting", "running"].includes(implementation.status)) {
-                throw new AnswerRequestError(
-                    409,
-                    "No implementation run is active.",
-                );
-            }
-            runId = implementation.runId;
-            const now = new Date().toISOString();
-            const next = {
-                ...state,
-                implementation: normalizeImplementation(
-                    {
-                        ...implementation,
-                        status: "cancelled",
-                        completedAt: now,
-                        workItems: implementation.workItems.map((item) =>
-                            item.status === "running"
-                                ? { ...item, status: "cancelled", completedAt: now }
-                                : item,
-                        ),
-                        events: [
-                            ...implementation.events,
-                            implementationEvent(
-                                "cancel",
-                                "Stop requested for the active implementation run.",
-                            ),
-                        ],
-                    },
-                    planning,
-                ),
-                status: "Implementation stopped.",
-                updatedAt: now,
-            };
-            await persistState(next);
-            publishState(entry.prototypeId);
-        });
-        if (runId) await session.factory.cancel(runId);
-        sendJson(res, 202, { accepted: true });
+        const request = await requestExecutionCancellation(entry.prototypeId, kind, null,
+            "Stop requested by the user.", "cancelled");
+        await performExecutionCancellation(entry.prototypeId, kind, request.token, request.cancellationId);
+        sendJson(res, 200, { accepted: true, stopped: true });
     } catch (error) {
-        if (error instanceof AnswerRequestError) {
-            sendJson(res, error.statusCode, { error: error.message });
+        if (error instanceof AnswerRequestError || error instanceof ExecutionCancellationPendingError) {
+            sendJson(res, error.statusCode, { error: error.message, stopped: false, retryable: true });
+            return;
+        }
+        if (error instanceof ExecutionSupersededError) {
+            sendJson(res, 409, { error: error.message, stopped: false });
             return;
         }
         throw error;
@@ -7245,27 +8235,35 @@ async function submitTestStart(entry, res) {
                 );
             }
             const testing = normalizeTesting(state.testing, review);
+            const inputRevision = executionInputRevision(state, "testing");
+            const sourceFingerprint = await fingerprintWorkspace(WORKSPACE_ROOT);
+            const retainPassed = testing.status !== "completed" && testing.inputRevision === inputRevision &&
+                testing.sourceFingerprint === sourceFingerprint &&
+                testing.workspaceRoot === executionWorkspace(WORKSPACE_ROOT);
             if (
                 ["starting", "running"].includes(testing.status) ||
                 activeTestRuns.has(entry.prototypeId)
             ) {
                 throw new AnswerRequestError(409, "Tests are already running.");
             }
-            if (testing.status === "completed") {
-                throw new AnswerRequestError(409, "All tests already passed.");
-            }
+            await assertPreviousExecutionStopped(testing);
             const startedAt = new Date().toISOString();
             const next = {
                 ...state,
+                stage: "test",
+                phase: "building",
+                lifecycle: reopenTestLifecycle(state.lifecycle),
                 artifacts: markTestResultsStale(state.artifacts),
                 testing: normalizeTesting(
                     {
                         ...testing,
+                        ...newExecution(inputRevision, WORKSPACE_ROOT, session.sessionId, sourceFingerprint),
+                        waveManifests: [],
                         status: "starting",
                         runId: null,
                         currentWaveIndex: 0,
                         scenarios: testing.scenarios.map((scenario) =>
-                            scenario.status === "passed"
+                            retainPassed && scenario.status === "passed" && scenario.summary && scenario.evidence.length > 0
                                 ? scenario
                                 : {
                                       ...scenario,
@@ -7278,7 +8276,7 @@ async function submitTestStart(entry, res) {
                         ),
                         agents: testing.agents.filter(
                             (agent) =>
-                                testing.scenarios.find(
+                                retainPassed && testing.scenarios.find(
                                     (scenario) =>
                                         scenario.id === agent.scenarioId,
                                 )?.status === "passed",
@@ -7369,6 +8367,107 @@ async function testRuntimeState(entry) {
     }
 }
 
+async function preparationRuntimeState(entry) {
+    const state = await loadState(entry.prototypeId);
+    const payload = publicState(entry, state);
+    const runId = state.preparation.processing?.runId;
+    if (!runId) return { ...payload, preparationRuntime: null };
+    try {
+        const detail = await session.factory.getRunDetail(runId);
+        return {
+            ...payload,
+            preparationRuntime: {
+                runId,
+                status: detail.status,
+                currentPhase: detail.currentPhase?.id || null,
+                liveAgentCount: detail.liveAgentCount,
+                agents: detail.agents
+                    .filter((agent) => agent.label.startsWith("prepare:"))
+                    .map((agent) => ({
+                        label: agent.label,
+                        status: agent.status,
+                        model: agent.resolvedModel || agent.requestedModel || "",
+                        activity: agent.activity || "",
+                        activeMs: agent.activeMs,
+                    })),
+                progress: detail.progress.records.slice(-50).map((record) => ({
+                    seq: record.seq,
+                    text: record.text,
+                    kind: record.kind,
+                    recordedAt: record.recordedAt,
+                })),
+            },
+        };
+    } catch (error) {
+        const message =
+            error instanceof Error
+                ? error.message
+                : "Preparation observability is unavailable.";
+        await logSafely(
+            `Tandem could not read preparation runtime details: ${message}`,
+            "warning",
+        );
+        return {
+            ...payload,
+            preparationRuntime: {
+                runId,
+                status: "unavailable",
+                currentPhase: null,
+                liveAgentCount: 0,
+                agents: [],
+                progress: [],
+                error: message,
+            },
+        };
+    }
+}
+
+async function submitPreparationRetry(entry, res) {
+    if (!(await isPreferredAnswerProvider(entry.extensionId))) {
+        sendJson(res, 409, {
+            error: "Use the installed user-scoped Tandem to retry preparation.",
+        });
+        return;
+    }
+    const state = await withAnswerClaim(entry.prototypeId, async () => {
+        const current = await loadState(entry.prototypeId);
+        if (
+            current.lifecycle.currentStage !== "prepare" ||
+            current.preparation.status !== "failed"
+        ) {
+            throw new AnswerRequestError(
+                409,
+                "Preparation can be retried only after a failed preparation run.",
+            );
+        }
+        const previousRunId = current.preparation.processing?.runId;
+        if (previousRunId) {
+            const previous = await session.factory.getRun(previousRunId);
+            if (!isFactoryRunTerminal(previous.status)) {
+                throw new AnswerRequestError(409, "The previous preparation run is still active. Stop it before retrying.");
+            }
+        }
+        const next = {
+            ...current,
+            preparation: normalizePreparation(null),
+            status: "Retrying preparation...",
+            updatedAt: new Date().toISOString(),
+        };
+        await persistState(next);
+        publishState(entry.prototypeId);
+        return next;
+    }).catch((error) => {
+        if (error instanceof AnswerRequestError) {
+            sendJson(res, error.statusCode, { error: error.message });
+            return null;
+        }
+        throw error;
+    });
+    if (!state) return;
+    sendJson(res, 202, { accepted: true });
+    await ensurePreparationStarted(state, true);
+}
+
 async function handleRequest(entry, req, res) {
     const requestUrl = new URL(req.url || "/", "http://127.0.0.1");
 
@@ -7388,6 +8487,15 @@ async function handleRequest(entry, req, res) {
             200,
             publicState(entry, await loadState(entry.prototypeId)),
         );
+        return;
+    }
+
+    if (
+        req.method === "GET" &&
+        requestUrl.pathname === "/api/preparation/status"
+    ) {
+        await refreshEntryAnswerCapability(entry);
+        sendJson(res, 200, await preparationRuntimeState(entry));
         return;
     }
 
@@ -7490,6 +8598,19 @@ async function handleRequest(entry, req, res) {
         return;
     }
 
+    if (req.method === "POST" && requestUrl.pathname === "/api/test/stop") {
+        await submitTestStop(entry, res);
+        return;
+    }
+
+    if (
+        req.method === "POST" &&
+        requestUrl.pathname === "/api/preparation/retry"
+    ) {
+        await submitPreparationRetry(entry, res);
+        return;
+    }
+
     if (req.method === "POST" && requestUrl.pathname === "/api/reload") {
         await submitReload(entry, res);
         return;
@@ -7497,6 +8618,22 @@ async function handleRequest(entry, req, res) {
 
     if (req.method === "POST" && requestUrl.pathname === "/api/stage/complete") {
         await submitStageCompletion(entry, req, res);
+        return;
+    }
+
+    if (req.method === "POST" && requestUrl.pathname === "/api/prototype/start") {
+        const state = await beginPrototypeBuild(entry.prototypeId, entry.extensionId);
+        sendJson(res, 202, publicState(entry, state));
+        return;
+    }
+    if (req.method === "POST" && requestUrl.pathname === "/api/stage/reopen") {
+        const body = await readRequestBody(req);
+        if (!isObject(body) || typeof body.stageId !== "string") {
+            sendJson(res, 400, { error: "Select the stage to reopen." });
+            return;
+        }
+        const state = await reopenLifecycleStage(entry.prototypeId, body.stageId, entry.extensionId);
+        sendJson(res, 200, publicState(entry, state));
         return;
     }
 
@@ -7522,7 +8659,9 @@ async function startServer(
     const server = createServer((req, res) => {
         handleRequest(entry, req, res).catch(async (error) => {
             if (!res.headersSent) {
-                sendJson(res, 500, { error: "Tandem request failed." });
+                sendJson(res, error instanceof ProjectStoreError || error instanceof AnswerRequestError ? error.statusCode : error instanceof CanvasError ? 409 : 500, {
+                    error: error instanceof Error ? error.message : "Tandem request failed.",
+                });
             } else {
                 res.end();
             }
@@ -7635,9 +8774,53 @@ const preparationSchema = {
     properties: {
         status: {
             type: "string",
-            enum: ["not-started", "ready", "needs-attention"],
+            enum: [
+                "not-started",
+                "starting",
+                "running",
+                "ready",
+                "needs-attention",
+                "failed",
+            ],
         },
         summary: { type: "string", maxLength: 2000 },
+        workItems: {
+            type: "array",
+            maxItems: 20,
+            items: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                    id: { type: "string", minLength: 1, maxLength: 120 },
+                    title: { type: "string", minLength: 1, maxLength: 160 },
+                    status: {
+                        type: "string",
+                        enum: ["pending", "running", "completed", "failed"],
+                    },
+                    detail: { type: "string", maxLength: 1000 },
+                    result: { type: "string", maxLength: 4000 },
+                },
+                required: ["id", "title", "status", "detail", "result"],
+            },
+        },
+        messages: {
+            type: "array",
+            maxItems: 100,
+            items: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                    id: { type: "string", minLength: 1, maxLength: 120 },
+                    text: { type: "string", minLength: 1, maxLength: 2000 },
+                    kind: {
+                        type: "string",
+                        enum: ["info", "success", "warning", "error"],
+                    },
+                    at: { type: "string" },
+                },
+                required: ["id", "text", "kind", "at"],
+            },
+        },
         checks: {
             type: "array",
             maxItems: 20,
@@ -7669,8 +8852,142 @@ const preparationSchema = {
                 required: ["title", "url", "purpose"],
             },
         },
+        suggestedUsages: {
+            type: "array",
+            maxItems: 6,
+            items: { type: "string", minLength: 1, maxLength: 500 },
+        },
+        processing: {
+            anyOf: [
+                { type: "null" },
+                {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                        requestId: { type: ["string", "null"] },
+                        generation: { type: ["string", "null"] },
+                        runId: { type: ["string", "null"] },
+                        requestedAt: { type: "string" },
+                        completedAt: { type: ["string", "null"] },
+                    },
+                    required: ["runId", "requestedAt", "completedAt"],
+                },
+            ],
+        },
+        error: { type: "string", maxLength: 4000 },
     },
-    required: ["status", "summary", "checks", "sources"],
+    required: [
+        "status",
+        "summary",
+        "workItems",
+        "messages",
+        "checks",
+        "sources",
+        "suggestedUsages",
+        "processing",
+        "error",
+    ],
+};
+
+const preparationCheckSchema = preparationSchema.properties.checks.items;
+const preparationSourceSchema = preparationSchema.properties.sources.items;
+
+const preparationWorkspaceOutputSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        summary: { type: "string", minLength: 1, maxLength: 4000 },
+        checks: {
+            type: "array",
+            maxItems: 10,
+            items: preparationCheckSchema,
+        },
+    },
+    required: ["summary", "checks"],
+};
+
+const preparationSourcesOutputSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        summary: { type: "string", minLength: 1, maxLength: 4000 },
+        sources: {
+            type: "array",
+            maxItems: 20,
+            items: preparationSourceSchema,
+        },
+        checks: {
+            type: "array",
+            maxItems: 10,
+            items: preparationCheckSchema,
+        },
+    },
+    required: ["summary", "sources", "checks"],
+};
+
+const preparationFactoryOutputSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        status: {
+            type: "string",
+            enum: ["ready", "needs-attention"],
+        },
+        summary: { type: "string", minLength: 1, maxLength: 2000 },
+        checks: {
+            type: "array",
+            maxItems: 20,
+            items: preparationCheckSchema,
+        },
+        sources: {
+            type: "array",
+            maxItems: 20,
+            items: preparationSourceSchema,
+        },
+        suggestedUsages: {
+            type: "array",
+            minItems: 1,
+            maxItems: 5,
+            items: { type: "string", minLength: 1, maxLength: 500 },
+        },
+        assumed: {
+            type: "array",
+            maxItems: 20,
+            items: { type: "string", minLength: 1, maxLength: 500 },
+        },
+        deferred: {
+            type: "array",
+            maxItems: 20,
+            items: { type: "string", minLength: 1, maxLength: 500 },
+        },
+        prototypeApproach: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+                mode: {
+                    type: "string",
+                    enum: [
+                        "undecided",
+                        "build",
+                        "validate-existing",
+                        "not-applicable",
+                    ],
+                },
+                reason: { type: "string", minLength: 1, maxLength: 500 },
+            },
+            required: ["mode", "reason"],
+        },
+    },
+    required: [
+        "status",
+        "summary",
+        "checks",
+        "sources",
+        "suggestedUsages",
+        "assumed",
+        "deferred",
+        "prototypeApproach",
+    ],
 };
 
 const prototypeApproachSchema = {
@@ -8050,6 +9367,20 @@ const planningFactoryOutputSchema = {
     required: ["summary", "strategy", "workItems", "risks"],
 };
 
+const executionValidationSchema = {
+    type: "array",
+    minItems: 1,
+    items: {
+        type: "object",
+        properties: {
+            requirement: { type: "string" },
+            status: { type: "string", enum: ["passed", "failed", "skipped"] },
+            evidence: { type: "string" },
+        },
+        required: ["requirement", "status", "evidence"],
+    },
+};
+
 const implementationAgentOutputSchema = {
     type: "object",
     additionalProperties: false,
@@ -8061,11 +9392,7 @@ const implementationAgentOutputSchema = {
             maxItems: 100,
             items: { type: "string", minLength: 1 },
         },
-        validation: {
-            type: "array",
-            maxItems: 50,
-            items: { type: "string", minLength: 1 },
-        },
+        validation: executionValidationSchema,
         blockers: {
             type: "array",
             maxItems: 50,
@@ -8092,8 +9419,10 @@ const testAgentOutputSchema = {
             maxItems: 50,
             items: { type: "string", minLength: 1 },
         },
+        validation: executionValidationSchema,
+        blockers: { type: "array", items: { type: "string" } },
     },
-    required: ["status", "summary", "evidence"],
+    required: ["status", "summary", "evidence", "validation", "blockers"],
 };
 
 const artifactSchema = {
@@ -8106,6 +9435,7 @@ const artifactSchema = {
         stage: {
             type: "string",
             enum: [
+                "prepare",
                 "requirements",
                 "prototype",
                 "design",
@@ -8246,6 +9576,162 @@ const answerFactoryOutputSchema = {
         "previewStatus",
     ],
 };
+
+const preparationFactory = defineFactory({
+    meta: {
+        name: PREPARATION_FACTORY_NAME,
+        description:
+            "Inspect the workspace and authoritative sources, then prepare the Requirements handoff.",
+        phases: [
+            {
+                title: "Inspect workspace",
+                detail: "Identify repository structure, tooling, and execution constraints.",
+            },
+            {
+                title: "Analyze sources",
+                detail: "Ground named products, methods, and benchmarks in authoritative sources.",
+            },
+            {
+                title: "Prepare requirements",
+                detail: "Synthesize usages, assumptions, and prototype guidance.",
+            },
+        ],
+        argsSchema: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+                prototypeId: { type: "string", minLength: 1 },
+                projectRoot: { type: "string", minLength: 1 },
+                goal: { type: "string" },
+                requestId: { type: "string", minLength: 1 },
+                generation: { type: "string", minLength: 1 },
+            },
+            required: ["prototypeId", "projectRoot", "goal", "requestId", "generation"],
+        },
+        limits: {
+            maxConcurrentSubagents: 1,
+            maxTotalSubagents: 3,
+            timeoutSeconds: 240,
+            maxAiCredits: 1024000,
+        },
+    },
+    run: async (ctx) => {
+        const args: any = ctx.args;
+        if (
+            !isObject(args) ||
+            !String(args.prototypeId || "").trim() ||
+            typeof args.requestId !== "string" || !args.requestId ||
+            typeof args.generation !== "string" || !args.generation ||
+            !sameOwner(
+                { sessionId: session.sessionId, workspaceRoot: String(args.projectRoot || "") },
+                { sessionId: session.sessionId, workspaceRoot: WORKSPACE_ROOT },
+            )
+        ) {
+            throw new Error("Preparation factory arguments are invalid.");
+        }
+        const token: PreparationToken = { requestId: args.requestId, generation: args.generation, runId: ctx.runId };
+        if (!(await bindPreparationRun(args.prototypeId, token))) {
+            throw new CanvasError("preparation_superseded", "This preparation request is no longer active.");
+        }
+
+        ctx.phase("Inspect workspace");
+        ctx.log("Inspecting repository structure and required tooling.");
+        await recordPreparationWorkItem(
+            args.prototypeId,
+            "workspace",
+            "running",
+            token,
+        );
+        const workspaceAnalysis: any = await ctx.step(`${token.requestId}:inspect-workspace`, async () =>
+            jsonResult(await ctx.agent(preparationWorkspacePrompt(args), {
+                label: "prepare:workspace",
+                schema: preparationWorkspaceOutputSchema,
+                reasoningEffort: "low",
+            })),
+        );
+        await recordPreparationWorkItem(
+            args.prototypeId,
+            "workspace",
+            "completed",
+            token,
+            workspaceAnalysis.summary,
+        );
+
+        ctx.phase("Analyze sources");
+        ctx.log("Reading authoritative sources for named concepts.");
+        await recordPreparationWorkItem(
+            args.prototypeId,
+            "sources",
+            "running",
+            token,
+        );
+        const sourceAnalysis: any = await ctx.step(`${token.requestId}:analyze-sources`, async () =>
+            jsonResult(await ctx.agent(preparationSourcesPrompt(args, workspaceAnalysis), {
+                label: "prepare:sources",
+                schema: preparationSourcesOutputSchema,
+                reasoningEffort: "medium",
+            })),
+        );
+        await recordPreparationWorkItem(
+            args.prototypeId,
+            "sources",
+            "completed",
+            token,
+            sourceAnalysis.summary,
+        );
+
+        ctx.phase("Prepare requirements");
+        ctx.log("Synthesizing preparation findings into Requirements suggestions.");
+        await recordPreparationWorkItem(
+            args.prototypeId,
+            "requirements-handoff",
+            "running",
+            token,
+        );
+        const handoff: any = await ctx.step(`${token.requestId}:prepare-requirements`, async () =>
+            jsonResult(await ctx.agent(
+                preparationHandoffPrompt(
+                    args,
+                    workspaceAnalysis,
+                    sourceAnalysis,
+                ),
+                {
+                    label: "prepare:requirements",
+                    schema: preparationFactoryOutputSchema,
+                    reasoningEffort: "medium",
+                },
+            )),
+        );
+        const checks = [
+            ...workspaceAnalysis.checks,
+            ...sourceAnalysis.checks,
+        ].filter(
+            (entry, index, entries) =>
+                entries.findIndex(
+                    (candidate) =>
+                        String(candidate.label).toLowerCase() ===
+                        String(entry.label).toLowerCase(),
+                ) === index,
+        );
+        const result = {
+            ...handoff,
+            status: checks.some((check) => check.status === "missing")
+                ? "needs-attention"
+                : handoff.status,
+            checks,
+            sources: sourceAnalysis.sources,
+        };
+        await recordPreparationWorkItem(
+            args.prototypeId,
+            "requirements-handoff",
+            "completed",
+            token,
+            result.summary,
+        );
+        ctx.log("Preparation handoff is ready.");
+        return result;
+    },
+});
 
 const usageSuggestionFactory = defineFactory({
     meta: {
@@ -8494,14 +9980,12 @@ const implementationFactory = defineFactory({
                 prototypeId: { type: "string", minLength: 1 },
                 projectRoot: { type: "string", minLength: 1 },
                 plan: { type: "object" },
+                execution: { type: "object" },
             },
-            required: ["prototypeId", "projectRoot", "plan"],
+            required: ["prototypeId", "projectRoot", "plan", "execution"],
         },
         limits: {
             maxConcurrentSubagents: 30,
-            maxTotalSubagents: 30,
-            timeoutSeconds: 3600,
-            maxAiCredits: 1024000,
         },
     },
     run: async (ctx) => {
@@ -8516,6 +10000,10 @@ const implementationFactory = defineFactory({
         ) {
             throw new Error("Implementation factory arguments are invalid.");
         }
+        const token = { ...executionToken(args.execution || {}), runId: ctx.runId };
+        if (executionWorkspace(args.projectRoot) !== token.workspaceRoot) throw new ExecutionSupersededError();
+        ctx.signal.throwIfAborted();
+        await bindExecutionRun(args.prototypeId, "implementation", token);
         ctx.phase("Execute work items");
         ctx.log(
             `Starting ${args.plan.workItems.length} planned work items for ${args.prototypeId}.`,
@@ -8525,6 +10013,7 @@ const implementationFactory = defineFactory({
                 args.prototypeId,
                 wave.index,
                 wave.workItemIds,
+                token,
             );
             if (boundary.stopped) {
                 return {
@@ -8536,7 +10025,6 @@ const implementationFactory = defineFactory({
             ctx.log(
                 `Wave ${wave.index}: launching ${boundary.runnable.length} agent${boundary.runnable.length === 1 ? "" : "s"}.`,
             );
-            const results = [];
             for (
                 let offset = 0;
                 offset < boundary.runnable.length;
@@ -8546,14 +10034,12 @@ const implementationFactory = defineFactory({
                     offset,
                     offset + boundary.maxConcurrency,
                 );
-                const batchNumber = Math.floor(offset / boundary.maxConcurrency) + 1;
-                const batchResults = await ctx.step(
-                    `wave-${wave.index}-batch-${batchNumber}`,
-                    () =>
-                        ctx.parallel(
-                            batch.map(
-                                (item) => () =>
-                                    ctx.agent(
+                ctx.signal.throwIfAborted();
+                await ctx.parallel(batch.map((item) => async () => {
+                    await assertExecutionDispatch(args.prototypeId, "implementation", token);
+                    ctx.signal.throwIfAborted();
+                    const result = await ctx.step(`implementation:${token.inputRevision}:item:${item.id}`, () =>
+                        ctx.agent(
                                         implementationPrompt(
                                             args,
                                             item,
@@ -8565,27 +10051,16 @@ const implementationFactory = defineFactory({
                                             schema: implementationAgentOutputSchema,
                                             reasoningEffort: "high",
                                         },
-                                    ),
-                            ),
-                        ),
-                );
-                results.push(
-                    ...(Array.isArray(batchResults) ? batchResults : []),
-                );
+                                    ).then(jsonResult));
+                    await recordImplementationWaveResults(args.prototypeId, wave.index,
+                        [{ itemId: item.id, result }], token);
+                    return result;
+                }));
             }
-            await recordImplementationWaveResults(
-                args.prototypeId,
-                wave.index,
-                boundary.runnable,
-                Array.isArray(results) ? results : [],
-            );
         }
         ctx.phase("Summarize implementation");
         const finalState = await loadState(args.prototypeId);
-        const implementation = normalizeImplementation(
-            finalState.implementation,
-            normalizePlanning(finalState.planning),
-        );
+        const implementation = assertCurrentExecution(finalState, "implementation", token);
         const failed = implementation.workItems.filter((item) =>
             ["failed", "blocked", "cancelled"].includes(item.status),
         );
@@ -8633,6 +10108,7 @@ const testFactory = defineFactory({
             properties: {
                 prototypeId: { type: "string", minLength: 1 },
                 projectRoot: { type: "string", minLength: 1 },
+                execution: { type: "object" },
                 scenarios: {
                     type: "array",
                     minItems: 1,
@@ -8640,13 +10116,10 @@ const testFactory = defineFactory({
                     items: testScenarioSchema,
                 },
             },
-            required: ["prototypeId", "projectRoot", "scenarios"],
+            required: ["prototypeId", "projectRoot", "scenarios", "execution"],
         },
         limits: {
             maxConcurrentSubagents: 4,
-            maxTotalSubagents: 30,
-            timeoutSeconds: 3600,
-            maxAiCredits: 1024000,
         },
     },
     run: async (ctx) => {
@@ -8660,6 +10133,10 @@ const testFactory = defineFactory({
         ) {
             throw new Error("Test factory arguments are invalid.");
         }
+        const token = { ...executionToken(args.execution || {}), runId: ctx.runId };
+        if (executionWorkspace(args.projectRoot) !== token.workspaceRoot) throw new ExecutionSupersededError();
+        ctx.signal.throwIfAborted();
+        await bindExecutionRun(args.prototypeId, "testing", token);
         const scenarios = normalizeTestScenarios(args.scenarios);
         const schedule = scheduleTestScenarios(scenarios, 4);
         if (schedule.error || schedule.waves.length === 0) {
@@ -8667,29 +10144,14 @@ const testFactory = defineFactory({
         }
         ctx.phase("Run test scenarios");
         for (const wave of schedule.waves) {
-            const runnable = await prepareTestWave(args.prototypeId, wave);
+            const { runnable, dependencyEvidence } = await prepareTestWave(args.prototypeId, wave, token);
             if (runnable.length === 0) continue;
-            const current = await loadState(args.prototypeId);
-            const dependencyEvidence = normalizeTesting(
-                current.testing,
-                normalizeDesignReview(current.testDesignReview),
-            ).scenarios
-                .filter(
-                    (scenario) =>
-                        scenario.status === "passed" &&
-                        runnable.some((candidate) =>
-                            candidate.dependencies.includes(scenario.id),
-                        ),
-                )
-                .map(
-                    (scenario) =>
-                        `${scenario.id}: ${scenario.summary || "passed"}`,
-                );
-            const results = await ctx.step(`test-wave-${wave.index}`, () =>
-                ctx.parallel(
-                    runnable.map(
-                        (scenario) => () =>
-                            ctx.agent(
+            ctx.signal.throwIfAborted();
+            await ctx.parallel(runnable.map((scenario) => async () => {
+                await assertExecutionDispatch(args.prototypeId, "testing", token);
+                ctx.signal.throwIfAborted();
+                const result = await ctx.step(`test:${token.inputRevision}:${token.sourceFingerprint}:scenario:${scenario.id}`, () =>
+                    ctx.agent(
                                 testScenarioPrompt(
                                     args,
                                     scenario,
@@ -8700,23 +10162,15 @@ const testFactory = defineFactory({
                                     schema: testAgentOutputSchema,
                                     reasoningEffort: "high",
                                 },
-                            ),
-                    ),
-                ),
-            );
-            await recordTestWaveResults(
-                args.prototypeId,
-                wave,
-                runnable,
-                Array.isArray(results) ? results : [],
-            );
+                            ).then(jsonResult));
+                await recordTestWaveResults(args.prototypeId, wave, [{ itemId: scenario.id, result }], token);
+                return result;
+            }));
         }
         ctx.phase("Summarize test evidence");
         const finalState = await loadState(args.prototypeId);
-        const testing = normalizeTesting(
-            finalState.testing,
-            normalizeDesignReview(finalState.testDesignReview),
-        );
+        const testing = assertCurrentExecution(finalState, "testing", token);
+        await assertExecutionSources(token);
         const passed =
             testing.scenarios.length > 0 &&
             testing.scenarios.every((scenario) => scenario.status === "passed");
@@ -8773,6 +10227,7 @@ const answerFactory = defineFactory({
                         "submit-revision",
                         "clarify-revision",
                         "generate-design-spec",
+                        "build-prototype",
                     ],
                 },
                 state: { type: "object" },
@@ -8820,6 +10275,11 @@ const answerFactory = defineFactory({
         ctx.log(
             `Request ${args.requestId}; prototype ${args.prototypeId}; question ${args.question.id}.`,
         );
+        if (!args.state.generation || !(await recordFactoryRunId(
+            args.prototypeId, args.requestId, ctx.runId, ANSWER_FACTORY_NAME, args.state.generation,
+        ))) {
+            throw new Error("This answer job no longer owns the current project inputs. Retry it from Tandem.");
+        }
         const result: any = await ctx.step("process-answer", () =>
             ctx.agent(answerFactoryPrompt(args), {
                 label: "Process Tandem answer",
@@ -8839,6 +10299,7 @@ const answerFactory = defineFactory({
 
 session = await joinSession({
     factories: [
+        preparationFactory,
         usageSuggestionFactory,
         designReviewFactory,
         planningFactory,
@@ -8864,14 +10325,10 @@ session = await joinSession({
                     skillAlreadyLoaded
                         ? "The Tandem skill is already loaded; do not invoke it again."
                         : "Load the Tandem skill once, then follow it.",
-                    "Complete its bounded workspace and authoritative-source preflight.",
-                    "Use at most four source calls and target one minute; prefer direct",
-                    "official repository reads and do not duplicate web and code searches.",
-                    "Record environment checks, blockers, and sources in preparation.",
-                    "Use prototypeApproach undecided when a named product has a GUI but",
-                    "the requested change does not clearly need graphical validation.",
-                    "Then initialize Tandem atomically through open_canvas with reset true;",
-                    "do not open stale state and reset it with a later action.",
+                    "Open Tandem immediately with reset true, the goal, and a stable",
+                    "prototypeId. Do not inspect the workspace or research sources first.",
+                    "Tandem owns the automatic Preparation stage and will pass its",
+                    "analysis suggestions into Requirements when preparation finishes.",
                     "Do not ask the user to write a more detailed invocation prompt.",
                 ].join(" "),
             };
@@ -8973,6 +10430,7 @@ session = await joinSession({
                             stageId: {
                                 type: "string",
                                 enum: [
+                                    "prepare",
                                     "requirements",
                                     "prototype",
                                     "design",
@@ -8984,6 +10442,24 @@ session = await joinSession({
                         },
                     },
                     handler: completeStage,
+                },
+                {
+                    name: "reopen_stage",
+                    description: "Explicitly reopen a completed stage, preserving snapshots and marking dependent outputs stale. Ask for user confirmation before invoking.",
+                    inputSchema: {
+                        type: "object", additionalProperties: false,
+                        properties: {
+                            prototypeId: { type: "string", minLength: 1 },
+                            stageId: { type: "string", enum: LIFECYCLE_STAGES.map((stage) => stage.id) },
+                        },
+                        required: ["stageId"],
+                    },
+                    handler: async (ctx) => {
+                        if (!isObject(ctx.input) || typeof ctx.input["stageId"] !== "string") {
+                            throw new CanvasError("invalid_stage", "Select a lifecycle stage.");
+                        }
+                        return reopenLifecycleStage(await resolvePrototypeId(ctx.instanceId, ctx.input["prototypeId"]), ctx.input["stageId"], ctx.extensionId);
+                    },
                 },
                 {
                     name: "get_tandem_state",
@@ -9014,50 +10490,25 @@ session = await joinSession({
                 );
                 instancePrototypeIds.set(ctx.instanceId, prototypeId);
 
-                const canSubmitAnswers = await isPreferredAnswerProvider(
+                let canSubmitAnswers = await isPreferredAnswerProvider(
                     ctx.extensionId,
                 );
                 if (canSubmitAnswers) {
                     await persistCurrentPrototypeId(prototypeId);
                 }
-                let state =
-                    canSubmitAnswers && input.reset
-                        ? await withAnswerClaim(prototypeId, async () => {
-                              const next = createState(prototypeId);
-                              if (typeof input.goal === "string") {
-                                  next.goal = input.goal.trim().slice(0, 4000);
-                              }
-                              if (typeof input.status === "string") {
-                                  next.status = input.status
-                                      .trim()
-                                      .slice(0, 1000);
-                              }
-                              next.preparation = normalizePreparation(
-                                  input.preparation,
-                              );
-                              next.prototypeApproach =
-                                  normalizePrototypeApproach(
-                                      input.prototypeApproach,
-                                  );
-                              next.requirements = normalizeRequirements(
-                                  input.requirements,
-                                  { nodes: [] },
-                              );
-                              next.question = usageQuestion(
-                                  next.requirements.suggestions,
-                              );
-                              next.assumed = normalizeStringList(input.assumed);
-                              next.deferred = normalizeStringList(input.deferred);
-                              next.updatedAt = new Date().toISOString();
-                              await persistState(next);
-                              return next;
-                          })
-                        : await loadState(prototypeId);
-                state = await markReloadComplete(state, ctx.extensionId);
+                let state = await loadState(prototypeId);
+                canSubmitAnswers = canSubmitAnswers && (!hasActiveWork(state) || !state.jobOwner ||
+                    sameOwner(state.jobOwner, { sessionId: session.sessionId, workspaceRoot: WORKSPACE_ROOT }));
+                state = await applyCanvasReset(
+                    state, input, `${ctx.sessionId}:${ctx.instanceId}`,
+                    isCanvasRehydration(ctx), canSubmitAnswers,
+                );
+                if (canSubmitAnswers) state = await markReloadComplete(state, ctx.extensionId);
                 state = await ensureDefaultProductDesignReview(
                     state,
                     canSubmitAnswers,
                 );
+                recoverPreparationFactory(state, canSubmitAnswers);
                 recoverAnswerFactory(state, canSubmitAnswers);
                 recoverSuggestionFactory(state, canSubmitAnswers);
                 recoverPrototypeCompletion(state, canSubmitAnswers);
@@ -9073,7 +10524,7 @@ session = await joinSession({
                 ) {
                     state = await withAnswerClaim(prototypeId, async () => {
                         const current = await loadState(prototypeId);
-                        if (current.goal || current.processing?.status === "running") {
+                        if (current.goal || hasActiveWork(current)) {
                             return current;
                         }
                         const next = {
@@ -9086,11 +10537,6 @@ session = await joinSession({
                         return next;
                     });
                 }
-                state = await ensureUsageSuggestionsStarted(
-                    state,
-                    canSubmitAnswers,
-                );
-
                 let entry = servers.get(ctx.instanceId);
                 if (!entry) {
                     entry = await startServer(
@@ -9105,6 +10551,16 @@ session = await joinSession({
                     entry.extensionId = ctx.extensionId;
                     entry.canSubmitAnswers = canSubmitAnswers;
                 }
+                state =
+                    state.lifecycle.currentStage === "prepare"
+                        ? await ensurePreparationStarted(
+                              state,
+                              canSubmitAnswers,
+                          )
+                        : await ensureUsageSuggestionsStarted(
+                              state,
+                              canSubmitAnswers,
+                          );
 
                 return {
                     title: "Tandem",

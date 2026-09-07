@@ -26,9 +26,9 @@
         <div class="lifecycle" aria-label="Development lifecycle">
           <span id="current-stage" class="stage" aria-label="Current lifecycle stage">
             <span id="current-stage-index" class="stage-index" aria-hidden="true">1</span>
-            <span id="stage">Requirements</span>
+            <span id="stage">Preparation</span>
           </span>
-          <span id="phase" class="phase">Discovery</span>
+          <span id="phase" class="phase">Building</span>
         </div>
         <div class="reload-control">
           <button id="reload-extension" class="reload-button" type="button">
@@ -42,29 +42,22 @@
 
     <main id="studio-workspace" class="workspace">
       <aside id="requirements-pane" class="requirements" aria-label="Prototype requirements">
-        <section id="preparation-section" class="section preparation-section">
-          <div class="preparation-heading">
-            <p class="eyebrow">Preparation</p>
-            <span id="preparation-status" class="preparation-status">Not started</span>
-          </div>
-          <p id="preparation-summary" class="preparation-summary muted">
-            Environment readiness and authoritative sources will appear here.
-          </p>
-          <ul id="preparation-checks" class="preparation-checks"></ul>
-          <div id="preparation-sources" class="preparation-sources"></div>
-        </section>
-
         <section class="section">
           <p class="eyebrow">Goal</p>
           <p id="goal" class="goal muted">Waiting for a prototype goal...</p>
           <p id="status" class="status"></p>
+          <p id="connection-status" class="status" role="status" aria-live="polite"></p>
         </section>
 
         <section class="section">
           <p class="eyebrow">Stages</p>
           <ol id="stage-list" class="stage-list"></ol>
           <button id="complete-stage" class="complete-stage" type="button">
-            Finish requirements
+            Preparation runs automatically
+          </button>
+          <p id="stage-browsing" class="stage-message"></p>
+          <button id="reopen-stage" class="complete-stage" type="button" hidden>
+            Reopen stage
           </button>
           <p id="stage-message" class="stage-message" role="status" aria-live="polite"></p>
         </section>
@@ -110,6 +103,15 @@
         <div class="previewbar">
           <div class="preview-tabs" role="tablist" aria-label="Prototype output">
             <button
+              id="preparation-tab"
+              class="preview-tab"
+              type="button"
+              role="tab"
+              aria-selected="true"
+              aria-controls="preparation-panel"
+              data-tab="preparation"
+            >Preparation</button>
+            <button
               id="design-tree-tab"
               class="preview-tab"
               type="button"
@@ -124,8 +126,9 @@
               class="preview-tab"
               type="button"
               role="tab"
-              aria-selected="true"
+              aria-selected="false"
               aria-controls="live-preview-panel"
+              tabindex="-1"
               data-tab="preview"
             >Live prototype</button>
             <button
@@ -188,10 +191,58 @@
           </div>
         </div>
         <div
+          id="preparation-panel"
+          class="preparation-panel"
+          role="tabpanel"
+          aria-labelledby="preparation-tab"
+          tabindex="0"
+        >
+          <section class="preparation-stage-card">
+            <div class="preparation-stage-heading">
+              <div>
+                <p class="eyebrow">Environment preparation</p>
+                <strong id="preparation-stage-title">Preparing Tandem context</strong>
+                <p id="preparation-stage-progress" class="muted">
+                  The preparation worker will inspect the workspace and analyze authoritative sources.
+                </p>
+              </div>
+              <span id="preparation-stage-status" class="preparation-status">Not started</span>
+            </div>
+            <div class="preparation-stage-grid">
+              <div class="preparation-stage-main">
+                <section class="plan-section">
+                  <h3>Work items</h3>
+                  <div id="preparation-work-items" class="implementation-list"></div>
+                </section>
+                <section class="plan-section">
+                  <h3>Results</h3>
+                  <p id="preparation-result-summary" class="muted">
+                    Results will appear as preparation completes.
+                  </p>
+                  <div id="preparation-result-suggestions" class="preparation-result-suggestions"></div>
+                  <div id="preparation-result-checks" class="preparation-result-list"></div>
+                  <div id="preparation-result-sources" class="preparation-result-sources"></div>
+                </section>
+              </div>
+              <aside class="preparation-stage-sidebar">
+                <section class="plan-section">
+                  <h3>Progress</h3>
+                  <div id="preparation-messages" class="implementation-events"></div>
+                  <button id="retry-preparation" class="retry-preparation" type="button" hidden>
+                    Retry preparation
+                  </button>
+                  <p id="preparation-stage-message" class="implementation-status" role="status" aria-live="polite"></p>
+                </section>
+              </aside>
+            </div>
+          </section>
+        </div>
+        <div
           id="live-preview-panel"
           class="frame-wrap"
           role="tabpanel"
           aria-labelledby="live-preview-tab"
+          hidden
         >
           <div class="preview-surface">
             <div
@@ -206,15 +257,20 @@
                 <span class="processing-indicator" aria-hidden="true"></span>
                 <span class="processing-copy">
                   <span class="processing-heading">
-                    <strong>Building runnable prototype</strong>
+                    <strong id="prototype-building-title">Building runnable prototype</strong>
                     <span class="processing-dots" aria-hidden="true"><i></i><i></i><i></i></span>
                   </span>
                   <span id="prototype-building-message" class="muted"></span>
+                  <span id="prototype-building-elapsed" class="muted" role="timer" aria-live="off"></span>
                 </span>
               </div>
             </div>
             <div id="preview-empty" class="preview-empty">
-              <p id="preview-empty-message">The runnable prototype will appear here after the essential interaction decisions are captured.</p>
+              <div>
+                <p id="preview-empty-message">The runnable prototype will appear here after the essential interaction decisions are captured.</p>
+                <button id="start-prototype" class="plan-button" type="button" hidden>Start prototype</button>
+                <p id="prototype-build-status" class="revision-status" role="status" aria-live="polite"></p>
+              </div>
             </div>
             <iframe
               id="preview-frame"
@@ -281,6 +337,7 @@
                 </button>
               </div>
             </div>
+            <p id="plan-status" class="plan-status" role="status" aria-live="polite"></p>
             <div id="plan-metrics" class="plan-metrics"></div>
             <section id="plan-strategy-section" class="plan-section" hidden>
               <h3>Orchestration strategy</h3>
@@ -323,7 +380,6 @@
                   aria-label="Execution plan revision"
                 ></textarea>
                 <div class="plan-actions">
-                  <span id="plan-status" class="plan-status" role="status" aria-live="polite"></span>
                   <button id="optimize-plan" class="plan-button secondary" type="button">
                     Optimize parallelism
                   </button>
@@ -497,6 +553,7 @@
                 No more questions
               </button>
             </div>
+            <p id="design-review-stage-status" class="design-review-status" role="status" aria-live="polite"></p>
             <div id="design-review-threads" class="design-review-threads"></div>
           </section>
         </div>
@@ -566,9 +623,10 @@
               <div
                 id="design-tree-host"
                 class="mermaid-host design-tree-host"
-                role="img"
+                role="group"
                 aria-label="Requirements decision DAG"
               ></div>
+              <ol id="decision-list" class="decision-list" aria-label="Requirement decisions"></ol>
               <p id="design-tree-status" class="diagram-status" role="status" aria-live="polite"></p>
               <details id="design-tree-source-details" class="diagram-source">
                 <summary>Mermaid source</summary>

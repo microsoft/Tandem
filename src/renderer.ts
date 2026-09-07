@@ -10,7 +10,7 @@ function injectAsset(template: string, token: string, content: string): string {
     if (!template.includes(token)) {
         throw new Error(`Tandem renderer template is missing ${token}.`);
     }
-    return template.replace(token, content);
+    return template.replace(token, () => content);
 }
 
 export function renderTandemHtml(version: string): string {
