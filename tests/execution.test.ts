@@ -28,6 +28,7 @@ const functions = [
     "finalCodeArtifact", "settleImplementationRun", "runImplementationFactory", "runExecutionFactory",
     "recordExecutionUsage",
     "resumeExecutionRun", "factoryErrorCode",
+    "runEffortFactory", "recordEffortFactoryReceipt", "waitForEffortRun", "resumeEffortRun", "getEffortRun", "observeEffortRun",
     "trackExecution", "startImplementationFactory", "recoverExecutionFactory", "recoverImplementationFactory",
     "hasExecutionIdentity", "failLegacyExecutions",
     "testEvent", "markTestResultsStale", "testScenarioPrompt", "prepareTestWave", "recordTestWaveResults",
@@ -218,6 +219,21 @@ const outcome = (summary: string, testing = false) => ({
     status: testing ? "passed" : "completed", summary, filesChanged: [], blockers: [],
     evidence: ["Observed expected outcome"],
     validation: [{ requirement: "check", status: "passed", evidence: "Command exited 0; expected output observed" }],
+});
+
+test("a delayed halted-run continuation cannot resume workers after their effort was reset", async () => {
+    const f = await fixture();
+    try {
+        f.initialize();
+        const token = f.start();
+        await f.api.bindExecutionRun("fixture", "implementation", token);
+        f.state = { ...f.state, generation: "replacement-generation", stage: "prepare",
+            lifecycle: { ...f.state.lifecycle, currentStage: "prepare" },
+            implementation: f.api.normalizeImplementation({}, f.state.planning), factoryRuns: [] };
+        await assert.rejects(f.api.resumeEffortRun("fixture", token.runId), /no longer owns/);
+        assert.equal(f.resumes.length, 0);
+        assert.equal(f.state.generation, "replacement-generation");
+    } finally { await f.close(); }
 });
 
 test("final factory persists real command evidence and fences changed verification inputs", async () => {

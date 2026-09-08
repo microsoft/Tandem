@@ -39,7 +39,7 @@ import { createProcessAdapters } from "./process-adapters.js";
 import { assertDeliveryCurrent, prepareDeliveryDraft } from "./delivery.js";
 import {
     applyAuthoritativeAnswer,
-    hasActiveWork,
+    hasActiveWork as hasWorkflowActiveWork,
     hasUnconfirmedExecution,
     invalidateArtifacts,
     lifecycleStages,
@@ -151,6 +151,10 @@ const projectStore = new ProjectStore<TandemState>({
 });
 
 let session;
+
+function hasActiveWork(state) {
+    return Boolean(state.effortReset || state.factoryRuns?.some((run) => !run.terminal)) || hasWorkflowActiveWork(state);
+}
 
 function isObject(value: unknown): value is Record<string, any> {
     return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -409,6 +413,8 @@ function createState(prototypeId: string, goal = ""): TandemState {
         version: 1,
         revision: 0,
         generation: randomUUID(),
+        effortReset: null,
+        factoryRuns: [],
         jobOwner: null,
         openResetRequestId: null,
         prototypeId,
@@ -421,8 +427,8 @@ function createState(prototypeId: string, goal = ""): TandemState {
             history: [],
         },
         goal,
-        phase: "building",
-        status: "Preparing the workspace and analyzing the goal...",
+        phase: goal ? "building" : "discovery",
+        status: goal ? "Preparing the workspace and analyzing the goal..." : "Enter a goal to start a new Tandem effort.",
         preparation: normalizePreparation(null),
         prototypeApproach: normalizePrototypeApproach(null),
         requirements: {
@@ -1787,6 +1793,14 @@ function normalizeStoredState(value, prototypeId): TandemState {
         !isObject(value.requirements) || !Array.isArray(value.artifacts) || typeof value.goal !== "string") {
         throw new ProjectStoreError("state_schema_invalid", `Saved state for "${prototypeId}" is incomplete or unsupported. Restore the original file before continuing.`, 422);
     }
+    if ((value.factoryRuns !== undefined && (!Array.isArray(value.factoryRuns) ||
+        value.factoryRuns.some((run) => !isObject(run) || typeof run.requestId !== "string" ||
+            run.generation !== value.generation || (run.runId !== null && typeof run.runId !== "string") ||
+            (run.terminal !== undefined && typeof run.terminal !== "boolean")))) ||
+        (value.effortReset != null && (!isObject(value.effortReset) ||
+            typeof value.effortReset.requestId !== "string" || value.effortReset.generation !== value.generation))) {
+        throw new ProjectStoreError("state_schema_invalid", "Saved reset/worker ownership is invalid. Repair it before continuing; data was preserved.", 422);
+    }
 
     const phase = ["discovery", "building", "iterating", "complete"].includes(value.phase)
         ? value.phase
@@ -1810,6 +1824,11 @@ function normalizeStoredState(value, prototypeId): TandemState {
         ...createState(prototypeId),
         revision: value.revision ?? 0,
         generation: typeof value.generation === "string" && value.generation ? value.generation : `legacy-${prototypeId}`,
+        effortReset: isObject(value.effortReset) && typeof value.effortReset.requestId === "string" &&
+            value.effortReset.generation === value.generation
+            ? { requestId: value.effortReset.requestId, generation: value.generation,
+                error: String(value.effortReset.error || "").slice(0, 2000) } : null,
+        factoryRuns: value.factoryRuns || [],
         openResetRequestId: typeof value.openResetRequestId === "string" ? value.openResetRequestId : null,
         jobOwner: isObject(value.jobOwner) && typeof value.jobOwner.sessionId === "string" &&
             typeof value.jobOwner.workspaceRoot === "string" ? {
@@ -1941,7 +1960,14 @@ async function verifyPreviewIdentity(url, prototypeId) {
 
 async function loadState(prototypeId) {
     const id = normalizePrototypeId(prototypeId);
-    const state = await projectStore.load(id);
+    let state = await projectStore.load(id);
+    if (state.revision === 0) {
+        state = await projectStore.transaction(id, async () => {
+            const current = await projectStore.load(id);
+            if (current.revision === 0) await projectStore.save(current);
+            return current;
+        });
+    }
     if (!stateCache.has(id) || stateCache.get(id).revision <= state.revision) stateCache.set(id, state);
     return state;
 }
@@ -1968,6 +1994,7 @@ async function withAnswerClaim<R>(
     prototypeId: string,
     operation: () => Promise<R>,
     rejectIfBusy = false,
+    allowReset = false,
 ) {
     try {
         return await projectStore.transaction(prototypeId, async () => {
@@ -1975,6 +2002,9 @@ async function withAnswerClaim<R>(
             if (hasActiveWork(current) && current.jobOwner &&
                 !sameOwner(current.jobOwner, { sessionId: session.sessionId, workspaceRoot: WORKSPACE_ROOT })) {
                 throw new AnswerRequestError(409, "This project has active work owned by another session/workspace. Return to its owning session before changing it.");
+            }
+            if (current.effortReset && !allowReset) {
+                throw new AnswerRequestError(409, "Reset is pending. Retry Reset to confirm termination before changing this effort.");
             }
             return operation();
         }, rejectIfBusy);
@@ -2002,12 +2032,101 @@ async function isPreferredAnswerProvider(extensionId) {
     );
 }
 
+async function recordEffortFactoryReceipt(prototypeId, requestId, generation, run) {
+    if (!isObject(run) || typeof run.runId !== "string" || !run.runId) {
+        throw new Error("The SDK did not supply a durable factory run ID.");
+    }
+    await withAnswerClaim(prototypeId, async () => {
+        const current = await loadState(prototypeId);
+        if (current.generation !== generation) return;
+        const receipts = current.factoryRuns || [];
+        const receipt = receipts.find((item) => item.requestId === requestId && (!item.runId || item.runId === run.runId));
+        if (!receipt) return;
+        await persistState({ ...current, factoryRuns: receipts.map((item) => item === receipt
+            ? { ...item, runId: run.runId, terminal: isFactoryRunTerminal(run.status) } : item) });
+    }, false, true);
+}
+
+async function runEffortFactory(prototypeId, requestId, request) {
+    let launched;
+    let generation;
+    await withAnswerClaim(prototypeId, async () => {
+        const current = await loadState(prototypeId);
+        const identities = [current.preparation?.processing, current.processing, current.suggestionProcessing,
+            current.designReview?.processing, current.testDesignReview?.processing, current.planning?.processing,
+            current.implementation, current.testing];
+        if (!identities.some((item) => item?.requestId === requestId)) {
+            throw new AnswerRequestError(409, "This factory request no longer owns the effort.");
+        }
+        generation = current.generation;
+        await persistState({ ...current, factoryRuns: [...(current.factoryRuns || []),
+            { requestId, generation, runId: null, terminal: false }] });
+        // Dispatch while owning the claim, but release it before awaiting SDK callbacks.
+        launched = session.rpc.factory.run(request);
+    });
+    const run = await launched;
+    await recordEffortFactoryReceipt(prototypeId, requestId, generation, run);
+    return run;
+}
+
+async function waitForEffortRun(prototypeId, runId) {
+    const run = await session.factory.waitForRun(runId);
+    return observeEffortRun(prototypeId, runId, run);
+}
+
+async function getEffortRun(prototypeId, runId) {
+    return observeEffortRun(prototypeId, runId, await session.factory.getRun(runId));
+}
+
+async function observeEffortRun(prototypeId, runId, run) {
+    await withAnswerClaim(prototypeId, async () => {
+        const current = await loadState(prototypeId);
+        if (run.runId !== runId) throw new Error("The SDK returned a different factory run.");
+        if (!isFactoryRunTerminal(run.status)) return;
+        if (!current.factoryRuns?.some((item) => item.runId === runId && !item.terminal)) return;
+        await persistState({ ...current, factoryRuns: current.factoryRuns.map((item) =>
+            item.runId === runId ? { ...item, terminal: isFactoryRunTerminal(run.status) } : item) });
+    }, false, true);
+    return run;
+}
+
+async function resumeEffortRun(prototypeId, runId) {
+    let resumed;
+    await withAnswerClaim(prototypeId, async () => {
+        const current = await loadState(prototypeId);
+        const receipts = current.factoryRuns || [];
+        const activeRunIds = [
+            ["starting", "running"].includes(current.preparation?.status) && current.preparation?.processing?.runId,
+            current.processing?.status === "running" && current.processing.runId,
+            current.suggestionProcessing?.status === "running" && current.suggestionProcessing.runId,
+            current.designReview?.processing?.runId, current.testDesignReview?.processing?.runId,
+            current.planning?.processing?.runId,
+            ["starting", "running"].includes(current.implementation?.status) && current.implementation?.runId,
+            ["starting", "running"].includes(current.testing?.status) && current.testing?.runId,
+        ];
+        if (!activeRunIds.includes(runId) && !receipts.some((item) => item.runId === runId && !item.terminal)) {
+            throw new AnswerRequestError(409, "This factory run no longer owns the effort and cannot be resumed.");
+        }
+        if (receipts.some((item) => item.runId === runId)) {
+            await persistState({ ...current, factoryRuns: receipts.map((item) =>
+                item.runId === runId ? { ...item, terminal: false } : item) });
+        }
+        resumed = session.factory.resume(runId);
+    });
+    const run = await resumed;
+    const current = await loadState(prototypeId);
+    const receipt = current.factoryRuns?.find((item) => item.runId === runId);
+    if (receipt) await recordEffortFactoryReceipt(prototypeId, receipt.requestId, receipt.generation, run);
+    return run;
+}
+
 async function refreshEntryAnswerCapability(entry) {
     const wasEnabled = entry.canSubmitAnswers;
     let state = await loadState(entry.prototypeId);
     entry.canSubmitAnswers = await isPreferredAnswerProvider(entry.extensionId) &&
         (!hasActiveWork(state) || !state.jobOwner ||
             sameOwner(state.jobOwner, { sessionId: session.sessionId, workspaceRoot: WORKSPACE_ROOT }));
+    if (state.effortReset) return;
     if (entry.canSubmitAnswers) {
         if (!wasEnabled) {
             recoverPreparationFactory(state, true);
@@ -2284,6 +2403,8 @@ async function bindPreparationRun(prototypeId, token: PreparationToken) {
         if (current.preparation.processing.runId === token.runId) return true;
         const next = {
             ...current,
+            factoryRuns: (current.factoryRuns || []).map((item) => item.requestId === token.requestId
+                ? { ...item, runId: token.runId } : item),
             preparation: normalizePreparation({
                 ...current.preparation, status: "running",
                 processing: { ...current.preparation.processing, runId: token.runId },
@@ -2293,7 +2414,7 @@ async function bindPreparationRun(prototypeId, token: PreparationToken) {
         await persistState(next);
         publishState(prototypeId);
         return true;
-    });
+    }, false, true);
 }
 
 async function recordPreparationWorkItem(
@@ -2396,6 +2517,7 @@ function preparationHandoffPrompt(
 }
 
 async function settlePreparationRun(prototypeId, run, token: PreparationToken) {
+    if ((await loadState(prototypeId)).effortReset) return;
     await withAnswerClaim(prototypeId, async () => {
         const current = await loadState(prototypeId);
         if (!preparationMatches(current, token) || (run.runId || null) !== token.runId) {
@@ -2552,7 +2674,7 @@ async function settlePreparationRun(prototypeId, run, token: PreparationToken) {
 
 async function runPreparationFactory(prototypeId, state, resumeFromRunId = null) {
     const token = preparationToken(state);
-    const run = resumeFromRunId ? await resumeHaltedRun(resumeFromRunId) : await session.rpc.factory.run({
+    const run = resumeFromRunId ? await resumeHaltedRun(prototypeId, resumeFromRunId) : await runEffortFactory(prototypeId, token.requestId, {
         name: PREPARATION_FACTORY_NAME,
         args: {
             prototypeId,
@@ -2578,7 +2700,7 @@ async function runPreparationFactory(prototypeId, state, resumeFromRunId = null)
     }
     const terminal = isFactoryRunTerminal(run.status)
         ? run
-        : await session.factory.waitForRun(run.runId);
+        : await waitForEffortRun(prototypeId, run.runId);
     await settlePreparationRun(prototypeId, terminal, token);
 }
 
@@ -2587,6 +2709,7 @@ function startPreparationFactory(prototypeId, state, resumeFromRunId = null) {
     const work = runPreparationFactory(prototypeId, state, resumeFromRunId)
         .catch(async (error) => {
             const latest = await loadState(prototypeId);
+            if (latest.effortReset) return;
             const token = preparationToken(state);
             if (latest.generation !== token.generation ||
                 latest.preparation.processing?.requestId !== token.requestId) {
@@ -2611,6 +2734,8 @@ function startPreparationFactory(prototypeId, state, resumeFromRunId = null) {
 async function ensurePreparationStarted(state, canSubmitAnswers) {
     if (
         !canSubmitAnswers ||
+        state.effortReset ||
+        !state.goal.trim() ||
         state.lifecycle.currentStage !== "prepare" ||
         state.preparation.status !== "not-started" ||
         activePreparationRuns.has(state.prototypeId)
@@ -2622,6 +2747,7 @@ async function ensurePreparationStarted(state, canSubmitAnswers) {
         const current = await loadState(state.prototypeId);
         if (
             current.lifecycle.currentStage !== "prepare" ||
+            !current.goal.trim() ||
             current.preparation.status !== "not-started"
         ) {
             return current;
@@ -2665,6 +2791,7 @@ async function ensurePreparationStarted(state, canSubmitAnswers) {
 function recoverPreparationFactory(state, canSubmitAnswers) {
     if (
         !canSubmitAnswers ||
+        state.effortReset ||
         state.lifecycle.currentStage !== "prepare" ||
         !["starting", "running"].includes(state.preparation.status) ||
         activePreparationRuns.has(state.prototypeId)
@@ -2693,13 +2820,13 @@ function recoverPreparationFactory(state, canSubmitAnswers) {
         }
         const token = preparationToken(state);
         const runId = token.runId;
-        let run = await session.factory.getRun(runId);
+        let run = await getEffortRun(state.prototypeId, runId);
         if (run.status === "halted") {
             await runPreparationFactory(state.prototypeId, state, runId);
             return;
         }
         if (!isFactoryRunTerminal(run.status)) {
-            run = await session.factory.waitForRun(run.runId);
+            run = await waitForEffortRun(state.prototypeId, run.runId);
         }
         await settlePreparationRun(state.prototypeId, run, token);
     })()
@@ -2729,6 +2856,172 @@ async function resolvePrototypeId(instanceId, requestedId) {
     return (await loadCurrentPrototypeId()) || DEFAULT_PROTOTYPE_ID;
 }
 
+function validateEffortRequest(input, action: "reset" | "start") {
+    const keys = ["expectedRevision", "generation", action === "reset" ? "confirm" : "goal"];
+    if (!isObject(input) || Object.keys(input).some((key) => !keys.includes(key)) ||
+        !Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0 ||
+        typeof input.generation !== "string" || !input.generation.trim() ||
+        input.generation.length > 200) {
+        throw new AnswerRequestError(400, "Supply the current effort revision and generation.");
+    }
+    if (action === "reset" && input.confirm !== true) {
+        throw new AnswerRequestError(400, "Confirm clearing only the current Tandem effort.");
+    }
+    if (action === "start" && (typeof input.goal !== "string" ||
+        !input.goal.trim() || input.goal.length > 4000)) {
+        throw new AnswerRequestError(400, "Enter a nonempty goal of at most 4000 characters.");
+    }
+}
+
+function assertEffortRevision(state, input) {
+    if (state.revision !== input.expectedRevision || state.generation !== input.generation) {
+        throw new AnswerRequestError(409, "This effort changed. Reload its current revision before retrying.");
+    }
+}
+
+async function startEffort(prototypeId, extensionId, input) {
+    validateEffortRequest(input, "start");
+    if (!(await isPreferredAnswerProvider(extensionId))) {
+        throw new AnswerRequestError(409, "Start the effort from its writable Tandem provider.");
+    }
+    const state = await withAnswerClaim(prototypeId, async () => {
+        const current = await loadState(prototypeId);
+        assertEffortRevision(current, input);
+        if (current.goal.trim() || current.lifecycle.currentStage !== "prepare" ||
+            current.preparation.status !== "not-started" || hasActiveWork(current)) {
+            throw new AnswerRequestError(409, "This effort has already started. Reset it before entering another goal.");
+        }
+        const next = { ...current, goal: input.goal.trim(), updatedAt: new Date().toISOString() };
+        await persistState(next);
+        return next;
+    });
+    await ensurePreparationStarted(state, true);
+    return loadState(prototypeId);
+}
+
+function effortRunsToStop(state) {
+    const receipts = state.factoryRuns || [];
+    const pending = [...receipts.filter((run) => !run.terminal)];
+    const add = (processing, active = true) => {
+        if (!active || !processing) return;
+        if (receipts.some((run) => run.requestId === processing.requestId)) return;
+        pending.push({ requestId: processing.requestId || "legacy", runId: processing.runId || null });
+    };
+    if (["starting", "running"].includes(state.preparation.status) && !state.preparation.processing) {
+        pending.push({ requestId: "legacy-preparation", runId: null });
+    }
+    const preparation = state.preparation;
+    const processing = preparation.processing;
+    // Migrated, finalized Preparation records predate live request fencing. Their
+    // archived run IDs are history, not pending launches; live receipts still win.
+    const settledLegacyPreparation = state.generation === `legacy-${state.prototypeId}`
+        && preparation.status === "failed"
+        && !processing?.requestId && !processing?.generation
+        && Number.isFinite(Date.parse(processing?.requestedAt || ""))
+        && Number.isFinite(Date.parse(processing?.completedAt || ""))
+        && Date.parse(processing.completedAt) >= Date.parse(processing.requestedAt)
+        && !preparation.workItems.some((item) => item.status === "running");
+    add(processing, ["starting", "running", "failed"].includes(preparation.status) && !settledLegacyPreparation);
+    add(state.processing, state.processing?.status !== "success");
+    add(state.suggestionProcessing, state.suggestionProcessing?.status !== "success");
+    add(state.designReview.processing);
+    add(state.testDesignReview.processing);
+    add(state.planning.processing);
+    for (const runtime of [state.implementation, state.testing]) {
+        add(runtime, (["starting", "running"].includes(runtime.status) || hasUnconfirmedExecution(runtime)) &&
+            runtime.launchState !== "unrequested");
+    }
+    return pending;
+}
+
+async function resetDeadline<T>(work: Promise<T>, milliseconds = 30_000): Promise<T> {
+    let timer;
+    try {
+        return await Promise.race([work, new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error("Timed out awaiting SDK termination confirmation.")), milliseconds);
+        })]);
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+async function resetEffort(prototypeId, extensionId, input) {
+    validateEffortRequest(input, "reset");
+    if (!(await isPreferredAnswerProvider(extensionId))) {
+        throw new AnswerRequestError(409, "Reset the effort from its writable Tandem provider and owning session.");
+    }
+    const claimed = await withAnswerClaim(prototypeId, async () => {
+        const current = await loadState(prototypeId);
+        assertEffortRevision(current, input);
+        const next = { ...current,
+            effortReset: current.effortReset || { requestId: randomUUID(), generation: current.generation, error: "" },
+            status: "Reset requested. Waiting for current-effort workers to stop.",
+            updatedAt: new Date().toISOString() };
+        await persistState(next);
+        publishState(prototypeId);
+        return next;
+    }, false, true);
+    const assertReset = (current) => {
+        if (current.generation !== claimed.generation ||
+            current.effortReset?.requestId !== claimed.effortReset.requestId) {
+            throw new AnswerRequestError(409, "This reset no longer owns the effort.");
+        }
+    };
+    try {
+        const pending = effortRunsToStop(claimed);
+        const runIds = [...new Set(pending.map((item) => item.runId).filter(Boolean))] as string[];
+        // No effort lock is held while cancellation waits for worker callbacks.
+        const results = await Promise.allSettled(runIds.map((runId) => resetDeadline((async () => {
+            let run = await session.factory.getRun(runId);
+            if (!isObject(run) || run.runId !== runId) throw new Error("The SDK returned a different factory run.");
+            if (!isFactoryRunTerminal(run.status)) run = await session.factory.cancel(runId);
+            if (!isObject(run) || run.runId !== runId) throw new Error("Cancellation did not confirm the requested run identity.");
+            if (!isFactoryRunTerminal(run.status)) run = await session.factory.waitForRun(runId);
+            if (!isObject(run) || run.runId !== runId || !isFactoryRunTerminal(run.status)) {
+                throw new Error(`Termination of ${runId} remains unconfirmed.`);
+            }
+        })())));
+        const failures = results.filter((result) => result.status === "rejected")
+            .map((result) => String(result.reason instanceof Error ? result.reason.message : result.reason));
+        if (pending.some((item) => !item.runId)) {
+            failures.push("An SDK launch has no confirmed run ID. Retry Reset after its identity is available.");
+        }
+        if (failures.length) throw new Error(failures.join(" "));
+        return await withAnswerClaim(prototypeId, async () => {
+            const current = await loadState(prototypeId);
+            assertReset(current);
+            if (!(await isPreferredAnswerProvider(extensionId))) {
+                throw new AnswerRequestError(409, "The writable provider changed during reset. Retry from its owning provider.");
+            }
+            const outstanding = effortRunsToStop(current);
+            if (outstanding.some((item) => !item.runId || !runIds.includes(item.runId))) {
+                throw new Error("A late SDK launch still needs termination confirmation. Retry Reset.");
+            }
+            await projectStore.clearEffortData(prototypeId);
+            const next = { ...createState(prototypeId), revision: current.revision,
+                openResetRequestId: current.openResetRequestId };
+            await persistState(next);
+            for (const runs of [activePreparationRuns, activeAnswerRuns, activeSuggestionRuns,
+                activeDesignReviewRuns, activePlanningRuns, activeImplementationRuns, activeTestRuns]) {
+                runs.delete(prototypeId);
+            }
+            activePrototypeCompletions.delete(prototypeId);
+            publishState(prototypeId);
+            return next;
+        }, false, true);
+    } catch (error) {
+        const message = `Reset failed; saved state and worker ownership are retained. ${error instanceof Error ? error.message : String(error)}`;
+        await withAnswerClaim(prototypeId, async () => {
+            const current = await loadState(prototypeId);
+            assertReset(current);
+            await persistState({ ...current, effortReset: { ...current.effortReset, error: message },
+                status: message, updatedAt: new Date().toISOString() });
+            publishState(prototypeId);
+        }, false, true);
+        throw new AnswerRequestError(409, message);
+    }
+}
+
 async function applyCanvasReset(state, input, requestId: string, rehydrating: boolean, writable: boolean) {
     if (!input.reset || rehydrating || state.openResetRequestId === requestId) return state;
     if (!writable) throw new CanvasError("read_only_provider", "Reset the effort from its writable provider and owning session.");
@@ -2740,6 +3033,7 @@ async function applyCanvasReset(state, input, requestId: string, rehydrating: bo
             ...createState(state.prototypeId), revision: current.revision, openResetRequestId: requestId,
             goal: typeof input.goal === "string" ? input.goal.trim().slice(0, 4000) : "",
         };
+        await projectStore.clearEffortData(state.prototypeId);
         await persistState(next);
         publishState(state.prototypeId);
         return next;
@@ -2887,6 +3181,7 @@ async function updateTandem(ctx) {
         next.lifecycle = normalizeLifecycle(next.lifecycle);
         next.stage = next.lifecycle.currentStage;
         next.updatedAt = new Date().toISOString();
+        if (input.reset) await projectStore.clearEffortData(prototypeId);
         await persistState(next);
         instancePrototypeIds.set(ctx.instanceId, prototypeId);
         await persistCurrentPrototypeId(prototypeId);
@@ -3337,6 +3632,7 @@ async function reopenLifecycleStage(prototypeId, stageId, extensionId) {
         const next = {
             ...state,
             generation: randomUUID(),
+            factoryRuns: [],
             stage: LIFECYCLE_STAGES[index].id,
             lifecycle: {
                 currentStage: LIFECYCLE_STAGES[index].id,
@@ -3441,6 +3737,7 @@ async function completeStage(ctx) {
 function recoverPrototypeCompletion(state, canSubmitAnswers) {
     if (
         !canSubmitAnswers ||
+        state.effortReset ||
         state.lifecycle.currentStage !== "prototype" ||
         state.processing?.status !== "success" ||
         state.processing.action !== "generate-design-spec" ||
@@ -4173,15 +4470,15 @@ async function recordFactoryFailure(prototypeId, requestId, error) {
 async function settleAnswerRun(prototypeId, requestId, run) {
     let terminalRun = run;
     if (!isFactoryRunTerminal(terminalRun.status)) {
-        terminalRun = await session.factory.waitForRun(terminalRun.runId);
+        terminalRun = await waitForEffortRun(prototypeId, terminalRun.runId);
     }
     if (terminalRun.status === "halted") {
-        terminalRun = await resumeHaltedRun(terminalRun.runId);
+        terminalRun = await resumeHaltedRun(prototypeId, terminalRun.runId);
     }
     await applyFactoryResult(prototypeId, requestId, terminalRun);
 }
 
-async function resumeHaltedRun(runId) {
+async function resumeHaltedRun(prototypeId, runId) {
     for (let attempt = 0; attempt < 305; attempt += 1) {
         if (!(await isPreferredAnswerProvider(PROVIDER_EXTENSION_ID))) {
             throw new Error(
@@ -4189,19 +4486,19 @@ async function resumeHaltedRun(runId) {
             );
         }
         try {
-            return await session.factory.resume(runId);
+            return await resumeEffortRun(prototypeId, runId);
         } catch (error) {
             if (error?.code === "already_active") {
-                return session.factory.waitForRun(runId);
+                return waitForEffortRun(prototypeId, runId);
             }
             if (error?.code !== "factory_already_running") {
                 throw error;
             }
 
             await new Promise((resolve) => setTimeout(resolve, 1_000));
-            const current = await session.factory.getRun(runId);
+            const current = await getEffortRun(prototypeId, runId);
             if (current.status === "running") {
-                return session.factory.waitForRun(runId);
+                return waitForEffortRun(prototypeId, runId);
             }
             if (current.status !== "halted") {
                 return current;
@@ -4264,7 +4561,7 @@ async function runAnswerFactory(
     if (!(await isPreferredAnswerProvider(PROVIDER_EXTENSION_ID))) {
         return;
     }
-    const run = await session.rpc.factory.run({
+    const run = await runEffortFactory(prototypeId, requestId, {
         name: ANSWER_FACTORY_NAME,
         args: {
             prototypeId,
@@ -4296,6 +4593,7 @@ function recoverAnswerFactory(state, canSubmitAnswers) {
     const processing = state.processing;
     if (
         !canSubmitAnswers ||
+        state.effortReset ||
         processing?.status !== "running" ||
         activeAnswerRuns.has(state.prototypeId)
     ) {
@@ -4315,7 +4613,7 @@ function recoverAnswerFactory(state, canSubmitAnswers) {
         let run;
         if (currentProcessing.runId) {
             try {
-                run = await session.factory.getRun(currentProcessing.runId);
+                run = await getEffortRun(state.prototypeId, currentProcessing.runId);
             } catch (error) {
                 if (
                     ["not_found", "non_resumable"].includes(
@@ -4338,7 +4636,7 @@ function recoverAnswerFactory(state, canSubmitAnswers) {
                 throw error;
             }
         } else {
-            run = await findAnswerFactoryRun(currentProcessing);
+            run = await findAnswerFactoryRun(state.prototypeId, currentProcessing);
             if (!run) {
                 throw new Error(
                     "The durable factory run could not be correlated after reload.",
@@ -4355,7 +4653,7 @@ function recoverAnswerFactory(state, canSubmitAnswers) {
 
         if (currentProcessing.factoryName !== ANSWER_FACTORY_NAME) {
             if (!isFactoryRunTerminal(run.status)) {
-                run = await session.factory.waitForRun(run.runId);
+                run = await waitForEffortRun(state.prototypeId, run.runId);
             }
             if (["halted", "cancelled"].includes(run.status)) {
                 if (!currentProcessing.question || !currentProcessing.answer) {
@@ -4384,7 +4682,7 @@ function recoverAnswerFactory(state, canSubmitAnswers) {
     trackAnswerRun(state.prototypeId, processing.requestId, work);
 }
 
-async function findAnswerFactoryRun(processing) {
+async function findAnswerFactoryRun(prototypeId, processing) {
     const requestedAt = Date.parse(processing.requestedAt);
     if (!Number.isFinite(requestedAt)) return null;
 
@@ -4403,7 +4701,7 @@ async function findAnswerFactoryRun(processing) {
                 { limit: 500 },
             );
             if (progress.records.some((record) => record.text.includes(marker))) {
-                return session.factory.getRun(candidate.runId);
+                return getEffortRun(prototypeId, candidate.runId);
             }
         }
         await new Promise((resolve) => setTimeout(resolve, 1_000));
@@ -4435,6 +4733,7 @@ function startSuggestionFactory(prototypeId, requestId, goal, usageItems) {
 async function ensureUsageSuggestionsStarted(state, canSubmitAnswers) {
     if (
         !canSubmitAnswers ||
+        state.effortReset ||
         state.lifecycle.currentStage !== "requirements" ||
         state.requirements.substage !== "usage" ||
         state.requirements.suggestions.length > 0 ||
@@ -4502,7 +4801,7 @@ async function ensureUsageSuggestionsStarted(state, canSubmitAnswers) {
 
 async function runSuggestionFactory(prototypeId, requestId, goal, usageItems) {
     if (!(await isPreferredAnswerProvider(PROVIDER_EXTENSION_ID))) return;
-    const run = await session.rpc.factory.run({
+    const run = await runEffortFactory(prototypeId, requestId, {
         name: SUGGESTION_FACTORY_NAME,
         args: {
             prototypeId,
@@ -4540,10 +4839,10 @@ async function runSuggestionFactory(prototypeId, requestId, goal, usageItems) {
 
     let terminalRun = run;
     if (!isFactoryRunTerminal(terminalRun.status)) {
-        terminalRun = await session.factory.waitForRun(terminalRun.runId);
+        terminalRun = await waitForEffortRun(prototypeId, terminalRun.runId);
     }
     if (terminalRun.status === "halted") {
-        terminalRun = await resumeHaltedRun(terminalRun.runId);
+        terminalRun = await resumeHaltedRun(prototypeId, terminalRun.runId);
     }
     if (terminalRun.status !== "completed" || !isObject(terminalRun.result)) {
         throw new Error(factoryErrorMessage(terminalRun));
@@ -4585,6 +4884,7 @@ async function runSuggestionFactory(prototypeId, requestId, goal, usageItems) {
 }
 
 async function recordSuggestionFailure(prototypeId, requestId, error) {
+    if ((await loadState(prototypeId)).effortReset) return;
     await withAnswerClaim(prototypeId, async () => {
         const current = await loadState(prototypeId);
         if (
@@ -4624,6 +4924,7 @@ function recoverSuggestionFactory(state, canSubmitAnswers) {
     const processing = state.suggestionProcessing;
     if (
         !canSubmitAnswers ||
+        state.effortReset ||
         processing?.status !== "running" ||
         activeSuggestionRuns.has(state.prototypeId)
     ) {
@@ -4632,12 +4933,12 @@ function recoverSuggestionFactory(state, canSubmitAnswers) {
     const work = (async () => {
         if (processing.runId) {
             try {
-                let run = await session.factory.getRun(processing.runId);
+                let run = await getEffortRun(state.prototypeId, processing.runId);
                 if (!isFactoryRunTerminal(run.status)) {
-                    run = await session.factory.waitForRun(run.runId);
+                    run = await waitForEffortRun(state.prototypeId, run.runId);
                 }
                 if (run.status === "halted") {
-                    run = await resumeHaltedRun(run.runId);
+                    run = await resumeHaltedRun(state.prototypeId, run.runId);
                 }
                 if (run.status !== "completed" || !isObject(run.result)) {
                     throw new Error(factoryErrorMessage(run));
@@ -4836,7 +5137,7 @@ function seedDefaultProductDesignReview(state, createdAt = new Date().toISOStrin
 }
 
 async function ensureDefaultProductDesignReview(state, canSubmitAnswers) {
-    if (!canSubmitAnswers) return state;
+    if (!canSubmitAnswers || state.effortReset) return state;
     return withAnswerClaim(state.prototypeId, async () => {
         const current = await loadState(state.prototypeId);
         const next = seedDefaultProductDesignReview(current);
@@ -5128,7 +5429,7 @@ async function claimNextDesignReviewJob(prototypeId) {
 }
 
 async function runDesignReviewJob(prototypeId, job) {
-    const run = await session.rpc.factory.run({
+    const run = await runEffortFactory(prototypeId, job.requestId, {
         name: DESIGN_REVIEW_FACTORY_NAME,
         args: {
             prototypeId,
@@ -5169,7 +5470,7 @@ async function runDesignReviewJob(prototypeId, job) {
     }
     const terminalRun = isFactoryRunTerminal(run.status)
         ? run
-        : await session.factory.waitForRun(run.runId);
+        : await waitForEffortRun(prototypeId, run.runId);
     await applyDesignReviewFactoryResult(
         prototypeId,
         job.requestId,
@@ -5210,7 +5511,7 @@ function startDesignReviewQueue(prototypeId) {
                     .then((state) => {
                         const review = designReviewContext(state).review;
                         if (
-                            state.lifecycle.currentStage === "design" &&
+                            !state.effortReset && state.lifecycle.currentStage === "design" &&
                             (
                                 review.finalizeRequested ||
                                 review.threads.some(
@@ -5238,6 +5539,7 @@ function startDesignReviewQueue(prototypeId) {
 function recoverDesignReviewFactory(state, canSubmitAnswers) {
     if (
         !canSubmitAnswers ||
+        state.effortReset ||
         state.lifecycle.currentStage !== "design" ||
         activeDesignReviewRuns.has(state.prototypeId)
     ) {
@@ -5249,9 +5551,9 @@ function recoverDesignReviewFactory(state, canSubmitAnswers) {
         let review = context.review;
         if (review.processing?.runId) {
             try {
-                let run = await session.factory.getRun(review.processing.runId);
+                let run = await getEffortRun(state.prototypeId, review.processing.runId);
                 if (!isFactoryRunTerminal(run.status)) {
-                    run = await session.factory.waitForRun(run.runId);
+                    run = await waitForEffortRun(state.prototypeId, run.runId);
                 }
                 await applyDesignReviewFactoryResult(
                     state.prototypeId,
@@ -5468,7 +5770,7 @@ async function runPlanningFactory(prototypeId, requestId, state) {
     const planning = normalizePlanning(state.planning);
     const processing = planning.processing;
     if (!processing || processing.requestId !== requestId) return;
-    const run = await session.rpc.factory.run({
+    const run = await runEffortFactory(prototypeId, requestId, {
         name: PLANNING_FACTORY_NAME,
         args: {
             prototypeId,
@@ -5507,7 +5809,7 @@ async function runPlanningFactory(prototypeId, requestId, state) {
     }
     const terminalRun = isFactoryRunTerminal(run.status)
         ? run
-        : await session.factory.waitForRun(run.runId);
+        : await waitForEffortRun(prototypeId, run.runId);
     await applyPlanningFactoryResult(prototypeId, requestId, terminalRun);
 }
 
@@ -5539,6 +5841,7 @@ function recoverPlanningFactory(state, canSubmitAnswers) {
     const planning = normalizePlanning(state.planning);
     if (
         !canSubmitAnswers ||
+        state.effortReset ||
         state.lifecycle.currentStage !== "plan" ||
         !planning.processing ||
         activePlanningRuns.has(state.prototypeId)
@@ -5548,9 +5851,9 @@ function recoverPlanningFactory(state, canSubmitAnswers) {
     const work = (async () => {
         if (planning.processing.runId) {
             try {
-                let run = await session.factory.getRun(planning.processing.runId);
+                let run = await getEffortRun(state.prototypeId, planning.processing.runId);
                 if (!isFactoryRunTerminal(run.status)) {
-                    run = await session.factory.waitForRun(run.runId);
+                    run = await waitForEffortRun(state.prototypeId, run.runId);
                 }
                 await applyPlanningFactoryResult(
                     state.prototypeId,
@@ -5734,12 +6037,15 @@ async function bindExecutionRun(prototypeId, kind: "implementation" | "testing",
         const runtime = assertCurrentExecution(state, kind, token, true, false, true);
         if (runtime.runId === token.runId) return;
         if (!["starting", "running"].includes(runtime.status)) throw new ExecutionSupersededError();
-        await persistState({ ...state, [kind]: { ...runtime, runId: token.runId, status: "running", launchState: "bound",
+        await persistState({ ...state,
+            factoryRuns: (state.factoryRuns || []).map((item) => item.requestId === token.requestId
+                ? { ...item, runId: token.runId } : item),
+            [kind]: { ...runtime, runId: token.runId, status: "running", launchState: "bound",
             cancellation: runtime.cancellation && !runtime.cancellation.confirmedAt
                 ? { ...runtime.cancellation, runId: token.runId } : runtime.cancellation },
             updatedAt: new Date().toISOString() });
         publishState(prototypeId);
-    });
+    }, false, true);
 }
 
 async function recordExecutionFailure(prototypeId, kind: "implementation" | "testing",
@@ -5831,7 +6137,10 @@ async function finishExecutionCancellation(prototypeId, kind: "implementation" |
                     ? { ...item, status: "failed", summary: message, completedAt: now } : item),
             }),
         };
-        await persistState({ ...state, [kind]: nextRuntime, status: message, updatedAt: now });
+        await persistState({ ...state,
+            factoryRuns: (state.factoryRuns || []).map((item) => item.runId === token.runId
+                ? { ...item, terminal: true } : item),
+            [kind]: nextRuntime, status: message, updatedAt: now });
         publishState(prototypeId);
         return true;
     });
@@ -6489,16 +6798,16 @@ async function resumeExecutionRun(prototypeId, kind: "implementation" | "testing
         assertCurrentExecution(await loadState(prototypeId), kind, token));
     await check();
     try {
-        return await session.factory.resume(token.runId);
+        return await resumeEffortRun(prototypeId, token.runId);
     } catch (error) {
         if (!["already_active", "factory_already_running"].includes(factoryErrorCode(error))) throw error;
         await check();
-        const existing = await session.factory.getRun(token.runId);
+        const existing = await getEffortRun(prototypeId, token.runId);
         if (existing.runId !== token.runId) throw new ExecutionSupersededError();
         if (existing.status === "halted") throw error;
         if (isFactoryRunTerminal(existing.status)) return existing;
         await check();
-        return session.factory.waitForRun(token.runId);
+        return waitForEffortRun(prototypeId, token.runId);
     }
 }
 
@@ -6517,7 +6826,7 @@ async function runExecutionFactory(prototypeId, state, kind: "implementation" | 
     });
     const run = resumeFromRunId
         ? await resumeExecutionRun(prototypeId, kind, token)
-        : await session.rpc.factory.run({
+        : await runEffortFactory(prototypeId, token.requestId, {
             name: kind === "implementation" ? IMPLEMENTATION_FACTORY_NAME : TEST_FACTORY_NAME,
             args: {
                 prototypeId, projectRoot: WORKSPACE_ROOT, execution: token,
@@ -6548,7 +6857,7 @@ async function runExecutionFactory(prototypeId, state, kind: "implementation" | 
         return;
     }
     await withAnswerClaim(prototypeId, async () => assertCurrentExecution(await loadState(prototypeId), kind, token));
-    const terminal = isFactoryRunTerminal(run.status) ? run : await session.factory.waitForRun(run.runId);
+    const terminal = isFactoryRunTerminal(run.status) ? run : await waitForEffortRun(prototypeId, run.runId);
     if (terminal.status === "halted") return;
     await recordExecutionUsage(prototypeId, kind, token);
     if (kind === "implementation") await settleImplementationRun(prototypeId, terminal, token);
@@ -6658,7 +6967,7 @@ async function failLegacyExecutions(observed) {
 function recoverExecutionFactory(state, canSubmitAnswers, kind: "implementation" | "testing") {
     const runtime = executionRuntime(state, kind);
     const active = kind === "implementation" ? activeImplementationRuns : activeTestRuns;
-    if (!canSubmitAnswers || state.lifecycle.currentStage !== (kind === "implementation" ? "implement" : "test") ||
+    if (!canSubmitAnswers || state.effortReset || state.lifecycle.currentStage !== (kind === "implementation" ? "implement" : "test") ||
         (!["starting", "running"].includes(runtime.status) && !hasUnconfirmedExecution(runtime)) ||
         active.has(state.prototypeId)) return;
     if (!hasExecutionIdentity(runtime)) {
@@ -6687,7 +6996,7 @@ function recoverExecutionFactory(state, canSubmitAnswers, kind: "implementation"
         if (!token.runId) {
             throw new Error("The previous execution has no durable SDK run ID. Inspect its status before explicitly retrying; automatic restart is unsafe.");
         }
-        let run = await session.factory.getRun(token.runId);
+        let run = await getEffortRun(state.prototypeId, token.runId);
         if (run.runId !== token.runId) throw new ExecutionSupersededError();
         if (run.status === "halted") {
             await runExecutionFactory(state.prototypeId, state, kind, token.runId);
@@ -6695,7 +7004,7 @@ function recoverExecutionFactory(state, canSubmitAnswers, kind: "implementation"
         }
         if (!isFactoryRunTerminal(run.status)) {
             await withAnswerClaim(state.prototypeId, async () => assertCurrentExecution(await loadState(state.prototypeId), kind, token));
-            run = await session.factory.waitForRun(token.runId);
+            run = await waitForEffortRun(state.prototypeId, token.runId);
         }
         if (kind === "implementation") await settleImplementationRun(state.prototypeId, run, token);
         else await settleTestRun(state.prototypeId, run, token);
@@ -7673,7 +7982,7 @@ async function markReloadComplete(state, extensionId) {
         };
         await persistState(completed);
         return completed;
-    });
+    }, false, true);
 }
 
 async function recordReloadError(prototypeId, error) {
@@ -7694,7 +8003,7 @@ async function recordReloadError(prototypeId, error) {
         };
         await persistState(failed);
         publishState(prototypeId);
-    });
+    }, false, true);
     await logSafely(`Tandem extension reload failed: ${message}`);
 }
 
@@ -7747,7 +8056,7 @@ async function submitReload(entry, res) {
         };
         await persistState(reloading);
         publishState(entry.prototypeId);
-    });
+    }, false, true);
     sendJson(res, 202, { accepted: true, requestedAt });
 
     setTimeout(() => {
@@ -8893,6 +9202,15 @@ async function handleRequest(entry, req, res) {
 
     if (req.method === "POST" && requestUrl.pathname === "/api/process") {
         const state = await processAction(entry.prototypeId, entry.extensionId, await readRequestBody(req));
+        sendJson(res, 200, publicState(entry, state));
+        return;
+    }
+
+    if (req.method === "POST" && ["/api/effort/reset", "/api/effort/start"].includes(requestUrl.pathname)) {
+        const input = await readRequestBody(req);
+        const action = requestUrl.pathname.endsWith("/reset") ? resetEffort : startEffort;
+        const state = await action(entry.prototypeId, entry.extensionId, input);
+        entry.canSubmitAnswers = true;
         sendJson(res, 200, publicState(entry, state));
         return;
     }
@@ -10979,6 +11297,8 @@ session = await joinSession({
                 recoverTestFactory(state, canSubmitAnswers);
                 if (
                     canSubmitAnswers &&
+                    !isCanvasRehydration(ctx) &&
+                    (!input.reset || state.openResetRequestId !== `${ctx.sessionId}:${ctx.instanceId}`) &&
                     typeof input.goal === "string" &&
                     input.goal.trim() &&
                     !state.goal

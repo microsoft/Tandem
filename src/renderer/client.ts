@@ -3,6 +3,16 @@ export {};
 type AnyRecord = Record<string, any>;
 
 const elements: AnyRecord = {
+  resetEffort: document.getElementById("reset-effort"),
+  effortMessage: document.getElementById("effort-message"),
+  lifecycleStatus: document.getElementById("lifecycle-status"),
+  startPanel: document.getElementById("start-panel"),
+  startForm: document.getElementById("start-form"),
+  startLoading: document.getElementById("start-loading"),
+  startGoal: document.getElementById("start-goal"),
+  startEffort: document.getElementById("start-effort"),
+  startMessage: document.getElementById("start-message"),
+  goalLength: document.getElementById("goal-length"),
   handoffStage: document.getElementById("handoff-stage"),
   handoffApprover: document.getElementById("handoff-approver"),
   acceptHandoff: document.getElementById("accept-handoff"),
@@ -39,6 +49,10 @@ const elements: AnyRecord = {
   status: document.getElementById("status"),
   connectionStatus: document.getElementById("connection-status"),
   nextActionGuide: document.getElementById("next-action-guide"),
+  nextActionBar: document.getElementById("next-action-bar"),
+  showNextAction: document.getElementById("show-next-action"),
+  contextToggle: document.getElementById("context-toggle"),
+  contextStage: document.getElementById("context-stage"),
   questionHost: document.getElementById("question-host"),
   confirmed: document.getElementById("confirmed"),
   assumed: document.getElementById("assumed"),
@@ -216,6 +230,8 @@ const LIFECYCLE_STAGES = [
   { id: "test", label: "Test" },
 ];
 let currentState = null;
+let effortSubmitting: "start" | "reset" | null = null;
+let lastRenderedGeneration: string | null = null;
 let submitting = false;
 let applyingAllRecommended = false;
 let appliedRecommendedCount = 0;
@@ -265,7 +281,7 @@ function currentStage(state = currentState) {
 }
 
 function hasPendingRequest() {
-  return submitting || completingStage || reopeningStage || prototypeSubmitting
+  return Boolean(effortSubmitting || currentState?.effortReset) || submitting || completingStage || reopeningStage || prototypeSubmitting
     || preparationSubmitting || implementationSubmitting || testSubmitting || processSubmitting;
 }
 
@@ -278,7 +294,7 @@ function skippedStage(state, stage) {
 
 function canEditStage(stage, state = currentState, allowCompleted = false) {
   return Boolean(state)
-    && !reopeningStage && !completingStage
+    && !effortSubmitting && !state.effortReset && !reopeningStage && !completingStage
     && currentStage(state) === stage
     && !skippedStage(state, stage)
     && (stage !== "prototype" || state.prototypeApproach?.mode !== "undecided")
@@ -323,6 +339,7 @@ function stageTab(stage) {
 function browseStage(stage) {
   if (!currentState || !hasStageData(currentState, stage) || skippedStage(currentState, stage)) return;
   viewedStageId = stage;
+  if (window.matchMedia("(max-width: 760px)").matches) setContextExpanded(false);
   activateOutputTab(stageTab(stage), true);
 }
 
@@ -466,19 +483,170 @@ function elapsedLabel(requestedAt) {
   return "Elapsed: " + Math.floor(seconds / 60) + "m " + (seconds % 60) + "s";
 }
 
-async function postJson(endpoint, body) {
+async function postJson(endpoint, body, timeoutMs = 60000) {
   const sequence = ++transportSequence;
   const response = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(60000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || "The request failed.");
   if (isStateSnapshot(result)) renderIfChanged(result, sequence);
   else await refreshSharedState(sequence).catch(() => undefined);
   return result;
+}
+
+function isGoalEntry(state) {
+  return !state?.goal?.trim()
+    && currentStage(state) === "prepare"
+    && state?.preparation?.status === "not-started";
+}
+
+function renderEffortControls(state) {
+  const writable = state?.provider?.canSubmitAnswers !== false;
+  const atStart = isGoalEntry(state);
+  const blocked = Boolean(effortSubmitting || state?.effortReset);
+  elements.startPanel.hidden = !atStart;
+  elements.workspace.hidden = atStart;
+  elements.workspace.inert = blocked;
+  elements.workspace.setAttribute("aria-busy", String(blocked));
+  elements.lifecycleStatus.hidden = atStart;
+  elements.startLoading.hidden = true;
+  elements.startForm.hidden = false;
+  elements.resetEffort.disabled = !state || !writable || Boolean(effortSubmitting);
+  elements.resetEffort.textContent = effortSubmitting === "reset" ? "Resetting..." : "Reset";
+  elements.resetEffort.title = !writable
+    ? "Use the writable Tandem provider and the session that owns active work to reset."
+    : "Clear the current Tandem effort and return to goal entry";
+  elements.startGoal.disabled = !writable || blocked;
+  elements.startEffort.disabled = !writable || blocked
+    || !elements.startGoal.value.trim() || elements.startGoal.value.length > 4000;
+  elements.startEffort.textContent = effortSubmitting === "start" ? "Starting..." : "Start project";
+  elements.startForm.setAttribute("aria-busy", String(effortSubmitting === "start"));
+  if (atStart && !writable && !elements.startMessage.textContent) {
+    elements.startMessage.textContent = "Open the writable Tandem provider to start this project.";
+  }
+  elements.goalLength.textContent = elements.startGoal.value.length.toLocaleString() + " / 4,000";
+  if (state?.effortReset) {
+    elements.effortMessage.textContent = state.effortReset.error
+      || "Reset is pending. Use Reset to confirm worker termination and finish clearing this effort.";
+    elements.effortMessage.dataset.status = state.effortReset.error ? "error" : "idle";
+  }
+  if (atStart || blocked) {
+    elements.nextActionBar.hidden = true;
+    clearNextAction();
+  }
+}
+
+elements.startGoal.addEventListener("input", () => {
+  elements.startGoal.removeAttribute("aria-invalid");
+  elements.startMessage.textContent = "";
+  if (currentState) renderEffortControls(currentState);
+});
+
+elements.startForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!currentState || effortSubmitting || currentState.effortReset || !isGoalEntry(currentState)
+    || currentState.provider?.canSubmitAnswers === false) return;
+  const goal = elements.startGoal.value.trim();
+  if (!goal || elements.startGoal.value.length > 4000) {
+    elements.startMessage.textContent = "Enter a project goal between 1 and 4,000 characters.";
+    elements.startMessage.dataset.status = "error";
+    elements.startGoal.setAttribute("aria-invalid", "true");
+    elements.startGoal.focus();
+    return;
+  }
+  const identity = { expectedRevision: currentState.revision ?? 0, generation: currentState.generation };
+  effortSubmitting = "start";
+  elements.startMessage.textContent = "Saving your goal and starting preparation...";
+  elements.startMessage.dataset.status = "idle";
+  elements.effortMessage.textContent = "";
+  render(currentState, true);
+  try {
+    await postJson("/api/effort/start", { ...identity, goal });
+    if (!isGoalEntry(currentState)) {
+      elements.startGoal.value = "";
+      elements.startMessage.textContent = "";
+      elements.preparationPanel.focus();
+    }
+  } catch (error) {
+    elements.startMessage.textContent = error instanceof Error ? error.message : "Could not start the project.";
+    elements.startMessage.dataset.status = "error";
+    if (!isGoalEntry(currentState)) {
+      elements.effortMessage.textContent = elements.startMessage.textContent;
+      elements.effortMessage.dataset.status = "error";
+    }
+  } finally {
+    effortSubmitting = null;
+    if (currentState) render(currentState, true);
+  }
+});
+
+elements.resetEffort.addEventListener("click", async () => {
+  if (!currentState || effortSubmitting || currentState.provider?.canSubmitAnswers === false) return;
+  if (!window.confirm(
+    "Reset this Tandem effort? Active work will be stopped before its goal, requirements, artifacts, "
+    + "stage history, handoffs, and settings are cleared. This cannot be undone. Other efforts, repository "
+    + "files, and exported files will not be changed.",
+  )) return;
+  const identity = { expectedRevision: currentState.revision ?? 0, generation: currentState.generation };
+  effortSubmitting = "reset";
+  applyingAllRecommended = false;
+  elements.effortMessage.textContent = "Stopping active work and resetting this effort...";
+  elements.effortMessage.dataset.status = "idle";
+  render(currentState, true);
+  try {
+    await postJson("/api/effort/reset", { ...identity, confirm: true }, 120000);
+    if (!isGoalEntry(currentState) || currentState.generation === identity.generation) {
+      throw new Error("Reset has not been confirmed. Reload the project state before retrying.");
+    }
+    elements.effortMessage.textContent = "Effort reset. Enter a new goal to start again.";
+    elements.startGoal.focus();
+  } catch (error) {
+    elements.effortMessage.textContent = error instanceof Error ? error.message : "Could not reset the effort.";
+    elements.effortMessage.dataset.status = "error";
+  } finally {
+    effortSubmitting = null;
+    if (currentState) render(currentState, true);
+    if (isGoalEntry(currentState)) elements.startGoal.focus();
+  }
+});
+
+function clearEffortDrafts() {
+  formDrafts.clear();
+  questionErrors.clear();
+  expandedViews.clear();
+  diagramViews.clear();
+  selectedArtifactId = null;
+  selectedDecisionId = null;
+  followingActiveDecision = true;
+  applyingAllRecommended = false;
+  appliedRecommendedCount = 0;
+  recommendedPendingId = null;
+  lastQuestionSignature = "";
+  lastLifecycleStage = null;
+  viewedStageId = null;
+  activeOutputTab = "preparation";
+  processSettingsDirty = false;
+  processSettingsEffort = "";
+  for (const input of document.querySelectorAll("input, textarea, select")) {
+    inputVersions.delete(input as HTMLElement);
+    if (input.tagName.toLowerCase() === "select") (input as HTMLSelectElement).selectedIndex = 0;
+    else if ((input as HTMLInputElement).type === "checkbox" || (input as HTMLInputElement).type === "radio") {
+      (input as HTMLInputElement).checked = false;
+    } else (input as HTMLInputElement).value = "";
+  }
+  for (const form of document.querySelectorAll("form[data-draft-key]")) form.removeAttribute("data-draft-key");
+  for (const details of document.querySelectorAll("details")) (details as HTMLDetailsElement).open = false;
+  elements.startMessage.textContent = "";
+  elements.effortMessage.textContent = "";
+  elements.effortMessage.dataset.status = "idle";
+  elements.startGoal.removeAttribute("aria-invalid");
+  elements.previewFrame.removeAttribute("src");
+  delete elements.previewFrame.dataset.url;
+  setContextExpanded(false);
 }
 
 let processSubmitting = false;
@@ -682,6 +850,34 @@ function finishSubmission() {
   }
 }
 
+function setContextExpanded(expanded: boolean) {
+  elements.workspace.dataset.contextOpen = String(expanded);
+  elements.contextToggle.setAttribute("aria-expanded", String(expanded));
+}
+
+elements.contextToggle.addEventListener("click", () => {
+  setContextExpanded(elements.contextToggle.getAttribute("aria-expanded") !== "true");
+});
+
+elements.requirements.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || !window.matchMedia("(max-width: 760px)").matches) return;
+  setContextExpanded(false);
+  elements.contextToggle.focus();
+  event.preventDefault();
+});
+
+elements.showNextAction.addEventListener("click", () => {
+  const action = currentState && nextActionForState(currentState);
+  if (!action?.target || action.target.disabled) return;
+  if (action.tab) activateOutputTab(action.tab);
+  else if (elements.requirements.contains(action.target)) browseStage(currentStage());
+  if (window.matchMedia("(max-width: 760px)").matches) {
+    setContextExpanded(elements.requirements.contains(action.target));
+  }
+  action.target.focus();
+  action.target.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+});
+
 function splitterBounds() {
   const workspaceRect = elements.workspace.getBoundingClientRect();
   const splitterWidth = elements.splitter.getBoundingClientRect().width || 9;
@@ -786,10 +982,10 @@ function renderReload(state) {
   const canReload = provider.canReload === true;
   const isReloading = receipt?.status === "reloading";
 
-  elements.reloadButton.disabled = !canReload || isReloading;
+  elements.reloadButton.disabled = !canReload || isReloading || Boolean(effortSubmitting);
   elements.reloadButton.textContent = isReloading
     ? "Reloading..."
-    : "Reload latest installed";
+    : "Reload";
 
   let status = "";
   let statusKind = "idle";
@@ -803,7 +999,6 @@ function renderReload(state) {
   } else if (receipt?.status === "reloading") {
     status = receipt.message || "Reloading...";
   } else if (receipt?.status === "success") {
-    status = receipt.message || "Reloaded";
     statusKind = "success";
   } else if (receipt?.status === "error") {
     status = receipt.message || "Reload failed";
@@ -1353,9 +1548,13 @@ function activateOutputTab(tabName, focusTab = false) {
   )?.stage || currentStage();
   for (const tab of elements.previewTabs) {
     const isActive = tab.dataset.tab === activeOutputTab;
+    const wasActive = tab.getAttribute("aria-selected") === "true";
     tab.setAttribute("aria-selected", String(isActive));
     tab.tabIndex = isActive ? 0 : -1;
     if (isActive && focusTab) tab.focus();
+    if (isActive && (focusTab || !wasActive)) {
+      tab.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    }
   }
   elements.preparationPanel.hidden = activeOutputTab !== "preparation";
   elements.previewPanel.hidden = activeOutputTab !== "preview";
@@ -1494,7 +1693,8 @@ function renderLifecycle(state, preserveMessage = false) {
 
     const number = document.createElement("span");
     number.className = "stage-step-index";
-    number.textContent = String(index + 1);
+    number.textContent = isComplete ? "\u2713" : String(index + 1);
+    number.setAttribute("aria-hidden", "true");
     const label = document.createElement("span");
     label.className = "stage-step-label";
     label.textContent = stage.label;
@@ -1518,6 +1718,7 @@ function renderLifecycle(state, preserveMessage = false) {
 
   elements.currentStageIndex.textContent = String(currentIndex + 1);
   elements.stage.textContent = currentDefinition.label;
+  elements.contextStage.textContent = currentDefinition.label;
   elements.currentStage.setAttribute(
     "aria-label",
     "Current lifecycle stage: " + currentDefinition.label,
@@ -1661,7 +1862,9 @@ function renderPreparation(state, preserveMessage = false) {
     ? "Current phase: " + runtime.currentPhase.split("-").join(" ")
     : isPreparing
       ? state.status || "Preparation is starting."
-      : preparation.summary || "Preparation has completed.";
+      : preparation.status === "failed"
+        ? preparation.error || "Preparation stopped before completion. Retry to continue."
+        : preparation.summary || "Preparation has completed.";
 
   const liveByWorkItem = new Map<string, AnyRecord>(
     (runtime?.agents || []).map(
@@ -2579,11 +2782,18 @@ function renderArtifacts(value) {
     ? "(" + artifacts.length + ")"
     : "";
   elements.artifactList.replaceChildren();
+  if (artifacts.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "artifact-empty";
+    empty.textContent = "Your artifacts will appear here as each stage progresses.";
+    elements.artifactList.append(empty);
+  }
 
   for (const stage of LIFECYCLE_STAGES) {
     const stageArtifacts = artifacts.filter(
       (artifact) => (artifact.stage || "requirements") === stage.id,
     );
+    if (stageArtifacts.length === 0) continue;
     const group = document.createElement("section");
     group.className = "artifact-stage-group";
     group.setAttribute("aria-label", stage.label + " artifacts");
@@ -2597,13 +2807,6 @@ function renderArtifacts(value) {
 
     const list = document.createElement("ul");
     list.className = "artifact-stage-items";
-    if (stageArtifacts.length === 0) {
-      const empty = document.createElement("li");
-      empty.className = "empty-item";
-      empty.textContent = "No artifacts yet";
-      list.append(empty);
-    }
-
     for (const artifact of stageArtifacts) {
       const item = document.createElement("li");
       const button = document.createElement("button");
@@ -2636,7 +2839,8 @@ function renderArtifacts(value) {
       button.addEventListener("click", () => {
         selectedArtifactId = artifact.id;
         render(currentState, true);
-        activateOutputTab("content");
+        if (window.matchMedia("(max-width: 760px)").matches) setContextExpanded(false);
+        activateOutputTab("content", true);
       });
       item.append(button);
       list.append(item);
@@ -4283,6 +4487,9 @@ function clearNextAction() {
 
 function nextActionForState(state) {
   if (
+    effortSubmitting ||
+    state.effortReset ||
+    isGoalEntry(state) ||
     completingStage ||
     submitting ||
     preparationSubmitting ||
@@ -4497,6 +4704,7 @@ function nextActionForState(state) {
 function renderNextAction(state) {
   clearNextAction();
   const action = nextActionForState(state);
+  elements.nextActionBar.hidden = !action?.target || action.target.disabled;
   if (!action?.target || action.target.disabled) {
     if (lastNextActionLabel) {
       elements.nextActionGuide.textContent = "";
@@ -4530,6 +4738,12 @@ function renderNextAction(state) {
 
 function render(state, preserveMessages = false) {
   const view = captureView();
+  const wasReset = lastRenderedGeneration !== null && state.generation !== lastRenderedGeneration && isGoalEntry(state);
+  if (wasReset) {
+    clearEffortDrafts();
+    preserveMessages = false;
+  }
+  lastRenderedGeneration = state.generation;
   currentState = state;
   const currentLifecycleStage =
     state.lifecycle?.currentStage || "prepare";
@@ -4561,7 +4775,9 @@ function render(state, preserveMessages = false) {
   renderTest(state, preserveMessages);
   renderReload(state);
   activateOutputTab(activeOutputTab);
-  restoreView(view);
+  renderEffortControls(state);
+  if (!wasReset) restoreView(view);
+  else if (!effortSubmitting) elements.startGoal.focus();
   void continueApplyingAllRecommended(state);
 }
 
@@ -4587,7 +4803,8 @@ function renderIfChanged(state, sequence = ++transportSequence) {
   const next = domainChanged ? { ...state, revision } : { ...currentState };
   for (const field of ["provider", "preparationRuntime", "implementationRuntime", "testRuntime"]) {
     if (sequence >= lastTransportSequence && Object.hasOwn(state, field)) next[field] = state[field];
-    else if (currentState && Object.hasOwn(currentState, field)) next[field] = currentState[field];
+    else if (currentState && Object.hasOwn(currentState, field)
+      && (field === "provider" || next.generation === currentState.generation)) next[field] = currentState[field];
   }
   lastTransportSequence = Math.max(lastTransportSequence, sequence);
   const providerSignature = JSON.stringify(next.provider || null);

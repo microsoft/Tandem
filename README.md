@@ -45,6 +45,10 @@ the workspace, analyzes authoritative sources for named concepts, and chooses
 whether to build a new GUI, validate an existing GUI, bypass Prototype, or ask
 Requirements to decide. Work through the stages in order:
 
+You can also open Tandem without a goal. A new effort shows a start page where
+you enter a goal and click **Start project**. Opening or refreshing that page
+does not run agents; submitting the goal starts Preparation.
+
 The Preparation tab shows live work-item and factory progress, source links,
 environment checks, blockers, and final results. When analysis completes, Tandem
 passes its usage suggestions, assumptions, and deferred work into Requirements.
@@ -62,6 +66,13 @@ passes its usage suggestions, assumptions, and deferred work into Requirements.
 
 Failed test runs provide a **Show error details** button with the run status,
 failed scenarios, agent summaries, captured evidence, and error events.
+
+In a narrow canvas, **Project context** opens the goal, stages, artifacts, and
+process settings without pushing the workspace off screen. Select a stage or
+artifact to return to its workspace, or press Escape to close project context.
+The next-step bar's **Go to action** button reveals and focuses the suggested
+control; it never submits an answer, starts a worker, or completes a stage.
+Stage tabs scroll horizontally and support arrow-key navigation.
 
 Tandem stores durable project state under `.tandem`. Add that
 directory to `.gitignore` unless you intentionally want to version the state.
@@ -88,6 +99,18 @@ cannot replace its inputs while work is active.
 Stopping work retains its ownership until the runtime confirms termination;
 a failed stop cannot unlock reset, reopening, or replacement execution.
 
+The top-right **Reset** button returns the current effort to goal entry after
+confirmation. It stops active work before clearing that effort's goal,
+requirements, artifacts, stage history, accepted handoffs, and process settings.
+Other Tandem efforts, repository files, and exported `tandem-records` bundles
+are not changed. Reset cannot be undone. If worker termination cannot be
+confirmed, Tandem keeps the effort and shows an error instead of clearing it.
+Use the owning session and writable provider when active work belongs there.
+Finalized Preparation history migrated from older versions does not require its
+archived factory run to remain available. Active or unconfirmed run receipts
+still require termination confirmation. **Reload** remains available while a
+reset is pending and preserves the reset barrier.
+
 Preparation uses the same durable ownership and request/run fencing. An interrupted
 job without a recoverable identity is surfaced for explicit retry, never recreated
 silently. Rehydrating a canvas cannot repeat its original reset request.
@@ -100,7 +123,7 @@ snapshot. Finish Test again after the new run succeeds to accept its new evidenc
 
 ## Accepted handoffs and process blocks
 
-Open **Accepted handoffs & process blocks** in the sidebar. The working lifecycle
+Open **Handoffs & process** in the sidebar (inside **Project context** in a narrow canvas). The working lifecycle
 is unchanged by default: automatic implementation, automatic tests, and
 tool-backed verification are opt-in.
 

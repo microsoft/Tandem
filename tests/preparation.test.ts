@@ -25,7 +25,7 @@ test("automatic Preparation binds its run before agents and writes a versioned R
         const state = fixture.api.createState("sample", "Build an app");
         await fixture.api.persistState(state);
         const pending = await fixture.api.ensurePreparationStarted(state, true);
-        await new Promise((resolve) => setImmediate(resolve));
+        await fixture.waitForRequests();
         assert.equal(fixture.requests.length, 1);
         const request = fixture.requests[0];
         assert.ok(request && typeof request === "object" && "args" in request);
@@ -49,6 +49,10 @@ test("automatic Preparation binds its run before agents and writes a versioned R
         });
         assert.equal(keys.length, 3);
         assert.ok(keys.every((key) => key.startsWith(pending.preparation.processing!.requestId!)));
+        fixture.api.setSession({ ...fixture.session, factory: {
+            waitForRun: async () => ({ runId: "prepare-run", status: "completed", result }),
+        } });
+        await fixture.api.waitForEffortRun("sample", "prepare-run");
         await fixture.api.settlePreparationRun("sample", { runId: "prepare-run", status: "completed", result }, tokenFor(pending, "prepare-run"));
         const ready = await fixture.api.loadState("sample");
         assert.equal(ready.lifecycle.currentStage, "requirements");
@@ -65,7 +69,7 @@ test("automatic Preparation binds its run before agents and writes a versioned R
 test("Preparation rejects superseded callbacks and foreign-session ownership", async () => {
     const fixture = await extensionHarness();
     try {
-        const state = fixture.api.createState("sample");
+        const state = fixture.api.createState("sample", "Analyze the workspace");
         await fixture.api.persistState(state);
         const pending = await fixture.api.ensurePreparationStarted(state, true);
         const token = tokenFor(pending, "prepare-run");
@@ -114,6 +118,7 @@ test("canvas reset preserves revisions and cannot repeat during rehydration or a
         assert.equal((await fixture.api.applyCanvasReset(loaded, input, "session:panel", false, true)).goal, reset.goal);
         assert.equal((await fixture.api.applyCanvasReset(loaded, input, "other:panel", true, true)).goal, reset.goal);
         const pending = await fixture.api.ensurePreparationStarted(loaded, true);
+        await fixture.waitForRequests();
         await assert.rejects(fixture.api.applyCanvasReset(pending, input, "new:panel", false, true), /active work/);
     } finally { await fixture.close(); }
 });
@@ -145,7 +150,7 @@ test("existing GUI validation does not request a separate app", async () => {
         await fixture.api.persistState(state);
         const pending = await fixture.api.completeLifecycleStage("sample", "requirements", "project:tandem");
         assert.equal(pending.processing.action, "build-prototype");
-        await new Promise((resolve) => setImmediate(resolve));
+        await fixture.waitForRequests();
         const request = fixture.requests[0];
         assert.ok(request && typeof request === "object" && "args" in request);
         const prompt = fixture.api.answerFactoryPrompt(request.args);
@@ -169,5 +174,6 @@ test("reopening Preparation invalidates downstream decisions and starts a fresh 
         assert.equal(reopened.lifecycle.history[0].path, "old.json");
         assert.notEqual(reopened.generation, state.generation);
         assert.ok(reopened.preparation.processing?.requestId);
+        await fixture.waitForRequests();
     } finally { await fixture.close(); }
 });

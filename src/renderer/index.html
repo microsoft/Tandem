@@ -17,13 +17,7 @@
         </div>
       </div>
       <div class="topbar-actions">
-        <span
-          id="next-action-guide"
-          class="visually-hidden"
-          role="status"
-          aria-live="polite"
-        ></span>
-        <div class="lifecycle" aria-label="Development lifecycle">
+        <div id="lifecycle-status" class="lifecycle" aria-label="Development lifecycle" hidden>
           <span id="current-stage" class="stage" aria-label="Current lifecycle stage">
             <span id="current-stage-index" class="stage-index" aria-hidden="true">1</span>
             <span id="stage">Preparation</span>
@@ -32,21 +26,51 @@
         </div>
         <div class="reload-control">
           <button id="reload-extension" class="reload-button" type="button">
-            Reload latest installed
+            Reload
           </button>
           <span id="reload-status" class="reload-status" role="status" aria-live="polite"></span>
         </div>
+        <button id="reset-effort" class="reset-button" type="button" disabled title="Clear the current Tandem effort and return to goal entry">Reset</button>
         <span class="build-version" title="Tandem extension version">v__TANDEM_VERSION__</span>
       </div>
+      <p id="effort-message" class="effort-message" role="status" aria-live="polite"></p>
+      <p id="connection-status" class="connection-status" role="status" aria-live="polite"></p>
     </header>
 
-    <main id="studio-workspace" class="workspace">
-      <aside id="requirements-pane" class="requirements" aria-label="Prototype requirements">
+    <main id="start-panel" class="start-panel" aria-labelledby="start-title">
+      <div class="start-content">
+        <p class="eyebrow">From idea to delivery</p>
+        <h2 id="start-title">What do you want to build?</h2>
+        <p class="start-intro">Start with a goal. Tandem will help you shape the requirements, explore the design, and guide implementation.</p>
+        <p id="start-loading" class="muted" role="status">Loading your project...</p>
+        <form id="start-form" class="start-form" hidden>
+          <label for="start-goal">Your project goal</label>
+          <textarea id="start-goal" rows="5" maxlength="4000" required aria-describedby="start-help start-message" placeholder="Build an app that helps my team triage customer requests."></textarea>
+          <p id="start-help" class="muted">Describe who it is for and what it should help them do. You can refine the details together.</p>
+          <div class="start-actions">
+            <span id="goal-length" class="muted">0 / 4,000</span>
+            <button id="start-effort" class="plan-button" type="submit">Start project</button>
+          </div>
+          <p id="start-message" class="start-message" role="status" aria-live="polite"></p>
+        </form>
+        <div class="start-expectation">
+          <strong>First, we prepare</strong>
+          <p>Tandem inspects this workspace and relevant sources, then opens Requirements for your input. Starting runs AI preparation; implementation comes later.</p>
+        </div>
+      </div>
+    </main>
+
+    <main id="studio-workspace" class="workspace" hidden>
+      <button id="context-toggle" class="context-toggle" type="button" aria-expanded="false" aria-controls="requirements-pane">
+        <span>Project context</span>
+        <span id="context-stage" class="context-stage">Preparation</span>
+        <span class="context-chevron" aria-hidden="true"></span>
+      </button>
+      <aside id="requirements-pane" class="requirements" aria-label="Project context">
         <section class="section">
           <p class="eyebrow">Goal</p>
           <p id="goal" class="goal muted">Waiting for a prototype goal...</p>
           <p id="status" class="status"></p>
-          <p id="connection-status" class="status" role="status" aria-live="polite"></p>
         </section>
 
         <section class="section">
@@ -68,7 +92,7 @@
         </section>
 
         <details class="section process-controls">
-          <summary class="eyebrow ledger-summary">Accepted handoffs &amp; process blocks</summary>
+          <summary class="eyebrow ledger-summary">Handoffs &amp; process</summary>
           <p class="muted">Finish a stage, then accept its immutable handoff. Exports never commit or publish.</p>
           <label for="handoff-stage">Completed stage</label>
           <select id="handoff-stage"></select>
@@ -152,9 +176,9 @@
         title="Drag or use Left and Right arrow keys to resize"
       ></div>
 
-      <section id="preview-pane" class="preview" aria-label="Prototype output">
+      <section id="preview-pane" class="preview" aria-label="Stage workspace">
         <div class="previewbar">
-          <div class="preview-tabs" role="tablist" aria-label="Prototype output">
+          <div class="preview-tabs" role="tablist" aria-label="Stage workspace">
             <button
               id="preparation-tab"
               class="preview-tab"
@@ -236,7 +260,7 @@
               aria-controls="content-panel"
               tabindex="-1"
               data-tab="content"
-            >Content <span id="artifact-count" class="artifact-count"></span></button>
+            >Artifacts <span id="artifact-count" class="artifact-count"></span></button>
           </div>
           <div id="preview-tools" class="preview-tools">
             <span id="preview-status" class="preview-status">Waiting</span>
@@ -634,9 +658,8 @@
               </li>
             </ol>
             <div id="usage-intake">
-              <p class="usage-intro">
-                How do you want to use the app? Add one sentence for each usage.
-              </p>
+              <h2 class="usage-title">What should this help you do?</h2>
+              <p id="usage-help" class="usage-intro">Add one goal at a time. Start with your own, or choose a suggestion below.</p>
               <ul id="usage-items" class="usage-items"></ul>
               <form id="usage-form" class="usage-form">
                 <input
@@ -646,6 +669,7 @@
                   autocomplete="off"
                   placeholder="I want to..."
                   aria-label="Add one app usage"
+                  aria-describedby="usage-help"
                 />
                 <button id="add-usage" type="submit">Add usage</button>
               </form>
@@ -765,6 +789,10 @@
         </div>
       </section>
     </main>
+    <footer id="next-action-bar" class="next-action-bar" aria-label="Next step" hidden>
+      <span id="next-action-guide" role="status" aria-live="polite"></span>
+      <button id="show-next-action" type="button">Go to action</button>
+    </footer>
   </div>
 
   <script>__TANDEM_CLIENT__</script>

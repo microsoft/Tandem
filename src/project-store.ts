@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import lockfile from "proper-lockfile";
 
@@ -200,6 +200,36 @@ export class ProjectStore<T extends StoredProject> {
             return normalizeProjectId(value.prototypeId);
         }
         return null;
+    }
+
+    async clearEffortData(id: string): Promise<void> {
+        return this.transaction(id, async () => {
+            const effort = dirname(this.statePath(id));
+            const assertDirectory = async (path: string) => {
+                const entry = await lstat(path);
+                if (entry.isSymbolicLink() || !entry.isDirectory()) {
+                    throw new ProjectStoreError("unsafe_reset_path", "Reset refused a redirected operational directory; saved data was preserved.", 409);
+                }
+            };
+            for (const path of [this.options.root, join(this.options.root, "efforts"), effort]) {
+                await assertDirectory(path);
+            }
+            const children = (await readdir(effort)).filter((name) => name !== "state.json");
+            const inspect = async (path: string): Promise<void> => {
+                const entry = await lstat(path);
+                if (entry.isSymbolicLink()) {
+                    throw new ProjectStoreError("unsafe_reset_path", "Reset refused a linked operational file; its target was preserved.", 409);
+                }
+                if (entry.isDirectory()) {
+                    for (const name of await readdir(path)) await inspect(join(path, name));
+                }
+            };
+            for (const name of children) await inspect(join(effort, name));
+            for (const name of children) {
+                this.transactions.getStore()!.assertOwned();
+                await rm(join(effort, name), { recursive: true, force: false });
+            }
+        });
     }
 
     async setCurrent(id: string): Promise<void> {

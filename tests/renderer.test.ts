@@ -13,6 +13,192 @@ function processFixture() {
     };
 }
 
+function blankEffort(revision = 1, generation = "fixture-generation") {
+    return { ...state("prepare", revision), goal: "", generation };
+}
+
+test("header omits reload success text and places the version after Reset", async () => {
+    const h = await rendererHarness();
+    const value = { ...state(), provider: { canSubmitAnswers: true, canReload: true },
+        reloadReceipt: { status: "success", message: "Reloaded the latest installed user extension." } };
+    h.api.renderIfChanged(value);
+    assert.equal(h.api.elements.reloadStatus.textContent, "");
+    assert.equal(h.api.elements.reloadButton.textContent, "Reload");
+    assert.equal(h.api.elements.reloadButton.disabled, false);
+    const actions = h.document.querySelector(".topbar-actions")!;
+    assert.equal(actions.children.at(-1)!.className, "build-version");
+    assert.equal(actions.children.at(-2), h.api.elements.resetEffort);
+    h.api.renderIfChanged({ ...value, revision: 2,
+        reloadReceipt: { status: "error", message: "Could not reload the extension." } });
+    assert.equal(h.api.elements.reloadStatus.textContent, "Could not reload the extension.");
+    assert.equal(h.api.elements.reloadStatus.dataset.status, "error");
+});
+
+test("goal entry waits for an explicit valid start and preserves drafts across updates", async () => {
+    const h = await rendererHarness();
+    const value = blankEffort();
+    h.api.renderIfChanged(value);
+    assert.equal(h.api.elements.startPanel.hidden, false);
+    assert.equal(h.api.elements.workspace.hidden, true);
+    assert.equal(h.api.elements.lifecycleStatus.hidden, true);
+    assert.equal(h.api.elements.nextActionBar.hidden, true);
+    assert.equal(h.api.elements.startEffort.disabled, true);
+    assert.equal(h.requests.length, 0);
+    h.api.elements.startGoal.value = "   ";
+    await h.api.elements.startForm.emit("submit");
+    assert.match(h.api.elements.startMessage.textContent, /Enter a project goal/);
+    assert.equal(h.api.elements.startGoal.getAttribute("aria-invalid"), "true");
+    assert.equal(h.requests.length, 0);
+    h.api.elements.startGoal.value = "  Build a team task board  ";
+    await h.api.elements.startGoal.emit("input");
+    h.api.elements.startGoal.focus();
+    h.api.elements.startGoal.setSelectionRange(3, 8);
+    h.api.renderIfChanged({ ...value, revision: 2 });
+    assert.equal(h.api.elements.startGoal.value, "  Build a team task board  ");
+    assert.equal(h.api.elements.startGoal.selectionStart, 3);
+    assert.equal(h.api.elements.startEffort.disabled, false);
+    const started = { ...state("prepare", 3), goal: "Build a team task board" };
+    started.preparation.status = "starting";
+    let release!: (response: any) => void;
+    h.setFetch(() => new Promise((resolve) => { release = resolve; }));
+    const request = h.api.elements.startForm.emit("submit");
+    await h.flush();
+    assert.equal(h.api.elements.startEffort.disabled, true);
+    await h.api.elements.startForm.emit("submit");
+    await h.api.elements.resetEffort.emit("click");
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.requests[0].path, "/api/effort/start");
+    assert.equal(h.requests[0].body.goal, "Build a team task board");
+    assert.equal(h.requests[0].body.expectedRevision, 2);
+    assert.equal(h.requests[0].body.generation, "fixture-generation");
+    release(response(started));
+    await request;
+    assert.equal(h.api.elements.startPanel.hidden, true);
+    assert.equal(h.api.elements.workspace.hidden, false);
+    assert.equal(h.api.elements.preparationPanel.hidden, false);
+    assert.equal(h.api.elements.startGoal.value, "");
+    assert.equal(h.document.activeElement, h.api.elements.preparationPanel);
+});
+
+test("start errors preserve the goal and read-only goal entry cannot submit", async () => {
+    const h = await rendererHarness();
+    const value = blankEffort();
+    h.api.renderIfChanged(value);
+    h.api.elements.startGoal.value = "x".repeat(4001);
+    await h.api.elements.startForm.emit("submit");
+    assert.equal(h.requests.length, 0);
+    h.api.elements.startGoal.value = "Build a focused app";
+    await h.api.elements.startGoal.emit("input");
+    h.setFetch(async () => response({ error: "The effort changed. Reload and retry." }, 409));
+    await h.api.elements.startForm.emit("submit");
+    assert.equal(h.api.elements.startGoal.value, "Build a focused app");
+    assert.match(h.api.elements.startMessage.textContent, /effort changed/);
+    h.api.renderIfChanged({ ...value, revision: 2 });
+    assert.match(h.api.elements.startMessage.textContent, /effort changed/);
+    h.api.renderIfChanged({ ...value, revision: 3, provider: { canSubmitAnswers: false } });
+    await h.api.elements.startForm.emit("submit");
+    await h.api.elements.resetEffort.emit("click");
+    assert.equal(h.api.elements.startGoal.disabled, true);
+    assert.equal(h.api.elements.resetEffort.disabled, true);
+    assert.equal(h.requests.length, 1);
+});
+
+test("reset is confirmed, available during active work, and clears local drafts only after success", async () => {
+    const h = await rendererHarness();
+    const value = { ...state("implement"), process: processFixture() };
+    value.implementation.status = "running";
+    h.api.renderIfChanged({ ...value, implementationRuntime: { liveAgentCount: 2 } });
+    assert.equal(h.api.elements.resetEffort.disabled, false);
+    h.api.elements.handoffApprover.value = "Previous owner";
+    h.api.elements.usageInput.value = "Old unsent usage";
+    h.api.elements.processRepository.value = "owner/old";
+    await h.api.elements.processRepository.emit("input");
+    h.api.formDrafts.set("old-question", { values: { detail: "Old draft" }, version: 1 });
+    h.setConfirm(false);
+    await h.api.elements.resetEffort.emit("click");
+    assert.equal(h.requests.length, 0);
+    assert.equal(h.api.elements.usageInput.value, "Old unsent usage");
+    h.setConfirm(true);
+    let release!: (response: any) => void;
+    h.setFetch(() => new Promise((resolve) => { release = resolve; }));
+    const request = h.api.elements.resetEffort.emit("click");
+    await h.flush();
+    assert.equal(h.api.elements.resetEffort.disabled, true);
+    assert.match(h.api.elements.effortMessage.textContent, /Stopping active work/);
+    assert.equal(h.api.elements.workspace.inert, true);
+    assert.equal(h.api.elements.workspace.getAttribute("aria-busy"), "true");
+    assert.equal(h.api.elements.usageInput.value, "Old unsent usage");
+    await h.api.elements.resetEffort.emit("click");
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.requests[0].path, "/api/effort/reset");
+    assert.equal(h.requests[0].body.confirm, true);
+    assert.equal(h.requests[0].body.expectedRevision, 1);
+    assert.equal(h.requests[0].body.generation, "fixture-generation");
+    release(response(blankEffort(4, "reset-generation")));
+    await request;
+    assert.equal(h.api.elements.startPanel.hidden, false);
+    assert.equal(h.api.elements.workspace.inert, false);
+    assert.equal(h.api.elements.usageInput.value, "");
+    assert.equal(h.api.elements.handoffApprover.value, "");
+    assert.equal(h.api.elements.processRepository.value, "");
+    assert.equal(h.api.formDrafts.has("old-question"), false);
+    assert.equal(h.api.current().implementationRuntime, undefined);
+    assert.equal(h.document.activeElement, h.api.elements.startGoal);
+    assert.match(h.api.elements.effortMessage.textContent, /Effort reset/);
+    assert.equal(h.api.renderIfChanged({ ...value, revision: 2 }), false, "old activity must not restore the previous effort");
+    assert.equal(h.api.elements.startPanel.hidden, false);
+});
+
+test("reset cancellation failure keeps the current effort and exposes a persistent error", async () => {
+    const h = await rendererHarness();
+    const value = state("prepare");
+    value.preparation.status = "running";
+    h.api.renderIfChanged(value);
+    h.api.elements.usageInput.value = "Keep this draft";
+    h.setFetch(async () => response({ error: "Worker termination could not be confirmed. Retry Reset." }, 409));
+    await h.api.elements.resetEffort.emit("click");
+    h.api.renderIfChanged({ ...value, revision: 2 });
+    assert.equal(h.api.elements.startPanel.hidden, true);
+    assert.equal(h.api.elements.usageInput.value, "Keep this draft");
+    assert.equal(h.api.elements.resetEffort.disabled, false);
+    assert.match(h.api.elements.effortMessage.textContent, /termination could not be confirmed/);
+    assert.equal(h.api.elements.effortMessage.dataset.status, "error");
+});
+
+test("reset does not claim success without a new empty generation", async () => {
+    const h = await rendererHarness();
+    const value = state("requirements");
+    h.api.renderIfChanged(value);
+    h.setFetch(async () => response(value));
+    await h.api.elements.resetEffort.emit("click");
+    assert.match(h.api.elements.effortMessage.textContent, /has not been confirmed/);
+    assert.equal(h.api.elements.effortMessage.dataset.status, "error");
+});
+
+test("a persisted reset barrier blocks normal actions after reload but leaves Reset retry available", async () => {
+    const h = await rendererHarness();
+    const value = { ...state("requirements"), effortReset: {
+        requestId: "reset-request", generation: "fixture-generation", error: "Worker termination is unconfirmed.",
+    } };
+    h.api.renderIfChanged(value);
+    assert.equal(h.api.elements.workspace.inert, true);
+    assert.equal(h.api.elements.resetEffort.disabled, false);
+    assert.equal(h.api.elements.nextActionBar.hidden, true);
+    assert.match(h.api.elements.effortMessage.textContent, /termination is unconfirmed/);
+    h.api.elements.usageInput.value = "Should not submit";
+    await h.api.elements.usageForm.emit("submit");
+    assert.equal(h.requests.length, 0);
+    h.api.renderIfChanged({ ...value, revision: 2, effortReset: { ...value.effortReset, error: "" } });
+    assert.equal(h.api.elements.resetEffort.disabled, false);
+    assert.match(h.api.elements.effortMessage.textContent, /Reset is pending/);
+    h.setFetch(async () => response(blankEffort(4, "after-retry")));
+    await h.api.elements.resetEffort.emit("click");
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.requests[0].body.expectedRevision, 2);
+    assert.equal(h.api.elements.startPanel.hidden, false);
+    assert.equal(h.api.elements.startGoal.disabled, false);
+});
+
 test("process setting drafts survive updates and stale-save errors", async () => {
     const h = await rendererHarness();
     const value = { ...state(), process: processFixture() };
@@ -431,6 +617,100 @@ test("responsive layout and graph keyboard focus have explicit accessible styles
     assert.match(css, /container:\s*output\s*\/\s*inline-size/);
     assert.match(css, /@container output \(max-width: 680px\)/);
     assert.match(css, /g\.node\[data-selectable="true"\]:focus-visible\s*\{\s*outline:\s*3px solid/);
+    assert.match(css, /\.workspace\[data-context-open="true"\] \.requirements\s*\{\s*display: block/);
+    assert.match(css, /\.preview-tabs\s*\{[^}]*overflow-x: auto/);
+    assert.doesNotMatch(css, /animation:\s*next-action/);
+    assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.processing-indicator/);
+});
+
+test("compact project context is explicit, preserves drafts, and closes on navigation or Escape", async () => {
+    const h = await rendererHarness();
+    h.setNarrowViewport(true);
+    const value = state("requirements");
+    h.api.renderIfChanged(value);
+    assert.equal(h.api.elements.contextToggle.getAttribute("aria-expanded"), "false");
+    assert.equal(h.api.elements.contextStage.textContent, "Requirements");
+    await h.api.elements.contextToggle.emit("click");
+    assert.equal(h.api.elements.workspace.dataset.contextOpen, "true");
+    h.api.elements.handoffApprover.value = "Design owner";
+    h.api.renderIfChanged({ ...value, revision: 2 });
+    assert.equal(h.api.elements.contextToggle.getAttribute("aria-expanded"), "true");
+    await h.api.elements.requirements.emit("keydown", { key: "Escape" });
+    assert.equal(h.api.elements.workspace.dataset.contextOpen, "false");
+    assert.equal(h.document.activeElement, h.api.elements.contextToggle);
+    assert.equal(h.api.elements.handoffApprover.value, "Design owner");
+    await h.api.elements.contextToggle.emit("click");
+    await h.api.elements.stageList.querySelector('[data-stage-id="prepare"]').emit("click");
+    assert.equal(h.api.elements.workspace.dataset.contextOpen, "false");
+    assert.equal(h.api.elements.preparationPanel.hidden, false);
+    assert.equal(h.api.current().lifecycle.currentStage, "requirements");
+    assert.equal(h.requests.length, 0);
+});
+
+test("next-step guidance navigates and focuses without executing a mutation", async () => {
+    const h = await rendererHarness();
+    h.setNarrowViewport(true);
+    const value = state("prepare");
+    value.preparation.status = "failed";
+    value.preparation.error = "Could not inspect workspace";
+    h.api.render(value);
+    assert.equal(h.api.elements.nextActionBar.hidden, false);
+    assert.match(h.api.elements.nextActionGuide.textContent, /Retry preparation/);
+    assert.equal(h.api.elements.preparationStageProgress.textContent, "Could not inspect workspace");
+    await h.api.elements.contextToggle.emit("click");
+    await h.api.elements.showNextAction.emit("click");
+    assert.equal(h.api.elements.workspace.dataset.contextOpen, "false");
+    assert.equal(h.document.activeElement, h.api.elements.retryPreparation);
+    assert.equal(h.requests.length, 0);
+    value.preparation.status = "running";
+    h.api.render(value);
+    assert.equal(h.api.elements.nextActionBar.hidden, true);
+});
+
+test("next-step guidance reveals stage completion in compact context from a historical view", async () => {
+    const h = await rendererHarness();
+    h.setNarrowViewport(true);
+    const value = state("requirements");
+    value.requirements.substage = "dag";
+    value.decisionGraph.nodes = [decision("accepted", "answered")];
+    h.api.render(value);
+    h.api.browseStage("prepare");
+    assert.equal(h.api.elements.completeStage.hidden, true);
+    await h.api.elements.showNextAction.emit("click");
+    assert.equal(h.api.elements.completeStage.hidden, false);
+    assert.equal(h.api.elements.contextToggle.getAttribute("aria-expanded"), "true");
+    assert.equal(h.document.activeElement, h.api.elements.completeStage);
+    assert.equal(h.requests.length, 0);
+});
+
+test("artifact navigation shows one empty state and only populated stage groups", async () => {
+    const h = await rendererHarness();
+    h.setNarrowViewport(true);
+    const value = state("design");
+    h.api.render(value);
+    assert.equal(h.api.elements.artifactList.querySelectorAll(".artifact-empty").length, 1);
+    assert.equal(h.api.elements.artifactList.querySelectorAll(".artifact-stage-group").length, 0);
+    value.artifacts = [
+        { id: "intent", title: "User intent", stage: "requirements", kind: "intent", content: "Intent" },
+        { id: "contract", title: "UI contract", stage: "design", kind: "contract", content: "Contract", reviewStatus: "stale" },
+    ];
+    h.api.render(value);
+    assert.equal(h.api.elements.artifactList.querySelectorAll(".artifact-stage-group").length, 2);
+    assert.match(h.api.elements.artifactList.textContent, /stale/);
+    await h.api.elements.contextToggle.emit("click");
+    await h.api.elements.artifactList.querySelector('[data-artifact-id="contract"]').emit("click");
+    assert.equal(h.api.elements.workspace.dataset.contextOpen, "false");
+    assert.equal(h.api.elements.artifactHeading.textContent, "UI contract");
+    assert.equal(h.api.elements.contentPanel.hidden, false);
+    assert.equal(h.requests.length, 0);
+});
+
+test("failed preparation without an error never reports successful completion", async () => {
+    const h = await rendererHarness();
+    const value = state("prepare");
+    value.preparation.status = "failed";
+    h.api.render(value);
+    assert.match(h.api.elements.preparationStageProgress.textContent, /stopped before completion/);
 });
 
 test("renderer asset injection does not interpret dollar substitution sequences", async () => {

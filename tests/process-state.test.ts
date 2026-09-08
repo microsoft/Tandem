@@ -128,7 +128,7 @@ test("local intake is idempotent, preserves the active effort and does not start
             instanceId: `linked-${receipt.followupId}`, input: { prototypeId: receipt.followupId },
         }]);
         await h.api.ensurePreparationStarted(followup, true);
-        await new Promise((resolve) => setImmediate(resolve));
+        await h.waitForRequests();
         const request = h.requests[0];
         assert.ok(request && typeof request === "object" && "args" in request);
         assert.ok(request.args && typeof request.args === "object" && "intake" in request.args);
