@@ -3,6 +3,34 @@ export {};
 type AnyRecord = Record<string, any>;
 
 const elements: AnyRecord = {
+  handoffStage: document.getElementById("handoff-stage"),
+  handoffApprover: document.getElementById("handoff-approver"),
+  acceptHandoff: document.getElementById("accept-handoff"),
+  exportHandoff: document.getElementById("export-handoff"),
+  handoffRecord: document.getElementById("handoff-record"),
+  handoffAdapter: document.getElementById("handoff-adapter"),
+  statusAdapter: document.getElementById("status-adapter"),
+  intakeAdapter: document.getElementById("intake-adapter"),
+  processRepository: document.getElementById("process-repository"),
+  autoImplement: document.getElementById("auto-implement"),
+  autoTest: document.getElementById("auto-test"),
+  evidenceEnabled: document.getElementById("evidence-enabled"),
+  independentReview: document.getElementById("independent-review"),
+  protectedPaths: document.getElementById("protected-paths"),
+  verificationChecks: document.getElementById("verification-checks"),
+  saveProcess: document.getElementById("save-process"),
+  processMetrics: document.getElementById("process-metrics"),
+  processEvidence: document.getElementById("process-evidence"),
+  processMessage: document.getElementById("process-message"),
+  prepareDelivery: document.getElementById("prepare-delivery"),
+  deliveryDraft: document.getElementById("delivery-draft"),
+  processReference: document.getElementById("process-reference"),
+  publishDelivery: document.getElementById("publish-delivery"),
+  refreshDelivery: document.getElementById("refresh-delivery"),
+  intakeContent: document.getElementById("intake-content"),
+  importIntake: document.getElementById("import-intake"),
+  processReceipts: document.getElementById("process-receipts"),
+  resetProcess: document.getElementById("reset-process"),
   stage: document.getElementById("stage"),
   currentStage: document.getElementById("current-stage"),
   currentStageIndex: document.getElementById("current-stage-index"),
@@ -238,7 +266,7 @@ function currentStage(state = currentState) {
 
 function hasPendingRequest() {
   return submitting || completingStage || reopeningStage || prototypeSubmitting
-    || preparationSubmitting || implementationSubmitting || testSubmitting;
+    || preparationSubmitting || implementationSubmitting || testSubmitting || processSubmitting;
 }
 
 function skippedStage(state, stage) {
@@ -451,6 +479,199 @@ async function postJson(endpoint, body) {
   if (isStateSnapshot(result)) renderIfChanged(result, sequence);
   else await refreshSharedState(sequence).catch(() => undefined);
   return result;
+}
+
+let processSubmitting = false;
+let processSettingsDirty = false;
+let processSettingsEffort = "";
+let processSettingsBaseRevision = 0;
+const processSettingsElements = ["handoffAdapter", "statusAdapter", "intakeAdapter", "processRepository",
+  "autoImplement", "autoTest", "evidenceEnabled", "independentReview", "verificationChecks", "protectedPaths"];
+for (const key of processSettingsElements) {
+  const markDirty = () => {
+    if (!processSettingsDirty) processSettingsBaseRevision = currentState?.revision ?? 0;
+    processSettingsDirty = true;
+  };
+  elements[key].addEventListener("input", markDirty);
+  elements[key].addEventListener("change", markDirty);
+}
+
+function selectedAcceptance(state) {
+  return (state.process?.acceptances || []).filter((record) => record.stageId === elements.handoffStage.value &&
+    state.lifecycle.outputs.some((output) => output.stageId === record.stageId && output.path === record.snapshotPath)).at(-1);
+}
+
+async function submitProcess(body) {
+  if (!currentState || processSubmitting || hasPendingRequest() || hasActiveJobs(currentState) ||
+      currentState.provider?.canSubmitAnswers === false) return;
+  processSubmitting = true;
+  elements.processMessage.textContent = "Processing...";
+  elements.processMessage.dataset.status = "idle";
+  renderProcess(currentState, true);
+  try {
+    await postJson("/api/process", { expectedRevision: currentState.revision ?? 0, ...body });
+    elements.processMessage.textContent = currentState.process?.message || "Process action completed.";
+    return true;
+  } catch (error) {
+    elements.processMessage.textContent = error instanceof Error ? error.message : "Process action failed.";
+    elements.processMessage.dataset.status = "error";
+    return false;
+  } finally {
+    processSubmitting = false;
+    if (currentState) renderProcess(currentState, true);
+  }
+}
+
+elements.handoffStage.addEventListener("change", () => currentState && renderProcess(currentState, true));
+elements.resetProcess.addEventListener("click", () => {
+  if (processSubmitting || !window.confirm("Discard the process settings draft and reload saved settings?")) return;
+  processSettingsDirty = false;
+  if (currentState) renderProcess(currentState, true);
+});
+elements.prepareDelivery.addEventListener("click", () => submitProcess({ action: "prepare-handoff" }));
+elements.publishDelivery.addEventListener("click", () => {
+  const adapter = currentState?.process?.settings.adapters.handoff || "local";
+  if (!window.confirm(`Publish the displayed delivery draft using ${adapter}? GitHub posts a comment to the existing PR; Local writes a local bundle. Nothing will be merged or deployed.`)) return;
+  return submitProcess({ action: "handoff", reference: elements.processReference.value, confirm: true });
+});
+elements.refreshDelivery.addEventListener("click", () =>
+  submitProcess({ action: "status", reference: elements.processReference.value }));
+elements.importIntake.addEventListener("click", () => {
+  if (!window.confirm("Read this source and create a new linked effort? The current effort will not be reset, and no agents will start.")) return;
+  return submitProcess({ action: "intake", reference: elements.processReference.value,
+    ...(currentState?.process?.settings.adapters.intake === "github" ? {} : { content: elements.intakeContent.value }) });
+});
+elements.acceptHandoff.addEventListener("click", () => submitProcess({
+  action: "accept", stageId: elements.handoffStage.value, approver: elements.handoffApprover.value,
+}));
+elements.exportHandoff.addEventListener("click", () => {
+  const record = selectedAcceptance(currentState);
+  if (!record || !window.confirm("Export the accepted snapshot and artifacts into tandem-records? Review the bundle before sharing; nothing will be committed.")) return;
+  return submitProcess({ action: "export", acceptanceId: record.id });
+});
+elements.saveProcess.addEventListener("click", async () => {
+  let checks;
+  try { checks = JSON.parse(elements.verificationChecks.value); }
+  catch {
+    elements.processMessage.textContent = "Verification commands must be a valid JSON array.";
+    elements.processMessage.dataset.status = "error";
+    return;
+  }
+  if (!window.confirm("Save these process settings? Enabled verification commands will run with your local user permissions. Acceptance and external publication remain explicit.")) return;
+  const settings = {
+    adapters: { handoff: elements.handoffAdapter.value, status: elements.statusAdapter.value, intake: elements.intakeAdapter.value },
+    githubRepository: elements.processRepository.value.trim(),
+    autoStartImplementation: elements.autoImplement.checked,
+    autoStartTests: elements.autoTest.checked,
+    verification: { enabled: elements.evidenceEnabled.checked, independentReview: elements.independentReview.checked, checks,
+      protectedPaths: elements.protectedPaths.value.split(/\r?\n/).map((path) => path.trim()).filter(Boolean) },
+  };
+  const submittedDraft = processSettingsElements.map((key) => [elements[key].value, elements[key].checked]);
+  const success = await submitProcess({ action: "configure", settings,
+    expectedRevision: processSettingsDirty ? processSettingsBaseRevision : currentState.revision });
+  if (success && JSON.stringify(submittedDraft) === JSON.stringify(
+    processSettingsElements.map((key) => [elements[key].value, elements[key].checked]),
+  )) processSettingsDirty = false;
+  if (currentState) renderProcess(currentState, true);
+});
+
+function renderProcess(state, preserveMessage = false) {
+  const process = state.process;
+  const busy = processSubmitting || hasPendingRequest() || hasActiveJobs(state) || state.provider?.canSubmitAnswers === false;
+  const stages = state.lifecycle.outputs || [];
+  const stageSignature = JSON.stringify(stages.map((output) => output.stageId));
+  if (elements.handoffStage.dataset.signature !== stageSignature) {
+    const selected = elements.handoffStage.value;
+    elements.handoffStage.replaceChildren(...stages.map((output) => {
+      const option = document.createElement("option");
+      option.value = output.stageId;
+      option.textContent = LIFECYCLE_STAGES.find((stage) => stage.id === output.stageId)?.label || output.stageId;
+      return option;
+    }));
+    elements.handoffStage.value = stages.some((output) => output.stageId === selected) ? selected : stages.at(-1)?.stageId || "";
+    elements.handoffStage.dataset.signature = stageSignature;
+  }
+  const record = selectedAcceptance(state);
+  elements.handoffRecord.textContent = record
+    ? `Accepted by ${record.acceptedBy.label} at ${record.acceptedAt}. ${record.exportPath || "Not exported."}`
+    : "No acceptance for this stage revision.";
+  elements.acceptHandoff.disabled = busy || !elements.handoffStage.value;
+  elements.exportHandoff.disabled = busy || !record;
+  elements.saveProcess.disabled = busy;
+  elements.resetProcess.disabled = busy;
+  elements.prepareDelivery.disabled = busy || !state.lifecycle.completedStages.includes("test");
+  elements.publishDelivery.disabled = busy || !process?.deliveryDraft || !state.lifecycle.completedStages.includes("test");
+  elements.publishDelivery.textContent = `Publish reviewed handoff (${process?.settings.adapters.handoff || "local"})`;
+  elements.refreshDelivery.disabled = busy;
+  elements.refreshDelivery.textContent = `Read review / check status (${process?.settings.adapters.status || "local"})`;
+  elements.importIntake.disabled = busy;
+  elements.importIntake.textContent = `Import linked effort (${process?.settings.adapters.intake || "local"})`;
+  elements.deliveryDraft.textContent = process?.deliveryDraft?.body || "Finish Test and accept its handoff to prepare a reviewable delivery draft.";
+  const receiptsSignature = JSON.stringify(process?.receipts || []);
+  if (elements.processReceipts.dataset.signature !== receiptsSignature) {
+    elements.processReceipts.replaceChildren(...(process?.receipts || []).slice().reverse().map((receipt) => {
+      const details = document.createElement("details");
+      details.dataset.uiKey = "process-receipt:" + receipt.id;
+      const summary = document.createElement("summary");
+      summary.textContent = `${receipt.adapter} / ${receipt.block} / ${receipt.recordedAt}`;
+      const text = document.createElement("pre");
+      text.textContent = `${receipt.reference}\n${receipt.summary}`;
+      details.append(summary, text);
+      if (receipt.followupId) {
+        const open = document.createElement("button");
+        open.type = "button";
+        open.className = "complete-stage";
+        open.textContent = "Open linked effort and start Preparation";
+        open.addEventListener("click", () => submitProcess({ action: "open-intake", receiptId: receipt.id }));
+        details.append(open);
+      }
+      return details;
+    }));
+    elements.processReceipts.dataset.signature = receiptsSignature;
+  }
+  if (processSettingsEffort !== state.prototypeId) {
+    processSettingsDirty = false;
+    processSettingsEffort = state.prototypeId;
+  }
+  if (!processSettingsDirty) {
+    const settings = process?.settings;
+    for (const block of ["handoff", "status", "intake"]) elements[block + "Adapter"].value = settings?.adapters?.[block] || "local";
+    elements.processRepository.value = settings?.githubRepository || "";
+    elements.autoImplement.checked = settings?.autoStartImplementation || false;
+    elements.autoTest.checked = settings?.autoStartTests || false;
+    elements.evidenceEnabled.checked = settings?.verification?.enabled || false;
+    elements.independentReview.checked = settings?.verification?.independentReview !== false;
+    elements.verificationChecks.value = JSON.stringify(settings?.verification?.checks || [], null, 2);
+    elements.protectedPaths.value = (settings?.verification?.protectedPaths || []).join("\n");
+    processSettingsBaseRevision = state.revision ?? 0;
+  }
+  const metrics = state.processMetrics;
+  elements.processMetrics.textContent = metrics
+    ? `${metrics.acceptanceCount} accepted handoffs; ${metrics.reopenedCount} reopenings; ${Math.round(metrics.acceptanceWaitingMs / 60000)} minutes awaiting handoff acceptance. `
+      + (metrics.measuredRunCount ? `${Math.round(metrics.measuredActiveMs / 60000)} factory-active minutes; ${(metrics.measuredNanoAiu / 1e9).toFixed(3)} reported AIU across ${metrics.measuredRunCount} metered runs.` : "Factory usage not yet recorded.")
+      + (process?.meteringError ? ` ${process.meteringError}` : "")
+    : "";
+  const proof = [state.implementation, state.testing].flatMap((runtime) => runtime?.commandEvidence || []);
+  const evidenceSignature = JSON.stringify([proof, state.testing?.independentVerdict]);
+  if (elements.processEvidence.dataset.signature !== evidenceSignature) {
+    elements.processEvidence.replaceChildren(...proof.map((record) => {
+      const details = document.createElement("details");
+      details.dataset.uiKey = "command-evidence:" + record.id;
+      const summary = document.createElement("summary");
+      summary.textContent = `${record.checkId}: ${record.status} (exit ${record.exitCode ?? "unavailable"})`;
+      const output = document.createElement("pre");
+      output.textContent = `${record.program} ${JSON.stringify(record.args)}\nSources: ${record.sourceFingerprint}\nOutput SHA256: ${record.outputHash}\n${record.output}\n${record.error || ""}${record.outputTruncated ? "\n[Output truncated]" : ""}`;
+      details.append(summary, output);
+      return details;
+    }));
+    const verdict = document.createElement("p");
+    verdict.textContent = state.testing?.independentVerdict
+      ? `Independent verifier: ${state.testing.independentVerdict.status}. ${state.testing.independentVerdict.summary}`
+      : "Independent verification has not run. Worker-reported evidence is shown in the implementation and test tabs.";
+    elements.processEvidence.append(verdict);
+    elements.processEvidence.dataset.signature = evidenceSignature;
+  }
+  if (!preserveMessage) elements.processMessage.textContent = process?.message || "";
 }
 
 function finishSubmission() {
@@ -4320,6 +4541,7 @@ function render(state, preserveMessages = false) {
     lastLifecycleStage = currentLifecycleStage;
   }
   renderLifecycle(state, preserveMessages);
+  renderProcess(state, preserveMessages);
   renderPreparation(state, preserveMessages);
   renderRequirementsSubstage(state, preserveMessages);
   elements.phase.textContent = state.phase || "discovery";

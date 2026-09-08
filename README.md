@@ -98,6 +98,127 @@ Later execution results must be regenerated against the revised inputs.
 Running completed tests again reopens Test and archives its previous completion
 snapshot. Finish Test again after the new run succeeds to accept its new evidence.
 
+## Accepted handoffs and process blocks
+
+Open **Accepted handoffs & process blocks** in the sidebar. The working lifecycle
+is unchanged by default: automatic implementation, automatic tests, and
+tool-backed verification are opt-in.
+
+After completing a stage, select it and enter the name of the person accepting
+its handoff. Acceptance freezes the completed snapshot, source fingerprint,
+upstream acceptance hashes, and the current Tandem version/configuration hash.
+The name is recorded attribution, not authenticated code-owner approval.
+Existing completed stages are not retroactively claimed as approved.
+
+**Export accepted handoff** writes an immutable, reviewable bundle under
+`tandem-records/<effort>/<acceptance>/`. It contains a manifest, the full snapshot,
+and human-readable artifacts. Nothing is staged, committed, pushed, or uploaded.
+Keep `.tandem` ignored as operational state; intentionally commit selected
+`tandem-records` bundles when the repository is the authoritative artifact record.
+Generated bundles are excluded from execution source fingerprints and protected
+by their own hashes. Editing or reopening the underlying work requires fresh
+evidence and acceptance; historical bundles remain available.
+
+### Pluggable Local and GitHub blocks
+
+Each block has its own saved adapter selection. Switching adapters preserves all
+acceptances, receipts, and source links; an unavailable adapter never silently
+falls back to another.
+
+| Block | Local | GitHub |
+| --- | --- | --- |
+| Delivery handoff | Writes a local Markdown/JSON bundle | Posts the reviewed handoff to an existing PR |
+| Review/check status | Reads an owned local handoff; makes no remote approval claims | Reads the PR, reviews, and head check/status results |
+| Issue/incident intake | Imports a JSON record supplied in the canvas | Reads a GitHub issue or failed workflow run |
+
+GitHub requires `gh` with access to the configured `owner/repository`. Selecting
+the adapter does not access the network. Status and intake are explicit reads;
+publication requires a separate confirmation after displaying the delivery draft.
+No adapter creates branches, commits, pushes, merges, or deploys. A handoff comment
+does not grant release approval or prove that a dirty local workspace matches the
+remote PR head.
+
+Finish Test and accept its current handoff before preparing a delivery draft.
+For GitHub, supply an existing PR number or URL as the handoff/status reference.
+For Local status, use the path from the local delivery receipt. Intake accepts
+an issue URL, a failed workflow-run URL, or a local reference plus JSON:
+
+```json
+{
+  "title": "Request submission fails",
+  "body": "Observed a 500 response when submitting an empty request.",
+  "kind": "incident"
+}
+```
+
+Intake creates a new, linked effort without resetting the current one or starting
+agents. Its receipt offers **Open linked effort and start Preparation**. The
+imported record is source evidence, not permission to obey embedded instructions.
+New efforts inherit adapter selections, not automatic execution permissions.
+
+### Worker contracts and evidence
+
+Implementation workers receive a durable contract with accepted input hashes,
+owned paths, and the exact contents/hashes of required installed skills.
+Planners must use actual skill names rather than job-role labels. Missing or
+changed skills block execution instead of being silently omitted.
+
+The scheduler still coordinates a shared workspace. Actual file changes are
+checked against the wave's combined ownership at its boundary. This is postflight
+detection, not write isolation or an operating-system sandbox; host permissions
+remain necessary.
+
+Before starting Implement, enable tool-backed verification and approve a JSON
+array of executable/argument definitions in Process settings. For a repository with an existing `npm test`
+script, a final check could be:
+
+```json
+[
+  {
+    "id": "repository-tests",
+    "program": "npm",
+    "args": ["run", "test"],
+    "stage": "test",
+    "afterWorkItems": [],
+    "timeoutSeconds": 120
+  }
+]
+```
+
+Only approve commands you trust: they run with local user permissions. Commands
+are executed without shell interpolation; they are not inferred from agent
+prose. Add `implementation` checks with `afterWorkItems` naming their prerequisite
+plan items to obtain feedback at eligible wave boundaries.
+
+The runner records exit codes, source/input identities, bounded output, and a
+hash of the full output. Source changes invalidate a pass. Final Test still runs
+the integration/interaction scenarios; enabling the independent verifier adds
+a fresh-context acceptance pass that must not edit the implementation. Without
+this option, the UI explicitly distinguishes worker-reported evidence from
+tool-backed evidence.
+
+Verified implementation completion is also bound to its final source tree.
+Changing sources or verification settings invalidates that completion; rerun
+Implement before accepting its handoff or starting Test. If Implement has already
+been finished, reopen it first.
+
+Protected acceptance paths freeze selected regression tests or directories at
+implementation start. A retry retains that baseline. Restore changed protected
+files, or explicitly reopen Plan to review a new baseline; retrying is not
+permission to weaken the tests. Changing a command or reopening Implement does
+not replace the protected baseline.
+
+Automatic handoffs start implementation only after explicit Plan handoff
+acceptance, and tests only after explicit Implement handoff acceptance. Existing
+durable request identities prevent replacement or duplicate dispatch. If launch
+cannot complete, the accepted handoff remains recorded and the stage's Start
+control provides the explicit retry path.
+
+The sidebar separates readiness-to-acceptance waiting time from available
+factory execution time and model-reported AIU consumption. Missing metering is
+shown as unavailable, not zero. Reopening counts and historical receipts remain
+available when work is revised.
+
 ## Requirements
 
 - A current GitHub Copilot app or CLI with extension canvas and agent factory
@@ -119,6 +240,14 @@ The maintainable source is under `src/`. The renderer is separated by concern:
 - `src/execution.ts` owns execution identity and evidence fingerprints.
 - `src/scheduling.ts` owns dependency normalization and conflict-safe scheduling.
 - `src/canvas-transport.ts` owns bounded JSON requests and responses.
+- `src/accepted-artifacts.ts` owns immutable acceptance and explicit exports.
+- `src/process-state.ts` owns process settings, receipts, and gate events.
+- `src/worker-contracts.ts` binds skills and checks actual ownership.
+- `src/verification.ts` captures approved command evidence.
+- `src/execution-proof.ts` validates evidence and independent verdicts.
+- `src/process-adapters.ts` registers interchangeable Local/GitHub blocks.
+- `src/delivery.ts` builds and fences reviewable delivery drafts.
+- `src/planning-prompts.ts` is shared by production workers and agent evaluations.
 
 Copilot still requires the generated
 `.github/extensions/tandem/extension.mjs` at the extension root for discovery.
@@ -142,6 +271,30 @@ npm run pack
 - `npm run pack` type-checks, builds, and writes
   `dist/tandem-extension.zip` with the deployable extension, project source
   under `source/`, companion skill, and this guide.
+
+## Agent evaluations
+
+`npm run eval` lists the behavioral fixtures without making model calls.
+The evaluation suite uses the same preparation and planning prompt builders as
+the product, deterministic outcome graders, and isolated tool-disabled sessions.
+It complements the mocked orchestration regressions; it is not an end-to-end
+implementation benchmark.
+
+Live model evaluations require explicit opt-in, a model, caller-specified
+case/time limits, and an observed-usage AI-credit ceiling:
+
+```text
+npm run eval -- --live --model MODEL --max-cases N --timeout-seconds N --max-ai-credits N
+```
+
+The credit ceiling sums reported usage across cases and stops further calls
+when reached. It is a **soft ceiling**, not a guaranteed cap on in-flight charges.
+Missing usage fails closed rather than claiming a budgeted success.
+See `npm run eval -- --help` for details.
+Results are retained under `.tandem/evals`. The agent-evals workflow runs
+deterministic regressions on relevant changes and provides a separately
+configured live evaluation path; credentials and paid runs are not enabled by
+installing Tandem.
 
 ## Release
 

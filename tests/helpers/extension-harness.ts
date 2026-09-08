@@ -33,7 +33,12 @@ interface HarnessApi {
     recoverPreparationFactory(state: TandemState, writable: boolean): void;
     waitForPreparation(id: string): Promise<void>;
     answerFactoryPrompt(args: unknown): string;
-    preparationFactory: { run(ctx: Record<string, unknown>): Promise<unknown> };
+    processAction(id: string, provider: string, input: unknown): Promise<TandemState>;
+    preparationFactory: {
+        meta: { argsSchema: { properties: Record<string, unknown> } };
+        run(ctx: Record<string, unknown>): Promise<unknown>;
+    };
+    waitForExecution(id: string): Promise<void>;
     isCanvasRehydration(ctx: { instanceId: string; reason?: unknown }): boolean;
     setSession(session: unknown): void;
 }
@@ -47,7 +52,7 @@ async function compile(): Promise<string> {
     const prefix = source.slice(0, end).replaceAll("import.meta.url", JSON.stringify("file:///project/.github/extensions/tandem/extension.mjs"));
     const result = await build({
         stdin: {
-            contents: `${prefix}\nmodule.exports = { createState, loadState, persistState, completeLifecycleStage, reopenLifecycleStage, beginPrototypeBuild, applyFactoryResult, updateTandem, readRequestBody, verifyPreviewIdentity, applyCanvasReset, isCanvasRehydration, ensurePreparationStarted, bindPreparationRun, recordPreparationWorkItem, settlePreparationRun, recoverPreparationFactory, preparationFactory, waitForPreparation(id) { return activePreparationRuns.get(id); }, answerFactoryPrompt, setSession(value) { session = value; } };`,
+            contents: `${prefix}\nmodule.exports = { createState, loadState, persistState, completeLifecycleStage, reopenLifecycleStage, beginPrototypeBuild, applyFactoryResult, updateTandem, readRequestBody, verifyPreviewIdentity, applyCanvasReset, isCanvasRehydration, ensurePreparationStarted, bindPreparationRun, recordPreparationWorkItem, settlePreparationRun, recoverPreparationFactory, preparationFactory, waitForPreparation(id) { return activePreparationRuns.get(id); }, waitForExecution(id) { return Promise.all([activeImplementationRuns.get(id), activeTestRuns.get(id)]); }, answerFactoryPrompt, processAction, setSession(value) { session = value; } };`,
             loader: "ts", resolveDir: sourceRoot,
         },
         bundle: true, platform: "node", target: "node20", format: "cjs", write: false,
@@ -81,7 +86,7 @@ export async function extensionHarness() {
     };
     try {
         runInNewContext(await (compiled ??= compile()), {
-            module, exports: module.exports, console, URL, Buffer, AbortController, Response, Error,
+            module, exports: module.exports, console, URL, Buffer, AbortController, Response, Error, TextDecoder,
             setTimeout, clearTimeout, setInterval, clearInterval,
             fetch: async () => new Response('<html><meta name="tandem-prototype-id" content="sample"></html>'),
             process: new Proxy(process, {

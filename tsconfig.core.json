@@ -10,6 +10,15 @@
     "src/canvas-transport.ts",
     "src/execution.ts",
     "src/scheduling.ts",
+    "src/process-state.ts",
+    "src/accepted-artifacts.ts",
+    "src/worker-contracts.ts",
+    "src/verification.ts",
+    "src/execution-proof.ts",
+    "src/process-adapters.ts",
+    "src/planning-prompts.ts",
+    "src/delivery.ts",
+    "src/agent-evals.ts",
     "src/types.ts"
   ]
 }

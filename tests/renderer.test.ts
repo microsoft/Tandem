@@ -5,6 +5,90 @@ import { transform } from "esbuild";
 import { runInNewContext } from "node:vm";
 import { rendererHarness, state, decision, response } from "./helpers/renderer-harness.js";
 
+function processFixture() {
+    return {
+        settings: { adapters: { handoff: "local", status: "local", intake: "local" }, githubRepository: "",
+            autoStartImplementation: false, autoStartTests: false, verification: { enabled: false, independentReview: true, checks: [] } },
+        acceptances: [], receipts: [], deliveryDraft: null, message: "",
+    };
+}
+
+test("process setting drafts survive updates and stale-save errors", async () => {
+    const h = await rendererHarness();
+    const value = { ...state(), process: processFixture() };
+    h.api.renderIfChanged(value);
+    h.api.elements.handoffAdapter.value = "github";
+    await h.api.elements.handoffAdapter.emit("change");
+    h.api.elements.processRepository.value = "owner/repo";
+    await h.api.elements.processRepository.emit("input");
+    h.api.renderIfChanged({ ...value, revision: 2 });
+    assert.equal(h.api.elements.handoffAdapter.value, "github");
+    h.setFetch(async () => response({ error: "The effort changed. Review and retry." }, 409));
+    await h.api.elements.saveProcess.emit("click");
+    assert.equal(h.requests[0].body.expectedRevision, 1);
+    assert.equal(h.requests[0].body.settings.adapters.status, "local");
+    assert.match(h.api.elements.processMessage.textContent, /effort changed/);
+    assert.equal(h.api.elements.processRepository.value, "owner/repo");
+    await h.api.elements.resetProcess.emit("click");
+    assert.equal(h.api.elements.handoffAdapter.value, "local");
+});
+
+test("handoff export uses only the current completed stage acceptance", async () => {
+    const h = await rendererHarness();
+    const value = { ...state("implement"), process: processFixture() };
+    value.lifecycle.outputs = [{ stageId: "plan", path: ".tandem\\plan-r2.json" }];
+    (value.process.acceptances as any[]).push({
+        id: "old", stageId: "plan", snapshotPath: ".tandem\\plan-r1.json", acceptedBy: { label: "Owner" }, acceptedAt: "earlier",
+    });
+    h.api.renderIfChanged(value);
+    assert.equal(h.api.elements.exportHandoff.disabled, true);
+    (value.process.acceptances as any[]).push({
+        id: "current", stageId: "plan", snapshotPath: ".tandem\\plan-r2.json", acceptedBy: { label: "Owner" }, acceptedAt: "now",
+    });
+    h.api.renderIfChanged({ ...value, revision: 2 });
+    assert.equal(h.api.elements.exportHandoff.disabled, false);
+    h.setConfirm(false);
+    await h.api.elements.exportHandoff.emit("click");
+    assert.equal(h.requests.length, 0);
+    h.setConfirm(true);
+    h.setFetch(async () => response({ ...value, revision: 3 }));
+    await h.api.elements.exportHandoff.emit("click");
+    assert.equal(h.requests[0].body.acceptanceId, "current");
+});
+
+test("a pending process mutation blocks stage completion and preserves new drafts", async () => {
+    const h = await rendererHarness();
+    const value = { ...state("prototype"), process: processFixture() };
+    value.previewStatus = "ready";
+    value.prototypeReview.designSpecArtifactId = "draft-feature-spec";
+    h.api.renderIfChanged(value);
+    let release!: (value: unknown) => void;
+    h.setFetch(() => new Promise((resolve) => { release = resolve; }));
+    const submission = h.api.elements.saveProcess.emit("click");
+    await h.flush();
+    await h.api.elements.completeStage.emit("click");
+    assert.equal(h.requests.length, 1);
+    h.api.elements.verificationChecks.value = "[unfinished";
+    await h.api.elements.verificationChecks.emit("input");
+    release(response({ ...value, revision: 2 }));
+    await submission;
+    assert.equal(h.api.elements.verificationChecks.value, "[unfinished");
+});
+
+test("publication is explicit and adapter receipts remain visible after switching", async () => {
+    const h = await rendererHarness();
+    const value = { ...state("test"), process: processFixture() };
+    (value.process.receipts as any[]).push({
+        id: "receipt", adapter: "local", block: "handoff", recordedAt: "now", reference: "tandem-records\\delivery\\local", summary: "Not published",
+    });
+    value.process.settings.adapters.handoff = "github";
+    h.api.renderIfChanged(value);
+    assert.match(h.api.elements.processReceipts.textContent, /local \/ handoff/);
+    h.setConfirm(false);
+    await h.api.elements.publishDelivery.emit("click");
+    assert.equal(h.requests.length, 0);
+});
+
 test("requirements remain answerable and selectable without Mermaid", async () => {
     const h = await rendererHarness();
     h.api.setMermaid(async () => { throw new Error("CDN unavailable"); });
@@ -519,4 +603,22 @@ test("legacy history fields remain optional and archived Preparation output can 
     await button.emit("click");
     assert.equal(h.api.elements.preparationPanel.hidden, false);
     assert.equal(h.requests.length, 0);
+});
+
+test("GitHub intake does not send stale Local JSON to the selected adapter", async () => {
+    const h = await rendererHarness();
+    const value = state("requirements");
+    value.process = {
+        settings: { adapters: { handoff: "local", status: "local", intake: "github" },
+            verification: { enabled: false, independentReview: true, checks: [] } },
+        acceptances: [], receipts: [], message: "",
+    };
+    h.api.render(value);
+    h.api.elements.intakeContent.value = '{"title":"Old local data","body":"Do not send"}';
+    h.api.elements.processReference.value = "https://github.com/Example/Tandem/issues/23";
+    h.setFetch(async () => response({ ...value, revision: 2 }));
+    await h.api.elements.importIntake.emit("click");
+    assert.equal(h.requests[0].path, "/api/process");
+    assert.equal(h.requests[0].body.action, "intake");
+    assert.equal(Object.hasOwn(h.requests[0].body, "content"), false);
 });

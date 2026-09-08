@@ -1,0 +1,97 @@
+name: Tandem agent evals
+
+on:
+  pull_request:
+    paths:
+      - "skills/**"
+      - ".github/copilot-instructions.md"
+      - "src/**"
+      - "scripts/evaluate.ts"
+      - "tests/**"
+      - ".github/workflows/**"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig*.json"
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Explicit Copilot model ID (paid calls require this opt-in)"
+        required: true
+        type: string
+      max_cases:
+        description: "Maximum fixture cases to call (1-6)"
+        required: true
+        type: string
+      timeout_seconds:
+        description: "Timeout per case in seconds, including CLI startup"
+        required: true
+        type: string
+      max_ai_credits:
+        description: "Observed-usage AI-credit soft ceiling across cases; in-flight costs can exceed it"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  deterministic:
+    name: Deterministic behavioral-eval harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci && npm run check && npm test
+      - name: Validate fixture inventory without model calls
+        run: npm run eval
+
+  # Live PR automation is deliberately not enabled: same-repo branches can still
+  # contain unreviewed code. Configure a protected copilot-evals environment with
+  # required reviewers and a COPILOT_EVAL_TOKEN secret before manually dispatching.
+  # Only the default branch can receive this secret. No pull_request_target,
+  # scheduled paid calls, or secrets available to fork PRs.
+  live:
+    name: Opt-in live planning probes
+    if: github.event_name == 'workflow_dispatch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    needs: deterministic
+    environment: copilot-evals
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      # Matches the released CLI installed with this repository's SDK 1.0.11.
+      # The SDK also resolves its locked bundled CLI; no developer dependency is added.
+      - name: Provision Copilot CLI
+        run: npm install --global @github/copilot@1.0.80
+      - name: Run live probes with an observed-usage soft budget
+        shell: bash
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_EVAL_TOKEN }}
+          EVAL_MODEL: ${{ inputs.model }}
+          EVAL_MAX_CASES: ${{ inputs.max_cases }}
+          EVAL_TIMEOUT_SECONDS: ${{ inputs.timeout_seconds }}
+          EVAL_MAX_AI_CREDITS: ${{ inputs.max_ai_credits }}
+        run: |
+          args=(--live --model "$EVAL_MODEL" --max-cases "$EVAL_MAX_CASES" --timeout-seconds "$EVAL_TIMEOUT_SECONDS" --max-ai-credits "$EVAL_MAX_AI_CREDITS")
+          npm run eval -- "${args[@]}"
+      - name: Retain reports, including behavioral or infrastructure failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tandem-agent-evals-${{ github.run_id }}
+          path: .tandem/evals/*.json
+          if-no-files-found: warn
+          retention-days: 14

@@ -67,6 +67,59 @@
           <div id="artifact-list" class="artifact-list"></div>
         </section>
 
+        <details class="section process-controls">
+          <summary class="eyebrow ledger-summary">Accepted handoffs &amp; process blocks</summary>
+          <p class="muted">Finish a stage, then accept its immutable handoff. Exports never commit or publish.</p>
+          <label for="handoff-stage">Completed stage</label>
+          <select id="handoff-stage"></select>
+          <label for="handoff-approver">Accepted by</label>
+          <input id="handoff-approver" maxlength="200" placeholder="Your name (recorded attribution)" />
+          <button id="accept-handoff" class="complete-stage" type="button">Accept handoff</button>
+          <button id="export-handoff" class="complete-stage" type="button">Export accepted handoff</button>
+          <p id="handoff-record" class="muted"></p>
+          <details>
+            <summary>Delivery &amp; maintenance</summary>
+            <button id="prepare-delivery" class="complete-stage" type="button">Prepare delivery draft</button>
+            <pre id="delivery-draft" tabindex="0"></pre>
+            <label for="process-reference">Adapter reference</label>
+            <input id="process-reference" placeholder="GitHub PR/issue/run URL or local receipt path / incident ID" />
+            <button id="publish-delivery" class="complete-stage" type="button">Publish reviewed handoff</button>
+            <button id="refresh-delivery" class="complete-stage" type="button">Read review / check status</button>
+            <label for="intake-content">Local intake JSON (unused by GitHub)</label>
+            <textarea id="intake-content" rows="5" spellcheck="false" placeholder='{"title":"Incident","body":"Observed failure","kind":"incident"}'></textarea>
+            <button id="import-intake" class="complete-stage" type="button">Import into a new linked effort</button>
+            <div id="process-receipts"></div>
+          </details>
+          <details>
+            <summary>Process settings</summary>
+            <label for="handoff-adapter">Delivery handoff</label>
+            <select id="handoff-adapter"><option value="local">Local</option><option value="github">GitHub</option></select>
+            <label for="status-adapter">Review / check status</label>
+            <select id="status-adapter"><option value="local">Local</option><option value="github">GitHub</option></select>
+            <label for="intake-adapter">Issue / incident intake</label>
+            <select id="intake-adapter"><option value="local">Local</option><option value="github">GitHub</option></select>
+            <label for="process-repository">GitHub repository</label>
+            <input id="process-repository" placeholder="owner/repository" maxlength="200" />
+            <label><input id="auto-implement" type="checkbox" /> Start implementation after explicit Plan handoff acceptance</label>
+            <label><input id="auto-test" type="checkbox" /> Start tests after explicit Implement handoff acceptance</label>
+            <label><input id="evidence-enabled" type="checkbox" /> Require tool-backed verification</label>
+            <label><input id="independent-review" type="checkbox" checked /> Independent final verifier</label>
+            <label for="protected-paths">Protected acceptance files / directories (one per line)</label>
+            <textarea id="protected-paths" rows="3" spellcheck="false" placeholder="tests\regressions"></textarea>
+            <label for="verification-checks">Approved commands (JSON array)</label>
+            <textarea id="verification-checks" rows="8" spellcheck="false" aria-describedby="verification-help">[]</textarea>
+            <p id="verification-help" class="muted">Each check: id, program, args, stage (implementation or test), afterWorkItems, timeoutSeconds. Only approve commands you trust. No shell interpolation.</p>
+            <button id="save-process" class="complete-stage" type="button">Save process settings</button>
+            <button id="reset-process" class="complete-stage" type="button">Reload saved settings</button>
+          </details>
+          <p id="process-metrics" class="muted"></p>
+          <details>
+            <summary>Tool-backed evidence</summary>
+            <div id="process-evidence"></div>
+          </details>
+          <p id="process-message" class="stage-message" role="status" aria-live="polite"></p>
+        </details>
+
         <details class="section ledger-details">
           <summary class="eyebrow ledger-summary">Requirement ledger</summary>
           <div class="ledger">

@@ -29,6 +29,9 @@ test("automatic Preparation binds its run before agents and writes a versioned R
         assert.equal(fixture.requests.length, 1);
         const request = fixture.requests[0];
         assert.ok(request && typeof request === "object" && "args" in request);
+        assert.ok(request.args && typeof request.args === "object");
+        assert.ok(Object.keys(request.args).every((key) =>
+            Object.hasOwn(fixture.api.preparationFactory.meta.argsSchema.properties, key)));
         const results = [
             { summary: "Workspace inspected", checks: [{ label: "Node", status: "ready", detail: "Available" }] },
             { summary: "Sources inspected", checks: [], sources: [{ title: "Reference", url: "https://example.com/docs", purpose: "Contract" }] },
