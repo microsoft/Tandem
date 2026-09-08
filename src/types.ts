@@ -108,6 +108,8 @@ export interface TandemState {
     version: 1;
     revision: number;
     generation: string;
+    effortReset?: { requestId: string; generation: string; error: string } | null;
+    factoryRuns?: Array<{ requestId: string; generation: string; runId: string | null; terminal?: boolean }>;
     jobOwner: JobOwner | null;
     openResetRequestId: string | null;
     prototypeId: string;

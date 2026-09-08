@@ -17,7 +17,7 @@
         </div>
       </div>
       <div class="topbar-actions">
-        <div class="lifecycle" aria-label="Development lifecycle">
+        <div id="lifecycle-status" class="lifecycle" aria-label="Development lifecycle" hidden>
           <span id="current-stage" class="stage" aria-label="Current lifecycle stage">
             <span id="current-stage-index" class="stage-index" aria-hidden="true">1</span>
             <span id="stage">Preparation</span>
@@ -30,11 +30,37 @@
           </button>
           <span id="reload-status" class="reload-status" role="status" aria-live="polite"></span>
         </div>
+        <button id="reset-effort" class="reset-button" type="button" disabled title="Clear the current Tandem effort and return to goal entry">Reset</button>
         <span class="build-version" title="Tandem extension version">v__TANDEM_VERSION__</span>
       </div>
+      <p id="effort-message" class="effort-message" role="status" aria-live="polite"></p>
+      <p id="connection-status" class="connection-status" role="status" aria-live="polite"></p>
     </header>
 
-    <main id="studio-workspace" class="workspace">
+    <main id="start-panel" class="start-panel" aria-labelledby="start-title">
+      <div class="start-content">
+        <p class="eyebrow">From idea to delivery</p>
+        <h2 id="start-title">What do you want to build?</h2>
+        <p class="start-intro">Start with a goal. Tandem will help you shape the requirements, explore the design, and guide implementation.</p>
+        <p id="start-loading" class="muted" role="status">Loading your project...</p>
+        <form id="start-form" class="start-form" hidden>
+          <label for="start-goal">Your project goal</label>
+          <textarea id="start-goal" rows="5" maxlength="4000" required aria-describedby="start-help start-message" placeholder="Build an app that helps my team triage customer requests."></textarea>
+          <p id="start-help" class="muted">Describe who it is for and what it should help them do. You can refine the details together.</p>
+          <div class="start-actions">
+            <span id="goal-length" class="muted">0 / 4,000</span>
+            <button id="start-effort" class="plan-button" type="submit">Start project</button>
+          </div>
+          <p id="start-message" class="start-message" role="status" aria-live="polite"></p>
+        </form>
+        <div class="start-expectation">
+          <strong>First, we prepare</strong>
+          <p>Tandem inspects this workspace and relevant sources, then opens Requirements for your input. Starting runs AI preparation; implementation comes later.</p>
+        </div>
+      </div>
+    </main>
+
+    <main id="studio-workspace" class="workspace" hidden>
       <button id="context-toggle" class="context-toggle" type="button" aria-expanded="false" aria-controls="requirements-pane">
         <span>Project context</span>
         <span id="context-stage" class="context-stage">Preparation</span>
@@ -45,7 +71,6 @@
           <p class="eyebrow">Goal</p>
           <p id="goal" class="goal muted">Waiting for a prototype goal...</p>
           <p id="status" class="status"></p>
-          <p id="connection-status" class="status" role="status" aria-live="polite"></p>
         </section>
 
         <section class="section">

@@ -1,7 +1,7 @@
 import { build } from "esbuild";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
@@ -32,6 +32,7 @@ interface HarnessApi {
     settlePreparationRun(id: string, run: unknown, token: PreparationToken): Promise<void>;
     recoverPreparationFactory(state: TandemState, writable: boolean): void;
     waitForPreparation(id: string): Promise<void>;
+    waitForAnswer(id: string): Promise<void>;
     answerFactoryPrompt(args: unknown): string;
     processAction(id: string, provider: string, input: unknown): Promise<TandemState>;
     preparationFactory: {
@@ -41,18 +42,31 @@ interface HarnessApi {
     waitForExecution(id: string): Promise<void>;
     isCanvasRehydration(ctx: { instanceId: string; reason?: unknown }): boolean;
     setSession(session: unknown): void;
+    resetEffort(id: string, provider: string, input: unknown): Promise<TandemState>;
+    startEffort(id: string, provider: string, input: unknown): Promise<TandemState>;
+    openTandem(ctx: CanvasContext & { sessionId: string; reason?: string }): Promise<{ url: string }>;
+    startServer(instance: string, id: string, provider: string, writable: boolean): Promise<{
+        url: string; server: import("node:http").Server; heartbeat: ReturnType<typeof setInterval>;
+    }>;
+    closeServers(): Promise<void>;
+    runEffortFactory(id: string, requestId: string, request: unknown): Promise<unknown>;
+    waitForEffortRun(id: string, runId: string): Promise<unknown>;
 }
 
 let compiled: Promise<string> | undefined;
 async function compile(): Promise<string> {
     const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "src");
-    const source = await readFile(join(sourceRoot, "extension.ts"), "utf8");
+    const source = (await readFile(join(sourceRoot, "extension.ts"), "utf8")).replaceAll("\r\n", "\n");
     const end = source.indexOf("session = await joinSession(");
     if (end === -1) throw new Error("The extension session entry point could not be located.");
     const prefix = source.slice(0, end).replaceAll("import.meta.url", JSON.stringify("file:///project/.github/extensions/tandem/extension.mjs"));
+    const openStart = source.lastIndexOf("open: async (ctx) => {");
+    const openEnd = source.indexOf(",\n            onClose:", openStart);
+    if (openStart === -1 || openEnd === -1) throw new Error("The canvas open handler could not be located.");
+    const openHandler = source.slice(openStart + "open: ".length, openEnd);
     const result = await build({
         stdin: {
-            contents: `${prefix}\nmodule.exports = { createState, loadState, persistState, completeLifecycleStage, reopenLifecycleStage, beginPrototypeBuild, applyFactoryResult, updateTandem, readRequestBody, verifyPreviewIdentity, applyCanvasReset, isCanvasRehydration, ensurePreparationStarted, bindPreparationRun, recordPreparationWorkItem, settlePreparationRun, recoverPreparationFactory, preparationFactory, waitForPreparation(id) { return activePreparationRuns.get(id); }, waitForExecution(id) { return Promise.all([activeImplementationRuns.get(id), activeTestRuns.get(id)]); }, answerFactoryPrompt, processAction, setSession(value) { session = value; } };`,
+            contents: `${prefix}\nmodule.exports = { createState, loadState, persistState, completeLifecycleStage, reopenLifecycleStage, beginPrototypeBuild, applyFactoryResult, updateTandem, readRequestBody, verifyPreviewIdentity, applyCanvasReset, isCanvasRehydration, ensurePreparationStarted, bindPreparationRun, recordPreparationWorkItem, settlePreparationRun, recoverPreparationFactory, preparationFactory, resetEffort, startEffort, startServer, runEffortFactory, waitForEffortRun, openTandem: ${openHandler}, async closeServers() { for (const entry of servers.values()) { clearInterval(entry.heartbeat); for (const client of entry.clients) client.end(); await new Promise(resolve => entry.server.close(resolve)); } servers.clear(); }, waitForPreparation(id) { return activePreparationRuns.get(id); }, waitForAnswer(id) { return activeAnswerRuns.get(id); }, waitForExecution(id) { return Promise.all([activeImplementationRuns.get(id), activeTestRuns.get(id)]); }, answerFactoryPrompt, processAction, setSession(value) { session = value; } };`,
             loader: "ts", resolveDir: sourceRoot,
         },
         bundle: true, platform: "node", target: "node20", format: "cjs", write: false,
@@ -64,7 +78,8 @@ async function compile(): Promise<string> {
 }
 
 export async function extensionHarness() {
-    const root = await mkdtemp(join(tmpdir(), "tandem-extension-"));
+    const root = resolve("node_modules", "tandem-test-fixtures", randomUUID());
+    await mkdir(root, { recursive: true });
     const requests: unknown[] = [];
     const logs: string[] = [];
     const require = createRequire(import.meta.url);
@@ -97,6 +112,15 @@ export async function extensionHarness() {
                 },
             }),
             require(name: string) {
+                if (name === "node:child_process") {
+                    const childProcess = require(name);
+                    return { ...childProcess, execFileSync(command: string, args: string[], options: unknown) {
+                        if (command === "git" && args[0] === "rev-parse" && args[1] === "--git-common-dir") {
+                            return join(root, ".git");
+                        }
+                        return childProcess.execFileSync(command, args, options);
+                    } };
+                }
                 if (name === "@github/copilot-sdk/extension") return {
                     CanvasError, defineFactory: (value: unknown) => value,
                     isFactoryRunTerminal: (status: string) => ["completed", "failed", "cancelled", "halted", "error"].includes(status),
@@ -107,7 +131,16 @@ export async function extensionHarness() {
         });
         const api = module.exports as HarnessApi;
         api.setSession(session);
-        return { api, root, requests, logs, session, close: () => rm(root, { recursive: true, force: true }) };
+        const waitForRequests = async (count = 1) => {
+            for (let attempt = 0; requests.length < count && attempt < 300; attempt++) {
+                await new Promise((resolve) => setTimeout(resolve, 10));
+            }
+            if (requests.length < count) throw new Error("The expected factory dispatch was not observed.");
+        };
+        return { api, root, requests, logs, session, waitForRequests, close: async () => {
+            await api.closeServers();
+            await rm(root, { recursive: true, force: true });
+        } };
     } catch (error) {
         await rm(root, { recursive: true, force: true });
         throw error;

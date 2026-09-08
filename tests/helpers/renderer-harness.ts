@@ -234,6 +234,7 @@ export function state(stage = "requirements", revision = 1): any {
     return {
         version: 1, prototypeId: "fixture", revision, updatedAt: `2026-09-06T00:00:${String(revision).padStart(2, "0")}Z`,
         generation: "fixture-generation", jobOwner: null,
+        goal: "Build a useful project",
         lifecycle: { currentStage: stage, completedStages: stages.slice(0, stages.indexOf(stage)), outputs: [], skippedStages: [], history: [] },
         provider: { canSubmitAnswers: true, extensionId: "fixture", canReload: false },
         preparation: { status: stage === "prepare" ? "not-started" : "ready", workItems: [], messages: [], checks: [], sources: [], suggestedUsages: [], processing: null },

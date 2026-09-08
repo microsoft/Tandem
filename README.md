@@ -45,6 +45,10 @@ the workspace, analyzes authoritative sources for named concepts, and chooses
 whether to build a new GUI, validate an existing GUI, bypass Prototype, or ask
 Requirements to decide. Work through the stages in order:
 
+You can also open Tandem without a goal. A new effort shows a start page where
+you enter a goal and click **Start project**. Opening or refreshing that page
+does not run agents; submitting the goal starts Preparation.
+
 The Preparation tab shows live work-item and factory progress, source links,
 environment checks, blockers, and final results. When analysis completes, Tandem
 passes its usage suggestions, assumptions, and deferred work into Requirements.
@@ -94,6 +98,18 @@ to that session to resume them. Other sessions may inspect the effort but
 cannot replace its inputs while work is active.
 Stopping work retains its ownership until the runtime confirms termination;
 a failed stop cannot unlock reset, reopening, or replacement execution.
+
+The top-right **Reset** button returns the current effort to goal entry after
+confirmation. It stops active work before clearing that effort's goal,
+requirements, artifacts, stage history, accepted handoffs, and process settings.
+Other Tandem efforts, repository files, and exported `tandem-records` bundles
+are not changed. Reset cannot be undone. If worker termination cannot be
+confirmed, Tandem keeps the effort and shows an error instead of clearing it.
+Use the owning session and writable provider when active work belongs there.
+Finalized Preparation history migrated from older versions does not require its
+archived factory run to remain available. Active or unconfirmed run receipts
+still require termination confirmation. **Reload** remains available while a
+reset is pending and preserves the reset barrier.
 
 Preparation uses the same durable ownership and request/run fencing. An interrupted
 job without a recoverable identity is surfaced for explicit retry, never recreated

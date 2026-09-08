@@ -50,12 +50,17 @@ model, or implementation prompt. The skill owns discovery.
 On activation:
 
 1. Open the `tandem` canvas immediately, displayed as **Tandem**, using stable
-   instance `tandem`. Pass `reset: true`, the initial goal, and a short stable
-   `prototypeId`. Do not inspect the workspace or research sources before opening.
-2. Tandem starts its automatic **Preparation** stage. End the turn while its hidden
+   instance `tandem`. For a supplied goal, pass `reset: true`, the initial goal,
+   and a short stable `prototypeId`. With no goal, open without reset to restore
+   the existing effort or show goal entry for a blank effort.
+   Do not inspect the workspace or research sources before opening.
+2. With a nonempty goal, Tandem starts its automatic **Preparation** stage. End the turn while its hidden
    bounded factory processes workspace inspection, authoritative-source analysis,
    and the Requirements handoff. Progress and results remain visible in the
    Preparation tab.
+   If no goal was supplied, open without resetting an existing effort. A blank
+   effort shows the goal-entry page; let the user enter a goal and click
+   **Start project**. Do not start Preparation for an empty goal.
 3. When Preparation completes, Tandem advances automatically to Requirements and
    exposes the generated usage suggestions. Let the user add the useful suggestions
    with one click or add another one-sentence usage.
@@ -336,6 +341,13 @@ Tandem persists project state under `.tandem` at the shared repository
 root. Reuse the same `prototypeId` when returning to an existing effort; opening
 without one restores the project's most recently active prototype. Do not put
 session-local copies of Tandem state under the Copilot session artifact folder.
+
+The canvas has a top-right **Reset** control with destructive-action confirmation.
+It stops active workers before clearing only the current effort's operational
+data and returns to goal entry. Other efforts, repository code, and exported
+`tandem-records` bundles stay untouched. If termination cannot be confirmed,
+reset fails visibly without clearing the effort. Do not automatically start a
+new run after Reset: wait for a new goal and explicit **Start project**.
 
 Each usage addition, DAG generation request, requirement answer, prototype
 revision, or clarification starts one bounded factory run with a hidden agent.
