@@ -17,12 +17,6 @@
         </div>
       </div>
       <div class="topbar-actions">
-        <span
-          id="next-action-guide"
-          class="visually-hidden"
-          role="status"
-          aria-live="polite"
-        ></span>
         <div class="lifecycle" aria-label="Development lifecycle">
           <span id="current-stage" class="stage" aria-label="Current lifecycle stage">
             <span id="current-stage-index" class="stage-index" aria-hidden="true">1</span>
@@ -32,7 +26,7 @@
         </div>
         <div class="reload-control">
           <button id="reload-extension" class="reload-button" type="button">
-            Reload latest installed
+            Reload
           </button>
           <span id="reload-status" class="reload-status" role="status" aria-live="polite"></span>
         </div>
@@ -41,7 +35,12 @@
     </header>
 
     <main id="studio-workspace" class="workspace">
-      <aside id="requirements-pane" class="requirements" aria-label="Prototype requirements">
+      <button id="context-toggle" class="context-toggle" type="button" aria-expanded="false" aria-controls="requirements-pane">
+        <span>Project context</span>
+        <span id="context-stage" class="context-stage">Preparation</span>
+        <span class="context-chevron" aria-hidden="true"></span>
+      </button>
+      <aside id="requirements-pane" class="requirements" aria-label="Project context">
         <section class="section">
           <p class="eyebrow">Goal</p>
           <p id="goal" class="goal muted">Waiting for a prototype goal...</p>
@@ -68,7 +67,7 @@
         </section>
 
         <details class="section process-controls">
-          <summary class="eyebrow ledger-summary">Accepted handoffs &amp; process blocks</summary>
+          <summary class="eyebrow ledger-summary">Handoffs &amp; process</summary>
           <p class="muted">Finish a stage, then accept its immutable handoff. Exports never commit or publish.</p>
           <label for="handoff-stage">Completed stage</label>
           <select id="handoff-stage"></select>
@@ -152,9 +151,9 @@
         title="Drag or use Left and Right arrow keys to resize"
       ></div>
 
-      <section id="preview-pane" class="preview" aria-label="Prototype output">
+      <section id="preview-pane" class="preview" aria-label="Stage workspace">
         <div class="previewbar">
-          <div class="preview-tabs" role="tablist" aria-label="Prototype output">
+          <div class="preview-tabs" role="tablist" aria-label="Stage workspace">
             <button
               id="preparation-tab"
               class="preview-tab"
@@ -236,7 +235,7 @@
               aria-controls="content-panel"
               tabindex="-1"
               data-tab="content"
-            >Content <span id="artifact-count" class="artifact-count"></span></button>
+            >Artifacts <span id="artifact-count" class="artifact-count"></span></button>
           </div>
           <div id="preview-tools" class="preview-tools">
             <span id="preview-status" class="preview-status">Waiting</span>
@@ -634,9 +633,8 @@
               </li>
             </ol>
             <div id="usage-intake">
-              <p class="usage-intro">
-                How do you want to use the app? Add one sentence for each usage.
-              </p>
+              <h2 class="usage-title">What should this help you do?</h2>
+              <p id="usage-help" class="usage-intro">Add one goal at a time. Start with your own, or choose a suggestion below.</p>
               <ul id="usage-items" class="usage-items"></ul>
               <form id="usage-form" class="usage-form">
                 <input
@@ -646,6 +644,7 @@
                   autocomplete="off"
                   placeholder="I want to..."
                   aria-label="Add one app usage"
+                  aria-describedby="usage-help"
                 />
                 <button id="add-usage" type="submit">Add usage</button>
               </form>
@@ -765,6 +764,10 @@
         </div>
       </section>
     </main>
+    <footer id="next-action-bar" class="next-action-bar" aria-label="Next step" hidden>
+      <span id="next-action-guide" role="status" aria-live="polite"></span>
+      <button id="show-next-action" type="button">Go to action</button>
+    </footer>
   </div>
 
   <script>__TANDEM_CLIENT__</script>

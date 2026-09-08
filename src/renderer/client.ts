@@ -39,6 +39,10 @@ const elements: AnyRecord = {
   status: document.getElementById("status"),
   connectionStatus: document.getElementById("connection-status"),
   nextActionGuide: document.getElementById("next-action-guide"),
+  nextActionBar: document.getElementById("next-action-bar"),
+  showNextAction: document.getElementById("show-next-action"),
+  contextToggle: document.getElementById("context-toggle"),
+  contextStage: document.getElementById("context-stage"),
   questionHost: document.getElementById("question-host"),
   confirmed: document.getElementById("confirmed"),
   assumed: document.getElementById("assumed"),
@@ -323,6 +327,7 @@ function stageTab(stage) {
 function browseStage(stage) {
   if (!currentState || !hasStageData(currentState, stage) || skippedStage(currentState, stage)) return;
   viewedStageId = stage;
+  if (window.matchMedia("(max-width: 760px)").matches) setContextExpanded(false);
   activateOutputTab(stageTab(stage), true);
 }
 
@@ -682,6 +687,34 @@ function finishSubmission() {
   }
 }
 
+function setContextExpanded(expanded: boolean) {
+  elements.workspace.dataset.contextOpen = String(expanded);
+  elements.contextToggle.setAttribute("aria-expanded", String(expanded));
+}
+
+elements.contextToggle.addEventListener("click", () => {
+  setContextExpanded(elements.contextToggle.getAttribute("aria-expanded") !== "true");
+});
+
+elements.requirements.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || !window.matchMedia("(max-width: 760px)").matches) return;
+  setContextExpanded(false);
+  elements.contextToggle.focus();
+  event.preventDefault();
+});
+
+elements.showNextAction.addEventListener("click", () => {
+  const action = currentState && nextActionForState(currentState);
+  if (!action?.target || action.target.disabled) return;
+  if (action.tab) activateOutputTab(action.tab);
+  else if (elements.requirements.contains(action.target)) browseStage(currentStage());
+  if (window.matchMedia("(max-width: 760px)").matches) {
+    setContextExpanded(elements.requirements.contains(action.target));
+  }
+  action.target.focus();
+  action.target.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+});
+
 function splitterBounds() {
   const workspaceRect = elements.workspace.getBoundingClientRect();
   const splitterWidth = elements.splitter.getBoundingClientRect().width || 9;
@@ -789,7 +822,7 @@ function renderReload(state) {
   elements.reloadButton.disabled = !canReload || isReloading;
   elements.reloadButton.textContent = isReloading
     ? "Reloading..."
-    : "Reload latest installed";
+    : "Reload";
 
   let status = "";
   let statusKind = "idle";
@@ -1353,9 +1386,13 @@ function activateOutputTab(tabName, focusTab = false) {
   )?.stage || currentStage();
   for (const tab of elements.previewTabs) {
     const isActive = tab.dataset.tab === activeOutputTab;
+    const wasActive = tab.getAttribute("aria-selected") === "true";
     tab.setAttribute("aria-selected", String(isActive));
     tab.tabIndex = isActive ? 0 : -1;
     if (isActive && focusTab) tab.focus();
+    if (isActive && (focusTab || !wasActive)) {
+      tab.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    }
   }
   elements.preparationPanel.hidden = activeOutputTab !== "preparation";
   elements.previewPanel.hidden = activeOutputTab !== "preview";
@@ -1494,7 +1531,8 @@ function renderLifecycle(state, preserveMessage = false) {
 
     const number = document.createElement("span");
     number.className = "stage-step-index";
-    number.textContent = String(index + 1);
+    number.textContent = isComplete ? "\u2713" : String(index + 1);
+    number.setAttribute("aria-hidden", "true");
     const label = document.createElement("span");
     label.className = "stage-step-label";
     label.textContent = stage.label;
@@ -1518,6 +1556,7 @@ function renderLifecycle(state, preserveMessage = false) {
 
   elements.currentStageIndex.textContent = String(currentIndex + 1);
   elements.stage.textContent = currentDefinition.label;
+  elements.contextStage.textContent = currentDefinition.label;
   elements.currentStage.setAttribute(
     "aria-label",
     "Current lifecycle stage: " + currentDefinition.label,
@@ -1661,7 +1700,9 @@ function renderPreparation(state, preserveMessage = false) {
     ? "Current phase: " + runtime.currentPhase.split("-").join(" ")
     : isPreparing
       ? state.status || "Preparation is starting."
-      : preparation.summary || "Preparation has completed.";
+      : preparation.status === "failed"
+        ? preparation.error || "Preparation stopped before completion. Retry to continue."
+        : preparation.summary || "Preparation has completed.";
 
   const liveByWorkItem = new Map<string, AnyRecord>(
     (runtime?.agents || []).map(
@@ -2579,11 +2620,18 @@ function renderArtifacts(value) {
     ? "(" + artifacts.length + ")"
     : "";
   elements.artifactList.replaceChildren();
+  if (artifacts.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "artifact-empty";
+    empty.textContent = "Your artifacts will appear here as each stage progresses.";
+    elements.artifactList.append(empty);
+  }
 
   for (const stage of LIFECYCLE_STAGES) {
     const stageArtifacts = artifacts.filter(
       (artifact) => (artifact.stage || "requirements") === stage.id,
     );
+    if (stageArtifacts.length === 0) continue;
     const group = document.createElement("section");
     group.className = "artifact-stage-group";
     group.setAttribute("aria-label", stage.label + " artifacts");
@@ -2597,13 +2645,6 @@ function renderArtifacts(value) {
 
     const list = document.createElement("ul");
     list.className = "artifact-stage-items";
-    if (stageArtifacts.length === 0) {
-      const empty = document.createElement("li");
-      empty.className = "empty-item";
-      empty.textContent = "No artifacts yet";
-      list.append(empty);
-    }
-
     for (const artifact of stageArtifacts) {
       const item = document.createElement("li");
       const button = document.createElement("button");
@@ -2636,7 +2677,8 @@ function renderArtifacts(value) {
       button.addEventListener("click", () => {
         selectedArtifactId = artifact.id;
         render(currentState, true);
-        activateOutputTab("content");
+        if (window.matchMedia("(max-width: 760px)").matches) setContextExpanded(false);
+        activateOutputTab("content", true);
       });
       item.append(button);
       list.append(item);
@@ -4497,6 +4539,7 @@ function nextActionForState(state) {
 function renderNextAction(state) {
   clearNextAction();
   const action = nextActionForState(state);
+  elements.nextActionBar.hidden = !action?.target || action.target.disabled;
   if (!action?.target || action.target.disabled) {
     if (lastNextActionLabel) {
       elements.nextActionGuide.textContent = "";

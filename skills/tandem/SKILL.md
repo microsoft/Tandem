@@ -230,7 +230,7 @@ Use one Tandem canvas as the shared requirements and output surface:
    regenerates every transitive dependent node before exposing the revised graph.
 6. Synthesize captured knowledge into Requirements-stage Tandem artifacts such as
    user intents and interaction flows so the user can inspect the accumulated
-   requirements from the Content tab.
+   requirements from the Artifacts tab.
 7. When every requirements node is answered, invoke `complete_stage` for
    `requirements`. Do not create or edit a runnable interface before this. When
    `prototypeApproach.mode` is `not-applicable`, Tandem disables and bypasses

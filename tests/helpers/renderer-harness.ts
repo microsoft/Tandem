@@ -201,6 +201,7 @@ export async function rendererHarness() {
     const timers: (() => void)[] = [];
     const confirmations: string[] = [];
     let confirm = true;
+    let narrowViewport = false;
     let handler: (path: string, options: any) => Promise<any> = async () => { throw new Error("Network disabled in renderer tests"); };
     const context: any = {
         module: { exports: {} }, exports: {}, document, console, Error,
@@ -208,7 +209,7 @@ export async function rendererHarness() {
         AbortSignal: { timeout: () => undefined },
         requestAnimationFrame() {},
         window: {
-            matchMedia: () => ({ matches: false }),
+            matchMedia: (query: string) => ({ matches: query === "(max-width: 760px)" && narrowViewport }),
             addEventListener() {}, clearInterval() {},
             setInterval(callback: () => void) { timers.push(callback); return timers.length; },
             confirm(message: string) { confirmations.push(message); return confirm; },
@@ -223,6 +224,7 @@ export async function rendererHarness() {
         api: context.api as any, document, requests, timers, confirmations,
         setFetch(value: typeof handler) { handler = value; },
         setConfirm(value: boolean) { confirm = value; },
+        setNarrowViewport(value: boolean) { narrowViewport = value; },
         flush: () => new Promise<void>((resolve) => setImmediate(resolve)),
     };
 }

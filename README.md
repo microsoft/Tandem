@@ -63,6 +63,13 @@ passes its usage suggestions, assumptions, and deferred work into Requirements.
 Failed test runs provide a **Show error details** button with the run status,
 failed scenarios, agent summaries, captured evidence, and error events.
 
+In a narrow canvas, **Project context** opens the goal, stages, artifacts, and
+process settings without pushing the workspace off screen. Select a stage or
+artifact to return to its workspace, or press Escape to close project context.
+The next-step bar's **Go to action** button reveals and focuses the suggested
+control; it never submits an answer, starts a worker, or completes a stage.
+Stage tabs scroll horizontally and support arrow-key navigation.
+
 Tandem stores durable project state under `.tandem`. Add that
 directory to `.gitignore` unless you intentionally want to version the state.
 
@@ -100,7 +107,7 @@ snapshot. Finish Test again after the new run succeeds to accept its new evidenc
 
 ## Accepted handoffs and process blocks
 
-Open **Accepted handoffs & process blocks** in the sidebar. The working lifecycle
+Open **Handoffs & process** in the sidebar (inside **Project context** in a narrow canvas). The working lifecycle
 is unchanged by default: automatic implementation, automatic tests, and
 tool-backed verification are opt-in.
 
