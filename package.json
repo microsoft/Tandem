@@ -1,10 +1,11 @@
 {
   "name": "@tandem/canvas-extension",
-  "version": "1.0.7",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "test": "tsx --test tests/index.test.ts",
+    "eval": "tsx scripts/evaluate.ts",
     "build": "tsx scripts/build.ts",
     "dev": "tsx scripts/build.ts --watch",
     "check": "tsc --noEmit && tsc --project tsconfig.core.json",

@@ -1,4 +1,5 @@
 import type { DecisionGraph, DecisionQuestion, JobOwner } from "./workflow.js";
+import type { ProcessState } from "./process-state.js";
 
 export type LifecycleStageId =
     | "prepare"
@@ -128,6 +129,7 @@ export interface TandemState {
     assumed: string[];
     deferred: string[];
     artifacts: TandemArtifact[];
+    process: ProcessState;
     previewUrl: string | null;
     previewStatus: "waiting" | "starting" | "ready" | "error";
     prototypeReview: Record<string, any>;

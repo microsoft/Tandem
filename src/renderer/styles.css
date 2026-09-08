@@ -2556,3 +2556,12 @@ textarea {
     border-left: 0;
   }
 }
+/* Process controls remain in the sidebar so inspecting a handoff does not change stages. */
+.process-controls label { display: block; margin-top: 10px; }
+.process-controls input:not([type="checkbox"]),
+.process-controls select,
+.process-controls textarea { width: 100%; box-sizing: border-box; margin-top: 5px; }
+.process-controls textarea { font-family: var(--font-mono, monospace); font-size: 12px; }
+.process-controls details { margin-top: 12px; }
+.process-controls .muted { overflow-wrap: anywhere; }
+.process-controls pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; }

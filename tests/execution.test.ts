@@ -12,6 +12,8 @@ import {
 } from "../src/execution.js";
 import { executionGraph, ownershipConflicts } from "../src/scheduling.js";
 import { hasActiveWork } from "../src/workflow.js";
+import { createProcessState } from "../src/process-state.js";
+import { captureWorkspaceFiles } from "../src/worker-contracts.js";
 
 const functions = [
     "isObject", "normalizeStringList", "normalizeTestScenarios", "scheduleTestScenarios",
@@ -19,9 +21,12 @@ const functions = [
     "normalizeImplementation", "resetImplementationForPlan", "implementationEvent", "executionInputRevision", "executionRuntime",
     "assertCurrentExecution", "bindExecutionRun", "recordExecutionFailure", "assertPreviousExecutionStopped",
     "requestExecutionCancellation", "cancellationRuntime", "finishExecutionCancellation", "performExecutionCancellation",
-    "assertExecutionDispatch", "assertCurrentTestEvidence", "implementationPrompt",
+    "assertExecutionDispatch", "assertCurrentTestEvidence", "assertCurrentImplementationEvidence", "implementationPrompt",
+    "runApprovedVerification", "runIndependentVerification",
+    "protectedSourceFiles", "assertProtectedSources",
     "prepareImplementationWave", "recordImplementationWaveResults", "markFinalCodeStale",
     "finalCodeArtifact", "settleImplementationRun", "runImplementationFactory", "runExecutionFactory",
+    "recordExecutionUsage",
     "resumeExecutionRun", "factoryErrorCode",
     "trackExecution", "startImplementationFactory", "recoverExecutionFactory", "recoverImplementationFactory",
     "hasExecutionIdentity", "failLegacyExecutions",
@@ -48,12 +53,19 @@ async function compileHarness() {
         import { jsonResult } from "./agent-runner.js";
         import { executionGraph, ownershipConflicts, ownershipContains, ownershipPath } from "./scheduling.js";
         import { hasActiveWork, hasUnconfirmedExecution, sameOwner, invalidateArtifacts, lifecycleStages, reopenTestLifecycle } from "./workflow.js";
+        import { normalizeProcessState, processEvent, currentAcceptances } from "./process-state.js";
+        import { normalizeExecutionProof, hasCurrentEvidence, verificationCompletionError } from "./execution-proof.js";
+        import { buildWorkerContract, contractInstruction, assertContractSkillsCurrent,
+            captureWorkspaceFiles, assertChangedPathsOwned } from "./worker-contracts.js";
+        import { runVerificationCheck, evidenceSummary } from "./verification.js";
         import {
             assertExecutionRequest, assertExecutionSources, executionDigest, executionToken,
             executionWorkspace, ExecutionCancellationPendingError, ExecutionSourceChangedError, ExecutionSupersededError,
             fingerprintWorkspace, newExecution, normalizeExecutionFields, workerOutcome
         } from "./execution.js";
         const IMPLEMENTATION_FACTORY_NAME = "implementation-fixture", TEST_FACTORY_NAME = "test-fixture";
+        const readFixtureState = globalThis.loadState;
+        const loadState = async () => JSON.parse(JSON.stringify(await readFixtureState()));
         const activeImplementationRuns = new Map(), activeTestRuns = new Map();
         const LIFECYCLE_STAGES = lifecycleStages;
         const defineFactory = value => value;
@@ -67,12 +79,13 @@ async function compileHarness() {
         ${functions.map((name) => extract(name)).join("\n")}
         ${["executionValidationSchema", "implementationAgentOutputSchema", "testAgentOutputSchema",
             "testScenarioSchema", "implementationFactory", "testFactory"].map((name) => extract(name, true)).join("\n")}
-        module.exports = { ${functions.join(",")}, implementationFactory, testFactory,
+        module.exports = { ${functions.join(",")}, implementationFactory, testFactory, loadState,
             async drain() { await Promise.all([...activeImplementationRuns.values(), ...activeTestRuns.values()]); } };
     `;
     const result = await build({
         stdin: { contents: code, loader: "ts", resolveDir: resolve("src") },
         platform: "node", format: "cjs", target: "node20", bundle: true, write: false, logLevel: "silent",
+        external: ["proper-lockfile"],
     });
     return result.outputFiles[0].text;
 }
@@ -90,6 +103,7 @@ async function fixture() {
         } } },
         factory: {
             getRun: async (runId: string) => ({ runId, status: "completed" }),
+            getRunDetail: async (runId: string) => ({ runId, consumed: { activeMs: 10, nanoAiu: 1000 }, agents: [] }),
             waitForRun: async (runId: string) => ({ runId, status: "completed", result: { status: "completed" } }),
             resume: async (runId: string) => { resumes.push(runId); return { runId, status: "completed", result: { status: "completed" } }; },
             cancel: async (runId: string) => ({ runId, status: "cancelled" }),
@@ -102,6 +116,7 @@ async function fixture() {
     const responses: { status: number; body: any }[] = [];
     const sandbox = {
         module, exports: module.exports, require: createRequire(import.meta.url), process, Buffer, AbortController,
+        TextDecoder, setTimeout, clearTimeout,
         WORKSPACE_ROOT: root, SHARED_PROJECT_ROOT: root, session,
         isFactoryRunTerminal: (status: string) => ["completed", "error", "cancelled", "halted"].includes(status),
         loadState: async () => structuredClone(state),
@@ -203,6 +218,151 @@ const outcome = (summary: string, testing = false) => ({
     status: testing ? "passed" : "completed", summary, filesChanged: [], blockers: [],
     evidence: ["Observed expected outcome"],
     validation: [{ requirement: "check", status: "passed", evidence: "Command exited 0; expected output observed" }],
+});
+
+test("final factory persists real command evidence and fences changed verification inputs", async () => {
+    const f = await fixture();
+    try {
+        f.initialize([work("a")], [scenario("a")], true);
+        f.state.process = createProcessState();
+        const profile = {
+            enabled: true, independentReview: false, protectedPaths: [],
+            checks: [{ id: "observed", program: "node", args: ["-e", "console.log('observed')"],
+                stage: "test", afterWorkItems: [], timeoutSeconds: 10 }],
+        };
+        f.state.process.settings.verification = structuredClone(profile);
+        f.state.testing.verificationProfile = structuredClone(profile);
+        const token = f.start("testing", await fingerprintWorkspace(f.root));
+        const { ctx } = f.context("testing");
+        const result = await f.api.testFactory.run(ctx);
+        assert.equal(result.status, "passed");
+        assert.equal(f.state.testing.commandEvidence.length, 1);
+        assert.equal(f.state.testing.commandEvidence[0].exitCode, 0);
+        assert.match(f.state.testing.commandEvidence[0].output, /observed/);
+        await f.api.settleTestRun("fixture", { runId: "sdk-run", status: "completed", result }, { ...token, runId: "sdk-run" });
+        await f.api.assertCurrentTestEvidence(await f.api.loadState());
+        f.state.process.settings.verification.checks[0].args = ["--version"];
+        await assert.rejects(f.api.assertCurrentTestEvidence(await f.api.loadState()), /does not match/);
+    } finally { await f.close(); }
+});
+
+test("an independent verifier finding rejects otherwise passing scenarios", async () => {
+    const f = await fixture();
+    try {
+        f.initialize([work("a")], [scenario("a")], true);
+        f.state.process = createProcessState();
+        const profile = {
+            enabled: true, independentReview: true, protectedPaths: [],
+            checks: [{ id: "observed", program: "node", args: ["--version"], stage: "test", afterWorkItems: [], timeoutSeconds: 10 }],
+        };
+        f.state.process.settings.verification = structuredClone(profile);
+        f.state.testing.verificationProfile = structuredClone(profile);
+        f.start("testing", await fingerprintWorkspace(f.root));
+        const { ctx } = f.context("testing");
+        const original = ctx.agent;
+        ctx.agent = (prompt, options) => options.label === "acceptance:independent"
+            ? { status: "passed", summary: "A requirement is still missing.", findings: ["Missing failure flow."] }
+            : original(prompt, options);
+        await assert.rejects(f.api.testFactory.run(ctx), /Independent acceptance verification failed/);
+        assert.equal(f.state.testing.independentVerdict.status, "failed");
+    } finally { await f.close(); }
+});
+
+test("protected regression files cannot be weakened after the execution baseline", async () => {
+    const f = await fixture();
+    try {
+        await writeFile(join(f.root, "regression.ts"), "assert.strictEqual(actual, expected);");
+        const protectedSources = f.api.protectedSourceFiles(await captureWorkspaceFiles(f.root), ["regression.ts"]);
+        const runtime = { verificationProfile: { enabled: true, protectedPaths: ["regression.ts"] }, protectedSources };
+        await f.api.assertProtectedSources(runtime);
+        await writeFile(join(f.root, "regression.ts"), "// assertion removed");
+        await assert.rejects(f.api.assertProtectedSources(runtime), /Protected acceptance files changed/);
+    } finally { await f.close(); }
+});
+
+test("implementation settlement rejects commands observed before the final source changes", async () => {
+    const f = await fixture();
+    try {
+        f.initialize();
+        f.state.process = createProcessState();
+        const profile = {
+            enabled: true, independentReview: false, protectedPaths: [],
+            checks: [
+                { id: "build", program: "node", args: ["--version"], stage: "implementation", afterWorkItems: [], timeoutSeconds: 10 },
+                { id: "test", program: "node", args: ["--version"], stage: "test", afterWorkItems: [], timeoutSeconds: 10 },
+            ],
+        };
+        f.state.process.settings.verification = structuredClone(profile);
+        f.state.implementation.verificationProfile = structuredClone(profile);
+        const token = f.start();
+        const result = await f.api.implementationFactory.run(f.context().ctx);
+        assert.equal(result.status, "completed");
+        assert.equal(f.state.implementation.commandEvidence.length, 1);
+        await writeFile(join(f.root, "a.ts"), "changed after verification");
+        await f.api.settleImplementationRun("fixture", { runId: "sdk-run", status: "completed", result }, token);
+        assert.equal(f.state.implementation.status, "failed");
+        assert.match(f.state.implementation.error, /no passing tool-backed evidence/);
+    } finally { await f.close(); }
+});
+
+test("completed implementation evidence is fenced against subsequent source edits", async () => {
+    const f = await fixture();
+    try {
+        f.initialize();
+        f.state.process = createProcessState();
+        const profile = {
+            enabled: true, independentReview: false, protectedPaths: [],
+            checks: [{ id: "test", program: "node", args: ["--version"], stage: "test", afterWorkItems: [], timeoutSeconds: 10 }],
+        };
+        f.state.process.settings.verification = structuredClone(profile);
+        f.state.implementation.verificationProfile = structuredClone(profile);
+        const token = f.start();
+        const result = await f.api.implementationFactory.run(f.context().ctx);
+        await f.api.settleImplementationRun("fixture", { runId: "sdk-run", status: "completed", result }, token);
+        assert.equal(f.state.implementation.status, "completed");
+        await f.api.assertCurrentImplementationEvidence(await f.api.loadState());
+        await writeFile(join(f.root, "a.ts"), "changed after completion");
+        await assert.rejects(f.api.assertCurrentImplementationEvidence(await f.api.loadState()), /does not match/);
+    } finally { await f.close(); }
+});
+
+test("changing verification commands does not silently replace a protected source baseline", async () => {
+    const f = await fixture();
+    try {
+        f.initialize();
+        f.state.process = createProcessState();
+        await writeFile(join(f.root, "regression.ts"), "original regression check");
+        const profile = {
+            enabled: true, independentReview: false, protectedPaths: ["regression.ts"],
+            checks: [{ id: "test", program: "node", args: ["--version"], stage: "test", afterWorkItems: [], timeoutSeconds: 10 }],
+        };
+        f.state.process.settings.verification = structuredClone(profile);
+        f.state.implementation.verificationProfile = structuredClone(profile);
+        f.state.implementation.protectedSources = f.api.protectedSourceFiles(await captureWorkspaceFiles(f.root), profile.protectedPaths);
+        f.start();
+        f.state.implementation.status = "failed";
+        f.state.implementation.terminalConfirmedAt = new Date().toISOString();
+        f.state.implementation.launchState = "settled";
+        f.state.process.settings.verification.checks[0].timeoutSeconds = 20;
+        await writeFile(join(f.root, "regression.ts"), "weakened regression check");
+        await assert.rejects(f.api.submitImplementationStart({ prototypeId: "fixture" }, undefined), /Protected acceptance files changed/);
+        assert.equal(f.requests.length, 0);
+    } finally { await f.close(); }
+});
+
+test("actual unowned edits fail a wave even when the worker omits them from its report", async () => {
+    const f = await fixture();
+    try {
+        f.initialize();
+        f.start();
+        const { ctx } = f.context();
+        ctx.agent = async () => {
+            await writeFile(join(f.root, "outside.ts"), "unreported edit");
+            return outcome("Claims only owned changes");
+        };
+        await assert.rejects(f.api.implementationFactory.run(ctx), /outside the wave-owned scopes/);
+        assert.equal(f.state.implementation.workItems[0].status, "failed");
+    } finally { await f.close(); }
 });
 
 test("execution graphs normalize both ends and reject collisions, missing references, and cycles", () => {

@@ -1,0 +1,61 @@
+export function buildPreparationHandoffPrompt(args: { goal: string }, workspaceAnalysis: unknown, sourceAnalysis: unknown): string {
+    return [
+        "Synthesize the completed Tandem preparation analysis. Do not use tools or",
+        "perform more research. Produce a concise requirements handoff.",
+        "Suggested usages must be distinct first-person sentences beginning with",
+        "'I want to'. Infer assumptions and explicitly defer missing runtime,",
+        "credential, platform, or expensive execution work.",
+        "Choose prototypeApproach build for a new GUI, validate-existing when an",
+        "existing GUI materially helps evaluate the flow, not-applicable only when",
+        "no graphical validation adds value, and undecided when the evidence does",
+        "not justify choosing yet.",
+        "",
+        `Goal: ${args.goal}`,
+        "Workspace analysis:",
+        JSON.stringify(workspaceAnalysis, null, 2),
+        "Authoritative source analysis:",
+        JSON.stringify(sourceAnalysis, null, 2),
+    ].join("\n");
+}
+
+export function buildPlanningPrompt(args: {
+    prototypeId: string; maxAgents: number; action: string; instruction?: string; state: unknown;
+}): string {
+    return [
+        "You are the hidden execution-planning worker for Tandem.",
+        "Do not implement code, edit files, message the parent chat, open canvases, or",
+        "advance the lifecycle. Return only the structured output required by the schema.",
+        "",
+        `Prototype ID: ${args.prototypeId}`,
+        `Maximum parallel agents: ${args.maxAgents}`,
+        `Action: ${args.action}`,
+        `Revision instruction: ${args.instruction || "Create the initial execution plan."}`,
+        "",
+        "Current Tandem state:",
+        JSON.stringify(args.state, null, 2),
+        "",
+        "Create an efficient implementation plan grounded in the accepted design-spec,",
+        "test-spec, draft feature specification, contracts, architecture, and repository.",
+        "Divide the work into the smallest independently implementable units that still",
+        "produce coherent, reviewable changes. Minimize dependencies and expose the widest",
+        "safe frontier without inventing artificial parallelism.",
+        "",
+        "For each work item provide a stable kebab-case ID, precise outcome, prerequisite",
+        "IDs, one agent role, realistic effort hours, owned workspace-relative files or",
+        "directories, required skills, observable acceptance criteria, and existing",
+        "validation commands or checks. Skills must be exact installed skill names;",
+        "use an empty list when none are needed rather than inventing generic skills.",
+        "Include approved integration checks at the earliest dependency-ready boundary",
+        "when they can run without incomplete components. Keep the independent final",
+        "integration and interaction acceptance pass in Test. Work items that can run",
+        "together should not claim the same files. Use dependencies only when one item",
+        "truly consumes another's output. Include integration and final validation work",
+        "where necessary.",
+        "",
+        "The extension computes dependency waves, file-conflict scheduling, agent slots,",
+        "critical path, and parallelism savings from your work items. Ensure every",
+        "dependency names another returned item, the graph is acyclic, and all required",
+        "implementation scope is covered. The strategy must explain orchestration, merge",
+        "order, integration points, and how agents coordinate handoffs.",
+    ].join("\n");
+}

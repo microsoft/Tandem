@@ -134,7 +134,7 @@ export function assertExecutionRequest(runtime: Record<string, any>, token: Exec
 const ignoredDirectories = new Set([
     ".git", ".tandem", "node_modules", ".next", ".nuxt", ".cache",
 ]);
-const rootOutputs = new Set(["dist", "build", "out", "coverage", "generated"]);
+const rootOutputs = new Set(["dist", "build", "out", "coverage", "generated", "tandem-records"]);
 
 export async function fingerprintWorkspace(root: string): Promise<string> {
     const hash = createHash("sha256");
