@@ -71,17 +71,27 @@ async function compile(): Promise<string> {
         },
         bundle: true, platform: "node", target: "node20", format: "cjs", write: false,
         external: ["@github/copilot-sdk/*", "proper-lockfile", "./renderer.js"],
+        plugins: [{
+            name: "fake-identity",
+            setup(api) {
+                api.onResolve({ filter: /^@azure\/identity$/ }, () => ({ path: "identity", namespace: "fake" }));
+                api.onLoad({ filter: /.*/, namespace: "fake" }, () => ({
+                    contents: "export const { DefaultAzureCredential } = globalThis.speechIdentity;",
+                }));
+            },
+        }],
         logLevel: "silent",
         define: { __TANDEM_VERSION__: JSON.stringify("test") },
     });
     return result.outputFiles[0].text;
 }
 
-export async function extensionHarness() {
+export async function extensionHarness(speechEnvironment: Record<string, string> = {}) {
     const root = resolve("node_modules", "tandem-test-fixtures", randomUUID());
     await mkdir(root, { recursive: true });
     const requests: unknown[] = [];
     const logs: string[] = [];
+    let speechTokenRequests = 0;
     const require = createRequire(import.meta.url);
     class CanvasError extends Error {
         constructor(readonly code: string, message: string) { super(message); }
@@ -101,12 +111,24 @@ export async function extensionHarness() {
     };
     try {
         runInNewContext(await (compiled ??= compile()), {
-            module, exports: module.exports, console, URL, Buffer, AbortController, Response, Error, TextDecoder,
+            module, exports: module.exports, console, URL, Buffer, AbortController, AbortSignal, Response, Error, TextDecoder,
             setTimeout, clearTimeout, setInterval, clearInterval,
+            speechIdentity: {
+                DefaultAzureCredential: class {
+                    async getToken() {
+                        speechTokenRequests++;
+                        return { token: "fixture-speech-token", expiresOnTimestamp: Date.now() + 600_000 };
+                    }
+                },
+            },
             fetch: async () => new Response('<html><meta name="tandem-prototype-id" content="sample"></html>'),
             process: new Proxy(process, {
                 get(target, key) {
                     if (key === "cwd") return () => root;
+                    if (key === "env") return {
+                        ...target.env, TANDEM_Speech__ResourceId: "", TANDEM_Speech__Region: "",
+                        TANDEM_Speech__Language: "", ...speechEnvironment,
+                    };
                     const value = Reflect.get(target, key);
                     return typeof value === "function" ? value.bind(target) : value;
                 },
@@ -137,7 +159,8 @@ export async function extensionHarness() {
             }
             if (requests.length < count) throw new Error("The expected factory dispatch was not observed.");
         };
-        return { api, root, requests, logs, session, waitForRequests, close: async () => {
+        return { api, root, requests, logs, session, waitForRequests,
+            speechTokenRequests: () => speechTokenRequests, close: async () => {
             await api.closeServers();
             await rm(root, { recursive: true, force: true });
         } };

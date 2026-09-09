@@ -25,6 +25,7 @@ import {
     type ExecutionToken,
 } from "./execution.js";
 import { readJsonRequest, sendJsonResponse } from "./canvas-transport.js";
+import { createSpeechTokenService, SpeechAuthError, validateSpeechTokenRequest } from "./speech-auth.js";
 import { acceptStageSnapshot, exportAcceptedSnapshot } from "./accepted-artifacts.js";
 import {
     createProcessState, currentAcceptances, normalizeProcessSettings, normalizeProcessState,
@@ -58,6 +59,7 @@ const PROJECT_EXTENSION_ID = "project:tandem";
 const MAX_REQUEST_BYTES = 32 * 1024;
 const PROCESS_STARTED_AT = Date.now();
 const WORKSPACE_ROOT = process.cwd();
+const speechTokens = createSpeechTokenService();
 const SHARED_PROJECT_ROOT = resolveSharedProjectRoot();
 const STATE_DIRECTORY = join(SHARED_PROJECT_ROOT, ".tandem");
 const CURRENT_STATE_PATH = join(STATE_DIRECTORY, "current.json");
@@ -9200,6 +9202,24 @@ async function handleRequest(entry, req, res) {
         return;
     }
 
+    if (requestUrl.pathname === "/api/speech/token") {
+        validateSpeechTokenRequest(req, new URL(entry.url).origin);
+        const body = await readRequestBody(req);
+        if (Object.keys(body).length) {
+            sendJson(res, 400, { error: "Speech configuration is owned by the extension, not the request." });
+            return;
+        }
+        const state = await loadState(entry.prototypeId);
+        if (!(await isPreferredAnswerProvider(entry.extensionId)) || state.effortReset
+            || (hasActiveWork(state) && state.jobOwner
+                && !sameOwner(state.jobOwner, { sessionId: session.sessionId, workspaceRoot: WORKSPACE_ROOT }))) {
+            sendJson(res, 409, { error: "Open the writable Tandem provider in the session that owns this effort to use speech input." });
+            return;
+        }
+        sendJson(res, 200, await speechTokens());
+        return;
+    }
+
     if (req.method === "POST" && requestUrl.pathname === "/api/process") {
         const state = await processAction(entry.prototypeId, entry.extensionId, await readRequestBody(req));
         sendJson(res, 200, publicState(entry, state));
@@ -9384,7 +9404,7 @@ async function startServer(
     const server = createServer((req, res) => {
         handleRequest(entry, req, res).catch(async (error) => {
             if (!res.headersSent) {
-                sendJson(res, error instanceof ProjectStoreError || error instanceof AnswerRequestError ? error.statusCode : error instanceof CanvasError ? 409 : 500, {
+                sendJson(res, error instanceof ProjectStoreError || error instanceof AnswerRequestError || error instanceof SpeechAuthError ? error.statusCode : error instanceof CanvasError ? 409 : 500, {
                     error: error instanceof Error ? error.message : "Tandem request failed.",
                 });
             } else {

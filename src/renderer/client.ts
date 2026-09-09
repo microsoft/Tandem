@@ -1,4 +1,5 @@
-export {};
+import { installSpeechInputs } from "./speech-input.js";
+import { createAzureSpeechSession } from "./speech-recognizer.js";
 
 type AnyRecord = Record<string, any>;
 
@@ -418,6 +419,7 @@ function saveFormDraft(form, edited = false) {
 function bindFormDraft(form, key) {
   const previousKey = form.dataset.draftKey;
   if (previousKey && previousKey !== key) {
+    speechInputs.cancelForForm(form);
     saveFormDraft(form);
     for (const input of form.querySelectorAll("textarea, input:not([type=radio])")) {
       input.value = "";
@@ -482,6 +484,10 @@ function elapsedLabel(requestedAt) {
   const seconds = Math.max(0, Math.floor((Date.now() - start) / 1000));
   return "Elapsed: " + Math.floor(seconds / 60) + "m " + (seconds % 60) + "s";
 }
+
+const speechInputs = installSpeechInputs(document, createAzureSpeechSession, () =>
+  JSON.stringify([currentState?.prototypeId, currentState?.generation]),
+);
 
 async function postJson(endpoint, body, timeoutMs = 60000) {
   const sequence = ++transportSequence;
@@ -1569,6 +1575,7 @@ function activateOutputTab(tabName, focusTab = false) {
     renderBrowsingState(currentState);
     renderNextAction(currentState);
   }
+  speechInputs.sync();
 }
 
 for (const tab of elements.previewTabs) {
@@ -2510,10 +2517,12 @@ async function renderDesignTree(state) {
 
   if (defaultNode) showDecisionQuestion(state, nodes, defaultNode.id);
   const selectDecision = (id) => {
+    speechInputs.beforeRender();
     const view = captureView();
     const latest = decisionNodesForState(currentState);
     followingActiveDecision = latest.find((node) => node.id === id)?.status === "active";
     showDecisionQuestion(currentState, latest, id);
+    speechInputs.afterRender();
     restoreView(view);
     renderNextAction(currentState);
   };
@@ -3008,6 +3017,8 @@ function renderQuestion(question, processing, canSubmitAnswers, decisionNode = n
   if (question.allowFreeText !== false) {
     detail = document.createElement("textarea");
     detail.name = "prototype-detail";
+    detail.setAttribute("data-speech-input", "");
+    detail.setAttribute("maxlength", "4000");
     detail.dataset.uiKey = "decision:" + question.id + ":detail";
     detail.disabled = submitting || !canSubmitAnswers;
     detail.placeholder = question.answerPlaceholder || (
@@ -4737,6 +4748,7 @@ function renderNextAction(state) {
 }
 
 function render(state, preserveMessages = false) {
+  speechInputs.beforeRender();
   const view = captureView();
   const wasReset = lastRenderedGeneration !== null && state.generation !== lastRenderedGeneration && isGoalEntry(state);
   if (wasReset) {
@@ -4776,6 +4788,7 @@ function render(state, preserveMessages = false) {
   renderReload(state);
   activateOutputTab(activeOutputTab);
   renderEffortControls(state);
+  speechInputs.afterRender();
   if (!wasReset) restoreView(view);
   else if (!effortSubmitting) elements.startGoal.focus();
   void continueApplyingAllRecommended(state);
@@ -4827,6 +4840,7 @@ function renderIfChanged(state, sequence = ++transportSequence) {
     if (preparationChanged) renderPreparation(next);
     if (implementationChanged) renderImplementation(next);
     if (testChanged) renderTest(next);
+    speechInputs.sync();
     restoreView(view);
   }
   return domainChanged || providerChanged || preparationChanged || implementationChanged || testChanged;

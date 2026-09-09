@@ -83,6 +83,44 @@ If startup fails, use the prototype retry control; building messages reflect
 the active job rather than simulated milestones. Requirements remain usable
 when diagram rendering is unavailable.
 
+## Speech input
+
+Every conversational input has a **Mic** control: project goals, usages,
+requirement answers, prototype revisions and clarifications, artifact reviews
+(including test design), plan revisions, and implementation strategy adjustments.
+Click **Mic**, allow microphone access, and speak naturally. Partial text updates
+in place; **Stop** finishes the recognized text so you can edit and send it.
+**Cancel** or Escape restores the original draft. Recording never sends a message
+or starts an agent. One input can record at a time, for up to two minutes.
+Changing conversation, hiding the page, or resetting the effort cancels capture.
+
+Speech uses **Azure Speech with Microsoft Entra ID**, following Demore's
+identity-based authentication pattern, not a Speech subscription key. Configure
+these environment variables in the environment that launches Copilot, then restart
+Copilot so the extension inherits them:
+
+```powershell
+$env:TANDEM_Speech__ResourceId = "/subscriptions/<subscription-id>/resourceGroups/<group>/providers/Microsoft.CognitiveServices/accounts/<speech-resource>"
+$env:TANDEM_Speech__Region = "eastus"
+$env:TANDEM_Speech__Language = "en-US" # Optional; defaults to en-US
+az login
+```
+
+Use an Azure Speech resource and grant the signed-in identity the **Cognitive
+Services Speech User** role on that resource. The extension uses
+`DefaultAzureCredential`; local development can use Azure CLI sign-in, and hosted
+environments can use a configured managed identity. No keys are needed. Shell-only
+environment changes apply only to applications launched from that shell.
+
+**Microphone audio is sent to Azure for transcription.** Tandem does not save
+audio, recognition history, or credentials; unsent text stays in the current
+page's draft memory. Normal message persistence starts only when you explicitly
+send. Recognition errors restore the original draft and never switch to another
+provider. If the host canvas denies microphone access, use **Open Tandem in
+browser** beside the error and grant microphone permission there; the same effort
+and chat inputs are available. Unsent drafts are page-local, so copy any draft
+you want to keep before switching windows.
+
 ## State and recovery
 
 Effort state is stored at `.tandem/efforts/<prototypeId>/state.json`; the active

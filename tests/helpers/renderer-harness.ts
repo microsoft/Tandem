@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
-import { transform } from "esbuild";
+import { build } from "esbuild";
+import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
+import type { SpeechSessionFactory } from "../../src/renderer/speech-recognizer.js";
 
 type Listener = { callback: (event: any) => unknown; capture: boolean };
 const dataName = (name: string) => name.slice(5).replace(/-([a-z])/g, (_, char) => char.toUpperCase());
@@ -14,6 +16,7 @@ export class Element {
     style: Record<string, any> = { setProperty(name: string, value: string) { this[name] = value; } };
     id = ""; className = ""; name = ""; type = ""; value = "";
     hidden = false; disabled = false; checked = false; open = false;
+    readOnly = false;
     tabIndex = -1; scrollTop = 0; scrollLeft = 0; clientWidth = 500;
     selectionStart = 0; selectionEnd = 0; title = "";
     private text = "";
@@ -61,6 +64,11 @@ export class Element {
     before(node: Element) {
         const siblings = this.parentElement!.children;
         siblings.splice(siblings.indexOf(this), 0, node);
+        node.parentElement = this.parentElement;
+    }
+    after(node: Element) {
+        const siblings = this.parentElement!.children;
+        siblings.splice(siblings.indexOf(this) + 1, 0, node);
         node.parentElement = this.parentElement;
     }
     contains(node: Element | null): boolean {
@@ -111,22 +119,44 @@ export class Element {
         ]);
     }
     querySelector(selector: string) { return this.querySelectorAll(selector)[0] || null; }
-    closest(selector: string): Element | null { return this.matches(selector) ? this : this.parentElement?.closest(selector) || null; }
+    closest(selector: string): Element | null {
+        return selector.split(",").some((part) => this.matches(part)) ? this : this.parentElement?.closest(selector) || null;
+    }
     addEventListener(name: string, callback: Listener["callback"], capture = false) {
         this.listeners.set(name, [...this.listeners.get(name) || [], { callback, capture }]);
     }
     async emit(name: string, details: Record<string, unknown> = {}) {
-        const event = { target: this, preventDefault() {}, ...details };
+        let stopped = false;
+        const event = { target: this, preventDefault() {}, stopImmediatePropagation() { stopped = true; }, ...details };
         const path: Element[] = [];
         for (let node: Element | null = this; node; node = node.parentElement) path.push(node);
         for (const node of [...path].reverse()) {
-            for (const listener of node.listeners.get(name) || []) if (listener.capture) await listener.callback(event);
+            for (const listener of node.listeners.get(name) || []) {
+                if (stopped) return;
+                if (listener.capture) await listener.callback(event);
+            }
         }
         for (const node of path) {
+            if (stopped) return;
             const handler = (node as any)["on" + name];
             if (handler) await handler(event);
-            for (const listener of node.listeners.get(name) || []) if (!listener.capture) await listener.callback(event);
+            for (const listener of node.listeners.get(name) || []) {
+                if (stopped) return;
+                if (!listener.capture) await listener.callback(event);
+            }
         }
+    }
+    dispatchEvent(event: { type: string; target?: Element; bubbles?: boolean }) {
+        event.target = this;
+        const path: Element[] = [];
+        for (let node: Element | null = this; node; node = node.parentElement) path.push(node);
+        for (const node of [...path].reverse()) {
+            for (const listener of node.listeners.get(event.type) || []) if (listener.capture) listener.callback(event);
+        }
+        for (const node of event.bubbles ? path : [this]) {
+            for (const listener of node.listeners.get(event.type) || []) if (!listener.capture) listener.callback(event);
+        }
+        return true;
     }
     focus() { this.ownerDocument.activeElement = this; }
     setSelectionRange(start: number, end: number) { this.selectionStart = start; this.selectionEnd = end; }
@@ -140,6 +170,8 @@ class Document extends Element {
     documentElement!: Element;
     body!: Element;
     activeElement!: Element;
+    defaultView: unknown;
+    visibilityState = "visible";
     constructor() {
         super("document", undefined as any);
         Object.defineProperty(this, "ownerDocument", { value: this });
@@ -183,10 +215,23 @@ globalThis.api = {
   setPending: value => { submitting = value; },
   selectDecision: id => { selectedDecisionId = id; followingActiveDecision = false; },
   setMermaid: loader => { loadMermaid = loader; },
+  speechInputs,
 };`;
-    return (await transform(source.slice(0, end) + testApi, {
-        loader: "ts", format: "cjs", target: "es2022", logLevel: "silent",
-    })).code;
+    const result = await build({
+        stdin: { contents: source.slice(0, end) + testApi, loader: "ts",
+            resolveDir: fileURLToPath(new URL("../../src/renderer/", import.meta.url)) },
+        bundle: true, write: false, format: "cjs", target: "es2022", logLevel: "silent",
+        plugins: [{
+            name: "fake-speech",
+            setup(api) {
+                api.onResolve({ filter: /^\.\/speech-recognizer\.js$/ }, () => ({ path: "speech", namespace: "fake" }));
+                api.onLoad({ filter: /.*/, namespace: "fake" }, () => ({
+                    contents: "export const createAzureSpeechSession = (...args) => globalThis.__speechFactory(...args);",
+                }));
+            },
+        }],
+    });
+    return result.outputFiles[0].text;
 }
 
 export async function rendererHarness() {
@@ -202,9 +247,13 @@ export async function rendererHarness() {
     const confirmations: string[] = [];
     let confirm = true;
     let narrowViewport = false;
+    let speechFactory: SpeechSessionFactory = async () => { throw new Error("Speech is not configured in this test"); };
     let handler: (path: string, options: any) => Promise<any> = async () => { throw new Error("Network disabled in renderer tests"); };
     const context: any = {
-        module: { exports: {} }, exports: {}, document, console, Error,
+        module: { exports: {} }, exports: {}, document, console, Error, AbortController,
+        setTimeout, clearTimeout,
+        Event: class { constructor(readonly type: string, readonly options: { bubbles?: boolean } = {}) {} get bubbles() { return this.options.bubbles; } },
+        __speechFactory: (...args: Parameters<SpeechSessionFactory>) => speechFactory(...args),
         HTMLDetailsElement: Element,
         AbortSignal: { timeout: () => undefined },
         requestAnimationFrame() {},
@@ -219,12 +268,14 @@ export async function rendererHarness() {
             return handler(path, options);
         },
     };
+    document.defaultView = context.window;
     runInNewContext(await (compiled ??= compile()), context);
     return {
         api: context.api as any, document, requests, timers, confirmations,
         setFetch(value: typeof handler) { handler = value; },
         setConfirm(value: boolean) { confirm = value; },
         setNarrowViewport(value: boolean) { narrowViewport = value; },
+        setSpeechFactory(value: SpeechSessionFactory) { speechFactory = value; },
         flush: () => new Promise<void>((resolve) => setImmediate(resolve)),
     };
 }
