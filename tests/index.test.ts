@@ -1,8 +1,12 @@
 import "./project-store.test.js";
 import "./workflow.test.js";
 import "./prototype-lifecycle.test.js";
+import "./factory-dispatch.test.js";
+import "./prototype-flow.test.js";
+import "./prototype-workspace.test.js";
 import "./requirements-dag.test.js";
 import "./requirements-defaults.test.js";
+import "./design-review.test.js";
 import "./preparation.test.js";
 import "./effort-lifecycle.test.js";
 import "./execution.test.js";

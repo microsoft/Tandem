@@ -29,6 +29,7 @@ const functions = [
     "recordExecutionUsage",
     "resumeExecutionRun", "factoryErrorCode",
     "runEffortFactory", "recordEffortFactoryReceipt", "waitForEffortRun", "resumeEffortRun", "getEffortRun", "observeEffortRun",
+    "recordRejectedFactoryLaunch",
     "trackExecution", "startImplementationFactory", "recoverExecutionFactory", "recoverImplementationFactory",
     "hasExecutionIdentity", "failLegacyExecutions",
     "testEvent", "markTestResultsStale", "testScenarioPrompt", "prepareTestWave", "recordTestWaveResults",
@@ -51,7 +52,7 @@ async function compileHarness() {
         import { randomUUID } from "node:crypto";
         import { dirname, relative } from "node:path";
         import { mkdir } from "node:fs/promises";
-        import { jsonResult } from "./agent-runner.js";
+        import { assertFactoryRequestEnvelope, rejectedFactoryLaunch, jsonResult } from "./agent-runner.js";
         import { executionGraph, ownershipConflicts, ownershipContains, ownershipPath } from "./scheduling.js";
         import { hasActiveWork, hasUnconfirmedExecution, sameOwner, invalidateArtifacts, lifecycleStages, reopenTestLifecycle } from "./workflow.js";
         import { normalizeProcessState, processEvent, currentAcceptances } from "./process-state.js";
@@ -74,7 +75,7 @@ async function compileHarness() {
         function normalizeArtifacts(value) { return value; }
         function normalizeLifecycle(value) { return value; }
         function stageCompletionError(value) { return value.testing.status === "completed" ? null : "Tests have not passed."; }
-        function seedDefaultProductDesignReview(value) { return value; }
+        function seedDefaultDesignReview(value) { return value; }
         class AnswerRequestError extends Error { constructor(statusCode, message) { super(message); this.statusCode = statusCode; } }
         class CanvasError extends Error { constructor(code, message) { super(message); this.code = code; } }
         ${functions.map((name) => extract(name)).join("\n")}

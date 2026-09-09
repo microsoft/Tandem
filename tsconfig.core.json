@@ -25,6 +25,10 @@
     "src/execution-proof.ts",
     "src/process-adapters.ts",
     "src/planning-prompts.ts",
+    "src/prototype-flow.ts",
+    "src/prototype-workspace.ts",
+    "src/prototype-runtime.ts",
+    "src/prototype-bridge.ts",
     "src/delivery.ts",
     "src/agent-evals.ts",
     "src/types.ts"

@@ -136,7 +136,9 @@ const ignoredDirectories = new Set([
 ]);
 const rootOutputs = new Set(["dist", "build", "out", "coverage", "generated", "tandem-records"]);
 
-export async function fingerprintWorkspace(root: string): Promise<string> {
+export async function fingerprintWorkspace(root: string, options: {
+    excludeDirectory?: (path: string) => boolean | Promise<boolean>;
+} = {}): Promise<string> {
     const hash = createHash("sha256");
     async function visit(directory: string, prefix: string) {
         const entries = (await readdir(directory, { withFileTypes: true }))
@@ -147,6 +149,7 @@ export async function fingerprintWorkspace(root: string): Promise<string> {
             const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
             const path = join(directory, entry.name);
             if (entry.isDirectory()) {
+                if (await options.excludeDirectory?.(path)) continue;
                 await visit(path, relativePath);
             } else if (entry.isSymbolicLink()) {
                 throw new Error(`Cannot safely fingerprint linked source ${relativePath}; use a workspace with materialized sources.`);

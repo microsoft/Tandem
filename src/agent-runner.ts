@@ -1,9 +1,29 @@
+import type { joinSession } from "@github/copilot-sdk/extension";
+
+type RpcFactoryRequest = Parameters<Awaited<ReturnType<typeof joinSession>>["rpc"]["factory"]["run"]>[0];
+export type FactoryLaunchRequest = Omit<RpcFactoryRequest, "args"> & { args: unknown };
+
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
 export interface PreparationToken {
     requestId: string;
     generation: string;
     runId: string | null;
+}
+
+export function assertFactoryRequestEnvelope(request: FactoryLaunchRequest): void {
+    if (!request || typeof request !== "object" || typeof request.name !== "string" || !request.name.trim() ||
+        !Object.hasOwn(request, "args") || Object.keys(request).some((key) => !["name", "args", "options"].includes(key))) {
+        throw new Error("A factory RPC request requires name, args, and optional options; limits belong inside options.");
+    }
+}
+
+export function rejectedFactoryLaunch(error: unknown): string | null {
+    const message = typeof error === "string" ? error : error instanceof Error ? error.message : "";
+    // This exact RPC deserialization rejection happens before a durable run exists.
+    // Timeouts, missing receipts, and transport failures do not prove non-execution.
+    return /^(?:Request (?:session\.)?factory\.run failed with message: )?unknown field `limits`, expected one of `name`, `args`, `options`$/.test(message)
+        ? message : null;
 }
 
 export function jsonResult(value: unknown): JsonValue {

@@ -177,6 +177,17 @@ const elements: AnyRecord = {
   prototypeBuildingTitle: document.getElementById("prototype-building-title"),
   prototypeBuildingElapsed: document.getElementById("prototype-building-elapsed"),
   prototypeBuildStatus: document.getElementById("prototype-build-status"),
+  prototypeProgress: document.getElementById("prototype-progress"),
+  prototypeMilestones: document.getElementById("prototype-milestones"),
+  prototypeProgressMessage: document.getElementById("prototype-progress-message"),
+  prototypeProgressDetails: document.getElementById("prototype-progress-details"),
+  prototypeBudget: document.getElementById("prototype-budget"),
+  prototypeActionStatus: document.getElementById("prototype-action-status"),
+  applyPrototypeUpdate: document.getElementById("apply-prototype-update"),
+  requestPrototypeVisual: document.getElementById("request-prototype-visual"),
+  skipPrototypeVisual: document.getElementById("skip-prototype-visual"),
+  retryPrototypeCheckpoint: document.getElementById("retry-prototype-checkpoint"),
+  extendPrototypeBudget: document.getElementById("extend-prototype-budget"),
   startPrototype: document.getElementById("start-prototype"),
   previewEmpty: document.getElementById("preview-empty"),
   previewEmptyMessage: document.getElementById("preview-empty-message"),
@@ -216,6 +227,8 @@ const elements: AnyRecord = {
   revisionQuestionDetail: document.getElementById("revision-question-detail"),
   submitClarification: document.getElementById("submit-clarification"),
   revisionHistory: document.getElementById("revision-history"),
+  revisionHistoryDetails: document.getElementById("revision-history-details"),
+  revisionQueueSummary: document.getElementById("revision-queue-summary"),
   revisionStatus: document.getElementById("revision-status"),
 };
 
@@ -240,6 +253,19 @@ let applyingAllRecommended = false;
 let completingStage = false;
 let reopeningStage = false;
 let prototypeSubmitting = false;
+let prototypeActionError = "";
+let revisionTransportError = "";
+const revisionSubmissions = new Map<string, {
+  suggestion: string; baseCheckpointId?: string | null; clientRequestId: string;
+}>();
+const MAX_PREVIEW_STATE_BYTES = 64 * 1024;
+let previewCapture: {
+  source: Window; origin: string; requestId: string; prototypeId: string;
+  finish: (value?: { state: unknown }) => void;
+} | null = null;
+let previewRestore: {
+  prototypeId: string; generation: string; checkpointId: string; state: unknown;
+} | null = null;
 let viewedStageId = null;
 let activePointerId = null;
 let reloadRequestError = "";
@@ -313,6 +339,7 @@ function hasActiveJobs(state) {
     || ["starting", "running"].includes(state.implementation?.status)
     || ["starting", "running"].includes(state.testing?.status)
     || state.previewStatus === "starting"
+    || (state.prototypeFlow?.checkpoints || []).some((checkpoint) => checkpoint.status === "running")
     || [state.designReview, state.testDesignReview].some((review) =>
       review?.processing || review?.finalizeRequested
       || (review?.threads || []).some((thread) =>
@@ -320,6 +347,117 @@ function hasActiveJobs(state) {
       )
     );
 }
+
+const PROTOTYPE_MILESTONES = [
+  { id: "structure", label: "Structure" },
+  { id: "interaction", label: "Interaction" },
+  { id: "visual", label: "Visual direction" },
+];
+const UNRESOLVED_REVISIONS = ["queued", "processing", "clarifying", "ready", "failed"];
+
+function prototypeCheckpoint(state, id) {
+  return (state?.prototypeFlow?.checkpoints || []).find((checkpoint) => checkpoint.id === id) || null;
+}
+
+function prototypeMilestoneReady(state, milestone) {
+  return (state.prototypeFlow?.checkpoints || []).some((checkpoint) =>
+    checkpoint.milestone === milestone && checkpoint.status === "ready");
+}
+
+function failedPrototypeCheckpoint(state) {
+  const checkpoints = state.prototypeFlow?.checkpoints || [];
+  return checkpoints.filter((checkpoint, index) => checkpoint.status === "failed"
+    && (checkpoint.milestone !== "visual" || state.prototypeFlow.visualRequested)
+    && !checkpoints.slice(index + 1).some((next) =>
+      next.milestone === checkpoint.milestone && next.revisionId === checkpoint.revisionId)).at(-1) || null;
+}
+
+function failedPrototypeRevision(state) {
+  return (state.prototypeReview?.revisions || []).find((revision) => revision.status === "failed") || null;
+}
+
+function prototypeFinalizing(state) {
+  return completingStage || (["starting", "running"].includes(state.processing?.status)
+    && state.processing?.action === "generate-design-spec");
+}
+
+function prototypeCompletionBlocked(state) {
+  const flow = state.prototypeFlow;
+  return hasActiveJobs(state)
+    || Boolean(state.prototypeReview?.question)
+    || (state.prototypeReview?.revisions || []).some((revision) => UNRESOLVED_REVISIONS.includes(revision.status))
+    || Boolean(flow && (flow.pendingCheckpointId
+      || !prototypeMilestoneReady(state, "structure")
+      || !prototypeMilestoneReady(state, "interaction")
+      || (flow.visualRequested && !prototypeMilestoneReady(state, "visual"))));
+}
+
+function previewOrigin(url) {
+  try {
+    const parsed = new URL(url);
+    return ["http:", "https:"].includes(parsed.protocol) ? parsed.origin : null;
+  } catch {
+    return null;
+  }
+}
+
+function capturePreviewState(): Promise<{ state: unknown } | undefined> {
+  previewCapture?.finish();
+  const source = elements.previewFrame.contentWindow;
+  const origin = previewOrigin(elements.previewFrame.dataset.url);
+  const prototypeId = currentState.prototypeId;
+  if (!source || !origin) return Promise.resolve(undefined);
+  return new Promise((resolve) => {
+    const requestId = crypto.randomUUID();
+    const timer = setTimeout(() => finish(), 350);
+    function finish(value?: { state: unknown }) {
+      clearTimeout(timer);
+      if (previewCapture?.requestId === requestId) previewCapture = null;
+      resolve(value);
+    }
+    previewCapture = { source, origin, requestId, prototypeId, finish };
+    try {
+      source.postMessage({ type: "tandem:preview:capture", requestId, prototypeId }, origin);
+    } catch (error) {
+      console.warn("Prototype state capture is unavailable; the update can still be applied.", error);
+      finish();
+    }
+  });
+}
+
+window.addEventListener("message", (event) => {
+  const capture = previewCapture;
+  const data = event.data;
+  if (!capture || event.source !== capture.source
+    || event.source !== elements.previewFrame.contentWindow || event.origin !== capture.origin
+    || data?.type !== "tandem:preview:state" || data.requestId !== capture.requestId
+    || data.prototypeId !== capture.prototypeId || !Object.hasOwn(data, "state")) return;
+  try {
+    const json = JSON.stringify(data.state);
+    if (!json || new TextEncoder().encode(json).byteLength > MAX_PREVIEW_STATE_BYTES) return;
+    capture.finish({ state: JSON.parse(json) });
+  } catch (error) {
+    console.warn("Ignored a prototype state response that could not be serialized.", error);
+  }
+});
+
+elements.previewFrame.addEventListener("load", () => {
+  const restore = previewRestore;
+  if (!restore || restore.prototypeId !== currentState?.prototypeId
+    || restore.generation !== currentState?.generation
+    || restore.checkpointId !== currentState?.prototypeFlow?.displayedCheckpointId
+    || restore.checkpointId !== elements.previewFrame.dataset.checkpointId) return;
+  const origin = previewOrigin(elements.previewFrame.dataset.url);
+  if (!origin) return;
+  previewRestore = null;
+  try {
+    elements.previewFrame.contentWindow?.postMessage({
+      type: "tandem:preview:restore", prototypeId: restore.prototypeId, state: restore.state,
+    }, origin);
+  } catch (error) {
+    console.warn("Prototype state could not be restored; the updated preview remains available.", error);
+  }
+});
 
 function hasStageData(state, stage) {
   return currentStage(state) === stage
@@ -622,6 +760,11 @@ elements.resetEffort.addEventListener("click", async () => {
 });
 
 function clearEffortDrafts() {
+  previewCapture?.finish();
+  previewRestore = null;
+  revisionSubmissions.clear();
+  revisionTransportError = "";
+  prototypeActionError = "";
   formDrafts.clear();
   questionErrors.clear();
   expandedViews.clear();
@@ -651,6 +794,7 @@ function clearEffortDrafts() {
   elements.startGoal.removeAttribute("aria-invalid");
   elements.previewFrame.removeAttribute("src");
   delete elements.previewFrame.dataset.url;
+  delete elements.previewFrame.dataset.checkpointId;
   setContextExpanded(false);
 }
 
@@ -1102,25 +1246,45 @@ elements.generateDag.addEventListener("click", () => {
 
 elements.revisionForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (hasPendingRequest() || !canEditStage("prototype") || elements.submitRevision.disabled) return;
+  if (hasPendingRequest() || !canEditStage("prototype") || prototypeFinalizing(currentState)) return;
   const draft = captureInput(elements.revisionInput);
   const suggestion = draft.value.trim();
-  if (!suggestion) {
-    elements.revisionStatus.textContent = "Enter a revision suggestion.";
+  const unresolved = (currentState.prototypeReview?.revisions || []).filter((revision) =>
+    UNRESOLVED_REVISIONS.includes(revision.status)).length;
+  if (!suggestion || suggestion.length > 4000 || unresolved >= 50) {
+    revisionTransportError = unresolved >= 50
+      ? "The feedback queue is full (50 unresolved revisions). Apply or resolve existing updates, then send this draft."
+      : suggestion.length > 4000 ? "Keep the revision suggestion within 4,000 characters." : "Enter a revision suggestion.";
+    elements.revisionStatus.textContent = revisionTransportError;
     elements.revisionStatus.dataset.status = "error";
+    elements.revisionStatus.dataset.essential = "true";
     return;
   }
+  const key = JSON.stringify([currentState.prototypeId, currentState.generation, suggestion]);
+  let submission = revisionSubmissions.get(key);
+  if (!submission) {
+    submission = {
+      suggestion,
+      baseCheckpointId: currentState.prototypeFlow?.displayedCheckpointId
+        || (currentState.previewStatus === "ready" && !currentState.prototypeFlow ? undefined : null),
+      clientRequestId: crypto.randomUUID(),
+    };
+    revisionSubmissions.set(key, submission);
+  }
   submitting = true;
+  revisionTransportError = "";
   elements.submitRevision.disabled = true;
   elements.submitRevision.textContent = "Sending...";
   elements.revisionStatus.textContent = "";
   try {
-    await postJson("/api/revision", { suggestion });
+    await postJson("/api/revision", submission);
+    revisionSubmissions.delete(key);
     clearAcceptedInput(elements.revisionInput, draft);
   } catch (error) {
-    elements.revisionStatus.textContent = error instanceof Error
+    revisionTransportError = error instanceof Error
       ? error.message
       : "Could not submit the revision.";
+    elements.revisionStatus.textContent = revisionTransportError;
     elements.revisionStatus.dataset.status = "error";
   } finally {
     finishSubmission();
@@ -1479,7 +1643,8 @@ elements.completeStage.addEventListener("click", async () => {
 });
 
 elements.startPrototype.addEventListener("click", async () => {
-  if (hasPendingRequest() || !canEditStage("prototype") || hasActiveJobs(currentState)) return;
+  if (hasPendingRequest() || !canEditStage("prototype") || hasActiveJobs(currentState)
+    || elements.startPrototype.hidden || elements.startPrototype.disabled) return;
   prototypeSubmitting = true;
   elements.prototypeBuildStatus.textContent = currentState.prototypeApproach?.mode === "validate-existing"
     ? "Requesting validation of the existing prototype..."
@@ -1496,6 +1661,64 @@ elements.startPrototype.addEventListener("click", async () => {
     if (currentState) render(currentState, true);
   }
 });
+
+async function submitPrototypeAction(action, button) {
+  if (hasPendingRequest() || !canEditStage("prototype") || hasActiveJobs(currentState)
+    || prototypeFinalizing(currentState) || button.hidden || button.disabled) return;
+  const flow = currentState.prototypeFlow;
+  if (!flow && (action !== "retry" || !failedPrototypeRevision(currentState))) return;
+  if (action === "extend-budget" && !window.confirm(
+    "Add another 15-minute AI work window and retry paused prototype work? Your current preview and queued feedback will be kept.",
+  )) return;
+  const checkpointId = action === "apply-update" ? flow?.pendingCheckpointId
+    : action === "retry" ? failedPrototypeCheckpoint(currentState)?.id : null;
+  if (action === "apply-update" && !checkpointId) return;
+  const identity = { prototypeId: currentState.prototypeId, generation: currentState.generation };
+  const displayedCheckpointId = flow?.displayedCheckpointId;
+  const oldUrl = elements.previewFrame.dataset.url;
+  prototypeSubmitting = true;
+  prototypeActionError = "";
+  elements.prototypeActionStatus.textContent = action === "apply-update"
+    ? "Applying update; preserving supported preview state..."
+    : action === "skip-visual" ? "Skipping optional visual direction..." : "Requesting prototype work...";
+  elements.prototypeActionStatus.dataset.status = "idle";
+  render(currentState, true);
+  try {
+    const captured = action === "apply-update" ? await capturePreviewState() : undefined;
+    if (currentState.prototypeId !== identity.prototypeId || currentState.generation !== identity.generation) {
+      throw new Error("The effort changed. Review the current prototype before retrying.");
+    }
+    if (action === "apply-update" && (currentState.prototypeFlow?.pendingCheckpointId !== checkpointId
+      || currentState.prototypeFlow?.displayedCheckpointId !== displayedCheckpointId
+      || elements.previewFrame.dataset.url !== oldUrl)) {
+      throw new Error("The update changed. Review the latest update before applying it.");
+    }
+    if (captured) previewRestore = { ...identity, checkpointId, state: captured.state };
+    await postJson("/api/prototype/action", {
+      action, ...(checkpointId ? { checkpointId } : {}), expectedRevision: currentState.revision,
+    });
+    elements.prototypeActionStatus.textContent = "";
+  } catch (error) {
+    previewRestore = null;
+    prototypeActionError = error instanceof Error ? error.message : "Could not update the prototype.";
+    elements.prototypeActionStatus.textContent = prototypeActionError;
+    elements.prototypeActionStatus.dataset.status = "error";
+  } finally {
+    prototypeSubmitting = false;
+    if (currentState) render(currentState, true);
+  }
+}
+
+elements.applyPrototypeUpdate.addEventListener("click", () =>
+  submitPrototypeAction("apply-update", elements.applyPrototypeUpdate));
+elements.requestPrototypeVisual.addEventListener("click", () =>
+  submitPrototypeAction("visual", elements.requestPrototypeVisual));
+elements.skipPrototypeVisual.addEventListener("click", () =>
+  submitPrototypeAction("skip-visual", elements.skipPrototypeVisual));
+elements.retryPrototypeCheckpoint.addEventListener("click", () =>
+  submitPrototypeAction("retry", elements.retryPrototypeCheckpoint));
+elements.extendPrototypeBudget.addEventListener("click", () =>
+  submitPrototypeAction("extend-budget", elements.extendPrototypeBudget));
 
 elements.reopenStage.addEventListener("click", async () => {
   if (hasPendingRequest() || !currentState || elements.reopenStage.disabled || elements.reopenStage.hidden) return;
@@ -1569,6 +1792,7 @@ function activateOutputTab(tabName, focusTab = false) {
   elements.testPanel.hidden = activeOutputTab !== "test";
   elements.contentPanel.hidden = activeOutputTab !== "content";
   elements.previewTools.hidden = activeOutputTab !== "preview";
+  document.body.classList.toggle("prototype-view", activeOutputTab === "preview");
   if (currentState) {
     renderBrowsingState(currentState);
     renderNextAction(currentState);
@@ -1742,6 +1966,7 @@ function renderLifecycle(state, preserveMessage = false) {
         || state.prototypeApproach?.mode === "undecided"
         || Boolean(skippedStage(state, "prototype"))
         || Boolean(state.prototypeReview?.question)
+        || prototypeCompletionBlocked(state)
       )
     )
     || (
@@ -3085,13 +3310,18 @@ function renderPrototypeReview(state, preserveMessage = false) {
   const canSubmit = canEditStage("prototype", state);
   const previewReady = state.previewStatus === "ready";
   const question = review.question || null;
-  const revisionDisabled =
-    submitting || processing || Boolean(question) || !canSubmit || !previewReady;
-  elements.revisionInput.disabled = revisionDisabled;
-  elements.submitRevision.disabled = revisionDisabled;
-  elements.submitRevision.textContent = processing
-    ? "Applying revision..."
-    : "Send revision";
+  const revisions = Array.isArray(review.revisions) ? review.revisions : [];
+  const unresolved = revisions.filter((revision) => UNRESOLVED_REVISIONS.includes(revision.status));
+  const queued = revisions.filter((revision) => revision.status === "queued");
+  const finalizing = prototypeFinalizing(state);
+  elements.revisionInput.disabled = Boolean(effortSubmitting || state.effortReset);
+  elements.submitRevision.disabled = hasPendingRequest() || !canSubmit || finalizing || unresolved.length >= 50;
+  elements.submitRevision.textContent = submitting ? "Sending..."
+    : hasActiveJobs(state) || question || state.prototypeFlow?.pendingCheckpointId || !previewReady
+      ? "Queue revision" : "Send revision";
+  elements.revisionQueueSummary.textContent = unresolved.length
+    ? `${queued.length} queued · ${unresolved.length} unresolved / 50` : "";
+  elements.revisionHistoryDetails.hidden = revisions.length === 0;
 
   elements.revisionQuestion.hidden = !question;
   saveFormDraft(elements.revisionQuestionForm);
@@ -3148,34 +3378,51 @@ function renderPrototypeReview(state, preserveMessage = false) {
     bindFormDraft(elements.revisionQuestionForm, key);
   }
 
-  const revisions = Array.isArray(review.revisions) ? review.revisions : [];
   elements.revisionHistory.replaceChildren();
-  for (const revision of revisions.slice(-5).reverse()) {
+  const recentApplied = new Set(revisions.filter((revision) => revision.status === "applied").slice(-5));
+  const statusLabels = {
+    queued: "Queued", processing: "Building update", clarifying: "Needs clarification",
+    ready: "Update ready — not applied", applied: "Applied", failed: "Failed — retry needed",
+  };
+  for (const revision of revisions.filter((revision) =>
+    revision.status !== "applied" || recentApplied.has(revision)).reverse()) {
     const item = document.createElement("li");
+    item.dataset.revisionId = revision.id;
+    item.dataset.status = revision.status;
     const suggestion = document.createElement("strong");
-    suggestion.textContent = revision.summary || revision.suggestion;
+    suggestion.textContent = revision.suggestion || revision.summary;
+    if (revision.summary) suggestion.title = revision.summary;
     const status = document.createElement("span");
-    status.textContent = revision.status;
+    status.textContent = statusLabels[revision.status] || revision.status;
     item.append(suggestion, status);
     elements.revisionHistory.append(item);
   }
 
-  if (!preserveMessage) {
-    elements.revisionStatus.textContent = !isPrototype
-      ? "Prototype history is read only. Reopen the stage to make changes."
+  if (!preserveMessage || revisionTransportError) {
+    elements.revisionStatus.textContent = revisionTransportError || (!isPrototype
+      ? "Prototype history is read only. You can keep a draft; reopen the stage to submit it."
       : !canSubmit
       ? "Open the installed user-scoped Tandem to submit revisions."
+      : finalizing
+        ? "The final feature specification is being generated from frozen input. Keep drafting; sending is paused for this handoff."
+      : unresolved.length >= 50
+        ? "The feedback queue is full. Apply or resolve existing updates before sending more; your draft is kept."
       : !previewReady
-        ? "The revision box will enable when the preview is ready."
-        : processing
-          ? state.status || "Applying the prototype revision..."
+        ? "You can queue feedback before the first preview is ready."
+        : hasActiveJobs(state)
+          ? "Keep using the displayed preview. New feedback is queued while the next update builds."
           : question
-            ? "Clarify this revision before the prototype is updated."
+            ? "Answer the clarification to continue that revision. You can queue other feedback meanwhile."
+            : state.prototypeFlow?.pendingCheckpointId
+              ? "An update is ready. Apply it when you are ready; new feedback remains queued."
             : revisions.length > 0
               ? "Add another revision, or finish Prototype when no changes remain."
-              : "Try the prototype, then describe any revision you want.";
+              : "Try the prototype, then describe any revision you want.");
     elements.revisionStatus.dataset.status =
-      state.processing?.status === "error" ? "error" : "idle";
+      revisionTransportError || unresolved.length >= 50 ? "error" : "idle";
+    elements.revisionStatus.dataset.essential = String(Boolean(
+      revisionTransportError || unresolved.length >= 50 || !canSubmit || !isPrototype || finalizing || question,
+    ));
   }
 }
 
@@ -3259,7 +3506,7 @@ function renderDesignReview(state, preserveMessage = false) {
       !isDesign && !designComplete
         ? "Required project-specific design artifacts will be generated after Prototype."
         : isTestDesign
-        ? "Ask about integration or interaction coverage, or generate a test scenario."
+        ? "Preparing integration and interaction test-design drafts for review."
         : "Preparing the required project-specific design artifacts for review.";
     elements.designReviewThreads.append(empty);
   }
@@ -3350,6 +3597,7 @@ function renderDesignReview(state, preserveMessage = false) {
     submitting ||
     !canSubmit ||
     finalized ||
+    (isTestDesign && threads.length === 0) ||
     Boolean(review.processing) ||
     Boolean(review.finalizeRequested) ||
     unresolved.length > 0;
@@ -3371,14 +3619,20 @@ function renderDesignReview(state, preserveMessage = false) {
       : failed
         ? "A review request failed. Retry it before finishing."
         : review.processing
-          ? "You can queue another request while this one is processing."
+          ? review.processing.action === "finalize"
+            ? "Finalizing the specification from the resolved review."
+            : "A design request is processing. Open a Design artifact to review it or queue a follow-up."
           : finalized
             ? isTestDesign
               ? "The test specification is available under Artifacts → Design."
               : "The design specification is available under Artifacts → Design."
-            : unresolved.length > 0
-              ? "Resolve each answer when it is clear."
-              : "Ask another question or finish the review.";
+            : isTestDesign && threads.length === 0
+              ? "Initial test-design drafts are generated automatically before finalization."
+              : queued > 0
+                ? "Generating design artifacts for review. Open an artifact when it is ready."
+                : unresolved.length > 0
+                  ? "Open each generated artifact to review it, ask questions, and mark its thread resolved."
+                  : "Open a Design artifact to ask another question, or finish the review.";
     elements.designReviewStatus.dataset.status = failed ? "error" : "idle";
   }
   elements.designReviewStageStatus.textContent = elements.designReviewStatus.textContent;
@@ -4316,6 +4570,98 @@ function renderTest(state, preserveMessage = false) {
   }
 }
 
+function renderPrototypeProgress(state, building, active, preserveMessage) {
+  const flow = state.prototypeFlow;
+  const pending = prototypeCheckpoint(state, flow?.pendingCheckpointId);
+  const failed = failedPrototypeCheckpoint(state);
+  const failedRevision = failedPrototypeRevision(state);
+  const checkpoints = flow?.checkpoints || [];
+  const milestonesReady = prototypeMilestoneReady(state, "structure")
+    && prototypeMilestoneReady(state, "interaction")
+    && (!flow?.visualRequested || prototypeMilestoneReady(state, "visual"));
+  const unresolved = (state.prototypeReview?.revisions || []).some((revision) =>
+    UNRESOLVED_REVISIONS.includes(revision.status));
+  const exhausted = flow && flow.budget.usedSeconds >= flow.budget.limitSeconds;
+  const blocked = hasPendingRequest() || !canEditStage("prototype", state)
+    || hasActiveJobs(state) || prototypeFinalizing(state) || Boolean(state.prototypeReview?.question);
+  elements.prototypeProgress.hidden = Boolean(skippedStage(state, "prototype"))
+    || (!flow && ((Boolean(state.previewUrl) && !failedRevision) || currentStage(state) !== "prototype"));
+  elements.prototypeMilestones.hidden = !flow && Boolean(state.previewUrl);
+  elements.prototypeMilestones.replaceChildren();
+  for (const milestone of PROTOTYPE_MILESTONES) {
+    const latest = checkpoints.filter((checkpoint) => checkpoint.milestone === milestone.id).at(-1);
+    const ready = prototypeMilestoneReady(state, milestone.id);
+    const skippedVisual = milestone.id === "visual" && !flow?.visualRequested && latest?.status === "failed";
+    const item = document.createElement("li");
+    const label = document.createElement("strong");
+    label.textContent = milestone.label;
+    const status = document.createElement("span");
+    status.textContent = skippedVisual ? "Skipped (optional)"
+      : latest?.id === pending?.id && pending
+      ? "Update ready — apply when ready"
+      : latest?.status === "running" ? "Building"
+      : latest?.status === "clarifying" ? "Needs clarification"
+      : latest?.status === "failed" ? "Failed — retry available"
+      : ready ? "Ready"
+      : milestone.id === "visual" && !flow?.visualRequested ? "Optional"
+      : "Waiting";
+    item.dataset.milestone = milestone.id;
+    item.dataset.status = skippedVisual ? "skipped" : latest?.status || "waiting";
+    if (active?.milestone === milestone.id) item.setAttribute("aria-current", "step");
+    item.append(label, status);
+    elements.prototypeMilestones.append(item);
+  }
+  elements.prototypeProgressMessage.textContent = pending
+    ? "Update ready. " + (pending.summary || "The next checkpoint has been validated.")
+      + " Your displayed preview will not change until you choose Apply update."
+    : state.prototypeReview?.question
+      ? "A revision needs clarification. Keep exploring and queue feedback below."
+    : building
+      ? state.previewUrl ? "Your working preview stays available while the next checkpoint builds."
+        : "Building the first runnable checkpoint. No preview is available yet; you can already queue feedback."
+    : failed
+      ? "The latest update failed. " + (failed.summary || state.processing?.message || "")
+        + (state.previewUrl ? " Your working preview is unchanged." : "")
+    : failedRevision
+      ? "A feedback revision failed. Retry the failed revision to continue."
+        + (state.previewUrl ? " Your working preview is unchanged." : "")
+    : exhausted && (!milestonesReady || unresolved)
+      ? "Prototype work is paused at its work-window limit. Your preview and queued feedback are kept."
+    : milestonesReady
+      ? flow?.visualRequested ? "All requested checkpoints are ready. Finish Prototype when no revisions remain."
+        : "Structure and Interaction are ready. Finish Prototype, or optionally explore visual direction."
+    : "Start with Structure, then test one complete Interaction. Visual direction is optional.";
+  elements.prototypeProgressMessage.dataset.essential = String(Boolean(
+    pending || failed || failedRevision || state.prototypeReview?.question || exhausted && !building,
+  ));
+  elements.prototypeBudget.textContent = flow
+    ? `Work window: ${Math.ceil(flow.budget.usedSeconds / 60)} of ${Math.ceil(flow.budget.limitSeconds / 60)} minutes used`
+      + (building ? " or reserved for active work. Unused reserved time is returned when the job ends." : ".")
+    : "";
+  elements.applyPrototypeUpdate.hidden = !pending;
+  elements.applyPrototypeUpdate.disabled = blocked;
+  elements.applyPrototypeUpdate.textContent = prototypeSubmitting ? "Applying update..." : "Apply update";
+  elements.requestPrototypeVisual.hidden = !flow || flow.visualRequested || building || hasActiveJobs(state)
+    || !prototypeMilestoneReady(state, "interaction") || Boolean(pending);
+  elements.requestPrototypeVisual.disabled = blocked || unresolved || exhausted;
+  elements.skipPrototypeVisual.hidden = !flow?.visualRequested || failed?.milestone !== "visual"
+    || Boolean(failed?.revisionId) || hasActiveJobs(state);
+  elements.skipPrototypeVisual.disabled = blocked;
+  elements.retryPrototypeCheckpoint.hidden = (!flow && !failedRevision) || Boolean(pending) || Boolean(state.prototypeReview?.question)
+    || building || exhausted || (!failed && !failedRevision && milestonesReady && !unresolved);
+  elements.retryPrototypeCheckpoint.disabled = blocked;
+  elements.retryPrototypeCheckpoint.textContent = failed
+    ? "Retry " + (PROTOTYPE_MILESTONES.find((milestone) => milestone.id === failed.milestone)?.label || "checkpoint")
+    : failedRevision ? "Retry failed revision"
+    : "Continue prototype work";
+  elements.extendPrototypeBudget.hidden = !exhausted || building || Boolean(pending);
+  elements.extendPrototypeBudget.disabled = blocked;
+  if (!preserveMessage || prototypeActionError) {
+    elements.prototypeActionStatus.textContent = prototypeActionError;
+    elements.prototypeActionStatus.dataset.status = prototypeActionError ? "error" : "idle";
+  }
+}
+
 function renderPreview(state, preserveMessage = false) {
   const stage = currentStage(state);
   const previewStatus = state.previewStatus || "waiting";
@@ -4325,8 +4671,18 @@ function renderPreview(state, preserveMessage = false) {
   const validateExisting = state.prototypeApproach?.mode === "validate-existing";
   const undecided = state.prototypeApproach?.mode === "undecided";
   const build = state.processing?.action === "build-prototype" ? state.processing : null;
+  const flow = state.prototypeFlow;
+  const active = prototypeCheckpoint(state, flow?.activeCheckpointId)
+    || (flow?.checkpoints || []).find((checkpoint) => checkpoint.status === "running");
+  const displayed = prototypeCheckpoint(state, flow?.displayedCheckpointId);
+  const pending = prototypeCheckpoint(state, flow?.pendingCheckpointId);
   const building = !prototypeUnavailable && !undecided && stage === "prototype"
-    && (previewStatus === "starting" || build?.status === "running");
+    && (active?.status === "running" || previewStatus === "starting" || build?.status === "running"
+      || (["submit-revision", "clarify-revision"].includes(state.processing?.action) && state.processing?.status === "running"));
+  const url = flow ? displayed?.previewUrl || (displayed ? state.previewUrl : null) : state.previewUrl;
+  const workingPreview = Boolean(url && (displayed?.status === "ready" || previewStatus === "ready"
+    || elements.previewFrame.dataset.url === url));
+  renderPrototypeProgress(state, building, active, preserveMessage);
   elements.previewTab.disabled = prototypeUnavailable;
   elements.previewTab.title = prototypeUnavailable ? prototypeReason : "";
   if (prototypeUnavailable && activeOutputTab === "preview") {
@@ -4334,8 +4690,9 @@ function renderPreview(state, preserveMessage = false) {
   }
   elements.previewStatus.textContent = prototypeUnavailable
     ? "not applicable"
+    : pending ? "update ready"
     : building
-      ? "building"
+      ? workingPreview ? "preview ready · building update" : "building"
       : previewStatus;
   elements.previewTab.classList.toggle("prototype-building-tab", building);
   elements.previewTab.setAttribute(
@@ -4346,7 +4703,9 @@ function renderPreview(state, preserveMessage = false) {
         ? validateExisting ? "Live prototype, validating existing app" : "Live prototype, building"
         : "Live prototype",
   );
-  elements.prototypeBuildingTitle.textContent = validateExisting
+  elements.prototypeBuildingTitle.textContent = active
+    ? "Building " + (PROTOTYPE_MILESTONES.find((milestone) => milestone.id === active.milestone)?.label || "update")
+    : validateExisting
     ? "Validating existing prototype"
     : "Building runnable prototype";
   elements.prototypeBuilding.hidden = !building;
@@ -4357,9 +4716,11 @@ function renderPreview(state, preserveMessage = false) {
   }
   if (building) {
     elements.prototypeBuildingMessage.textContent =
-      build?.message || state.status || (validateExisting ? "Existing prototype validation is running." : "Prototype build is running.");
+      state.processing?.message || active?.focus || build?.message || state.status
+      || (validateExisting ? "Existing prototype validation is running." : "Prototype build is running.");
+    elements.prototypeBuildingMessage.title = elements.prototypeBuildingMessage.textContent;
     const updateMessage = () => {
-      elements.prototypeBuildingElapsed.textContent = elapsedLabel(build?.requestedAt);
+      elements.prototypeBuildingElapsed.textContent = elapsedLabel(active?.requestedAt || build?.requestedAt);
     };
     updateMessage();
     prototypeBuildMessageTimer = window.setInterval(updateMessage, 1000);
@@ -4367,7 +4728,8 @@ function renderPreview(state, preserveMessage = false) {
     elements.prototypeBuildingElapsed.textContent = "";
   }
 
-  elements.startPrototype.hidden = prototypeUnavailable || building || previewStatus === "ready" || stage !== "prototype";
+  elements.startPrototype.hidden = prototypeUnavailable || building || workingPreview
+    || Boolean(flow) || previewStatus === "ready" || stage !== "prototype";
   elements.startPrototype.disabled = hasPendingRequest()
     || !canEditStage("prototype", state) || hasActiveJobs(state);
   elements.startPrototype.textContent = prototypeSubmitting ? "Requesting..."
@@ -4378,6 +4740,8 @@ function renderPreview(state, preserveMessage = false) {
     ? "Live prototype is not applicable. " + prototypeReason
     : undecided
       ? "Choose the prototype approach in Requirements before starting prototype work."
+    : building
+      ? "The runnable preview will appear here after its first checkpoint is validated. Feedback can be queued below."
     : previewStatus === "error"
       ? "Prototype " + (validateExisting ? "validation" : "build") + " failed. Review the error, then retry."
     : stage === "prototype"
@@ -4391,9 +4755,8 @@ function renderPreview(state, preserveMessage = false) {
       : "";
     elements.prototypeBuildStatus.dataset.status = previewStatus === "error" ? "error" : "idle";
   }
-  const url = state.previewUrl;
-  if (prototypeUnavailable || undecided || !url || building || previewStatus !== "ready") {
-    elements.previewEmpty.style.display = building ? "none" : "grid";
+  if (prototypeUnavailable || undecided || !workingPreview) {
+    elements.previewEmpty.style.display = "grid";
     elements.previewFrame.style.display = "none";
     elements.openPreview.style.display = "none";
     return;
@@ -4403,8 +4766,10 @@ function renderPreview(state, preserveMessage = false) {
   elements.previewFrame.style.display = "block";
   elements.openPreview.style.display = "inline";
   elements.openPreview.href = url;
-  if (elements.previewFrame.dataset.url !== url) {
+  const checkpointId = flow?.displayedCheckpointId || "";
+  if (elements.previewFrame.dataset.url !== url || (elements.previewFrame.dataset.checkpointId || "") !== checkpointId) {
     elements.previewFrame.dataset.url = url;
+    elements.previewFrame.dataset.checkpointId = checkpointId;
     elements.previewFrame.src = url;
   }
 }
@@ -4486,7 +4851,14 @@ function nextActionForState(state) {
 
   if (stage === "prototype") {
     if (state.processing?.status === "running") return null;
-    if (state.previewStatus !== "ready" && !elements.startPrototype.disabled) {
+    for (const [target, label] of [
+      [elements.applyPrototypeUpdate, "Apply the prepared prototype update"],
+      [elements.extendPrototypeBudget, "Review an additional prototype work window"],
+      [elements.retryPrototypeCheckpoint, "Retry incomplete prototype work"],
+    ]) {
+      if (!target.hidden && !target.disabled) return { tab: "preview", target, label };
+    }
+    if (state.previewStatus !== "ready" && !elements.startPrototype.hidden && !elements.startPrototype.disabled) {
       return {
         tab: "preview",
         target: elements.startPrototype,
@@ -4682,6 +5054,13 @@ function render(state, preserveMessages = false) {
   if (wasReset) {
     clearEffortDrafts();
     preserveMessages = false;
+  }
+  if (currentState && (state.prototypeId !== currentState.prototypeId || state.generation !== currentState.generation)) {
+    previewCapture?.finish();
+    previewRestore = null;
+    revisionSubmissions.clear();
+    revisionTransportError = "";
+    prototypeActionError = "";
   }
   lastRenderedGeneration = state.generation;
   currentState = state;

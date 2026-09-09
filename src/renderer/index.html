@@ -322,6 +322,22 @@
           hidden
         >
           <div class="preview-surface">
+            <section id="prototype-progress" class="prototype-progress" aria-label="Prototype progress" hidden>
+              <ol id="prototype-milestones" class="prototype-milestones" aria-label="Prototype substages"></ol>
+              <div class="prototype-actions">
+                <button id="apply-prototype-update" class="plan-button" type="button" hidden>Apply update</button>
+                <button id="request-prototype-visual" class="plan-button" type="button" hidden>Explore visual direction (optional)</button>
+                <button id="skip-prototype-visual" class="plan-button" type="button" hidden>Skip visual direction</button>
+                <button id="retry-prototype-checkpoint" class="plan-button" type="button" hidden>Retry checkpoint</button>
+                <button id="extend-prototype-budget" class="plan-button" type="button" hidden>Add 15 minutes and retry</button>
+              </div>
+              <details id="prototype-progress-details" class="prototype-progress-details">
+                <summary>Build details</summary>
+                <p id="prototype-budget" class="muted"></p>
+              </details>
+              <p id="prototype-progress-message" class="muted" role="status" aria-live="polite"></p>
+              <p id="prototype-action-status" class="revision-status" role="status" aria-live="polite"></p>
+            </section>
             <div
               id="prototype-building"
               class="prototype-building"
@@ -342,28 +358,30 @@
                 </span>
               </div>
             </div>
+            <p id="prototype-build-status" class="revision-status" role="status" aria-live="polite"></p>
             <div id="preview-empty" class="preview-empty">
               <div>
                 <p id="preview-empty-message">The runnable prototype will appear here after the essential interaction decisions are captured.</p>
                 <button id="start-prototype" class="plan-button" type="button" hidden>Start prototype</button>
-                <p id="prototype-build-status" class="revision-status" role="status" aria-live="polite"></p>
               </div>
             </div>
             <iframe
               id="preview-frame"
               title="Runnable prototype"
+              referrerpolicy="origin"
               sandbox="allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
             ></iframe>
           </div>
           <section id="prototype-review" class="prototype-review" hidden>
             <div class="prototype-review-heading">
-              <strong>Suggest a prototype revision</strong>
-              <span>Iterate until no more changes are needed</span>
+              <strong>Feedback</strong>
+              <span>Keep exploring; feedback is queued while work runs</span>
             </div>
             <form id="revision-form" class="revision-form">
               <textarea
                 id="revision-input"
                 data-speech-input
+                rows="1"
                 maxlength="4000"
                 placeholder="Describe one change you want to see in the prototype."
                 aria-label="Prototype revision suggestion"
@@ -385,7 +403,10 @@
                 <button id="submit-clarification" type="submit">Use this answer</button>
               </form>
             </div>
-            <ul id="revision-history" class="revision-history"></ul>
+            <details id="revision-history-details" class="revision-history-details" hidden>
+              <summary>Revision history <span id="revision-queue-summary" class="muted" role="status" aria-live="polite"></span></summary>
+              <ul id="revision-history" class="revision-history"></ul>
+            </details>
             <p id="revision-status" class="revision-status" role="status" aria-live="polite"></p>
           </section>
         </div>

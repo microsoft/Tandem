@@ -17,6 +17,38 @@ function blankEffort(revision = 1, generation = "fixture-generation") {
     return { ...state("prepare", revision), goal: "", generation };
 }
 
+function checkpoint(id: string, milestone: string, status = "ready", extra: any = {}) {
+    return {
+        id, milestone, revisionId: null, requestId: `request-${id}`, generation: "fixture-generation",
+        status, baseCheckpointId: null, workspacePath: `workspaces\\${id}`,
+        previewUrl: status === "ready" ? `http://127.0.0.1:${id === "structure" ? 9998 : 9999}/` : null,
+        summary: `${milestone} checkpoint`, focus: `Building ${milestone}`, requestedAt: "2026-09-09T00:00:00Z",
+        completedAt: status === "running" ? null : "2026-09-09T00:01:00Z", timeoutSeconds: 300, ...extra,
+    };
+}
+
+function progressivePrototype(revision = 1): any {
+    return {
+        ...state("prototype", revision), previewStatus: "ready", previewUrl: "http://127.0.0.1:9998/",
+        prototypeFlow: {
+            version: 1,
+            checkpoints: [checkpoint("structure", "structure"), checkpoint("interaction", "interaction", "running")],
+            displayedCheckpointId: "structure", pendingCheckpointId: null, activeCheckpointId: "interaction",
+            visualRequested: false, budget: { limitSeconds: 900, usedSeconds: 90 },
+        },
+    };
+}
+
+function readyPrototype(revision = 1, pending = false): any {
+    const value = progressivePrototype(revision);
+    value.prototypeFlow.checkpoints[1] = checkpoint("interaction", "interaction");
+    value.prototypeFlow.activeCheckpointId = null;
+    value.prototypeFlow.pendingCheckpointId = pending ? "interaction" : null;
+    value.prototypeFlow.displayedCheckpointId = pending ? "structure" : "interaction";
+    value.previewUrl = value.prototypeFlow.checkpoints[pending ? 0 : 1].previewUrl;
+    return value;
+}
+
 test("header omits reload success text and places the version after Reset", async () => {
     const h = await rendererHarness();
     const value = { ...state(), provider: { canSubmitAnswers: true, canReload: true },
@@ -648,6 +680,52 @@ test("stage finalization cannot overtake an in-flight review submission", async 
     assert.equal(h.api.pending(), false);
 });
 
+test("Test design explains automatic drafts and gates finalization until review is resolved", async () => {
+    const h = await rendererHarness();
+    const value = state("design");
+    value.design.substage = "test";
+    value.designReview.finalizedArtifactId = "design-spec";
+    h.api.render(value);
+    assert.match(h.api.elements.designReviewThreads.textContent, /Preparing integration and interaction test-design drafts/);
+    assert.match(h.api.elements.designReviewStageStatus.textContent, /automatically before finalization/);
+    assert.equal(h.api.elements.finishReview.disabled, true);
+    await h.api.elements.finishReview.emit("click");
+    assert.equal(h.requests.length, 0);
+    value.testDesignReview.threads = [{
+        id: "default-project-integration-tests", type: "artifact", artifactKind: "test-scenario",
+        prompt: "Generate integration drafts", status: "queued", artifactIds: [],
+    }];
+    h.api.render(value);
+    assert.match(h.api.elements.designReviewStageStatus.textContent, /Generating design artifacts/);
+    assert.equal(h.api.elements.finishReview.disabled, true);
+    value.testDesignReview.threads[0].status = "answered";
+    value.testDesignReview.threads[0].artifactIds = ["integration-draft"];
+    value.artifacts = [{
+        id: "integration-draft", title: "Integration test draft", stage: "design",
+        kind: "test-scenario", content: "Reviewable integration scenarios", mermaid: "",
+        sourceThreadIds: ["default-project-integration-tests"], reviewStatus: "current",
+    }];
+    h.api.render(value);
+    assert.match(h.api.elements.designReviewStageStatus.textContent, /Open each generated artifact/);
+    assert.equal(h.api.elements.finishReview.disabled, true);
+    await h.api.elements.designReviewThreads.querySelector(".review-artifact-link").emit("click");
+    assert.equal(h.api.elements.contentPanel.hidden, false);
+    assert.equal(h.api.elements.artifactHeading.textContent, "Integration test draft");
+    assert.equal(h.api.elements.designReviewForm.hidden, false);
+    assert.equal(h.api.elements.artifactReviewThreads.querySelector('[data-thread-action="resolve"]').textContent, "Mark resolved");
+    value.testDesignReview.threads[0].status = "resolved";
+    h.api.render(value);
+    assert.equal(h.api.elements.finishReview.disabled, false);
+    assert.equal(h.api.elements.finishReview.textContent, "Finish test design");
+    h.setFetch(async () => response({ ...value, revision: 2 }));
+    h.api.elements.designReviewInput.value = "Also cover invalid requests";
+    h.api.elements.reviewRequestKind.value = "test-scenario";
+    await h.api.elements.designReviewForm.emit("submit");
+    assert.equal(h.requests[0].path, "/api/design-review");
+    assert.equal(h.requests[0].body.artifactId, "integration-draft");
+    assert.equal(h.requests[0].body.artifactKind, "test-scenario");
+});
+
 test("failed usage and plan submissions retain their inputs and show initial plan errors", async () => {
     const h = await rendererHarness();
     h.api.render(state());
@@ -780,6 +858,537 @@ test("prototype waits honestly, starts explicitly, and reports actual progress p
     assert.match(h.api.elements.prototypeBuildStatus.textContent, /Build failed/);
 });
 
+test("progressive Prototype shows honest milestones and retains the working iframe while updates build", async () => {
+    const h = await rendererHarness();
+    const first = progressivePrototype();
+    first.previewUrl = null;
+    first.previewStatus = "starting";
+    first.prototypeFlow.checkpoints = [checkpoint("first", "structure", "running")];
+    first.prototypeFlow.displayedCheckpointId = null;
+    first.prototypeFlow.activeCheckpointId = "first";
+    h.api.renderIfChanged(first);
+    assert.equal(h.api.elements.prototypeProgress.hidden, false);
+    assert.match(h.api.elements.prototypeMilestones.textContent, /StructureBuildingInteractionWaitingVisual directionOptional/);
+    assert.match(h.api.elements.prototypeProgressMessage.textContent, /No preview is available yet/);
+    assert.equal(h.api.elements.previewFrame.style.display, "none");
+    assert.equal(h.api.elements.revisionInput.disabled, false);
+    assert.equal(h.api.elements.submitRevision.disabled, false);
+    const value = progressivePrototype(2);
+    h.api.renderIfChanged(value);
+    const frame = h.api.elements.previewFrame;
+    assert.equal(frame.style.display, "block");
+    assert.equal(frame.src, value.previewUrl);
+    assert.equal(h.api.elements.prototypeBuilding.hidden, false);
+    assert.equal(h.api.elements.prototypeBuildingTitle.textContent, "Building Interaction");
+    assert.match(h.api.elements.prototypeBudget.textContent, /used or reserved for active work/);
+    assert.equal(h.api.elements.prototypeMilestones.querySelector('[aria-current="step"]').dataset.milestone, "interaction");
+    h.api.elements.revisionInput.value = "Keep this draft";
+    await h.api.elements.revisionInput.emit("input");
+    h.api.elements.revisionInput.focus();
+    h.api.elements.revisionInput.setSelectionRange(2, 5);
+    h.api.renderIfChanged({ ...value, revision: 3, status: "Verifying the update" });
+    assert.equal(frame.navigations.length, 1);
+    assert.equal(h.api.elements.revisionInput.value, "Keep this draft");
+    assert.equal(h.api.elements.revisionInput.selectionStart, 2);
+    h.api.renderIfChanged(readyPrototype(4, true));
+    assert.equal(frame.navigations.length, 1, "a validated candidate must not automatically replace the displayed preview");
+    assert.match(h.api.elements.prototypeProgressMessage.textContent, /Update ready/);
+    assert.equal(h.api.elements.applyPrototypeUpdate.hidden, false);
+    assert.equal(h.api.elements.applyPrototypeUpdate.disabled, false);
+    assert.equal(h.api.elements.requestPrototypeVisual.hidden, true);
+    assert.equal(h.api.elements.completeStage.disabled, true);
+});
+
+test("compact prototype layout is scoped to the preview and preserves expanded details and drafts", async () => {
+    const h = await rendererHarness();
+    const value = progressivePrototype();
+    value.prototypeReview.revisions = [{ id: "queued", suggestion: "Keep the camera position.", status: "queued" }];
+    h.api.renderIfChanged(value);
+    assert.equal(h.document.body.classList.contains("prototype-view"), true);
+    assert.equal(h.api.elements.prototypeProgressDetails.open, false);
+    assert.equal(h.api.elements.revisionHistoryDetails.open, false);
+    assert.equal(h.api.elements.revisionHistoryDetails.hidden, false);
+    assert.match(h.api.elements.revisionQueueSummary.textContent, /1 queued/);
+    assert.equal(h.api.elements.requestPrototypeVisual.hidden, true);
+    assert.equal(h.api.elements.prototypeProgressMessage.dataset.essential, "false");
+    assert.equal(h.api.elements.revisionStatus.dataset.essential, "false");
+    assert.equal(h.api.elements.revisionInput.getAttribute("rows"), "1");
+    await h.api.elements.revisionForm.emit("submit");
+    assert.equal(h.api.elements.revisionStatus.dataset.status, "error");
+    assert.equal(h.api.elements.revisionStatus.dataset.essential, "true");
+    assert.match(h.api.elements.revisionStatus.textContent, /Enter a revision suggestion/);
+    const frame = h.api.elements.previewFrame;
+    h.api.elements.prototypeProgressDetails.open = true;
+    h.api.elements.revisionHistoryDetails.open = true;
+    h.api.elements.revisionInput.value = "Draft stays here.";
+    h.api.elements.revisionInput.focus();
+    h.api.elements.revisionInput.setSelectionRange(3, 5);
+    h.api.renderIfChanged({ ...value, revision: 2, status: "Building the next update" });
+    assert.equal(h.api.elements.prototypeProgressDetails.open, true);
+    assert.equal(h.api.elements.revisionHistoryDetails.open, true);
+    assert.equal(h.api.elements.revisionInput.value, "Draft stays here.");
+    assert.equal(h.api.elements.revisionInput.selectionStart, 3);
+    assert.equal(frame.navigations.length, 1);
+    await h.api.elements.requirementsTab.emit("click");
+    assert.equal(h.document.body.classList.contains("prototype-view"), false);
+    await h.api.elements.previewTab.emit("click");
+    assert.equal(h.document.body.classList.contains("prototype-view"), true);
+    assert.equal(h.api.elements.revisionHistoryDetails.open, true);
+    assert.equal(frame.navigations.length, 1);
+});
+
+test("compact prototype controls never collapse pending updates, failures, or clarifications", async () => {
+    const h = await rendererHarness();
+    const pending = readyPrototype(1, true);
+    h.api.renderIfChanged(pending);
+    assert.equal(h.api.elements.applyPrototypeUpdate.hidden, false);
+    assert.equal(h.api.elements.prototypeProgressMessage.dataset.essential, "true");
+    assert.equal(h.api.elements.prototypeProgressDetails.open, false);
+    const failed = progressivePrototype(2);
+    failed.prototypeFlow.activeCheckpointId = null;
+    failed.prototypeFlow.checkpoints[1].status = "failed";
+    failed.prototypeFlow.checkpoints[1].summary = "Build failed; preview retained.";
+    h.api.renderIfChanged(failed);
+    assert.equal(h.api.elements.retryPrototypeCheckpoint.hidden, false);
+    assert.equal(h.api.elements.prototypeProgressMessage.dataset.essential, "true");
+    assert.equal(h.api.elements.previewFrame.style.display, "block");
+    const clarification = readyPrototype(3);
+    clarification.prototypeReview.question = decision("clarify").question;
+    h.api.renderIfChanged(clarification);
+    assert.equal(h.api.elements.revisionQuestion.hidden, false);
+    assert.equal(h.api.elements.revisionStatus.dataset.essential, "true");
+    h.api.elements.revisionInput.value = "Keep this failed submission.";
+    h.setFetch(async () => response({ error: "Submission was rejected." }, 409));
+    await h.api.elements.revisionForm.emit("submit");
+    assert.equal(h.api.elements.revisionStatus.dataset.essential, "true");
+    assert.equal(h.api.elements.revisionStatus.dataset.status, "error");
+    assert.equal(h.api.elements.revisionInput.value, "Keep this failed submission.");
+});
+
+test("feedback queues before a preview and during clarification without losing an actively edited draft", async () => {
+    const h = await rendererHarness();
+    const value = progressivePrototype();
+    value.previewUrl = null;
+    value.previewStatus = "starting";
+    value.prototypeFlow.displayedCheckpointId = null;
+    h.api.renderIfChanged(value);
+    h.api.elements.revisionInput.value = "Make the primary action obvious";
+    await h.api.elements.revisionInput.emit("input");
+    let release!: (value: any) => void;
+    h.setFetch(() => new Promise((resolve) => { release = resolve; }));
+    const request = h.api.elements.revisionForm.emit("submit");
+    await h.flush();
+    assert.equal(h.requests[0].path, "/api/revision");
+    assert.equal(h.requests[0].body.baseCheckpointId, null);
+    assert.match(h.requests[0].body.clientRequestId, /^[\da-f-]{36}$/);
+    assert.equal(h.api.elements.revisionInput.disabled, false);
+    h.api.elements.revisionInput.value = "A second observation";
+    await h.api.elements.revisionInput.emit("input");
+    const queued = { ...value, revision: 2, prototypeReview: { revisions: [
+        { id: "revision-1", suggestion: h.requests[0].body.suggestion, status: "queued" },
+    ], question: decision("clarify").question } };
+    release(response(queued));
+    await request;
+    assert.equal(h.api.elements.revisionInput.value, "A second observation");
+    assert.equal(h.api.elements.submitRevision.disabled, false);
+    assert.match(h.api.elements.revisionHistory.textContent, /Make the primary action obviousQueued/);
+    assert.match(h.api.elements.revisionQueueSummary.textContent, /1 queued/);
+    h.setFetch(async () => response({ ...queued, revision: 3 }));
+    await h.api.elements.revisionForm.emit("submit");
+    assert.equal(h.requests.length, 2);
+    assert.equal(h.requests[1].body.suggestion, "A second observation");
+    assert.notEqual(h.requests[1].body.clientRequestId, h.requests[0].body.clientRequestId);
+    assert.equal(h.api.elements.revisionInput.value, "");
+});
+
+test("revision transport retries preserve the request id and original base checkpoint", async () => {
+    const h = await rendererHarness();
+    h.api.renderIfChanged(progressivePrototype());
+    h.api.elements.revisionInput.value = "Keep the filter visible";
+    await h.api.elements.revisionInput.emit("input");
+    h.setFetch(async () => response({ error: "Connection failed; retry the saved draft" }, 503));
+    await h.api.elements.revisionForm.emit("submit");
+    assert.equal(h.api.elements.revisionInput.value, "Keep the filter visible");
+    h.api.renderIfChanged(readyPrototype(2));
+    assert.match(h.api.elements.revisionStatus.textContent, /Connection failed/);
+    h.setFetch(async () => response(readyPrototype(3)));
+    await h.api.elements.revisionForm.emit("submit");
+    assert.equal(h.requests[1].body.clientRequestId, h.requests[0].body.clientRequestId);
+    assert.equal(h.requests[1].body.baseCheckpointId, "structure", "retry must refer to the preview originally reviewed");
+    assert.equal(h.api.elements.revisionInput.value, "");
+    h.api.elements.revisionInput.value = "Keep the filter visible";
+    await h.api.elements.revisionInput.emit("input");
+    await h.api.elements.revisionForm.emit("submit");
+    assert.notEqual(h.requests[2].body.clientRequestId, h.requests[0].body.clientRequestId);
+    assert.equal(h.requests[2].body.baseCheckpointId, "interaction");
+});
+
+test("the revision queue displays unresolved history accurately and never discards a full-queue draft", async () => {
+    const h = await rendererHarness();
+    const value = readyPrototype();
+    value.prototypeReview.revisions = ["queued", "processing", "clarifying", "ready", "applied", "failed"]
+        .map((status, index) => ({ id: `r-${index}`, suggestion: `Suggestion ${index}`, status }));
+    h.api.renderIfChanged(value);
+    assert.equal(h.api.elements.revisionHistory.children.length, 6);
+    assert.match(h.api.elements.revisionHistory.textContent, /Building update/);
+    assert.match(h.api.elements.revisionHistory.textContent, /Update ready — not applied/);
+    assert.match(h.api.elements.revisionHistory.textContent, /Applied/);
+    assert.match(h.api.elements.revisionHistory.textContent, /Needs clarification/);
+    value.prototypeReview.revisions = Array.from({ length: 50 }, (_, index) => ({
+        id: `queued-${index}`, suggestion: `Queued suggestion ${index}`, status: "queued",
+    }));
+    h.api.renderIfChanged({ ...value, revision: 2 });
+    h.api.elements.revisionInput.value = "Never lose this draft";
+    assert.equal(h.api.elements.revisionInput.disabled, false);
+    assert.equal(h.api.elements.submitRevision.disabled, true);
+    assert.equal(h.api.elements.revisionHistory.children.length, 50);
+    await h.api.elements.revisionForm.emit("submit");
+    assert.equal(h.requests.length, 0);
+    assert.equal(h.api.elements.revisionInput.value, "Never lose this draft");
+    assert.match(h.api.elements.revisionStatus.textContent, /queue is full/);
+    h.api.renderIfChanged({ ...value, revision: 3 });
+    assert.match(h.api.elements.revisionStatus.textContent, /queue is full/);
+});
+
+test("read-only, final-spec generation and other stages block revision submission but retain editable drafts", async () => {
+    const h = await rendererHarness();
+    const value = readyPrototype();
+    for (const snapshot of [
+        { ...value, provider: { canSubmitAnswers: false } },
+        { ...value, processing: { action: "generate-design-spec", status: "running" } },
+        { ...value, lifecycle: { ...value.lifecycle, currentStage: "design", completedStages: ["prepare", "requirements", "prototype"] } },
+    ]) {
+        h.api.render(snapshot);
+        h.api.elements.revisionInput.value = "Keep the draft";
+        assert.equal(h.api.elements.revisionInput.disabled, false);
+        assert.equal(h.api.elements.submitRevision.disabled, true);
+        if (snapshot.processing?.action === "generate-design-spec") {
+            assert.match(h.api.elements.revisionStatus.textContent, /frozen input.*Keep drafting/);
+        }
+        await h.api.elements.revisionForm.emit("submit");
+        assert.equal(h.api.elements.revisionInput.value, "Keep the draft");
+    }
+    h.api.render({ ...value, effortReset: { requestId: "reset" } });
+    await h.api.elements.revisionForm.emit("submit");
+    assert.equal(h.requests.length, 0);
+    assert.equal(h.api.elements.revisionInput.value, "Keep the draft");
+});
+
+test("Finish Prototype requires promoted milestones and resolved feedback, but not optional visual direction", async () => {
+    const h = await rendererHarness();
+    const value = readyPrototype();
+    h.api.render(value);
+    assert.equal(h.api.elements.completeStage.disabled, false);
+    const snapshots = [
+        progressivePrototype(),
+        readyPrototype(1, true),
+        { ...value, prototypeFlow: { ...value.prototypeFlow, checkpoints: [checkpoint("structure", "structure")] } },
+        { ...value, prototypeFlow: { ...value.prototypeFlow, visualRequested: true } },
+        { ...value, prototypeReview: { ...value.prototypeReview, question: decision("clarify").question } },
+        ...["queued", "processing", "clarifying", "ready", "failed"].map((status) => ({
+            ...value, prototypeReview: { revisions: [{ id: status, status, suggestion: status }], question: null },
+        })),
+    ];
+    for (const snapshot of snapshots) {
+        h.api.render(snapshot);
+        assert.equal(h.api.elements.completeStage.disabled, true, JSON.stringify(snapshot.prototypeReview));
+        await h.api.elements.completeStage.emit("click");
+    }
+    assert.equal(h.requests.length, 0);
+    h.api.render({ ...value, prototypeReview: { revisions: [{ id: "done", status: "applied", suggestion: "Done" }], question: null } });
+    assert.equal(h.api.elements.completeStage.disabled, false);
+    const legacy = state("prototype");
+    legacy.previewStatus = "ready";
+    legacy.previewUrl = "http://127.0.0.1:9998/";
+    h.api.render(legacy);
+    assert.equal(h.api.elements.prototypeProgress.hidden, true);
+    assert.equal(h.api.elements.completeStage.disabled, false, "legacy ready previews do not acquire new milestone gates");
+});
+
+test("visual direction is explicitly optional and failed checkpoint retries preserve the preview", async () => {
+    const h = await rendererHarness();
+    const value = readyPrototype();
+    h.api.renderIfChanged(value);
+    assert.equal(h.api.elements.requestPrototypeVisual.hidden, false);
+    assert.equal(h.api.elements.requestPrototypeVisual.disabled, false);
+    const visual = { ...value, revision: 2, prototypeFlow: { ...value.prototypeFlow, visualRequested: true,
+        activeCheckpointId: "visual", checkpoints: [...value.prototypeFlow.checkpoints, checkpoint("visual", "visual", "running")] } };
+    h.setFetch(async () => response(visual));
+    await h.api.elements.requestPrototypeVisual.emit("click");
+    assert.equal(h.requests[0].path, "/api/prototype/action");
+    assert.equal(h.requests[0].body.action, "visual");
+    assert.equal(h.requests[0].body.expectedRevision, 1);
+    assert.equal(h.api.elements.completeStage.disabled, true);
+    assert.equal(h.api.elements.previewFrame.navigations.length, 1);
+    const failed = { ...visual, revision: 3, prototypeFlow: { ...visual.prototypeFlow, activeCheckpointId: null,
+        checkpoints: [...value.prototypeFlow.checkpoints, checkpoint("visual", "visual", "failed", { summary: "Worker timed out" })] } };
+    h.api.renderIfChanged(failed);
+    assert.equal(h.api.elements.previewFrame.style.display, "block");
+    assert.equal(h.api.elements.previewFrame.navigations.length, 1);
+    assert.match(h.api.elements.prototypeProgressMessage.textContent, /Worker timed out.*preview is unchanged/);
+    assert.equal(h.api.elements.retryPrototypeCheckpoint.hidden, false);
+    h.setFetch(async () => response({ ...visual, revision: 4 }));
+    await h.api.elements.retryPrototypeCheckpoint.emit("click");
+    assert.equal(h.requests[1].body.action, "retry");
+    assert.equal(h.requests[1].body.checkpointId, "visual");
+});
+
+test("feedback on a legacy ready preview lets the host bind its migrated checkpoint", async () => {
+    const h = await rendererHarness();
+    const value = { ...readyPrototype(), prototypeFlow: null };
+    h.api.renderIfChanged(value);
+    h.api.elements.revisionInput.value = "Keep my selected item.";
+    h.setFetch(async () => response({ ...value, revision: 2 }));
+    await h.api.elements.revisionForm.emit("submit");
+    assert.equal(Object.hasOwn(h.requests[0].body, "baseCheckpointId"), false);
+    assert.equal(h.requests[0].body.suggestion, "Keep my selected item.");
+});
+
+test("legacy failed feedback exposes retry without a checkpoint and preserves the ready preview", async () => {
+    const h = await rendererHarness();
+    const value = state("prototype");
+    value.previewStatus = "ready";
+    value.previewUrl = "http://127.0.0.1:9998/";
+    value.prototypeReview.revisions = [
+        { id: "oldest-failure", suggestion: "Keep the first filter visible", status: "failed" },
+        { id: "later-failure", suggestion: "Keep the second filter visible", status: "failed" },
+    ];
+    h.api.renderIfChanged(value);
+    const frame = h.api.elements.previewFrame;
+    assert.equal(h.api.elements.prototypeProgress.hidden, false);
+    assert.equal(h.api.elements.prototypeMilestones.hidden, true, "legacy previews must not acquire new milestone requirements");
+    assert.equal(h.api.elements.retryPrototypeCheckpoint.hidden, false);
+    assert.equal(h.api.elements.retryPrototypeCheckpoint.disabled, false);
+    assert.equal(h.api.elements.retryPrototypeCheckpoint.textContent, "Retry failed revision");
+    assert.equal(h.api.elements.startPrototype.hidden, true);
+    assert.equal(h.api.elements.completeStage.disabled, true);
+    h.api.elements.revisionInput.value = "Keep this draft while retrying";
+    h.setFetch(async () => response({ ...value, revision: 2,
+        processing: { action: "submit-revision", status: "running", message: "Retrying oldest failed feedback" } }));
+    await h.api.elements.retryPrototypeCheckpoint.emit("click");
+    assert.equal(h.requests[0].path, "/api/prototype/action");
+    assert.equal(h.requests[0].body.action, "retry");
+    assert.equal(Object.hasOwn(h.requests[0].body, "checkpointId"), false);
+    assert.equal(h.requests[0].body.expectedRevision, 1);
+    assert.equal(frame.style.display, "block");
+    assert.equal(frame.navigations.length, 1);
+    assert.equal(h.api.elements.revisionInput.value, "Keep this draft while retrying");
+    assert.equal(h.api.elements.retryPrototypeCheckpoint.hidden, true);
+});
+
+test("failed feedback without a matching checkpoint can retry in a progressive flow", async () => {
+    const h = await rendererHarness();
+    const value = readyPrototype();
+    value.prototypeReview.revisions = [{ id: "legacy-failure", suggestion: "Earlier feedback", status: "failed" }];
+    h.api.renderIfChanged(value);
+    assert.equal(h.api.elements.retryPrototypeCheckpoint.hidden, false);
+    assert.equal(h.api.elements.retryPrototypeCheckpoint.textContent, "Retry failed revision");
+    h.setFetch(async () => response({ ...value, revision: 2 }));
+    await h.api.elements.retryPrototypeCheckpoint.emit("click");
+    assert.equal(h.requests[0].body.action, "retry");
+    assert.equal(Object.hasOwn(h.requests[0].body, "checkpointId"), false);
+    assert.equal(h.api.elements.previewFrame.navigations.length, 1);
+});
+
+test("extending an exhausted prototype work window requires explicit confirmation", async () => {
+    const h = await rendererHarness();
+    const value = progressivePrototype();
+    value.prototypeFlow.activeCheckpointId = null;
+    value.prototypeFlow.checkpoints[1] = checkpoint("interaction", "interaction", "failed");
+    value.prototypeFlow.budget.usedSeconds = 900;
+    h.api.renderIfChanged(value);
+    assert.equal(h.api.elements.extendPrototypeBudget.hidden, false);
+    assert.equal(h.api.elements.retryPrototypeCheckpoint.hidden, true);
+    h.setConfirm(false);
+    await h.api.elements.extendPrototypeBudget.emit("click");
+    assert.equal(h.requests.length, 0);
+    h.setConfirm(true);
+    h.setFetch(async () => response({ ...value, revision: 2 }));
+    await h.api.elements.extendPrototypeBudget.emit("click");
+    assert.equal(h.requests[0].body.action, "extend-budget");
+    assert.match(h.confirmations[0], /15-minute AI work window/);
+    assert.equal(h.api.elements.previewFrame.navigations.length, 1);
+    assert.equal(h.api.elements.revisionInput.disabled, false);
+});
+
+test("failed optional visual direction can be skipped without losing history or the working preview", async () => {
+    const h = await rendererHarness();
+    const value = readyPrototype();
+    value.prototypeFlow.visualRequested = true;
+    value.prototypeFlow.checkpoints.push(checkpoint("visual", "visual", "failed", { summary: "Visual job exceeded its work window" }));
+    value.prototypeFlow.budget.usedSeconds = 900;
+    h.api.renderIfChanged(value);
+    const frame = h.api.elements.previewFrame;
+    assert.equal(h.api.elements.skipPrototypeVisual.hidden, false);
+    assert.equal(h.api.elements.skipPrototypeVisual.disabled, false);
+    assert.equal(h.api.elements.completeStage.disabled, true);
+    h.api.elements.revisionInput.value = "Keep my future feedback";
+    const skipped = { ...value, revision: 2, prototypeFlow: { ...value.prototypeFlow, visualRequested: false } };
+    h.setFetch(async () => response(skipped));
+    await h.api.elements.skipPrototypeVisual.emit("click");
+    assert.equal(h.requests[0].path, "/api/prototype/action");
+    assert.equal(h.requests[0].body.action, "skip-visual");
+    assert.equal(h.requests[0].body.expectedRevision, 1);
+    assert.equal(h.api.elements.skipPrototypeVisual.hidden, true);
+    assert.equal(h.api.elements.retryPrototypeCheckpoint.hidden, true);
+    assert.equal(h.api.elements.extendPrototypeBudget.hidden, false, "The user can extend an exhausted budget before requesting more optional work.");
+    assert.equal(h.api.elements.requestPrototypeVisual.disabled, true);
+    assert.equal(h.api.elements.completeStage.disabled, false);
+    assert.match(h.api.elements.prototypeMilestones.textContent, /Visual directionSkipped \(optional\)/);
+    assert.doesNotMatch(h.api.elements.prototypeProgressMessage.textContent, /latest update failed/);
+    assert.equal(h.api.current().prototypeFlow.checkpoints.at(-1).status, "failed", "skipping retains checkpoint history");
+    assert.equal(h.api.elements.revisionInput.value, "Keep my future feedback");
+    assert.equal(frame.navigations.length, 1);
+    assert.equal(frame.style.display, "block");
+});
+
+test("Skip visual direction is unavailable before a visual failure and while any job is active", async () => {
+    const h = await rendererHarness();
+    const ready = readyPrototype();
+    const failed = { ...ready, prototypeFlow: { ...ready.prototypeFlow, visualRequested: true,
+        checkpoints: [...ready.prototypeFlow.checkpoints, checkpoint("visual", "visual", "failed")] } };
+    for (const value of [
+        ready,
+        { ...ready, prototypeFlow: { ...ready.prototypeFlow, visualRequested: true } },
+        { ...failed, processing: { action: "submit-revision", status: "running" } },
+        { ...failed, prototypeFlow: { ...failed.prototypeFlow, activeCheckpointId: "retry",
+            checkpoints: [...failed.prototypeFlow.checkpoints, checkpoint("retry", "visual", "running")] } },
+    ]) {
+        h.api.render(value);
+        assert.equal(h.api.elements.skipPrototypeVisual.hidden, true);
+        await h.api.elements.skipPrototypeVisual.emit("click");
+    }
+    h.api.render({ ...failed, provider: { canSubmitAnswers: false } });
+    assert.equal(h.api.elements.skipPrototypeVisual.disabled, true);
+    await h.api.elements.skipPrototypeVisual.emit("click");
+    assert.equal(h.requests.length, 0);
+});
+
+test("explicit update captures only the current iframe origin and restores bounded state after the new load", async () => {
+    const h = await rendererHarness();
+    h.api.renderIfChanged(readyPrototype(1, true));
+    const frame = h.api.elements.previewFrame;
+    assert.equal(frame.getAttribute("referrerpolicy"), "origin", "bridge receives the parent origin without its path or query");
+    h.setFetch(async () => response(readyPrototype(2)));
+    const applying = h.api.elements.applyPrototypeUpdate.emit("click");
+    await h.flush();
+    const capture = frame.frameMessages[0];
+    assert.equal(capture.data.type, "tandem:preview:capture");
+    assert.equal(capture.origin, "http://127.0.0.1:9998");
+    assert.equal(h.requests.length, 0);
+    const data = { type: "tandem:preview:state", requestId: capture.data.requestId, prototypeId: "fixture",
+        state: { route: "/items/7", scroll: { x: 0, y: 400 }, fields: { search: "private draft" } } };
+    for (const event of [
+        { source: {}, origin: capture.origin, data },
+        { source: frame.contentWindow, origin: "http://127.0.0.1:1234", data },
+        { source: frame.contentWindow, origin: capture.origin, data: { ...data, requestId: "stale" } },
+        { source: frame.contentWindow, origin: capture.origin, data: { ...data, prototypeId: "another-effort" } },
+        { source: frame.contentWindow, origin: capture.origin, data: { ...data, state: "x".repeat(65 * 1024) } },
+    ]) await h.emitWindow("message", event);
+    assert.equal(h.requests.length, 0, "untrusted or oversized messages cannot trigger promotion");
+    await h.emitWindow("message", { source: frame.contentWindow, origin: capture.origin, data });
+    await applying;
+    assert.equal(h.requests[0].body.action, "apply-update");
+    assert.equal(h.requests[0].body.checkpointId, "interaction");
+    assert.equal(h.requests[0].body.expectedRevision, 1);
+    assert.equal(JSON.stringify(h.requests).includes("private draft"), false, "captured fields never enter durable API state");
+    assert.equal(frame.navigations.length, 2);
+    assert.equal(frame.frameMessages.length, 1, "restore must wait for the promoted preview to load");
+    await frame.emit("load");
+    const restore = frame.frameMessages[1];
+    assert.equal(restore.origin, "http://127.0.0.1:9999");
+    assert.equal(restore.data.type, "tandem:preview:restore");
+    assert.equal(restore.data.prototypeId, "fixture");
+    assert.equal(JSON.stringify(restore.data.state), JSON.stringify(data.state));
+    h.api.renderIfChanged(readyPrototype(3));
+    await frame.emit("load");
+    assert.equal(frame.navigations.length, 2);
+    assert.equal(frame.frameMessages.length, 2, "cooperative restore runs only once");
+});
+
+test("an unsupported or malicious preview cannot block explicit promotion", async () => {
+    const h = await rendererHarness();
+    h.api.renderIfChanged(readyPrototype(1, true));
+    const frame = h.api.elements.previewFrame;
+    h.setFetch(async () => response(readyPrototype(2)));
+    const applying = h.api.elements.applyPrototypeUpdate.emit("click");
+    await h.flush();
+    const capture = frame.frameMessages[0];
+    await h.emitWindow("message", { source: frame.contentWindow, origin: capture.origin, data: {
+        type: "tandem:preview:state", prototypeId: "fixture", requestId: capture.data.requestId,
+        state: "😀".repeat(20 * 1024),
+    } });
+    await applying;
+    assert.equal(h.requests.length, 1);
+    await frame.emit("load");
+    assert.equal(frame.frameMessages.length, 1, "oversized UTF-8 data is not restored");
+    assert.equal(frame.src, readyPrototype().previewUrl);
+    assert.equal(h.api.elements.completeStage.disabled, false);
+});
+
+test("a candidate changed during capture is rejected without submitting or replacing the preview", async () => {
+    const h = await rendererHarness();
+    h.api.renderIfChanged(readyPrototype(1, true));
+    const frame = h.api.elements.previewFrame;
+    const applying = h.api.elements.applyPrototypeUpdate.emit("click");
+    await h.flush();
+    const capture = frame.frameMessages[0];
+    const changed = readyPrototype(2, true);
+    changed.prototypeFlow.checkpoints.push(checkpoint("new-interaction", "interaction"));
+    changed.prototypeFlow.pendingCheckpointId = "new-interaction";
+    h.api.renderIfChanged(changed);
+    await h.emitWindow("message", { source: frame.contentWindow, origin: capture.origin, data: {
+        type: "tandem:preview:state", requestId: capture.data.requestId, prototypeId: "fixture", state: { scroll: 20 },
+    } });
+    await applying;
+    assert.equal(h.requests.length, 0);
+    assert.equal(frame.navigations.length, 1);
+    assert.match(h.api.elements.prototypeActionStatus.textContent, /update changed/);
+    h.api.renderIfChanged({ ...changed, revision: 3 });
+    assert.match(h.api.elements.prototypeActionStatus.textContent, /update changed/);
+});
+
+test("a server rejection preserves the preview, discards captured state and permits retry", async () => {
+    const h = await rendererHarness();
+    h.api.renderIfChanged(readyPrototype(1, true));
+    const frame = h.api.elements.previewFrame;
+    frame.onPreviewMessage = (request, origin) => {
+        if (request.type === "tandem:preview:capture") void h.emitWindow("message", {
+            source: frame.contentWindow, origin, data: { type: "tandem:preview:state", requestId: request.requestId,
+                prototypeId: request.prototypeId, state: { field: "ephemeral" } },
+        });
+    };
+    h.setFetch(async () => response({ error: "Stale pending checkpoint; review the new update" }, 409));
+    await h.api.elements.applyPrototypeUpdate.emit("click");
+    assert.equal(frame.navigations.length, 1);
+    assert.equal(h.api.elements.applyPrototypeUpdate.disabled, false);
+    assert.match(h.api.elements.prototypeActionStatus.textContent, /Stale pending checkpoint/);
+    h.api.renderIfChanged(readyPrototype(2));
+    await frame.emit("load");
+    assert.equal(frame.frameMessages.some((message: any) => message.data.type === "tandem:preview:restore"), false);
+});
+
+test("promoting a checkpoint at the same URL reloads only after the explicit action", async () => {
+    const h = await rendererHarness();
+    const value = readyPrototype(1, true);
+    value.prototypeFlow.checkpoints[1].previewUrl = value.previewUrl;
+    h.api.renderIfChanged(value);
+    const frame = h.api.elements.previewFrame;
+    frame.onPreviewMessage = (request, origin) => {
+        if (request.type === "tandem:preview:capture") void h.emitWindow("message", {
+            source: frame.contentWindow, origin, data: { type: "tandem:preview:state", requestId: request.requestId,
+                prototypeId: request.prototypeId, state: null },
+        });
+    };
+    h.setFetch(async () => response({ ...value, revision: 2, prototypeFlow: { ...value.prototypeFlow,
+        displayedCheckpointId: "interaction", pendingCheckpointId: null } }));
+    await h.api.elements.applyPrototypeUpdate.emit("click");
+    assert.equal(frame.navigations.length, 2);
+    assert.equal(frame.navigations[0], frame.navigations[1]);
+    await frame.emit("load");
+    assert.equal(frame.frameMessages[1].data.state, null);
+});
+
 test("stage browsing is read-only; reopening requires confirmation and no active jobs", async () => {
     const h = await rendererHarness();
     const value = state("test");
@@ -817,8 +1426,42 @@ test("responsive layout and graph keyboard focus have explicit accessible styles
     assert.match(css, /g\.node\[data-selectable="true"\]:focus-visible\s*\{\s*outline:\s*3px solid/);
     assert.match(css, /\.workspace\[data-context-open="true"\] \.requirements\s*\{\s*display: block/);
     assert.match(css, /\.preview-tabs\s*\{[^}]*overflow-x: auto/);
+    assert.match(css, /\.preview\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
+    assert.match(css, /\.prototype-view \.frame-wrap\s*\{[^}]*grid-template-rows:\s*minmax\(220px, 1fr\) auto/);
+    assert.match(css, /form:focus-within textarea\[data-speech-input\]/);
     assert.doesNotMatch(css, /animation:\s*next-action/);
     assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.processing-indicator/);
+});
+
+test("compact density is shared by all stage headers, panels, controls, and composers", async () => {
+    const css = await readFile(new URL("../src/renderer/styles.css", import.meta.url), "utf8");
+    const rules = (selector: string) => {
+        const start = css.indexOf(selector + " {");
+        assert.ok(start >= 0, `Missing ${selector}`);
+        return css.slice(start, css.indexOf("}", start));
+    };
+    assert.match(css, /--studio-space:\s*8px/);
+    assert.match(css, /--studio-control-height:\s*32px/);
+    assert.match(css, /--studio-composer-height:\s*36px/);
+    assert.match(rules(".topbar"), /min-height:\s*var\(--studio-header-height\)/);
+    assert.match(rules(".previewbar"), /min-height:\s*var\(--studio-tab-height\)/);
+    assert.doesNotMatch(css, /\.prototype-view \.(?:topbar|previewbar|mark)\s*\{/);
+    for (const selector of [".preparation-panel", ".design-tree-panel", ".design-review-panel",
+        ".plan-panel", ".implementation-panel", ".content-panel", ".frame-wrap"]) {
+        assert.match(rules(selector), /padding:\s*var\(--studio-space\)/, selector);
+    }
+    for (const selector of [".preparation-stage-heading", ".design-review-heading", ".plan-heading",
+        ".implementation-heading", ".content-heading", ".design-tree-heading"]) {
+        assert.match(rules(selector), /padding:\s*var\(--studio-heading-padding\)/, selector);
+    }
+    assert.match(rules("form textarea[data-speech-input]"), /height:\s*var\(--studio-composer-height\)/);
+    assert.match(rules("form:focus-within textarea[data-speech-input]"), /var\(--studio-composer-expanded-height\)/);
+    assert.match(rules(".start-form textarea[data-speech-input]"), /min-height:\s*112px/);
+    assert.match(rules(".artifact-content"), /line-height:\s*1\.55/);
+    assert.match(rules(".requirements"), /padding-inline-end:\s*4px/);
+    assert.match(rules(".requirements"), /scrollbar-width:\s*thin/);
+    assert.match(rules(".requirements"), /scrollbar-gutter:\s*stable/);
+    assert.match(rules(".splitter"), /min-width:\s*9px/);
 });
 
 test("compact project context is explicit, preserves drafts, and closes on navigation or Escape", async () => {

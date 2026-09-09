@@ -1,5 +1,6 @@
 import type { DecisionGraph, DecisionQuestion, JobOwner } from "./workflow.js";
 import type { ProcessState } from "./process-state.js";
+import type { PrototypeFlow } from "./prototype-flow.js";
 
 export type LifecycleStageId =
     | "prepare"
@@ -109,7 +110,10 @@ export interface TandemState {
     revision: number;
     generation: string;
     effortReset?: { requestId: string; generation: string; error: string } | null;
-    factoryRuns?: Array<{ requestId: string; generation: string; runId: string | null; terminal?: boolean }>;
+    factoryRuns?: Array<{
+        requestId: string; generation: string; runId: string | null; terminal?: boolean;
+        launchRejection?: { message: string; recordedAt: string };
+    }>;
     jobOwner: JobOwner | null;
     openResetRequestId: string | null;
     prototypeId: string;
@@ -134,6 +138,7 @@ export interface TandemState {
     process: ProcessState;
     previewUrl: string | null;
     previewStatus: "waiting" | "starting" | "ready" | "error";
+    prototypeFlow: PrototypeFlow | null;
     prototypeReview: Record<string, any>;
     designReview: Record<string, any>;
     design: { substage: "product" | "test" };

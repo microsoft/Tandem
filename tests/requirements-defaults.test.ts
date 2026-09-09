@@ -142,9 +142,10 @@ test("one bounded factory reconciles every dependent snapshot default without du
         assert.deepEqual(request.args.defaultBatch.defaults, approved.defaults);
         assert.equal(request.args.defaultBatch.revision, f.initial.revision);
         assert.equal(request.args.defaultBatch.generation, f.initial.generation);
-        assert.equal(request.limits.maxTotalSubagents, 1);
-        assert.equal(request.limits.timeoutSeconds, 300);
-        assert.equal(request.limits.maxAiCredits, 128);
+        assert.equal(request.options.limits.maxTotalSubagents, 1);
+        assert.equal(request.options.limits.timeoutSeconds, 300);
+        assert.equal(request.options.limits.maxAiCredits, 128);
+        assert.equal(Object.hasOwn(request, "limits"), false);
         for (const key of ["artifacts", "confirmed", "lifecycle", "previewUrl", "processing", "implementation", "question"]) {
             assert.equal(key in request.args.state, false, key);
         }
