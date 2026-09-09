@@ -33,7 +33,9 @@ interface HarnessApi {
     recoverPreparationFactory(state: TandemState, writable: boolean): void;
     waitForPreparation(id: string): Promise<void>;
     waitForAnswer(id: string): Promise<void>;
+    recoverAnswerFactory(state: TandemState, writable: boolean): void;
     answerFactoryPrompt(args: unknown): string;
+    answerFactory: { run(ctx: Record<string, unknown>): Promise<unknown> };
     processAction(id: string, provider: string, input: unknown): Promise<TandemState>;
     preparationFactory: {
         meta: { argsSchema: { properties: Record<string, unknown> } };
@@ -66,22 +68,39 @@ async function compile(): Promise<string> {
     const openHandler = source.slice(openStart + "open: ".length, openEnd);
     const result = await build({
         stdin: {
-            contents: `${prefix}\nmodule.exports = { createState, loadState, persistState, completeLifecycleStage, reopenLifecycleStage, beginPrototypeBuild, applyFactoryResult, updateTandem, readRequestBody, verifyPreviewIdentity, applyCanvasReset, isCanvasRehydration, ensurePreparationStarted, bindPreparationRun, recordPreparationWorkItem, settlePreparationRun, recoverPreparationFactory, preparationFactory, resetEffort, startEffort, startServer, runEffortFactory, waitForEffortRun, openTandem: ${openHandler}, async closeServers() { for (const entry of servers.values()) { clearInterval(entry.heartbeat); for (const client of entry.clients) client.end(); await new Promise(resolve => entry.server.close(resolve)); } servers.clear(); }, waitForPreparation(id) { return activePreparationRuns.get(id); }, waitForAnswer(id) { return activeAnswerRuns.get(id); }, waitForExecution(id) { return Promise.all([activeImplementationRuns.get(id), activeTestRuns.get(id)]); }, answerFactoryPrompt, processAction, setSession(value) { session = value; } };`,
+            contents: `${prefix}\nmodule.exports = { createState, loadState, persistState, completeLifecycleStage, reopenLifecycleStage, beginPrototypeBuild, applyFactoryResult, updateTandem, readRequestBody, verifyPreviewIdentity, applyCanvasReset, isCanvasRehydration, ensurePreparationStarted, bindPreparationRun, recordPreparationWorkItem, settlePreparationRun, recoverPreparationFactory, recoverAnswerFactory, preparationFactory, resetEffort, startEffort, startServer, runEffortFactory, waitForEffortRun, openTandem: ${openHandler}, async closeServers() { for (const entry of servers.values()) { clearInterval(entry.heartbeat); for (const client of entry.clients) client.end(); await new Promise(resolve => entry.server.close(resolve)); } servers.clear(); }, waitForPreparation(id) { return activePreparationRuns.get(id); }, waitForAnswer(id) { return activeAnswerRuns.get(id); }, waitForExecution(id) { return Promise.all([activeImplementationRuns.get(id), activeTestRuns.get(id)]); }, answerFactory, answerFactoryPrompt, processAction, setSession(value) { session = value; } };`,
             loader: "ts", resolveDir: sourceRoot,
         },
         bundle: true, platform: "node", target: "node20", format: "cjs", write: false,
         external: ["@github/copilot-sdk/*", "proper-lockfile", "./renderer.js"],
+        plugins: [{
+            name: "fake-identity",
+            setup(api) {
+                api.onResolve({ filter: /^@azure\/identity$/ }, () => ({ path: "identity", namespace: "fake" }));
+                api.onResolve({ filter: /^\.\/speech-browser\.js$/ }, () => ({ path: "browser", namespace: "fake" }));
+                api.onLoad({ filter: /^identity$/, namespace: "fake" }, () => ({
+                    contents: "export const { DefaultAzureCredential } = globalThis.speechIdentity;",
+                }));
+                api.onLoad({ filter: /^browser$/, namespace: "fake" }, () => ({
+                    contents: "export const createBrowserSpeechCredential = options => globalThis.speechIdentity.createSpeechBrowser(options);",
+                }));
+            },
+        }],
         logLevel: "silent",
         define: { __TANDEM_VERSION__: JSON.stringify("test") },
     });
     return result.outputFiles[0].text;
 }
 
-export async function extensionHarness() {
-    const root = resolve("node_modules", "tandem-test-fixtures", randomUUID());
+export async function extensionHarness(speechEnvironment: Record<string, string> = {}, sharedRoot?: string) {
+    const root = sharedRoot || resolve("node_modules", "tandem-test-fixtures", randomUUID());
     await mkdir(root, { recursive: true });
     const requests: unknown[] = [];
     const logs: string[] = [];
+    let speechTokenRequests = 0;
+    let browserSignIns = 0;
+    let browserTokenRequests = 0;
+    let signIn: (signal: AbortSignal) => Promise<void> = async () => {};
     const require = createRequire(import.meta.url);
     class CanvasError extends Error {
         constructor(readonly code: string, message: string) { super(message); }
@@ -101,12 +120,38 @@ export async function extensionHarness() {
     };
     try {
         runInNewContext(await (compiled ??= compile()), {
-            module, exports: module.exports, console, URL, Buffer, AbortController, Response, Error, TextDecoder,
+            module, exports: module.exports, console, URL, Buffer, AbortController, AbortSignal, Response, Error, TextDecoder,
             setTimeout, clearTimeout, setInterval, clearInterval,
+            speechIdentity: {
+                DefaultAzureCredential: class {
+                    async getToken() {
+                        speechTokenRequests++;
+                        return { token: "fixture-speech-token", expiresOnTimestamp: Date.now() + 600_000 };
+                    }
+                },
+                createSpeechBrowser() {
+                    return {
+                        async authenticate(_scope: string, options: { abortSignal: AbortSignal }) {
+                            browserSignIns++;
+                            await signIn(options.abortSignal);
+                            return { token: "fixture-browser-token", expiresOnTimestamp: Date.now() + 600_000 };
+                        },
+                        async getToken() {
+                            browserTokenRequests++;
+                            return { token: "fixture-browser-token", expiresOnTimestamp: Date.now() + 600_000 };
+                        },
+                        async dispose() {},
+                    };
+                },
+            },
             fetch: async () => new Response('<html><meta name="tandem-prototype-id" content="sample"></html>'),
             process: new Proxy(process, {
                 get(target, key) {
                     if (key === "cwd") return () => root;
+                    if (key === "env") return {
+                        ...target.env, TANDEM_Speech__ResourceId: "", TANDEM_Speech__Region: "",
+                        TANDEM_Speech__Language: "", ...speechEnvironment,
+                    };
                     const value = Reflect.get(target, key);
                     return typeof value === "function" ? value.bind(target) : value;
                 },
@@ -137,12 +182,16 @@ export async function extensionHarness() {
             }
             if (requests.length < count) throw new Error("The expected factory dispatch was not observed.");
         };
-        return { api, root, requests, logs, session, waitForRequests, close: async () => {
+        return { api, root, requests, logs, session, waitForRequests,
+            browserSignIns: () => browserSignIns,
+            browserTokenRequests: () => browserTokenRequests,
+            setSpeechSignIn(value: typeof signIn) { signIn = value; },
+            speechTokenRequests: () => speechTokenRequests, close: async () => {
             await api.closeServers();
-            await rm(root, { recursive: true, force: true });
+            if (!sharedRoot) await rm(root, { recursive: true, force: true });
         } };
     } catch (error) {
-        await rm(root, { recursive: true, force: true });
+        if (!sharedRoot) await rm(root, { recursive: true, force: true });
         throw error;
     }
 }

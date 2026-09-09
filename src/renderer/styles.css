@@ -2118,6 +2118,38 @@ h1 {
   margin: 16px 0 24px;
 }
 
+.speech-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.usage-form .speech-controls { grid-column: 1 / -1; grid-row: 2; }
+
+.speech-controls .speech-toggle,
+.speech-controls .speech-sign-in,
+.speech-controls .speech-cancel {
+  padding: 5px 9px;
+  border: 1px solid var(--border-color-default, #d0d7de);
+  border-radius: 6px;
+  background: var(--background-color-default, #fff);
+  color: var(--text-color-default, #1f2328);
+  cursor: pointer;
+  font-weight: var(--font-weight-semibold, 600);
+}
+
+.speech-controls .speech-toggle[aria-pressed="true"] {
+  color: var(--true-color-red, #cf222e);
+  border-color: currentColor;
+}
+
+.speech-controls button:disabled { opacity: .55; cursor: not-allowed; }
+.speech-status { color: var(--text-color-muted, #656d76); font-size: 12px; }
+.speech-status[data-status="error"] { color: var(--true-color-red, #cf222e); }
+[data-speech-input][readonly] { outline: 1px solid var(--color-focus-outline, #0969da); }
+
 .usage-form input {
   width: 100%;
   padding: 8px 9px;

@@ -45,7 +45,7 @@
         <p id="start-loading" class="muted" role="status">Loading your project...</p>
         <form id="start-form" class="start-form" hidden>
           <label for="start-goal">Your project goal</label>
-          <textarea id="start-goal" rows="5" maxlength="4000" required aria-describedby="start-help start-message" placeholder="Build an app that helps my team triage customer requests."></textarea>
+          <textarea id="start-goal" data-speech-input rows="5" maxlength="4000" required aria-describedby="start-help start-message" placeholder="Build an app that helps my team triage customer requests."></textarea>
           <p id="start-help" class="muted">Describe who it is for and what it should help them do. You can refine the details together.</p>
           <div class="start-actions">
             <span id="goal-length" class="muted">0 / 4,000</span>
@@ -363,6 +363,7 @@
             <form id="revision-form" class="revision-form">
               <textarea
                 id="revision-input"
+                data-speech-input
                 maxlength="4000"
                 placeholder="Describe one change you want to see in the prototype."
                 aria-label="Prototype revision suggestion"
@@ -376,6 +377,7 @@
                 <div id="revision-question-choices" class="revision-question-choices"></div>
                 <textarea
                   id="revision-question-detail"
+                  data-speech-input
                   maxlength="4000"
                   placeholder="Optional clarification"
                   aria-label="Prototype clarification"
@@ -452,6 +454,7 @@
               <form id="plan-revision-form" class="plan-revision-form">
                 <textarea
                   id="plan-revision-input"
+                  data-speech-input
                   maxlength="4000"
                   placeholder="Describe how assignments, dependencies, work-item scope, or schedule should change."
                   aria-label="Execution plan revision"
@@ -522,6 +525,7 @@
                   <form id="implementation-strategy-form" class="implementation-strategy-form">
                     <textarea
                       id="implementation-strategy-input"
+                      data-speech-input
                       maxlength="4000"
                       placeholder="Change priority, validation depth, coordination, or guidance for the next wave."
                       aria-label="Implementation strategy adjustment"
@@ -664,6 +668,7 @@
               <form id="usage-form" class="usage-form">
                 <input
                   id="usage-input"
+                  data-speech-input
                   type="text"
                   maxlength="500"
                   autocomplete="off"
@@ -769,6 +774,7 @@
                   </select>
                   <textarea
                     id="design-review-input"
+                    data-speech-input
                     maxlength="4000"
                     placeholder="Ask about this artifact, its tradeoffs, behavior, or risks."
                     aria-label="Artifact review question or request"

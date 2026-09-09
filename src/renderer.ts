@@ -15,6 +15,6 @@ function injectAsset(template: string, token: string, content: string): string {
 
 export function renderTandemHtml(version: string): string {
     const withStyles = injectAsset(htmlTemplate, STYLES_TOKEN, styles);
-    const withClient = injectAsset(withStyles, CLIENT_TOKEN, clientScript);
+    const withClient = injectAsset(withStyles, CLIENT_TOKEN, clientScript.replace(/<\/script/gi, "<\\/script"));
     return injectAsset(withClient, VERSION_TOKEN, version);
 }

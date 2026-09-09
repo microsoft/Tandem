@@ -1,10 +1,17 @@
 import "./project-store.test.js";
 import "./workflow.test.js";
 import "./prototype-lifecycle.test.js";
+import "./requirements-dag.test.js";
+import "./requirements-defaults.test.js";
 import "./preparation.test.js";
 import "./effort-lifecycle.test.js";
 import "./execution.test.js";
 import "./renderer.test.js";
+import "./speech-input.test.js";
+import "./speech-recognizer.test.js";
+import "./speech-auth.test.js";
+import "./speech-browser.test.js";
+import "./speech-http.test.js";
 import "./accepted-artifacts.test.js";
 import "./process-state.test.js";
 import "./worker-contracts.test.js";

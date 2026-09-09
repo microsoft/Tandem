@@ -9,6 +9,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { buildSpeechWorker } from "./speech-worker-build.js";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const extensionRoot = join(
@@ -36,10 +37,27 @@ for (const [name, licenseFile] of [
     const license = await readFile(join(packageRoot, licenseFile), "utf8");
     bundledNotices.push(`/* ${name}\n${license.replaceAll("*/", "* /")}\n*/`);
 }
+for (const name of ["@azure/identity", "microsoft-cognitiveservices-speech-sdk"]) {
+    const packageRoot = dirname(createRequire(import.meta.url).resolve(`${name}/package.json`));
+    const license = await readFile(join(packageRoot, "LICENSE"), "utf8");
+    bundledNotices.push(`/* ${name}\n${license.replaceAll("*/", "* /")}\n*/`);
+}
 
 const rendererAssetsPlugin: Plugin = {
     name: "tandem-renderer-assets",
     setup(buildApi) {
+        buildApi.onResolve({ filter: /^tandem:speech-worker$/ }, () => ({
+            path: "speech-login-worker.ts",
+            namespace: "tandem-speech-worker",
+        }));
+        buildApi.onLoad({ filter: /.*/, namespace: "tandem-speech-worker" }, async () => {
+            const compiled = await buildSpeechWorker();
+            return {
+                contents: `export default ${JSON.stringify(compiled.outputFiles[0].text)};`,
+                loader: "js",
+                watchFiles: Object.keys(compiled.metafile.inputs).map((path) => resolve(path)),
+            };
+        });
         buildApi.onResolve({ filter: /^tandem:client$/ }, () => ({
             path: "client.ts",
             namespace: "tandem-client",
@@ -51,17 +69,21 @@ const rendererAssetsPlugin: Plugin = {
         buildApi.onLoad(
             { filter: /.*/, namespace: "tandem-client" },
             async () => {
-                const source = await readFile(clientEntry, "utf8");
-                const compiled = await transform(source, {
-                    loader: "ts",
+                const compiled = await build({
+                    entryPoints: [clientEntry],
+                    bundle: true,
+                    write: false,
+                    metafile: true,
+                    platform: "browser",
                     target: "es2020",
                     format: "iife",
                     minify: true,
+                    legalComments: "inline",
                 });
                 return {
-                    contents: `export default ${JSON.stringify(compiled.code)};`,
+                    contents: `export default ${JSON.stringify(compiled.outputFiles[0].text)};`,
                     loader: "js",
-                    watchFiles: [clientEntry],
+                    watchFiles: Object.keys(compiled.metafile.inputs).map((path) => resolve(path)),
                 };
             },
         );

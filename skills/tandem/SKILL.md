@@ -69,11 +69,24 @@ On activation:
    generation must never block adding another usage.
 4. The user explicitly generates the DAG from the completed usage list. The hidden
    agent then creates the complete dependency graph and exposes its first frontier.
+   A completed worker/factory is not proof that Tandem accepted the result. Before
+   saying the DAG is ready, read the owning canvas state and confirm
+   `requirements.substage === "dag"`, an active decision, and successful processing
+   for that request. If processing failed, report the actual error and direct the
+   user to **Retry requirements DAG**. Never invent answers, edit `.tandem` files,
+   or bypass result validation to make a failed graph appear ready.
 5. Each DAG answer is processed by the bounded hidden factory. If the user changes
    an answered node, regenerate every transitive dependent node and clear
    stale descendant answers rather than preserving static downstream decisions.
-   **All as Recommended** repeatedly applies the current active recommendation,
-   waiting for each dependent regeneration before applying the next recommendation.
+   **Use whole-graph defaults** explicitly approves the displayed recommendations
+   for all current unanswered nodes in a confirmation, including descendants. It
+   saves one generation/revision-bound snapshot and starts at most one bounded
+   semantic reconciliation job, not a sequential answer loop. **Use this answer**
+   still consents to one question only. Never infer whole-graph consent from it.
+   The worker returns a focused change set; Tandem derives structural state.
+   Conflicts or changed questions require explicit review and invalidate affected
+   descendants without selecting new recommendations. Failed jobs retain the
+   approved snapshot for **Retry whole-graph defaults**; do not bypass reconciliation.
 
 Tandem is the lifecycle orchestration UI. It advances sequentially through
 **Preparation**, **Requirements**, **Prototype**, **Design**, **Plan**,
@@ -153,6 +166,12 @@ worker remains in Preparation and exposes **Retry preparation**.
 
 ## Instructions
 
+Speech input supports **Sign in with Microsoft** beside each conversational
+composer. The user completes Microsoft authentication and MFA in their own
+browser, then explicitly selects **Mic**. Do not ask for passwords, tokens, or
+API keys, and do not treat sign-in as permission to record or send a draft.
+Browser authentication is memory-only for the current extension session.
+
 - Understand the actor, job, primary flow, required screens, key data, and success
   outcome before committing to a UI structure.
 - Ask only questions whose answers materially change the main interaction or UI
@@ -206,9 +225,10 @@ frameworks, test strategy, or other matters outside prototype scope.
 
 Represent discovery as a `decisionGraph`. Every node ID is also its question ID;
 `dependencies` contains prerequisite node IDs. A node is `answered` after it has an
-answer. Exactly one eligible unanswered node is `active`; every other unanswered
-node is `toAnswer`. After the active node is answered, promote the next eligible
-`toAnswer` node to `active`. Keep independent questions as separate nodes and give
+answer. Tandem deterministically derives `answered`, the one eligible `active`
+node, the remaining `toAnswer` nodes, the next question, Confirmed, and Design tree
+from authoritative answers. Workers must not regenerate those structural outputs.
+Keep independent questions as separate nodes and give
 every `toAnswer` node a complete question and choices so its contents can be
 recomputed when an upstream answer changes. The Requirements tab is the question
 navigator; the active node opens in the right-side inspector, answered nodes remain
@@ -229,15 +249,18 @@ Use one Tandem canvas as the shared requirements and output surface:
    accepts any useful AI suggestions.
 4. After the user clicks **Generate requirements DAG**, build the complete DAG from
    all usage items and expose its first frontier.
-5. The hidden processor moves each DAG answer into **Confirmed**, adjusts
-   **Assumed** and **Deferred**, marks that node answered, and promotes the next
-   eligible `toAnswer` node to active. When an answered node is changed, it
-   regenerates every transitive dependent node before exposing the revised graph.
+5. The hidden processor reconciles semantic consequences and adjusts **Assumed**
+   and **Deferred**. Tandem applies only the submitted answer or approved snapshot
+   defaults and derives **Confirmed**, statuses, the next question, and Design tree
+   locally. When an answered node is changed, the worker regenerates every
+   transitive dependent node before exposing the revised graph.
 6. Synthesize captured knowledge into Requirements-stage Tandem artifacts such as
    user intents and interaction flows so the user can inspect the accumulated
    requirements from the Artifacts tab.
-7. When every requirements node is answered, invoke `complete_stage` for
-   `requirements`. Do not create or edit a runnable interface before this. When
+7. Only after every requirement is answered, reconciliation has successfully
+   applied, and outstanding workers are terminal, invoke `complete_stage` for
+   `requirements` as the explicit stage-completion action. Default batching itself
+   never completes a stage or starts a prototype. Do not create or edit a runnable interface before this. When
    `prototypeApproach.mode` is `not-applicable`, Tandem disables and bypasses
    Prototype, persists the reason, creates the non-GUI `draft-feature-spec`, and
    enables Design.
@@ -301,19 +324,16 @@ Use this `open_canvas` input on activation:
 During usage intake, `requirements.usageItems` and `requirements.suggestions` are
 authoritative and `decisionGraph.nodes` stays empty. After explicit DAG generation,
 set `requirements.substage` to `dag`; `decisionGraph` becomes authoritative and
-`question` is the active node. Include
-the complete question and curated options on every node. Set `question` to `null`
-when no node is active or while building. Update `status` and `phase` so the
+Tandem derives `question` from the active node. Include the complete question and
+curated options on every node. Update semantic status text so
 Tandem shows progress without verbose chat narration. Canvas answers are owned by
 Tandem's hidden processor; do not also process them in the parent agent.
 
-Maintain one `design-tree` artifact with `kind: "design-tree"` and
-`language: "mermaid"`. Use `flowchart LR` so the tree is laid out from left to
-right. Its Mermaid flowchart must preserve answered branches, the active decision,
-and `toAnswer` downstream decisions. Use solid green nodes for answered decisions,
-solid blue for the single active decision, and amber for `toAnswer` decisions. The renderer also
-builds a selectable DAG from `decisionGraph`; the artifact is the durable,
-inspectable design record.
+Tandem maintains the reserved `design-tree` artifact locally using the same
+`flowchart LR` helper as the selectable canvas DAG: answered nodes are green, the
+active node is blue, and `toAnswer` nodes are amber. Do not generate or rewrite this
+structural artifact in the worker. Other semantic artifacts remain inspectable
+and are preserved independently.
 
 `artifacts` is the complete current list, not a patch. Preserve prior entries when
 publishing an update. Every new artifact must set `stage` to `requirements`,
@@ -349,12 +369,28 @@ data and returns to goal entry. Other efforts, repository code, and exported
 reset fails visibly without clearing the effort. Do not automatically start a
 new run after Reset: wait for a new goal and explicit **Start project**.
 
-Each usage addition, DAG generation request, requirement answer, prototype
-revision, or clarification starts one bounded factory run with a hidden agent.
-The run receives the action, current persisted state, active question, answer,
-prototype review evidence, and active worktree root, then returns the complete
-requirements and prototype-review objects, ledger, decision graph, and lifecycle
-state plus explicit artifact upserts and removals. The worker edits the active worktree
+Each usage addition, DAG generation request, single requirement answer, prototype
+revision, or clarification uses its existing hidden processing flow. Requirements
+workers return semantic question changes, assumptions, and deferrals; Tandem owns
+status/next-question selection, Confirmed, and Design tree. Legacy single-answer
+and generation output envelopes remain supported; they need not synthesize those
+derived fields (use an empty confirmed array, null question, and omit node status).
+
+Whole-graph defaults use one bounded reconciliation run (one subagent, 300 seconds,
+128 AI credits). Its input includes the complete frozen list of approved node
+IDs/exact choice values, generation/revision, existing accepted answers, and
+Requirements semantic context. Its strict output contains only `version`,
+`conflicts`, affected replacement `questions`, `assumptions`/`deferred` add/remove
+patches, and optional `prototypeApproach`. Do not return full state, answered flags,
+confirmed ledger, diagram, or artifacts; do not change topology, invent answers,
+or pick new recommendations. Every conflict includes a reason and a review
+question. Changed questions and conflicts invalidate their decisions and
+descendants; prior selections remain visible for explicit review. An empty patch
+means all frozen choices have been checked for compatibility, not skipped.
+Failure/reload preserves the frozen approval and completion gates.
+
+Non-Requirements flows retain their existing complete review/state output
+envelopes plus explicit artifact upserts and removals. The worker edits the active worktree
 when the current stage permits code changes, while `.tandem` remains shared
 at the repository root. Unchanged artifacts remain intact even when their factory
 context was truncated. It never sends a synthetic user message to the main

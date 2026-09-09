@@ -1,4 +1,7 @@
-export {};
+import { installSpeechInputs } from "./speech-input.js";
+import { createAzureSpeechSession } from "./speech-recognizer.js";
+import { buildDecisionGraphMermaid, escapeMermaidLabel } from "../decision-diagram.js";
+import { curatedDefault } from "../workflow.js";
 
 type AnyRecord = Record<string, any>;
 
@@ -234,7 +237,6 @@ let effortSubmitting: "start" | "reset" | null = null;
 let lastRenderedGeneration: string | null = null;
 let submitting = false;
 let applyingAllRecommended = false;
-let appliedRecommendedCount = 0;
 let completingStage = false;
 let reopeningStage = false;
 let prototypeSubmitting = false;
@@ -245,12 +247,12 @@ let activeOutputTab = "preparation";
 let selectedArtifactId = null;
 let selectedDecisionId = null;
 let followingActiveDecision = true;
-let recommendedPendingId = null;
 let mermaidModulePromise = null;
 let diagramRenderId = 0;
 let designTreeRenderId = 0;
 let planRenderId = 0;
 let lastLifecycleStage = null;
+let lastRequirementsView: { identity: string; substage: string } | null = null;
 let preparationSubmitting = false;
 let lastPreparationRuntimeSignature = "";
 let implementationSubmitting = false;
@@ -418,6 +420,7 @@ function saveFormDraft(form, edited = false) {
 function bindFormDraft(form, key) {
   const previousKey = form.dataset.draftKey;
   if (previousKey && previousKey !== key) {
+    speechInputs.cancelForForm(form);
     saveFormDraft(form);
     for (const input of form.querySelectorAll("textarea, input:not([type=radio])")) {
       input.value = "";
@@ -482,6 +485,10 @@ function elapsedLabel(requestedAt) {
   const seconds = Math.max(0, Math.floor((Date.now() - start) / 1000));
   return "Elapsed: " + Math.floor(seconds / 60) + "m " + (seconds % 60) + "s";
 }
+
+const speechInputs = installSpeechInputs(document, createAzureSpeechSession, () =>
+  JSON.stringify([currentState?.prototypeId, currentState?.generation]),
+);
 
 async function postJson(endpoint, body, timeoutMs = 60000) {
   const sequence = ++transportSequence;
@@ -623,8 +630,6 @@ function clearEffortDrafts() {
   selectedDecisionId = null;
   followingActiveDecision = true;
   applyingAllRecommended = false;
-  appliedRecommendedCount = 0;
-  recommendedPendingId = null;
   lastQuestionSignature = "";
   lastLifecycleStage = null;
   viewedStageId = null;
@@ -846,7 +851,6 @@ function finishSubmission() {
   submitting = false;
   if (currentState) {
     render(currentState, true);
-    void continueApplyingAllRecommended(currentState);
   }
 }
 
@@ -1569,6 +1573,7 @@ function activateOutputTab(tabName, focusTab = false) {
     renderBrowsingState(currentState);
     renderNextAction(currentState);
   }
+  speechInputs.sync();
 }
 
 for (const tab of elements.previewTabs) {
@@ -2043,6 +2048,7 @@ function renderRequirementsSubstage(state, preserveMessage = false) {
     : [];
   elements.usageSuggestions.replaceChildren();
   const processing = state.processing?.status === "running" || submitting;
+  const dagFailed = state.processing?.action === "generate-dag" && state.processing.status === "error";
   const suggestionsLoading =
     state.suggestionProcessing?.status === "running";
   elements.usageSuggestionArea.hidden =
@@ -2074,13 +2080,16 @@ function renderRequirementsSubstage(state, preserveMessage = false) {
     processing || !canSubmit || usageItems.length === 0;
   elements.addUsage.textContent = processing ? "Working..." : "Add usage";
   elements.generateDag.textContent =
-    state.processing?.action === "generate-dag"
+    state.processing?.action === "generate-dag" && state.processing.status === "running"
       ? "Generating DAG..."
-      : "Generate requirements DAG";
+      : dagFailed ? "Retry requirements DAG" : "Generate requirements DAG";
 
-  if (!preserveMessage) {
+  if (!preserveMessage || (dagFailed && !processing)) {
     elements.usageMessage.textContent = !canSubmit
       ? "Open the installed user-scoped Tandem to edit requirements."
+      : dagFailed && !processing
+        ? (state.processing.message || "The requirements DAG could not be generated.")
+          + " Your usages are saved. Retry requirements DAG to continue."
       : processing
         ? state.status || "Updating requirements..."
         : suggestionsLoading
@@ -2092,7 +2101,7 @@ function renderRequirementsSubstage(state, preserveMessage = false) {
             ? "Add the first usage to receive AI suggestions."
             : "Add another usage or generate the decision DAG."
           : "Usage collection is complete. Work through the dynamic DAG.";
-    elements.usageMessage.dataset.status = "idle";
+    elements.usageMessage.dataset.status = dagFailed && !processing ? "error" : "idle";
   }
 }
 
@@ -2314,47 +2323,6 @@ function decisionNodesForState(state) {
   }];
 }
 
-function escapeMermaidLabel(value) {
-  return String(value || "")
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, "'")
-    .replace(/\r?\n/g, " ");
-}
-
-function buildDecisionGraphMermaid(nodes) {
-  const aliases = new Map();
-  const lines = ["flowchart LR"];
-  nodes.forEach((node, index) => {
-    const alias = "Decision" + index;
-    aliases.set(alias, node);
-    lines.push("  " + alias + "[\"" + escapeMermaidLabel(node.title) + "\"]");
-  });
-  nodes.forEach((node, index) => {
-    for (const dependencyId of node.dependencies || []) {
-      const dependencyIndex = nodes.findIndex(
-        (candidate) => candidate.id === dependencyId,
-      );
-      if (dependencyIndex >= 0) {
-        lines.push("  Decision" + dependencyIndex + " --> Decision" + index);
-      }
-    }
-  });
-  lines.push(
-    "  classDef answered fill:#dafbe1,stroke:#1a7f37,stroke-width:2px,color:#1f2328",
-    "  classDef active fill:#ddf4ff,stroke:#0969da,stroke-width:3px,color:#1f2328",
-    "  classDef toAnswer fill:#fff8c5,stroke:#bf8700,stroke-width:2px,color:#1f2328",
-  );
-  for (const status of ["answered", "active", "toAnswer"]) {
-    const members = nodes
-      .map((node, index) => node.status === status ? "Decision" + index : null)
-      .filter(Boolean);
-    if (members.length > 0) {
-      lines.push("  class " + members.join(",") + " " + status);
-    }
-  }
-  return { source: lines.join("\n"), aliases };
-}
-
 function showDecisionQuestion(state, nodes, nodeId) {
   const node = nodes.find((candidate) => candidate.id === nodeId) || null;
   if (!node || node.status === "toAnswer") return;
@@ -2370,7 +2338,7 @@ function showDecisionQuestion(state, nodes, nodeId) {
     group.dataset.selected = String(group.dataset.decisionId === node.id);
   }
   const processing = ["running", "error"].includes(state.processing?.status)
-    && state.processing?.question?.id === node.id
+    && (state.processing?.question?.id === node.id || state.processing?.action === "apply-defaults")
     ? state.processing
     : null;
   renderQuestion(
@@ -2393,90 +2361,38 @@ async function postDecisionAnswer(questionId, answer, action = "answer-decision"
   return postJson("/api/answer", { questionId, answer, action });
 }
 
-function stopApplyingAllRecommended(message = "", isError = false) {
-  applyingAllRecommended = false;
-  recommendedPendingId = null;
-  if (message) {
-    elements.designTreeStatus.textContent = message;
-    elements.designTreeStatus.dataset.status = isError ? "error" : "success";
+async function applyWholeGraphDefaults(state, useCurrentSnapshot = false) {
+  if (hasPendingRequest() || applyingAllRecommended || !canEditStage("requirements") ||
+      state.processing?.status === "running") return;
+  const retry = !useCurrentSnapshot && state.processing?.action === "apply-defaults" && state.processing.status === "error";
+  const unanswered = (state.decisionGraph?.nodes || []).filter((node) => !node.answer);
+  if (!retry) {
+    const missing = unanswered.find((node) => !curatedDefault(node.question));
+    if (missing) {
+      elements.designTreeStatus.textContent = `"${missing.title}" has no curated recommended choice. Answer it explicitly first.`;
+      elements.designTreeStatus.dataset.status = "error";
+      return;
+    }
+    if (!window.confirm("Use whole-graph defaults for ALL " + unanswered.length + " unanswered decisions?\n\n"
+      + unanswered.map((node) => node.title + ": " + node.question.recommended).join("\n")
+      + "\n\nOne semantic review checks compatibility. Changed decisions require review; new recommendations are not automatically selected.")) return;
   }
-  if (currentState) renderNextAction(currentState);
-}
-
-async function continueApplyingAllRecommended(state) {
-  if (
-    !applyingAllRecommended ||
-    submitting ||
-    state !== currentState
-  ) {
-    return;
-  }
-  if (
-    (state.lifecycle?.currentStage || "requirements") !== "requirements" ||
-    state.requirements?.substage !== "dag"
-  ) {
-    stopApplyingAllRecommended();
-    return;
-  }
-  if (state.processing?.status === "running") return;
-  if (state.processing?.status === "error") {
-    stopApplyingAllRecommended(
-      state.processing.message || "Could not apply all recommended answers.",
-      true,
-    );
-    return;
-  }
-
-  const activeNode = (state.decisionGraph?.nodes || []).find(
-    (node) => node.status === "active",
-  );
-  if (!activeNode) {
-    const count = appliedRecommendedCount;
-    appliedRecommendedCount = 0;
-    stopApplyingAllRecommended(
-      count > 0
-        ? `Applied ${count} recommended ${count === 1 ? "answer" : "answers"}.`
-        : "No recommended answers are waiting.",
-    );
-    return;
-  }
-  if (recommendedPendingId === activeNode.id) return;
-
-  const recommendation = String(activeNode.question?.recommended || "").trim();
-  if (!recommendation) {
-    stopApplyingAllRecommended(
-      `Stopped at "${activeNode.title}" because it has no recommended answer.`,
-      true,
-    );
-    return;
-  }
-
+  const body = {
+    action: "apply-defaults", expectedRevision: state.revision, generation: state.generation,
+    ...(retry ? { retryRequestId: state.processing.requestId } : {
+      defaults: unanswered.map((node) => ({ nodeId: node.id, answer: node.question.recommended })),
+    }),
+  };
+  applyingAllRecommended = true;
   submitting = true;
-  recommendedPendingId = activeNode.id;
   renderNextAction(state);
-  const bulkButton = elements.questionHost.querySelector(
-    ".all-recommended",
-  ) as HTMLButtonElement | null;
-  const sendButton = elements.questionHost.querySelector(
-    ".send",
-  ) as HTMLButtonElement | null;
-  if (bulkButton) {
-    bulkButton.disabled = true;
-    bulkButton.textContent = "Applying recommendations...";
-  }
-  if (sendButton) sendButton.disabled = true;
-
   try {
-    await postDecisionAnswer(activeNode.id, recommendation);
-    appliedRecommendedCount += 1;
+    await postJson("/api/answer", body);
   } catch (error) {
-    stopApplyingAllRecommended(
-      error instanceof Error
-        ? error.message
-        : "Could not apply all recommended answers.",
-      true,
-    );
+    elements.designTreeStatus.textContent = error instanceof Error ? error.message : "Could not reconcile whole-graph defaults.";
+    elements.designTreeStatus.dataset.status = "error";
   } finally {
+    applyingAllRecommended = false;
     finishSubmission();
   }
 }
@@ -2510,10 +2426,12 @@ async function renderDesignTree(state) {
 
   if (defaultNode) showDecisionQuestion(state, nodes, defaultNode.id);
   const selectDecision = (id) => {
+    speechInputs.beforeRender();
     const view = captureView();
     const latest = decisionNodesForState(currentState);
     followingActiveDecision = latest.find((node) => node.id === id)?.status === "active";
     showDecisionQuestion(currentState, latest, id);
+    speechInputs.afterRender();
     restoreView(view);
     renderNextAction(currentState);
   };
@@ -2853,6 +2771,7 @@ function renderArtifacts(value) {
 }
 
 const PROCESSING_TITLES = {
+  "apply-defaults": "Reconciling whole-graph defaults",
   "add-usage": "Updating usage guidance",
   "generate-dag": "Building requirements DAG",
   "answer-decision": "Applying your decision",
@@ -2865,7 +2784,7 @@ const PROCESSING_TITLES = {
 function renderQuestion(question, processing, canSubmitAnswers, decisionNode = null) {
   const key = draftKey("decision", question?.id, [question, decisionNode?.answer || null]);
   const signature = JSON.stringify([
-    key, processing, canSubmitAnswers, decisionNode?.status,
+    key, processing, canSubmitAnswers, decisionNode?.status, decisionNode?.review,
     submitting, applyingAllRecommended, questionErrors.get(key),
   ]);
   if (lastQuestionSignature === signature) return;
@@ -2943,6 +2862,14 @@ function renderQuestion(question, processing, canSubmitAnswers, decisionNode = n
     failure.textContent = processing.message || "Tandem processing failed.";
     elements.questionHost.append(failure);
   }
+  if (decisionNode?.review) {
+    const review = document.createElement("p");
+    review.className = "processing-error";
+    review.setAttribute("role", "alert");
+    review.textContent = "Review required: " + decisionNode.review.reason
+      + (decisionNode.review.previousAnswer ? " Previously selected: " + decisionNode.review.previousAnswer : "");
+    elements.questionHost.append(review);
+  }
 
   if (!question) {
     const waiting = document.createElement("p");
@@ -3008,6 +2935,8 @@ function renderQuestion(question, processing, canSubmitAnswers, decisionNode = n
   if (question.allowFreeText !== false) {
     detail = document.createElement("textarea");
     detail.name = "prototype-detail";
+    detail.setAttribute("data-speech-input", "");
+    detail.setAttribute("maxlength", "4000");
     detail.dataset.uiKey = "decision:" + question.id + ":detail";
     detail.disabled = submitting || !canSubmitAnswers;
     detail.placeholder = question.answerPlaceholder || (
@@ -3067,16 +2996,15 @@ function renderQuestion(question, processing, canSubmitAnswers, decisionNode = n
     allRecommended.type = "button";
     allRecommended.dataset.uiKey = "decision:" + question.id + ":recommended";
     allRecommended.textContent = applyingAllRecommended
-      ? "Applying recommendations..."
-      : "All as Recommended";
+      ? "Saving whole-graph defaults..."
+      : currentState.processing?.action === "apply-defaults" && currentState.processing.status === "error"
+        ? "Retry whole-graph defaults"
+        : "Use whole-graph defaults";
     allRecommended.title =
-      "Use each active recommendation, updating dependent decisions as the DAG changes.";
+      "Approve the currently displayed recommended choices for ALL unanswered decisions, including downstream nodes, in one reconciled batch. Changed decisions require review.";
     allRecommended.disabled = submitting || applyingAllRecommended;
     allRecommended.addEventListener("click", () => {
-      if (hasPendingRequest() || applyingAllRecommended || !canEditStage("requirements")) return;
-      applyingAllRecommended = true;
-      appliedRecommendedCount = 0;
-      void continueApplyingAllRecommended(currentState);
+      void applyWholeGraphDefaults(currentState);
     });
   }
   const error = document.createElement("p");
@@ -3085,6 +3013,16 @@ function renderQuestion(question, processing, canSubmitAnswers, decisionNode = n
   error.textContent = questionErrors.get(key) || "";
   actions.append(send);
   if (allRecommended) actions.append(allRecommended);
+  if (allRecommended && currentState.processing?.action === "apply-defaults" && currentState.processing.status === "error") {
+    const reviewDefaults = document.createElement("button");
+    reviewDefaults.type = "button";
+    reviewDefaults.className = "review-current-defaults";
+    reviewDefaults.textContent = "Review current whole-graph defaults";
+    reviewDefaults.title = "Replace the failed batch only after approving a fresh snapshot of every current recommendation.";
+    reviewDefaults.disabled = submitting || applyingAllRecommended;
+    reviewDefaults.addEventListener("click", () => { void applyWholeGraphDefaults(currentState, true); });
+    actions.append(reviewDefaults);
+  }
   actions.append(error);
   form.append(actions);
   bindFormDraft(form, key);
@@ -4521,7 +4459,8 @@ function nextActionForState(state) {
         ? {
             tab: "design-tree",
             target: elements.generateDag,
-            label: "Generate the requirements DAG",
+            label: state.processing?.action === "generate-dag" && state.processing.status === "error"
+              ? "Retry the requirements DAG" : "Generate the requirements DAG",
           }
         : {
             tab: "design-tree",
@@ -4737,6 +4676,7 @@ function renderNextAction(state) {
 }
 
 function render(state, preserveMessages = false) {
+  speechInputs.beforeRender();
   const view = captureView();
   const wasReset = lastRenderedGeneration !== null && state.generation !== lastRenderedGeneration && isGoalEntry(state);
   if (wasReset) {
@@ -4747,6 +4687,24 @@ function render(state, preserveMessages = false) {
   currentState = state;
   const currentLifecycleStage =
     state.lifecycle?.currentStage || "prepare";
+  const requirementsIdentity = JSON.stringify([state.prototypeId, state.generation]);
+  const requirementsSubstage = state.requirements?.substage
+    || (decisionNodesForState(state).length ? "dag" : "usage");
+  const generatedDag = currentLifecycleStage === "requirements"
+    && lastRequirementsView?.identity === requirementsIdentity
+    && lastRequirementsView.substage === "usage" && requirementsSubstage === "dag"
+    && state.processing?.status !== "running" && state.processing?.status !== "error"
+    && decisionNodesForState(state).some((node) => node.status === "active");
+  const focusGeneratedDag = generatedDag && !hasPendingRequest();
+  lastRequirementsView = currentLifecycleStage === "requirements"
+    ? { identity: requirementsIdentity, substage: generatedDag && !focusGeneratedDag ? "usage" : requirementsSubstage } : null;
+  if (focusGeneratedDag) {
+    activeOutputTab = "design-tree";
+    viewedStageId = "requirements";
+    followingActiveDecision = true;
+    selectedDecisionId = null;
+    if (window.matchMedia("(max-width: 760px)").matches) setContextExpanded(false);
+  }
   if (currentLifecycleStage !== lastLifecycleStage) {
     if (!lastLifecycleStage || viewedStageId === lastLifecycleStage) {
       activeOutputTab = stageTab(currentLifecycleStage);
@@ -4757,7 +4715,7 @@ function render(state, preserveMessages = false) {
   renderLifecycle(state, preserveMessages);
   renderProcess(state, preserveMessages);
   renderPreparation(state, preserveMessages);
-  renderRequirementsSubstage(state, preserveMessages);
+  renderRequirementsSubstage(state, preserveMessages && !focusGeneratedDag);
   elements.phase.textContent = state.phase || "discovery";
   elements.goal.textContent = state.goal || "Waiting for a prototype goal...";
   elements.goal.classList.toggle("muted", !state.goal);
@@ -4776,9 +4734,16 @@ function render(state, preserveMessages = false) {
   renderReload(state);
   activateOutputTab(activeOutputTab);
   renderEffortControls(state);
+  speechInputs.afterRender();
   if (!wasReset) restoreView(view);
   else if (!effortSubmitting) elements.startGoal.focus();
-  void continueApplyingAllRecommended(state);
+  if (focusGeneratedDag) {
+    elements.questionHost.scrollIntoView?.({ block: "nearest" });
+    const target = elements.questionHost.querySelector('input:checked:not([disabled])')
+      || elements.questionHost.querySelector('textarea:not([disabled])')
+      || elements.requirementsTab;
+    target.focus({ preventScroll: true });
+  }
 }
 
 function isStateSnapshot(state) {
@@ -4827,6 +4792,7 @@ function renderIfChanged(state, sequence = ++transportSequence) {
     if (preparationChanged) renderPreparation(next);
     if (implementationChanged) renderImplementation(next);
     if (testChanged) renderTest(next);
+    speechInputs.sync();
     restoreView(view);
   }
   return domainChanged || providerChanged || preparationChanged || implementationChanged || testChanged;
