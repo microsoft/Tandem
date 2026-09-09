@@ -288,7 +288,7 @@ test("An in-flight launch remains owned across reset failure and a late SDK rece
                 cancel: async (runId: string) => ({ runId, status: "cancelled" }),
             },
         });
-        const launching = fixture.api.runEffortFactory("sample", "launch-request", {});
+        const launching = fixture.api.runEffortFactory("sample", "launch-request", { name: "test-launch", args: {} });
         for (let attempt = 0; !dispatched && attempt < 100; attempt++) {
             await new Promise((resolve) => setTimeout(resolve, 10));
         }

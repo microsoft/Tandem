@@ -187,13 +187,16 @@ Browser authentication is memory-only for the current extension session.
 - Keep UI code behind typed interfaces. Components must not import mock data
   directly; they consume a hook, store, or API facade backed by a mock adapter.
 - Implement the main path end to end and make every primary visible control work.
-- Keep the development server running with hot module replacement and iterate in
-  small, visible slices.
+- Keep each published preview server running. Build the next small slice in its
+  host-assigned isolated checkpoint directory, never by modifying a published
+  checkpoint or the user's active source tree.
 - Keep one Tandem canvas open for the entire workflow. As soon as the
   first screen works, set its `previewUrl` so the live prototype appears in the
   Tandem output area.
 - During Prototype, do not implement backend logic, production integrations,
-  tests, review workflows, or visual polish. In Implement and Test, follow the
+  tests, review workflows, or production visual polish. The optional Visual
+  direction milestone may adjust lightweight theme variables or presets.
+  In Implement and Test, follow the
   accepted design, execution contract, and validation requirements instead.
 
 ## Discovery budget
@@ -264,15 +267,33 @@ Use one Tandem canvas as the shared requirements and output surface:
    `prototypeApproach.mode` is `not-applicable`, Tandem disables and bypasses
    Prototype, persists the reason, creates the non-GUI `draft-feature-spec`, and
    enables Design.
-8. For applicable prototypes, completing Requirements schedules Tandem's durable initial-prototype worker.
-   Do not launch a competing build or overwrite state while that job is active.
-   For `build`, it creates the minimum prototype; for `validate-existing`, it
-   runs and revises the repository's existing GUI instead of creating a second app.
-   It adds the identity marker, starts the server, and returns its actual URL.
-9. Tandem verifies the URL's identity before marking the preview ready. If
-   creation fails, use the canvas's explicit prototype retry control.
+8. For applicable prototypes, completing Requirements schedules the durable
+   **Structure** checkpoint: realistic labels, simple layout, and a minimally
+   clickable primary journey. Start with a simplified interactive scene when 3D
+   navigation is central. Do not wait for every screen or detailed visual asset.
+   **Interaction** follows automatically, developing the same primary journey.
+   **Visual direction** is optional and explicitly requested after Interaction.
+   Do not launch a competing build or write checkpoint state manually.
+   Use the shared compact spacing and controls consistently across all stages.
+   Conversation fields expand on focus; keep specifications and diagrams readable.
+   Keep the preview visually primary: compact milestone/build status, expandable
+   Build details and Revision history, and a compact feedback field that expands
+   on focus. Keep actionable failures and pending-update controls visible.
+   For `validate-existing`, use the host's source snapshot of the existing GUI,
+   not a new application or a reimplementation.
+9. Tandem verifies both prototype and checkpoint URL identities. The first
+   checkpoint appears immediately; later results show **Update ready** without
+   replacing the working preview. Let the user apply updates at a natural pause.
+   If a step fails, retry only that step; the previous preview stays available.
+   A known RPC request-schema rejection is a failed launch, not a running worker:
+   reload the updated provider to repair its receipt, then retry explicitly.
+   Never reset the effort to clear this condition or clear an unconfirmed launch
+   after an ambiguous transport error.
 10. Let the user interact with the embedded prototype and submit revision
-   suggestions in the box below it. Apply clear revisions directly. If a material
+   suggestions in the box below it. Capture suggestions immediately as queued,
+   including while a worker or clarification is active. Reconcile each suggestion
+   from its recorded preview identity against the latest checkpoint; never undo
+   unrelated newer changes. If a material
    interaction detail is ambiguous, show one focused question with three to five
    options in the right pane, then continue the same revision after the answer.
 11. Repeat revision, clarification, implementation, and preview validation until
@@ -288,8 +309,11 @@ Use one Tandem canvas as the shared requirements and output surface:
     its Q&A, resolution controls, and review composer into the artifact view. Mermaid
     surfaces provide zoom in, zoom out, actual-size, and fit controls. Product design
     also accepts questions and artifact requests, then synthesizes `design-spec`.
-    Test design accepts coverage questions and test-scenario requests, then
-    synthesizes `test-spec` plus executable integration and interaction scenarios.
+    Entering Test design automatically queues integration and interaction
+    test-scenario drafts grounded in the accepted product design. Existing empty
+    Test design efforts recover these requests when opened. Review the drafts in
+    their artifact views, ask coverage questions, and resolve their threads before
+    finishing Test design to synthesize `test-spec` plus executable scenarios.
 14. Resolve each satisfactory answer in the active substage. Reopening an answer
     marks artifacts derived from that thread stale. Finish Product design before
     Test design; Design completes only after both specifications are current.
@@ -389,9 +413,26 @@ descendants; prior selections remain visible for explicit review. An empty patch
 means all frozen choices have been checked for compatibility, not skipped.
 Failure/reload preserves the frozen approval and completion gates.
 
-Non-Requirements flows retain their existing complete review/state output
-envelopes plus explicit artifact upserts and removals. The worker edits the active worktree
-when the current stage permits code changes, while `.tandem` remains shared
+Prototype checkpoint workers return a focused summary, next interaction to try,
+preview URL, optional clarification, artifact changes, and observations. They do
+not return or replace the entire Tandem state. The host owns milestone status,
+queued feedback, preview promotion, and budget accounting. Every checkpoint has
+one worker limited to 300 seconds and 10,000 AI credits; the total work window is
+900 execution seconds, including failed steps. Extending that window is an
+explicit user action, not an automatic retry loop. Worker observations are not
+independent tool-backed evidence.
+
+Checkpoint code lives in host-prepared isolated directories under
+`.tandem/efforts/<prototypeId>/previews/<requestId>/`. Workers may edit only their
+assigned code snapshot, not operational JSON, other checkpoints, or the original
+worktree. Put browser profiles and dev-tool caches in the host-provided sibling
+`runtime/<requestId>` directory, never in checkpoint source. Do not stop a working
+browser or ignore source permission errors to force a copy. Preparation failures
+retry from the last fully prepared source and preserve partial attempts as history.
+Shared dependency links must not be modified; install locally if a
+dependency change is essential. Other non-Requirements flows retain their
+existing complete review/state output envelopes and artifact changes. Implement
+workers edit the active worktree, while `.tandem` remains shared
 at the repository root. Unchanged artifacts remain intact even when their factory
 context was truncated. It never sends a synthetic user message to the main
 session. Tandem persists processing status and the durable factory run ID so
@@ -418,7 +459,14 @@ Stages are gated and cannot be skipped:
    artifacts but must not edit prototype files.
 3. **Prototype** follows the selected approach. `build` produces a new runnable
    preview. `validate-existing` runs and revises the repository's existing GUI.
-   Keep the revision input enabled while no worker or clarification is active.
+   Progress through Structure, Interaction, and optional Visual direction inside
+   this one lifecycle stage. Keep feedback capture enabled while building or
+   clarifying; queue submissions durably. Freeze submission only while generating
+   the final handoff, preserving the user's draft. Keep the last working preview
+   visible and promote later previews only through **Apply update**. Finish only
+   after Interaction is applied, no update or feedback remains pending, and no
+   clarification or worker is active. Failed optional visual refinement may be
+   skipped without losing the interactive prototype.
    Prototype completion is owned by Tandem button: it gathers interaction evidence
    and generates a complete `draft-feature-spec` artifact with
    `kind: "feature-spec"` before advancing. For `not-applicable`, the stage and
@@ -457,6 +505,7 @@ in the document served at the preview root:
 
 ```html
 <meta name="tandem-prototype-id" content="workflow-demo">
+<meta name="tandem-prototype-checkpoint" content="<host-assigned-checkpoint-id>">
 ```
 
 Never assume the development server uses its framework's default port, and never
@@ -467,7 +516,17 @@ publishing, fetch that exact URL and verify both HTTP success and the identity
 marker. If a framework falls back from one port to another, publish the fallback
 URL it actually reported.
 
-When the verified server is ready, add:
+Serve and include the host-provided `tandem-preview-bridge.js` script. Its
+cooperative state transfer keeps ordinary inputs, route, and scroll where
+possible. For 3D cameras or custom selection, provide
+`window.tandemPreviewState.capture()` and `.restore(state)` hooks. Never include
+passwords, credentials, payment details, or other sensitive state. Capture stays
+ephemeral in the canvas, not in durable effort records.
+
+The worker returns the verified URL; the host publishes the first preview and
+holds subsequent previews pending the user's update action. Do not call
+`update_tandem` to bypass checkpoint promotion. Legacy integrations without an
+active checkpoint use:
 
 ```json
 {
@@ -613,15 +672,17 @@ scenarios only when they help evaluate an important UI decision.
    requirements stage.
 3. For `build`, establish the minimum runnable shell in Prototype. For
    `validate-existing`, use the existing GUI entry point. Start its hot-reload
-   development server on a verified, prototype-specific URL as early as possible.
+   development server on a verified, checkpoint-specific URL as early as possible.
    For `not-applicable`, continue directly to Design using the generated non-GUI
    feature specification.
 4. Define the UI contracts, mock port, and representative sample data.
 5. Implement one complete primary interaction from entry to visible result.
 6. Verify the running page's `tandem-prototype-id`, set Tandem's `previewUrl`
    to that exact URL, and fix runtime or type errors immediately.
-7. Collect one focused piece of feedback in Tandem, then modify the same
-   embedded prototype rather than starting another tab or design document.
+7. Collect feedback about the visible interaction in Tandem, then refine its next
+   isolated checkpoint. Keep one embedded prototype surface and apply prepared
+   updates only at the user's request; do not switch tabs or mutate the live
+   checkpoint underneath them.
 8. When feedback is unclear, return one focused clarification question to the
    Tandem before editing; preserve its answer as revision evidence.
 9. Repeat in small slices until the user has no more revisions, then let the
@@ -647,9 +708,13 @@ The Design Review tab is the authoritative Design-stage discussion surface:
 5. Enable **Finish product design** only when every Product design thread is
    resolved and no request is processing. This action creates a current
    `design-spec` and advances the same surface to Test design.
-6. In Test design, accept coverage questions and test-scenario artifacts. Finalize
-   only after every Test design thread is resolved; create a current `test-spec`
-   and at least one structured integration or interaction scenario.
+6. On entering Test design, automatically queue integration and interaction
+   test-scenario drafts for review. Recover empty Test design efforts on open
+   without replacing existing threads, scenarios, or finalization work. Accept
+   follow-up coverage questions and test-scenario requests from the artifact
+   views. Finalize only after the drafts exist and every Test design thread is
+   resolved; create a current `test-spec` and at least one structured integration
+   or interaction scenario.
 7. Enable **Finish Design** only after both specifications are current. Reopening a
    thread invalidates the final artifact for that substage and reopens its loop.
 

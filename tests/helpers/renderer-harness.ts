@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { build } from "esbuild";
 import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
+import { webcrypto } from "node:crypto";
 import type { SpeechSessionFactory } from "../../src/renderer/speech-recognizer.js";
 
 type Listener = { callback: (event: any) => unknown; capture: boolean };
@@ -19,8 +20,20 @@ export class Element {
     readOnly = false;
     tabIndex = -1; scrollTop = 0; scrollLeft = 0; clientWidth = 500;
     selectionStart = 0; selectionEnd = 0; title = "";
+    navigations: string[] = [];
+    frameMessages: { data: any; origin: string }[] = [];
+    contentWindow: { postMessage: (data: any, origin: string) => void } | undefined;
+    onPreviewMessage?: (data: any, origin: string) => void;
+    private source = "";
     private text = "";
-    constructor(readonly tagName: string, readonly ownerDocument: Document) {}
+    constructor(readonly tagName: string, readonly ownerDocument: Document) {
+        if (tagName === "iframe") this.contentWindow = { postMessage: (data, origin) => {
+            this.frameMessages.push({ data, origin });
+            this.onPreviewMessage?.(data, origin);
+        } };
+    }
+    get src() { return this.source; }
+    set src(value: string) { this.source = value; this.navigations.push(value); }
     get childElementCount() { return this.children.length; }
     get isConnected(): boolean { return this === this.ownerDocument || Boolean(this.parentElement?.isConnected); }
     get previousElementSibling() {
@@ -93,6 +106,7 @@ export class Element {
         this.attributes.delete(name);
         if (name.startsWith("data-")) delete this.dataset[dataName(name)];
         else if (name === "title") this.title = "";
+        else if (name === "src") this.source = "";
     }
     matches(selector: string): boolean {
         let source = selector.trim();
@@ -245,12 +259,13 @@ export async function rendererHarness() {
     const requests: { path: string; body: any }[] = [];
     const timers: (() => void)[] = [];
     const confirmations: string[] = [];
+    const windowListeners = new Map<string, ((event: any) => unknown)[]>();
     let confirm = true;
     let narrowViewport = false;
     let speechFactory: SpeechSessionFactory = async () => { throw new Error("Speech is not configured in this test"); };
     let handler: (path: string, options: any) => Promise<any> = async () => { throw new Error("Network disabled in renderer tests"); };
     const context: any = {
-        module: { exports: {} }, exports: {}, document, console, Error, AbortController,
+        module: { exports: {} }, exports: {}, document, console, Error, AbortController, URL, TextEncoder, crypto: webcrypto,
         setTimeout, clearTimeout,
         Event: class { constructor(readonly type: string, readonly options: { bubbles?: boolean } = {}) {} get bubbles() { return this.options.bubbles; } },
         __speechFactory: (...args: Parameters<SpeechSessionFactory>) => speechFactory(...args),
@@ -259,7 +274,9 @@ export async function rendererHarness() {
         requestAnimationFrame() {},
         window: {
             matchMedia: (query: string) => ({ matches: query === "(max-width: 760px)" && narrowViewport }),
-            addEventListener() {}, clearInterval() {},
+            addEventListener(type: string, callback: (event: any) => unknown) {
+                windowListeners.set(type, [...windowListeners.get(type) || [], callback]);
+            }, clearInterval() {},
             setInterval(callback: () => void) { timers.push(callback); return timers.length; },
             confirm(message: string) { confirmations.push(message); return confirm; },
         },
@@ -276,6 +293,9 @@ export async function rendererHarness() {
         setConfirm(value: boolean) { confirm = value; },
         setNarrowViewport(value: boolean) { narrowViewport = value; },
         setSpeechFactory(value: SpeechSessionFactory) { speechFactory = value; },
+        async emitWindow(type: string, event: any) {
+            for (const listener of windowListeners.get(type) || []) await listener(event);
+        },
         flush: () => new Promise<void>((resolve) => setImmediate(resolve)),
     };
 }

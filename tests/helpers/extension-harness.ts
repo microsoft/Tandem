@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
 import type { TandemState } from "../../src/types.js";
 import type { PreparationToken } from "../../src/agent-runner.js";
+import { assertFactoryRequestEnvelope, type FactoryLaunchRequest } from "../../src/agent-runner.js";
 
 interface CanvasContext {
     instanceId: string;
@@ -21,6 +22,9 @@ interface HarnessApi {
     completeLifecycleStage(id: string, stage: string, provider: string): Promise<TandemState>;
     reopenLifecycleStage(id: string, stage: string, provider: string): Promise<TandemState>;
     beginPrototypeBuild(id: string, provider: string): Promise<TandemState>;
+    prototypeAction(id: string, provider: string, input: Record<string, unknown>): Promise<TandemState>;
+    queuePrototypeRevision(id: string, provider: string, input: Record<string, unknown>): Promise<{ revisionId: string }>;
+    stageCompletionError(state: TandemState, stage: string, options?: { requirePrototypeSpec: boolean }): string | null;
     applyFactoryResult(id: string, request: string, result: unknown): Promise<void>;
     updateTandem(ctx: CanvasContext): Promise<TandemState>;
     readRequestBody(chunks: AsyncIterable<Buffer>): Promise<unknown>;
@@ -34,6 +38,9 @@ interface HarnessApi {
     waitForPreparation(id: string): Promise<void>;
     waitForAnswer(id: string): Promise<void>;
     recoverAnswerFactory(state: TandemState, writable: boolean): void;
+    seedDefaultDesignReview(state: TandemState, createdAt?: string): TandemState;
+    ensureDefaultDesignReview(state: TandemState, writable: boolean): Promise<TandemState>;
+    waitForDesignReview(id: string): Promise<void>;
     answerFactoryPrompt(args: unknown): string;
     answerFactory: { run(ctx: Record<string, unknown>): Promise<unknown> };
     processAction(id: string, provider: string, input: unknown): Promise<TandemState>;
@@ -51,7 +58,7 @@ interface HarnessApi {
         url: string; server: import("node:http").Server; heartbeat: ReturnType<typeof setInterval>;
     }>;
     closeServers(): Promise<void>;
-    runEffortFactory(id: string, requestId: string, request: unknown): Promise<unknown>;
+    runEffortFactory(id: string, requestId: string, request: FactoryLaunchRequest): Promise<unknown>;
     waitForEffortRun(id: string, runId: string): Promise<unknown>;
 }
 
@@ -68,7 +75,7 @@ async function compile(): Promise<string> {
     const openHandler = source.slice(openStart + "open: ".length, openEnd);
     const result = await build({
         stdin: {
-            contents: `${prefix}\nmodule.exports = { createState, loadState, persistState, completeLifecycleStage, reopenLifecycleStage, beginPrototypeBuild, applyFactoryResult, updateTandem, readRequestBody, verifyPreviewIdentity, applyCanvasReset, isCanvasRehydration, ensurePreparationStarted, bindPreparationRun, recordPreparationWorkItem, settlePreparationRun, recoverPreparationFactory, recoverAnswerFactory, preparationFactory, resetEffort, startEffort, startServer, runEffortFactory, waitForEffortRun, openTandem: ${openHandler}, async closeServers() { for (const entry of servers.values()) { clearInterval(entry.heartbeat); for (const client of entry.clients) client.end(); await new Promise(resolve => entry.server.close(resolve)); } servers.clear(); }, waitForPreparation(id) { return activePreparationRuns.get(id); }, waitForAnswer(id) { return activeAnswerRuns.get(id); }, waitForExecution(id) { return Promise.all([activeImplementationRuns.get(id), activeTestRuns.get(id)]); }, answerFactory, answerFactoryPrompt, processAction, setSession(value) { session = value; } };`,
+            contents: `${prefix}\nmodule.exports = { createState, loadState, persistState, completeLifecycleStage, reopenLifecycleStage, beginPrototypeBuild, prototypeAction, queuePrototypeRevision, stageCompletionError, applyFactoryResult, updateTandem, readRequestBody, verifyPreviewIdentity, applyCanvasReset, isCanvasRehydration, ensurePreparationStarted, bindPreparationRun, recordPreparationWorkItem, settlePreparationRun, recoverPreparationFactory, recoverAnswerFactory, seedDefaultDesignReview, ensureDefaultDesignReview, preparationFactory, resetEffort, startEffort, startServer, runEffortFactory, waitForEffortRun, openTandem: ${openHandler}, async closeServers() { for (const entry of servers.values()) { clearInterval(entry.heartbeat); for (const client of entry.clients) client.end(); await new Promise(resolve => entry.server.close(resolve)); } servers.clear(); }, waitForPreparation(id) { return activePreparationRuns.get(id); }, waitForAnswer(id) { return activeAnswerRuns.get(id); }, waitForDesignReview(id) { return activeDesignReviewRuns.get(id); }, waitForExecution(id) { return Promise.all([activeImplementationRuns.get(id), activeTestRuns.get(id)]); }, answerFactory, answerFactoryPrompt, processAction, setSession(value) { session = value; } };`,
             loader: "ts", resolveDir: sourceRoot,
         },
         bundle: true, platform: "node", target: "node20", format: "cjs", write: false,
@@ -100,6 +107,7 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
     let speechTokenRequests = 0;
     let browserSignIns = 0;
     let browserTokenRequests = 0;
+    let previewHtml = '<html><meta name="tandem-prototype-id" content="sample"></html>';
     let signIn: (signal: AbortSignal) => Promise<void> = async () => {};
     const require = createRequire(import.meta.url);
     class CanvasError extends Error {
@@ -112,7 +120,8 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
         log: async (message: string) => { logs.push(message); },
         rpc: {
             extensions: { list: async () => ({ extensions: [{ id: "project:tandem", status: "running" }] }) },
-            factory: { run: async (request: unknown) => {
+            factory: { run: async (request: FactoryLaunchRequest) => {
+                assertFactoryRequestEnvelope(request);
                 requests.push(request);
                 return new Promise<never>(() => {});
             } },
@@ -144,7 +153,7 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
                     };
                 },
             },
-            fetch: async () => new Response('<html><meta name="tandem-prototype-id" content="sample"></html>'),
+            fetch: async () => new Response(previewHtml),
             process: new Proxy(process, {
                 get(target, key) {
                     if (key === "cwd") return () => root;
@@ -183,6 +192,7 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
             if (requests.length < count) throw new Error("The expected factory dispatch was not observed.");
         };
         return { api, root, requests, logs, session, waitForRequests,
+            setPreviewHtml(value: string) { previewHtml = value; },
             browserSignIns: () => browserSignIns,
             browserTokenRequests: () => browserTokenRequests,
             setSpeechSignIn(value: typeof signIn) { signIn = value; },

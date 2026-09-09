@@ -59,7 +59,9 @@ passes its usage suggestions, assumptions, and deferred work into Requirements.
 3. Review the new or existing live interface and submit revisions until it is
    ready. For no-GUI work, Prototype is disabled with an explanation and Design
    opens after Requirements.
-4. Complete Product design and Test design.
+4. Review the automatically generated Product design artifacts, then the
+   integration and interaction test-design drafts. Resolve their review threads
+   before finishing each substage to capture `design-spec` and `test-spec`.
 5. Generate and finalize the execution plan.
 6. Start implementation agents and monitor their work.
 7. Run integration and interaction tests, then finish the lifecycle.
@@ -77,11 +79,54 @@ Stage tabs scroll horizontally and support arrow-key navigation.
 Tandem stores durable project state under `.tandem`. Add that
 directory to `.gitignore` unless you intentionally want to version the state.
 
-Finishing Requirements schedules the applicable new or existing GUI work automatically.
-Non-GUI efforts bypass Prototype and retain their feature-spec handoff.
-If startup fails, use the prototype retry control; building messages reflect
-the active job rather than simulated milestones. Requirements remain usable
-when diagram rendering is unavailable.
+Finishing Requirements starts **Structure**, the first progressive Prototype
+checkpoint. A minimally clickable wireframe appears before **Interaction** builds
+the primary journey. **Visual direction** is optional: request lightweight theme
+refinement after trying the interaction. These are milestones inside Prototype,
+not extra lifecycle approval stages. Non-GUI efforts still bypass Prototype.
+
+The last working preview remains available during later builds and failures.
+Each checkpoint uses an isolated source snapshot under
+`.tandem/efforts/<prototypeId>/previews/<requestId>/`; existing-GUI validation uses
+a snapshot of the same application, not a replacement application. **Update
+ready** lets you apply the next preview at a natural pause. Cooperative previews
+can restore their route, ordinary form fields, scroll, and application-provided
+camera or selection state; sensitive fields are never carried across updates.
+Ordinary dependency installations can be reused read-only. Workspace-linked
+installations are copied locally and their package links are redirected to the
+new checkpoint, so monorepos do not execute mutable source from an older preview.
+
+All Tandem stages share compact header, navigation, card spacing, and control
+sizes. Conversation fields expand on focus; specifications and diagrams retain
+their reading space. Live prototype adds inline milestone and build status and
+a preview that fills the remaining workspace height. **Build details** and
+**Revision history** expand on demand; update/retry actions and errors remain
+visible. The feedback field expands when focused without replacing the preview.
+
+Feedback is saved immediately, even during generation or a clarification. The
+queue records which preview the suggestion refers to and processes one revision
+at a time. A failed step retries from its prepared files without rebuilding
+successful checkpoints. A failed optional visual refinement can be skipped.
+Each prototype worker has at most 300 seconds and 10,000 AI credits; the work window permits
+900 cumulative execution seconds, including retries. Continuing beyond that
+window requires an explicit budget extension. Waiting for user feedback does not
+consume the work window. Budget and checkpoint progress survive provider reloads.
+If an older installation reports `unknown field limits`, reload the updated
+extension and retry the checkpoint. Tandem repairs that known rejected-launch
+record without resetting the effort. Unconfirmed transport failures remain
+locked until the runtime can establish whether a worker actually started.
+
+Browser profiles and tool caches belong in each checkpoint's separate
+`.tandem/efforts/<prototypeId>/runtime/<requestId>/` directory. Checkpoint copies
+and new source fingerprints exclude recognized browser profiles and legacy
+`.browser-checkpoint` / `.vite-checkpoint` caches, so Windows-locked metrics do
+not block an update. A failed copy retries from its last fully prepared source,
+preserving unfinished application changes rather than copying partial output.
+
+Finish Prototype after applying the Interaction update and resolving outstanding
+feedback; Visual direction is not required unless requested. This produces the
+feature-spec handoff for technical Design. Requirements remain usable when
+diagram rendering is unavailable.
 
 Generating the requirements DAG keeps your usage list until Tandem accepts a
 valid, unanswered graph. An accepted graph opens Requirements and focuses its
