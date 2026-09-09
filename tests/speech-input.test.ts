@@ -35,10 +35,68 @@ test("speech controls cover all conversational fields and exclude configuration"
     const h = await fixture(value);
     assert.equal(h.document.querySelectorAll("[data-speech-input]").length, 8);
     assert.equal(h.document.querySelectorAll(".speech-toggle").length, 8);
+    assert.equal(h.document.querySelectorAll(".speech-sign-in").length, 8);
     for (const name of ["intake-content", "verification-checks", "protected-paths", "handoff-approver"]) {
         assert.equal(h.document.getElementById(name)!.getAttribute("data-speech-input"), null);
     }
     assert.equal(h.requests.length, 0, "no Azure authentication before explicit recording");
+    assert.equal(h.sessions.length, 0);
+});
+
+test("explicit browser sign-in preserves editable drafts, survives polling, and does not request a microphone", async () => {
+    const h = await fixture();
+    const input = h.api.elements.usageInput;
+    input.value = "Keep this thought";
+    let release!: (value: unknown) => void;
+    h.setFetch(() => new Promise((resolve) => { release = resolve; }));
+    await h.control(input, ".speech-sign-in").emit("click");
+    await h.flush();
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.requests[0].path, "/api/speech/sign-in");
+    assert.equal(input.readOnly, false);
+    assert.equal(h.control(input).disabled, true);
+    assert.equal(h.control(input, ".speech-sign-in").disabled, true);
+    await h.control(input, ".speech-sign-in").emit("click");
+    await h.control(input).emit("click");
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.sessions.length, 0);
+    h.document.visibilityState = "hidden";
+    await h.document.emit("visibilitychange");
+    h.api.renderIfChanged({ ...state(), revision: 2 });
+    assert.match(h.control(input, ".speech-status").textContent, /Complete Microsoft sign-in/);
+    input.value = "Typed during sign-in";
+    await input.emit("input");
+    release(response({ authenticated: true }));
+    await h.flush();
+    assert.equal(input.value, "Typed during sign-in");
+    assert.match(h.control(input, ".speech-status").textContent, /Signed in to Microsoft/);
+    assert.equal(h.sessions.length, 0);
+    assert.equal(h.control(input).disabled, false);
+    assert.equal(h.control(input, ".speech-cancel").hidden, true);
+});
+
+test("browser sign-in cancellation and errors are visible and leave the draft untouched", async () => {
+    const h = await fixture();
+    const input = h.api.elements.usageInput;
+    input.value = "Original";
+    let signal: AbortSignal | undefined;
+    h.setFetch((_path, options) => new Promise((_resolve, reject) => {
+        signal = options.signal;
+        signal!.addEventListener("abort", () => reject(new Error("Aborted")));
+    }));
+    await h.control(input, ".speech-sign-in").emit("click");
+    await h.control(input, ".speech-cancel").emit("click");
+    await h.flush();
+    assert.equal(signal!.aborted, true);
+    assert.equal(input.value, "Original");
+    assert.match(h.control(input, ".speech-status").textContent, /cancelled/);
+    assert.equal(h.control(input, ".speech-sign-in").disabled, false);
+    h.setFetch(async () => response({ error: "Your organization requires an approved desktop application." }, 503));
+    await h.control(input, ".speech-sign-in").emit("click");
+    await h.flush();
+    assert.match(h.control(input, ".speech-status").textContent, /approved desktop application/);
+    assert.equal(h.control(input, ".speech-status").dataset.status, "error");
+    assert.equal(input.value, "Original");
     assert.equal(h.sessions.length, 0);
 });
 

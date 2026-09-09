@@ -6,6 +6,7 @@ interface Controls {
   input: ChatInput;
   bar: HTMLElement;
   toggle: HTMLButtonElement;
+  signIn: HTMLButtonElement;
   cancel: HTMLButtonElement;
   status: HTMLElement;
   browserLink?: HTMLAnchorElement;
@@ -40,6 +41,9 @@ export function installSpeechInputs(
 ) {
   const controls = new Map<ChatInput, Controls>();
   let active: Capture | null = null;
+  let login: AbortController | null = null;
+  let loginStatus = "";
+  let loginFailed = false;
   let writing = false;
   let nextId = 0;
   const key = (input: ChatInput) => JSON.stringify([
@@ -56,17 +60,24 @@ export function installSpeechInputs(
     for (const control of controls.values()) {
       const capture = active?.controls === control ? active : null;
       control.toggle.disabled = !available(control.input) || Boolean(active && !capture)
-        || capture?.state === "stopping";
+        || capture?.state === "stopping" || Boolean(login);
+      control.signIn.disabled = !available(control.input) || Boolean(active || login);
+      control.signIn.textContent = login ? "Signing in..." : "Sign in with Microsoft";
       control.toggle.textContent = capture?.state === "starting" ? "Starting..."
         : capture?.state === "stopping" ? "Finishing..." : capture ? "Stop" : "Mic";
       control.toggle.setAttribute("aria-pressed", String(Boolean(capture)));
       control.toggle.setAttribute("aria-label", capture ? "Stop speech input" : "Start speech input");
-      control.cancel.hidden = !capture;
+      control.cancel.hidden = !capture && !login;
+      control.cancel.textContent = login ? "Cancel sign-in" : "Cancel";
+      control.cancel.setAttribute("aria-label", login ? "Cancel Microsoft sign-in" : "Cancel speech and restore draft");
       if (control.browserLink) control.browserLink.hidden = control.status.dataset.status !== "error";
       if (capture) {
         control.status.textContent = capture.state === "starting" ? "Connecting to Azure Speech..."
           : capture.state === "stopping" ? "Finishing transcript..." : "Listening... Stop to edit or send.";
         control.status.dataset.status = capture.state;
+      } else if (login) {
+        control.status.textContent = "Complete Microsoft sign-in in your browser, then return here. Your microphone is off.";
+        control.status.dataset.status = "starting";
       }
     }
   };
@@ -143,7 +154,7 @@ export function installSpeechInputs(
     }
   };
   const start = async (control: Controls) => {
-    if (active || !available(control.input) || control.input.readOnly) return;
+    if (active || login || !available(control.input) || control.input.readOnly) return;
     const input = control.input;
     const capture: Capture = {
       controls: control, key: key(input), baseline: input.value,
@@ -187,6 +198,43 @@ export function installSpeechInputs(
       );
     }
   };
+  const signIn = async (control: Controls) => {
+    if (active || login || !available(control.input)) return;
+    const controller = new AbortController();
+    login = controller;
+    loginFailed = false;
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, 190_000);
+    updateControls();
+    try {
+      const response = await fetch("/api/speech/sign-in", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Tandem-Speech": "1" },
+        body: "{}",
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      const result = await response.json();
+      if (!response.ok || result.authenticated !== true) {
+        throw new Error(result.error || "Microsoft sign-in was not confirmed. Please retry.");
+      }
+      controller.signal.throwIfAborted();
+      loginStatus = "Signed in to Microsoft. Select Mic when you are ready to speak.";
+    } catch (error) {
+      loginFailed = !controller.signal.aborted || timedOut;
+      loginStatus = timedOut ? "Microsoft sign-in timed out. Select Sign in with Microsoft to retry."
+        : controller.signal.aborted ? "Microsoft sign-in cancelled. Your draft is unchanged."
+        : error instanceof Error ? error.message : "Microsoft sign-in failed. Please retry.";
+    } finally {
+      clearTimeout(timer);
+      login = null;
+      for (const current of controls.values()) {
+        current.status.textContent = loginStatus;
+        current.status.dataset.status = loginFailed ? "error" : "idle";
+      }
+      updateControls();
+    }
+  };
   function attach(input: ChatInput): Controls {
     const bar = doc.createElement("div");
     bar.className = "speech-controls";
@@ -194,6 +242,11 @@ export function installSpeechInputs(
     toggle.type = "button";
     toggle.className = "speech-toggle";
     toggle.title = "Dictate with Azure Speech. Audio is sent to Azure; text is never sent as a message automatically.";
+    const signInButton = doc.createElement("button");
+    signInButton.type = "button";
+    signInButton.className = "speech-sign-in";
+    signInButton.textContent = "Sign in with Microsoft";
+    signInButton.title = "Open Microsoft sign-in in your browser. This does not turn on the microphone.";
     const cancelButton = doc.createElement("button");
     cancelButton.type = "button";
     cancelButton.className = "speech-cancel";
@@ -203,10 +256,12 @@ export function installSpeechInputs(
     status.id = "speech-status-" + ++nextId;
     status.setAttribute("role", "status");
     status.setAttribute("aria-live", "polite");
-    status.textContent = "Audio goes to Azure. You choose when to send.";
+    status.textContent = loginStatus || "Audio goes to Azure. You choose when to send.";
+    status.dataset.status = loginFailed ? "error" : "idle";
     toggle.setAttribute("aria-describedby", status.id);
+    signInButton.setAttribute("aria-describedby", status.id);
     cancelButton.setAttribute("aria-label", "Cancel speech and restore draft");
-    bar.append(toggle, cancelButton, status);
+    bar.append(toggle, signInButton, cancelButton, status);
     let browserLink: HTMLAnchorElement | undefined;
     if (doc.defaultView?.location?.href) {
       browserLink = doc.createElement("a");
@@ -218,13 +273,14 @@ export function installSpeechInputs(
       bar.append(browserLink);
     }
     input.after(bar);
-    const control = { input, bar, toggle, cancel: cancelButton, status, browserLink };
+    const control = { input, bar, toggle, signIn: signInButton, cancel: cancelButton, status, browserLink };
     controls.set(input, control);
     toggle.addEventListener("click", () => {
       if (active?.controls === control) void stop();
       else void start(control);
     });
-    cancelButton.addEventListener("click", () => cancel());
+    signInButton.addEventListener("click", () => { void signIn(control); });
+    cancelButton.addEventListener("click", () => { if (login) login.abort(); else cancel(); });
     return control;
   }
   function sync() {
@@ -251,6 +307,7 @@ export function installSpeechInputs(
     }
   }, true);
   doc.addEventListener("keydown", (event) => {
+    if (login && event.key === "Escape") { event.preventDefault(); login.abort(); }
     if (active && event.key === "Escape") { event.preventDefault(); cancel(); }
   }, true);
   doc.addEventListener("input", (event) => {
@@ -261,7 +318,7 @@ export function installSpeechInputs(
   doc.addEventListener("visibilitychange", () => {
     if (doc.visibilityState === "hidden") cancel("Speech cancelled while Tandem is hidden.");
   });
-  doc.defaultView?.addEventListener("pagehide", () => cancel());
+  doc.defaultView?.addEventListener("pagehide", () => { login?.abort(); cancel(); });
   sync();
   return {
     sync,

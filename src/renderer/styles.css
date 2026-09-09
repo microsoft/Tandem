@@ -2129,6 +2129,7 @@ h1 {
 .usage-form .speech-controls { grid-column: 1 / -1; grid-row: 2; }
 
 .speech-controls .speech-toggle,
+.speech-controls .speech-sign-in,
 .speech-controls .speech-cancel {
   padding: 5px 9px;
   border: 1px solid var(--border-color-default, #d0d7de);

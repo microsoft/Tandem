@@ -8,6 +8,7 @@ import {
     createSpeechTokenService,
     SpeechAuthError,
     type SpeechCredential,
+    type SpeechInteractiveCredential,
     validateSpeechTokenRequest,
 } from "../src/speech-auth.js";
 
@@ -16,6 +17,146 @@ const environment = { TANDEM_Speech__ResourceId: resourceId, TANDEM_Speech__Regi
 const timestamp = 1_800_000_000_000;
 const expectedOrigin = "http://127.0.0.1:43127";
 const token = { token: "fixture-access-token", expiresOnTimestamp: timestamp + 600_000 };
+
+function interactiveCredential(overrides: Partial<SpeechInteractiveCredential> = {}): SpeechInteractiveCredential {
+    return { authenticate: async () => token, getToken: async () => token, dispose: async () => {}, ...overrides };
+}
+
+test("browser sign-in is explicit, returns no token, and its selected account is reused without fallback", async () => {
+    let browserCreations = 0;
+    let defaultCalls = 0;
+    let requiresInteraction = false;
+    const service = createSpeechTokenService({
+        env: environment, now: () => timestamp,
+        createCredential: () => ({ getToken: async () => { defaultCalls++; return token; } }),
+        createInteractiveCredential: (options) => {
+            browserCreations++;
+            assert.equal(options.tenantId, "organizations");
+            assert.equal(options.clientId, undefined);
+            return interactiveCredential({
+                getToken: async () => {
+                    if (requiresInteraction) throw new Error("interaction_required sensitive details");
+                    return { ...token, token: "browser-token" };
+                },
+            });
+        },
+    });
+    await service();
+    assert.equal(browserCreations, 0);
+    const login = await service.signIn(new AbortController().signal);
+    assert.deepEqual(login, { authenticated: true });
+    assert.equal((await service()).authorizationToken, `aad#${resourceId}#browser-token`);
+    assert.equal(defaultCalls, 1);
+    requiresInteraction = true;
+    await assert.rejects(service(), /Sign in with Microsoft/);
+    assert.equal(defaultCalls, 1, "selected identity cannot silently fall back to another account");
+});
+
+test("parallel sign-in and mic requests are rejected while a browser login is pending", async () => {
+    let finish!: () => void;
+    let started!: () => void;
+    const ready = new Promise<void>((resolve) => { started = resolve; });
+    const service = createSpeechTokenService({
+        env: environment, now: () => timestamp,
+        createInteractiveCredential: () => interactiveCredential({
+            async authenticate() {
+                started();
+                await new Promise<void>((resolve) => { finish = resolve; });
+                return token;
+            },
+        }),
+    });
+    const login = service.signIn(new AbortController().signal);
+    await ready;
+    await assert.rejects(service.signIn(new AbortController().signal), errorWithStatus(409));
+    await assert.rejects(service(), errorWithStatus(409));
+    finish();
+    assert.deepEqual(await login, { authenticated: true });
+});
+
+test("browser sign-in cancellation disposes the candidate and keeps the previous account", async () => {
+    let count = 0;
+    let disposed = 0;
+    let begin!: () => void;
+    const begun = new Promise<void>((resolve) => { begin = resolve; });
+    const service = createSpeechTokenService({
+        env: environment, now: () => timestamp,
+        createInteractiveCredential: () => {
+            count++;
+            return count === 1 ? interactiveCredential() : interactiveCredential({
+                authenticate: (_scope, { abortSignal }) => new Promise((_resolve, reject) => {
+                    abortSignal.addEventListener("abort", () => reject(new Error("secret from cancelled login")));
+                    begin();
+                }),
+                dispose: async () => { disposed++; },
+            });
+        },
+    });
+    await service.signIn(new AbortController().signal);
+    const cancel = new AbortController();
+    const login = service.signIn(cancel.signal);
+    await begun;
+    cancel.abort();
+    await assert.rejects(login, (error) => {
+        errorWithStatus(409)(error);
+        assert.doesNotMatch((error as Error).message, /secret/);
+        return true;
+    });
+    assert.equal(disposed, 1);
+    assert.equal((await service()).authorizationToken, `aad#${resourceId}#${token.token}`);
+});
+
+test("browser login has a three-minute deadline and fails without success-shaped results", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    let started!: () => void;
+    const ready = new Promise<void>((resolve) => { started = resolve; });
+    let disposed = false;
+    const service = createSpeechTokenService({
+        env: environment,
+        createInteractiveCredential: () => interactiveCredential({
+            authenticate: (_scope, { abortSignal }) => new Promise((_resolve, reject) => {
+                abortSignal.addEventListener("abort", () => reject(new Error("deadline")));
+                started();
+            }),
+            dispose: async () => { disposed = true; },
+        }),
+    });
+    const failure = assert.rejects(service.signIn(new AbortController().signal), errorWithStatus(504));
+    await ready;
+    t.mock.timers.tick(180_000);
+    await failure;
+    assert.equal(disposed, true);
+});
+
+test("browser settings validate before opening and cancelled or failed login is safe to retry", async () => {
+    let opened = 0;
+    let disposed = 0;
+    const env = { ...environment, TANDEM_Speech__TenantId: "https://untrusted.example", TANDEM_Speech__ClientId: "" };
+    const service = createSpeechTokenService({
+        env, now: () => timestamp,
+        createInteractiveCredential: (options) => {
+            opened++;
+            assert.equal(options.tenantId, "11111111-1111-1111-1111-111111111111");
+            return interactiveCredential({
+                authenticate: async () => { if (opened === 1) throw new Error("raw-token-secret"); return token; },
+                dispose: async () => { disposed++; },
+            });
+        },
+    });
+    await assert.rejects(service.signIn(new AbortController().signal), errorWithStatus(503));
+    assert.equal(opened, 0);
+    env.TANDEM_Speech__TenantId = "11111111-1111-1111-1111-111111111111";
+    const aborted = new AbortController();
+    aborted.abort();
+    await assert.rejects(service.signIn(aborted.signal), errorWithStatus(409));
+    assert.equal(opened, 0);
+    await assert.rejects(service.signIn(new AbortController().signal), (error) => {
+        assert.doesNotMatch(JSON.stringify(error), /raw-token-secret/);
+        return true;
+    });
+    assert.equal(disposed, 1);
+    assert.deepEqual(await service.signIn(new AbortController().signal), { authenticated: true });
+});
 
 function request(headers: IncomingHttpHeaders = {}, method = "POST"): IncomingMessage {
     return {
@@ -64,7 +205,11 @@ test("the VM bundle loads Azure Identity only on demand", async () => {
             name: "fake-identity",
             setup(api) {
                 api.onResolve({ filter: /^@azure\/identity$/ }, () => ({ path: "identity", namespace: "fake" }));
-                api.onLoad({ filter: /.*/, namespace: "fake" }, () => ({
+                api.onResolve({ filter: /^\.\/speech-browser\.js$/ }, () => ({ path: "browser", namespace: "fake" }));
+                api.onLoad({ filter: /^browser$/, namespace: "fake" }, () => ({
+                    contents: "export const createBrowserSpeechCredential = () => { throw new Error('Browser must not open implicitly'); };",
+                }));
+                api.onLoad({ filter: /^identity$/, namespace: "fake" }, () => ({
                     contents: "export const { DefaultAzureCredential } = globalThis.loadIdentity();",
                 }));
             },

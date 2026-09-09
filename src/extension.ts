@@ -14,6 +14,11 @@ import {
     joinSession,
 } from "@github/copilot-sdk/extension";
 import { renderTandemHtml } from "./renderer.js";
+import { buildDecisionGraphMermaid } from "./decision-diagram.js";
+import {
+    curatedDefault, patchSemanticList, readDefaultBatch, reconciliationInput,
+    requirementsChangeSetSchema, requirementsInputDigest, validateChangeSet,
+} from "./requirements-reconciliation.js";
 import type { LifecycleStageId, LifecycleState, TandemState } from "./types.js";
 import { ProjectStore, ProjectStoreError, normalizeProjectId, readJsonFile, writeJsonAtomically } from "./project-store.js";
 import { jsonResult, type PreparationToken } from "./agent-runner.js";
@@ -93,6 +98,7 @@ const ANSWER_ACTIONS = new Set([
     "generate-dag",
     "answer-decision",
     "change-answer",
+    "apply-defaults",
     "submit-revision",
     "clarify-revision",
     "generate-design-spec",
@@ -104,6 +110,7 @@ const PROCESSING_MESSAGES = {
     "generate-dag": "Analyzing usages and building the dependency-aware requirements DAG.",
     "answer-decision": "Recording the answer and recomputing dependent decisions.",
     "change-answer": "Regenerating every downstream decision affected by this answer.",
+    "apply-defaults": "Reconciling the approved whole-graph defaults in one hidden job.",
     "submit-revision": "Reviewing the requested prototype behavior and interaction changes.",
     "clarify-revision": "Applying the clarification to the active prototype revision.",
     "generate-design-spec": "Synthesizing confirmed requirements and prototype evidence.",
@@ -1493,6 +1500,12 @@ function normalizeDecisionGraph(value, legacyQuestion = null) {
                     ? rawNode.answer.trim().slice(0, 4000)
                     : null,
             status: "toAnswer",
+            ...(isObject(rawNode.review) && typeof rawNode.review.reason === "string" ? {
+                review: {
+                    reason: rawNode.review.reason.slice(0, 1200),
+                    previousAnswer: typeof rawNode.review.previousAnswer === "string" ? rawNode.review.previousAnswer.slice(0, 4000) : null,
+                },
+            } : {}),
         });
     }
 
@@ -1567,6 +1580,12 @@ function generatedDecisionGraphError(
 ) {
     if (decisionGraph.nodes.length === 0) {
         return "The generated requirements DAG did not contain any decisions.";
+    }
+    if (decisionGraph.nodes.some((node) => node.id === USAGE_QUESTION_ID)) {
+        return "Usage intake is not a requirement decision. Generate the DAG from the collected usages without a usage-intake node.";
+    }
+    if (decisionGraph.nodes.some((node) => node.answer)) {
+        return "New requirements must be answered by the user, not by the worker.";
     }
     if (decisionGraph.nodes.some((node) => !node.question)) {
         return "Every generated requirements node must include a complete question.";
@@ -1648,6 +1667,27 @@ function invalidateDependentNodes(decisionGraph, changedNodeId) {
         }
     }
     return normalizeDecisionGraph({ nodes });
+}
+
+function deriveRequirementsState(state) {
+    if (state.lifecycle.currentStage !== "requirements" || state.requirements.substage !== "dag") return state;
+    const graph = normalizeDecisionGraph(state.decisionGraph);
+    const active = firstActiveQuestion(graph);
+    const remaining = graph.nodes.filter((node) => !node.answer).length;
+    const artifact = {
+        id: "design-tree", title: "Design tree", kind: "design-tree", stage: "requirements",
+        path: "", language: "mermaid", mermaid: buildDecisionGraphMermaid(graph.nodes).source,
+        content: active ? `Current decision: ${active.text}\n${remaining} decisions remain unanswered.`
+            : state.processing?.status === "running" ? "Requirements reconciliation is in progress."
+            : "All requirement decisions are answered. Complete Requirements explicitly when ready.",
+    };
+    return {
+        ...state, decisionGraph: graph, question: active,
+        confirmed: graph.nodes.filter((node) => node.answer).map((node) => `${node.title}: ${node.answer}`),
+        artifacts: graph.nodes.length ? [
+            ...state.artifacts.filter((item) => item.id !== "design-tree"), artifact,
+        ] : state.artifacts,
+    };
 }
 
 function normalizeLifecycle(value): LifecycleState {
@@ -1765,6 +1805,7 @@ function normalizeProcessing(value) {
             value.action === "change-answer"
                 ? normalizeDecisionGraph(value.originalDecisionGraph)
                 : null,
+        defaultBatch: value.defaultBatch == null ? null : readDefaultBatch(value.defaultBatch),
     };
 }
 
@@ -1822,7 +1863,7 @@ function normalizeStoredState(value, prototypeId): TandemState {
     const planning = normalizePlanning(value.planning);
     const designReview = normalizeDesignReview(value.designReview);
     const testDesignReview = normalizeDesignReview(value.testDesignReview);
-    return {
+    return deriveRequirementsState({
         ...createState(prototypeId),
         revision: value.revision ?? 0,
         generation: typeof value.generation === "string" && value.generation ? value.generation : `legacy-${prototypeId}`,
@@ -1869,7 +1910,7 @@ function normalizeStoredState(value, prototypeId): TandemState {
         ),
         reloadReceipt: normalizeReloadReceipt(value.reloadReceipt),
         updatedAt: String(value.updatedAt || new Date().toISOString()),
-    };
+    });
 }
 
 function normalizePreviewUrl(value, allowInvalidAsNull = false) {
@@ -1975,6 +2016,7 @@ async function loadState(prototypeId) {
 }
 
 async function persistState(state) {
+    Object.assign(state, deriveRequirementsState(state));
     state.process = normalizeProcessState(state.process);
     if (!hasActiveWork(state) && state.lifecycle.currentStage !== "prepare" &&
         !state.lifecycle.completedStages.includes(state.lifecycle.currentStage) &&
@@ -3201,6 +3243,9 @@ function stageCompletionError(
         return "Preparation completes automatically when its worker finishes.";
     }
     if (stageId === "requirements") {
+        if (state.processing?.action === "apply-defaults" && state.processing.status !== "success") {
+            return "Reconcile the saved whole-graph defaults successfully before completing Requirements.";
+        }
         if (state.prototypeApproach.mode === "undecided") {
             return "Resolve whether Prototype should build, validate, or be bypassed.";
         }
@@ -3429,6 +3474,24 @@ async function completeLifecycleStage(prototypeId, requestedStageId, extensionId
         );
     }
 
+    // A provider can reload after the worker binds its ID but before the launch
+    // receipt is observed. Verify that receipt with the SDK; never infer terminal
+    // ownership from a success badge or from the absence of an in-memory promise.
+    const snapshot = await loadState(prototypeId);
+    for (const receipt of snapshot.factoryRuns || []) {
+        if (receipt.terminal) continue;
+        if (snapshot.processing?.status === "error" && canRecoverDefaultBatch(snapshot) &&
+            receipt === defaultBatchReceipt(snapshot)) {
+            await recoverDefaultBatch(snapshot);
+            continue;
+        }
+        const runId = receipt.runId || (snapshot.processing?.requestId === receipt.requestId
+            ? snapshot.processing.runId : null);
+        if (!runId) continue;
+        const run = await session.factory.getRun(runId);
+        if (run.runId !== runId) throw new Error("The SDK returned a different factory run.");
+        await recordEffortFactoryReceipt(prototypeId, receipt.requestId, receipt.generation, run);
+    }
     const completed = await withAnswerClaim(prototypeId, async () => {
         const state = await loadState(prototypeId);
         if (hasActiveWork(state)) {
@@ -3766,8 +3829,8 @@ function recoverPrototypeCompletion(state, canSubmitAnswers) {
         .finally(() => activePrototypeCompletions.delete(state.prototypeId));
 }
 
-async function readRequestBody(req): Promise<Record<string, any>> {
-    return readJsonRequest(req, MAX_REQUEST_BYTES);
+async function readRequestBody(req, maxBytes = MAX_REQUEST_BYTES): Promise<Record<string, any>> {
+    return readJsonRequest(req, maxBytes);
 }
 
 function sendJson(res, statusCode, value) {
@@ -3852,6 +3915,30 @@ function factoryStateSnapshot(state) {
 }
 
 function answerFactoryPrompt(args) {
+    if (args.action === "apply-defaults") {
+        return [
+            "You are the hidden Requirements semantic reconciliation worker for one explicit whole-graph default batch.",
+            "Do not edit any files, open canvases, call other agents/factories, build a prototype, or advance/complete lifecycle stages.",
+            "Return only the typed change set. The host derives answers, statuses, the next eligible question, confirmed ledger, and design-tree.",
+            `Request ${args.requestId}; prototype ${args.prototypeId}.`,
+            "Frozen Requirements inputs (accepted existing answers are authoritative):",
+            JSON.stringify(args.state),
+            "User-approved snapshot defaults (exact displayed choices, not permission to choose new recommendations):",
+            JSON.stringify(args.defaultBatch),
+            "Reconcile ALL approved choices together in dependency order against usages, existing answers, and each other.",
+            "Do not skip semantic review just because every node has a recommended choice.",
+            "Return conflicts for incompatible, ambiguous, changed-meaning, or no-longer-applicable decisions, including conflicts with existing accepted answers.",
+            "Each conflict must include its node ID, a user-facing reason, and a replacement review question in questions.",
+            "Return only affected regenerated questions with the SAME node IDs. No topology edits, new decisions, answers, statuses, complete graph, ledger, artifacts, or diagrams.",
+            "For any missing decision/scope or necessary dependency change, raise a conflict on the affected existing node and ask explicitly rather than silently restructuring.",
+            "Any returned question (including a changed title) invalidates its decision and descendants, so omit unchanged questions.",
+            "Provide 3–5 distinct curated choices with an exact recommended choice or null and allowFreeText true. Never automatically accept regenerated choices.",
+            "Preserve independent decisions and human semantics. Patch assumptions/deferred only where necessary; no complete replacements.",
+            "prototypeApproach must be null unless the approved prototype-approach decision resolves or changes it.",
+            "If prototype-approach is conflicted or regenerated, return null: the host will require explicit review.",
+            "An empty change set means you have reviewed all frozen defaults and found them mutually compatible, not that review was skipped.",
+        ].join("\n");
+    }
     const actionInstructions = {
         "build-prototype": [
             args.state.prototypeApproach.mode === "validate-existing"
@@ -3878,6 +3965,10 @@ function answerFactoryPrompt(args) {
             "decision DAG from requirements.usageItems. Cover every listed usage while",
             "sharing common prerequisites. Give every node its complete question and",
             "choices now, including toAnswer nodes, so dependents can be regenerated.",
+            "This is a generation command, not an answer to a requirement. Set answer",
+            "to null on EVERY generated node. Never mark a node answered or treat the",
+            "usage list, recommendations, or generation command as confirmed decisions.",
+            "Do not copy the usage-intake question or node into the decision DAG.",
             "If prototypeApproach.mode is undecided, include an interface-validation",
             "decision with id prototype-approach whose choices map clearly to building",
             "a new GUI, validating an",
@@ -3947,7 +4038,9 @@ function answerFactoryPrompt(args) {
         "",
         ...actionInstructions[args.action],
         "",
-        "Treat the answer as an authoritative product decision. Update project files",
+        args.action === "generate-dag"
+            ? "Treat the usage list as scope for questions, not as answers to those questions. Update project files"
+            : "Treat the answer as an authoritative product decision. Update project files",
         "only when the decision requires a prototype change, following the existing",
         "stack and keeping production integrations, tests, and polish out of scope.",
         "Perform a targeted validation after code changes.",
@@ -3966,8 +4059,10 @@ function answerFactoryPrompt(args) {
         "",
         "Return prototypeReview matching the schema, including only the active revision",
         "and newly collected evidence. The extension preserves all earlier history.",
-        "Return the ledger and lifecycle state matching the",
-        "output schema. Return only changed or new artifacts in artifactChanges.upsert",
+        "The host derives Requirements statuses, next question, confirmed decisions, and design-tree.",
+        "During Requirements return confirmed as [] and question null; omit node status and do not generate a design-tree artifact.",
+        "Return semantic assumptions and deferred work matching the output schema.",
+        "Return only changed or new artifacts in artifactChanges.upsert",
         "and IDs intentionally removed in artifactChanges.remove; leave both arrays",
         "empty when artifacts are unchanged. Each upsert must contain the complete",
         "replacement artifact even when the input snapshot was marked as truncated.",
@@ -3985,25 +4080,18 @@ function answerFactoryPrompt(args) {
         "can submit it without entering text. Keep free text available for overrides.",
         "Return a complete decisionGraph whose nodes are the source of truth for question",
         "selection during Requirements only. Outside Requirements preserve it unchanged.",
-        "Never omit an existing node or invent an answer. Only the extension applies the submitted answer;",
+        args.action === "generate-dag"
+            ? "Generate new unanswered decisions; do not preserve an intake placeholder from the supplied state."
+            : "Never omit an existing node or invent an answer. Only the extension applies the submitted answer;",
         "independent and previously confirmed decisions must retain their IDs, answers, and prerequisites.",
-        "selection. Each node id is also its question id. dependencies contains parent",
-        "node ids that must be answered first. Include the submitted answer on its node.",
+        "Each node id is also its question id. dependencies contains parent",
+        "node ids that must be answered first.",
+        ["answer-decision", "change-answer"].includes(args.action)
+            ? "Include the submitted answer only on its matching decision node."
+            : "Do not turn this command into an answer on a decision node.",
         "A node with every dependency answered must include its question and curated",
         "choices so it can be promoted. Keep independent decisions as separate nodes.",
-        "Exactly one unanswered eligible node is active at a time; all other unanswered",
-        "nodes are toAnswer. Set question to the active node only; after it is answered,",
-        "promote the next eligible toAnswer node to active.",
-        "",
-        "During Requirements maintain a single artifact with id design-tree, title Design tree,",
-        "kind design-tree, stage requirements, and language mermaid. Model decisions as",
-        "a prerequisite DAG using flowchart LR: preserve answered branches, shared",
-        "prerequisites, the active decision, and known downstream decisions. Style nodes",
-        "with Mermaid classes answered, active, and toAnswer. Use solid green styling",
-        "for answered, solid blue styling for active, and amber styling for toAnswer.",
-        "Exactly one node may be active. Its content must briefly explain the user's",
-        "current location. Update this artifact after every answer, including when the",
-        "design is confirmed and implementation becomes current.",
+        "The host promotes the next eligible unanswered node and renders its prerequisite DAG locally.",
     ].join("\n");
 }
 
@@ -4110,6 +4198,8 @@ async function recordFactoryRunId(
 
         const next = {
             ...current,
+            factoryRuns: (current.factoryRuns || []).map((receipt) =>
+                receipt.requestId === requestId && !receipt.runId ? { ...receipt, runId } : receipt),
             processing: {
                 ...current.processing,
                 factoryName,
@@ -4147,6 +4237,73 @@ async function applyFactoryResult(prototypeId, requestId, run) {
         }
 
         const result = run.result;
+        if (current.processing.action === "apply-defaults") {
+            const batch = readDefaultBatch(current.processing.defaultBatch);
+            if (batch.generation !== current.generation || batch.revision >= current.revision ||
+                batch.inputDigest !== requirementsInputDigest(current)) {
+                throw new Error("The frozen requirements inputs changed. Review the graph and submit a new default batch.");
+            }
+            const changes = validateChangeSet(result, current.decisionGraph);
+            let graph = normalizeDecisionGraph(current.decisionGraph);
+            const roots = new Set(changes.questions.map((entry) => entry.nodeId));
+            const affected = new Set<string>();
+            for (const id of roots) {
+                affected.add(id);
+                for (const child of dependentNodeIds(graph, id)) affected.add(String(child));
+                graph = invalidateDependentNodes(graph, id);
+            }
+            const defaults = new Map(batch.defaults.map((entry) => [entry.nodeId, entry.answer]));
+            for (const node of graph.nodes) {
+                const old = current.decisionGraph.nodes.find((entry) => entry.id === node.id);
+                const replacement = changes.questions.find((entry) => entry.nodeId === node.id);
+                if (affected.has(node.id)) {
+                    node.answer = null;
+                    node.review = {
+                        reason: changes.conflicts.find((entry) => entry.nodeId === node.id)?.reason ||
+                            (roots.has(node.id) ? "This decision changed during reconciliation. Review the new question."
+                                : "An upstream decision needs review. Reconfirm this dependent decision afterwards."),
+                        previousAnswer: old.answer || defaults.get(node.id) || old.review?.previousAnswer || null,
+                    };
+                    if (replacement) {
+                        node.title = replacement.title;
+                        node.question = normalizeQuestion(replacement.question);
+                    }
+                } else if (defaults.has(node.id)) {
+                    if (old.answer || curatedDefault(old.question) !== defaults.get(node.id)) {
+                        throw new Error(`The approved default for "${node.id}" no longer matches its question.`);
+                    }
+                    node.answer = defaults.get(node.id);
+                    node.review = null;
+                }
+            }
+            let prototypeApproach = current.prototypeApproach;
+            if (affected.has("prototype-approach")) {
+                if (changes.prototypeApproach) throw new Error("An unresolved prototype approach cannot be accepted.");
+                prototypeApproach = { mode: "undecided", reason: "Review the affected interface-validation decision." };
+            } else if (defaults.has("prototype-approach")) {
+                if (!changes.prototypeApproach) throw new Error("Reconciliation must resolve the approved prototype-approach default.");
+                prototypeApproach = changes.prototypeApproach;
+            } else if (changes.prototypeApproach) {
+                throw new Error("Reconciliation cannot change an unsubmitted prototype approach.");
+            }
+            const completedAt = new Date().toISOString();
+            await persistState({
+                ...current, decisionGraph: normalizeDecisionGraph(graph), prototypeApproach,
+                assumed: patchSemanticList(current.assumed, changes.assumptions),
+                deferred: patchSemanticList(current.deferred, changes.deferred),
+                artifacts: affected.size ? invalidateArtifacts(current.artifacts, "requirements") : current.artifacts,
+                status: affected.size
+                    ? `Whole-graph defaults reconciled; ${affected.size} affected decisions require explicit review.`
+                    : "Whole-graph defaults reconciled. Requirements are ready for explicit completion.",
+                processing: { ...current.processing, status: "success", completedAt, question: null, answer: null,
+                    message: affected.size ? "Reconciliation found decisions requiring review." : "Whole-graph defaults reconciled in one hidden job." },
+                factoryRuns: (current.factoryRuns || []).map((receipt) => receipt.requestId === requestId &&
+                    (!receipt.runId || receipt.runId === run.runId) ? { ...receipt, runId: run.runId, terminal: true } : receipt),
+                updatedAt: completedAt,
+            });
+            publishState(prototypeId);
+            return;
+        }
         const previewUrl = normalizePreviewUrl(result.previewUrl);
         if (previewUrl && previewUrl !== current.previewUrl) {
             await verifyPreviewIdentity(previewUrl, prototypeId);
@@ -4177,9 +4334,6 @@ async function applyFactoryResult(prototypeId, requestId, run) {
                 current.prototypeApproach.mode === "undecided",
             );
             if (graphError) throw new Error(graphError);
-            if (decisionGraph.nodes.some((node) => node.answer)) {
-                throw new Error("New requirements must be answered by the user, not by the worker.");
-            }
         }
         const answeredQuestionId = current.processing.question?.id;
         if (
@@ -4193,6 +4347,10 @@ async function applyFactoryResult(prototypeId, requestId, run) {
                 current.processing.answer,
                 action === "change-answer",
             ));
+            for (const node of decisionGraph.nodes) {
+                if (node.answer) node.review = null;
+                else if (!node.review) node.review = current.decisionGraph.nodes.find((old) => old.id === node.id)?.review;
+            }
         }
         let requirements = normalizeRequirements(
             result.requirements,
@@ -4345,6 +4503,8 @@ async function applyFactoryResult(prototypeId, requestId, run) {
         }
         const next = {
             ...current,
+            factoryRuns: (current.factoryRuns || []).map((receipt) => receipt.requestId === requestId &&
+                (!receipt.runId || receipt.runId === run.runId) ? { ...receipt, runId: run.runId, terminal: true } : receipt),
             goal: current.goal,
             phase: action === "build-prototype" ? "iterating" : phase,
             status:
@@ -4474,7 +4634,8 @@ async function settleAnswerRun(prototypeId, requestId, run) {
     if (!isFactoryRunTerminal(terminalRun.status)) {
         terminalRun = await waitForEffortRun(prototypeId, terminalRun.runId);
     }
-    if (terminalRun.status === "halted") {
+    if (terminalRun.status === "halted" &&
+        (await loadState(prototypeId)).processing?.action !== "apply-defaults") {
         terminalRun = await resumeHaltedRun(prototypeId, terminalRun.runId);
     }
     await applyFactoryResult(prototypeId, requestId, terminalRun);
@@ -4572,8 +4733,14 @@ async function runAnswerFactory(
             question,
             answer,
             action,
-            state: factoryStateSnapshot(state),
+            state: action === "apply-defaults" ? {
+                ...reconciliationInput(state), generation: state.generation, revision: state.revision,
+            } : factoryStateSnapshot(state),
+            ...(action === "apply-defaults" ? { defaultBatch: state.processing.defaultBatch } : {}),
         },
+        ...(action === "apply-defaults" ? {
+            limits: { maxConcurrentSubagents: 1, maxTotalSubagents: 1, timeoutSeconds: 300, maxAiCredits: 128 },
+        } : {}),
     });
     const currentRequest = await recordFactoryRunId(
         prototypeId,
@@ -4591,14 +4758,102 @@ async function runAnswerFactory(
     await settleAnswerRun(prototypeId, requestId, run);
 }
 
+function defaultBatchReceipt(state) {
+    return (state.factoryRuns || []).find((receipt) =>
+        receipt.requestId === state.processing?.requestId && receipt.generation === state.generation);
+}
+
+function canRecoverDefaultBatch(state) {
+    return state.processing?.action === "apply-defaults" && Boolean(defaultBatchReceipt(state)) &&
+        (state.processing.status === "running" ||
+            (state.processing.status === "error" && !defaultBatchReceipt(state).terminal));
+}
+
+function assertDefaultBatchRecovery(current, observed, runId = null) {
+    const processing = current.processing;
+    const receipt = defaultBatchReceipt(current);
+    const batch = readDefaultBatch(processing?.defaultBatch);
+    const owner = { sessionId: session.sessionId, workspaceRoot: WORKSPACE_ROOT };
+    if (current.effortReset || current.lifecycle.currentStage !== "requirements" ||
+        current.requirements.substage !== "dag" || !sameOwner(observed.jobOwner, owner) ||
+        (current.jobOwner && !sameOwner(current.jobOwner, owner)) ||
+        current.generation !== observed.generation || processing?.action !== "apply-defaults" ||
+        !["running", "error"].includes(processing.status) ||
+        processing.requestId !== observed.processing.requestId ||
+        processing.factoryName !== observed.processing.factoryName || !receipt ||
+        JSON.stringify(batch) !== JSON.stringify(readDefaultBatch(observed.processing.defaultBatch)) ||
+        batch.generation !== current.generation || batch.revision >= current.revision ||
+        batch.inputDigest !== requirementsInputDigest(current) ||
+        (receipt.runId && processing.runId && receipt.runId !== processing.runId) ||
+        (runId && ((receipt.runId && receipt.runId !== runId) || (processing.runId && processing.runId !== runId)))) {
+        throw new AnswerRequestError(409, "The previous default batch no longer owns these frozen requirements inputs.");
+    }
+    return receipt;
+}
+
+async function recoverDefaultBatch(state, monitor = false, expectedRevision = undefined) {
+    const receipt = assertDefaultBatchRecovery(state, state);
+    const runId = state.processing.runId || receipt.runId;
+    let run;
+    try {
+        run = runId ? await session.factory.getRun(runId)
+            : await findAnswerFactoryRun(state.prototypeId, state.processing, { attempts: monitor ? 5 : 1, observe: false });
+        if (!run?.runId || (runId && run.runId !== runId)) {
+            throw new Error("The durable factory run could not be correlated.");
+        }
+    } catch (error) {
+        throw new AnswerRequestError(409, `The previous default batch could not be verified with the SDK: ${error.message}`);
+    }
+    const recoveredRunId = run.runId;
+    const settle = async (observedRun, revision = undefined) => withAnswerClaim(state.prototypeId, async () => {
+        const current = await loadState(state.prototypeId);
+        if (revision !== undefined && current.revision !== revision) {
+            throw new AnswerRequestError(409, "The graph snapshot is stale. Review the current whole-graph defaults and retry.");
+        }
+        if (observedRun?.runId !== recoveredRunId) throw new Error("The SDK returned a different factory run.");
+        const currentReceipt = assertDefaultBatchRecovery(current, state, recoveredRunId);
+        const terminal = isFactoryRunTerminal(observedRun.status);
+        if (terminal || !current.processing.runId || !currentReceipt.runId) {
+            await persistState({
+                ...current,
+                processing: { ...current.processing, runId: recoveredRunId,
+                    status: terminal ? "running" : current.processing.status },
+                factoryRuns: current.factoryRuns.map((item) => item === currentReceipt
+                    ? { ...item, runId: recoveredRunId, terminal } : item),
+            });
+        }
+        if (terminal) {
+            // Reuse the normal result/failure guards, atomically with the verified
+            // receipt. No worker or long SDK wait runs while holding this claim.
+            try {
+                await applyFactoryResult(state.prototypeId, state.processing.requestId, observedRun);
+            } catch (error) {
+                await recordFactoryFailure(state.prototypeId, state.processing.requestId, error);
+            }
+        }
+        return loadState(state.prototypeId);
+    });
+    let recovered = await settle(run, expectedRevision);
+    if (monitor && !isFactoryRunTerminal(run.status)) {
+        run = await session.factory.waitForRun(recoveredRunId);
+        recovered = await settle(run);
+    }
+    return recovered;
+}
+
 function recoverAnswerFactory(state, canSubmitAnswers) {
     const processing = state.processing;
     if (
         !canSubmitAnswers ||
         state.effortReset ||
-        processing?.status !== "running" ||
+        (processing?.status !== "running" && !canRecoverDefaultBatch(state)) ||
         activeAnswerRuns.has(state.prototypeId)
     ) {
+        return;
+    }
+
+    if (processing.action === "apply-defaults") {
+        trackAnswerRun(state.prototypeId, processing.requestId, recoverDefaultBatch(state, true));
         return;
     }
 
@@ -4622,6 +4877,7 @@ function recoverAnswerFactory(state, canSubmitAnswers) {
                         factoryErrorCode(error),
                     ) &&
                     currentProcessing.factoryName !== ANSWER_FACTORY_NAME &&
+                    currentProcessing.action !== "apply-defaults" &&
                     currentProcessing.question &&
                     currentProcessing.answer
                 ) {
@@ -4658,6 +4914,9 @@ function recoverAnswerFactory(state, canSubmitAnswers) {
                 run = await waitForEffortRun(state.prototypeId, run.runId);
             }
             if (["halted", "cancelled"].includes(run.status)) {
+                if (currentProcessing.action === "apply-defaults") {
+                    throw new Error("The prior default reconciliation stopped. Retry the saved whole-graph batch explicitly.");
+                }
                 if (!currentProcessing.question || !currentProcessing.answer) {
                     throw new Error(
                         "The prior provider stopped before its hidden run could be resumed.",
@@ -4684,12 +4943,12 @@ function recoverAnswerFactory(state, canSubmitAnswers) {
     trackAnswerRun(state.prototypeId, processing.requestId, work);
 }
 
-async function findAnswerFactoryRun(prototypeId, processing) {
+async function findAnswerFactoryRun(prototypeId, processing, { attempts = 5, observe = true } = {}) {
     const requestedAt = Date.parse(processing.requestedAt);
     if (!Number.isFinite(requestedAt)) return null;
 
     const marker = `Request ${processing.requestId};`;
-    for (let attempt = 0; attempt < 5; attempt += 1) {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
         const runs = await session.factory.listRuns();
         const candidates = runs.filter(
             (run) =>
@@ -4703,10 +4962,13 @@ async function findAnswerFactoryRun(prototypeId, processing) {
                 { limit: 500 },
             );
             if (progress.records.some((record) => record.text.includes(marker))) {
-                return getEffortRun(prototypeId, candidate.runId);
+                const run = observe ? await getEffortRun(prototypeId, candidate.runId)
+                    : await session.factory.getRun(candidate.runId);
+                if (run.runId !== candidate.runId) throw new Error("The SDK returned a different factory run.");
+                return run;
             }
         }
-        await new Promise((resolve) => setTimeout(resolve, 1_000));
+        if (attempt + 1 < attempts) await new Promise((resolve) => setTimeout(resolve, 1_000));
     }
     return null;
 }
@@ -7801,7 +8063,7 @@ async function beginPrototypeCompletion(entry, res) {
 async function submitAnswer(entry, req, res) {
     let body;
     try {
-        body = await readRequestBody(req);
+        body = await readRequestBody(req, 256 * 1024);
     } catch (error) {
         sendJson(res, 400, {
             error: error instanceof Error ? error.message : "Invalid request.",
@@ -7813,7 +8075,7 @@ async function submitAnswer(entry, req, res) {
     const answer = String(body.answer || "").trim().slice(0, 4000);
     const requestedAction = String(body.action || "").trim();
 
-    if (!answer) {
+    if (!answer && requestedAction !== "apply-defaults") {
         sendJson(res, 400, { error: "Choose or enter an answer." });
         return;
     }
@@ -7828,9 +8090,119 @@ async function submitAnswer(entry, req, res) {
         });
         return;
     }
+    if (requestedAction === "apply-defaults") {
+        await submitDefaultBatch(entry, body, res);
+        return;
+    }
     if (requestedAction === "add-usage") {
         await submitUsage(entry, answer, res);
         return;
+    }
+
+    async function submitDefaultBatch(entry, body, res) {
+        let accepted;
+        try {
+            const allowed = ["action", "expectedRevision", "generation", "defaults", "retryRequestId"];
+            if (Object.keys(body).some((key) => !allowed.includes(key)) ||
+                !Number.isSafeInteger(body.expectedRevision) || typeof body.generation !== "string") {
+                throw new AnswerRequestError(400, "Whole-graph defaults require a revision and generation snapshot.");
+            }
+            const submission = await withAnswerClaim(entry.prototypeId, async () => {
+                const state = await loadState(entry.prototypeId);
+                if (state.lifecycle.currentStage !== "requirements" || state.requirements.substage !== "dag") {
+                    throw new AnswerRequestError(409, "Whole-graph defaults are only available for the Requirements DAG.");
+                }
+                if (state.revision !== body.expectedRevision || state.generation !== body.generation) {
+                    throw new AnswerRequestError(409, "The graph snapshot is stale. Review the current whole-graph defaults and retry.");
+                }
+                let batch;
+                if (body.retryRequestId !== undefined) {
+                    if (body.defaults !== undefined || state.processing?.action !== "apply-defaults" ||
+                        state.processing.status !== "error" || state.processing.requestId !== body.retryRequestId) {
+                        throw new AnswerRequestError(409, "This failed default batch is no longer available to retry.");
+                    }
+                    batch = readDefaultBatch(state.processing.defaultBatch);
+                    if (batch.generation !== state.generation || batch.inputDigest !== requirementsInputDigest(state)) {
+                        throw new AnswerRequestError(409, "The failed batch inputs changed. Review and approve a new whole-graph snapshot.");
+                    }
+                } else {
+                    const unanswered = state.decisionGraph.nodes.filter((node) => !node.answer);
+                    for (const node of unanswered) {
+                        if (!curatedDefault(node.question)) {
+                            throw new AnswerRequestError(409, `"${node.title}" has no curated recommended choice. Answer it explicitly first.`);
+                        }
+                    }
+                    try {
+                        batch = readDefaultBatch({
+                            version: 1, generation: state.generation, revision: state.revision,
+                            inputDigest: requirementsInputDigest(state), defaults: body.defaults,
+                        });
+                    } catch (error) {
+                        throw new AnswerRequestError(400, error.message);
+                    }
+                    if (!unanswered.length || unanswered.length !== batch.defaults.length) {
+                        throw new AnswerRequestError(409, "Approve exactly all current unanswered whole-graph recommendations.");
+                    }
+                    for (const node of unanswered) {
+                        const recommended = curatedDefault(node.question);
+                        if (!batch.defaults.some((item) => item.nodeId === node.id && item.answer === recommended)) {
+                            throw new AnswerRequestError(409, `The displayed recommendation for "${node.title}" changed. Review the graph and retry.`);
+                        }
+                    }
+                }
+                return { state, batch };
+            }, true);
+            let checked = submission.state;
+            let recovered = false;
+            if (checked.processing?.status === "error" && canRecoverDefaultBatch(checked) &&
+                !activeAnswerRuns.has(entry.prototypeId)) {
+                checked = await recoverDefaultBatch(checked, false, body.expectedRevision);
+                recovered = checked.processing.status === "success";
+            }
+            accepted = await withAnswerClaim(entry.prototypeId, async () => {
+                const state = await loadState(entry.prototypeId);
+                // Only our verified receipt/result bookkeeping may advance the
+                // submitted revision. Any intervening edit still invalidates it.
+                if (state.revision !== checked.revision || state.generation !== body.generation) {
+                    throw new AnswerRequestError(409, "The graph snapshot is stale. Review the current whole-graph defaults and retry.");
+                }
+                if (hasActiveWork(state) || activeAnswerRuns.has(entry.prototypeId)) {
+                    throw new AnswerRequestError(409, "A previous request is still being processed.");
+                }
+                if (recovered) return { recovered: true, requestId: state.processing.requestId };
+                const batch = submission.batch;
+                if (batch.inputDigest !== requirementsInputDigest(state)) {
+                    throw new AnswerRequestError(409, "The failed batch inputs changed. Review and approve a new whole-graph snapshot.");
+                }
+                const requestedAt = new Date().toISOString();
+                const requestId = randomUUID();
+                const question = { id: "whole-graph-defaults", text: "Reconcile the approved whole-graph defaults." };
+                const pending = {
+                    ...state,
+                    status: "Whole-graph defaults saved; awaiting semantic reconciliation before accepting answers.",
+                    processing: {
+                        status: "running", action: "apply-defaults", requestId, runId: null,
+                        factoryName: ANSWER_FACTORY_NAME, question, answer: "Apply only the frozen whole-graph defaults.",
+                        defaultBatch: batch, requestedAt, completedAt: null,
+                        message: PROCESSING_MESSAGES["apply-defaults"],
+                    },
+                    updatedAt: requestedAt,
+                };
+                await persistState(pending);
+                publishState(entry.prototypeId);
+                return { pending, question, requestId };
+            }, true);
+        } catch (error) {
+            if (error instanceof AnswerRequestError) {
+                sendJson(res, error.statusCode, { error: error.message });
+                return;
+            }
+            throw error;
+        }
+        sendJson(res, 202, { accepted: true, requestId: accepted.requestId });
+        if (accepted.recovered) return;
+        startAnswerFactory(entry.prototypeId, accepted.requestId, accepted.question,
+            accepted.pending.processing.answer, "apply-defaults", accepted.pending);
     }
     if (requestedAction === "clarify-revision") {
         await submitRevisionClarification(entry, questionId, answer, res);
@@ -7849,7 +8221,7 @@ async function submitAnswer(entry, req, res) {
             }
             const decisionGraph = normalizeDecisionGraph(
                 state.decisionGraph,
-                state.question,
+                state.requirements.substage === "usage" ? null : state.question,
             );
             const decisionNode = decisionGraph.nodes.find(
                 (node) => node.id === questionId,
@@ -7903,7 +8275,9 @@ async function submitAnswer(entry, req, res) {
             const requestedAt = new Date().toISOString();
             const requestId = randomUUID();
             const pendingDecisionGraph =
-                action === "change-answer"
+                action === "generate-dag"
+                    ? { nodes: [] }
+                    : action === "change-answer"
                     ? invalidateDependentNodes(decisionGraph, questionId)
                     : decisionGraph;
             const pending = {
@@ -9202,7 +9576,7 @@ async function handleRequest(entry, req, res) {
         return;
     }
 
-    if (requestUrl.pathname === "/api/speech/token") {
+    if (["/api/speech/token", "/api/speech/sign-in"].includes(requestUrl.pathname)) {
         validateSpeechTokenRequest(req, new URL(entry.url).origin);
         const body = await readRequestBody(req);
         if (Object.keys(body).length) {
@@ -9216,7 +9590,19 @@ async function handleRequest(entry, req, res) {
             sendJson(res, 409, { error: "Open the writable Tandem provider in the session that owns this effort to use speech input." });
             return;
         }
-        sendJson(res, 200, await speechTokens());
+        if (requestUrl.pathname === "/api/speech/sign-in") {
+            const controller = new AbortController();
+            const disconnected = () => { if (!res.writableEnded) controller.abort(); };
+            res.on("close", disconnected);
+            try {
+                const result = await speechTokens.signIn(controller.signal);
+                if (!res.destroyed) sendJson(res, 200, result);
+            } finally {
+                res.off("close", disconnected);
+            }
+        } else {
+            sendJson(res, 200, await speechTokens());
+        }
         return;
     }
 
@@ -10968,7 +11354,7 @@ const answerFactory = defineFactory({
     meta: {
         name: ANSWER_FACTORY_NAME,
         description:
-            "Process one Tandem answer in a hidden agent and return the complete next Tandem state.",
+            "Process one Tandem request; whole-graph defaults return only a focused Requirements change set.",
         phases: [
             {
                 title: "Interpret decision",
@@ -11001,6 +11387,7 @@ const answerFactory = defineFactory({
                         "generate-dag",
                         "answer-decision",
                         "change-answer",
+                        "apply-defaults",
                         "submit-revision",
                         "clarify-revision",
                         "generate-design-spec",
@@ -11008,6 +11395,7 @@ const answerFactory = defineFactory({
                     ],
                 },
                 state: { type: "object" },
+                defaultBatch: { type: "object" },
             },
             required: [
                 "prototypeId",
@@ -11057,19 +11445,38 @@ const answerFactory = defineFactory({
         ))) {
             throw new Error("This answer job no longer owns the current project inputs. Retry it from Tandem.");
         }
+        if (args.action === "apply-defaults") {
+            const batch = readDefaultBatch(args.defaultBatch);
+            const current = await loadState(args.prototypeId);
+            if (batch.generation !== args.state.generation || batch.inputDigest !== requirementsInputDigest(args.state as any) ||
+                batch.inputDigest !== requirementsInputDigest(current) ||
+                JSON.stringify(batch) !== JSON.stringify(current.processing.defaultBatch)) {
+                throw new Error("The default batch no longer owns its frozen Requirements inputs.");
+            }
+        }
         const result: any = await ctx.step("process-answer", () =>
             ctx.agent(answerFactoryPrompt(args), {
-                label: "Process Tandem answer",
-                schema: answerFactoryOutputSchema,
+                label: args.action === "apply-defaults" ? "Reconcile whole-graph defaults" : "Process Tandem answer",
+                schema: args.action === "apply-defaults" ? requirementsChangeSetSchema : answerFactoryOutputSchema,
                 reasoningEffort: "medium",
             }) as Promise<any>,
         );
         if (!isObject(result)) {
             throw new Error("The hidden agent returned an invalid Tandem update.");
         }
+        if (args.action === "apply-defaults") {
+            validateChangeSet(result, args.state.decisionGraph);
+        }
+        if (args.action === "generate-dag") {
+            const graphError = generatedDecisionGraphError(
+                normalizeDecisionGraph(result.decisionGraph, result.question),
+                args.state.prototypeApproach?.mode === "undecided",
+            );
+            if (graphError) throw new Error(graphError);
+        }
 
         ctx.phase("Return Tandem update");
-        ctx.log("Returning the complete Tandem state.");
+        ctx.log(args.action === "apply-defaults" ? "Returning the focused Requirements change set." : "Returning the Tandem update.");
         return result;
     },
 });

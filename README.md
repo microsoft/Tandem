@@ -83,12 +83,52 @@ If startup fails, use the prototype retry control; building messages reflect
 the active job rather than simulated milestones. Requirements remain usable
 when diagram rendering is unavailable.
 
+Generating the requirements DAG keeps your usage list until Tandem accepts a
+valid, unanswered graph. An accepted graph opens Requirements and focuses its
+first decision. If generation fails, the usage panel shows the actual error and
+**Retry requirements DAG** instead of remaining on **Generating DAG...**.
+Worker completion alone does not mean the DAG was accepted.
+
+**Use whole-graph defaults** replaces the sequential **All as Recommended** loop.
+The confirmation lists the exact current recommendations for **all unanswered
+nodes**, including dependent decisions. Tandem saves this approval atomically with
+the effort generation and snapshot revision, then runs one semantic reconciliation
+job (one subagent, at most 300 seconds and 128 AI credits). A stale snapshot,
+duplicate click, or missing/non-curated recommendation cannot start a second job.
+**Use this answer** still answers only the selected question.
+
+The worker checks the frozen defaults together against existing answers and
+returns only conflicts, affected replacement questions, assumption/deferred
+patches, and the prototype approach when relevant—not a complete state, ledger,
+or diagram. Tandem validates that change set and locally derives node statuses,
+the next eligible question, Confirmed, and the shared Design tree rendering.
+Unchanged accepted answers and unrelated artifacts are retained. Changed or
+conflicting decisions and their descendants become unresolved with the prior
+selection and reason visible; unseen recommendations are never auto-selected.
+Topology changes require explicit review rather than automatic restructuring.
+
+Saved defaults are not accepted answers until reconciliation succeeds. A failed
+worker exposes **Retry whole-graph defaults**, which reuses the exact saved
+approval if its inputs still match. Reload reconnects to the durable run rather
+than dispatching another batch. **Review current whole-graph defaults** offers a
+new confirmation if the failed batch's semantic inputs changed. Requirements completion checks outstanding run
+receipts against the SDK, so a terminal applied result is not blocked by an
+unobserved receipt; genuinely active or unidentified workers still block.
+Batch reconciliation never completes Requirements or builds a prototype. The
+existing explicit **Finish Requirements** behavior above is unchanged.
+
+Regression tests prove a single factory/subagent call and a compatible change set
+under 200 response characters. These are protocol/count checks with a mock worker,
+not measured end-to-end latency or credit savings.
+
 ## Speech input
 
 Every conversational input has a **Mic** control: project goals, usages,
 requirement answers, prototype revisions and clarifications, artifact reviews
 (including test design), plan revisions, and implementation strategy adjustments.
-Click **Mic**, allow microphone access, and speak naturally. Partial text updates
+Select **Sign in with Microsoft** to open your default browser, choose your work
+account, and complete any MFA prompt. Return to Tandem after it confirms sign-in,
+then click **Mic**, allow microphone access, and speak naturally. Partial text updates
 in place; **Stop** finishes the recognized text so you can edit and send it.
 **Cancel** or Escape restores the original draft. Recording never sends a message
 or starts an agent. One input can record at a time, for up to two minutes.
@@ -103,14 +143,31 @@ Copilot so the extension inherits them:
 $env:TANDEM_Speech__ResourceId = "/subscriptions/<subscription-id>/resourceGroups/<group>/providers/Microsoft.CognitiveServices/accounts/<speech-resource>"
 $env:TANDEM_Speech__Region = "eastus"
 $env:TANDEM_Speech__Language = "en-US" # Optional; defaults to en-US
-az login
 ```
 
 Use an Azure Speech resource and grant the signed-in identity the **Cognitive
-Services Speech User** role on that resource. The extension uses
-`DefaultAzureCredential`; local development can use Azure CLI sign-in, and hosted
-environments can use a configured managed identity. No keys are needed. Shell-only
-environment changes apply only to applications launched from that shell.
+Services Speech User** role on that resource. **Browser sign-in requires neither
+Azure CLI nor an API key.** It uses Azure Identity's `InteractiveBrowserCredential`
+with PKCE and a local loopback callback. Browser sign-in has a three-minute limit;
+**Cancel sign-in** or Escape stops the local listener. Switching to the browser
+does not cancel sign-in. It never starts the microphone or sends your draft.
+
+The selected account and token cache are memory-only for this extension session;
+sign in again after restarting or reloading the extension. Selecting **Sign in
+with Microsoft** again lets you change accounts. Failed or cancelled sign-in
+does not replace an already selected account. Once a browser account is selected,
+Tandem does not silently switch to another identity if its tokens expire.
+Before browser sign-in, existing `DefaultAzureCredential` sources (such as
+`az login` or a managed identity) remain supported.
+
+For local development, the browser flow uses Azure Identity's development
+application. If your organization's policies require an approved app, set
+`TANDEM_Speech__TenantId` and `TANDEM_Speech__ClientId` to its tenant and client
+GUIDs. Register it as a public desktop client with the `http://localhost` redirect
+URI and the required Azure Cognitive Services delegated permissions/consent.
+Use an organization-owned application for production distribution. No client
+secret is used. Shell-only environment changes apply only to applications
+launched from that shell.
 
 **Microphone audio is sent to Azure for transcription.** Tandem does not save
 audio, recognition history, or credentials; unsent text stays in the current
@@ -301,6 +358,10 @@ The maintainable source is under `src/`. The renderer is separated by concern:
 - `src/execution.ts` owns execution identity and evidence fingerprints.
 - `src/scheduling.ts` owns dependency normalization and conflict-safe scheduling.
 - `src/canvas-transport.ts` owns bounded JSON requests and responses.
+- `src/requirements-reconciliation.ts` owns the frozen default-batch contract,
+  strict semantic change-set validation, and Requirements input freshness digest.
+- `src/decision-diagram.ts` shares deterministic DAG rendering between persistence
+  and the canvas; Requirements normalization derives status and Confirmed locally.
 - `src/accepted-artifacts.ts` owns immutable acceptance and explicit exports.
 - `src/process-state.ts` owns process settings, receipts, and gate events.
 - `src/worker-contracts.ts` binds skills and checks actual ownership.

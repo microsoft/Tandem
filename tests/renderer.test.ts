@@ -292,6 +292,92 @@ test("requirements remain answerable and selectable without Mermaid", async () =
     assert.equal(h.api.elements.decisionList.hidden, false);
 });
 
+test("a rejected DAG stops showing generation, keeps usages, and exposes a retry", async () => {
+    const h = await rendererHarness();
+    const value = state();
+    value.requirements.usageItems = ["I want to explore a model."];
+    value.processing = { action: "generate-dag", requestId: "dag-request", status: "running" };
+    h.api.renderIfChanged(value);
+    assert.equal(h.api.elements.generateDag.textContent, "Generating DAG...");
+    assert.equal(h.api.elements.generateDag.disabled, true);
+    const failed = { ...value, revision: 2, processing: { ...value.processing, status: "error",
+        message: "New requirements must be answered by the user, not by the worker." } };
+    h.api.renderIfChanged(failed);
+    assert.equal(h.api.elements.generateDag.textContent, "Retry requirements DAG");
+    assert.equal(h.api.elements.generateDag.disabled, false);
+    assert.equal(h.api.elements.usageIntake.hidden, false);
+    assert.equal(h.api.elements.dagSubstage.dataset.status, "locked");
+    assert.equal(h.api.elements.designTreeCard.hidden, true);
+    assert.match(h.api.elements.usageItems.textContent, /explore a model/);
+    assert.match(h.api.elements.usageMessage.textContent, /answered by the user/);
+    assert.equal(h.api.elements.usageMessage.dataset.status, "error");
+    assert.match(h.api.elements.nextActionGuide.textContent, /Retry the requirements DAG/);
+    h.api.render({ ...failed, revision: 3 }, true);
+    assert.match(h.api.elements.usageMessage.textContent, /Your usages are saved/);
+    h.setFetch(async () => response({ ...value, revision: 4 }));
+    await h.api.elements.generateDag.emit("click");
+    await h.flush();
+    assert.equal(h.requests[0].path, "/api/answer");
+    assert.equal(h.requests[0].body.action, "generate-dag");
+    assert.equal(h.api.elements.generateDag.textContent, "Generating DAG...");
+});
+
+test("an accepted DAG opens Requirements and focuses its first decision exactly once without Mermaid", async () => {
+    const h = await rendererHarness();
+    h.api.setMermaid(async () => { throw new Error("Diagram unavailable"); });
+    h.setNarrowViewport(true);
+    const value = state();
+    value.requirements.usageItems = ["I want to explore a model."];
+    value.processing = { action: "generate-dag", status: "running", requestId: "dag-request" };
+    h.api.renderIfChanged(value);
+    h.api.browseStage("prepare");
+    await h.api.elements.contextToggle.emit("click");
+    const ready = { ...value, revision: 2,
+        requirements: { ...value.requirements, substage: "dag" },
+        processing: { ...value.processing, status: "success" },
+        decisionGraph: { nodes: [decision("first"), decision("next", "toAnswer")] } };
+    h.api.renderIfChanged(ready);
+    assert.equal(h.api.elements.designTreePanel.hidden, false);
+    assert.equal(h.api.elements.preparationPanel.hidden, true);
+    assert.equal(h.api.elements.usageIntake.hidden, true);
+    assert.equal(h.api.elements.usageSubstage.dataset.status, "complete");
+    assert.equal(h.api.elements.dagSubstage.dataset.status, "active");
+    assert.equal(h.api.elements.designTreeCard.hidden, false);
+    assert.equal(h.api.elements.contextToggle.getAttribute("aria-expanded"), "false");
+    assert.equal(h.document.activeElement, h.api.elements.questionHost.querySelector("input:checked"));
+    await h.flush();
+    assert.equal(h.document.activeElement, h.api.elements.questionHost.querySelector("input:checked"));
+    const detail = h.api.elements.questionHost.querySelector("textarea");
+    detail.value = "My own decision";
+    await detail.emit("input");
+    detail.focus();
+    detail.setSelectionRange(2, 5);
+    h.api.renderIfChanged({ ...ready, revision: 3 });
+    assert.equal(h.document.activeElement, detail);
+    assert.equal(detail.selectionStart, 2);
+    h.api.browseStage("prepare");
+    h.api.renderIfChanged({ ...ready, revision: 4 });
+    assert.equal(h.api.elements.preparationPanel.hidden, false, "later polling must not pull the user back");
+    assert.equal(h.requests.length, 0, "focus does not submit the recommended answer");
+});
+
+test("DAG focus waits for a pending submit to settle and never carries across effort identities", async () => {
+    const h = await rendererHarness();
+    const value = state();
+    h.api.render(value);
+    h.api.setPending(true);
+    const ready = { ...value, revision: 2, requirements: { ...value.requirements, substage: "dag" },
+        decisionGraph: { nodes: [decision("first")] } };
+    h.api.render(ready);
+    h.api.setPending(false);
+    h.api.render(ready, true);
+    assert.equal(h.document.activeElement, h.api.elements.questionHost.querySelector("input:checked"));
+    h.api.render({ ...value, revision: 3 });
+    h.api.browseStage("prepare");
+    h.api.render({ ...ready, revision: 4, generation: "another-effort" });
+    assert.equal(h.api.elements.preparationPanel.hidden, false);
+});
+
 test("snapshots reject older revisions and late equal-revision runtime/provider responses", async () => {
     const h = await rendererHarness();
     const newer = state("design", 3);
@@ -397,29 +483,30 @@ test("failed clarification retains its draft and choice; unrelated renders do no
     assert.equal(h.api.pending(), false);
 });
 
-test("bulk recommendations stay single-flight across unrelated snapshots and advance once per decision", async () => {
+test("whole-graph defaults freeze all choices in one request and never chain new recommendations", async () => {
     const h = await rendererHarness();
     h.api.setMermaid(async () => { throw new Error("offline"); });
     const value = state();
     value.requirements.substage = "dag";
-    value.decisionGraph.nodes = [decision("first"), decision("second", "toAnswer")];
+    value.decisionGraph.nodes = [decision("first"), { ...decision("second", "toAnswer"), dependencies: ["first"] }];
+    for (const node of value.decisionGraph.nodes) node.question.choices.push("C");
     h.api.renderIfChanged(value);
     let resolveFirst!: (value: any) => void;
     h.setFetch(async () => {
-        if (h.requests.length === 1) return new Promise((resolve) => { resolveFirst = resolve; });
-        return response({
-            ...value, revision: 5,
-            decisionGraph: { nodes: [decision("first", "answered"), decision("second")] },
-            processing: { status: "running", action: "answer-decision", question: { id: "second" } },
-        });
+        return new Promise((resolve) => { resolveFirst = resolve; });
     });
-    await h.api.elements.questionHost.querySelector(".all-recommended").emit("click");
+    const button = h.api.elements.questionHost.querySelector(".all-recommended");
+    assert.match(button.textContent, /whole-graph defaults/);
+    assert.match(button.title, /ALL unanswered decisions/);
+    await button.emit("click");
+    await button.emit("click");
     h.api.renderIfChanged({ ...value, revision: 2, status: "Unrelated notification" });
     assert.equal(h.api.pending(), true);
     assert.equal(h.requests.length, 1);
+    assert.match(h.confirmations[0], /first: A\nsecond: A/);
     resolveFirst(response({
         ...value, revision: 3,
-        processing: { status: "running", action: "answer-decision", question: { id: "first" } },
+        processing: { status: "running", action: "apply-defaults", question: { id: "whole-graph-defaults" } },
     }));
     await h.flush();
     assert.equal(h.requests.length, 1);
@@ -427,10 +514,121 @@ test("bulk recommendations stay single-flight across unrelated snapshots and adv
         ...value, revision: 4,
         decisionGraph: { nodes: [decision("first", "answered"), decision("second")] },
     });
+
     await h.flush();
-    assert.equal(h.requests.length, 2);
-    assert.deepEqual(h.requests.map((request) => request.body.questionId), ["first", "second"]);
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.requests[0].body.action, "apply-defaults");
+    assert.equal(h.requests[0].body.expectedRevision, 1);
+    assert.equal(h.requests[0].body.generation, "fixture-generation");
+    assert.deepEqual(h.requests[0].body.defaults, [
+        { nodeId: "first", answer: value.decisionGraph.nodes[0].question.recommended },
+        { nodeId: "second", answer: value.decisionGraph.nodes[1].question.recommended },
+    ]);
     assert.equal(h.api.pending(), false);
+});
+
+test("whole-graph defaults require confirmation and curated recommendations on downstream nodes", async () => {
+    const h = await rendererHarness();
+    const value = state();
+    value.requirements.substage = "dag";
+    value.decisionGraph.nodes = [decision("first"), decision("second", "toAnswer")];
+    value.decisionGraph.nodes[0].question.choices.push("C");
+    h.api.renderIfChanged(value);
+    await h.api.elements.questionHost.querySelector(".all-recommended").emit("click");
+    assert.equal(h.requests.length, 0);
+    assert.match(h.api.elements.designTreeStatus.textContent, /second.*no curated recommended/);
+    value.decisionGraph.nodes[1].question.choices.push("C");
+    h.api.renderIfChanged({ ...value, revision: 2 });
+    h.setConfirm(false);
+    await h.api.elements.questionHost.querySelector(".all-recommended").emit("click");
+    assert.equal(h.requests.length, 0);
+    assert.match(h.confirmations[0], /ALL 2 unanswered/);
+    assert.equal(h.api.pending(), false);
+});
+
+test("a single default answer does not consent to whole-graph defaults", async () => {
+    const h = await rendererHarness();
+    const value = state();
+    value.requirements.substage = "dag";
+    value.decisionGraph.nodes = [decision("first"), decision("second", "toAnswer")];
+    h.api.renderIfChanged(value);
+    h.setFetch(async () => response({ ...value, revision: 2, processing: { status: "running", action: "answer-decision" } }));
+    await h.api.elements.questionHost.querySelector("form").emit("submit");
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.requests[0].body.action, "answer-decision");
+    assert.equal(h.requests[0].body.questionId, "first");
+    assert.equal(h.requests[0].body.defaults, undefined);
+});
+
+test("failed whole-graph defaults retry their saved request and show unresolved review evidence after reload", async () => {
+    const h = await rendererHarness();
+    const value = state();
+    value.requirements.substage = "dag";
+    value.decisionGraph.nodes = [decision("first"), decision("second", "toAnswer")];
+    value.processing = { status: "error", action: "apply-defaults", requestId: "saved-batch", message: "Semantic worker failed" };
+    h.api.renderIfChanged(value);
+    assert.match(h.api.elements.questionHost.textContent, /Semantic worker failed/);
+    const retry = h.api.elements.questionHost.querySelector(".all-recommended");
+    assert.equal(retry.textContent, "Retry whole-graph defaults");
+    h.setFetch(async () => response({ ...value, revision: 2, processing: { status: "running", action: "apply-defaults" } }));
+    await retry.emit("click");
+    await h.flush();
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.requests[0].body.retryRequestId, "saved-batch");
+    assert.equal(h.requests[0].body.defaults, undefined);
+    h.api.renderIfChanged({ ...value, revision: 3, processing: { status: "success", action: "apply-defaults" },
+        decisionGraph: { nodes: [{ ...decision("first"), review: { reason: "Incompatible choices", previousAnswer: "Old recommendation" } },
+            decision("second", "toAnswer")] } });
+    assert.match(h.api.elements.questionHost.textContent, /Review required: Incompatible choices/);
+    assert.match(h.api.elements.questionHost.textContent, /Previously selected: Old recommendation/);
+    assert.equal(h.requests.length, 1);
+});
+
+test("replacing a failed batch requires confirmation of the current whole-graph choices", async () => {
+    const h = await rendererHarness();
+    const value = state();
+    value.requirements.substage = "dag";
+    value.decisionGraph.nodes = [decision("first"), decision("second", "toAnswer")];
+    for (const node of value.decisionGraph.nodes) node.question.choices.push("C");
+    value.processing = { action: "apply-defaults", status: "error", requestId: "old", message: "Inputs changed" };
+    h.api.renderIfChanged(value);
+    h.setConfirm(false);
+    await h.api.elements.questionHost.querySelector(".review-current-defaults").emit("click");
+    assert.equal(h.requests.length, 0);
+    h.setConfirm(true);
+    h.setFetch(async () => response({ ...value, revision: 2, processing: { status: "running", action: "apply-defaults" } }));
+    await h.api.elements.questionHost.querySelector(".review-current-defaults").emit("click");
+    await h.flush();
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.requests[0].body.retryRequestId, undefined);
+    assert.equal(h.requests[0].body.defaults.length, 2);
+});
+
+test("review-only terminal snapshots refresh an unchanged question even when running updates were missed", async () => {
+    const h = await rendererHarness();
+    const value = state();
+    value.requirements.substage = "dag";
+    value.processing = { status: "success", action: "apply-defaults" };
+    value.decisionGraph.nodes = [decision("first"), decision("second", "toAnswer")];
+    h.api.renderIfChanged(value);
+    assert.doesNotMatch(h.api.elements.questionHost.textContent, /Review required:/);
+    for (const [index, review] of [
+        { reason: "Incompatible choices", previousAnswer: "Old recommendation" },
+        { reason: "Changed compatibility constraint", previousAnswer: "Another selection" },
+        null,
+    ].entries()) {
+        h.api.renderIfChanged({ ...value, revision: index + 2,
+            decisionGraph: { nodes: [{ ...value.decisionGraph.nodes[0], review }, value.decisionGraph.nodes[1]] } });
+        const text = h.api.elements.questionHost.textContent;
+        if (review) {
+            assert.ok(text.includes(`Review required: ${review.reason}`));
+            assert.ok(text.includes(`Previously selected: ${review.previousAnswer}`));
+        } else {
+            assert.doesNotMatch(text, /Review required:|Previously selected:/);
+        }
+        if (index > 0) assert.doesNotMatch(text, /Old recommendation/);
+    }
+    assert.equal(h.requests.length, 0);
 });
 
 test("stage finalization cannot overtake an in-flight review submission", async () => {

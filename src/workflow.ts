@@ -98,9 +98,17 @@ export interface DecisionNode {
     question: DecisionQuestion | null;
     answer: string | null;
     status: "answered" | "active" | "toAnswer";
+    review?: { reason: string; previousAnswer: string | null } | null;
 }
 
 export interface DecisionGraph { nodes: DecisionNode[] }
+
+export function curatedDefault(question: DecisionQuestion | null): string | null {
+    if (!question || question.choices.length < 3 || question.choices.length > 5 ||
+        new Set(question.choices.map((choice) => choice.toLowerCase())).size !== question.choices.length ||
+        !question.recommended || !question.choices.includes(question.recommended)) return null;
+    return question.recommended;
+}
 
 export function normalizeDecisionId(value: unknown): string {
     return String(value || "").trim().replace(/[^A-Za-z0-9._-]+/g, "-")
