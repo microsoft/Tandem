@@ -52,7 +52,6 @@ internal sealed class MainForm : Form
     private bool _smokeChecking;
     private bool _smokeFinished;
     private bool _backendReady;
-    private bool _smokeStartupPermissionApproved;
 
     internal MainForm(DesktopOptions options)
     {
@@ -94,7 +93,7 @@ internal sealed class MainForm : Form
         about.Click += (_, _) => MessageBox.Show(this,
             $"Tandem {Program.Version}\nWindows desktop host\n\n" +
             "Copilot runs in an independent backend for the selected workspace.\n" +
-            "Interactive launches always ask before approving permissions.",
+            "Copilot tool approvals are disabled (allow all).\nOnly open workspaces and tools you trust.",
             "About Tandem", MessageBoxButtons.OK, MessageBoxIcon.Information);
         _log.Changed += () =>
         {
@@ -191,7 +190,6 @@ internal sealed class MainForm : Form
             _backendReady = false;
             _backendSessionId = null;
             _topLevelNavigations = 0;
-            _smokeStartupPermissionApproved = false;
             _workspaceLabel.Text = CompactPath(_workspace);
             _workspaceLabel.ToolTipText = _workspace;
             if (!Directory.Exists(_workspace))
@@ -449,25 +447,10 @@ internal sealed class MainForm : Form
         {
             if (message.Type == "permission")
             {
-                if (string.IsNullOrWhiteSpace(message.Title) || string.IsNullOrWhiteSpace(message.Details) ||
-                    message.Details.Length > 32 * 1024)
-                {
-                    _log.Write("Rejected a permission request with missing or oversized review details.");
-                    await ReplyAsync(backend, new { type = "permission-response", id = message.Id, approved = false });
-                    return;
-                }
-                bool approved;
-                if (!token.IsCancellationRequested && SecurityPolicy.CanApproveSmokeStartupPermission(
-                    message.Details, _options.SmokeReport is not null, _backendReady, _smokeStartupPermissionApproved))
-                {
-                    _smokeStartupPermissionApproved = true;
-                    approved = true;
-                    _log.Write("Smoke test allowed the startup-only session:tandem register-hooks permission.");
-                }
-                else
-                    approved = await AskPermissionAsync(Limit(message.Title, 300), message.Details, token);
-                approved = approved && !token.IsCancellationRequested;
-                await ReplyAsync(backend, new { type = "permission-response", id = message.Id, approved });
+                const string notice = "Rejected a legacy tool-approval request. Rebuild the desktop backend; tool approvals are now handled automatically.";
+                _log.Write(notice);
+                SetStatus(notice);
+                await ReplyAsync(backend, new { type = "permission-response", id = message.Id, approved = false });
             }
             else
             {
@@ -698,7 +681,7 @@ internal sealed class MainForm : Form
                 documentReady = page?.GetProperty("documentReady").GetString(),
                 rendered = page?.GetProperty("rendered").GetBoolean() ?? false,
                 topLevelNavigations = _topLevelNavigations,
-                startupPermissionApproved = _smokeStartupPermissionApproved,
+                toolApprovalMode = "allow-all",
                 page, error = error is null ? null : DiagnosticLog.Sanitize(error),
                 timestamp = DateTimeOffset.UtcNow
             };

@@ -1,6 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <_TandemSuppliedVersion>$(Version)</_TandemSuppliedVersion>
+    <_TandemRepositoryRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)..\..'))</_TandemRepositoryRoot>
+    <_TandemPackageJson Condition="Exists('$(_TandemRepositoryRoot)package.json')">$([System.IO.File]::ReadAllText('$(_TandemRepositoryRoot)package.json'))</_TandemPackageJson>
+    <_TandemPackageVersion>$([System.Text.RegularExpressions.Regex]::Match('$(_TandemPackageJson)', '"version"\s*:\s*"([^"]+)"').Groups[1].Value)</_TandemPackageVersion>
+    <Version>$(_TandemPackageVersion)</Version>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
@@ -17,11 +20,23 @@
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3537.50" />
     <Compile Remove="Checks\**\*.cs" />
     <InternalsVisibleTo Include="Tandem.Desktop.Checks" />
+    <Content Include="$(_TandemRepositoryRoot)dist\desktop\runtime\host.mjs;$(_TandemRepositoryRoot)dist\desktop\runtime\extension.mjs"
+             Link="runtime\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(_TandemRepositoryRoot)dist\desktop\runtime\skills\tandem\SKILL.md"
+             Link="runtime\skills\tandem\SKILL.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
-  <Target Name="RequireTandemPackageVersion" BeforeTargets="PrepareForBuild;GenerateNuspec"
+  <Target Name="ValidateTandemPackageVersion" BeforeTargets="PrepareForBuild;GenerateNuspec"
           Condition="'$(DesignTimeBuild)' != 'true'">
-    <Error Condition="'$(_TandemSuppliedVersion)' == ''" Code="TANDEM001"
-           Text="Tandem's release version must come from package.json. Build with npm run build:desktop, or supply -p:Version=&lt;package.json version&gt; to dotnet/MSBuild (including IDE builds). The default SDK version is not a Tandem release version." />
+    <Error Condition="'$(_TandemPackageVersion)' == ''" Code="TANDEM001"
+           Text="Tandem's version could not be read from the repository's package.json. Restore that file before building." />
+    <Error Condition="'$(Version)' != '$(_TandemPackageVersion)'" Code="TANDEM001"
+           Text="Version $(Version) does not match package.json ($(_TandemPackageVersion)). Remove the Version override; Tandem reads its version from package.json automatically." />
+  </Target>
+  <Target Name="BuildTandemRuntime" BeforeTargets="PrepareForBuild" DependsOnTargets="ValidateTandemPackageVersion"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <Error Condition="!Exists('$(_TandemRepositoryRoot)node_modules\tsx\dist\cli.mjs')" Code="TANDEM002"
+           Text="Tandem's Node dependencies are missing. Run npm ci in the repository root, then build again." />
+    <Exec Command="npm run build:desktop:runtime" WorkingDirectory="$(_TandemRepositoryRoot)" />
   </Target>
   <Target Name="RemoveUnusedWebView2WpfReference" BeforeTargets="ResolveAssemblyReferences">
     <ItemGroup>

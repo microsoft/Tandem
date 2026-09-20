@@ -10,6 +10,7 @@ import { desktopRuntimeEnvironment } from "../src/desktop/environment.js";
 import { validateDesktopUrl, type DesktopEvent } from "../src/desktop/protocol.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const metadata = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as { version: string };
 const workspace = await mkdtemp(join(tmpdir(), "tandem-desktop-smoke-"));
 const host = join(root, "dist", "desktop", "runtime", "host.mjs");
 const sessions = new Set<string>();
@@ -24,7 +25,7 @@ async function cycle(): Promise<{ sessionId: string; snapshot: Snapshot }> {
     const child = spawn(process.execPath, [host, "--workspace", workspace], { cwd: root, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
     const reader = createInterface({ input: child.stdout });
     let stderr = "";
-    let startupPermissions = 0;
+    let permissionRequests = 0;
     child.stderr.on("data", (value: Buffer) => { stderr = (stderr + value.toString()).slice(-8000); });
     const exited = new Promise<number | null>((resolveExit, reject) => {
         child.once("exit", resolveExit);
@@ -49,11 +50,9 @@ async function cycle(): Promise<{ sessionId: string; snapshot: Snapshot }> {
                     }
                     if (event.type === "ready") resolveReady(event);
                     if (event.type === "permission") {
-                        const details = JSON.parse(event.details) as { kind?: string; extensionName?: string; capabilities?: string[] };
-                        const approved = details.kind === "extension-permission-access" && details.extensionName === "session:tandem" &&
-                            JSON.stringify(details.capabilities) === '["register hooks"]' && ++startupPermissions === 1;
-                        child.stdin.write(`${JSON.stringify({ type: "permission-response", id: event.id, approved })}\n`);
-                        if (!approved) reject(new Error(`Unexpected permission request during idle smoke test: ${event.title}`));
+                        permissionRequests++;
+                        child.stdin.write(`${JSON.stringify({ type: "permission-response", id: event.id, approved: false })}\n`);
+                        reject(new Error("The allow-all desktop backend must not emit tool-approval requests."));
                     }
                     if (event.type === "question") reject(new Error("Idle startup must not ask an agent question."));
                 } catch (error) { reject(error); }
@@ -80,25 +79,34 @@ async function cycle(): Promise<{ sessionId: string; snapshot: Snapshot }> {
         clearTimeout(timer);
         reader.close();
         assert.equal(exitCode, 0, `Desktop shutdown failed. ${stderr}`);
+        assert.equal(permissionRequests, 0, "startup, session recovery, and shutdown must not ask for tool approval");
     }
 }
 
 async function guiCycle(reportName: string, navigations: number, overrideHost?: string): Promise<void> {
     const report = join(workspace, reportName);
     const exitCode = await new Promise<number | null>((resolveGui, reject) => {
-        const child = spawn(join(root, "dist", "desktop", "Tandem.Desktop.exe"),
-            ["--workspace", workspace, "--smoke-test", report], {
-                stdio: "inherit",
-                env: overrideHost ? { ...process.env, TANDEM_DESKTOP_HOST: overrideHost } : process.env,
-            });
+        const useDotnet = process.argv.includes("--dotnet");
+        const program = useDotnet ? "dotnet" : join(root, "dist", "desktop", "Tandem.Desktop.exe");
+        const args = ["--workspace", workspace, "--smoke-test", report];
+        if (useDotnet) args.unshift("run", "--project", join(root, "src", "Tandem.Desktop", "Tandem.Desktop.csproj"), "--");
+        const child = spawn(program, args, {
+            cwd: root,
+            stdio: "inherit",
+            env: overrideHost ? { ...process.env, TANDEM_DESKTOP_HOST: overrideHost } : process.env,
+        });
         child.once("error", reject);
         child.once("exit", resolveGui);
     });
     const result = await readFile(report, "utf8");
     console.info(result);
     assert.equal(exitCode, 0, `Windows Forms smoke test failed. ${result}`);
-    const page = JSON.parse(result) as { success: boolean; rendered: boolean; topLevelNavigations: number; url: string };
+    const page = JSON.parse(result) as {
+        success: boolean; version: string; rendered: boolean; topLevelNavigations: number; url: string; toolApprovalMode: string;
+    };
     assert.equal(page.success, true);
+    assert.equal(page.version, metadata.version, "the desktop version must come from package.json");
+    assert.equal(page.toolApprovalMode, "allow-all");
     assert.equal(page.rendered, true);
     assert.equal(page.topLevelNavigations, navigations, "navigate only when the selected canvas changes");
     const diagnostics = await readFile(join(workspace, ".tandem", "desktop", "desktop.log"), "utf8");
@@ -111,7 +119,7 @@ try {
     const second = await cycle();
     assert.equal(second.sessionId, first.sessionId, "desktop must resume its original SDK session");
     assert.equal(second.snapshot.generation, first.snapshot.generation, "restart must not reset the effort");
-    if (process.argv.includes("--gui")) {
+    if (process.argv.includes("--gui") || process.argv.includes("--dotnet")) {
         await guiCycle("gui-smoke.json", 1);
         const fixture = join(workspace, "canvas-transition.mjs");
         await writeFile(fixture, `

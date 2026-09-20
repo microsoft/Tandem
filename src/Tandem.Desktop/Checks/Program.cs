@@ -39,35 +39,32 @@ foreach (var secret in new[]
     Check(!sanitized.Contains("test-secret") && !sanitized.Contains("more-secret"), "redact diagnostic token");
 }
 
-var workspace = Path.Combine(AppContext.BaseDirectory, "checks-" + Guid.NewGuid().ToString("N"));
-const string startupPermission =
-    """{"kind":"extension-permission-access","extensionName":"session:tandem","capabilities":["register hooks"]}""";
-Check(SecurityPolicy.CanApproveSmokeStartupPermission(startupPermission, true, false, false),
-    "allow only the exact smoke-test startup permission");
-Check(!SecurityPolicy.CanApproveSmokeStartupPermission(startupPermission, false, false, false),
-    "interactive mode must prompt even for startup permission");
-Check(!SecurityPolicy.CanApproveSmokeStartupPermission(startupPermission, true, true, false),
-    "smoke exception ends when the backend becomes ready");
-Check(!SecurityPolicy.CanApproveSmokeStartupPermission(startupPermission, true, false, true),
-    "smoke exception is allowed only once per backend");
-foreach (var invalid in new string?[]
+void CheckPermissionDialogs()
 {
-    null, "", "not-json", "null", "[]",
-    """{"kind":"shell","extensionName":"session:tandem","capabilities":["register hooks"]}""",
-    """{"kind":"extension-permission-access","extensionName":"user:tandem","capabilities":["register hooks"]}""",
-    """{"kind":"extension-permission-access","extensionName":"session:other","capabilities":["register hooks"]}""",
-    """{"kind":"extension-permission-access","extensionName":"session:tandem","capabilities":[]}""",
-    """{"kind":"extension-permission-access","extensionName":"session:tandem","capabilities":["register hooks","shell"]}""",
-    """{"kind":"extension-permission-access","extensionName":"session:tandem","capabilities":["register hooks","register hooks"]}""",
-    """{"kind":"extension-permission-access","extensionName":"session:tandem","capabilities":["Register hooks"]}""",
-    """{"kind":"extension-permission-access","extensionName":"session:tandem","capabilities":"register hooks"}""",
-    """{"kind":"extension-permission-access","extensionName":"session:tandem","capabilities":[null]}""",
-    """{"kind":"extension-permission-access","extensionName":"session:tandem","capabilities":["register hooks"],"command":"run"}""",
-    """{"kind":"shell","kind":"extension-permission-access","extensionName":"session:tandem","capabilities":["register hooks"]}""",
-    """{"kind":"extension-permission-access","extensionName":"session:tandem","capabilities":["register hooks"],}"""
-})
-    Check(!SecurityPolicy.CanApproveSmokeStartupPermission(invalid, true, false, false),
-        "deny malformed or broader smoke permission");
+    using (var dialog = new PermissionDialog("Open an external link?", "https://example.com", "Open browser"))
+    {
+        var buttons = dialog.Controls.OfType<TableLayoutPanel>().Single()
+            .Controls.OfType<FlowLayoutPanel>().Single().Controls.OfType<Button>().ToArray();
+        var deny = buttons.Single(button => button.Text == "Deny");
+        Check(deny.DialogResult == DialogResult.Cancel && dialog.AcceptButton == deny && dialog.CancelButton == deny,
+            "browser consent defaults and Escape remain deny");
+        Check(buttons.Length == 2 && buttons.Single(button => button.Text == "Open browser").DialogResult == DialogResult.OK,
+            "non-Copilot native consent preserves its original actions");
+    }
+}
+// Keep WinForms' synchronization context out of the async backend checks below.
+Exception? dialogError = null;
+var dialogThread = new Thread(() =>
+{
+    try { CheckPermissionDialogs(); }
+    catch (Exception error) { dialogError = error; }
+});
+dialogThread.SetApartmentState(ApartmentState.STA);
+dialogThread.Start();
+dialogThread.Join();
+if (dialogError is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(dialogError).Throw();
+
+var workspace = Path.Combine(AppContext.BaseDirectory, "checks-" + Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(workspace);
 var previousHost = Environment.GetEnvironmentVariable("TANDEM_DESKTOP_HOST");
 try
@@ -127,7 +124,9 @@ try
         backend.MessageReceived += message =>
         {
             if (message.Type == "permission")
+            {
                 receivedPermissionDetails = message.Details?.Contains("private-command-argument-marker") == true;
+            }
             if (message.Type == "ready") ready.TrySetResult();
             if (message.Message == "question-cancelled") cancelled.TrySetResult();
             if (message.Message == "permission-denied") denied.TrySetResult();

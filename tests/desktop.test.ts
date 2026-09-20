@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
+import type { PermissionRequest } from "@github/copilot-sdk";
 import { DesktopProtocol, validateDesktopUrl } from "../src/desktop/protocol.js";
 import { desktopRuntimeEnvironment } from "../src/desktop/environment.js";
 import { claimDesktopWorkspace } from "../src/desktop/workspace.js";
@@ -73,32 +74,115 @@ function protocolFixture() {
         reply(value: Record<string, unknown>) { input.write(`${JSON.stringify(value)}\n`); } };
 }
 
-test("desktop permissions require a matching, explicit native approval; malformed approval is denied", async () => {
+function shellPermission(fullCommandText = "Get-ChildItem"): Extract<PermissionRequest, { kind: "shell" }> {
+    return {
+        kind: "shell", fullCommandText, intention: "Run a shell command",
+        commands: [{ identifier: fullCommandText, readOnly: false }],
+        canOfferSessionApproval: false, hasWriteFileRedirection: false, possiblePaths: [], possibleUrls: [],
+    };
+}
+
+const desktopPermissionRequests = {
+    shell: shellPermission(),
+    read: { kind: "read", path: "example.txt", intention: "Read a file" },
+    write: { kind: "write", fileName: "example.txt", diff: "+text", intention: "Write a file", canOfferSessionApproval: false },
+    url: { kind: "url", url: "https://example.com", intention: "Fetch a page" },
+    mcp: { kind: "mcp", serverName: "example", toolName: "test", toolTitle: "Test", readOnly: false },
+    memory: { kind: "memory", fact: "Example fact" },
+    "custom-tool": { kind: "custom-tool", toolName: "test", toolDescription: "Test" },
+    hook: { kind: "hook", toolName: "test" },
+    "extension-management": { kind: "extension-management", extensionName: "session:tandem", operation: "reload" },
+    "extension-permission-access": {
+        kind: "extension-permission-access", extensionName: "session:tandem", capabilities: ["register hooks"],
+    },
+    factory: {
+        kind: "factory", name: "test", description: "Test", operation: "run", approvalKey: "test",
+        canPersistApproval: false, phases: [], maxConcurrentSubagents: 1, maxTotalSubagents: 1,
+        timeoutSeconds: 10, maxAiCredits: 1,
+    },
+} satisfies { [Kind in PermissionRequest["kind"]]: Extract<PermissionRequest, { kind: Kind }> };
+const permissionInvocation = { sessionId: "desktop-test" };
+
+for (const request of Object.values(desktopPermissionRequests)) {
+    test(`desktop automatically approves ${request.kind} without a dialog`, async () => {
+        const f = protocolFixture();
+        try {
+            const permission = f.protocol.permission(request, permissionInvocation);
+            if (f.events[0]?.type === "permission")
+                f.reply({ type: "permission-response", id: f.events[0].id, approved: false });
+            assert.deepEqual(await permission, { kind: "approve-once" });
+            assert.deepEqual(f.events, []);
+            assert.equal(f.protocol.waitingForInput, false);
+        } finally { f.protocol.close(); }
+    });
+}
+
+test("desktop allow-all handles concurrent tool requests without a prompt queue or saved opt-in", async () => {
+    for (let cycle = 0; cycle < 2; cycle++) {
+        const f = protocolFixture();
+        try {
+            const results = await Promise.all(Array.from({ length: 32 }, (_, index) =>
+                f.protocol.permission(index % 2 ? shellPermission() : desktopPermissionRequests.read, permissionInvocation)));
+            assert.ok(results.every((result) => result.kind === "approve-once"));
+            assert.deepEqual(f.events, []);
+            assert.equal(f.protocol.waitingForInput, false);
+        } finally { f.protocol.close(); }
+    }
+});
+
+test("desktop allow-all reports managed restrictions without prompting or leaving requests pending", async () => {
     const f = protocolFixture();
     try {
-        const permission = f.protocol.permission({ kind: "read", path: "example.txt" });
-        assert.equal(f.protocol.waitingForInput, true);
-        assert.equal(f.events[0].type, "permission");
-        f.reply({ type: "question-response", id: f.events[0].id, approved: true });
-        assert.equal(f.events[1].type, "error");
-        f.reply({ type: "permission-response", id: f.events[0].id, approved: "true" });
-        assert.deepEqual(await permission, { kind: "reject" });
-        assert.equal(f.protocol.waitingForInput, false);
-        const approved = f.protocol.permission({ kind: "read", path: "example.txt" });
-        f.reply({ type: "permission-response", id: f.events.at(-1)!.id, approved: true });
-        assert.deepEqual(await approved, { kind: "approve-once" });
+        for (const [request, invocation] of [
+            [{ ...shellPermission(), managedApprovalRequired: true }, permissionInvocation],
+            [{ ...desktopPermissionRequests.read, managedApprovalRequired: true }, permissionInvocation],
+            [shellPermission(), { ...permissionInvocation, managedSettingsEnabled: true }],
+        ] as const) {
+            const result = await f.protocol.permission(request, invocation);
+            assert.equal(result.kind, "reject");
+            assert.equal(f.events.at(-1)!.type, "error");
+            assert.match(String(f.events.at(-1)!.message), /managed/i);
+            assert.equal(f.protocol.waitingForInput, false);
+        }
+        assert.equal(f.events.length, 3);
     } finally { f.protocol.close(); }
 });
 
-test("desktop shutdown releases an open input pipe and rejects pending consent", async () => {
+test("desktop allow-all does not assert per-request interactive approval", async () => {
     const f = protocolFixture();
-    const permission = f.protocol.permission({ kind: "read", path: "example.txt" });
-    const rejected = assert.rejects(permission, /closing/);
+    try {
+        assert.deepEqual(await f.protocol.permission(
+            { ...shellPermission(), requestSandboxBypass: true }, permissionInvocation,
+        ), { kind: "approve-once" });
+        assert.deepEqual(f.events, []);
+    } finally { f.protocol.close(); }
+});
+
+test("desktop shutdown releases input, rejects pending questions, and stops tool approvals", async () => {
+    const f = protocolFixture();
+    const question = f.protocol.question({ question: "Continue?" });
+    const rejected = assert.rejects(question, /closing/);
+    const permission = f.protocol.permission(shellPermission(), permissionInvocation);
     f.protocol.close();
     await rejected;
+    assert.deepEqual(await permission, { kind: "reject" });
+    await assert.rejects(f.protocol.permission(shellPermission(), permissionInvocation), /closed|closing/);
     assert.equal(f.input.destroyed, true);
     assert.equal(f.protocol.waitingForInput, false);
     assert.equal(f.shutdowns(), 1);
+});
+
+test("desktop rejects stale approval messages instead of resolving unrelated questions", async () => {
+    const f = protocolFixture();
+    try {
+        const question = f.protocol.question({ question: "Continue?", choices: ["Yes"], allowFreeform: false });
+        const id = f.events[0].id;
+        f.reply({ type: "permission-response", id, approved: true });
+        assert.equal(f.events[1].type, "error");
+        assert.equal(f.protocol.waitingForInput, true);
+        f.reply({ type: "question-response", id, answer: "Yes" });
+        assert.deepEqual(await question, { answer: "Yes", wasFreeform: false });
+    } finally { f.protocol.close(); }
 });
 
 test("desktop question choices and cancellation are enforced and pending requests close", async () => {

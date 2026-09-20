@@ -24,13 +24,33 @@ npm run desktop -- --workspace C:\projects\my-app
 
 Omit `--workspace` to choose a folder in the app. To build without opening it,
 run `npm run build:desktop`; the executable is `dist\desktop\Tandem.Desktop.exe`.
+After `npm ci`, you can also launch directly with the .NET CLI:
+
+```powershell
+dotnet run --project .\src\Tandem.Desktop\Tandem.Desktop.csproj
+```
+
+The project reads its version from `package.json`, builds the Node backend, and
+copies the backend and companion skill beside the executable automatically.
+No `-p:Version` argument or separate npm build is required.
+
 The development build needs Node on PATH and the .NET 10 Desktop Runtime.
 `TANDEM_NODE_PATH` may specify a Node executable; `TANDEM_DESKTOP_HOST` may
 specify a different built `host.mjs` for debugging.
 
-Native dialogs handle Copilot permission requests and questions. Nothing is
-blanket-approved. Opening an empty workspace shows goal entry without starting
-agents. Closing or switching folders stops that window's runtime; reopening a
+**Copilot tool-approval dialogs are disabled in the desktop app.** The backend
+uses the SDK's allow-all handler for shell commands, file reads and writes, URL
+access, MCP/custom tools, memory, hooks, extensions, and factory permissions.
+This is the default for both new and resumed desktop sessions; no initial
+approval or saved opt-in is required. Commands may change files and access the
+network without confirmation, so only open workspaces and tools you trust.
+SDK-managed restrictions are not bypassed: requests that cannot be automatically
+approved fail with a visible error rather than opening a dialog or waiting
+indefinitely. Agent questions, external-browser confirmation, and browser/OS
+microphone permissions remain separate.
+
+Opening an empty workspace shows goal entry without starting agents.
+Closing or switching folders stops that window's runtime; reopening a
 folder resumes its original session, preserving effort state and run receipts.
 An active effort owned by a different Copilot session stays read-only rather
 than being taken over. Only one desktop window may own a given workspace.
@@ -59,8 +79,9 @@ If Copilot CLI is not separately installed, sign in with the bundled CLI:
 `npm run test:desktop` runs the native host checks and exercises the built backend
 without AI calls, including startup, session recovery, and shutdown. Add
 `-- --gui` to check the real Windows Forms/WebView2 page and canvas switching.
-These smoke checks require an existing Copilot login and `npm run build:desktop`;
-they do not run live model evaluations.
+Use `-- --dotnet` instead to exercise `dotnet run` without a version override.
+These smoke checks require an existing Copilot login; the `--gui` executable
+checks also require `npm run build:desktop`. They do not run live model evaluations.
 
 ## Install
 

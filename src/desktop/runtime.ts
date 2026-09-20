@@ -84,8 +84,7 @@ export async function runDesktopRuntime(options: {
             enableConfigDiscovery: true,
             requestCanvasRenderer: true,
             requestExtensions: true,
-            // The native host, not the extension or a blanket auto-approval policy, owns consent.
-            onPermissionRequest: (request: Parameters<DesktopProtocol["permission"]>[0]) => protocol.permission(request),
+            onPermissionRequest: protocol.permission.bind(protocol),
             onUserInputRequest: (request: Parameters<DesktopProtocol["question"]>[0]) => protocol.question(request),
             skillDirectories: [join(options.runtimeDirectory, "skills")],
         };

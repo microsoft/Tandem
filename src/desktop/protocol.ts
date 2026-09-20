@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createInterface, type Interface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
-import type { PermissionRequest, PermissionRequestResult, SessionConfig } from "@github/copilot-sdk";
+import { approveAll, type PermissionHandler, type PermissionRequest, type PermissionRequestResult, type SessionConfig } from "@github/copilot-sdk";
 
 type UserInputHandler = NonNullable<SessionConfig["onUserInputRequest"]>;
 type UserInputRequest = Parameters<UserInputHandler>[0];
@@ -43,7 +43,7 @@ export class DesktopProtocol {
         if (!this.closed) this.output.write(`${JSON.stringify(event)}\n`);
     }
 
-    get waitingForInput(): boolean { return this.pending.size > 0; }
+    get waitingForInput(): boolean { return !this.closed && this.pending.size > 0; }
 
     private receive(line: string): void {
         try {
@@ -70,12 +70,19 @@ export class DesktopProtocol {
         });
     }
 
-    async permission(request: PermissionRequest): Promise<PermissionRequestResult> {
-        const reply = await this.ask({
-            type: "permission", id: randomUUID(), title: `Allow Copilot ${request.kind}?`,
-            details: JSON.stringify(request, null, 2),
-        }, "permission-response");
-        return reply.approved === true ? { kind: "approve-once" } : { kind: "reject" };
+    async permission(request: PermissionRequest, invocation: Parameters<PermissionHandler>[1]): Promise<Awaited<ReturnType<PermissionHandler>>> {
+        if (this.closed) throw new Error("The desktop window is closed.");
+        if (invocation.managedSettingsEnabled) return this.rejectManagedPermission();
+        const result = await approveAll(request, invocation);
+        if (this.closed) return { kind: "reject" };
+        // There is no second client to answer requests the SDK cannot automatically approve.
+        return result.kind === "no-result" ? this.rejectManagedPermission() : result;
+    }
+
+    private rejectManagedPermission(): PermissionRequestResult {
+        const feedback = "Copilot managed policy prevents automatic approval. Tool-approval dialogs are disabled in Tandem Desktop.";
+        this.send({ type: "error", message: feedback });
+        return { kind: "reject", feedback };
     }
 
     async question(request: UserInputRequest): Promise<UserInputResponse> {
