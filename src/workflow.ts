@@ -3,6 +3,7 @@ import type { LifecycleStageId, LifecycleState, TandemArtifact } from "./types.j
 export const lifecycleStages: { id: LifecycleStageId; label: string }[] = [
     { id: "prepare", label: "Preparation" },
     { id: "requirements", label: "Requirements" },
+    { id: "sketch", label: "Sketch" },
     { id: "prototype", label: "Prototype" },
     { id: "design", label: "Design" },
     { id: "plan", label: "Plan" },

@@ -1,7 +1,7 @@
 # Tandem
 
 Tandem is a standalone Windows Forms app and Copilot canvas for taking an app idea through preparation, requirements,
-prototype revisions, product and test design, execution planning, implementation,
+approved app sketches, prototype revisions, product and test design, execution planning, implementation,
 and integration/interaction testing.
 
 ## Standalone Windows app
@@ -46,8 +46,10 @@ approval or saved opt-in is required. Commands may change files and access the
 network without confirmation, so only open workspaces and tools you trust.
 SDK-managed restrictions are not bypassed: requests that cannot be automatically
 approved fail with a visible error rather than opening a dialog or waiting
-indefinitely. Agent questions, external-browser confirmation, and browser/OS
-microphone permissions remain separate.
+indefinitely. Untracked agent-question tools and their native pop-ups are disabled
+in the dedicated desktop session. Product questions appear in Tandem's tracked
+DAG or prototype-revision clarification UI instead. External-browser confirmation
+and browser/OS microphone permissions remain separate.
 
 Opening an empty workspace shows goal entry without starting agents.
 Closing or switching folders stops that window's runtime; reopening a
@@ -132,18 +134,36 @@ The Preparation tab shows live work-item and factory progress, source links,
 environment checks, blockers, and final results. When analysis completes, Tandem
 passes its usage suggestions, assumptions, and deferred work into Requirements.
 
+For a goal-only project in an empty folder, Preparation checks the local directory
+instead of launching a workspace-inspection agent. A single lightweight agent can
+then provide the Requirements handoff without tool calls or generic web research.
+Only Git and Tandem metadata directories are ignored; project files, guidance, or
+an imported source record retain the full analysis path. Goals that need named
+APIs, references, methods, or other authoritative evidence still run source
+analysis. Runtime, dependency, and credential checks remain explicitly deferred
+until an implementation approach is selected, rather than being reported as verified.
+
+Preparation and usage suggestions do not conduct a product interview. Collect
+your **"I want to..."** intents first, then generate the DAG to resolve decisions
+needed by those accepted intents. Suggestions are optional, not accepted scope.
+Unknown names, opening hours, addresses, and other replaceable content stay
+deferred instead of blocking intent entry. Handoff and suggestion workers have
+no tools; other workers return clarifications or blockers through tracked stage
+results, never through an ad-hoc question dialog.
+
 1. Review Preparation results and its suggested usages.
 2. Add one usage sentence at a time, then generate and resolve the requirements
    DAG.
-3. Review the new or existing live interface and submit revisions until it is
-   ready. For no-GUI work, Prototype is disabled with an explanation and Design
+3. Review and edit the generated app drawings, then approve the drawing set.
+4. Review the new or existing live interface and submit revisions until it is
+   ready. For no-GUI work, Sketch and Prototype are disabled with an explanation and Design
    opens after Requirements.
-4. Review the automatically generated Product design artifacts, then the
+5. Review the automatically generated Product design artifacts, then the
    integration and interaction test-design drafts. Resolve their review threads
    before finishing each substage to capture `design-spec` and `test-spec`.
-5. Generate and finalize the execution plan.
-6. Start implementation agents and monitor their work.
-7. Run integration and interaction tests, then finish the lifecycle.
+6. Generate and finalize the execution plan.
+7. Start implementation agents and monitor their work.
+8. Run integration and interaction tests, then finish the lifecycle.
 
 Failed test runs provide a **Show error details** button with the run status,
 failed scenarios, agent summaries, captured evidence, and error events.
@@ -158,11 +178,40 @@ Stage tabs scroll horizontally and support arrow-key navigation.
 Tandem stores durable project state under `.tandem`. Add that
 directory to `.gitignore` unless you intentionally want to version the state.
 
-Finishing Requirements starts **Structure**, the first progressive Prototype
+Finishing Requirements starts **Sketch**, not a runnable prototype. A bounded
+worker derives a small set of screens and navigation transitions from the goal,
+usages and accepted DAG answers. The decision DAG is not treated as a screen map.
+Sketch uses editable vector scenes rather than generated application code.
+Review screen purposes, labels, geometry, annotations and requirement links;
+save direct edits or request an AI revision. Saved revisions are immutable.
+For an existing GUI, sketches describe the same application and proposed changes,
+not a parallel replacement.
+
+**Approve drawings and continue** captures the current scenes and a PNG of every
+screen before enabling Prototype. The handoff records the exact Requirements
+digest and sketch revision. Prototype receives the structured scenes and must
+read each approved PNG through Tandem's image tool; a worker claim or image
+filename is not enough. Drawing generation and revisions use one worker, at most
+300 seconds and 128 AI credits per request. A failed request preserves the last
+saved drawings and requires an explicit retry.
+
+Drawing JSON, SVG and PNG files live under ignored
+`.tandem/efforts/<prototypeId>/sketches/<revisionId>/`. Accepted handoffs archive
+their verified asset bytes; explicit export includes the assets in
+`tandem-records`, without publishing them to Git. Reopening Requirements makes
+drawings stale; reopening Sketch clears its approval and invalidates downstream
+prototype checkpoints while retaining revision and handoff history.
+
+Existing efforts already at Prototype or later retain their progress with a
+recorded legacy Sketch bypass, not fabricated approval. Reopen Requirements to
+adopt the new drawing stage. New non-GUI efforts bypass both graphical stages.
+
+Finishing Sketch starts **Structure**, the first progressive Prototype
 checkpoint. A minimally clickable wireframe appears before **Interaction** builds
 the primary journey. **Visual direction** is optional: request lightweight theme
 refinement after trying the interaction. These are milestones inside Prototype,
-not extra lifecycle approval stages. Non-GUI efforts still bypass Prototype.
+not extra lifecycle approval stages. These milestones implement the approved
+sketch structure and navigation before refining interaction or visual direction.
 
 The last working preview remains available during later builds and failures.
 Each checkpoint uses an isolated source snapshot under
@@ -238,8 +287,8 @@ than dispatching another batch. **Review current whole-graph defaults** offers a
 new confirmation if the failed batch's semantic inputs changed. Requirements completion checks outstanding run
 receipts against the SDK, so a terminal applied result is not blocked by an
 unobserved receipt; genuinely active or unidentified workers still block.
-Batch reconciliation never completes Requirements or builds a prototype. The
-existing explicit **Finish Requirements** behavior above is unchanged.
+Batch reconciliation never completes Requirements, generates sketches, or builds
+a prototype. **Finish Requirements** remains an explicit separate action.
 
 Regression tests prove a single factory/subagent call and a compatible change set
 under 200 response characters. These are protocol/count checks with a mock worker,

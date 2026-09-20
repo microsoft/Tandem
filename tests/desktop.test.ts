@@ -7,6 +7,7 @@ import { test } from "node:test";
 import type { PermissionRequest } from "@github/copilot-sdk";
 import { DesktopProtocol, validateDesktopUrl } from "../src/desktop/protocol.js";
 import { desktopRuntimeEnvironment } from "../src/desktop/environment.js";
+import { desktopSessionConfig } from "../src/desktop/runtime.js";
 import { claimDesktopWorkspace } from "../src/desktop/workspace.js";
 import { isPreferredTandemProvider, preferredTandemProvider } from "../src/provider-identity.js";
 import { canvasRequestAllowed } from "../src/canvas-transport.js";
@@ -73,6 +74,29 @@ function protocolFixture() {
     return { input, events, protocol, shutdowns: () => shutdowns,
         reply(value: Record<string, unknown>) { input.write(`${JSON.stringify(value)}\n`); } };
 }
+
+test("desktop sessions disable untracked question tools without changing tool permissions", async () => {
+    const f = protocolFixture();
+    try {
+        const config = desktopSessionConfig("workspace", "runtime", f.protocol);
+        assert.equal(config.onUserInputRequest, undefined, "the native question bridge must not be registered");
+        assert.deepEqual(config.excludedTools, ["ask_user"]);
+        assert.ok(config.hooks?.onPreToolUse);
+        const hookInput = {
+            sessionId: "desktop-worker", timestamp: new Date(), workingDirectory: "workspace",
+            toolName: "ask_user", toolArgs: { question: "What are the second location's name and opening hours?" },
+        };
+        const rejected = await config.hooks.onPreToolUse(hookInput, { sessionId: "desktop" });
+        assert.equal(rejected?.permissionDecision, "deny");
+        assert.match(rejected!.permissionDecisionReason!, /tracked decision\/question/);
+        assert.match(rejected!.permissionDecisionReason!, /Never invent a user answer/);
+        assert.equal(await config.hooks.onPreToolUse({ ...hookInput, toolName: "read_file" }, { sessionId: "desktop" }), undefined);
+        assert.equal(await config.hooks.onPreToolUse({ ...hookInput, toolName: "run_factory" }, { sessionId: "desktop" }), undefined);
+        assert.deepEqual(await config.onPermissionRequest!(desktopPermissionRequests.read, permissionInvocation), { kind: "approve-once" });
+        assert.deepEqual(f.events, [], "neither a modal question nor a synthetic user answer is emitted");
+        assert.equal(f.protocol.waitingForInput, false);
+    } finally { f.protocol.close(); }
+});
 
 function shellPermission(fullCommandText = "Get-ChildItem"): Extract<PermissionRequest, { kind: "shell" }> {
     return {

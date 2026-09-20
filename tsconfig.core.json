@@ -28,12 +28,17 @@
     "src/execution-proof.ts",
     "src/process-adapters.ts",
     "src/planning-prompts.ts",
+    "src/preparation.ts",
     "src/prototype-flow.ts",
     "src/prototype-workspace.ts",
     "src/prototype-runtime.ts",
     "src/prototype-bridge.ts",
     "src/delivery.ts",
     "src/agent-evals.ts",
-    "src/types.ts"
+    "src/types.ts",
+    "src/sketch.ts",
+    "src/sketch-store.ts",
+    "src/artifact-assets.ts",
+    "src/renderer/sketch-editor.ts"
   ]
 }

@@ -19,6 +19,7 @@ export class Element {
     hidden = false; disabled = false; checked = false; open = false;
     readOnly = false;
     tabIndex = -1; scrollTop = 0; scrollLeft = 0; clientWidth = 500;
+    width = 0; height = 0;
     selectionStart = 0; selectionEnd = 0; title = "";
     navigations: string[] = [];
     frameMessages: { data: any; origin: string }[] = [];
@@ -174,7 +175,12 @@ export class Element {
     }
     focus() { this.ownerDocument.activeElement = this; }
     setSelectionRange(start: number, end: number) { this.selectionStart = start; this.selectionEnd = end; }
-    getBoundingClientRect() { return { width: Number.parseFloat(this.style.width) || this.clientWidth, left: 0 }; }
+    getBoundingClientRect() {
+        return { width: Number.parseFloat(this.style.width) || Number(this.getAttribute("width")) || this.clientWidth,
+            height: Number.parseFloat(this.style.height) || Number(this.getAttribute("height")) || 300, left: 0, top: 0 };
+    }
+    getContext() { return this.ownerDocument.canvasContext?.(this) ?? null; }
+    toDataURL() { return this.ownerDocument.canvasDataUrl; }
     hasPointerCapture() { return false; }
     setPointerCapture() {}
     releasePointerCapture() {}
@@ -186,6 +192,8 @@ class Document extends Element {
     activeElement!: Element;
     defaultView: unknown;
     visibilityState = "visible";
+    canvasContext?: (canvas: Element) => unknown;
+    canvasDataUrl = "";
     constructor() {
         super("document", undefined as any);
         Object.defineProperty(this, "ownerDocument", { value: this });
@@ -229,7 +237,7 @@ globalThis.api = {
   setPending: value => { submitting = value; },
   selectDecision: id => { selectedDecisionId = id; followingActiveDecision = false; },
   setMermaid: loader => { loadMermaid = loader; },
-  speechInputs,
+  speechInputs, sketchWorkspace,
 };`;
     const result = await build({
         stdin: { contents: source.slice(0, end) + testApi, loader: "ts",
@@ -259,6 +267,7 @@ export async function rendererHarness() {
     const requests: { path: string; body: any }[] = [];
     const timers: (() => void)[] = [];
     const confirmations: string[] = [];
+    const pngExports: { width: number; height: number; source: string }[] = [];
     const windowListeners = new Map<string, ((event: any) => unknown)[]>();
     let confirm = true;
     let narrowViewport = false;
@@ -288,7 +297,19 @@ export async function rendererHarness() {
     document.defaultView = context.window;
     runInNewContext(await (compiled ??= compile()), context);
     return {
-        api: context.api as any, document, requests, timers, confirmations,
+        api: context.api as any, document, requests, timers, confirmations, pngExports,
+        enablePngExport(data = "iVBORw0KGgo=") {
+            context.Image = class {
+                onload?: () => void;
+                source = "";
+                set src(value: string) { this.source = value; this.onload?.(); }
+            };
+            document.canvasContext = (canvas) => ({
+                fillRect() {},
+                drawImage(image: { source: string }) { pngExports.push({ width: canvas.width, height: canvas.height, source: image.source }); },
+            });
+            document.canvasDataUrl = "data:image/png;base64," + data;
+        },
         setFetch(value: typeof handler) { handler = value; },
         setConfirm(value: boolean) { confirm = value; },
         setNarrowViewport(value: boolean) { narrowViewport = value; },
@@ -301,15 +322,16 @@ export async function rendererHarness() {
 }
 
 export function state(stage = "requirements", revision = 1): any {
-    const stages = ["prepare", "requirements", "prototype", "design", "plan", "implement", "test"];
+    const stages = ["prepare", "requirements", "sketch", "prototype", "design", "plan", "implement", "test"];
     return {
         version: 1, prototypeId: "fixture", revision, updatedAt: `2026-09-06T00:00:${String(revision).padStart(2, "0")}Z`,
         generation: "fixture-generation", jobOwner: null,
         goal: "Build a useful project",
-        lifecycle: { currentStage: stage, completedStages: stages.slice(0, stages.indexOf(stage)), outputs: [], skippedStages: [], history: [] },
+        lifecycle: { version: 2, currentStage: stage, completedStages: stages.slice(0, stages.indexOf(stage)), outputs: [], skippedStages: [], history: [] },
         provider: { canSubmitAnswers: true, extensionId: "fixture", canReload: false },
         preparation: { status: stage === "prepare" ? "not-started" : "ready", workItems: [], messages: [], checks: [], sources: [], suggestedUsages: [], processing: null },
         prototypeApproach: { mode: stage === "prepare" ? "undecided" : "build", reason: "Fixture prototype approach" },
+        sketch: { version: 1, status: "empty", current: null, approved: null, history: [] },
         requirements: { substage: "usage", usageItems: [], suggestions: [] },
         decisionGraph: { nodes: [] }, artifacts: [], previewStatus: "waiting", previewUrl: null,
         prototypeReview: { revisions: [], question: null },

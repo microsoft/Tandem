@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { link, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import { test, type TestContext } from "node:test";
 import {
     acceptStageSnapshot, exportAcceptedSnapshot, validateAcceptanceRecords,
     type AcceptanceRecord, type AcceptStageSnapshotInput,
 } from "../src/accepted-artifacts.js";
+import { ARTIFACT_ASSET_LIMITS, validateArtifactAssets, type ArtifactAsset } from "../src/artifact-assets.js";
 import { executionDigest, fingerprintWorkspace } from "../src/execution.js";
 import { ProjectStoreError } from "../src/project-store.js";
 import type { LifecycleStageId } from "../src/types.js";
@@ -20,7 +20,9 @@ const artifact = (overrides = {}) => ({
 });
 
 async function fixture(t: TestContext) {
-    const root = await mkdtemp(join(tmpdir(), "tandem-acceptance-"));
+    const testRoot = join(process.cwd(), ".tandem", "tests");
+    await mkdir(testRoot, { recursive: true });
+    const root = await mkdtemp(join(testRoot, "tandem-acceptance-"));
     t.after(() => rm(root, { recursive: true, force: true }));
     const sharedRoot = join(root, "shared");
     const workspaceRoot = join(root, "worktree");
@@ -426,5 +428,294 @@ test("file symlinks cannot redirect snapshot or manifest reads", async (t) => {
     await writeFile(sourceCopy, f.bytes);
     await rm(f.sourcePath);
     await symlink(sourceCopy, f.sourcePath, "file");
+    await assert.rejects(acceptStageSnapshot(f.input), { code: "acceptance_path_unsafe" });
+});
+
+async function assetFixture(t: TestContext) {
+    const f = await fixture(t);
+    const folder = ".tandem/efforts/example/sketches/12345678-1234-4234-8234-123456789abc";
+    const scene = Buffer.from(JSON.stringify({ version: 1, screens: [{ id: "home", elements: [{ type: "rectangle", x: 12, y: 24 }] }] }));
+    const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="80" height="60"><rect x="12" y="24" width="30" height="20"/></svg>');
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=", "base64");
+    const sources = new Map([
+        [`${folder}/document.json`, scene], [`${folder}/home.svg`, svg], [`${folder}/home.png`, png],
+    ]);
+    const refs: ArtifactAsset[] = [...sources].map(([path, bytes], index) => ({
+        id: ["scene", "home-svg", "home-png"][index], path,
+        hash: createHash("sha256").update(bytes).digest("hex"),
+        mediaType: (["application/json", "image/svg+xml", "image/png"] as const)[index],
+    }));
+    const sketchDirectory = join(f.input.sharedRoot, ...folder.split("/"));
+    await mkdir(sketchDirectory, { recursive: true });
+    for (const [path, bytes] of sources) await writeFile(join(f.input.sharedRoot, ...path.split("/")), bytes);
+    const sketchArtifact = (assets = refs) => artifact({
+        id: "sketch-spec", title: "Approved sketch", content: "Approved drawing and screen layout.\n", assets,
+    });
+    const save = async (assets = refs) => {
+        const bytes = Buffer.from(`${JSON.stringify(f.snapshot(7, "requirements", [sketchArtifact(assets)]), null, 2)}\n`);
+        await writeFile(f.sourcePath, bytes);
+        return bytes;
+    };
+    const snapshotBytes = await save();
+    return { ...f, refs, sources, sketchDirectory, sketchArtifact, save, snapshotBytes };
+}
+
+test("legacy manifests, record fields, and acceptance identity remain version-one compatible", async (t) => {
+    const f = await fixture(t);
+    const record = await acceptStageSnapshot(f.input);
+    const { id, acceptedAt: _at, exportPath: _export, ...identity } = record;
+    assert.equal(id, executionDigest({ version: 1, ...identity, snapshotPath: identity.snapshotPath.replace(/\\/g, "/") }));
+    const manifest = JSON.parse(await readFile(join(f.acceptedPath(record), "manifest.json"), "utf8"));
+    assert.deepEqual(Object.keys(manifest), ["version", "effortId", "acceptance", "acceptanceHash", "snapshot", "attribution"]);
+    assert.equal(manifest.version, 1);
+    assert.deepEqual(record.artifactHashes, [{ id: artifact().id, hash: executionDigest(artifact().content) }]);
+    const exported = await exportAcceptedSnapshot(f.input.workspaceRoot, f.input.sharedRoot, "example", record);
+    const exportManifest = JSON.parse(await readFile(join(f.input.workspaceRoot, exported.exportPath!, "manifest.json"), "utf8"));
+    assert.equal(exportManifest.version, 1);
+    assert.equal(Object.hasOwn(exportManifest, "assetFiles"), false);
+    assert.equal(Object.hasOwn(record, "assets"), false);
+});
+
+test("scene, SVG and PNG are frozen by acceptance and exported from verified archived bytes", async (t) => {
+    const f = await assetFixture(t);
+    const portableRefs = validateArtifactAssets(f.refs);
+    const snapshotBytes = await f.save(f.refs.map((asset) => ({ ...asset, path: asset.path.replace(/\//g, "\\") })));
+    const record = await acceptStageSnapshot(f.input);
+    assert.deepEqual(record.artifactHashes, [{
+        id: "sketch-spec", hash: executionDigest({ version: 1, content: f.sketchArtifact().content, assets: portableRefs }),
+    }]);
+    assert.notEqual(record.artifactHashes[0].hash, executionDigest(f.sketchArtifact().content));
+    assert.deepEqual(await readdir(f.input.workspaceRoot), []);
+    const archive = f.acceptedPath(record);
+    const manifestBytes = await readFile(join(archive, "manifest.json"));
+    const manifest = JSON.parse(manifestBytes.toString("utf8"));
+    assert.equal(manifest.version, 2);
+    assert.deepEqual(manifest.assetFiles, portableRefs.map((asset) => ({
+        artifactId: "sketch-spec", asset, path: `assets/${asset.hash}.${asset.path.split(".").at(-1)}`,
+    })));
+    assert.deepEqual(await readFile(join(archive, "snapshot.json")), snapshotBytes);
+    const archiveTime = (await stat(join(archive, "manifest.json"))).mtimeMs;
+    assert.deepEqual(await acceptStageSnapshot(f.input), record);
+    assert.equal((await stat(join(archive, "manifest.json"))).mtimeMs, archiveTime);
+    for (const entry of manifest.assetFiles) {
+        const path = join(archive, ...entry.path.split("/"));
+        assert.deepEqual(await readFile(path), f.sources.get(entry.asset.path));
+        assert.equal((await stat(path)).nlink, 1);
+    }
+    // Export must survive deleted, changed, or redirected live drawing inputs.
+    await rm(f.sketchDirectory, { recursive: true });
+    const outside = join(f.root, "changed-live-assets");
+    await mkdir(outside);
+    await writeFile(join(outside, "document.json"), "a later drawing");
+    await directoryLink(outside, f.sketchDirectory);
+    const exported = await exportAcceptedSnapshot(f.input.workspaceRoot, f.input.sharedRoot, "example", record);
+    const directory = join(f.input.workspaceRoot, exported.exportPath!);
+    const exportManifest = JSON.parse(await readFile(join(directory, "manifest.json"), "utf8"));
+    assert.deepEqual(exportManifest.assetFiles, manifest.assetFiles);
+    assert.equal(exportManifest.version, 2);
+    assert.deepEqual(await readFile(join(directory, "snapshot.json")), snapshotBytes);
+    const markdown = await readFile(join(directory, "001-approved-sketch.md"), "utf8");
+    const readme = await readFile(join(directory, "README.md"), "utf8");
+    for (const entry of manifest.assetFiles) {
+        assert.deepEqual(await readFile(join(directory, ...entry.path.split("/"))), f.sources.get(entry.asset.path));
+        assert.ok(markdown.includes(`](${entry.path})`));
+        assert.ok(readme.includes(`](${entry.path})`));
+        if (entry.asset.mediaType !== "application/json") {
+            assert.ok(markdown.includes(`![${entry.asset.id.replace(/-/g, "\\-")}](${entry.path})`));
+        }
+    }
+    assert.deepEqual(await readFile(join(archive, "manifest.json")), manifestBytes);
+    assert.deepEqual(await exportAcceptedSnapshot(f.input.workspaceRoot, f.input.sharedRoot, "example", exported), exported);
+    assert.equal(await readFile(join(outside, "document.json"), "utf8"), "a later drawing");
+});
+
+test("asset reference identities and hashes participate in stage artifact hashes", async (t) => {
+    const f = await assetFixture(t);
+    const first = await acceptStageSnapshot(f.input);
+    await f.save(f.refs.map((asset, index) => index ? asset : { ...asset, id: "renamed-scene" }));
+    const renamed = await acceptStageSnapshot(f.input);
+    assert.notEqual(renamed.artifactHashes[0].hash, first.artifactHashes[0].hash);
+    const document = f.refs[0];
+    const changedBytes = Buffer.from('{"version":1,"screens":[]}');
+    await writeFile(join(f.input.sharedRoot, ...document.path.split("/")), changedBytes);
+    const changedRefs = f.refs.map((asset, index) => index ? asset : {
+        ...asset, hash: createHash("sha256").update(changedBytes).digest("hex"),
+    });
+    await f.save(changedRefs);
+    const changed = await acceptStageSnapshot(f.input);
+    assert.notEqual(changed.artifactHashes[0].hash, first.artifactHashes[0].hash);
+    assert.notEqual(changed.id, first.id);
+    assert.deepEqual(await readFile(join(f.acceptedPath(first), "assets", `${document.hash}.json`)), f.sources.get(document.path));
+});
+
+test("upstream assets in the full snapshot are archived even when the accepted stage has no assets", async (t) => {
+    const f = await assetFixture(t);
+    await writeFile(f.sourcePath, JSON.stringify(f.snapshot(7, "requirements", [
+        artifact(), artifact({ id: "sketch-spec", stage: "design", assets: f.refs }),
+    ])));
+    const record = await acceptStageSnapshot(f.input);
+    assert.deepEqual(record.artifactHashes, [{ id: artifact().id, hash: executionDigest(artifact().content) }]);
+    const manifestPath = join(f.acceptedPath(record), "manifest.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    assert.equal(manifest.assetFiles.length, 3);
+    const exported = await exportAcceptedSnapshot(f.input.workspaceRoot, f.input.sharedRoot, "example", record);
+    assert.match(await readFile(join(f.input.workspaceRoot, exported.exportPath!, "README.md"), "utf8"), /assets\/[a-f0-9]{64}\.png/);
+    // Even a canonically rewritten manifest cannot omit a snapshot reference.
+    manifest.assetFiles.pop();
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    await assert.rejects(exportAcceptedSnapshot(f.input.workspaceRoot, f.input.sharedRoot, "example", record),
+        { code: "acceptance_integrity" });
+});
+
+test("content-addressed assets are deduplicated without losing original reference mappings", async (t) => {
+    const f = await assetFixture(t);
+    const duplicate = { ...f.refs[2], id: "second-png", path: f.refs[2].path.replace("home.png", "second.png") };
+    await writeFile(join(f.sketchDirectory, "second.png"), f.sources.get(f.refs[2].path)!);
+    await f.save([...f.refs, duplicate]);
+    const record = await acceptStageSnapshot(f.input);
+    const manifest = JSON.parse(await readFile(join(f.acceptedPath(record), "manifest.json"), "utf8"));
+    assert.equal(manifest.assetFiles.length, 4);
+    assert.equal(manifest.assetFiles[2].path, manifest.assetFiles[3].path);
+    assert.equal((await readdir(join(f.acceptedPath(record), "assets"))).length, 3);
+    await exportAcceptedSnapshot(f.input.workspaceRoot, f.input.sharedRoot, "example", record);
+});
+
+test("missing, tampered, oversized, hard-linked and redirected source assets cannot be accepted", async (t) => {
+    for (const problem of ["missing", "hash", "json-size", "svg-size", "png-size", "hard-link", "ancestor"]) {
+        await t.test(problem, async (t) => {
+            const f = await assetFixture(t);
+            const index = problem === "svg-size" ? 1 : problem === "png-size" ? 2 : 0;
+            const ref = f.refs[index];
+            const path = join(f.input.sharedRoot, ...ref.path.split("/"));
+            let expected = "acceptance_io";
+            if (problem === "missing") await rm(path);
+            else if (problem === "hash") {
+                await writeFile(path, "{}");
+                expected = "acceptance_integrity";
+            } else if (problem.endsWith("-size")) {
+                const bytes = Buffer.alloc(ARTIFACT_ASSET_LIMITS[ref.mediaType] + 1);
+                await writeFile(path, bytes);
+                await f.save(f.refs.map((asset, position) => position === index
+                    ? { ...asset, hash: createHash("sha256").update(bytes).digest("hex") } : asset));
+                expected = "acceptance_invalid";
+            } else if (problem === "hard-link") {
+                await link(path, join(f.root, "shared-asset-link"));
+                expected = "acceptance_path_unsafe";
+            } else {
+                const outside = join(f.root, "outside-assets");
+                await mkdir(outside);
+                for (const [path, bytes] of f.sources) await writeFile(join(outside, path.split("/").at(-1)!), bytes);
+                await rm(f.sketchDirectory, { recursive: true });
+                await directoryLink(outside, f.sketchDirectory);
+                expected = "acceptance_path_unsafe";
+            }
+            await assert.rejects(acceptStageSnapshot(f.input), { code: expected });
+            assert.deepEqual(await readdir(f.input.workspaceRoot), []);
+            assert.ok(!(await readdir(join(f.input.sharedRoot, ".tandem", "efforts", "example"))).includes("accepted"));
+        });
+    }
+});
+
+test("snapshot asset paths, duplicate refs, and cross-effort refs are rejected before any archive write", async (t) => {
+    const f = await assetFixture(t);
+    for (const refs of [
+        [{ ...f.refs[0], path: "../outside.json" }],
+        [{ ...f.refs[0], path: f.refs[0].path.replace("/example/", "/other/") }],
+        [f.refs[0], { ...f.refs[1], id: f.refs[0].id }],
+        [f.refs[0], { ...f.refs[0], id: "alias", path: f.refs[0].path.replace(/\//g, "\\") }],
+    ]) {
+        await f.save(refs);
+        await assert.rejects(acceptStageSnapshot(f.input), projectError);
+    }
+    await writeFile(f.sourcePath, JSON.stringify(f.snapshot(7, "requirements", [
+        f.sketchArtifact(), artifact({ id: "other-artifact", assets: f.refs }),
+    ])));
+    await assert.rejects(acceptStageSnapshot(f.input), { code: "artifact_assets_invalid" });
+    assert.ok(!(await readdir(join(f.input.sharedRoot, ".tandem", "efforts", "example"))).includes("accepted"));
+});
+
+test("tampered archived asset bytes, mappings, missing files, and extra files are never repaired or exported", async (t) => {
+    for (const problem of ["bytes", "missing", "extra", "mapping", "hash", "legacy-manifest", "ancestor", "hard-link"]) {
+        await t.test(problem, async (t) => {
+            const f = await assetFixture(t);
+            const record = await acceptStageSnapshot(f.input);
+            const archive = f.acceptedPath(record);
+            const manifestPath = join(archive, "manifest.json");
+            const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+            const assetPath = join(archive, ...manifest.assetFiles[2].path.split("/"));
+            if (problem === "bytes") await writeFile(assetPath, Buffer.from([0, 1, 2, 3]));
+            else if (problem === "missing") await rm(assetPath);
+            else if (problem === "extra") await writeFile(join(archive, "assets", "unexpected.png"), "preserve");
+            else if (problem === "hard-link") await link(assetPath, join(f.root, "archive-hard-link.png"));
+            else if (problem === "ancestor") {
+                const outside = join(f.root, "outside-archive");
+                await mkdir(outside);
+                await rm(join(archive, "assets"), { recursive: true });
+                await directoryLink(outside, join(archive, "assets"));
+            } else {
+                if (problem === "mapping") manifest.assetFiles[2].path = "../outside.png";
+                else if (problem === "hash") manifest.assetFiles[2].asset.hash = "0".repeat(64);
+                else {
+                    manifest.version = 1;
+                    delete manifest.assetFiles;
+                }
+                await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+            }
+            const before = await readFile(manifestPath);
+            await assert.rejects(exportAcceptedSnapshot(f.input.workspaceRoot, f.input.sharedRoot, "example", record), projectError);
+            await assert.rejects(acceptStageSnapshot(f.input), projectError);
+            assert.deepEqual(await readFile(manifestPath), before);
+            assert.deepEqual(await readdir(f.input.workspaceRoot), []);
+            if (problem === "bytes") assert.deepEqual(await readFile(assetPath), Buffer.from([0, 1, 2, 3]));
+        });
+    }
+});
+
+test("conflicting or linked exported assets are preserved rather than overwritten", async (t) => {
+    for (const problem of ["changed", "extra", "ancestor"]) {
+        await t.test(problem, async (t) => {
+            const f = await assetFixture(t);
+            const record = await acceptStageSnapshot(f.input);
+            const exported = await exportAcceptedSnapshot(f.input.workspaceRoot, f.input.sharedRoot, "example", record);
+            const directory = join(f.input.workspaceRoot, exported.exportPath!, "assets");
+            if (problem === "changed") await writeFile(join(directory, `${f.refs[0].hash}.json`), "preserve");
+            else if (problem === "extra") await writeFile(join(directory, "extra.json"), "preserve");
+            else {
+                const outside = join(f.root, "outside-export");
+                await mkdir(outside);
+                await rm(directory, { recursive: true });
+                await directoryLink(outside, directory);
+            }
+            await assert.rejects(exportAcceptedSnapshot(f.input.workspaceRoot, f.input.sharedRoot, "example", record), projectError);
+            if (problem !== "ancestor") {
+                assert.equal(await readFile(join(directory, problem === "extra" ? "extra.json" : `${f.refs[0].hash}.json`), "utf8"), "preserve");
+            }
+        });
+    }
+});
+
+test("source and archived asset file symlinks are rejected", async (t) => {
+    const f = await assetFixture(t);
+    const probe = join(f.root, "asset-link-probe");
+    const source = join(f.sketchDirectory, "document.json");
+    try { await symlink(source, probe, "file"); }
+    catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "EPERM" && process.platform === "win32") {
+            t.skip("File symlinks require Windows developer mode or symlink privilege; asset junction coverage remains active.");
+            return;
+        }
+        throw error;
+    }
+    await rm(probe);
+    const record = await acceptStageSnapshot(f.input);
+    const archivePath = join(f.acceptedPath(record), "assets", `${f.refs[0].hash}.json`);
+    const outside = join(f.root, "scene-copy.json");
+    await writeFile(outside, f.sources.get(f.refs[0].path)!);
+    await rm(archivePath);
+    await symlink(outside, archivePath, "file");
+    await assert.rejects(exportAcceptedSnapshot(f.input.workspaceRoot, f.input.sharedRoot, "example", record),
+        { code: "acceptance_path_unsafe" });
+    await rm(source);
+    await symlink(outside, source, "file");
     await assert.rejects(acceptStageSnapshot(f.input), { code: "acceptance_path_unsafe" });
 });

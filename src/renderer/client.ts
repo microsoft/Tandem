@@ -1,7 +1,8 @@
 import { installSpeechInputs } from "./speech-input.js";
 import { createAzureSpeechSession } from "./speech-recognizer.js";
 import { buildDecisionGraphMermaid, escapeMermaidLabel } from "../decision-diagram.js";
-import { curatedDefault } from "../workflow.js";
+import { curatedDefault, lifecycleStages } from "../workflow.js";
+import { SketchWorkspace } from "./sketch-editor.js";
 
 type AnyRecord = Record<string, any>;
 
@@ -77,6 +78,12 @@ const elements: AnyRecord = {
   preparationTab: document.getElementById("preparation-tab"),
   preparationPanel: document.getElementById("preparation-panel"),
   requirementsTab: document.getElementById("design-tree-tab"),
+  sketchTab: document.getElementById("sketch-tab"),
+  sketchPanel: document.getElementById("sketch-panel"),
+  sketchGenerate: document.getElementById("sketch-generate"),
+  sketchApprove: document.getElementById("sketch-approve"),
+  sketchSave: document.getElementById("sketch-save"),
+  sketchRetryRevision: document.getElementById("sketch-retry-revision"),
   preparationStageTitle: document.getElementById("preparation-stage-title"),
   preparationStageProgress: document.getElementById("preparation-stage-progress"),
   preparationStageStatus: document.getElementById("preparation-stage-status"),
@@ -236,15 +243,7 @@ const MIN_REQUIREMENTS_WIDTH = 280;
 const MIN_PREVIEW_WIDTH = 360;
 const DEFAULT_REQUIREMENTS_RATIO = 0.24;
 const KEYBOARD_RESIZE_STEP = 24;
-const LIFECYCLE_STAGES = [
-  { id: "prepare", label: "Preparation" },
-  { id: "requirements", label: "Requirements" },
-  { id: "prototype", label: "Prototype" },
-  { id: "design", label: "Design" },
-  { id: "plan", label: "Plan" },
-  { id: "implement", label: "Implement" },
-  { id: "test", label: "Test" },
-];
+const LIFECYCLE_STAGES = lifecycleStages;
 let currentState = null;
 let effortSubmitting: "start" | "reset" | null = null;
 let lastRenderedGeneration: string | null = null;
@@ -310,13 +309,13 @@ function currentStage(state = currentState) {
 
 function hasPendingRequest() {
   return Boolean(effortSubmitting || currentState?.effortReset) || submitting || completingStage || reopeningStage || prototypeSubmitting
-    || preparationSubmitting || implementationSubmitting || testSubmitting || processSubmitting;
+    || preparationSubmitting || implementationSubmitting || testSubmitting || processSubmitting || sketchWorkspace.busy;
 }
 
 function skippedStage(state, stage) {
   return (state?.lifecycle?.skippedStages || []).find((entry) => entry.stageId === stage)
-    || (stage === "prototype" && state?.prototypeApproach?.mode === "not-applicable"
-      ? { stageId: stage, reason: state.prototypeApproach.reason || "No graphical interface needs prototype validation." }
+    || (["sketch", "prototype"].includes(stage) && state?.prototypeApproach?.mode === "not-applicable"
+      ? { stageId: stage, reason: state.prototypeApproach.reason || "No graphical interface needs sketch or prototype validation." }
       : null);
 }
 
@@ -325,7 +324,7 @@ function canEditStage(stage, state = currentState, allowCompleted = false) {
     && !effortSubmitting && !state.effortReset && !reopeningStage && !completingStage
     && currentStage(state) === stage
     && !skippedStage(state, stage)
-    && (stage !== "prototype" || state.prototypeApproach?.mode !== "undecided")
+    && (!["sketch", "prototype"].includes(stage) || state.prototypeApproach?.mode !== "undecided")
     && (allowCompleted || !(state.lifecycle?.completedStages || []).includes(stage))
     && state.provider?.canSubmitAnswers !== false;
 }
@@ -470,6 +469,7 @@ function hasStageData(state, stage) {
     || (state.lifecycle?.completedStages || []).includes(stage)
     || (state.lifecycle?.history || []).some((output) => output.stageId === stage)
     || (state.artifacts || []).some((artifact) => artifact.stage === stage)
+    || (stage === "sketch" && Boolean(state.sketch?.current))
     || (stage === "plan" && (state.planning?.workItems || []).length > 0)
     || (stage === "implement" && (state.implementation?.workItems || []).length > 0)
     || (stage === "test" && (state.testing?.scenarios || []).length > 0);
@@ -477,7 +477,7 @@ function hasStageData(state, stage) {
 
 function stageTab(stage) {
   return {
-    prepare: "preparation", requirements: "design-tree", prototype: "preview", design: "design-review",
+    prepare: "preparation", requirements: "design-tree", sketch: "sketch", prototype: "preview", design: "design-review",
     plan: "plan", implement: "implementation", test: "test",
   }[stage] || "content";
 }
@@ -649,6 +649,14 @@ async function postJson(endpoint, body, timeoutMs = 60000) {
   return result;
 }
 
+const sketchWorkspace = new SketchWorkspace(elements.sketchPanel, {
+  post: postJson,
+  changed: () => { if (currentState) render(currentState, true); },
+  canEdit: () => canEditStage("sketch"),
+  blocked: () => !currentState || hasPendingRequest() || hasActiveJobs(currentState),
+  guidance: () => providerWriteGuidance("edit or approve drawings"),
+});
+
 function isGoalEntry(state) {
   return !state?.goal?.trim()
     && currentStage(state) === "prepare"
@@ -766,6 +774,7 @@ elements.resetEffort.addEventListener("click", async () => {
 });
 
 function clearEffortDrafts() {
+  sketchWorkspace.reset();
   previewCapture?.finish();
   previewRestore = null;
   revisionSubmissions.clear();
@@ -1627,6 +1636,7 @@ elements.completeStage.addEventListener("click", async () => {
   if (hasPendingRequest() || elements.completeStage.disabled || !currentState) return;
   const stageId = currentStage();
   if (stageId === "prepare" || skippedStage(currentState, stageId)) return;
+  if (stageId === "sketch" && (sketchWorkspace.completionBlocked || hasActiveJobs(currentState))) return;
   completingStage = true;
   elements.completeStage.disabled = true;
   elements.completeStage.textContent = "Saving stage output...";
@@ -1735,6 +1745,7 @@ elements.reopenStage.addEventListener("click", async () => {
   const label = LIFECYCLE_STAGES.find((stage) => stage.id === stageId)?.label;
   if (!window.confirm(
     `Reopen ${label}? Its outputs and dependent stage outputs will be marked stale. `
+      + (["requirements", "sketch"].includes(stageId) ? "Sketch approval and dependent prototype evidence must be reviewed again. " : "")
       + "Saved evidence is retained, but affected stages must be completed again.",
   )) return;
   if (hasActiveJobs(currentState)) return;
@@ -1760,6 +1771,7 @@ function activateOutputTab(tabName, focusTab = false) {
     "preparation",
     "preview",
     "design-tree",
+    "sketch",
     "design-review",
     "plan",
     "implementation",
@@ -1776,7 +1788,7 @@ function activateOutputTab(tabName, focusTab = false) {
       || "preparation"
     : requestedTab;
   viewedStageId = {
-    preparation: "prepare", preview: "prototype", "design-tree": "requirements", "design-review": "design",
+    preparation: "prepare", preview: "prototype", "design-tree": "requirements", sketch: "sketch", "design-review": "design",
     plan: "plan", implementation: "implement", test: "test",
   }[activeOutputTab] || (currentState?.artifacts || []).find(
     (artifact) => artifact.id === selectedArtifactId,
@@ -1794,6 +1806,7 @@ function activateOutputTab(tabName, focusTab = false) {
   elements.preparationPanel.hidden = activeOutputTab !== "preparation";
   elements.previewPanel.hidden = activeOutputTab !== "preview";
   elements.designTreePanel.hidden = activeOutputTab !== "design-tree";
+  elements.sketchPanel.hidden = activeOutputTab !== "sketch";
   elements.designReviewPanel.hidden = activeOutputTab !== "design-review";
   elements.planPanel.hidden = activeOutputTab !== "plan";
   elements.implementationPanel.hidden = activeOutputTab !== "implementation";
@@ -1838,7 +1851,7 @@ function renderBrowsingState(state) {
   const skipped = skippedStage(state, viewed);
   const readOnly = Boolean(skipped) || viewed !== active || (state.lifecycle?.completedStages || []).includes(viewed);
   elements.stageBrowsing.textContent = skipped
-    ? `${label} is not applicable. ${skipped.reason} Reopen Requirements to change prototype applicability.`
+    ? `${label} is disabled. ${skipped.reason} Reopen Requirements to revisit sketch and prototype applicability.`
     : readOnly
     ? `Viewing ${label} · read only. Reopen explicitly to change its scope.`
     : "";
@@ -1848,7 +1861,7 @@ function renderBrowsingState(state) {
       > LIFECYCLE_STAGES.findIndex((stage) => stage.id === active);
   elements.reopenStage.textContent = reopeningStage ? "Reopening..." : "Reopen " + label;
   elements.reopenStage.disabled = reopeningStage || completingStage || submitting
-    || prototypeSubmitting || preparationSubmitting || implementationSubmitting || testSubmitting
+    || prototypeSubmitting || preparationSubmitting || implementationSubmitting || testSubmitting || sketchWorkspace.busy
     || state.provider?.canSubmitAnswers === false || hasActiveJobs(state);
   for (const button of elements.stageList.querySelectorAll("button")) {
     button.setAttribute("aria-pressed", String(button.dataset.stageId === viewed));
@@ -1892,16 +1905,7 @@ function renderLifecycle(state, preserveMessage = false) {
   elements.stageList.replaceChildren();
   LIFECYCLE_STAGES.forEach((stage, index) => {
     const isComplete = completed.has(stage.id);
-    const configuredSkip = stage.id === "prototype"
-      && state.prototypeApproach?.mode === "not-applicable";
-    const skippedEntry = skipped.get(stage.id)
-      || (configuredSkip
-        ? {
-            stageId: "prototype",
-            reason: state.prototypeApproach?.reason
-              || "No graphical interface needs prototype validation.",
-          }
-        : null);
+    const skippedEntry = skippedStage(state, stage.id);
     const isSkipped = Boolean(skippedEntry);
     const isActive = stage.id === currentStageId && !allComplete;
     const status = isSkipped
@@ -1961,12 +1965,14 @@ function renderLifecycle(state, preserveMessage = false) {
     "Current lifecycle stage: " + currentDefinition.label,
   );
   elements.completeStage.disabled = completingStage
-    || reopeningStage || submitting || prototypeSubmitting
+    || reopeningStage || submitting || prototypeSubmitting || sketchWorkspace.busy
     || preparationSubmitting || implementationSubmitting || testSubmitting
     || allComplete
     || currentStageId === "prepare"
+    || Boolean(skippedStage(state, currentStageId))
     || state.provider?.canSubmitAnswers === false
     || state.processing?.status === "running"
+    || (currentStageId === "sketch" && (sketchWorkspace.completionBlocked || hasActiveJobs(state)))
     || (
       currentStageId === "prototype"
       && (
@@ -2055,7 +2061,10 @@ function renderLifecycle(state, preserveMessage = false) {
           ? state.prototypeApproach
           : null
       );
-    elements.stageMessage.textContent = prototypeSkip
+    const activeSkip = skippedStage(state, currentStageId);
+    elements.stageMessage.textContent = activeSkip
+      ? currentDefinition.label + " disabled: " + activeSkip.reason
+      : prototypeSkip
         && (!latestOutput || latestOutput.stageId === "prototype")
       ? "Prototype disabled: " + prototypeSkip.reason
       : latestOutput
@@ -3007,6 +3016,8 @@ const PROCESSING_TITLES = {
   "apply-defaults": "Reconciling whole-graph defaults",
   "add-usage": "Updating usage guidance",
   "generate-dag": "Building requirements DAG",
+  "generate-sketch": "Drawing screen sketches",
+  "revise-sketch": "Revising screen sketches",
   "answer-decision": "Applying your decision",
   "change-answer": "Revising dependent decisions",
   "submit-revision": "Reviewing prototype revision",
@@ -4755,7 +4766,7 @@ function renderPreview(state, preserveMessage = false) {
       ? validateExisting
         ? "No prototype validation is running. Validate the existing app without replacing it."
         : "No prototype build is running. Start a build to create the runnable preview."
-      : "The runnable prototype will appear after Requirements are completed.";
+      : "The runnable prototype will appear after Requirements and screen sketch approval.";
   if (!preserveMessage) {
     elements.prototypeBuildStatus.textContent = previewStatus === "error"
       ? build?.message || state.status || "The preview is unavailable."
@@ -4807,6 +4818,7 @@ function nextActionForState(state) {
     testSubmitting ||
     preparationSubmitting ||
     prototypeSubmitting || reopeningStage ||
+    sketchWorkspace.busy ||
     state.provider?.canSubmitAnswers === false
   ) {
     return null;
@@ -4853,6 +4865,15 @@ function nextActionForState(state) {
         label: "Finish requirements collection",
       };
     }
+    return null;
+  }
+
+  if (stage === "sketch") {
+    if (hasActiveJobs(state)) return null;
+    if (!elements.sketchRetryRevision.disabled) return { tab: "sketch", target: elements.sketchRetryRevision, label: "Retry the failed drawing revision" };
+    if (!elements.completeStage.disabled) return { target: elements.completeStage, label: "Finish Sketch and continue to Prototype" };
+    if (!elements.sketchApprove.disabled) return { tab: "sketch", target: elements.sketchApprove, label: "Approve drawings and continue" };
+    if (!elements.sketchGenerate.disabled) return { tab: "sketch", target: elements.sketchGenerate, label: "Generate screen drawings" };
     return null;
   }
 
@@ -5098,6 +5119,11 @@ function render(state, preserveMessages = false) {
     }
     lastLifecycleStage = currentLifecycleStage;
   }
+  sketchWorkspace.update(state);
+  const sketchSkip = skippedStage(state, "sketch");
+  elements.sketchTab.disabled = Boolean(sketchSkip) || !hasStageData(state, "sketch");
+  elements.sketchTab.title = sketchSkip?.reason || (!hasStageData(state, "sketch") ? "Finish Requirements to unlock Sketch." : "");
+  elements.sketchTab.setAttribute("aria-label", sketchSkip ? "Sketch disabled. " + sketchSkip.reason : "Sketch");
   renderLifecycle(state, preserveMessages);
   renderProcess(state, preserveMessages);
   renderPreparation(state, preserveMessages);

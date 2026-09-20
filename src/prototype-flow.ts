@@ -19,6 +19,9 @@ export interface PrototypeCheckpoint {
     completedAt: string | null;
     timeoutSeconds: number;
     sourceFingerprint?: string | null;
+    sketchRevisionId?: string | null;
+    sketchInputHash?: string | null;
+    sketchImagesRead?: string[];
 }
 
 export interface PrototypeFlow {
@@ -74,6 +77,15 @@ export function readPrototypeFlow(value: unknown): PrototypeFlow | null {
             typeof entry.requestedAt !== "string" || !nullableString(entry.completedAt) ||
             typeof entry.timeoutSeconds !== "number" || !Number.isFinite(entry.timeoutSeconds) ||
             (entry.sourceFingerprint !== undefined && !nullableString(entry.sourceFingerprint)) ||
+            (entry.sketchRevisionId !== undefined && !nullableString(entry.sketchRevisionId)) ||
+            (entry.sketchInputHash !== undefined && !nullableString(entry.sketchInputHash)) ||
+            Boolean(entry.sketchRevisionId) !== Boolean(entry.sketchInputHash) ||
+            (typeof entry.sketchRevisionId === "string" && (!entry.sketchRevisionId || entry.sketchRevisionId.length > 80)) ||
+            (typeof entry.sketchInputHash === "string" && !/^[a-f0-9]{64}$/.test(entry.sketchInputHash)) ||
+            (entry.sketchImagesRead !== undefined && (!Array.isArray(entry.sketchImagesRead) ||
+                entry.sketchImagesRead.length > 8 || entry.sketchImagesRead.some((id) => typeof id !== "string") ||
+                new Set(entry.sketchImagesRead).size !== entry.sketchImagesRead.length)) ||
+            (!entry.sketchRevisionId && Array.isArray(entry.sketchImagesRead) && entry.sketchImagesRead.length > 0) ||
             entry.timeoutSeconds < 0 || entry.timeoutSeconds > 300) throw invalid();
         return {
             id: entry.id, requestId: entry.requestId, generation: entry.generation,
@@ -87,6 +99,13 @@ export function readPrototypeFlow(value: unknown): PrototypeFlow | null {
             ...(entry.sourceFingerprint !== undefined ? {
                 sourceFingerprint: typeof entry.sourceFingerprint === "string" ? entry.sourceFingerprint : null,
             } : {}),
+            ...(entry.sketchRevisionId !== undefined ? {
+                sketchRevisionId: typeof entry.sketchRevisionId === "string" ? entry.sketchRevisionId : null,
+            } : {}),
+            ...(entry.sketchInputHash !== undefined ? {
+                sketchInputHash: typeof entry.sketchInputHash === "string" ? entry.sketchInputHash : null,
+            } : {}),
+            ...(Array.isArray(entry.sketchImagesRead) ? { sketchImagesRead: entry.sketchImagesRead.map((id: string) => id) } : {}),
         };
     });
     if (new Set(checkpoints.map((item) => item.id)).size !== checkpoints.length) throw invalid();

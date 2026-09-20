@@ -17,11 +17,15 @@ interface CanvasContext {
 
 interface HarnessApi {
     createState(id: string, goal?: string): TandemState;
+    createLegacyState(id: string, goal?: string): TandemState;
     loadState(id: string): Promise<TandemState>;
     persistState(state: TandemState): Promise<void>;
     completeLifecycleStage(id: string, stage: string, provider: string): Promise<TandemState>;
     reopenLifecycleStage(id: string, stage: string, provider: string): Promise<TandemState>;
     beginPrototypeBuild(id: string, provider: string): Promise<TandemState>;
+    sketchAction(id: string, provider: string, input: Record<string, unknown>): Promise<TandemState>;
+    ensureSketchStarted(state: TandemState, writable: boolean): Promise<TandemState>;
+    readSketchImage(input: unknown): Promise<{ resultType: string; textResultForLlm: string; binaryResultsForLlm: { type: string; mimeType: string; data: string }[] }>;
     prototypeAction(id: string, provider: string, input: Record<string, unknown>): Promise<TandemState>;
     queuePrototypeRevision(id: string, provider: string, input: Record<string, unknown>): Promise<{ revisionId: string }>;
     stageCompletionError(state: TandemState, stage: string, options?: { requirePrototypeSpec: boolean }): string | null;
@@ -43,6 +47,8 @@ interface HarnessApi {
     waitForDesignReview(id: string): Promise<void>;
     answerFactoryPrompt(args: unknown): string;
     answerFactory: { run(ctx: Record<string, unknown>): Promise<unknown> };
+    usageSuggestionFactory: { run(ctx: Record<string, unknown>): Promise<unknown> };
+    textWorkerAgent: { name: string; tools: string[]; infer: boolean; prompt: string };
     processAction(id: string, provider: string, input: unknown): Promise<TandemState>;
     preparationFactory: {
         meta: { argsSchema: { properties: Record<string, unknown> } };
@@ -75,7 +81,7 @@ async function compile(): Promise<string> {
     const openHandler = source.slice(openStart + "open: ".length, openEnd);
     const result = await build({
         stdin: {
-            contents: `${prefix}\nmodule.exports = { createState, loadState, persistState, completeLifecycleStage, reopenLifecycleStage, beginPrototypeBuild, prototypeAction, queuePrototypeRevision, stageCompletionError, applyFactoryResult, updateTandem, readRequestBody, verifyPreviewIdentity, applyCanvasReset, isCanvasRehydration, ensurePreparationStarted, bindPreparationRun, recordPreparationWorkItem, settlePreparationRun, recoverPreparationFactory, recoverAnswerFactory, seedDefaultDesignReview, ensureDefaultDesignReview, preparationFactory, resetEffort, startEffort, startServer, runEffortFactory, waitForEffortRun, openTandem: ${openHandler}, async closeServers() { for (const entry of servers.values()) { clearInterval(entry.heartbeat); for (const client of entry.clients) client.end(); await new Promise(resolve => entry.server.close(resolve)); } servers.clear(); }, waitForPreparation(id) { return activePreparationRuns.get(id); }, waitForAnswer(id) { return activeAnswerRuns.get(id); }, waitForDesignReview(id) { return activeDesignReviewRuns.get(id); }, waitForExecution(id) { return Promise.all([activeImplementationRuns.get(id), activeTestRuns.get(id)]); }, answerFactory, answerFactoryPrompt, processAction, setSession(value) { session = value; } };`,
+            contents: `${prefix}\nmodule.exports = { createState, createLegacyState(id, goal) { const state = createState(id, goal); delete state.lifecycle.version; return state; }, loadState, persistState, completeLifecycleStage, reopenLifecycleStage, beginPrototypeBuild, sketchAction, ensureSketchStarted, readSketchImage, prototypeAction, queuePrototypeRevision, stageCompletionError, applyFactoryResult, updateTandem, readRequestBody, verifyPreviewIdentity, applyCanvasReset, isCanvasRehydration, ensurePreparationStarted, bindPreparationRun, recordPreparationWorkItem, settlePreparationRun, recoverPreparationFactory, recoverAnswerFactory, seedDefaultDesignReview, ensureDefaultDesignReview, preparationFactory, usageSuggestionFactory, textWorkerAgent, resetEffort, startEffort, startServer, runEffortFactory, waitForEffortRun, openTandem: ${openHandler}, async closeServers() { for (const entry of servers.values()) { clearInterval(entry.heartbeat); for (const client of entry.clients) client.end(); await new Promise(resolve => entry.server.close(resolve)); } servers.clear(); }, waitForPreparation(id) { return activePreparationRuns.get(id); }, waitForAnswer(id) { return activeAnswerRuns.get(id); }, waitForDesignReview(id) { return activeDesignReviewRuns.get(id); }, waitForExecution(id) { return Promise.all([activeImplementationRuns.get(id), activeTestRuns.get(id)]); }, answerFactory, answerFactoryPrompt, processAction, setSession(value) { session = value; } };`,
             loader: "ts", resolveDir: sourceRoot,
         },
         bundle: true, platform: "node", target: "node20", format: "cjs", write: false,
@@ -99,7 +105,7 @@ async function compile(): Promise<string> {
     return result.outputFiles[0].text;
 }
 
-export async function extensionHarness(speechEnvironment: Record<string, string> = {}, sharedRoot?: string) {
+export async function extensionHarness(speechEnvironment: Record<string, string> = {}, sharedRoot?: string, rendererHtml = "") {
     const root = sharedRoot || resolve("node_modules", "tandem-test-fixtures", randomUUID());
     await mkdir(root, { recursive: true });
     const requests: unknown[] = [];
@@ -129,7 +135,7 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
     };
     try {
         runInNewContext(await (compiled ??= compile()), {
-            module, exports: module.exports, console, URL, Buffer, AbortController, AbortSignal, Response, Error, TextDecoder,
+            module, exports: module.exports, console, URL, Buffer, AbortController, AbortSignal, Response, Error, TextDecoder, TextEncoder,
             setTimeout, clearTimeout, setInterval, clearInterval,
             speechIdentity: {
                 DefaultAzureCredential: class {
@@ -179,7 +185,7 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
                     CanvasError, defineFactory: (value: unknown) => value,
                     isFactoryRunTerminal: (status: string) => ["completed", "failed", "cancelled", "halted", "error"].includes(status),
                 };
-                if (name === "./renderer.js") return { renderTandemHtml: () => "" };
+                if (name === "./renderer.js") return { renderTandemHtml: () => rendererHtml };
                 return require(name);
             },
         });

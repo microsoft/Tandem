@@ -61,7 +61,7 @@ test("explicit acceptance and export persist without committing or changing the 
     const h = await extensionHarness();
     try {
         execFileSync("git", ["init", "--quiet", h.root]);
-        const state = h.api.createState("accept", "Preserve accepted intent");
+        const state = h.api.createLegacyState("accept", "Preserve accepted intent");
         state.stage = "prototype";
         state.lifecycle.currentStage = "prototype";
         state.lifecycle.completedStages = ["prepare", "requirements"];
@@ -142,7 +142,7 @@ for (const stage of ["plan", "implement"] as const) {
         const h = await extensionHarness();
         try {
             execFileSync("git", ["init", "--quiet", h.root]);
-            const state = h.api.createState("automatic", "Exercise explicit handoff automation");
+            const state = h.api.createLegacyState("automatic", "Exercise explicit handoff automation");
             state.stage = stage === "plan" ? "implement" : "test";
             state.lifecycle.currentStage = state.stage;
             state.lifecycle.completedStages = ["prepare", "requirements", "prototype", "design", "plan",
@@ -201,7 +201,7 @@ for (const stage of ["plan", "implement"] as const) {
 test("protected paths remain locked through Implement reopening and can be reviewed after reopening Plan", async () => {
     const h = await extensionHarness();
     try {
-        const state = h.api.createState("protected", "Protect accepted regression tests");
+        const state = h.api.createLegacyState("protected", "Protect accepted regression tests");
         state.stage = "test";
         state.lifecycle.currentStage = "test";
         state.lifecycle.completedStages = ["prepare", "requirements", "prototype", "design", "plan", "implement"];

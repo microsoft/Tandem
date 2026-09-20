@@ -6,6 +6,28 @@ import { isPreferredTandemProvider } from "../provider-identity.js";
 import { DesktopProtocol, validateDesktopUrl } from "./protocol.js";
 import { claimDesktopWorkspace } from "./workspace.js";
 import { desktopRuntimeEnvironment } from "./environment.js";
+import { tandemWorkerInteractionRules } from "../planning-prompts.js";
+
+export function desktopSessionConfig(
+    workspace: string, runtimeDirectory: string, protocol: DesktopProtocol,
+): ResumeSessionConfig {
+    return {
+        workingDirectory: workspace,
+        clientName: "Tandem Desktop",
+        enableConfigDiscovery: true,
+        requestCanvasRenderer: true,
+        requestExtensions: true,
+        onPermissionRequest: protocol.permission.bind(protocol),
+        excludedTools: ["ask_user"],
+        hooks: {
+            onPreToolUse: (input) => input.toolName === "ask_user" ? {
+                permissionDecision: "deny",
+                permissionDecisionReason: tandemWorkerInteractionRules,
+            } : undefined,
+        },
+        skillDirectories: [join(runtimeDirectory, "skills")],
+    };
+}
 
 export async function openDesktopSession(
     client: Pick<CopilotClient, "rpc" | "resumeSession">,
@@ -78,16 +100,7 @@ export async function runDesktopRuntime(options: {
         if (!auth.isAuthenticated) {
             throw new Error("Copilot is not signed in. Run 'copilot login' in a terminal, complete sign-in, then reopen this folder. No Copilot app is required.");
         }
-        const config = {
-            workingDirectory: ownership.workspace,
-            clientName: "Tandem Desktop",
-            enableConfigDiscovery: true,
-            requestCanvasRenderer: true,
-            requestExtensions: true,
-            onPermissionRequest: protocol.permission.bind(protocol),
-            onUserInputRequest: (request: Parameters<DesktopProtocol["question"]>[0]) => protocol.question(request),
-            skillDirectories: [join(options.runtimeDirectory, "skills")],
-        };
+        const config = desktopSessionConfig(ownership.workspace, options.runtimeDirectory, protocol);
         session = await openDesktopSession(client, ownership, config);
         await ownership.save();
         signal.throwIfAborted();

@@ -60,6 +60,7 @@ async function compileHarness() {
         import { buildWorkerContract, contractInstruction, assertContractSkillsCurrent,
             captureWorkspaceFiles, assertChangedPathsOwned } from "./worker-contracts.js";
         import { runVerificationCheck, evidenceSummary } from "./verification.js";
+        import { tandemWorkerInteractionRules } from "./planning-prompts.js";
         import {
             assertExecutionRequest, assertExecutionSources, executionDigest, executionToken,
             executionWorkspace, ExecutionCancellationPendingError, ExecutionSourceChangedError, ExecutionSupersededError,
@@ -163,7 +164,7 @@ async function fixture() {
             stage: testing ? "test" : "implement",
             lifecycle: {
                 currentStage: testing ? "test" : "implement",
-                completedStages: ["prepare", "requirements", "prototype", "design", "plan", ...(testing ? ["implement"] : [])],
+                completedStages: ["prepare", "requirements", "sketch", "prototype", "design", "plan", ...(testing ? ["implement"] : [])],
                 skippedStages: [], outputs: [], history: [],
             },
             planning: api.normalizePlanning({ status: "complete", finalizedArtifactId: "execution-plan", maxAgents: 2, workItems: items }),

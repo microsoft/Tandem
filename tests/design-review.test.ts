@@ -28,7 +28,7 @@ function artifact(id: string, kind = id, sourceThreadIds: string[] = []): Tandem
 }
 
 function designState(h: Harness, substage: "product" | "test" = "test"): TandemState {
-    const state = h.api.createState("sample", "Preserve accepted design and review history");
+    const state = h.api.createLegacyState("sample", "Preserve accepted design and review history");
     state.lifecycle.currentStage = state.stage = "design";
     state.lifecycle.completedStages = ["prepare", "requirements", "prototype"];
     state.design.substage = substage;

@@ -199,6 +199,16 @@
               data-tab="design-tree"
             >Requirements</button>
             <button
+              id="sketch-tab"
+              class="preview-tab"
+              type="button"
+              role="tab"
+              aria-selected="false"
+              aria-controls="sketch-panel"
+              tabindex="-1"
+              data-tab="sketch"
+            >Sketch</button>
+            <button
               id="live-preview-tab"
               class="preview-tab"
               type="button"
@@ -314,6 +324,90 @@
             </div>
           </section>
         </div>
+        <section id="sketch-panel" class="sketch-panel" role="tabpanel" aria-labelledby="sketch-tab" tabindex="0" hidden>
+          <div class="sketch-heading">
+            <div><strong>Screen sketches</strong><p class="muted">Review structure and navigation before building the prototype.</p></div>
+            <div class="sketch-actions">
+              <button id="sketch-generate" class="plan-button secondary" type="button">Generate drawings</button>
+              <button id="sketch-save" class="plan-button secondary" type="button">Save drawings</button>
+              <button id="sketch-approve" class="plan-button" type="button">Approve drawings and continue</button>
+            </div>
+          </div>
+          <p id="sketch-status" class="muted" role="status" aria-live="polite"></p>
+          <p id="sketch-message" class="sketch-error" role="alert" hidden></p>
+          <div class="sketch-actions">
+            <button id="sketch-add-screen" type="button">Add screen</button>
+            <button id="sketch-undo" type="button">Undo</button>
+            <button id="sketch-redo" type="button">Redo</button>
+            <button id="sketch-reload" type="button">Reload saved drawings</button>
+          </div>
+          <p id="sketch-empty" class="sketch-empty">No drawings yet. Generate a first draft or add a screen to begin.</p>
+          <div id="sketch-workspace" class="sketch-workspace" hidden>
+            <aside class="sketch-sidebar" aria-label="Sketch screens and properties">
+              <h3>Screens</h3>
+              <nav id="sketch-screens" class="sketch-list" aria-label="Screens"></nav>
+              <label for="sketch-title">Screen title</label>
+              <input id="sketch-title" maxlength="500" />
+              <span id="sketch-viewport" class="muted"></span>
+              <label for="sketch-purpose">Purpose</label>
+              <textarea id="sketch-purpose" rows="2" maxlength="500"></textarea>
+              <label for="sketch-notes">Notes</label>
+              <textarea id="sketch-notes" rows="2" maxlength="4000"></textarea>
+              <label for="sketch-decisions">Requirement decision IDs</label>
+              <input id="sketch-decisions" placeholder="Comma-separated IDs" />
+              <details>
+                <summary>Shapes (keyboard selection)</summary>
+                <div id="sketch-shapes" class="sketch-list" aria-label="Shapes"></div>
+              </details>
+            </aside>
+            <div class="sketch-main">
+              <div id="sketch-tools" class="sketch-actions" role="group" aria-label="Drawing tools">
+                <button id="sketch-add-rectangle" type="button">Rectangle</button>
+                <button id="sketch-add-ellipse" type="button">Ellipse</button>
+                <button id="sketch-add-text" type="button">Text</button>
+                <button id="sketch-add-line" type="button">Line</button>
+                <button id="sketch-add-arrow" type="button">Arrow</button>
+                <button id="sketch-freehand" type="button" aria-pressed="false">Freehand</button>
+              </div>
+              <p id="sketch-board-help" class="muted"></p>
+              <div class="sketch-board-wrap">
+                <div id="sketch-board" class="sketch-board" tabindex="0" role="group" aria-label="Editable screen drawing" aria-describedby="sketch-board-help"></div>
+              </div>
+              <fieldset class="sketch-inspector">
+                <legend id="sketch-shape-label">Select a shape to edit</legend>
+                <label>X<input id="sketch-x" type="number" min="0" step="1" /></label>
+                <label>Y<input id="sketch-y" type="number" min="0" step="1" /></label>
+                <label>Width<input id="sketch-width" type="number" min="1" step="1" /></label>
+                <label>Height<input id="sketch-height" type="number" min="1" step="1" /></label>
+                <label class="sketch-label-input">Text tool label<input id="sketch-text" maxlength="500" /></label>
+                <label>Font size<input id="sketch-font-size" type="number" min="1" max="500" /></label>
+                <label>Fill<select id="sketch-fill"><option value="none">None</option><option value="#ffffff">White</option><option value="#eeeeee">Light gray</option><option value="#999999">Gray</option><option value="#333333">Dark gray</option></select></label>
+                <label>Stroke<select id="sketch-stroke"><option value="none">None</option><option value="#ffffff">White</option><option value="#999999">Gray</option><option value="#333333">Dark gray</option><option value="#000000">Black</option></select></label>
+                <button id="sketch-delete-shape" type="button">Delete shape</button>
+              </fieldset>
+            </div>
+          </div>
+          <details class="sketch-details">
+            <summary>Screen transitions</summary>
+            <div id="sketch-transitions"></div>
+            <button id="sketch-add-transition" type="button">Add transition</button>
+          </details>
+          <section id="sketch-failed-revision" class="sketch-details" aria-label="Failed drawing revision" hidden>
+            <p id="sketch-failed-instruction" class="muted"></p>
+            <button id="sketch-retry-revision" type="button">Retry same revision</button>
+            <p class="muted">Retries the original instruction against these drawings. Local edits are saved first; any new instruction below is kept.</p>
+          </section>
+          <form id="sketch-revise-form" class="sketch-revise-form">
+            <label for="sketch-instruction">Ask AI to revise these drawings</label>
+            <textarea id="sketch-instruction" data-speech-input rows="2" maxlength="4000" placeholder="Describe a layout, label, screen, or navigation change."></textarea>
+            <button id="sketch-revise" class="plan-button secondary" type="submit">Revise drawings</button>
+            <p class="muted">Local edits are saved first. AI creates a new revision; approval is always explicit.</p>
+          </form>
+          <details class="sketch-details">
+            <summary>Revision history</summary>
+            <ul id="sketch-history" class="muted"></ul>
+          </details>
+        </section>
         <div
           id="live-preview-panel"
           class="frame-wrap"
@@ -361,7 +455,7 @@
             <p id="prototype-build-status" class="revision-status" role="status" aria-live="polite"></p>
             <div id="preview-empty" class="preview-empty">
               <div>
-                <p id="preview-empty-message">The runnable prototype will appear here after the essential interaction decisions are captured.</p>
+                <p id="preview-empty-message">The runnable prototype will appear here after the requirements and screen sketches are approved.</p>
                 <button id="start-prototype" class="plan-button" type="button" hidden>Start prototype</button>
               </div>
             </div>

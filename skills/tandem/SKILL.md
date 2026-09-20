@@ -1,6 +1,6 @@
 ---
 name: tandem
-description: "Guide software intent through requirements, optional interactive prototypes, design, execution planning, implementation, evidence-backed testing, and accepted delivery handoffs."
+description: "Guide software intent through requirements, approved app sketches, optional interactive prototypes, design, execution planning, implementation, evidence-backed testing, and accepted delivery handoffs."
 priority: 100
 categories:
   - prototyping
@@ -47,6 +47,13 @@ Treat all text after `/tandem` as an initial goal, not a complete
 specification. Never ask the user to compose the architecture, screen list, data
 model, or implementation prompt. The skill owns discovery.
 
+Do not interview the user for product details before the "I want to..." intent
+collection. The initial goal is sufficient. Preparation records unknowns as
+assumptions/deferred work; suggestions remain optional until the user adds them.
+Accepted usages are the scope for subsequent DAG questions, not already-answered
+decisions. Exact business names, hours, addresses, and similar content can remain
+explicit placeholders rather than blocking intent entry.
+
 On activation:
 
 1. Open the `tandem` canvas immediately, displayed as **Tandem**, using stable
@@ -89,11 +96,11 @@ On activation:
    approved snapshot for **Retry whole-graph defaults**; do not bypass reconciliation.
 
 Tandem is the lifecycle orchestration UI. It advances sequentially through
-**Preparation**, **Requirements**, **Prototype**, **Design**, **Plan**,
+**Preparation**, **Requirements**, **Sketch**, **Prototype**, **Design**, **Plan**,
 **Implement**, and **Test**.
 Each applicable stage must be completed explicitly, which persists its JSON result
 under `.tandem/efforts/<prototypeId>/stages/` before enabling the next stage. A Prototype
-that is not applicable is disabled and bypassed automatically after Requirements,
+that is not applicable, together with Sketch, is disabled and bypassed automatically after Requirements,
 with its reason and feature-spec handoff still persisted. Tandem
 owns Q&A, assumptions, scope, progress, prototype revisions, evidence, and the
 live output area. The website being prototyped is a separate artifact rendered
@@ -104,6 +111,21 @@ inside Tandem; never mix discovery controls into the prototype itself.
 Preparation is an automatic, durable first stage owned by Tandem. The parent agent
 opens the canvas immediately; a bounded hidden factory then processes three visible
 work items:
+
+For a goal-only project, Tandem first checks the local directory. If it contains
+only Git/Tandem metadata or is empty, one lightweight worker assesses source needs
+and can produce the handoff without tools. Generic app goals do not trigger web
+research. Named references or integrations that need authoritative evidence still
+take the source-analysis path. Project files, guidance, or imported source records
+retain full preparation. Tooling and credential checks not performed are deferred,
+never claimed as verified.
+
+Hidden workers must not call `ask_user` or other direct question tools. Questions
+belong in the stage's structured DAG or clarification fields so Tandem can display,
+persist, and apply the user's actual answer. If the output has no question field,
+return assumptions, deferred work, notes, or blockers without inventing an answer.
+Desktop disables the native agent-question bridge; this does not authorize
+bypassing tool permissions or automatically accepting product decisions.
 
 1. **Inspect workspace** identifies repository structure, guidance, manifests,
    package managers, run commands, runtimes, container tools, and execution
@@ -265,11 +287,16 @@ Use one Tandem canvas as the shared requirements and output surface:
    `requirements` as the explicit stage-completion action. Default batching itself
    never completes a stage or starts a prototype. Do not create or edit a runnable interface before this. When
    `prototypeApproach.mode` is `not-applicable`, Tandem disables and bypasses
-   Prototype, persists the reason, creates the non-GUI `draft-feature-spec`, and
+   Sketch and Prototype, persists the reason, creates the non-GUI `draft-feature-spec`, and
    enables Design.
-8. For applicable prototypes, completing Requirements schedules the durable
+8. For applicable prototypes, completing Requirements generates app sketches from
+   the accepted DAG. Let the user review and edit the screen scenes, annotations
+   and navigation in Sketch. Save changes before approval. Only explicit
+   **Approve drawings and continue** freezes the scene and PNG inputs and advances
+   into Prototype; never fabricate approval through `update_tandem`.
+   Completing Sketch schedules the durable
    **Structure** checkpoint: realistic labels, simple layout, and a minimally
-   clickable primary journey. Start with a simplified interactive scene when 3D
+   clickable primary journey matching the approved sketches. Start with a simplified interactive scene when 3D
    navigation is central. Do not wait for every screen or detailed visual asset.
    **Interaction** follows automatically, developing the same primary journey.
    **Visual direction** is optional and explicitly requested after Interaction.
@@ -449,7 +476,7 @@ The activation payload above is the `open_canvas` input, not a later
 
 ## Sequential lifecycle
 
-Stages are gated and cannot be skipped:
+Applicable stages are gated and cannot be silently skipped:
 
 1. **Preparation** runs automatically after the canvas opens, displays its durable
    work-item progress and results, persists `prepare.json`, and passes analysis
@@ -457,10 +484,22 @@ Stages are gated and cannot be skipped:
 2. **Requirements** captures at least one usage, generates the DAG, and records an
    answer for every decision-graph node. Hidden workers may update Tandem state and
    artifacts but must not edit prototype files.
-3. **Prototype** follows the selected approach. `build` produces a new runnable
+3. **Sketch** generates low-fidelity app drawings from the completed Requirements
+   snapshot. The decision DAG is not a navigation graph: derive screens and
+   transitions from the combined intent, then link screens to source decisions.
+   Users may edit shapes, labels and annotations or request focused AI revisions.
+   The host validates and saves immutable scene revisions. Explicit approval
+   captures a PNG for every screen and a `sketch-spec` artifact; only the current
+   revision bound to current Requirements can advance. No application code or
+   server should be created during Sketch.
+4. **Prototype** follows the selected approach. `build` produces a new runnable
    preview. `validate-existing` runs and revises the repository's existing GUI.
    Progress through Structure, Interaction, and optional Visual direction inside
-   this one lifecycle stage. Keep feedback capture enabled while building or
+   this one lifecycle stage. Consume the exact approved scene and read every
+   screen image through the provider's `tandem_read_sketch_image_*` tool using
+   the checkpoint identities in its prompt. Missing image transport is a visible
+   blocker, not permission to silently reinterpret the drawings from text alone.
+   Keep feedback capture enabled while building or
    clarifying; queue submissions durably. Freeze submission only while generating
    the final handoff, preserving the user's draft. Keep the last working preview
    visible and promote later previews only through **Apply update**. Finish only
@@ -472,22 +511,22 @@ Stages are gated and cannot be skipped:
    `kind: "feature-spec"` before advancing. For `not-applicable`, the stage and
    Live prototype tab are disabled with the recorded reason; completing Requirements
    automatically persists a non-GUI `draft-feature-spec` and enables Design.
-4. **Design** has two ordered substages in the Design Review UI. Product design
+5. **Design** has two ordered substages in the Design Review UI. Product design
    reconciles the draft feature specification into `design-spec`, architecture,
    contracts, and other product-design artifacts. Test design converts the accepted
    design into `test-spec` and structured integration and interaction scenarios.
    Question and artifact requests are queued without blocking the composer. The
    user explicitly resolves every answer and finalizes each substage.
-5. **Plan** converts the accepted design into an `execution-plan` artifact with
+6. **Plan** converts the accepted design into an `execution-plan` artifact with
    implementable work items, a dependency DAG, conflict-safe parallel waves,
    relative schedule, agent-role distribution, file ownership, validation, and
    explicit scope boundaries. The user reviews and finalizes the plan in the
    Execution plan tab before completion.
-6. **Implement** executes the accepted plan and records a `final-code` artifact
+7. **Implement** executes the accepted plan and records a `final-code` artifact
    with the workspace-relative path to the completed code. Tandem launches
    work-item agents in dependency waves, preserves completed work across retries,
    and applies queued user strategy adjustments at safe wave boundaries.
-7. **Test** executes the approved `test-spec` scenarios in dependency waves after
+8. **Test** executes the approved `test-spec` scenarios in dependency waves after
    implementation. Passing scenarios are preserved only while their code and
    specification fingerprints still match; changed inputs invalidate prior passes. Failed
    prerequisites block only dependent scenarios. Successful completion records
@@ -497,8 +536,12 @@ Invoke `complete_stage` only for an active user-completed stage. Preparation own
 its automatic completion. Other stage actions write
 `.tandem/efforts/<prototypeId>/stages/<stageId>-r<revision>.json`, marks the stage complete, and
 enables the next one. Keep the Goal above the Stages control in Tandem, and
-keep the Design tree tab before Live prototype so requirement navigation remains
-the primary discovery surface.
+keep Requirements, Sketch, and Live prototype in that order. Existing efforts
+that had already entered Prototype before Sketch was introduced retain a recorded
+legacy Sketch bypass, not invented approval. Reopen Requirements to adopt sketches.
+Reopening Requirements makes drawings stale; reopening Sketch retains drawing
+history but clears approval and invalidates downstream prototype checkpoints.
+Scene and PNG assets stay in ignored `.tandem` until an explicit accepted export.
 
 Every `build` or `validate-existing` preview must put its normalized `prototypeId`
 in the document served at the preview root:

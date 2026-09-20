@@ -65,6 +65,22 @@ test("legacy states remain readable and corrupted checkpoint references fail vis
     assert.throws(() => readPrototypeFlow({ ...newPrototypeFlow(), budget: { limitSeconds: 900, usedSeconds: NaN } }), /invalid/);
 });
 
+test("checkpoint sketch bindings and delivered-image receipts survive reload without partial identities", () => {
+    const flow = reservePrototypeCheckpoint(newPrototypeFlow(), {
+        ...pending("drawn", "structure"), sketchRevisionId: "approved-revision",
+        sketchInputHash: "a".repeat(64), sketchImagesRead: ["main"],
+    });
+    assert.deepEqual(readPrototypeFlow(JSON.parse(JSON.stringify(flow))), flow);
+    for (const patch of [
+        { sketchInputHash: null }, { sketchRevisionId: null }, { sketchInputHash: "wrong" },
+        { sketchImagesRead: ["main", "main"] }, { sketchImagesRead: [42] },
+    ]) {
+        assert.throws(() => readPrototypeFlow({
+            ...flow, checkpoints: [{ ...flow.checkpoints[0], ...patch }],
+        }), /invalid/);
+    }
+});
+
 test("retry traverses preparation failures without discarding the last worker's source changes", () => {
     const prepared: PrototypeCheckpoint = { ...pending("worker-failed", "interaction"),
         status: "failed", timeoutSeconds: 300 };

@@ -8,7 +8,7 @@ const provider = "project:tandem";
 
 async function prototypeFixture() {
     const fixture = await extensionHarness();
-    const state = fixture.api.createState("sample", "Preserve the existing effort.");
+    const state = fixture.api.createLegacyState("sample", "Preserve the existing effort.");
     state.lifecycle.currentStage = state.stage = "prototype";
     state.lifecycle.completedStages = ["prepare", "requirements"];
     state.prototypeApproach = { mode: "build", reason: "New interface" };

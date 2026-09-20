@@ -1,10 +1,13 @@
 import type { DecisionGraph, DecisionQuestion, JobOwner } from "./workflow.js";
 import type { ProcessState } from "./process-state.js";
 import type { PrototypeFlow } from "./prototype-flow.js";
+import type { SketchState } from "./sketch.js";
+import type { ArtifactAsset } from "./artifact-assets.js";
 
 export type LifecycleStageId =
     | "prepare"
     | "requirements"
+    | "sketch"
     | "prototype"
     | "design"
     | "plan"
@@ -84,6 +87,7 @@ export interface SkippedLifecycleStage {
 }
 
 export interface LifecycleState {
+    version?: 2;
     currentStage: LifecycleStageId;
     completedStages: LifecycleStageId[];
     outputs: LifecycleOutput[];
@@ -103,6 +107,7 @@ export interface TandemArtifact {
     sourceThreadIds?: string[];
     reviewStatus?: "current" | "stale";
     sourceRevision?: number;
+    assets?: ArtifactAsset[];
 }
 
 export interface TandemState {
@@ -135,6 +140,7 @@ export interface TandemState {
     assumed: string[];
     deferred: string[];
     artifacts: TandemArtifact[];
+    sketch: SketchState;
     process: ProcessState;
     previewUrl: string | null;
     previewStatus: "waiting" | "starting" | "ready" | "error";

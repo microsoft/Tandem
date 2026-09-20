@@ -33,9 +33,10 @@ test("speech controls cover all conversational fields and exclude configuration"
     value.requirements.substage = "dag";
     value.decisionGraph.nodes = [decision("q")];
     const h = await fixture(value);
-    assert.equal(h.document.querySelectorAll("[data-speech-input]").length, 8);
-    assert.equal(h.document.querySelectorAll(".speech-toggle").length, 8);
-    assert.equal(h.document.querySelectorAll(".speech-sign-in").length, 8);
+    assert.equal(h.document.querySelectorAll("[data-speech-input]").length, 9);
+    assert.equal(h.document.querySelectorAll(".speech-toggle").length, 9);
+    assert.equal(h.document.querySelectorAll(".speech-sign-in").length, 9);
+    assert.notEqual(h.document.getElementById("sketch-instruction")!.getAttribute("data-speech-input"), null);
     for (const name of ["intake-content", "verification-checks", "protected-paths", "handoff-approver"]) {
         assert.equal(h.document.getElementById(name)!.getAttribute("data-speech-input"), null);
     }
