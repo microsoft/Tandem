@@ -1,3 +1,5 @@
 .tandem/
 dist/
 node_modules/
+**/bin/
+**/obj/

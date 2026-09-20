@@ -1,6 +1,5 @@
 import {
     execFileSync,
-    type ExecFileSyncOptionsWithStringEncoding,
 } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
@@ -14,6 +13,8 @@ import {
     joinSession,
 } from "@github/copilot-sdk/extension";
 import { renderTandemHtml } from "./renderer.js";
+import { isPreferredTandemProvider } from "./provider-identity.js";
+import { resolveSharedProjectRoot } from "./workspace-root.js";
 import { buildDecisionGraphMermaid } from "./decision-diagram.js";
 import {
     curatedDefault, patchSemanticList, readDefaultBatch, reconciliationInput,
@@ -32,7 +33,7 @@ import {
     fingerprintWorkspace, newExecution, normalizeExecutionFields, workerOutcome,
     type ExecutionToken,
 } from "./execution.js";
-import { readJsonRequest, sendJsonResponse } from "./canvas-transport.js";
+import { canvasRequestAllowed, readJsonRequest, sendJsonResponse } from "./canvas-transport.js";
 import { createSpeechTokenService, SpeechAuthError, validateSpeechTokenRequest } from "./speech-auth.js";
 import { acceptStageSnapshot, exportAcceptedSnapshot } from "./accepted-artifacts.js";
 import {
@@ -213,36 +214,6 @@ async function logSafely(message, level = "error") {
                 error instanceof Error ? error.message : String(error)
             }`,
         );
-    }
-}
-
-function resolveSharedProjectRoot() {
-    const cwd = process.cwd();
-    const options: ExecFileSyncOptionsWithStringEncoding = {
-        cwd,
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-        windowsHide: true,
-    };
-
-    try {
-        const commonValue = execFileSync(
-            "git",
-            ["rev-parse", "--git-common-dir"],
-            options,
-        ).trim();
-        const commonDirectory = resolve(cwd, commonValue);
-        if (basename(commonDirectory).toLowerCase() === ".git") {
-            return dirname(commonDirectory);
-        }
-
-        return execFileSync(
-            "git",
-            ["rev-parse", "--show-toplevel"],
-            options,
-        ).trim() || cwd;
-    } catch {
-        return cwd;
     }
 }
 
@@ -2105,18 +2076,7 @@ async function withAnswerClaim<R>(
 
 async function isPreferredAnswerProvider(extensionId) {
     const extensionList = await session.rpc.extensions.list();
-    const runningIds = new Set(
-        extensionList.extensions
-            .filter((extension) => extension.status === "running")
-            .map((extension) => extension.id),
-    );
-    if (runningIds.has(USER_EXTENSION_ID)) {
-        return extensionId === USER_EXTENSION_ID;
-    }
-    return (
-        runningIds.has(PROJECT_EXTENSION_ID) &&
-        extensionId === PROJECT_EXTENSION_ID
-    );
+    return isPreferredTandemProvider(extensionId, extensionList.extensions, session.sessionId);
 }
 
 async function recordEffortFactoryReceipt(prototypeId, requestId, generation, run) {
@@ -9989,6 +9949,10 @@ async function submitPreparationRetry(entry, res) {
 }
 
 async function handleRequest(entry, req, res) {
+    if (!canvasRequestAllowed(req, entry.url)) {
+        sendJson(res, 403, { error: "This request did not originate from the Tandem application." });
+        return;
+    }
     const requestUrl = new URL(req.url || "/", "http://127.0.0.1");
 
     if (req.method === "GET" && requestUrl.pathname === "/") {

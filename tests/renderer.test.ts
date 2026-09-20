@@ -66,6 +66,15 @@ test("header omits reload success text and places the version after Reset", asyn
     assert.equal(h.api.elements.reloadStatus.dataset.status, "error");
 });
 
+test("standalone read-only guidance returns to the owning session without requiring a user extension", async () => {
+    const h = await rendererHarness();
+    h.api.renderIfChanged({ ...state("requirements"), provider: { source: "session", canSubmitAnswers: false, canReload: false } });
+    assert.match(h.api.elements.usageMessage.textContent, /Tandem session that owns this effort/);
+    assert.match(h.api.elements.reloadStatus.textContent, /Reopen the workspace/);
+    assert.equal(h.api.elements.reloadButton.disabled, true);
+    assert.equal(h.requests.length, 0);
+});
+
 test("goal entry waits for an explicit valid start and preserves drafts across updates", async () => {
     const h = await rendererHarness();
     const value = blankEffort();

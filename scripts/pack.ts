@@ -38,7 +38,7 @@ archive.file(join(repositoryRoot, "README.md"), {
 archive.file(join(repositoryRoot, "skills", "tandem", "SKILL.md"), {
     name: "skills/tandem/SKILL.md",
 });
-archive.glob("src/**/*", { cwd: repositoryRoot }, { prefix: "source" });
+archive.glob("src/**/*", { cwd: repositoryRoot, ignore: ["**/bin/**", "**/obj/**"] }, { prefix: "source" });
 archive.glob("scripts/**/*", { cwd: repositoryRoot }, { prefix: "source" });
 archive.glob("tests/**/*", { cwd: repositoryRoot }, { prefix: "source" });
 for (const fileName of [

@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <_TandemSuppliedVersion>$(Version)</_TandemSuppliedVersion>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <AssemblyName>Tandem.Desktop</AssemblyName>
+    <RootNamespace>Tandem.Desktop</RootNamespace>
+    <Product>Tandem</Product>
+    <Description>Tandem Windows desktop host</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3537.50" />
+    <Compile Remove="Checks\**\*.cs" />
+    <InternalsVisibleTo Include="Tandem.Desktop.Checks" />
+  </ItemGroup>
+  <Target Name="RequireTandemPackageVersion" BeforeTargets="PrepareForBuild;GenerateNuspec"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <Error Condition="'$(_TandemSuppliedVersion)' == ''" Code="TANDEM001"
+           Text="Tandem's release version must come from package.json. Build with npm run build:desktop, or supply -p:Version=&lt;package.json version&gt; to dotnet/MSBuild (including IDE builds). The default SDK version is not a Tandem release version." />
+  </Target>
+  <Target Name="RemoveUnusedWebView2WpfReference" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Reference.Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
+</Project>

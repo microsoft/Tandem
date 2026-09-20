@@ -1,8 +1,66 @@
 # Tandem
 
-Tandem is a Copilot canvas for taking an app idea through preparation, requirements,
+Tandem is a standalone Windows Forms app and Copilot canvas for taking an app idea through preparation, requirements,
 prototype revisions, product and test design, execution planning, implementation,
 and integration/interaction testing.
+
+## Standalone Windows app
+
+The desktop app follows WorkMesh's Windows Forms + WebView2 hosting pattern. It
+uses the same Tandem UI, workflow, process adapters, and artifacts as the canvas,
+with its own Copilot SDK runtime. **The GitHub Copilot app does not need to be
+running.** AI operations still require a signed-in Copilot account and network
+access; this is not an offline AI engine.
+
+For development, install Windows, the .NET 10 SDK, Node.js 22.12+ (or 24 LTS),
+Git, and the Microsoft Edge WebView2 Evergreen Runtime. Install dependencies,
+authenticate once, and launch:
+
+```powershell
+npm ci
+npx copilot login
+npm run desktop -- --workspace C:\projects\my-app
+```
+
+Omit `--workspace` to choose a folder in the app. To build without opening it,
+run `npm run build:desktop`; the executable is `dist\desktop\Tandem.Desktop.exe`.
+The development build needs Node on PATH and the .NET 10 Desktop Runtime.
+`TANDEM_NODE_PATH` may specify a Node executable; `TANDEM_DESKTOP_HOST` may
+specify a different built `host.mjs` for debugging.
+
+Native dialogs handle Copilot permission requests and questions. Nothing is
+blanket-approved. Opening an empty workspace shows goal entry without starting
+agents. Closing or switching folders stops that window's runtime; reopening a
+folder resumes its original session, preserving effort state and run receipts.
+An active effort owned by a different Copilot session stays read-only rather
+than being taken over. Only one desktop window may own a given workspace.
+
+Desktop session identities and locks live in ignored `.tandem\desktop`; normal
+efforts remain in `.tandem\efforts`. The bundled extension and companion skill
+are private to the desktop runtime session, not installed over your personal
+Copilot extensions. If a user or project Tandem provider is loaded, the existing
+user-before-project precedence is preserved; the session bundle is the fallback.
+Native page reload does not redeploy extensions or reset project state.
+
+Before publishing a desktop release, bump the version in `package.json` with
+`npm version patch --no-git-tag-version` (or the intended minor/major increment),
+then run `npm run pack:desktop`. It runs the normal extension pack as well and
+creates `dist\tandem-<version>-windows-x64.zip`, including the self-contained
+.NET host, Node runtime, Copilot SDK/runtime dependencies, and companion skill.
+Recipients still need WebView2, Git, any tools required by their project, and
+Copilot authentication. Extract the entire ZIP before launching
+`Tandem.Desktop.exe`; do not copy the executable without its `runtime` directory.
+If Copilot CLI is not separately installed, sign in with the bundled CLI:
+
+```powershell
+.\runtime\node.exe .\runtime\node_modules\@github\copilot\npm-loader.js login
+```
+
+`npm run test:desktop` runs the native host checks and exercises the built backend
+without AI calls, including startup, session recovery, and shutdown. Add
+`-- --gui` to check the real Windows Forms/WebView2 page and canvas switching.
+These smoke checks require an existing Copilot login and `npm run build:desktop`;
+they do not run live model evaluations.
 
 ## Install
 

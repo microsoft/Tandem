@@ -5,7 +5,7 @@ import {
     type BuildOptions,
     type Plugin,
 } from "esbuild";
-import { readFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -18,6 +18,8 @@ const extensionRoot = join(
     "extensions",
     "tandem",
 );
+const desktopRuntime = join(repositoryRoot, "dist", "desktop", "runtime");
+const desktop = process.argv.includes("--desktop");
 const clientEntry = join(repositoryRoot, "src", "renderer", "client.ts");
 const stylesEntry = join(repositoryRoot, "src", "renderer", "styles.css");
 const packageMetadata = JSON.parse(
@@ -107,7 +109,7 @@ const rendererAssetsPlugin: Plugin = {
 
 const options: BuildOptions = {
     entryPoints: [join(repositoryRoot, "src", "extension.ts")],
-    outfile: join(extensionRoot, "extension.mjs"),
+    outfile: join(desktop ? desktopRuntime : extensionRoot, "extension.mjs"),
     bundle: true,
     platform: "node",
     format: "esm",
@@ -135,4 +137,16 @@ if (process.argv.includes("--watch")) {
     console.info("Watching Tandem TypeScript sources...");
 } else {
     await build(options);
+    if (desktop) {
+        await build({
+            entryPoints: [join(repositoryRoot, "src", "desktop", "host.ts")],
+            outfile: join(desktopRuntime, "host.mjs"),
+            bundle: true, platform: "node", format: "esm", target: "node22",
+            external: ["@github/copilot-sdk", "@github/copilot-sdk/*"],
+            banner: options.banner,
+        });
+        const skillDirectory = join(desktopRuntime, "skills", "tandem");
+        await mkdir(skillDirectory, { recursive: true });
+        await copyFile(join(repositoryRoot, "skills", "tandem", "SKILL.md"), join(skillDirectory, "SKILL.md"));
+    }
 }

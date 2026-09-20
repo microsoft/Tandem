@@ -330,6 +330,12 @@ function canEditStage(stage, state = currentState, allowCompleted = false) {
     && state.provider?.canSubmitAnswers !== false;
 }
 
+function providerWriteGuidance(action, state = currentState) {
+  return state?.provider?.source === "session"
+    ? "Return to the Tandem session that owns this effort to " + action + "."
+    : "Open the installed user-scoped Tandem to " + action + ".";
+}
+
 function hasActiveJobs(state) {
   return ["running", "starting"].includes(state.processing?.status)
     || ["starting", "running"].includes(state.preparation?.status)
@@ -1143,6 +1149,8 @@ function renderReload(state) {
   } else if (!canReload) {
     status = provider.source === "project"
       ? "Available from the user-installed Tandem"
+      : provider.source === "session"
+      ? "Reopen the workspace to update Tandem"
       : "Reload unavailable";
   } else if (receipt?.status === "reloading") {
     status = receipt.message || "Reloading...";
@@ -2311,7 +2319,7 @@ function renderRequirementsSubstage(state, preserveMessage = false) {
 
   if (!preserveMessage || (dagFailed && !processing)) {
     elements.usageMessage.textContent = !canSubmit
-      ? "Open the installed user-scoped Tandem to edit requirements."
+      ? providerWriteGuidance("edit requirements", state)
       : dagFailed && !processing
         ? (state.processing.message || "The requirements DAG could not be generated.")
           + " Your usages are saved. Retry requirements DAG to continue."
@@ -3109,8 +3117,7 @@ function renderQuestion(question, processing, canSubmitAnswers, decisionNode = n
   if (!canSubmitAnswers) {
     const notice = document.createElement("p");
     notice.className = "provider-notice";
-    notice.textContent =
-      "Answers are routed through the installed user-scoped Tandem.";
+    notice.textContent = providerWriteGuidance("answer decisions");
     elements.questionHost.append(notice);
   }
 
@@ -3402,7 +3409,7 @@ function renderPrototypeReview(state, preserveMessage = false) {
     elements.revisionStatus.textContent = revisionTransportError || (!isPrototype
       ? "Prototype history is read only. You can keep a draft; reopen the stage to submit it."
       : !canSubmit
-      ? "Open the installed user-scoped Tandem to submit revisions."
+      ? providerWriteGuidance("submit revisions", state)
       : finalizing
         ? "The final feature specification is being generated from frozen input. Keep drafting; sending is paused for this handoff."
       : unresolved.length >= 50
@@ -3615,7 +3622,7 @@ function renderDesignReview(state, preserveMessage = false) {
         ? "Design review is complete and remains available for reference."
         : "Complete Prototype to unlock review actions."
       : !canSubmit
-      ? "Open the installed user-scoped Tandem to conduct the review."
+      ? providerWriteGuidance("conduct the review", state)
       : failed
         ? "A review request failed. Retry it before finishing."
         : review.processing
@@ -3906,7 +3913,7 @@ function renderPlan(state, preserveMessage = false) {
     elements.planStatus.textContent = !isPlan
       ? "Execution plan is read only. Reopen Plan to change it."
       : !canSubmit
-      ? "Open the installed user-scoped Tandem to generate the plan."
+      ? providerWriteGuidance("generate the plan", state)
       : planning.error
         ? planning.error
         : processing
@@ -4254,7 +4261,7 @@ function renderImplementation(state, preserveMessage = false) {
     elements.implementationStatus.textContent = !isImplementation
       ? "Implementation evidence is read only."
       : !canSubmit
-      ? "Open the installed user-scoped Tandem to run implementation."
+      ? providerWriteGuidance("run implementation", state)
       : runtime?.error
         ? "Live agent details are unavailable: " + runtime.error
       : implementation.error
@@ -4551,7 +4558,7 @@ function renderTest(state, preserveMessage = false) {
     elements.testStatus.textContent = !isTest
       ? "Test evidence is read only."
       : !canSubmit
-      ? "Open the installed user-scoped Tandem to run tests."
+      ? providerWriteGuidance("run tests", state)
       : runtime?.error
         ? "Live agent details are unavailable: " + runtime.error
         : testing.error

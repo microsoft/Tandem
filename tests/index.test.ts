@@ -24,3 +24,4 @@ import "./process-adapters.test.js";
 import "./agent-evals.test.js";
 import "./execution-proof.test.js";
 import "./delivery.test.js";
+import "./desktop.test.js";
