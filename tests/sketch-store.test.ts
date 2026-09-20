@@ -118,6 +118,25 @@ test("sketch approval binds all screen JSON, SVG, and PNG assets and exact retri
     await assert.rejects(store.readImage("example", revision, approval, "../outside"), /requested screen/);
 });
 
+test("canvas resizing persists HD dimensions and clipped shapes through save, reload and approval", async (t) => {
+    const { store } = await fixture(t);
+    const original = document();
+    const first = await store.save("example", original, options);
+    const resized = structuredClone(original);
+    resized.screens[0].width = 1080;
+    resized.screens[0].height = 1920;
+    const hd = await store.save("example", resized, { ...options, source: "edited", number: 2 });
+    const approved = await store.approve("example", hd, [preview(png(1080, 1920))]);
+    assert.deepEqual(await store.verifyApproval("example", hd, approved), resized);
+    resized.screens[0].width = 1;
+    resized.screens[0].height = 1;
+    const clipped = await store.save("example", resized, { ...options, source: "edited", number: 3 });
+    const clippedApproval = await store.approve("example", clipped, [preview(png(1, 1))]);
+    assert.deepEqual(await store.verifyApproval("example", clipped, clippedApproval), resized);
+    assert.deepEqual((await store.read("example", clipped)).screens[0].shapes, original.screens[0].shapes);
+    assert.deepEqual(await store.read("example", first), original);
+});
+
 test("sketch approval rejects conflicting previews without overwriting previously approved bytes", async (t) => {
     const { store, path } = await fixture(t);
     const revision = await store.save("example", document(), options);

@@ -105,7 +105,7 @@
 .sketch-panel button[aria-pressed="true"] { background: var(--studio-accent-soft); border-color: var(--studio-accent); }
 .sketch-error { color: var(--text-color-danger, #b42318); white-space: pre-wrap; }
 .sketch-empty { padding: 32px 12px; text-align: center; }
-.sketch-workspace { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 12px; margin-top: 12px; }
+.sketch-workspace { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 12px; margin-top: 12px; }
 .sketch-sidebar { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .sketch-sidebar h3 { margin: 0; font-size: inherit; }
 .sketch-sidebar input, .sketch-sidebar textarea { width: 100%; resize: vertical; }
@@ -113,10 +113,23 @@
 .sketch-list button { text-align: left; overflow-wrap: anywhere; }
 .sketch-main { min-width: 0; }
 .sketch-main .muted { margin: 6px 0; }
-.sketch-board-wrap { background: #d8d8d8; border: 1px solid #aaa; padding: 12px; overflow: auto; }
-.sketch-board { touch-action: none; user-select: none; line-height: 0; background: #fff; color: #333; }
+.sketch-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.sketch-view-controls { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-inline-start: auto; max-width: 100%; }
+.sketch-size-preset { width: 200px; max-width: 100%; min-width: 0; height: 40px; }
+.sketch-panel .sketch-icon-button {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 40px; height: 40px; padding: 0; flex: none;
+}
+.sketch-icon-button > .lucide { margin: 0; }
+.sketch-zoom-output { min-width: 52px; text-align: center; font-variant-numeric: tabular-nums; }
+.sketch-board-wrap {
+  display: flex; align-items: flex-start; height: clamp(240px, 58vh, 720px);
+  background: #d8d8d8; border: 1px solid #aaa; padding: 12px; overflow: auto;
+}
+.sketch-canvas { flex: none; margin: auto; }
+.sketch-board { width: 100%; height: 100%; overflow: hidden; touch-action: none; user-select: none; line-height: 0; background: #fff; color: #333; }
 .sketch-board:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
-.sketch-board svg { display: block; width: 100%; height: auto; }
+.sketch-board svg { display: block; width: 100%; height: 100%; overflow: hidden; }
 .sketch-board [data-shape-id] { cursor: move; }
 .sketch-board .sketch-selected { outline: 2px dashed #777; outline-offset: 3px; }
 .sketch-board.sketch-drawing, .sketch-board.sketch-drawing [data-shape-id] { cursor: crosshair; }
@@ -160,6 +173,46 @@ html, body {
   background: var(--studio-panel);
   color: var(--text-color-default, #1f2328);
 }
+
+#root { height: 100%; }
+[hidden] { display: none !important; }
+button > .lucide, a > .lucide { vertical-align: middle; flex-shrink: 0; }
+button > .lucide { margin-inline-end: 5px; }
+.preview-tab > .lucide { margin-inline-end: 5px; }
+.stage-step-index > .lucide, .mark > .lucide { vertical-align: middle; }
+.react-diagram > svg { width: var(--diagram-width, 100%) !important; min-width: 0; max-width: none !important; height: auto; }
+.react-diagram g.node[role="button"]:focus-visible { outline: 3px solid var(--color-focus-outline, #0969da); outline-offset: 3px; }
+.dialog-overlay { position: fixed; inset: 0; z-index: 100; background: rgb(0 0 0 / 45%); }
+.dialog-content {
+  position: fixed; left: 50%; top: 50%; z-index: 101; transform: translate(-50%, -50%);
+  width: min(480px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto;
+  box-sizing: border-box; padding: 24px; border: 1px solid var(--studio-border);
+  border-radius: 12px; background: var(--background-color-default, #fff);
+  color: var(--text-color-default, #1f2328); box-shadow: 0 20px 60px rgb(0 0 0 / 25%);
+}
+.dialog-content h2 { margin: 0 0 12px; font-size: var(--text-title-small, 20px); }
+.dialog-content p { white-space: pre-line; line-height: 1.6; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+.radio-control {
+  display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 17px; height: 17px; min-height: 17px; padding: 0;
+  border: 1px solid var(--studio-border); border-radius: 50%;
+  background: var(--background-color-default, #fff);
+}
+.radio-control[data-state="checked"] { border-color: var(--studio-accent); }
+.radio-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--studio-accent); }
+.process-controls button.ledger-summary, .process-section button.ledger-summary {
+  width: 100%; min-height: auto; padding: 0; border: 0;
+  background: transparent; text-align: left; cursor: pointer;
+}
+.process-controls button.ledger-summary .lucide, .process-section button.ledger-summary .lucide {
+  transition: transform 120ms ease;
+}
+.process-controls button.ledger-summary[data-state="open"] > .lucide:first-child,
+.process-section button.ledger-summary[data-state="open"] > .lucide:first-child { transform: rotate(180deg); }
+.spin { animation: react-spin 1.2s linear infinite; }
+@keyframes react-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
 
 body.is-resizing {
   cursor: col-resize;

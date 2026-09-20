@@ -1,0 +1,420 @@
+import { Component, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ErrorInfo, type ReactNode } from "react";
+import { AlertDialog, Tabs, Tooltip } from "radix-ui";
+import { ArrowRight, Check, ChevronDown, ClipboardList, Code, FileText, GitBranch, Layers, ListChecks, Monitor, PencilRuler, Play, RefreshCw, RotateCcw, Sparkles } from "lucide-react";
+import { lifecycleStages } from "../workflow.js";
+import type { LifecycleStageId } from "../types.js";
+import { StudioStore } from "./state-store.js";
+import { DraftProvider, hasActiveJobs, hasStageData, skippedStage, UiContext, useAction, useDraft, useUi, type UiContextValue, type UiState } from "./ui-context.js";
+import { PreparationPanel } from "./preparation-panel.js";
+import { RequirementsPanel } from "./requirements-panel.js";
+import { SketchPanel, SketchCompletionContext, isSketchRevisionApproved } from "./sketch-panel.js";
+import { PrototypePanel, prototypeCompletionBlocked } from "./prototype-panel.js";
+import { ReviewPanel } from "./review-panel.js";
+import { ArtifactList, ArtifactsPanel } from "./artifacts-panel.js";
+import { ProcessPanel } from "./process-panel.js";
+import { PlanPanel } from "./plan-panel.js";
+import { ImplementationPanel, TestPanel } from "./execution-panel.js";
+import { SpeechProvider, SpeechTextarea } from "./speech-textarea.js";
+
+const stageTabs = [
+  { stage: "prepare", value: "preparation", id: "preparation", label: "Preparation", icon: Sparkles, className: "preparation-panel" },
+  { stage: "requirements", value: "design-tree", id: "design-tree", label: "Requirements", icon: GitBranch, className: "design-tree-panel" },
+  { stage: "sketch", value: "sketch", id: "sketch", label: "Sketch", icon: PencilRuler, className: "sketch-panel" },
+  { stage: "prototype", value: "preview", id: "live-preview", label: "Live prototype", icon: Monitor, className: "frame-wrap" },
+  { stage: "design", value: "design-review", id: "design-review", label: "Design review", icon: Layers, className: "design-review-panel" },
+  { stage: "plan", value: "plan", id: "plan", label: "Plan", icon: ClipboardList, className: "plan-panel" },
+  { stage: "implement", value: "implementation", id: "implementation", label: "Implement", icon: Code, className: "implementation-panel" },
+  { stage: "test", value: "test", id: "test", label: "Test", icon: ListChecks, className: "implementation-panel" },
+] as const;
+type TabId = typeof stageTabs[number]["value"] | "content";
+const tabFor = (stage: LifecycleStageId): TabId => stageTabs.find((tab) => tab.stage === stage)?.value || "content";
+export const isGoalEntry = (state: UiState) => !state.goal?.trim() && state.lifecycle.currentStage === "prepare" && state.preparation?.status === "not-started";
+
+export function canCompleteStage(state: UiState): boolean {
+  const stage = state.lifecycle.currentStage;
+  if (state.effortReset || state.provider?.canSubmitAnswers === false || skippedStage(state, stage)
+    || state.lifecycle.completedStages.includes(stage) || hasActiveJobs(state)) return false;
+  switch (stage) {
+    case "prepare": return false;
+    case "requirements": return state.preparation?.status !== "not-started" && state.prototypeApproach?.mode !== "undecided"
+      && state.requirements?.substage === "dag" && Boolean(state.decisionGraph?.nodes?.length)
+      && state.decisionGraph.nodes.every((node) => Boolean(node.answer));
+    case "sketch": return isSketchRevisionApproved(state.sketch);
+    case "prototype": return state.previewStatus === "ready" && state.prototypeApproach?.mode !== "undecided" && !prototypeCompletionBlocked(state);
+    case "design": return ["design-spec", "design-review"].includes(state.designReview?.finalizedArtifactId)
+      && state.testDesignReview?.finalizedArtifactId === "test-spec"
+      && [state.designReview, state.testDesignReview].every((review) =>
+        !review?.processing && !review?.finalizeRequested && (review?.threads || []).every((thread: { status: string }) => thread.status === "resolved"));
+    case "plan": return state.planning?.status === "complete" && state.planning?.finalizedArtifactId === "execution-plan" && !state.planning.processing;
+    case "implement": return state.implementation?.status === "completed" && state.implementation?.finalizedArtifactId === "final-code"
+      && state.artifacts.some((artifact) => artifact.id === "final-code" && artifact.kind === "final-code" && artifact.stage === "implement" && artifact.path && artifact.reviewStatus !== "stale")
+      && (state.implementation.workItems || []).every((item: { status: string }) => item.status === "completed");
+    case "test": return state.testing?.status === "completed" && state.testing?.finalizedArtifactId === "test-results"
+      && (state.testing.scenarios || []).every((item: { status: string }) => item.status === "passed");
+  }
+}
+
+class RenderBoundary extends Component<{ children: ReactNode }, { error: string }> {
+  state = { error: "" };
+  static getDerivedStateFromError(error: Error) { return { error: error.message }; }
+  componentDidCatch(error: Error, info: ErrorInfo) { console.error("Tandem UI failed to render.", error, info.componentStack); }
+  render() {
+    return this.state.error
+      ? <main className="start-panel"><div className="start-content" role="alert"><h1>Tandem could not display this workspace</h1><p>{this.state.error}</p><p>Reload the page to reconnect. Saved project data has not been reset.</p></div></main>
+      : this.props.children;
+  }
+}
+
+interface Confirmation { title: string; message: string; resolve: (confirmed: boolean) => void }
+export function App({ store, version, connect = true }: { store: StudioStore; version: string; connect?: boolean }) {
+  const { state, connectionError } = useSyncExternalStore(store.subscribe, store.getSnapshot);
+  const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
+  const confirmationRef = useRef<Confirmation | null>(null);
+  const confirmationFocus = useRef<HTMLElement | null>(null);
+  const confirm = useCallback<UiContextValue["confirm"]>((message, title = "Confirm action") => new Promise((resolve) => {
+    confirmationRef.current?.resolve(false);
+    confirmationFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const next = { message, title, resolve };
+    confirmationRef.current = next;
+    setConfirmation(next);
+  }), []);
+  const resolve = useCallback((approved: boolean) => {
+    confirmationRef.current?.resolve(approved);
+    confirmationRef.current = null;
+    setConfirmation(null);
+  }, []);
+  useEffect(() => connect ? store.connect() : undefined, [store, connect]);
+  useEffect(() => () => confirmationRef.current?.resolve(false), []);
+  return <RenderBoundary><Tooltip.Provider delayDuration={500}>
+    {state ? <DraftProvider key={state.prototypeId + ":" + state.generation}>
+      <EffortApp state={state} store={store} version={version} connectionError={connectionError} confirm={confirm} />
+    </DraftProvider> : <div className="app"><header className="topbar"><Brand /><span className="build-version">v{version}</span></header>
+      <main className="start-panel"><div className="start-content"><h2>What do you want to build?</h2><p id="start-loading" role="status">{connectionError || "Loading your project..."}</p></div></main></div>}
+    <AlertDialog.Root open={Boolean(confirmation)} onOpenChange={(open) => { if (!open) resolve(false); }}>
+      <AlertDialog.Portal><AlertDialog.Overlay className="dialog-overlay" /><AlertDialog.Content className="dialog-content"
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          if (confirmationFocus.current?.isConnected) confirmationFocus.current.focus({ preventScroll: true });
+          confirmationFocus.current = null;
+        }}>
+        <AlertDialog.Title>{confirmation?.title}</AlertDialog.Title><AlertDialog.Description>{confirmation?.message}</AlertDialog.Description>
+        <div className="dialog-actions"><AlertDialog.Cancel className="plan-button secondary" onClick={() => resolve(false)}>Cancel</AlertDialog.Cancel>
+          <AlertDialog.Action className="plan-button" onClick={() => resolve(true)}>Confirm</AlertDialog.Action></div>
+      </AlertDialog.Content></AlertDialog.Portal>
+    </AlertDialog.Root>
+  </Tooltip.Provider></RenderBoundary>;
+}
+
+function Brand() {
+  return <div className="brand"><div className="mark" aria-hidden="true"><Layers size={22} /></div><div className="brand-copy"><h1>Tandem</h1><span className="brand-subtitle">Lifecycle design workspace</span></div></div>;
+}
+
+function EffortApp({ state, store, version, connectionError, confirm }: {
+  state: UiState; store: StudioStore; version: string; connectionError: string; confirm: UiContextValue["confirm"];
+}) {
+  const [busy, setBusyKeys] = useState<Set<string>>(() => new Set());
+  const [activeTab, setActiveTab] = useState<TabId>(() => tabFor(state.lifecycle.currentStage));
+  const [selectedArtifact, setSelectedArtifact] = useState<string | null>(null);
+  const [contextOpen, setContextOpen] = useState(false);
+  const previousStage = useRef(state.lifecycle.currentStage);
+  const [sketchBlocked, setSketchBlocked] = useState(true);
+  const setBusy = useCallback((key: string, value: boolean) => setBusyKeys((current) => {
+    if (current.has(key) === value) return current;
+    const next = new Set(current);
+    if (value) next.add(key); else next.delete(key);
+    return next;
+  }), []);
+  const browseStage = useCallback((stage: LifecycleStageId) => {
+    if (!hasStageData(state, stage) || skippedStage(state, stage)) return;
+    setActiveTab(tabFor(stage)); setContextOpen(false);
+  }, [state]);
+  const selectArtifact = useCallback((id: string) => { setSelectedArtifact(id); setActiveTab("content"); setContextOpen(false); }, []);
+  useEffect(() => {
+    const stage = state.lifecycle.currentStage;
+    if (previousStage.current !== stage) {
+      const previous = previousStage.current;
+      setActiveTab((current) => current === tabFor(previous) ? tabFor(stage) : current);
+      previousStage.current = stage;
+    }
+  }, [state.lifecycle.currentStage]);
+  useEffect(() => {
+    document.body.classList.toggle("prototype-view", activeTab === "preview");
+    return () => document.body.classList.remove("prototype-view");
+  }, [activeTab]);
+  const value: UiContextValue = {
+    state, pending: busy.size > 0 || Boolean(state.effortReset), post: store.post, refresh: store.refresh,
+    canEdit: (stage, allowCompleted = false) => !state.effortReset && !busy.has("effort") && !busy.has("stage")
+      && state.lifecycle.currentStage === stage && !skippedStage(state, stage)
+      && (!["sketch", "prototype"].includes(stage) || state.prototypeApproach?.mode !== "undecided")
+      && (allowCompleted || !state.lifecycle.completedStages.includes(stage)) && state.provider?.canSubmitAnswers !== false,
+    guidance: (action) => state.provider?.source === "session" ? "Return to the Tandem session that owns this effort to " + action + "."
+      : "Open the installed user-scoped Tandem to " + action + ".",
+    confirm, browseStage, selectArtifact, setBusy,
+  };
+  return <UiContext.Provider value={value}><SpeechProvider>
+    <Workspace version={version} connectionError={connectionError} store={store} activeTab={activeTab} onTabChange={setActiveTab}
+      selectedArtifact={selectedArtifact} contextOpen={contextOpen} setContextOpen={setContextOpen}
+      sketchBlocked={sketchBlocked} onSketchBlocked={setSketchBlocked} effortBusy={busy.has("effort")} />
+  </SpeechProvider></UiContext.Provider>;
+}
+
+function GoalEntry() {
+  const { state, pending, post } = useUi();
+  const action = useAction("effort");
+  const [goal, setGoal] = useDraft("start-goal", "");
+  const input = useRef<HTMLTextAreaElement>(null);
+  const writable = state.provider?.canSubmitAnswers !== false;
+  return <main id="start-panel" className="start-panel" aria-labelledby="start-title">
+    <div className="start-content"><p className="eyebrow">From idea to delivery</p><h2 id="start-title">What do you want to build?</h2>
+      <p className="start-intro">Start with a goal. Tandem will help you shape the requirements, explore the design, and guide implementation.</p>
+      <form id="start-form" className="start-form" aria-busy={action.busy} onSubmit={(event) => {
+        event.preventDefault();
+        if (pending || !writable) return;
+        if (!goal.trim() || goal.length > 4000) { action.setError("Enter a project goal between 1 and 4,000 characters."); input.current?.focus(); return; }
+        void action.run(async () => {
+          await post("/api/effort/start", { expectedRevision: state.revision ?? 0, generation: state.generation, goal: goal.trim() });
+        });
+      }}>
+        <label htmlFor="start-goal">Your project goal</label>
+        <SpeechTextarea id="start-goal" ref={input} value={goal} onValueChange={(text) => { setGoal(text); action.setError(""); }}
+          rows={5} maxLength={4000} required disabled={!writable || pending} aria-invalid={Boolean(action.error)}
+          aria-describedby="start-help start-message" placeholder="Build an app that helps my team triage customer requests." />
+        <p id="start-help" className="muted">Describe who it is for and what it should help them do. You can refine the details together.</p>
+        <div className="start-actions"><span id="goal-length" className="muted">{goal.length.toLocaleString()} / 4,000</span>
+          <button id="start-effort" className="plan-button" type="submit" disabled={!writable || pending || !goal.trim() || goal.length > 4000}><Play size={16} />{action.busy ? "Starting..." : "Start project"}</button></div>
+        <p id="start-message" className="start-message" role="status" data-status={action.error ? "error" : "idle"}>{action.error || (!writable ? "Open the writable Tandem provider to start this project." : "")}</p>
+      </form>
+      <div className="start-expectation"><strong>First, we prepare</strong><p>Tandem inspects this workspace and relevant sources, then opens Requirements for your input. Starting runs AI preparation; implementation comes later.</p></div>
+    </div>
+  </main>;
+}
+
+function Header({ version, connectionError, store, effortBusy }: { version: string; connectionError: string; store: StudioStore; effortBusy: boolean }) {
+  const { state, confirm, post } = useUi();
+  const reset = useAction("effort");
+  const reload = useAction("reload");
+  const [message, setMessage] = useState("");
+  const [reloadRequested, setReloadRequested] = useState(false);
+  const stageIndex = Math.max(0, lifecycleStages.findIndex((stage) => stage.id === state.lifecycle.currentStage));
+  const reloadReceipt = state.reloadReceipt;
+  useEffect(() => {
+    if (["success", "error"].includes(reloadReceipt?.status)) setReloadRequested(false);
+  }, [reloadReceipt?.status]);
+  const reloadStatus = reload.error || (state.provider?.canReload !== true
+    ? state.provider?.source === "session" ? "Reopen the workspace to update Tandem" : state.provider?.source === "project" ? "Available from the user-installed Tandem" : "Reload unavailable"
+    : reloadReceipt?.status === "success" ? "" : reloadReceipt?.message || (reloadRequested ? "Reloading this session..." : "Current session only"));
+  return <header className="topbar"><Brand /><div className="topbar-actions">
+    <div id="lifecycle-status" className="lifecycle" aria-label="Development lifecycle" hidden={isGoalEntry(state)}>
+      <span id="current-stage" className="stage" aria-label={"Current lifecycle stage: " + lifecycleStages[stageIndex].label}>
+        <span id="current-stage-index" className="stage-index" aria-hidden="true">{stageIndex + 1}</span><span id="stage">{lifecycleStages[stageIndex].label}</span>
+      </span><span id="phase" className="phase">{state.phase || "discovery"}</span>
+    </div>
+    <div className="reload-control"><button id="reload-extension" className="reload-button" type="button"
+      disabled={state.provider?.canReload !== true || reload.busy || reloadRequested || reloadReceipt?.status === "reloading" || effortBusy}
+      title={state.provider?.canReload ? "Restart this session's provider from the latest installed user extension. This does not download updates." : reloadStatus}
+      onClick={() => void reload.run(async () => {
+        const response = await fetch("/api/reload", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "Reload request failed.");
+        setReloadRequested(true);
+      })}><RefreshCw size={15} />{reload.busy ? "Checking..." : reloadRequested || reloadReceipt?.status === "reloading" ? "Reloading..." : "Reload"}</button>
+      <span id="reload-status" className="reload-status" role="status" data-status={reload.error || reloadReceipt?.status === "error" ? "error" : "idle"}>{reloadStatus}</span></div>
+    <button id="reset-effort" className="reset-button" type="button" disabled={state.provider?.canSubmitAnswers === false || effortBusy}
+      title="Clear the current Tandem effort and return to goal entry" onClick={async () => {
+        if (!await confirm("Reset this Tandem effort? Active work will be stopped before its goal, requirements, artifacts, stage history, handoffs, and settings are cleared. This cannot be undone. Other efforts, repository files, and exported files will not be changed.", "Reset Tandem effort?")) return;
+        void reset.run(async () => {
+          setMessage("Stopping active work and resetting this effort...");
+          await post("/api/effort/reset", { expectedRevision: state.revision ?? 0, generation: state.generation, confirm: true }, 120000);
+          const current = store.getSnapshot().state;
+          if (!current || !isGoalEntry(current) || current.generation === state.generation) throw new Error("Reset has not been confirmed. Reload the project state before retrying.");
+        });
+      }}><RotateCcw size={15} />{reset.busy ? "Resetting..." : "Reset"}</button>
+    <span className="build-version" title="Tandem extension version">v{version}</span>
+  </div>
+    <p id="effort-message" className="effort-message" role="status" data-status={reset.error || state.effortReset?.error ? "error" : "idle"}>
+      {reset.error || state.effortReset?.error || (state.effortReset ? "Reset is pending. Use Reset to confirm worker termination and finish clearing this effort." : message)}
+    </p>
+    <p id="connection-status" className="connection-status" role="status">{connectionError}</p>
+  </header>;
+}
+
+interface WorkspaceProps {
+  version: string; connectionError: string; store: StudioStore; activeTab: TabId; onTabChange: (tab: TabId) => void;
+  selectedArtifact: string | null; contextOpen: boolean; setContextOpen: (open: boolean) => void;
+  sketchBlocked: boolean; onSketchBlocked: (blocked: boolean) => void; effortBusy: boolean;
+}
+function Workspace(props: WorkspaceProps) {
+  const { state, pending, browseStage, post, confirm } = useUi();
+  const { activeTab, onTabChange, selectedArtifact, contextOpen, setContextOpen, sketchBlocked } = props;
+  const stageAction = useAction("stage");
+  const workspace = useRef<HTMLElement>(null);
+  const [width, setWidth] = useState(280);
+  const [maximum, setMaximum] = useState(280);
+  const [dragging, setDragging] = useState<number | null>(null);
+  const [nextAction, setNextAction] = useState<{ id: string; label: string } | null>(null);
+  const atStart = isGoalEntry(state);
+  const previousAtStart = useRef(atStart);
+  useLayoutEffect(() => {
+    if (atStart) document.getElementById("start-goal")?.focus();
+    else if (previousAtStart.current) document.getElementById("preparation-panel")?.focus();
+    previousAtStart.current = atStart;
+  }, [atStart]);
+  const current = state.lifecycle.currentStage;
+  const viewed = stageTabs.find((tab) => tab.value === activeTab)?.stage
+    || state.artifacts.find((artifact) => artifact.id === selectedArtifact)?.stage || current;
+  const readOnly = viewed !== current || state.lifecycle.completedStages.includes(viewed);
+  const complete = !pending && canCompleteStage(state) && (current !== "sketch" || !sketchBlocked);
+  const allComplete = lifecycleStages.every((stage) => state.lifecycle.completedStages.includes(stage.id) || skippedStage(state, stage.id));
+  const selectedLabel = lifecycleStages.find((stage) => stage.id === viewed)?.label || viewed;
+  const narrow = () => window.matchMedia("(max-width: 760px)").matches;
+  const resize = (value: number) => {
+    if (narrow()) return;
+    const max = Math.max(280, (workspace.current?.getBoundingClientRect().width || 649) - 9 - 360);
+    setMaximum(max); setWidth(Math.round(Math.min(max, Math.max(280, value))));
+  };
+  useEffect(() => {
+    const update = () => { const max = Math.max(280, (workspace.current?.getBoundingClientRect().width || 649) - 369); setMaximum(max); setWidth((width) => Math.min(max, width)); };
+    update(); window.addEventListener("resize", update); return () => window.removeEventListener("resize", update);
+  }, [atStart]);
+  useEffect(() => {
+    document.body.classList.toggle("is-resizing", dragging !== null);
+    return () => document.body.classList.remove("is-resizing");
+  }, [dragging]);
+  useLayoutEffect(() => {
+    const candidates: [string, string][] = pending || atStart || state.provider?.canSubmitAnswers === false ? [] : {
+      prepare: [["retry-preparation", "Retry preparation"]],
+      requirements: state.requirements?.substage !== "dag" ? state.requirements?.usageItems?.length
+        ? [["generate-dag", state.processing?.action === "generate-dag" && state.processing.status === "error"
+          ? "Retry the requirements DAG" : "Generate the requirements DAG"]] : [["add-usage", "Add the first usage"]]
+        : state.decisionGraph.nodes.some((node) => node.status === "active")
+          ? [["decision-submit", "Answer the active requirement decision"], ["complete-stage", "Finish requirements collection"]]
+          : [["complete-stage", "Finish requirements collection"]],
+      sketch: [["sketch-retry-revision", "Retry the failed drawing revision"], ["complete-stage", "Finish Sketch and continue to Prototype"],
+        ["sketch-approve", "Approve drawings and continue"], ["sketch-generate", "Generate screen drawings"]],
+      prototype: [["apply-prototype-update", "Apply the prepared prototype update"], ["extend-prototype-budget", "Review an additional prototype work window"],
+        ["retry-prototype-checkpoint", "Retry incomplete prototype work"], ["start-prototype", "Start the prototype build"],
+        ["submit-clarification", "Answer the prototype clarification"], ["complete-stage", "Finish prototype iteration"]],
+      design: [["finish-review", state.design?.substage === "test" ? "Finish integration and interaction test design" : "Finish product design"], ["complete-stage", "Finish the Design stage"]],
+      plan: [["complete-stage", "Finish execution planning"], ["finalize-plan", "Finalize the execution plan"], ["generate-plan", "Generate the execution plan"]],
+      implement: [["complete-stage", "Finish implementation"], ["start-implementation", "Start implementation"]],
+      test: [["complete-stage", "Finish integration testing"], ["start-tests", "Run integration and interaction tests"]],
+    }[current] as [string, string][];
+    const update = () => {
+      const candidate = candidates.find(([id]) => {
+        const button = document.getElementById(id) as HTMLButtonElement | null;
+        return button && !button.disabled && (id === "complete-stage" || (!button.hidden
+          && !button.parentElement?.closest('[hidden]:not([role="tabpanel"])')));
+      });
+      const next = candidate ? { id: candidate[0], label: candidate[1] } : null;
+      setNextAction((current) => current?.id === next?.id && current?.label === next?.label ? current : next);
+    };
+    update();
+    const observer = new MutationObserver(update);
+    if (workspace.current) observer.observe(workspace.current, {
+      subtree: true, childList: true, attributes: true, attributeFilter: ["hidden", "disabled"],
+    });
+    return () => observer.disconnect();
+  }, [state, pending, atStart, current]);
+  function navigate(tab: string) {
+    const target = stageTabs.find((item) => item.value === tab);
+    if (target && (!hasStageData(state, target.stage) || skippedStage(state, target.stage))) return;
+    onTabChange(tab as TabId);
+    setContextOpen(false);
+  }
+  return <div className="app">
+    <Header version={props.version} connectionError={props.connectionError} store={props.store} effortBusy={props.effortBusy} />
+    {atStart ? <GoalEntry /> : <Tabs.Root value={activeTab} onValueChange={navigate} asChild>
+      <main id="studio-workspace" ref={workspace} className="workspace" data-context-open={contextOpen} inert={props.effortBusy || Boolean(state.effortReset)}
+        aria-busy={props.effortBusy || Boolean(state.effortReset)} style={{ "--requirements-width": width + "px" } as CSSProperties}>
+        <button id="context-toggle" className="context-toggle" type="button" aria-expanded={contextOpen} aria-controls="requirements-pane" onClick={() => setContextOpen(!contextOpen)}>
+          <span>Project context</span><span id="context-stage" className="context-stage">{lifecycleStages.find((stage) => stage.id === current)?.label}</span><ChevronDown size={16} />
+        </button>
+        <aside id="requirements-pane" className="requirements" aria-label="Project context" onKeyDown={(event) => {
+          if (event.key === "Escape" && contextOpen) { setContextOpen(false); document.getElementById("context-toggle")?.focus(); event.preventDefault(); }
+        }}>
+          <section className="section"><p className="eyebrow">Goal</p><p id="goal" className="goal">{state.goal}</p><p id="status" className="status">{state.status}</p></section>
+          <section className="section"><p className="eyebrow">Stages</p><ol id="stage-list" className="stage-list">
+            {lifecycleStages.map((stage, index) => {
+              const skipped = skippedStage(state, stage.id);
+              const done = state.lifecycle.completedStages.includes(stage.id);
+              const status = skipped ? "not applicable" : done ? "complete" : current === stage.id ? "active" : "locked";
+              const output = [...(state.lifecycle.history || []), ...(state.lifecycle.outputs || [])].reverse().find((item) => item.stageId === stage.id);
+              return <li key={stage.id}><button className="stage-step" type="button" data-stage-id={stage.id} data-status={status} data-ui-key={"stage:" + stage.id}
+                aria-current={current === stage.id && !allComplete ? "step" : undefined} aria-pressed={viewed === stage.id}
+                disabled={Boolean(skipped) || !hasStageData(state, stage.id)} title={skipped?.reason || output?.path}
+                aria-label={skipped ? `${stage.label}, not applicable. ${skipped.reason}` : undefined}
+                onClick={() => browseStage(stage.id)}>
+                <span className="stage-step-index" aria-hidden="true">{done ? <Check size={15} /> : index + 1}</span>
+                <span className="stage-step-label">{stage.label}</span><span className="stage-step-status">{status}</span>
+              </button>{skipped && <p className="stage-step-hint">{skipped.reason}</p>}</li>;
+            })}
+          </ol>
+            <button id="complete-stage" className="complete-stage" type="button" hidden={viewed !== current || Boolean(skippedStage(state, current))}
+              disabled={!complete} onClick={() => { if (complete) void stageAction.run(() => post("/api/stage/complete", { stageId: current })); }}>
+              <Check size={16} />{allComplete ? "All stages complete" : stageAction.busy ? "Saving stage output..." : current === "prepare" ? "Preparation runs automatically" : "Finish " + (lifecycleStages.find((stage) => stage.id === current)?.label || current).toLowerCase()}
+            </button>
+            <p id="stage-browsing" className="stage-message">{readOnly ? `Viewing ${selectedLabel} · read only. Reopen explicitly to change its scope.` : ""}</p>
+            <button id="reopen-stage" className="complete-stage" type="button"
+              hidden={!readOnly || Boolean(skippedStage(state, viewed)) || lifecycleStages.findIndex((stage) => stage.id === viewed) > lifecycleStages.findIndex((stage) => stage.id === current)}
+              disabled={pending || state.provider?.canSubmitAnswers === false || hasActiveJobs(state)}
+              onClick={async () => {
+                if (!await confirm(`Reopen ${selectedLabel}? Its outputs and dependent stage outputs will be marked stale. ${["requirements", "sketch"].includes(viewed) ? "Sketch approval and dependent prototype evidence must be reviewed again. " : ""}Saved evidence is retained, but affected stages must be completed again.`)) return;
+                void stageAction.run(async () => {
+                  const latest = props.store.getSnapshot().state;
+                  if (!latest || latest.generation !== state.generation || latest.revision !== state.revision
+                    || latest.provider?.canSubmitAnswers === false || hasActiveJobs(latest)) {
+                    throw new Error("The effort changed while confirmation was open. Review the stage before reopening it.");
+                  }
+                  await post("/api/stage/reopen", { stageId: viewed }); browseStage(viewed);
+                });
+              }}><RotateCcw size={16} />Reopen {selectedLabel}</button>
+            <p id="stage-message" className="stage-message" role="status" data-status={stageAction.error ? "error" : "idle"}>{stageAction.error || (state.lifecycle.outputs?.at(-1) ? "Saved " + state.lifecycle.outputs.at(-1)!.path : current === "prepare" ? "Preparation advances automatically when analysis completes." : "Complete the active stage to unlock the next.")}</p>
+          </section>
+          <section className="section"><p className="eyebrow">Artifacts</p><ArtifactList selectedArtifactId={selectedArtifact} /></section>
+          <ProcessPanel />
+          <details className="section ledger-details"><summary className="eyebrow ledger-summary">Requirement ledger</summary>
+            <div className="ledger">{(["confirmed", "assumed", "deferred"] as const).map((kind) => <div key={kind}><h3>{kind[0].toUpperCase() + kind.slice(1)}</h3><ul id={kind}>{(state[kind] || []).map((text, index) => <li key={index}>{text}</li>)}</ul></div>)}</div>
+          </details>
+        </aside>
+        <div id="studio-splitter" className={"splitter" + (dragging !== null ? " is-dragging" : "")} role="separator" tabIndex={0}
+          aria-label="Resize requirements and output panels" aria-orientation="vertical" aria-controls="requirements-pane preview-pane"
+          aria-valuemin={280} aria-valuemax={maximum} aria-valuenow={width} title="Drag or use Left and Right arrow keys to resize"
+          onPointerDown={(event) => { if (event.button !== 0 || narrow()) return; setDragging(event.pointerId); event.currentTarget.setPointerCapture(event.pointerId); resize(event.clientX - (workspace.current?.getBoundingClientRect().left || 0)); event.preventDefault(); }}
+          onPointerMove={(event) => { if (dragging === event.pointerId) resize(event.clientX - (workspace.current?.getBoundingClientRect().left || 0)); }}
+          onPointerUp={(event) => { if (dragging === event.pointerId) { setDragging(null); if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); } }}
+          onPointerCancel={() => setDragging(null)} onLostPointerCapture={() => setDragging(null)}
+          onKeyDown={(event) => { if (["ArrowLeft", "ArrowRight"].includes(event.key)) { resize(width + (event.key === "ArrowLeft" ? -1 : 1) * (event.shiftKey ? 48 : 24)); event.preventDefault(); } }} />
+        <section id="preview-pane" className="preview" aria-label="Stage workspace">
+          <div className="previewbar"><Tabs.List className="preview-tabs" aria-label="Stage workspace">
+            {stageTabs.map((tab) => <Tabs.Trigger key={tab.value} value={tab.value} id={tab.id + "-tab"} data-tab={tab.value}
+              className="preview-tab" disabled={!hasStageData(state, tab.stage) || Boolean(skippedStage(state, tab.stage))}
+              title={skippedStage(state, tab.stage)?.reason || undefined}
+              aria-controls={tab.id + "-panel"} onFocus={(event) => event.currentTarget.scrollIntoView?.({ block: "nearest", inline: "nearest" })}>
+              <tab.icon size={15} aria-hidden="true" />{tab.label}</Tabs.Trigger>)}
+            <Tabs.Trigger value="content" id="content-tab" className="preview-tab" data-tab="content" aria-controls="content-panel"><FileText size={15} aria-hidden="true" />Artifacts <span id="artifact-count" className="artifact-count">{state.artifacts.length || ""}</span></Tabs.Trigger>
+          </Tabs.List></div>
+          {stageTabs.map((tab) => <Tabs.Content key={tab.value} value={tab.value} forceMount hidden={activeTab !== tab.value}
+            id={tab.id + "-panel"} className={tab.className} aria-labelledby={tab.id + "-tab"} tabIndex={0}>
+            {tab.stage === "prepare" ? <PreparationPanel /> : tab.stage === "requirements" ? <RequirementsPanel />
+              : tab.stage === "sketch" ? <SketchCompletionContext.Provider value={props.onSketchBlocked}><SketchPanel /></SketchCompletionContext.Provider>
+              : tab.stage === "prototype" ? <PrototypePanel /> : tab.stage === "design" ? <ReviewPanel />
+              : tab.stage === "plan" ? <PlanPanel /> : tab.stage === "implement" ? <ImplementationPanel /> : <TestPanel />}
+          </Tabs.Content>)}
+          <Tabs.Content value="content" forceMount hidden={activeTab !== "content"} id="content-panel" className="content-panel" aria-labelledby="content-tab" tabIndex={0}><ArtifactsPanel selectedArtifactId={selectedArtifact} /></Tabs.Content>
+        </section>
+      </main>
+    </Tabs.Root>}
+    <div id="next-action-bar" className="next-action-bar" hidden={!nextAction}>
+      <span id="next-action-guide" role="status">{nextAction ? "Next action: " + nextAction.label : ""}</span>
+      <button id="show-next-action" type="button" onClick={() => {
+        if (!nextAction) return;
+        if (nextAction.id === "complete-stage") { onTabChange(tabFor(current)); if (narrow()) setContextOpen(true); }
+        else { onTabChange(tabFor(current)); setContextOpen(false); }
+        window.requestAnimationFrame(() => {
+          const target = document.getElementById(nextAction.id);
+          target?.scrollIntoView?.({ block: "nearest" }); target?.focus({ preventScroll: true });
+        });
+      }}>Go to action<ArrowRight size={16} /></button>
+    </div>
+  </div>;
+}

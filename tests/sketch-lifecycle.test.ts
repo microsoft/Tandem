@@ -355,6 +355,8 @@ test("production sketch/prototype prompts bind scene semantics and actual image 
     });
     assert.match(sketch, /decision DAG is NOT a navigation graph/);
     assert.match(sketch, /SAME existing GUI/);
+    assert.match(sketch, /whole-number dimensions from 1 to 10000/);
+    assert.match(sketch, /Preserve user-selected dimensions and any existing clipped content/);
     const prototype = buildPrototypeCheckpointPrompt({
         prototypeId: "sample", projectRoot: "C:\\app", goal: "Task app", approach: "build",
         requirements: {}, confirmed: [],

@@ -153,24 +153,37 @@ test("sketch rejects unsupported fields, references, duplicate identities, and u
     for (const value of [null, {}, undefined, [], "text"]) assert.throws(() => validateSketchDocument(value), /Invalid sketch/);
 });
 
-test("sketch rejects nonfinite, out-of-viewport, malformed, and zero box geometry", () => {
+test("sketch rejects nonfinite, out-of-range, malformed, and zero box geometry", () => {
     for (const change of [
         { x: -1 }, { y: Number.NaN }, { width: Infinity }, { height: 0 }, { width: 0 },
-        { x: 319, width: 2 }, { y: 230, height: 20 }, { fontSize: 0 }, { fontSize: 501 },
+        { x: 9999, width: 2 }, { y: 9990, height: 20 }, { fontSize: 0 }, { fontSize: 501 },
         { fill: "#fff" }, { stroke: "red" }, { points: [{ x: 0, y: 0 }] },
         { kind: "line", points: [] }, { kind: "arrow", points: [{ x: 0, y: 0 }] },
-        { kind: "line", points: [{ x: 0, y: 0 }, { x: 321, y: 0 }] },
+        { kind: "line", points: [{ x: 0, y: 0 }, { x: 10001, y: 0 }] },
         { kind: "path", points: [] }, { text: "\ud800" }, { text: "\0" },
     ] as Array<Partial<SketchShape>>) {
         const input = document();
         input.screens[0].shapes[0] = shape(change);
         assert.throws(() => validateSketchDocument(input), /Invalid sketch/);
     }
-    for (const size of [{ width: 239 }, { height: 1201 }, { width: 320.5 }]) {
+    for (const size of [{ width: 0 }, { height: 10001 }, { width: 320.5 }, { height: NaN }]) {
         const input = document();
         Object.assign(input.screens[0], size);
         assert.throws(() => validateSketchDocument(input), /screen/);
     }
+});
+
+test("sketch supports canvas size boundaries and preserves clipped geometry without changing serialized SVG format", () => {
+    const input = document();
+    const shapes = structuredClone(input.screens[0].shapes);
+    for (const dimension of [1, 10000]) {
+        input.screens[0].width = dimension;
+        input.screens[0].height = dimension;
+        assert.deepEqual(validateSketchDocument(input).screens[0].shapes, shapes);
+        assert.match(renderSketchSvg(input.screens[0]), new RegExp(`width="${dimension}" height="${dimension}" viewBox="0 0 ${dimension} ${dimension}"`));
+    }
+    assert.deepEqual(sketchDocumentSchema.properties.screens.items.properties.width, { type: "integer", minimum: 1, maximum: 10000 });
+    assert.deepEqual(sketchDocumentSchema.properties.screens.items.properties.height, { type: "integer", minimum: 1, maximum: 10000 });
 });
 
 test("sketch enforces collection, text, point, and UTF-8 document byte limits", () => {

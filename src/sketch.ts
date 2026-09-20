@@ -69,6 +69,12 @@ const SLUG = "^[a-z0-9]+(?:-[a-z0-9]+)*$";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const HASH = /^[0-9a-f]{64}$/;
 const KINDS = ["rectangle", "ellipse", "text", "line", "arrow", "path"] as const;
+export const MIN_SKETCH_DIMENSION = 1;
+export const MAX_SKETCH_DIMENSION = 10000;
+
+export function validSketchDimension(value: number): boolean {
+    return Number.isInteger(value) && value >= MIN_SKETCH_DIMENSION && value <= MAX_SKETCH_DIMENSION;
+}
 
 function invalid(message: string): never {
     throw new Error(`Invalid sketch: ${message}`);
@@ -137,24 +143,28 @@ function color(value: unknown): string {
 
 function screen(value: unknown): SketchScreen {
     const item = object(value, ["id", "title", "purpose", "decisionIds", "width", "height", "shapes", "notes"]);
-    const width = number(item.width, "screen width", 240, 1600, true);
-    const height = number(item.height, "screen height", 240, 1200, true);
+    const width = number(item.width, "screen width", MIN_SKETCH_DIMENSION, MAX_SKETCH_DIMENSION, true);
+    const height = number(item.height, "screen height", MIN_SKETCH_DIMENSION, MAX_SKETCH_DIMENSION, true);
     const decisionIds = list(item.decisionIds, "decision references", 1, 200).map(decisionReference);
     unique(decisionIds, "decision references");
     const shapes = list(item.shapes, "screen shapes", 0, 100).map((value): SketchShape => {
         const shape = object(value, ["id", "kind", "x", "y", "width", "height", "text", "points", "stroke", "fill", "fontSize"]);
         if (!KINDS.includes(shape.kind as SketchShape["kind"])) return invalid("unsupported shape kind.");
         const kind = shape.kind as SketchShape["kind"];
-        const x = number(shape.x, "shape x", 0, width);
-        const y = number(shape.y, "shape y", 0, height);
-        const w = number(shape.width, "shape width", 0, width - x);
-        const h = number(shape.height, "shape height", 0, height - y);
+        // Canvas resizing clips the view, not the saved geometry.
+        const x = number(shape.x, "shape x", 0, MAX_SKETCH_DIMENSION);
+        const y = number(shape.y, "shape y", 0, MAX_SKETCH_DIMENSION);
+        const w = number(shape.width, "shape width", 0, MAX_SKETCH_DIMENSION - x);
+        const h = number(shape.height, "shape height", 0, MAX_SKETCH_DIMENSION - y);
         const isBox = kind === "rectangle" || kind === "ellipse" || kind === "text";
         if (isBox && (w === 0 || h === 0)) return invalid("box and text dimensions must be positive.");
         const points = list(shape.points, "shape points", isBox ? 0 : 2, kind === "path" ? 512 : isBox ? 0 : 2)
             .map((value) => {
                 const point = object(value, ["x", "y"]);
-                return { x: number(point.x, "point x", 0, width), y: number(point.y, "point y", 0, height) };
+                return {
+                    x: number(point.x, "point x", 0, MAX_SKETCH_DIMENSION),
+                    y: number(point.y, "point y", 0, MAX_SKETCH_DIMENSION),
+                };
             });
         return {
             id: slug(shape.id, "shape ID"), kind, x, y, width: w, height: h,
@@ -207,15 +217,20 @@ const idSchema = { type: "string", minLength: 1, maxLength: 80, pattern: SLUG };
 const labelSchema = { type: "string", maxLength: 500 };
 const pointSchema = {
     type: "object", additionalProperties: false, required: ["x", "y"],
-    properties: { x: { type: "number", minimum: 0, maximum: 1600 }, y: { type: "number", minimum: 0, maximum: 1200 } },
+    properties: {
+        x: { type: "number", minimum: 0, maximum: MAX_SKETCH_DIMENSION },
+        y: { type: "number", minimum: 0, maximum: MAX_SKETCH_DIMENSION },
+    },
 };
 const shapeSchema = {
     type: "object", additionalProperties: false,
     required: ["id", "kind", "x", "y", "width", "height", "text", "points", "stroke", "fill", "fontSize"],
     properties: {
         id: idSchema, kind: { type: "string", enum: [...KINDS] },
-        x: { type: "number", minimum: 0, maximum: 1600 }, y: { type: "number", minimum: 0, maximum: 1200 },
-        width: { type: "number", minimum: 0, maximum: 1600 }, height: { type: "number", minimum: 0, maximum: 1200 },
+        x: { type: "number", minimum: 0, maximum: MAX_SKETCH_DIMENSION },
+        y: { type: "number", minimum: 0, maximum: MAX_SKETCH_DIMENSION },
+        width: { type: "number", minimum: 0, maximum: MAX_SKETCH_DIMENSION },
+        height: { type: "number", minimum: 0, maximum: MAX_SKETCH_DIMENSION },
         text: labelSchema, points: { type: "array", maxItems: 512, items: pointSchema },
         stroke: { type: "string", pattern: "^(#[0-9a-fA-F]{6}|none)$" },
         fill: { type: "string", pattern: "^(#[0-9a-fA-F]{6}|none)$" },
@@ -239,8 +254,8 @@ export const sketchDocumentSchema = {
                         type: "array", minItems: 1, maxItems: 200,
                         items: { type: "string", minLength: 1, maxLength: 120, pattern: "^[A-Za-z0-9._-]+$" },
                     },
-                    width: { type: "integer", minimum: 240, maximum: 1600 },
-                    height: { type: "integer", minimum: 240, maximum: 1200 },
+                    width: { type: "integer", minimum: MIN_SKETCH_DIMENSION, maximum: MAX_SKETCH_DIMENSION },
+                    height: { type: "integer", minimum: MIN_SKETCH_DIMENSION, maximum: MAX_SKETCH_DIMENSION },
                     shapes: { type: "array", maxItems: 100, items: shapeSchema },
                     notes: { type: "string", maxLength: 4000 },
                 },

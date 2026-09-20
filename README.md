@@ -85,6 +85,24 @@ Use `-- --dotnet` instead to exercise `dotnet run` without a version override.
 These smoke checks require an existing Copilot login; the `--gui` executable
 checks also require `npm run build:desktop`. They do not run live model evaluations.
 
+## Web UI development
+
+The desktop WebView2 host and Copilot canvas share a **React** UI with **Radix UI**
+accessible primitives and **Lucide React** icons. The renderer entry point is
+`src\renderer\main.tsx`; each workflow screen is a React component. Keep UI state
+and form drafts in React rather than mutating the rendered DOM. Project state
+still comes from the existing loopback HTTP/SSE API; the transport store rejects
+out-of-order snapshots and effort-scoped drafts survive polling and tab changes.
+The Sketch editor keeps geometry and history logic separate from its React view.
+
+Run `npm run check`, `npm test`, and `npm run build` after changes. The build
+bundles React, Radix, icons, and dependency license notices into the existing
+self-contained extension, so the UI framework needs no CDN or new runtime
+server. Mermaid diagrams retain their optional browser-loaded renderer and
+readable text/source fallback. UI regression tests use jsdom to exercise the
+actual React components, keyboard controls, dialogs, and request payloads.
+Edit `src\renderer` and the build script, not the generated extension.
+
 ## Install
 
 ### From a shared Gist
@@ -184,6 +202,20 @@ usages and accepted DAG answers. The decision DAG is not treated as a screen map
 Sketch uses editable vector scenes rather than generated application code.
 Review screen purposes, labels, geometry, annotations and requirement links;
 save direct edits or request an AI revision. Saved revisions are immutable.
+The **Canvas size** dropdown beside the zoom controls offers Tandem and
+VisionLoop defaults, HD landscape/portrait, square, 4:3, and A4 presets. Selecting
+a preset immediately resizes the selected screen in one undoable step, keeping
+all shapes at their original positions and sizes. Existing custom dimensions
+remain supported and are displayed in the dropdown. A smaller canvas hides
+overflow without deleting it; enlarge the canvas or undo to reveal it again.
+Save drawings to persist the new dimensions.
+
+The larger, icon-only drawing tools retain tooltips and accessible labels.
+**Zoom in**, **Zoom out**, **Fit entire canvas**, and **Actual size (100%)**
+change only the view, never drawing geometry, undo history, or export dimensions.
+Fit follows the available viewport in both directions; larger views scroll
+inside it. Selecting another screen starts in Fit mode.
+
 For an existing GUI, sketches describe the same application and proposed changes,
 not a parallel replacement.
 
@@ -521,9 +553,12 @@ available when work is revised.
 
 The maintainable source is under `src/`. The renderer is separated by concern:
 
-- `src/renderer/index.html` contains the semantic document structure.
+- `src/renderer/index.html` contains the minimal React mount document.
 - `src/renderer/styles.css` contains the complete canvas theme and layout.
-- `src/renderer/client.ts` contains browser behavior and state rendering.
+- `src/renderer/main.tsx` mounts the React app; `app.tsx` owns the Radix workspace shell.
+- `src/renderer/*-panel.tsx` owns workflow screens and controlled forms.
+- `src/renderer/state-store.ts` orders HTTP/SSE state updates; `ui-context.tsx`
+  shares UI permissions, actions, confirmations, and effort-scoped drafts.
 - `src/renderer.ts` assembles the generated client and source assets.
 - `src/project-store.ts` owns transactions, migration, revision checks, and durable writes.
 - `src/workflow.ts` owns authoritative decisions, activity ownership, and artifact invalidation.

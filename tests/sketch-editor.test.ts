@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createScreen, createShape, setShapeBounds, shapeBounds, SketchEditor } from "../src/renderer/sketch-editor.js";
+import { createScreen, createShape, resizeScreen, setShapeBounds, shapeBounds, SketchEditor, SKETCH_SIZE_PRESETS } from "../src/renderer/sketch-editor.js";
 import { validateSketchDocument } from "../src/sketch.js";
 import type { SketchDocument } from "../src/sketch.js";
 
@@ -98,7 +98,7 @@ test("editor snapshots isolate saved data and undo redo restore dirty state", ()
 test("invalid edits are atomic and do not enter undo history", () => {
     const editor = new SketchEditor();
     editor.load(drawing());
-    assert.throws(() => editor.edit((draft) => { draft.screens[0].width = 2; }), /width/);
+    assert.throws(() => editor.edit((draft) => { draft.screens[0].width = 0; }), /width/);
     assert.equal(editor.document!.screens[0].width, 960);
     assert.equal(editor.dirty, false);
     assert.equal(editor.canUndo, false);
@@ -116,4 +116,48 @@ test("undoing the first manually created screen restores an empty workspace", ()
     assert.equal(editor.dirty, false);
     editor.redo();
     assert.equal(editor.document!.screens.length, 1);
+});
+
+test("canvas presets and custom sizes preserve every shape and resize in one undoable step", () => {
+    const original = drawing();
+    const screen = original.screens[0];
+    for (const kind of ["rectangle", "ellipse", "text", "line", "arrow", "path"] as const) {
+        screen.shapes.push(createShape(screen, kind));
+    }
+    const editor = new SketchEditor();
+    editor.load(original);
+    for (const size of [...SKETCH_SIZE_PRESETS, { width: 1, height: 1 }, { width: 10000, height: 10000 }]) {
+        editor.edit((draft) => resizeScreen(draft.screens[0], size.width, size.height));
+        const resized = editor.document!.screens[0];
+        assert.equal(resized.width, size.width);
+        assert.equal(resized.height, size.height);
+        assert.deepEqual(resized.shapes, screen.shapes);
+        assert.deepEqual(validateSketchDocument(editor.document), editor.document);
+    }
+    editor.load(original);
+    editor.edit((draft) => resizeScreen(draft.screens[0], 100, 100));
+    assert.equal(editor.dirty, true);
+    editor.undo();
+    assert.deepEqual(editor.document, original);
+    assert.equal(editor.dirty, false);
+    assert.equal(editor.canUndo, false);
+    editor.redo();
+    assert.equal(editor.document!.screens[0].width, 100);
+    assert.deepEqual(editor.document!.screens[0].shapes, screen.shapes);
+    for (const value of [0, -1, 10001, 1.5, NaN, Infinity]) {
+        assert.throws(() => editor.edit((draft) => resizeScreen(draft.screens[0], value, 640)), /whole numbers/);
+        assert.equal(editor.document!.screens[0].width, 100);
+    }
+});
+
+test("editing shapes after a canvas shrink does not truncate hidden geometry or change the other axis", () => {
+    const screen = drawing().screens[0];
+    const arrow = createShape(screen, "arrow");
+    resizeScreen(screen, 50, 50);
+    assert.deepEqual(setShapeBounds(screen, arrow, {}), arrow);
+    const moved = setShapeBounds(screen, arrow, { y: 30 });
+    assert.equal(moved.x, arrow.x);
+    assert.equal(moved.width, arrow.width);
+    assert.equal(moved.height, arrow.height);
+    assert.deepEqual(moved.points, arrow.points.map((point) => ({ x: point.x, y: point.y - 10 })));
 });

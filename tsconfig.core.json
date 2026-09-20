@@ -39,6 +39,9 @@
     "src/sketch.ts",
     "src/sketch-store.ts",
     "src/artifact-assets.ts",
-    "src/renderer/sketch-editor.ts"
+    "src/renderer/sketch-editor.ts",
+    "src/renderer/**/*.tsx",
+    "src/renderer/state-store.ts",
+    "src/renderer/requirements-model.ts"
   ]
 }

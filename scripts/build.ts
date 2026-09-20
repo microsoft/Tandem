@@ -5,8 +5,8 @@ import {
     type BuildOptions,
     type Plugin,
 } from "esbuild";
-import { copyFile, mkdir, readFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { copyFile, mkdir, readFile, readdir } from "node:fs/promises";
+import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { buildSpeechWorker } from "./speech-worker-build.js";
@@ -20,7 +20,7 @@ const extensionRoot = join(
 );
 const desktopRuntime = join(repositoryRoot, "dist", "desktop", "runtime");
 const desktop = process.argv.includes("--desktop");
-const clientEntry = join(repositoryRoot, "src", "renderer", "client.ts");
+const clientEntry = join(repositoryRoot, "src", "renderer", "main.tsx");
 const stylesEntry = join(repositoryRoot, "src", "renderer", "styles.css");
 const packageMetadata = JSON.parse(
     await readFile(join(repositoryRoot, "package.json"), "utf8"),
@@ -61,7 +61,7 @@ const rendererAssetsPlugin: Plugin = {
             };
         });
         buildApi.onResolve({ filter: /^tandem:client$/ }, () => ({
-            path: "client.ts",
+            path: "main.tsx",
             namespace: "tandem-client",
         }));
         buildApi.onResolve({ filter: /^tandem:styles$/ }, () => ({
@@ -81,11 +81,42 @@ const rendererAssetsPlugin: Plugin = {
                     format: "iife",
                     minify: true,
                     legalComments: "inline",
+                    define: { "process.env.NODE_ENV": JSON.stringify("production") },
                 });
+                const rendererInputs = Object.keys(compiled.metafile.inputs).filter((input) => !input.startsWith("(disabled):"));
+                const packageRoots = new Set(rendererInputs.flatMap((input) => {
+                    const parts = resolve(input).split(sep);
+                    const index = parts.lastIndexOf("node_modules");
+                    return index < 0 ? [] : [parts.slice(0, index + (parts[index + 1].startsWith("@") ? 3 : 2)).join(sep)];
+                }));
+                const rendererPackages = await Promise.all([...packageRoots].sort().map(async (root) => ({
+                    root, metadata: JSON.parse(await readFile(join(root, "package.json"), "utf8")),
+                })));
+                const uiDependencies = new Set(["react", "react-dom", "radix-ui", "lucide-react"]);
+                let previousSize = 0;
+                while (previousSize !== uiDependencies.size) {
+                    previousSize = uiDependencies.size;
+                    for (const { metadata } of rendererPackages) {
+                        if (uiDependencies.has(metadata.name)) {
+                            for (const name of Object.keys(metadata.dependencies || {})) uiDependencies.add(name);
+                        }
+                    }
+                }
+                const notices = await Promise.all(rendererPackages.filter(({ metadata }) => uiDependencies.has(metadata.name)).map(async ({ root, metadata }) => {
+                    const files = await readdir(root);
+                    const licenseFile = files.find((file) => /^licen[cs]e(?:\.(?:md|txt))?$/i.test(file));
+                    // This release omits the upstream MIT license from its npm tarball.
+                    const licensePath = licenseFile ? join(root, licenseFile)
+                        : metadata.name === "react-remove-scroll-bar" && metadata.version === "2.3.8"
+                            ? join(repositoryRoot, "scripts", "licenses", "react-remove-scroll-bar.txt") : null;
+                    if (!licensePath) throw new Error(`Bundled renderer dependency ${root} has no license file.`);
+                    const license = await readFile(licensePath, "utf8");
+                    return `/* ${metadata.name} ${metadata.version}\n${license.replaceAll("*/", "* /")}\n*/`;
+                }));
                 return {
-                    contents: `export default ${JSON.stringify(compiled.outputFiles[0].text)};`,
+                    contents: `export default ${JSON.stringify(notices.join("\n") + "\n" + compiled.outputFiles[0].text)};`,
                     loader: "js",
-                    watchFiles: Object.keys(compiled.metafile.inputs).map((path) => resolve(path)),
+                    watchFiles: rendererInputs.map((path) => resolve(path)),
                 };
             },
         );

@@ -1,0 +1,301 @@
+import { useEffect, useRef, useState } from "react";
+import { ArrowUpRight, Check, Clock, ExternalLink, LoaderCircle, Play, RefreshCw, Send, Sparkles } from "lucide-react";
+import { RadioGroup } from "radix-ui";
+import type { DecisionQuestion } from "../workflow.js";
+import { hasActiveJobs, hasStageData, skippedStage, useAction, useDraft, useUi, type UiState } from "./ui-context.js";
+import { SpeechTextarea } from "./speech-textarea.js";
+
+const milestones = [
+  { id: "structure", label: "Structure" }, { id: "interaction", label: "Interaction" }, { id: "visual", label: "Visual direction" },
+] as const;
+const unresolvedStatuses = ["queued", "processing", "clarifying", "ready", "failed"];
+interface Revision { id: string; status: string; suggestion?: string; summary?: string }
+interface Submission { suggestion: string; baseCheckpointId?: string | null; clientRequestId: string }
+
+export function milestoneReady(state: UiState, milestone: string): boolean {
+  return (state.prototypeFlow?.checkpoints || []).some((checkpoint) => checkpoint.milestone === milestone && checkpoint.status === "ready");
+}
+export function prototypeCompletionBlocked(state: UiState): boolean {
+  const flow = state.prototypeFlow;
+  return hasActiveJobs(state) || Boolean(state.prototypeReview?.question)
+    || (state.prototypeReview?.revisions || []).some((revision: Revision) => unresolvedStatuses.includes(revision.status))
+    || Boolean(flow && (flow.pendingCheckpointId || !milestoneReady(state, "structure") || !milestoneReady(state, "interaction")
+      || (flow.visualRequested && !milestoneReady(state, "visual"))));
+}
+function originOf(url: string | null | undefined) {
+  try { const parsed = new URL(url || ""); return ["http:", "https:"].includes(parsed.protocol) ? parsed.origin : null; }
+  catch { return null; }
+}
+
+function Clarification({ question }: { question: DecisionQuestion }) {
+  const { state, pending, post, canEdit } = useUi();
+  const action = useAction("prototype-clarification");
+  const [draft, setDraft] = useDraft("clarification:" + JSON.stringify(question), { choice: question.recommended || "", detail: "", version: 0 });
+  const blocked = pending || !canEdit("prototype") || state.processing?.status === "running";
+  return <div id="revision-question" className="revision-question">
+    <p id="revision-question-title" className="revision-question-title">{question.text}</p>
+    {question.rationale && <p id="revision-question-rationale" className="rationale">{question.rationale}</p>}
+    <form id="revision-question-form" className="revision-question-form" onSubmit={(event) => {
+      event.preventDefault();
+      if (blocked) return;
+      const answer = draft.detail.trim() || draft.choice;
+      if (!answer) { action.setError("Choose an option or enter clarification."); return; }
+      const submitted = draft.version;
+      void action.run(async () => {
+        await post("/api/answer", { questionId: question.id, answer, action: "clarify-revision" });
+        setDraft((current) => current.version === submitted ? { choice: "", detail: "", version: submitted + 1 } : current);
+      });
+    }}>
+      <RadioGroup.Root id="revision-question-choices" className="revision-question-choices" name="revision-clarification"
+        aria-label={question.text} value={draft.choice} disabled={blocked}
+        onValueChange={(choice) => setDraft((current) => ({ choice, detail: "", version: current.version + 1 }))}>
+        {(question.choices || []).map((choice, index) => <label key={choice} className="revision-question-choice">
+          <RadioGroup.Item className="radio-control" value={choice} id={"clarification-choice-" + index}><RadioGroup.Indicator className="radio-dot" /></RadioGroup.Item>
+          <span>{choice}</span>
+        </label>)}
+      </RadioGroup.Root>
+      {question.allowFreeText !== false && <SpeechTextarea id="revision-question-detail" value={draft.detail} speechKey={JSON.stringify(question)}
+        onValueChange={(detail) => setDraft((current) => ({ detail, choice: detail.trim() ? "" : current.choice, version: current.version + 1 }))}
+        onSpeechStart={() => {
+          const beforeSpeech = { choice: draft.choice, detail: draft.detail };
+          return () => setDraft((current) => ({ ...beforeSpeech, version: current.version + 1 }));
+        }}
+        maxLength={4000} disabled={blocked} placeholder={question.answerPlaceholder || "Optional clarification"} aria-label="Prototype clarification" />}
+      <button id="submit-clarification" type="submit" disabled={blocked}><Check size={16} />{action.busy ? "Sending..." : "Use this answer"}</button>
+      <p role="status" className="revision-status" data-status={action.error ? "error" : "idle"}>{action.error}</p>
+    </form>
+  </div>;
+}
+
+export function PrototypePanel() {
+  const ui = useUi();
+  const { state, pending, post, canEdit, confirm, guidance } = ui;
+  const latest = useRef(state);
+  latest.current = state;
+  const latestUi = useRef(ui);
+  latestUi.current = ui;
+  const action = useAction("prototype-action");
+  const revisionAction = useAction("prototype-revision");
+  const [draft, setDraft] = useDraft("prototype-revision", { value: "", version: 0 });
+  const submissions = useRef(new Map<string, Submission>());
+  const frame = useRef<HTMLIFrameElement>(null);
+  const capture = useRef<{ finish: (value?: { state: unknown }) => void } | null>(null);
+  const restore = useRef<{ generation: string; checkpointId: string; state: unknown } | null>(null);
+  const [elapsed, setElapsed] = useState("");
+  const flow = state.prototypeFlow;
+  const checkpoints = flow?.checkpoints || [];
+  const displayed = checkpoints.find((item) => item.id === flow?.displayedCheckpointId);
+  const candidate = checkpoints.find((item) => item.id === flow?.pendingCheckpointId);
+  const active = checkpoints.find((item) => item.id === flow?.activeCheckpointId || item.status === "running");
+  const failed = checkpoints.filter((item, index) => item.status === "failed" && (item.milestone !== "visual" || flow?.visualRequested)
+    && !checkpoints.slice(index + 1).some((next) => next.milestone === item.milestone && next.revisionId === item.revisionId)).at(-1);
+  const revisions: Revision[] = state.prototypeReview?.revisions || [];
+  const failedRevision = revisions.find((item) => item.status === "failed");
+  const unresolved = revisions.filter((item) => unresolvedStatuses.includes(item.status));
+  const question: DecisionQuestion | null = state.prototypeReview?.question || null;
+  const unavailable = skippedStage(state, "prototype");
+  const undecided = state.prototypeApproach?.mode === "undecided";
+  const finalizing = ["starting", "running"].includes(state.processing?.status) && state.processing?.action === "generate-design-spec";
+  const building = !unavailable && !undecided && state.lifecycle.currentStage === "prototype"
+    && (active?.status === "running" || state.previewStatus === "starting"
+      || (["build-prototype", "submit-revision", "clarify-revision"].includes(state.processing?.action) && state.processing?.status === "running"));
+  const url = flow ? displayed?.previewUrl || (displayed ? state.previewUrl : null) : state.previewUrl;
+  const readyUrl = originOf(url) && !unavailable && !undecided ? url : null;
+  const exhausted = Boolean(flow && flow.budget.usedSeconds >= flow.budget.limitSeconds);
+  const milestonesReady = milestoneReady(state, "structure") && milestoneReady(state, "interaction")
+    && (!flow?.visualRequested || milestoneReady(state, "visual"));
+  const blocked = pending || !canEdit("prototype") || hasActiveJobs(state) || finalizing || Boolean(question);
+  const validation = state.prototypeApproach?.mode === "validate-existing";
+  const startVisible = !unavailable && !building && !readyUrl && !flow && state.previewStatus !== "ready" && state.lifecycle.currentStage === "prototype";
+  const retryVisible = Boolean(flow || failedRevision) && !candidate && !question && !building && !exhausted
+    && Boolean(failed || failedRevision || !milestonesReady || unresolved.length);
+  const visualVisible = Boolean(flow && !flow.visualRequested && !building && !hasActiveJobs(state) && milestoneReady(state, "interaction") && !candidate);
+  const skipVisible = Boolean(flow?.visualRequested && failed?.milestone === "visual" && !failed.revisionId && !hasActiveJobs(state));
+  const checkpointKey = flow?.displayedCheckpointId || "legacy";
+  useEffect(() => {
+    if (!building) { setElapsed(""); return; }
+    const update = () => {
+      const seconds = Math.max(0, Math.floor((Date.now() - Date.parse(active?.requestedAt || state.processing?.requestedAt)) / 1000));
+      setElapsed(Number.isFinite(seconds) ? `Elapsed: ${Math.floor(seconds / 60)}m ${seconds % 60}s` : "Elapsed: less than a minute");
+    };
+    update();
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  }, [building, active?.requestedAt, state.processing?.requestedAt]);
+  useEffect(() => () => { capture.current?.finish(); restore.current = null; }, []);
+
+  async function capturePreview(): Promise<{ state: unknown } | undefined> {
+    capture.current?.finish();
+    const source = frame.current?.contentWindow;
+    const origin = originOf(readyUrl);
+    if (!source || !origin) return undefined;
+    return new Promise((resolve) => {
+      const requestId = crypto.randomUUID();
+      const timer = window.setTimeout(() => finish(), 350);
+      const receive = (event: MessageEvent) => {
+        if (event.source !== source || event.source !== frame.current?.contentWindow || event.origin !== origin
+          || event.data?.type !== "tandem:preview:state" || event.data.requestId !== requestId
+          || event.data.prototypeId !== state.prototypeId || !Object.hasOwn(event.data, "state")) return;
+        try {
+          const json = JSON.stringify(event.data.state);
+          if (json && new TextEncoder().encode(json).byteLength <= 64 * 1024) finish({ state: JSON.parse(json) });
+        } catch (error) { console.warn("Ignored a prototype state response that could not be serialized.", error); }
+      };
+      function finish(value?: { state: unknown }) {
+        window.clearTimeout(timer);
+        window.removeEventListener("message", receive);
+        capture.current = null;
+        resolve(value);
+      }
+      capture.current = { finish };
+      window.addEventListener("message", receive);
+      try { source.postMessage({ type: "tandem:preview:capture", requestId, prototypeId: state.prototypeId }, origin); }
+      catch (error) { console.warn("Prototype state capture is unavailable; the update can still be applied.", error); finish(); }
+    });
+  }
+
+  async function submitAction(kind: string) {
+    if (blocked) return;
+    if (kind === "extend-budget" && !await confirm("Add another 15-minute AI work window and retry paused prototype work? Your current preview and queued feedback will be kept.")) return;
+    await action.run(async () => {
+      if (!latestUi.current.canEdit("prototype") || hasActiveJobs(latest.current)
+        || (kind === "extend-budget" && latest.current.revision !== state.revision)) {
+        throw new Error("The prototype changed. Review its current state before retrying.");
+      }
+      const checkpointId = kind === "apply-update" ? candidate?.id : kind === "retry" ? failed?.id : null;
+      if (kind === "apply-update" && !checkpointId) throw new Error("The update is no longer available.");
+      try {
+        const captured = kind === "apply-update" ? await capturePreview() : undefined;
+        if (latest.current.generation !== state.generation || !latestUi.current.canEdit("prototype")) {
+          throw new Error("The effort changed. Review the current prototype before retrying.");
+        }
+        if (kind === "apply-update" && (latest.current.prototypeFlow?.pendingCheckpointId !== checkpointId
+          || latest.current.prototypeFlow?.displayedCheckpointId !== flow?.displayedCheckpointId || latest.current.previewUrl !== state.previewUrl)) {
+          throw new Error("The update changed. Review the latest update before applying it.");
+        }
+        if (captured && checkpointId) restore.current = { generation: state.generation, checkpointId, state: captured.state };
+        await post("/api/prototype/action", { action: kind, ...(checkpointId ? { checkpointId } : {}), expectedRevision: latest.current.revision });
+      } catch (error) { restore.current = null; throw error; }
+    });
+  }
+  const message = candidate ? "Update ready. " + (candidate.summary || "The next checkpoint has been validated.") + " Your displayed preview will not change until you choose Apply update."
+    : question ? "A revision needs clarification. Keep exploring and queue feedback below."
+    : building ? readyUrl ? "Your working preview stays available while the next checkpoint builds." : "Building the first runnable checkpoint. No preview is available yet; you can already queue feedback."
+    : failed ? "The latest update failed. " + failed.summary + (readyUrl ? " Your working preview is unchanged." : "")
+    : failedRevision ? "A feedback revision failed. Retry the failed revision to continue."
+    : exhausted && (!milestonesReady || unresolved.length) ? "Prototype work is paused at its work-window limit. Your preview and queued feedback are kept."
+    : milestonesReady ? "Structure and Interaction are ready. Finish Prototype, or optionally explore visual direction."
+    : "Start with Structure, then test one complete Interaction. Visual direction is optional.";
+  const revisionMessage = revisionAction.error || (state.lifecycle.currentStage !== "prototype"
+    ? "Prototype history is read only. You can keep a draft; reopen the stage to submit it."
+    : !canEdit("prototype") ? guidance("submit revisions")
+    : finalizing ? "The final feature specification is being generated from frozen input. Keep drafting; sending is paused for this handoff."
+    : unresolved.length >= 50 ? "The feedback queue is full. Apply or resolve existing updates before sending more; your draft is kept."
+    : !readyUrl ? "You can queue feedback before the first preview is ready."
+    : hasActiveJobs(state) ? "Keep using the displayed preview. New feedback is queued while the next update builds."
+    : question ? "Answer the clarification to continue that revision. You can queue other feedback meanwhile."
+    : candidate ? "An update is ready. Apply it when you are ready; new feedback remains queued."
+    : "Try the prototype, then describe any revision you want.");
+  const recentApplied = new Set(revisions.filter((item) => item.status === "applied").slice(-5).map((item) => item.id));
+
+  return <>
+    <div className="preview-surface">
+      <div id="preview-tools" className="preview-tools">
+        <span id="preview-status">{unavailable ? "not applicable" : candidate ? "update ready" : building ? readyUrl ? "preview ready · building update" : "building" : state.previewStatus}</span>
+        {readyUrl && <a id="open-preview" href={readyUrl} target="_blank" rel="noreferrer"><ExternalLink size={14} />Open preview</a>}
+      </div>
+      <section id="prototype-progress" className="prototype-progress" aria-label="Prototype progress"
+        hidden={Boolean(unavailable) || (!flow && ((Boolean(readyUrl) && !failedRevision) || state.lifecycle.currentStage !== "prototype"))}>
+        <ol id="prototype-milestones" className="prototype-milestones" aria-label="Prototype substages" hidden={!flow && Boolean(readyUrl)}>
+          {milestones.map((milestone) => {
+            const latest = checkpoints.filter((checkpoint) => checkpoint.milestone === milestone.id).at(-1);
+            const skipped = milestone.id === "visual" && !flow?.visualRequested && latest?.status === "failed";
+            const label = skipped ? "Skipped (optional)" : latest?.id === candidate?.id && candidate ? "Update ready - apply when ready"
+              : latest?.status === "running" ? "Building" : latest?.status === "clarifying" ? "Needs clarification" : latest?.status === "failed" ? "Failed - retry available"
+              : milestoneReady(state, milestone.id) ? "Ready" : milestone.id === "visual" && !flow?.visualRequested ? "Optional" : "Waiting";
+            return <li key={milestone.id} data-milestone={milestone.id} data-status={skipped ? "skipped" : latest?.status || "waiting"} aria-current={active?.milestone === milestone.id ? "step" : undefined}>
+              <strong>{milestone.label}</strong><span>{label}</span>
+            </li>;
+          })}
+        </ol>
+        <div className="prototype-actions">
+          <button id="apply-prototype-update" className="plan-button" hidden={!candidate} disabled={blocked} onClick={() => void submitAction("apply-update")}><ArrowUpRight size={16} />Apply update</button>
+          <button id="request-prototype-visual" className="plan-button" hidden={!visualVisible} disabled={blocked || unresolved.length > 0 || exhausted} onClick={() => void submitAction("visual")}><Sparkles size={16} />Explore visual direction (optional)</button>
+          <button id="skip-prototype-visual" className="plan-button" hidden={!skipVisible} disabled={blocked} onClick={() => void submitAction("skip-visual")}>Skip visual direction</button>
+          <button id="retry-prototype-checkpoint" className="plan-button" hidden={!retryVisible} disabled={blocked} onClick={() => void submitAction("retry")}><RefreshCw size={16} />{failed ? "Retry " + milestones.find((item) => item.id === failed.milestone)?.label : failedRevision ? "Retry failed revision" : "Continue prototype work"}</button>
+          <button id="extend-prototype-budget" className="plan-button" hidden={!exhausted || building || Boolean(candidate)} disabled={blocked} onClick={() => void submitAction("extend-budget")}><Clock size={16} />Add 15 minutes and retry</button>
+        </div>
+        <details id="prototype-progress-details" className="prototype-progress-details"><summary>Build details</summary>
+          <p id="prototype-budget" className="muted">{flow && `Work window: ${Math.ceil(flow.budget.usedSeconds / 60)} of ${Math.ceil(flow.budget.limitSeconds / 60)} minutes used${building ? " or reserved for active work. Unused reserved time is returned when the job ends." : "."}`}</p>
+        </details>
+        <p id="prototype-progress-message" className="muted" role="status" data-essential={Boolean(candidate || failed || failedRevision || question || exhausted && !building)}>{message}</p>
+      </section>
+      <p id="prototype-action-status" className="revision-status" role="status" data-status={action.error ? "error" : "idle"}>{action.error}</p>
+      <div id="prototype-building" className="prototype-building" role="status" hidden={!building}>
+        <div className="prototype-building-card"><LoaderCircle className="spin" size={20} /><span className="processing-copy">
+          <strong id="prototype-building-title">{active ? "Building " + milestones.find((item) => item.id === active.milestone)?.label : validation ? "Validating existing prototype" : "Building runnable prototype"}</strong>
+          <span id="prototype-building-message" className="muted">{state.processing?.message || active?.focus || state.status}</span>
+          <span id="prototype-building-elapsed" className="muted" role="timer" aria-live="off">{elapsed}</span>
+        </span></div>
+      </div>
+      <p id="prototype-build-status" className="revision-status" role="status" data-status={state.previewStatus === "error" ? "error" : "idle"}>{state.previewStatus === "error" ? state.processing?.message || state.status || "The preview is unavailable." : ""}</p>
+      <div id="preview-empty" className="preview-empty" hidden={Boolean(readyUrl)}>
+        <div><p id="preview-empty-message">{unavailable ? "Live prototype is not applicable. " + unavailable.reason : undecided
+          ? "Choose the prototype approach in Requirements before starting prototype work." : building
+          ? "The runnable preview will appear here after its first checkpoint is validated. Feedback can be queued below." : validation
+          ? "No prototype validation is running. Validate the existing app without replacing it." : "No prototype build is running. Start a build to create the runnable preview."}</p>
+          <button id="start-prototype" className="plan-button" hidden={!startVisible} disabled={pending || !canEdit("prototype") || hasActiveJobs(state)}
+            onClick={() => void action.run(() => post("/api/prototype/start", {}))}><Play size={16} />{validation ? state.previewStatus === "error" ? "Retry existing prototype validation" : "Validate existing prototype" : state.previewStatus === "error" ? "Retry prototype build" : "Start prototype"}</button>
+        </div>
+      </div>
+      <iframe key={checkpointKey} id="preview-frame" ref={frame} title="Runnable prototype" src={readyUrl || undefined} hidden={!readyUrl}
+        data-url={readyUrl || ""} data-checkpoint-id={flow?.displayedCheckpointId || ""} referrerPolicy="origin"
+        sandbox="allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
+        onLoad={() => {
+          const saved = restore.current;
+          if (!saved || saved.generation !== latest.current.generation || saved.checkpointId !== latest.current.prototypeFlow?.displayedCheckpointId) return;
+          const origin = originOf(readyUrl);
+          if (!origin) return;
+          restore.current = null;
+          try { frame.current?.contentWindow?.postMessage({ type: "tandem:preview:restore", prototypeId: state.prototypeId, state: saved.state }, origin); }
+          catch (error) { console.warn("Prototype state could not be restored; the updated preview remains available.", error); }
+        }} />
+    </div>
+    <section id="prototype-review" className="prototype-review" hidden={!hasStageData(state, "prototype") || Boolean(unavailable)}>
+      <div className="prototype-review-heading"><strong>Feedback</strong><span>Keep exploring; feedback is queued while work runs</span></div>
+      <form id="revision-form" className="revision-form" onSubmit={(event) => {
+        event.preventDefault();
+        if (pending || !canEdit("prototype") || finalizing) return;
+        const suggestion = draft.value.trim();
+        if (!suggestion || suggestion.length > 4000 || unresolved.length >= 50) {
+          revisionAction.setError(unresolved.length >= 50 ? "The feedback queue is full (50 unresolved revisions). Apply or resolve existing updates, then send this draft."
+            : suggestion.length > 4000 ? "Keep the revision suggestion within 4,000 characters." : "Enter a revision suggestion."); return;
+        }
+        let submission = submissions.current.get(suggestion);
+        if (!submission) {
+          submission = { suggestion, baseCheckpointId: flow?.displayedCheckpointId || (state.previewStatus === "ready" && !flow ? undefined : null), clientRequestId: crypto.randomUUID() };
+          submissions.current.set(suggestion, submission);
+        }
+        const submitted = draft.version;
+        void revisionAction.run(async () => {
+          await post("/api/revision", submission);
+          submissions.current.delete(suggestion);
+          setDraft((current) => current.version === submitted ? { value: "", version: submitted + 1 } : current);
+        });
+      }}>
+        <SpeechTextarea id="revision-input" value={draft.value} onValueChange={(value) => setDraft((current) => ({ value, version: current.version + 1 }))}
+          rows={1} maxLength={4000} disabled={Boolean(state.effortReset)} placeholder="Describe one change you want to see in the prototype." aria-label="Prototype revision suggestion" />
+        <button id="submit-revision" type="submit" disabled={pending || !canEdit("prototype") || finalizing || unresolved.length >= 50}><Send size={16} />{revisionAction.busy ? "Sending..." : hasActiveJobs(state) || question || candidate || !readyUrl ? "Queue revision" : "Send revision"}</button>
+      </form>
+      {question && <Clarification key={JSON.stringify(question)} question={question} />}
+      <details id="revision-history-details" className="revision-history-details" hidden={!revisions.length}>
+        <summary>Revision history <span id="revision-queue-summary" className="muted" role="status">{unresolved.length ? `${revisions.filter((item) => item.status === "queued").length} queued · ${unresolved.length} unresolved / 50` : ""}</span></summary>
+        <ul id="revision-history" className="revision-history">{revisions.filter((item) => item.status !== "applied" || recentApplied.has(item.id)).slice().reverse().map((revision) =>
+          <li key={revision.id} data-revision-id={revision.id} data-status={revision.status}><strong title={revision.summary}>{revision.suggestion || revision.summary}</strong>
+            <span>{{ queued: "Queued", processing: "Building update", clarifying: "Needs clarification", ready: "Update ready - not applied", applied: "Applied", failed: "Failed - retry needed" }[revision.status] || revision.status}</span></li>)}</ul>
+      </details>
+      <p id="revision-status" className="revision-status" role="status" data-status={revisionAction.error || unresolved.length >= 50 ? "error" : "idle"}
+        data-essential={Boolean(revisionAction.error || unresolved.length >= 50 || !canEdit("prototype") || finalizing || question)}>{revisionMessage}</p>
+    </section>
+  </>;
+}
