@@ -1,5 +1,6 @@
 import { lifecycleStages } from "../workflow.js";
 import type { UiState } from "./ui-context.js";
+import { SketchPreviewTracker, sketchPreviewIdentity } from "./sketch-preview.js";
 
 export interface StudioSnapshot {
   state: UiState | null;
@@ -20,6 +21,7 @@ export class StudioStore {
   private listeners = new Set<() => void>();
   private sequence = 0;
   private lastTransportSequence = 0;
+  private sketchPreview = new SketchPreviewTracker();
   private request: Promise<void> | null = null;
   private requestSequence = 0;
   private disposed = false;
@@ -61,11 +63,15 @@ export class StudioStore {
         Object.assign(next, { [field]: previous[field] });
       }
     }
+    const preview = this.sketchPreview.accept(next as UiState,
+      sequence >= this.lastTransportSequence && sketchPreviewIdentity(state) === sketchPreviewIdentity(next as UiState)
+        ? state.sketchPreview : undefined);
+    next.sketchPreview = preview.preview;
     this.lastTransportSequence = Math.max(this.lastTransportSequence, sequence);
-    const transportChanged = !previous || ["provider", "preparationRuntime", "implementationRuntime", "testRuntime"].some(
+    const transportChanged = !previous || ["provider", "preparationRuntime", "implementationRuntime", "testRuntime", "sketchPreview"].some(
       (field) => JSON.stringify(Reflect.get(next, field)) !== JSON.stringify(Reflect.get(previous, field)));
-    if (changed || transportChanged) this.publish({ state: next as UiState, connectionError: "" });
-    else this.setConnectionError("");
+    if (changed || transportChanged) this.publish({ state: next as UiState, connectionError: preview.error });
+    else this.setConnectionError(preview.error);
     return changed || transportChanged;
   };
 

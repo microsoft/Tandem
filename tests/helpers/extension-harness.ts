@@ -62,6 +62,7 @@ interface HarnessApi {
     openTandem(ctx: CanvasContext & { sessionId: string; reason?: string }): Promise<{ url: string }>;
     startServer(instance: string, id: string, provider: string, writable: boolean): Promise<{
         url: string; server: import("node:http").Server; heartbeat: ReturnType<typeof setInterval>;
+        live: { close(): void };
     }>;
     closeServers(): Promise<void>;
     runEffortFactory(id: string, requestId: string, request: FactoryLaunchRequest): Promise<unknown>;
@@ -135,7 +136,7 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
     };
     try {
         runInNewContext(await (compiled ??= compile()), {
-            module, exports: module.exports, console, URL, Buffer, AbortController, AbortSignal, Response, Error, TextDecoder, TextEncoder,
+            module, exports: module.exports, console, URL, Buffer, AbortController, AbortSignal, Response, Error, TextDecoder, TextEncoder, structuredClone,
             setTimeout, clearTimeout, setInterval, clearInterval,
             speechIdentity: {
                 DefaultAzureCredential: class {

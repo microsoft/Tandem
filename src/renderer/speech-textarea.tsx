@@ -31,6 +31,12 @@ interface SpeechContextValue {
 const SpeechContext = createContext<SpeechContextValue | null>(null);
 const initialStatus: Status = { text: "Audio goes to Azure. You choose when to send.", kind: "idle" };
 
+export function useSpeechCoordinator() {
+  const context = useContext(SpeechContext);
+  if (!context) throw new Error("Voice input requires a SpeechProvider.");
+  return context;
+}
+
 /** One provider per effort root; changing effort identity also releases any microphone or sign-in. */
 export function SpeechProvider({
   children, createSession = createAzureSpeechSession,

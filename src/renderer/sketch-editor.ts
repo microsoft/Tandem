@@ -1,5 +1,5 @@
-import { renderSketchSvg, validateSketchDocument, validSketchDimension } from "../sketch.js";
-import type { SketchDocument, SketchScreen, SketchShape } from "../sketch.js";
+import { MAX_SKETCH_DIMENSION, renderSketchSvg, validateSketchDocument, validSketchDimension } from "../sketch.js";
+import type { SketchCurve, SketchDocument, SketchPoint, SketchScreen, SketchShape } from "../sketch.js";
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
@@ -47,6 +47,36 @@ export function createShape(screen: SketchScreen, kind: SketchShape["kind"]): Sk
     fill: kind === "text" ? "#333333" : ["rectangle", "ellipse"].includes(kind) ? "#eeeeee" : "none", fontSize: 16,
     points: ["line", "arrow", "path"].includes(kind) ? [{ x, y }, { x: x + width, y: y + height }] : [],
   };
+}
+
+export function createCurveShape(screen: SketchScreen, curve: Exclude<SketchCurve, "linear">): SketchShape {
+  const shape = createShape(screen, "path");
+  const { x, y, width, height } = shape;
+  const point = (across: number, down: number) => ({ x: x + across * width, y: y + down * height });
+  const points = curve === "quadratic" ? [point(0, 1), point(0.5, 0), point(1, 1)]
+    : curve === "cubic" ? [point(0, 1), point(0, 0), point(1, 0), point(1, 1)]
+    : [point(0, 1), point(1 / 3, 0), point(2 / 3, 1), point(1, 0)];
+  return { ...shape, curve, closed: false, ...(curve === "catmull-rom" ? { tension: 0 } : {}), points };
+}
+
+export function setPathPoints(shape: SketchShape, points: SketchPoint[]): SketchShape {
+  if (shape.kind !== "path") throw new Error("Point editing requires a path.");
+  if (points.length < 2 || points.length > 512) throw new Error("Paths require 2-512 points.");
+  if (points.some((point) => [point.x, point.y].some((value) => !Number.isFinite(value) || value < 0 || value > MAX_SKETCH_DIMENSION))) {
+    throw new Error("Point coordinates must be finite numbers from 0 to 10,000.");
+  }
+  const next = { ...shape, points: points.map((point) => ({ ...point })) };
+  return { ...next, ...shapeBounds(next) };
+}
+
+export function parsePathPoints(value: string): SketchPoint[] {
+  return value.trim().split(/\r?\n/).map((line, index) => {
+    const pair = line.trim().split(/\s*,\s*|\s+/);
+    if (pair.length !== 2 || pair.some((part) => !part || !Number.isFinite(Number(part)))) {
+      throw new Error(`Point ${index + 1} needs two numbers: x, y. Use one point per line.`);
+    }
+    return { x: Number(pair[0]), y: Number(pair[1]) };
+  });
 }
 
 export function shapeBounds(shape: SketchShape): Pick<SketchShape, "x" | "y" | "width" | "height"> {

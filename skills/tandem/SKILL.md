@@ -488,10 +488,25 @@ Applicable stages are gated and cannot be silently skipped:
    snapshot. The decision DAG is not a navigation graph: derive screens and
    transitions from the combined intent, then link screens to source decisions.
    Users may edit shapes, labels and annotations or request focused AI revisions.
+   Paths support linear, quadratic/cubic Bezier and Catmull-Rom spline geometry,
+   with editable points, optional closure and spline tension from 0 to 1.
+   Quadratic points are start plus control/end pairs; cubic points are start
+   plus control/control/end triples. Splines use knots, not control handles.
+   Preserve path-only `curve`, `closed` and `tension` metadata on revisions;
+   only splines accept tension. Omitted fields retain linear/open paths and
+   zero spline tension. Keep paths within the existing 512-point budget.
    The host validates and saves immutable scene revisions. Explicit approval
    captures a PNG for every screen and a `sketch-spec` artifact; only the current
    revision bound to current Requirements can advance. No application code or
-   server should be created during Sketch.
+   server should be created during Sketch. Sketch's voice selector additionally
+   offers GPT-live for spoken discussion and client-delegated drawing revisions;
+   other stages keep Azure Speech dictation. Voice edits use the same validated
+   revision worker and never approve drawings or advance the lifecycle. Starting
+   voice is explicit; stopping it does not cancel a worker already submitted.
+   Both typed and voice requests show validated drawing operations incrementally
+   in a temporary live preview. Never report a preview as saved or approved:
+   wait for the matching successful request and new saved revision. A failed
+   stream is discarded without replacing the prior drawings or local drafts.
 4. **Prototype** follows the selected approach. `build` produces a new runnable
    preview. `validate-existing` runs and revises the repository's existing GUI.
    Progress through Structure, Interaction, and optional Visual direction inside

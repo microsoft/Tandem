@@ -23,6 +23,7 @@
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@types/jsdom": "30.0.0",
+    "@types/ws": "8.18.1",
     "archiver": "8.0.0",
     "esbuild": "0.28.2",
     "jsdom": "30.0.1",
@@ -37,6 +38,7 @@
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "radix-ui": "1.6.7",
-    "lucide-react": "1.45.0"
+    "lucide-react": "1.45.0",
+    "ws": "8.21.3"
   }
 }

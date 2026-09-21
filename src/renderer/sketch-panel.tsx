@@ -1,16 +1,21 @@
 import {
-  createContext, useContext, useEffect, useLayoutEffect, useRef, useState,
+  createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState,
   type KeyboardEvent, type PointerEvent, type ReactNode,
 } from "react";
 import { Toggle } from "radix-ui";
 import {
-  ArrowRight, Check, Circle, Minus, Pencil, Plus, Redo2, RefreshCw, Save, Sparkles, Square, Trash2, Type, Undo2,
+  ArrowRight, Check, Circle, Minus, Pencil, PenTool, Plus, Redo2, RefreshCw, Save, Sparkles, Spline, Square, Trash2, Type, Undo2,
 } from "lucide-react";
 import { validateSketchDocument } from "../sketch.js";
-import type { SketchDocument, SketchRevision, SketchScreen, SketchShape, SketchState, SketchTransition } from "../sketch.js";
-import { createScreen, createShape, renderSketchPng, resizeScreen, setShapeBounds, shapeBounds, SketchEditor, SKETCH_SIZE_PRESETS } from "./sketch-editor.js";
+import type { SketchCurve, SketchDocument, SketchRevision, SketchScreen, SketchShape, SketchState, SketchTransition } from "../sketch.js";
+import { sketchPathData } from "../sketch-path.js";
+import { createCurveShape, createScreen, createShape, parsePathPoints, renderSketchPng, resizeScreen, setPathPoints, setShapeBounds, shapeBounds, SketchEditor, SKETCH_SIZE_PRESETS } from "./sketch-editor.js";
 import { SketchViewport } from "./sketch-viewport.js";
 import { SpeechTextarea } from "./speech-textarea.js";
+import { SketchLivePanel } from "./sketch-live-panel.js";
+import { sketchLiveContext } from "./sketch-live-context.js";
+import type { SketchLiveSessionFactory } from "./sketch-live-session.js";
+import { readSketchPreview } from "./sketch-preview.js";
 import { hasActiveJobs, skippedStage, useAction, useDraft, useUi, type UiState } from "./ui-context.js";
 
 // The shell must distinguish completion readiness from pending requests: unsaved drawings
@@ -58,6 +63,7 @@ interface Gesture {
   shape: SketchShape | null;
   points: Array<{ x: number; y: number }>;
   moved: SketchShape | null;
+  pointIndex: number | null;
 }
 
 function freehandShape(screen: SketchScreen, points: Gesture["points"]): SketchShape {
@@ -86,7 +92,7 @@ function ShapePrimitive({ shape }: { shape: SketchShape }) {
       stroke="none" xmlSpace="preserve">{shape.text}</text>;
   }
   if (shape.kind === "path") {
-    return <path d={shape.points.map((point, index) => `${index ? "L" : "M"} ${point.x} ${point.y}`).join(" ")} {...style} />;
+    return <path d={sketchPathData(shape)} {...style} />;
   }
   const [start, end] = shape.points;
   let head: ReactNode = null;
@@ -101,7 +107,10 @@ function ShapePrimitive({ shape }: { shape: SketchShape }) {
   return <><line x1={start.x} y1={start.y} x2={end.x} y2={end.y} {...style} />{head}</>;
 }
 
-export function SketchSvg({ screen, selectedShape = "" }: { screen: SketchScreen; selectedShape?: string }) {
+export function SketchSvg({ screen, selectedShape = "", editPoints = false }: {
+  screen: SketchScreen; selectedShape?: string; editPoints?: boolean;
+}) {
+  const selected = screen.shapes.find((shape) => shape.id === selectedShape);
   return <svg xmlns="http://www.w3.org/2000/svg" width={screen.width} height={screen.height}
     viewBox={`0 0 ${screen.width} ${screen.height}`}>
     <title>{screen.title}</title>
@@ -110,22 +119,42 @@ export function SketchSvg({ screen, selectedShape = "" }: { screen: SketchScreen
       className={shape.id === selectedShape ? "sketch-selected" : undefined}>
       <ShapePrimitive shape={shape} />
     </g>)}
+    {editPoints && selected?.kind === "path" && <g className="sketch-path-handles" data-point-shape={selected.id}>
+      {(selected.curve === "quadratic" || selected.curve === "cubic") && <polyline
+        points={selected.points.map((point) => `${point.x},${point.y}`).join(" ")}
+        fill="none" stroke="#777777" strokeDasharray="4 4" vectorEffect="non-scaling-stroke" pointerEvents="none" />}
+      {selected.points.map((point, index) => {
+        const control = selected.curve === "quadratic" ? index % 2 !== 0 : selected.curve === "cubic" && index % 3 !== 0;
+        return <circle key={index} data-point-index={index} cx={point.x} cy={point.y} r={5}
+          fill={control ? "#ffffff" : "#333333"} stroke="#333333" strokeWidth={2} vectorEffect="non-scaling-stroke">
+          <title>{`${control ? "Control point" : "Knot / endpoint"} ${index + 1}: drag to edit`}</title>
+        </circle>;
+      })}
+    </g>}
   </svg>;
 }
 
-const shapeTools = [
-  { kind: "rectangle", label: "Rectangle", Icon: Square },
-  { kind: "ellipse", label: "Ellipse", Icon: Circle },
-  { kind: "text", label: "Text", Icon: Type },
-  { kind: "line", label: "Line", Icon: Minus },
-  { kind: "arrow", label: "Arrow", Icon: ArrowRight },
-] as const;
+const curveLabels: Record<SketchCurve, string> = {
+  linear: "Linear", quadratic: "Quadratic Bezier", cubic: "Cubic Bezier", "catmull-rom": "Catmull-Rom spline",
+};
+const shapeTools: Array<{
+  id: string; kind: SketchShape["kind"]; curve?: Exclude<SketchCurve, "linear">; label: string; Icon: typeof Square;
+}> = [
+  { id: "rectangle", kind: "rectangle", label: "Rectangle", Icon: Square },
+  { id: "ellipse", kind: "ellipse", label: "Ellipse", Icon: Circle },
+  { id: "text", kind: "text", label: "Text", Icon: Type },
+  { id: "line", kind: "line", label: "Line", Icon: Minus },
+  { id: "arrow", kind: "arrow", label: "Arrow", Icon: ArrowRight },
+  { id: "quadratic", kind: "path", curve: "quadratic", label: "Quadratic Bezier", Icon: PenTool },
+  { id: "cubic", kind: "path", curve: "cubic", label: "Cubic Bezier", Icon: PenTool },
+  { id: "spline", kind: "path", curve: "catmull-rom", label: "Catmull-Rom spline", Icon: Spline },
+];
 const colorChoices = [
   ["none", "None"], ["#ffffff", "White"], ["#eeeeee", "Light gray"],
   ["#999999", "Gray"], ["#333333", "Dark gray"], ["#000000", "Black"],
 ] as const;
 
-export function SketchPanel() {
+export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchLiveSessionFactory } = {}) {
   const ui = useUi();
   const { state, pending, canEdit, guidance } = ui;
   const action = useAction("sketch");
@@ -144,6 +173,8 @@ export function SketchPanel() {
   const [gesture, setGesture] = useState<Gesture | null>(null);
   const gestureRef = useRef(gesture);
   const [instruction, setInstruction] = useDraft("sketch:instruction", "");
+  const [voiceProvider, setVoiceProvider] = useDraft<"azure-speech" | "gpt-live">("sketch:voice-provider", "azure-speech");
+  const instructionInput = useRef<HTMLTextAreaElement>(null);
   const instructionRef = useRef(instruction);
   instructionRef.current = instruction;
   const [retryDraft, setRetryDraft] = useState("");
@@ -162,11 +193,17 @@ export function SketchPanel() {
   const key = loadKey(state);
   const skipped = skippedStage(state, "sketch");
   const available = Boolean(state.sketch && (state.lifecycle.currentStage === "sketch" || state.sketch.current));
-  const document = editor.document;
-  const screen = document?.screens.find((item) => item.id === selectedScreen) ?? document?.screens[0];
-  const shape = screen?.shapes.find((item) => item.id === selectedShape);
   const invalidFields = Object.values(drafts).some((draft) => Boolean(draft.error));
   const dirty = editor.dirty || Boolean(gesture) || Object.keys(drafts).length > 0;
+  const incoming = useMemo(() => {
+    try { return { preview: readSketchPreview(state, state.sketchPreview), error: "" }; }
+    catch (cause) { return { preview: null, error: errorMessage(cause) }; }
+  }, [state]);
+  const livePreview = !dirty ? incoming.preview : null;
+  // A preview is only a display source: the editor, undo history and voice scene stay local/saved.
+  const document = livePreview?.document ?? editor.document;
+  const screen = document?.screens.find((item) => item.id === selectedScreen) ?? document?.screens[0];
+  const shape = screen?.shapes.find((item) => item.id === selectedShape);
   const remoteChanged = loadState.loadedKey !== null
     && revisionIdentity(loadState.baseRevision) !== revisionIdentity(state.sketch.current);
   const conflict = loadState.conflict || (!action.busy && remoteChanged && dirty);
@@ -178,7 +215,7 @@ export function SketchPanel() {
   const failedInstruction = worker?.action === "revise-sketch" && worker.status === "error" && typeof worker.answer === "string"
     ? worker.answer.trim() : "";
   const retryInstruction = retryDraft || failedInstruction;
-  const completionBlocked = action.busy || loadState.loading || dirty || conflict || !available || Boolean(skipped)
+  const completionBlocked = hasActiveJobs(state) || action.busy || loadState.loading || dirty || conflict || !available || Boolean(skipped)
     || loadState.loadedKey !== key || loadState.failedKey === key || emptyScreens || !isSketchRevisionApproved(state.sketch);
 
   function updateLoad(change: Partial<LoadState>) {
@@ -375,13 +412,14 @@ export function SketchPanel() {
     if (result.revision >= stateRef.current.revision) stateRef.current = result;
     return result;
   }
-  async function save(identity: string) {
+  async function save(identity: string, expectedGeneration?: string) {
     if (!editor.document) throw new Error("Add a screen before saving.");
     if (hasInvalidFields()) throw new Error("Complete the invalid drawing fields before saving drawings.");
     ensureRevision(loadRef.current.baseRevision);
     const savedDocument = validateSketchDocument(editor.document, acceptedDecisionIds(stateRef.current));
     const result = await post("/api/sketch", {
       action: "save", expectedRevision: loadRef.current.baseRevision?.id ?? null, document: savedDocument,
+      ...(expectedGeneration !== undefined ? { expectedGeneration } : {}),
     }, identity);
     const revision = result.sketch.current;
     if (!revision) throw new Error("The saved revision could not be confirmed. Reload state before retrying.");
@@ -390,7 +428,7 @@ export function SketchPanel() {
     updateDrafts({});
     updateLoad({ baseRevision: { ...revision }, loadedKey: loadKey(stateRef.current), failedKey: null, conflict: false });
   }
-  async function submit(kind: "generate" | "save" | "approve" | "revise", retry?: string) {
+  async function submit(kind: "generate" | "save" | "approve" | "revise", retry?: string, signal?: AbortSignal) {
     if (!canWrite() || hasConflict() || hasInvalidFields()) return;
     const requestedInstruction = retry ?? instructionRef.current.trim();
     if (kind === "revise" && (!editor.document || !requestedInstruction)) return;
@@ -400,19 +438,22 @@ export function SketchPanel() {
     }
     if (kind === "approve" && (emptyScreens || stateRef.current.sketch.status === "stale")) return;
     const identity = identityOf(stateRef.current);
+    const expectedGeneration = signal ? stateRef.current.generation : undefined;
     const startRevision = loadRef.current.baseRevision;
     operation.current = true;
-    await action.run(async () => {
+    return action.run(async () => {
       try {
         if (kind === "generate" && editor.document
           && !await latest.current.confirm("Generate a new drawing revision? Your saved revision remains in history.", "Regenerate drawings")) return;
         ensureEffort(identity);
         ensureRevision(startRevision);
         ensureSketchWritable();
+        signal?.throwIfAborted();
         if (kind === "revise" && retry !== undefined) setRetryDraft(requestedInstruction);
-        if (kind === "save" || (editor.dirty && (kind === "approve" || kind === "revise"))) await save(identity);
+        if (kind === "save" || (editor.dirty && (kind === "approve" || kind === "revise"))) await save(identity, expectedGeneration);
         ensureEffort(identity);
         ensureSketchWritable();
+        signal?.throwIfAborted();
         if (kind === "approve") {
           const revision = loadRef.current.baseRevision;
           if (!revision || !editor.document) throw new Error("Save a drawing revision before approval.");
@@ -432,14 +473,16 @@ export function SketchPanel() {
           ensureSketchWritable();
           await post("/api/stage/complete", { stageId: "sketch" }, identity);
         } else if (kind !== "save") {
-          await post("/api/sketch", {
+          const result = await post("/api/sketch", {
             action: kind, expectedRevision: loadRef.current.baseRevision?.id ?? null,
             ...(kind === "revise" ? { instruction: requestedInstruction } : {}),
+            ...(expectedGeneration !== undefined ? { expectedGeneration } : {}),
           }, identity);
           if (kind === "revise") {
             setRetryDraft("");
             if (retry === undefined && instructionRef.current.trim() === requestedInstruction) setInstruction("");
           }
+          return result;
         }
       } catch (cause) {
         if (mounted.current && identity === identityOf(stateRef.current)
@@ -452,8 +495,49 @@ export function SketchPanel() {
       }
     });
   }
+
+  async function reviseByVoice(instruction: string, signal: AbortSignal) {
+    signal.throwIfAborted();
+    if (!canWrite() || hasConflict() || hasInvalidFields() || !editor.document) {
+      throw new Error("Drawings are busy, conflicted or unavailable. Finish the current edit or reload before asking again.");
+    }
+    const identity = identityOf(stateRef.current);
+    const queued = await submit("revise", instruction, signal);
+    if (!queued || typeof queued.processing?.requestId !== "string") {
+      throw new Error("The voice revision could not be submitted. Review the drawing error and retry explicitly.");
+    }
+    const requestId = queued.processing.requestId;
+    const baseRevisionId = queued.processing.sketchRequest?.baseRevisionId ?? queued.sketch.current?.id;
+    const deadline = Date.now() + 310_000;
+    while (Date.now() < deadline) {
+      signal.throwIfAborted();
+      ensureEffort(identity);
+      const snapshot = stateRef.current;
+      if (snapshot.lifecycle.currentStage !== "sketch" || snapshot.effortReset) {
+        throw new Error("Sketch changed while the voice revision was running.");
+      }
+      const processing = snapshot.processing;
+      if (processing?.requestId !== requestId) throw new Error("The voice revision was replaced by another drawing request.");
+      if (processing.status === "error") throw new Error(processing.message || "The voice drawing revision failed.");
+      if (processing.status === "success") {
+        const revision = snapshot.sketch.current;
+        if (!revision || revision.id === baseRevisionId || revision.source !== "revised") {
+          throw new Error("No new saved drawing revision could be confirmed.");
+        }
+        return `Drawing revision ${revision.number} is saved and ready to review. Approval is still required in the Sketch UI.`;
+      }
+      await new Promise<void>((resolve, reject) => {
+        const abort = () => { clearTimeout(timer); reject(new Error("Voice stopped.")); };
+        const timer = setTimeout(() => { signal.removeEventListener("abort", abort); resolve(); }, 500);
+        signal.addEventListener("abort", abort, { once: true });
+      });
+      signal.throwIfAborted();
+      await latest.current.refresh();
+    }
+    throw new Error("The drawing revision has not finished within its deadline. Check Sketch before retrying.");
+  }
   async function reload() {
-    if (operation.current || loadRef.current.loading || gestureRef.current) return;
+    if (operation.current || loadRef.current.loading || gestureRef.current || hasActiveJobs(stateRef.current)) return;
     const identity = identityOf(stateRef.current);
     operation.current = true;
     await action.run(async () => {
@@ -486,7 +570,9 @@ export function SketchPanel() {
   }
   function pointerDown(event: PointerEvent<HTMLDivElement>) {
     if (!canWrite() || !screen || event.button !== 0) return;
-    const id = (event.target as Element).closest("[data-shape-id]")?.getAttribute("data-shape-id");
+    const element = event.target as Element;
+    const id = element.closest("[data-shape-id]")?.getAttribute("data-shape-id")
+      ?? element.closest("[data-point-shape]")?.getAttribute("data-point-shape");
     const target = screen.shapes.find((item) => item.id === id);
     if ((!drawing && !target) || (drawing && screen.shapes.length >= 100)) return;
     event.preventDefault();
@@ -495,9 +581,10 @@ export function SketchPanel() {
       board.current!.setPointerCapture(event.pointerId);
       board.current!.focus();
       setSelectedShape(drawing ? "" : target!.id);
+      const handle = !drawing && target?.kind === "path" ? element.closest("[data-point-index]") : null;
       updateGesture({
         id: event.pointerId, ...point, screen: clone(screen), shape: drawing ? null : clone(target!),
-        points: [point], moved: null,
+        points: [point], moved: null, pointIndex: handle ? Number(handle.getAttribute("data-point-index")) : null,
       });
     } catch (cause) {
       action.setError(errorMessage(cause));
@@ -509,10 +596,18 @@ export function SketchPanel() {
     try {
       const point = position(event, current.screen);
       if (current.shape) {
-        const bounds = shapeBounds(current.shape);
-        updateGesture({ ...current, moved: setShapeBounds(current.screen, current.shape, {
-          x: bounds.x + point.x - current.x, y: bounds.y + point.y - current.y,
-        }) });
+        if (current.pointIndex !== null) {
+          updateGesture({ ...current, moved: setPathPoints(current.shape,
+            current.shape.points.map((original, index) => index === current.pointIndex ? {
+              x: clamp(original.x + point.x - current.x, current.screen.width),
+              y: clamp(original.y + point.y - current.y, current.screen.height),
+            } : original)) });
+        } else {
+          const bounds = shapeBounds(current.shape);
+          updateGesture({ ...current, moved: setShapeBounds(current.screen, current.shape, {
+            x: bounds.x + point.x - current.x, y: bounds.y + point.y - current.y,
+          }) });
+        }
       } else if (current.points.length < 512) {
         const last = current.points.at(-1)!;
         if (Math.hypot(point.x - last.x, point.y - last.y) >= 2) updateGesture({ ...current, points: [...current.points, point] });
@@ -569,7 +664,10 @@ export function SketchPanel() {
   }
 
   const status = skipped ? "Sketch disabled: " + skipped.reason
-    : loadState.loading || (available && !loadState.loadedKey && !loadState.failedKey) ? "Loading drawings…"
+    : incoming.preview ? dirty
+      ? "Live preview pending — local edits are preserved and remain visible. Incoming drawings are not saved or approved."
+      : `Live preview · update ${incoming.preview.sequence} — not saved or approved. You can browse screens while AI draws.`
+    : loadState.loading || (available && !dirty && loadState.loadedKey !== key && loadState.failedKey !== key) ? "Loading saved drawings…"
     : action.busy ? "Saving drawings or preparing approval…"
     : worker?.status === "running" || worker?.status === "starting" ? worker.message || "AI is preparing a drawing revision. Existing drawings are retained."
     : conflict ? "Conflict: a newer saved revision exists. Your local edits are retained; load latest explicitly to discard them."
@@ -581,7 +679,7 @@ export function SketchPanel() {
     : isSketchRevisionApproved(state.sketch) ? "Drawings approved. Finish Sketch to continue if the stage has not advanced."
     : document ? "Review every screen, edit the drawings, then approve to continue to Prototype."
     : "Generate drawings from the requirements DAG, or add a screen to draw your own.";
-  const message = action.error || Object.values(drafts).find((draft) => draft.error)?.error
+  const message = action.error || incoming.error || Object.values(drafts).find((draft) => draft.error)?.error
     || (worker?.status === "error" ? worker.message || "Drawing generation failed. Retry explicitly." : "");
   const preview = screen && {
     ...screen,
@@ -632,7 +730,7 @@ export function SketchPanel() {
         <Undo2 size={14} aria-hidden="true" /> Undo</button>
       <button id="sketch-redo" type="button" disabled={!writable || !editor.canRedo || invalidFields} onClick={redo}>
         <Redo2 size={14} aria-hidden="true" /> Redo</button>
-      <button id="sketch-reload" type="button" disabled={action.busy || loadState.loading || Boolean(gesture) || !state.sketch}
+      <button id="sketch-reload" type="button" disabled={action.busy || loadState.loading || Boolean(gesture) || hasActiveJobs(state) || !state.sketch}
         onClick={() => void reload()}><RefreshCw size={14} aria-hidden="true" /> {conflict ? "Discard local edits & load latest" : "Reload saved drawings"}</button>
     </div>
     <p id="sketch-empty" className="sketch-empty" hidden={Boolean(screen)}>No drawings yet. Generate a first draft or add a screen to begin.</p>
@@ -668,7 +766,7 @@ export function SketchPanel() {
             {screen?.shapes.map((item) => <button key={item.id} type="button" disabled={Boolean(gesture)}
               data-ui-key={`sketch-shape:${item.id}`} aria-pressed={item.id === selectedShape}
               onClick={() => { setSelectedShape(item.id); setDrawing(false); }}>
-              {item.kind}{item.text ? ": " + item.text : " · " + item.id}
+              {item.kind === "path" ? curveLabels[item.curve ?? "linear"] : item.kind}{item.text ? ": " + item.text : " · " + item.id}
             </button>)}
           </div>
         </details>
@@ -690,12 +788,12 @@ export function SketchPanel() {
             </select>
           } tools={
           <div id="sketch-tools" className="sketch-actions" role="group" aria-label="Drawing tools">
-          {shapeTools.map(({ kind, label, Icon }) => <button id={`sketch-add-${kind}`} key={kind} type="button"
+          {shapeTools.map(({ id, kind, curve, label, Icon }) => <button id={`sketch-add-${id}`} key={id} type="button"
             className="sketch-icon-button" title={label} aria-label={label}
             disabled={!writable || !screen || screen.shapes.length >= 100} onClick={() => {
               let created = "";
               if (editScreen((owner) => {
-                const item = createShape(owner, kind);
+                const item = curve ? createCurveShape(owner, curve) : createShape(owner, kind);
                 owner.shapes.push(item);
                 created = item.id;
               })) { setSelectedShape(created); setDrawing(false); }
@@ -706,15 +804,17 @@ export function SketchPanel() {
             <Pencil size={20} aria-hidden="true" />
           </Toggle.Root>
         </div>
-        } help={<p id="sketch-board-help" className="muted">{drawing
+        } help={<p id="sketch-board-help" className="muted">{livePreview
+          ? "Live preview is read only. Browse screens and shapes, or zoom while drawing continues. Nothing here is saved or approved yet."
+          : drawing
           ? "Freehand: drag on the board to draw. Select Freehand again to stop."
-          : "Select a shape on the board or in the list. Drag to move; use arrow keys to nudge, or edit dimensions below."}</p>}>
+          : "Select a shape on the board or in the list. Drag to move; drag path points to reshape. Use arrow keys to nudge, or edit coordinates below."}</p>}>
           <div ref={board} id="sketch-board" className={`sketch-board${drawing ? " sketch-drawing" : ""}`}
-            tabIndex={0} role="group" aria-label="Editable screen drawing" aria-describedby="sketch-board-help"
+            tabIndex={0} role="group" aria-label={livePreview ? "Live preview screen drawing (read only)" : "Editable screen drawing"} aria-describedby="sketch-board-help"
             onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp}
             onPointerCancel={(event) => { if (gestureRef.current?.id === event.pointerId) cancelGesture(); }}
             onLostPointerCapture={(event) => { if (gestureRef.current?.id === event.pointerId) cancelGesture(); }}>
-            {preview && <SketchSvg screen={preview} selectedShape={selectedShape} />}
+            {preview && <SketchSvg screen={preview} selectedShape={selectedShape} editPoints={!drawing && (writable || Boolean(gesture))} />}
           </div>
         </SketchViewport>
         <fieldset className="sketch-inspector">
@@ -754,6 +854,37 @@ export function SketchPanel() {
           <button id="sketch-delete-shape" type="button" disabled={!writable || !shape} onClick={deleteShape}>
             <Trash2 size={14} aria-hidden="true" /> Delete shape</button>
         </fieldset>
+        {shape?.kind === "path" && <fieldset className="sketch-inspector sketch-path-inspector">
+          <legend>{curveLabels[shape.curve ?? "linear"]} path</legend>
+          <label>Closed path
+            <select id="sketch-path-closed" disabled={!writable} value={String(shape.closed ?? false)}
+              onChange={(event) => editShape((item) => ({ ...item, closed: event.target.value === "true" }))}>
+              <option value="false">Open</option><option value="true">Closed</option>
+            </select>
+          </label>
+          {shape.curve === "catmull-rom" && <label>Spline tension (0-1)
+            <input id="sketch-path-tension" type="number" min={0} max={1} step={0.05} disabled={!writable}
+              value={fieldValue(shapeFieldKey("tension"), shape.tension ?? 0)} aria-invalid={fieldInvalid(shapeFieldKey("tension"))}
+              onBlur={() => finishField(shapeFieldKey("tension"))}
+              onChange={(event) => editShape((item) => ({ ...item, tension: event.target.value.trim() ? Number(event.target.value) : NaN }),
+                { key: shapeFieldKey("tension"), value: event.target.value, keepInput: true })} />
+          </label>}
+          <label className="sketch-path-points">Points (one x, y pair per line)
+            <textarea id="sketch-path-points" rows={5} disabled={!writable} aria-describedby="sketch-path-help"
+              value={fieldValue(shapeFieldKey("points"), shape.points.map((point) => `${point.x}, ${point.y}`).join("\n"))}
+              aria-invalid={fieldInvalid(shapeFieldKey("points"))}
+              onBlur={() => finishField(shapeFieldKey("points"))}
+              onChange={(event) => editShape((item) => setPathPoints(item, parsePathPoints(event.target.value)),
+                { key: shapeFieldKey("points"), value: event.target.value, keepInput: true })} />
+          </label>
+          <p id="sketch-path-help" className="muted">
+            {shape.curve === "quadratic" ? "Start point, then control/end pairs. Append complete pairs to add segments."
+              : shape.curve === "cubic" ? "Start point, then control/control/end triples. Append complete triples to add segments."
+              : shape.curve === "catmull-rom" ? "Knots only; the spline passes through each one. Closed splines wrap smoothly without repeating the first knot. Tension 0 is smooth; 1 gives straight segments."
+              : "Points are joined by straight segments."}
+            {" "}Drag knots or control points on the board, or edit their coordinates here. Paths allow 2-512 points.
+          </p>
+        </fieldset>}
       </div>
     </div>
     <details className="sketch-details">
@@ -800,9 +931,26 @@ export function SketchPanel() {
       <p className="muted">Retries the original instruction against these drawings. Local edits are saved first; any new instruction below is kept.</p>
     </section>
     <form id="sketch-revise-form" className="sketch-revise-form" onSubmit={(event) => { event.preventDefault(); void submit("revise"); }}>
+      <label htmlFor="sketch-voice-provider">Sketch voice provider</label>
+      <select id="sketch-voice-provider" value={voiceProvider} onChange={(event) => {
+        if (event.target.value === "azure-speech" || event.target.value === "gpt-live") setVoiceProvider(event.target.value);
+      }}>
+        <option value="azure-speech">Azure Speech (dictation)</option>
+        <option value="gpt-live">GPT-live (conversation and drawing edits)</option>
+      </select>
       <label htmlFor="sketch-instruction">Ask AI to revise these drawings</label>
-      <SpeechTextarea id="sketch-instruction" rows={2} maxLength={4000} disabled={!writable}
-        value={instruction} onValueChange={setInstruction} placeholder="Describe a layout, label, screen, or navigation change." />
+      {voiceProvider === "azure-speech"
+        ? <SpeechTextarea id="sketch-instruction" rows={2} maxLength={4000} disabled={!writable}
+          value={instruction} onValueChange={setInstruction} placeholder="Describe a layout, label, screen, or navigation change." />
+        : <><textarea ref={instructionInput} id="sketch-instruction" rows={2} maxLength={4000} disabled={!writable}
+          value={instruction} onChange={(event) => setInstruction(event.target.value)}
+          placeholder="Type a revision, or start GPT-live to discuss and edit by voice." />
+          <SketchLivePanel identity={identityOf(state)} input={instructionInput} createSession={createLiveSession}
+            enabled={canEdit("sketch") && state.provider?.canSubmitAnswers !== false && !state.effortReset
+              && !skipped && !conflict && !invalidFields}
+            canStart={writable && Boolean(document)}
+            context={sketchLiveContext(state, editor.document, selectedScreen, selectedShape)} revise={reviseByVoice} />
+        </>}
       <button id="sketch-revise" className="plan-button secondary" type="submit"
         disabled={!writable || !document || conflict || !instruction.trim() || invalidFields}>
         <Sparkles size={14} aria-hidden="true" /> Revise drawings</button>

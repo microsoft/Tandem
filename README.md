@@ -202,6 +202,18 @@ usages and accepted DAG answers. The decision DAG is not treated as a screen map
 Sketch uses editable vector scenes rather than generated application code.
 Review screen purposes, labels, geometry, annotations and requirement links;
 save direct edits or request an AI revision. Saved revisions are immutable.
+AI generation and both typed and voice revisions stream validated screen,
+shape and navigation operations into a **live preview** as they arrive. A small
+edit sends only changed objects instead of regenerating the entire document.
+The tool-free drawing worker uses the existing factory budget and model
+selection. Complete operations are coalesced into preview updates at 50 ms;
+the initial model response still depends on model and service latency.
+Previews are temporary, read-only and never constitute saved or approved
+drawings. One immutable revision is saved only after the final operation stream
+passes validation. Failure or cancellation discards the preview and keeps the
+last saved revision; unsaved edits in another view are never overwritten.
+Reconnecting retrieves the latest in-memory preview for the exact active
+request. Restarting the provider discards previews, not saved revision history.
 The **Canvas size** dropdown beside the zoom controls offers Tandem and
 VisionLoop defaults, HD landscape/portrait, square, 4:3, and A4 presets. Selecting
 a preset immediately resizes the selected screen in one undoable step, keeping
@@ -211,6 +223,20 @@ overflow without deleting it; enlarge the canvas or undo to reveal it again.
 Save drawings to persist the new dimensions.
 
 The larger, icon-only drawing tools retain tooltips and accessible labels.
+**Quadratic Bezier**, **Cubic Bezier**, and **Catmull-Rom spline** tools add
+editable curves using VisionLoop's path modes. Select a path to drag its knots
+or control points, edit coordinates (one `x, y` pair per line), close the path,
+or adjust spline tension from 0 (smooth) to 1 (straight segments).
+Quadratic paths use a start point followed by control/end pairs; cubic paths
+use a start point followed by control/control/end triples. Add complete
+segments in the points editor. Splines use knots only and wrap smoothly when
+closed; repeating the first knot is unnecessary. Point drags are single
+undoable edits, and malformed edits block saving instead of losing geometry.
+AI drawing operations support the same optional path-only `curve`, `closed`,
+and `tension` fields. Existing paths without these fields stay linear and open;
+omitted spline tension is 0. The 512-point limit is unchanged. The editor,
+live preview, and saved SVG/PNG all use the same curve geometry.
+
 **Zoom in**, **Zoom out**, **Fit entire canvas**, and **Actual size (100%)**
 change only the view, never drawing geometry, undo history, or export dimensions.
 Fit follows the available viewport in both directions; larger views scroll
@@ -327,6 +353,62 @@ under 200 response characters. These are protocol/count checks with a mock worke
 not measured end-to-end latency or credit savings.
 
 ## Speech input
+
+### GPT-live in Sketch
+
+**Sketch voice provider** offers **Azure Speech (dictation)** and **GPT-live
+(conversation and drawing edits)**. This selector affects Sketch only; all other
+stages retain their existing Azure Speech controls.
+
+Select GPT-live, then **Talk with GPT-live** to start the microphone and hear
+spoken replies. Discuss the current screen or ask for layout, label, shape,
+canvas-size or navigation changes. Like VisionLoop, GPT-live delegates drawing
+work to the app rather than directly executing model-generated commands.
+Tandem saves local drawing edits first, runs its bounded streaming sketch worker,
+and shows drawing operations incrementally before saving the completed revision.
+Typed drafts remain untouched; a live preview is not a saved or approved result.
+Voice never accepts requirements, approves drawings, advances stages or publishes.
+Review the drawing and use **Approve drawings and continue** yourself.
+The initial scene summary is included in session startup. Later context and
+spoken work updates carry the provider's delegation ID; manual changes are
+included at the next delegation rather than sent as unsolicited append commands.
+
+GPT-live uses VisionLoop's native Live WebSocket protocol, **gpt-live-1**, mono
+16 kHz PCM audio, and Azure CLI / Microsoft Entra authentication. It is not the
+OpenAI Realtime/WebRTC API. The extension holds the Entra token; only a short-lived,
+single-use loopback connection ticket reaches the page. Its configuration is
+separate from Azure Speech:
+
+```powershell
+$env:Path += ";$env:LOCALAPPDATA\Programs\AzureCLI\bin" # For a per-user Azure CLI installation
+az login --tenant 72f988bf-86f1-41af-91ab-2d7cd011db47
+# Optional overrides in the environment that launches Tandem / Copilot:
+$env:TANDEM_Live__Endpoint = "https://cloudgpt-ins.openai.azure.com/openai/v1/"
+$env:TANDEM_Live__Model = "gpt-live-1"
+$env:TANDEM_Live__Voice = "marin"
+$env:TANDEM_Live__TenantId = "72f988bf-86f1-41af-91ab-2d7cd011db47"
+```
+
+Your account must have access to this Azure GPT-live deployment. The endpoint
+is restricted to the approved VisionLoop host and Live route; arbitrary
+endpoints and other models are rejected rather than receiving credentials.
+Azure Speech's **Sign in with Microsoft** does not sign in to GPT-live.
+On Windows, GPT-live also adds the verified
+`%LOCALAPPDATA%\Programs\AzureCLI\bin` installation to the extension process's
+PATH before authenticating. This works even when Copilot was launched before
+Azure CLI was added to PATH; it does not change your persistent Windows PATH.
+
+**Live audio, captions and a bounded summary of the current sketch are sent to
+Azure.** The provider session requests `store: false`. Tandem keeps conversation
+captions in page memory, not audio files; a delegated drawing instruction is
+handled by the normal sketch revision workflow. Connections stop after ten
+minutes, when Sketch is hidden, when the effort/provider changes, or when you
+select **End voice** or press Escape. Stopping voice does not cancel a drawing
+worker already submitted. Failures are visible and never switch providers or
+reconnect automatically. A microphone-capable browser with Web Audio is required;
+use **Open Tandem in browser** if the embedded canvas blocks microphone access.
+
+### Azure Speech dictation
 
 Every conversational input has a **Mic** control: project goals, usages,
 requirement answers, prototype revisions and clarifications, artifact reviews

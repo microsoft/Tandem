@@ -102,6 +102,36 @@ test("drawing edits create immutable revisions and stale saves or previews canno
     } finally { await fixture.close(); }
 });
 
+test("voice drawing requests retain generation and revision boundaries and use the existing worker", async () => {
+    const fixture = await extensionHarness();
+    try {
+        await readyRequirements(fixture);
+        generateDrawings(fixture);
+        await fixture.api.completeLifecycleStage("sample", "requirements", "project:tandem");
+        await fixture.api.waitForAnswer("sample");
+        const before = await fixture.api.loadState("sample");
+        for (const action of ["save", "revise"]) {
+            await assert.rejects(fixture.api.sketchAction("sample", "project:tandem", {
+                action, expectedRevision: before.sketch.current!.id, expectedGeneration: "old-effort",
+                ...(action === "save" ? { document: sketchDocument() } : { instruction: "Move the primary action." }),
+            }), /effort changed/);
+        }
+        assert.equal(fixture.requests.length, 1);
+        await fixture.api.sketchAction("sample", "project:tandem", {
+            action: "revise", expectedRevision: before.sketch.current!.id, expectedGeneration: before.generation,
+            instruction: "Move the primary action to the right.",
+        });
+        await fixture.api.waitForAnswer("sample");
+        const after = await fixture.api.loadState("sample");
+        assert.equal(after.processing.status, "success");
+        assert.equal(after.sketch.current!.source, "revised");
+        assert.equal(after.sketch.history.length, 2);
+        assert.equal(after.sketch.approved, null);
+        assert.equal(after.lifecycle.currentStage, "sketch");
+        assert.equal(after.generation, before.generation);
+    } finally { await fixture.close(); }
+});
+
 test("no-GUI efforts skip both graphical stages with snapshots and a reason", async () => {
     const fixture = await extensionHarness();
     try {
@@ -357,6 +387,11 @@ test("production sketch/prototype prompts bind scene semantics and actual image 
     assert.match(sketch, /SAME existing GUI/);
     assert.match(sketch, /whole-number dimensions from 1 to 10000/);
     assert.match(sketch, /Preserve user-selected dimensions and any existing clipped content/);
+    assert.match(sketch, /Quadratic Bezier points: start, then control\/end pairs/);
+    assert.match(sketch, /Cubic Bezier points: start, then control\/control\/end triples/);
+    assert.match(sketch, /Catmull-Rom splines use knots only/);
+    assert.match(sketch, /Omitted curve means linear; omitted closed means false/);
+    assert.match(sketch, /retain curve, closed and tension on replacement paths/);
     const prototype = buildPrototypeCheckpointPrompt({
         prototypeId: "sample", projectRoot: "C:\\app", goal: "Task app", approach: "build",
         requirements: {}, confirmed: [],

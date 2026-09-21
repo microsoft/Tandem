@@ -39,7 +39,7 @@ for (const [name, licenseFile] of [
     const license = await readFile(join(packageRoot, licenseFile), "utf8");
     bundledNotices.push(`/* ${name}\n${license.replaceAll("*/", "* /")}\n*/`);
 }
-for (const name of ["@azure/identity", "microsoft-cognitiveservices-speech-sdk"]) {
+for (const name of ["@azure/identity", "microsoft-cognitiveservices-speech-sdk", "ws"]) {
     const packageRoot = dirname(createRequire(import.meta.url).resolve(`${name}/package.json`));
     const license = await readFile(join(packageRoot, "LICENSE"), "utf8");
     bundledNotices.push(`/* ${name}\n${license.replaceAll("*/", "* /")}\n*/`);

@@ -118,6 +118,28 @@ test("sketch approval binds all screen JSON, SVG, and PNG assets and exact retri
     await assert.rejects(store.readImage("example", revision, approval, "../outside"), /requested screen/);
 });
 
+test("curve scenes round-trip immutable revisions and approved assets without rewriting previous geometry", async (t) => {
+    const { store, path } = await fixture(t);
+    const original = document();
+    const first = await store.save("example", original, options);
+    const firstSvg = await readFile(path(first, "home.svg"), "utf8");
+    const input = document();
+    const points = [{ x: 10, y: 20 }, { x: 30, y: 40 }, { x: 50, y: 20 }, { x: 70, y: 40 }];
+    input.screens[0].shapes = (["quadratic", "cubic", "catmull-rom"] as const).map((curve) => ({
+        ...original.screens[0].shapes[0], id: curve, kind: "path", curve, closed: true,
+        points: curve === "quadratic" ? points.slice(0, 3) : points,
+        ...(curve === "catmull-rom" ? { tension: 0.6 } : {}),
+    }));
+    const curved = await store.save("example", input, { ...options, number: 2, source: "edited" });
+    assert.notEqual(curved.documentHash, first.documentHash);
+    assert.deepEqual(await store.read("example", curved), input);
+    assert.equal(await readFile(path(curved, "home.svg"), "utf8"), renderSketchSvg(input.screens[0]));
+    const approved = await store.approve("example", curved, [preview()]);
+    assert.deepEqual(await store.verifyApproval("example", curved, approved), input);
+    assert.deepEqual(await store.read("example", first), original);
+    assert.equal(await readFile(path(first, "home.svg"), "utf8"), firstSvg);
+});
+
 test("canvas resizing persists HD dimensions and clipped shapes through save, reload and approval", async (t) => {
     const { store } = await fixture(t);
     const original = document();

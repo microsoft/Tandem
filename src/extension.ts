@@ -35,6 +35,7 @@ import {
 } from "./execution.js";
 import { canvasRequestAllowed, readJsonRequest, sendJsonResponse } from "./canvas-transport.js";
 import { createSpeechTokenService, SpeechAuthError, validateSpeechTokenRequest } from "./speech-auth.js";
+import { attachSketchLiveServer, SketchLiveError } from "./sketch-live-server.js";
 import { acceptStageSnapshot, exportAcceptedSnapshot } from "./accepted-artifacts.js";
 import {
     createProcessState, currentAcceptances, normalizeProcessSettings, normalizeProcessState,
@@ -47,7 +48,7 @@ import { normalizeExecutionProof, hasCurrentEvidence, verificationCompletionErro
 import {
     buildGoalOnlyPreparationPrompt, buildPlanningPrompt, buildPreparationHandoffPrompt,
     buildPreparationSourcesPrompt, buildPreparationWorkspacePrompt, buildPrototypeCheckpointPrompt,
-    buildSketchPrompt, buildUsageSuggestionsPrompt, tandemWorkerInteractionRules,
+    buildSketchPrompt, buildSketchLivePrompt, buildUsageSuggestionsPrompt, tandemWorkerInteractionRules,
     type PrototypeSketchInput,
 } from "./planning-prompts.js";
 import { inspectEmptyPreparationWorkspace } from "./preparation.js";
@@ -56,6 +57,8 @@ import {
     type SketchDocument, type SketchRevision,
 } from "./sketch.js";
 import { SketchStore } from "./sketch-store.js";
+import type { SketchPreview } from "./sketch-stream.js";
+import { runSketchStreamWorker } from "./sketch-stream-worker.js";
 import { validateArtifactAssets } from "./artifact-assets.js";
 import { preparePrototypeWorkspace } from "./prototype-workspace.js";
 import { fingerprintPrototypeWorkspace, PROTOTYPE_FINGERPRINT_PREFIX } from "./prototype-runtime.js";
@@ -92,6 +95,7 @@ const speechTokens = createSpeechTokenService();
 const SHARED_PROJECT_ROOT = resolveSharedProjectRoot();
 const STATE_DIRECTORY = join(SHARED_PROJECT_ROOT, ".tandem");
 const sketchStore = new SketchStore(SHARED_PROJECT_ROOT);
+const sketchPreviews = new Map<string, { value: SketchPreview; timer?: ReturnType<typeof setTimeout> }>();
 const MAX_SKETCH_REQUEST_BYTES = 12 * 1024 * 1024;
 const LEGACY_SKETCH_REASON = "This effort entered Prototype before Sketch was introduced. Reopen Requirements to add approved drawings.";
 const CURRENT_STATE_PATH = join(STATE_DIRECTORY, "current.json");
@@ -2278,6 +2282,7 @@ function publicState(entry, state) {
     const source = String(entry.extensionId || "").split(":", 1)[0] || "unknown";
     return {
         ...state,
+        sketchPreview: currentSketchPreview(state),
         processMetrics: processMetrics(state.process || createProcessState()),
         provider: {
             extensionId: entry.extensionId,
@@ -2493,11 +2498,17 @@ async function processAction(prototypeId, extensionId, input) {
 function publishState(prototypeId) {
     const state = stateCache.get(prototypeId);
     if (!state) return;
+    currentSketchPreview(state);
 
     for (const entry of servers.values()) {
         if (entry.prototypeId !== prototypeId) continue;
         const event = `data: ${JSON.stringify(publicState(entry, state))}\n\n`;
         for (const client of entry.clients) {
+            if (client.destroyed || client.writableLength > 1024 * 1024) {
+                entry.clients.delete(client);
+                client.destroy();
+                continue;
+            }
             client.write(event);
         }
     }
@@ -3313,6 +3324,51 @@ interface SketchRequest {
     baseRevisionId: string | null;
 }
 
+function clearSketchPreview(prototypeId: string, requestId?: string): void {
+    const entry = sketchPreviews.get(prototypeId);
+    if (!entry || (requestId !== undefined && entry.value.requestId !== requestId)) return;
+    clearTimeout(entry.timer);
+    sketchPreviews.delete(prototypeId);
+}
+
+function currentSketchPreview(state: TandemState): SketchPreview | null {
+    const preview = sketchPreviews.get(state.prototypeId)?.value;
+    if (!preview) return null;
+    const processing = state.processing;
+    const token = processing?.sketchRequest;
+    if (state.effortReset || state.lifecycle.currentStage !== "sketch"
+        || state.lifecycle.completedStages.includes("sketch")
+        || !isSketchAction(processing?.action) || processing?.status !== "running"
+        || preview.generation !== state.generation || preview.requestId !== processing.requestId
+        || preview.runId !== processing.runId || preview.baseRevisionId !== (state.sketch.current?.id ?? null)
+        || preview.generation !== token?.generation || preview.baseRevisionId !== token?.baseRevisionId
+        || preview.requirementsDigest !== token?.requirementsDigest
+        || preview.requirementsDigest !== requirementsInputDigest(state)) {
+        clearSketchPreview(state.prototypeId, preview.requestId);
+        return null;
+    }
+    return preview;
+}
+
+function publishSketchPreview(value: SketchPreview): void {
+    let entry = sketchPreviews.get(value.prototypeId);
+    if (entry && entry.value.requestId !== value.requestId) {
+        clearSketchPreview(value.prototypeId);
+        entry = undefined;
+    }
+    if (entry) entry.value = value;
+    else {
+        entry = { value };
+        sketchPreviews.set(value.prototypeId, entry);
+    }
+    if (entry.timer) return;
+    entry.timer = setTimeout(() => {
+        entry.timer = undefined;
+        if (sketchPreviews.get(value.prototypeId) === entry) publishState(value.prototypeId);
+    }, 50);
+    entry.timer.unref();
+}
+
 function readSketchRequest(value: unknown): SketchRequest {
     if (!isObject(value) || Object.keys(value).some((key) =>
         !["generation", "requirementsDigest", "baseRevisionId"].includes(key)) ||
@@ -3403,18 +3459,22 @@ async function sketchAction(prototypeId: string, extensionId: string, value: unk
     const input: Record<string, unknown> = value;
     if (!(await isPreferredAnswerProvider(extensionId))) throw new CanvasError("read_only_provider", "Edit drawings through the active Tandem provider.");
     const keys = {
-        generate: ["action", "expectedRevision"], revise: ["action", "expectedRevision", "instruction"],
-        save: ["action", "expectedRevision", "document"], approve: ["action", "expectedRevision", "previews"],
+        generate: ["action", "expectedRevision"], revise: ["action", "expectedRevision", "instruction", "expectedGeneration"],
+        save: ["action", "expectedRevision", "document", "expectedGeneration"], approve: ["action", "expectedRevision", "previews"],
     };
     if (typeof input.action !== "string" || !Object.hasOwn(keys, input.action) ||
         Object.keys(input).some((key) => !keys[input.action as keyof typeof keys].includes(key)) ||
-        !(input.expectedRevision === null || typeof input.expectedRevision === "string")) {
+        !(input.expectedRevision === null || typeof input.expectedRevision === "string")
+        || (Object.hasOwn(input, "expectedGeneration") && typeof input.expectedGeneration !== "string")) {
         throw new CanvasError("sketch_action_invalid", "Supply a supported drawing action and its current revision.");
     }
     await recoverRejectedFactoryLaunch(prototypeId);
     let dispatch: { requestId: string; question: any; answer: string; action: string } | null = null;
     const next = await withAnswerClaim(prototypeId, async () => {
         const state = await loadState(prototypeId);
+        if (input.expectedGeneration !== undefined && input.expectedGeneration !== state.generation) {
+            throw new CanvasError("sketch_generation_stale", "The effort changed. The voice drawing request was not applied.");
+        }
         if (automatic && (state.lifecycle.currentStage !== "sketch" || hasActiveWork(state) ||
             state.processing?.sketchRequest?.generation === state.generation ||
             (state.sketch.current && state.sketch.status !== "stale"))) return state;
@@ -4808,6 +4868,7 @@ async function applyFactoryResult(prototypeId, requestId, run) {
             next.factoryRuns = (current.factoryRuns || []).map((receipt) =>
                 receipt.requestId === requestId ? { ...receipt, runId: run.runId, terminal: true } : receipt);
             await persistState(next);
+            clearSketchPreview(prototypeId, requestId);
             publishState(prototypeId);
             return;
         }
@@ -10333,6 +10394,17 @@ async function handleRequest(entry, req, res) {
         return;
     }
 
+    if (requestUrl.pathname === "/api/sketch/live/session") {
+        validateSpeechTokenRequest(req, new URL(entry.url).origin);
+        const body = await readRequestBody(req);
+        if (Object.keys(body).some((key) => key !== "context")) {
+            sendJson(res, 400, { error: "GPT-live configuration is owned by the extension, not the request." });
+            return;
+        }
+        sendJson(res, 200, await entry.live.issueTicket(body.context));
+        return;
+    }
+
     if (["/api/speech/token", "/api/speech/sign-in"].includes(requestUrl.pathname)) {
         validateSpeechTokenRequest(req, new URL(entry.url).origin);
         const body = await readRequestBody(req);
@@ -10552,7 +10624,7 @@ async function startServer(
     const server = createServer((req, res) => {
         handleRequest(entry, req, res).catch(async (error) => {
             if (!res.headersSent) {
-                sendJson(res, error instanceof ProjectStoreError || error instanceof AnswerRequestError || error instanceof SpeechAuthError ? error.statusCode : error instanceof CanvasError ? 409 : 500, {
+                sendJson(res, error instanceof ProjectStoreError || error instanceof AnswerRequestError || error instanceof SpeechAuthError || error instanceof SketchLiveError ? error.statusCode : error instanceof CanvasError ? 409 : 500, {
                     error: error instanceof Error ? error.message : "Tandem request failed.",
                 });
             } else {
@@ -10564,6 +10636,25 @@ async function startServer(
                 }`,
             );
         });
+    });
+    entry.live = attachSketchLiveServer(server, {
+        origin: () => new URL(entry.url).origin,
+        onFailure: (code) => { void logSafely(`Tandem GPT-live failed: ${code}`, "warning"); },
+        authorize: async () => {
+            const state = await loadState(entry.prototypeId);
+            if (!(await isPreferredAnswerProvider(entry.extensionId)) || state.effortReset
+                || state.lifecycle.currentStage !== "sketch" || state.lifecycle.completedStages.includes("sketch")
+                || state.lifecycle.skippedStages.some((stage) => stage.stageId === "sketch")
+                || !["build", "validate-existing"].includes(state.prototypeApproach.mode)
+                || (hasActiveWork(state) && state.jobOwner
+                    && !sameOwner(state.jobOwner, { sessionId: session.sessionId, workspaceRoot: WORKSPACE_ROOT }))) {
+                throw new SpeechAuthError("GPT-live is available only in the writable Sketch stage of the owning Tandem session.", 409);
+            }
+            return {
+                identity: JSON.stringify([state.prototypeId, state.generation, requirementsInputDigest(state), entry.extensionId]),
+                instructions: buildSketchLivePrompt(),
+            };
+        },
     });
 
     await new Promise<void>((resolve, reject) => {
@@ -12271,15 +12362,49 @@ const answerFactory = defineFactory({
                 throw new Error("The drawing job no longer owns its frozen requirements and draft.");
             }
         }
-        const result: any = await ctx.step("process-answer", () =>
-            ctx.agent(answerFactoryPrompt(args), {
+        const result: any = await ctx.step("process-answer", async () => {
+            if (isSketchAction(args.action)) {
+                const current = await loadState(args.prototypeId);
+                const token = readSketchRequest(current.processing?.sketchRequest);
+                const base = args.action === "revise-sketch" && current.sketch.current
+                    ? await sketchStore.read(args.prototypeId, current.sketch.current) : null;
+                return jsonResult(await runSketchStreamWorker({
+                    runId: ctx.runId, signal: ctx.signal, base,
+                    decisionIds: current.decisionGraph.nodes.filter((node) => node.status === "answered"
+                        && typeof node.answer === "string" && node.answer.trim()).map((node) => node.id),
+                    subscribe: (handler) => ctx.session.on(handler),
+                    run: () => ctx.agent(answerFactoryPrompt(args), {
+                        label: "Stream app drawings", agent: textWorkerAgent.name, reasoningEffort: "medium",
+                    }),
+                    preview: (document, sequence) => {
+                        ctx.signal.throwIfAborted();
+                        const state = stateCache.get(args.prototypeId);
+                        if (!state || state.generation !== token.generation
+                            || state.processing?.requestId !== args.requestId || state.processing.runId !== ctx.runId
+                            || state.processing.status !== "running" || state.lifecycle.currentStage !== "sketch"
+                            || state.effortReset || requirementsInputDigest(state) !== token.requirementsDigest
+                            || (state.sketch.current?.id ?? null) !== token.baseRevisionId) {
+                            throw new Error("The drawing stream no longer owns the current requirements and draft.");
+                        }
+                        publishSketchPreview({
+                            prototypeId: args.prototypeId, requestId: args.requestId, runId: ctx.runId,
+                            ...token, sequence, document,
+                        });
+                    },
+                    failed: (error) => {
+                        clearSketchPreview(args.prototypeId, args.requestId);
+                        publishState(args.prototypeId);
+                        void logSafely(`Drawing preview discarded: ${error.message}`, "warning");
+                    },
+                }));
+            }
+            return ctx.agent(answerFactoryPrompt(args), {
                 label: args.action === "apply-defaults" ? "Reconcile whole-graph defaults" : "Process Tandem answer",
-                schema: isSketchAction(args.action) ? sketchDocumentSchema
-                    : args.state.processing?.prototypeCheckpointId ? prototypeCheckpointOutputSchema
+                schema: args.state.processing?.prototypeCheckpointId ? prototypeCheckpointOutputSchema
                     : args.action === "apply-defaults" ? requirementsChangeSetSchema : answerFactoryOutputSchema,
                 reasoningEffort: "medium",
-            }) as Promise<any>,
-        );
+            }) as Promise<ReturnType<typeof jsonResult>>;
+        });
         if (!isObject(result)) {
             throw new Error("The hidden agent returned an invalid Tandem update.");
         }
@@ -12301,6 +12426,8 @@ const answerFactory = defineFactory({
 });
 
 session = await joinSession({
+    streaming: true,
+    includeSubAgentStreamingEvents: true,
     customAgents: [textWorkerAgent],
     tools: [{
         name: SKETCH_IMAGE_TOOL_NAME,
@@ -12671,6 +12798,7 @@ session = await joinSession({
                 servers.delete(ctx.instanceId);
                 instancePrototypeIds.delete(ctx.instanceId);
                 clearInterval(entry.heartbeat);
+                entry.live.close();
                 for (const client of entry.clients) client.end();
                 await new Promise((resolve) => entry.server.close(resolve));
             },

@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { JSDOM } from "jsdom";
 import type { SketchDocument } from "../src/sketch.js";
+import { renderSketchSvg } from "../src/sketch.js";
 import type { UiContextValue, UiState } from "../src/renderer/ui-context.js";
-import { createScreen, createShape } from "../src/renderer/sketch-editor.js";
+import { createCurveShape, createScreen, createShape } from "../src/renderer/sketch-editor.js";
+import type { SketchLiveEvents, SketchLiveSessionFactory } from "../src/renderer/sketch-live-session.js";
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost" });
 const globals = new Map<string, PropertyDescriptor | undefined>();
@@ -47,7 +49,7 @@ function fixture() {
   return { document, state };
 }
 
-async function harness(initial = fixture()) {
+async function harness(initial = fixture(), createLiveSession?: SketchLiveSessionFactory) {
   const fetchDescriptor = Object.getOwnPropertyDescriptor(globalThis, "fetch");
   const imageDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Image");
   const observerDescriptor = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
@@ -65,6 +67,7 @@ async function harness(initial = fixture()) {
   let completionBlocked = true;
   let confirm = true;
   let readError = "";
+  let readGate: Promise<void> | null = null;
   let postHandler: ((endpoint: string, body: Record<string, any>) => Promise<UiState>) | null = null;
   const requests: Array<{ path: string; body: Record<string, any> | null }> = [];
   const exports: Array<{ width: number; height: number; source: string }> = [];
@@ -74,6 +77,7 @@ async function harness(initial = fixture()) {
   globalValue("Image", undefined);
   globalValue("fetch", async (path: string) => {
     requests.push({ path, body: null });
+    if (readGate) await readGate;
     return {
       ok: !readError,
       json: async () => readError ? { error: readError } : { sketch: server.sketch, document: stored },
@@ -130,7 +134,7 @@ async function harness(initial = fixture()) {
       },
     };
     return <UiContext.Provider value={context}><DraftProvider><SpeechProvider>
-      <SketchCompletionContext.Provider value={report}><div hidden={!shown}><SketchPanel /></div></SketchCompletionContext.Provider>
+      <SketchCompletionContext.Provider value={report}><div hidden={!shown}><SketchPanel createLiveSession={createLiveSession} /></div></SketchCompletionContext.Provider>
     </SpeechProvider></DraftProvider></UiContext.Provider>;
   }
   await act(async () => { root.render(<App />); });
@@ -199,6 +203,7 @@ async function harness(initial = fixture()) {
     setConfirm(value: boolean) { confirm = value; },
     setPost(value: typeof postHandler) { postHandler = value; },
     setReadError(value: string) { readError = value; },
+    setReadGate(value: Promise<void> | null) { readGate = value; },
     setDocument(value: SketchDocument | null) { stored = value; },
     enablePng() {
       globalValue("Image", class {
@@ -216,6 +221,400 @@ async function harness(initial = fixture()) {
     },
   };
 }
+
+function streaming(state: UiState, document: SketchDocument, sequence = 1): UiState {
+  const request = {
+    generation: state.generation, baseRevisionId: state.sketch.current?.id ?? null,
+    requirementsDigest: "requirements-1",
+  };
+  return { ...state, processing: {
+    action: state.sketch.current ? "revise-sketch" : "generate-sketch", status: "running",
+    requestId: "stream-request", runId: "stream-run", sketchRequest: request,
+    answer: "Move the navigation", message: "Drawing screens",
+  }, sketchPreview: {
+    prototypeId: state.prototypeId, ...request, requestId: "stream-request", runId: "stream-run", sequence, document,
+  } };
+}
+
+test("React sketch displays incremental screens and shapes before a first saved revision without refetching", async () => {
+  const initial = fixture();
+  initial.state.sketch.current = null;
+  initial.state.sketch.status = "empty";
+  const h = await harness({ ...initial, document: null as unknown as SketchDocument });
+  try {
+    const document = structuredClone(initial.document);
+    document.screens[0].shapes = [];
+    document.screens[0].title = "Incoming screen";
+    await h.sse(streaming(h.server, document));
+    assert.equal(h.element<HTMLInputElement>("title").value, "Incoming screen");
+    assert.equal(h.element("workspace").hidden, false);
+    assert.equal(h.element("board").querySelectorAll("[data-shape-id]").length, 0);
+    const second = structuredClone(document);
+    second.screens[0].shapes.push(createShape(second.screens[0], "rectangle"));
+    await h.sse(streaming(h.server, second, 2));
+    assert.equal(h.element("board").querySelectorAll("[data-shape-id]").length, 1);
+    const third = structuredClone(second);
+    third.screens[0].shapes.push({ ...createShape(third.screens[0], "text"), text: "Already visible" });
+    await h.sse(streaming(h.server, third, 3));
+    assert.equal(h.element("board").querySelectorAll("[data-shape-id]").length, 2);
+    assert.match(h.element("board").textContent!, /Already visible/);
+    assert.match(h.element("status").textContent!, /Live preview.*update 3.*not saved or approved/);
+    assert.equal(h.state.sketch.current, null);
+    assert.deepEqual(h.requests, [{ path: "/api/sketch", body: null }], "preview updates never load saved drawings");
+    assert.equal(h.completionBlocked, true);
+    for (const id of ["save", "approve", "generate", "add-screen", "add-rectangle", "undo", "redo", "reload",
+      "title", "size-preset", "add-transition"]) {
+      assert.equal(h.element<HTMLButtonElement>(id).disabled, true, id);
+    }
+    await h.input("title", "Cannot mutate a preview");
+    await h.click("add-rectangle");
+    assert.equal(h.element<HTMLInputElement>("title").value, "Incoming screen");
+    assert.equal(h.element("board").querySelectorAll("[data-shape-id]").length, 2);
+    await h.sse({ ...h.server, processing: { ...h.server.processing, status: "error", message: "Stream failed. Retry explicitly." },
+      sketchPreview: null });
+    assert.equal(h.element("empty").hidden, false);
+    assert.equal(h.element<HTMLButtonElement>("undo").disabled, true);
+    assert.equal(h.element<HTMLButtonElement>("save").disabled, true);
+    assert.match(h.element("message").textContent!, /Stream failed/);
+  } finally { await h.close(); }
+});
+
+test("React sketch streaming screens stay navigable across updates and failure restores saved drawings without undo entries", async () => {
+  const initial = fixture();
+  const h = await harness(initial);
+  try {
+    const document = structuredClone(initial.document);
+    document.screens[0].shapes[0].x = 250;
+    const second = createScreen(document, ["Requirement.Main_1"]);
+    second.title = "Second live screen";
+    second.shapes.push({ ...createShape(second, "text"), text: "Streaming label" });
+    document.screens.push(second);
+    await h.sse(streaming(h.server, document));
+    await h.selectScreen(1);
+    assert.equal(h.element<HTMLInputElement>("title").value, "Second live screen");
+    assert.match(h.element("board").textContent!, /Streaming label/);
+    await h.selectShape(0);
+    assert.equal(h.element<HTMLInputElement>("text").value, "Streaming label");
+    assert.equal(h.element<HTMLInputElement>("text").disabled, true);
+    await h.click("zoom-actual");
+    await h.click("zoom-out");
+    assert.equal(h.element("zoom").textContent, "80%");
+    const next = structuredClone(document);
+    next.screens[1].shapes.push(createShape(next.screens[1], "ellipse"));
+    await h.sse(streaming(h.server, next, 2));
+    assert.equal(h.element<HTMLInputElement>("title").value, "Second live screen");
+    assert.equal(h.element("board").querySelectorAll("[data-shape-id]").length, 2);
+    assert.equal(h.element("zoom").textContent, "80%", "incremental chunks do not reset navigation");
+    await h.sse({ ...h.server, processing: { ...h.server.processing, status: "error", message: "Drawing worker failed. Retry explicitly." },
+      sketchPreview: null });
+    assert.equal(h.element<HTMLInputElement>("title").value, "Screen 1");
+    assert.equal(h.element("board").querySelector("[data-shape-id] rect")!.getAttribute("x"), "40");
+    assert.equal(h.element("board").querySelectorAll("[data-shape-id]").length, 1);
+    assert.equal(h.element<HTMLButtonElement>("save").disabled, true);
+    assert.equal(h.element<HTMLButtonElement>("undo").disabled, true);
+    assert.equal(h.element<HTMLButtonElement>("redo").disabled, true);
+    assert.equal(h.requests.length, 1);
+    assert.match(h.element("failed-instruction").textContent!, /Move the navigation/);
+    assert.equal(h.element<HTMLButtonElement>("retry-revision").disabled, false);
+    assert.equal(h.element("board").getAttribute("aria-label"), "Editable screen drawing");
+  } finally { await h.close(); }
+});
+
+test("React sketch incoming preview never obscures local edits or changes their undo history", async () => {
+  const initial = fixture();
+  const h = await harness(initial);
+  try {
+    await h.input("title", "My unsaved title");
+    const document = structuredClone(initial.document);
+    document.screens[0].title = "Incoming AI title";
+    document.screens[0].shapes.push(createShape(document.screens[0], "text"));
+    await h.sse(streaming(h.server, document));
+    assert.equal(h.element<HTMLInputElement>("title").value, "My unsaved title");
+    assert.equal(h.element("board").querySelectorAll("[data-shape-id]").length, 1);
+    assert.match(h.element("status").textContent!, /Live preview pending.*local edits are preserved.*not saved or approved/);
+    assert.equal(h.element<HTMLButtonElement>("reload").disabled, true);
+    assert.equal(h.element<HTMLButtonElement>("save").disabled, true);
+    await h.sse({ ...h.server, processing: { ...h.server.processing, status: "cancelled" }, sketchPreview: null });
+    assert.equal(h.element<HTMLInputElement>("title").value, "My unsaved title");
+    assert.equal(h.element<HTMLButtonElement>("save").disabled, false);
+    await h.click("undo");
+    assert.equal(h.element<HTMLInputElement>("title").value, "Screen 1");
+    assert.equal(h.element<HTMLButtonElement>("undo").disabled, true);
+    assert.equal(h.element<HTMLButtonElement>("save").disabled, true);
+    await h.click("redo");
+    assert.equal(h.element<HTMLInputElement>("title").value, "My unsaved title");
+    await h.click("save");
+    const saved = h.requests.find((request) => request.body?.action === "save")!.body!.document as SketchDocument;
+    assert.equal(saved.screens[0].title, "My unsaved title");
+    assert.deepEqual(saved.screens[0].shapes, initial.document.screens[0].shapes);
+  } finally { await h.close(); }
+});
+
+test("React sketch ignores late request and generation previews and reports malformed matching documents", async () => {
+  const initial = fixture();
+  const h = await harness(initial);
+  try {
+    const document = structuredClone(initial.document);
+    document.screens[0].title = "Live title";
+    const active = streaming(h.server, document);
+    for (const field of ["prototypeId", "generation", "requestId", "runId", "baseRevisionId", "requirementsDigest"]) {
+      const stale = { ...active.sketchPreview!, [field]: "obsolete", document: {} };
+      await h.sse({ ...active, sketchPreview: stale as UiState["sketchPreview"] });
+      assert.equal(h.element<HTMLInputElement>("title").value, "Screen 1", field);
+      assert.equal(h.element("message").hidden, true, field);
+    }
+    await h.sse(active);
+    assert.equal(h.element<HTMLInputElement>("title").value, "Live title");
+    await h.sse({ ...active, processing: { ...active.processing, requestId: "replacement" } });
+    assert.equal(h.element<HTMLInputElement>("title").value, "Screen 1");
+    await h.sse({ ...active, generation: "replacement-generation" });
+    assert.equal(h.element<HTMLInputElement>("title").value, "Screen 1");
+    await h.sse({ ...active, sketchPreview: { ...active.sketchPreview!, document: {} as SketchDocument } });
+    assert.equal(h.element<HTMLInputElement>("title").value, "Screen 1");
+    assert.match(h.element("message").textContent!, /preview is invalid.*unchanged.*retry/);
+    assert.equal(h.element("board").querySelectorAll("[data-shape-id]").length, 1);
+  } finally { await h.close(); }
+});
+
+test("React sketch blocks completion of previously approved drawings until streaming ends and loads only the saved success revision", async () => {
+  const initial = fixture();
+  initial.state.sketch.status = "approved";
+  initial.state.sketch.approved = {
+    revisionId: "drawing-1", documentHash: "hash-1", requirementsDigest: "requirements-1",
+    approvedAt: "2026-09-20T00:01:00.000Z", assets: [],
+  };
+  const h = await harness(initial);
+  let release = () => {};
+  try {
+    assert.equal(h.completionBlocked, false);
+    const document = structuredClone(initial.document);
+    document.screens[0].title = "Unsaved live result";
+    await h.sse(streaming(h.server, document));
+    assert.equal(h.completionBlocked, true, "old approval does not approve a running preview");
+    assert.equal(h.element<HTMLButtonElement>("approve").disabled, true);
+    h.setReadGate(new Promise<void>((resolve) => { release = resolve; }));
+    const saved = structuredClone(document);
+    saved.screens[0].title = "Confirmed saved result";
+    h.setDocument(saved);
+    await h.sse({ ...h.server, revision: 2, sketchPreview: null, processing: { ...h.server.processing, status: "success" },
+      sketch: { ...h.server.sketch, status: "draft", approved: null, current: {
+        ...h.server.sketch.current!, id: "drawing-success", documentHash: "saved-hash", number: 2,
+      } } });
+    assert.match(h.element("status").textContent!, /Loading saved drawings/);
+    assert.doesNotMatch(h.element("status").textContent!, /approved/);
+    assert.notEqual(h.element<HTMLInputElement>("title").value, "Unsaved live result");
+    assert.equal(h.element<HTMLButtonElement>("approve").disabled, true);
+    assert.equal(h.completionBlocked, true);
+    await act(async () => release());
+    assert.equal(h.element<HTMLInputElement>("title").value, "Confirmed saved result");
+    assert.equal(h.element<HTMLButtonElement>("save").disabled, true);
+    assert.equal(h.element<HTMLButtonElement>("undo").disabled, true);
+    assert.equal(h.element<HTMLButtonElement>("approve").disabled, false);
+    assert.equal(h.completionBlocked, true, "new saved revision still needs explicit approval");
+    assert.equal(h.requests.length, 2, "only the final saved revision triggers another drawing read");
+  } finally { release(); await h.close(); }
+});
+
+test("React sketch keeps unsaved streaming geometry out of GPT-live scene context", async () => {
+  const live = liveFixture();
+  const initial = fixture();
+  const h = await harness(initial, live.create);
+  try {
+    await h.input("voice-provider", "gpt-live");
+    await h.click("live-toggle");
+    const document = structuredClone(initial.document);
+    document.screens[0].title = "Unconfirmed streaming title";
+    document.screens[0].shapes.push({ ...createShape(document.screens[0], "text"), text: "Unconfirmed streaming shape" });
+    await h.sse(streaming(h.server, document));
+    assert.equal(h.element<HTMLInputElement>("title").value, "Unconfirmed streaming title");
+    await act(async () => {
+      live.events.delegation("context-during-stream", 1000);
+      await new Promise((resolve) => setTimeout(resolve, 850));
+    });
+    assert.ok(live.context.some((value) => value.includes('"kind":"screen"')));
+    assert.doesNotMatch(live.context.join("\n"), /Unconfirmed streaming/);
+    assert.ok(live.context.some((value) => value.includes('"totalShapes":1')));
+    assert.equal(h.requests.filter((request) => request.body).length, 0);
+  } finally { await h.close(); }
+});
+
+function liveFixture() {
+  let events!: SketchLiveEvents;
+  let signal!: AbortSignal;
+  let starts = 0;
+  let closes = 0;
+  const context: string[] = [];
+  const initialContext: string[] = [];
+  const commentary: string[] = [];
+  const create: SketchLiveSessionFactory = async (callbacks, abort, snapshot = []) => {
+    events = callbacks;
+    signal = abort;
+    initialContext.push(...snapshot);
+    return {
+      async start() { starts++; }, close() { closes++; },
+      context: (value, id) => { assert.ok(id); assert.ok(Buffer.byteLength(value, "utf8") <= 500); context.push(value); },
+      commentary: (value, id) => { assert.ok(id); assert.ok(Buffer.byteLength(value, "utf8") <= 500); commentary.push(value); },
+    };
+  };
+  return { create, context, initialContext, commentary, get events() { return events; }, get starts() { return starts; },
+    get closes() { return closes; }, get signal() { return signal; } };
+}
+
+test("Sketch alone offers GPT-live, starts explicitly and discusses without editing", async () => {
+  const live = liveFixture();
+  const h = await harness(fixture(), live.create);
+  try {
+    assert.equal(h.element<HTMLSelectElement>("voice-provider").value, "azure-speech");
+    await h.input("instruction", "Keep my typed draft");
+    await h.input("voice-provider", "gpt-live");
+    assert.equal(live.starts, 0);
+    assert.equal(h.element<HTMLTextAreaElement>("instruction").value, "Keep my typed draft");
+    await h.click("live-toggle");
+    assert.equal(live.starts, 1);
+    assert.match(live.initialContext[0], /sketch-context/);
+    assert.deepEqual(live.context, [], "startup cannot send unsolicited context append messages");
+    await h.input("title", "Updated during conversation");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
+    assert.deepEqual(live.context, [], "manual edits wait for the next provider delegation");
+    await act(async () => {
+      live.events.transcript("user", "What do you think of the layout?", 0, 1000);
+      live.events.transcript("assistant", "The primary action is clear.", 1000, 2000);
+    });
+    assert.equal(h.requests.filter((request) => request.body).length, 0);
+    await h.click("live-toggle");
+    assert.equal(live.signal.aborted, true);
+    assert.equal(live.closes, 1);
+    const oldEvents = live.events;
+    await act(async () => oldEvents.error("Some browser audio resources could not be released. Reload the page."));
+    assert.match(h.element("live-error").textContent!, /could not be released/, "asynchronous cleanup failures remain visible");
+    await h.click("live-toggle");
+    await act(async () => { oldEvents.error("Late failure"); oldEvents.ended(); });
+    assert.equal(live.signal.aborted, false, "late callbacks cannot stop the newer conversation");
+    await h.click("live-toggle");
+    await h.input("voice-provider", "azure-speech");
+    assert.equal(h.element<HTMLTextAreaElement>("instruction").value, "Keep my typed draft");
+    assert.equal(live.starts, 2, "no fallback or automatic reconnect");
+  } finally { await h.close(); }
+});
+
+test("GPT-live delegates spoken edits through saved revisions, preserves local edits and never approves", async () => {
+  const live = liveFixture();
+  const initial = fixture();
+  const h = await harness(initial, live.create);
+  try {
+    await h.input("title", "My local screen");
+    await h.input("instruction", "My unsent text");
+    await h.input("voice-provider", "gpt-live");
+    await h.click("live-toggle");
+    h.setPost(async (_endpoint, body) => {
+      const next = structuredClone(h.server);
+      next.revision++;
+      next.sketch.status = "draft";
+      next.sketch.approved = null;
+      if (body.action === "save") {
+        h.setDocument(body.document);
+        next.sketch.current = { ...next.sketch.current!, id: "local-saved", documentHash: "local-hash", source: "edited" };
+      } else {
+        const revised = structuredClone(initial.document);
+        revised.screens[0].title = "My local screen";
+        revised.screens[0].shapes[0].x = 120;
+        h.setDocument(revised);
+        next.sketch.current = { ...next.sketch.current!, id: "voice-saved", documentHash: "voice-hash", source: "revised", number: 3 };
+        next.processing = { requestId: "voice-request", action: "revise-sketch", status: "success",
+          sketchRequest: { generation: next.generation, baseRevisionId: "local-saved" } };
+      }
+      return next;
+    });
+    await act(async () => {
+      live.events.activity?.(true);
+      live.events.transcript("user", "Move the rectangle to the right.", 0, 1000);
+      live.events.delegation("edit-1", 1000);
+      live.events.delegation("edit-1", 1000);
+      await new Promise((resolve) => setTimeout(resolve, 850));
+    });
+    assert.equal(h.requests.filter((request) => request.body).length, 0, "wait for the user to stop speaking");
+    await act(async () => {
+      live.events.activity?.(false);
+      await new Promise((resolve) => setTimeout(resolve, 850));
+    });
+    const writes = h.requests.filter((request) => request.body);
+    assert.deepEqual(writes.map((request) => request.body!.action), ["save", "revise"]);
+    assert.equal(writes[0].body!.document.screens[0].title, "My local screen");
+    assert.equal(writes[1].body!.expectedRevision, "local-saved");
+    assert.match(writes[1].body!.instruction, /Move the rectangle to the right/);
+    assert.equal(h.element<HTMLTextAreaElement>("instruction").value, "My unsent text");
+    assert.equal(h.state.sketch.approved, null);
+    assert.equal(h.state.lifecycle.currentStage, "sketch");
+    assert.equal(h.element("board").querySelector("[data-shape-id] rect")!.getAttribute("x"), "120");
+    assert.match(live.commentary.at(-1)!, /revision 3 is saved/);
+    await act(async () => {
+      live.events.delegation("edit-2", 1200);
+      await new Promise((resolve) => setTimeout(resolve, 850));
+    });
+    assert.equal(h.requests.filter((request) => request.body).length, 2, "old speech is not replayed");
+    assert.match(live.commentary.at(-1)!, /did not catch a new drawing instruction/);
+  } finally { await h.close(); }
+});
+
+test("GPT-live stops on hidden Sketch, provider changes and late startup, without replaying edits", async () => {
+  const live = liveFixture();
+  const h = await harness(fixture(), live.create);
+  try {
+    await h.input("voice-provider", "gpt-live");
+    await h.click("live-toggle");
+    await act(async () => {
+      live.events.transcript("user", "Move the rectangle.", 0, 1000);
+      live.events.delegation("edit-hidden", 1000);
+    });
+    await h.hidden(true);
+    assert.equal(live.signal.aborted, true);
+    await act(async () => {
+      live.events.delegation("late", 1000);
+      await new Promise((resolve) => setTimeout(resolve, 800));
+    });
+    assert.equal(h.requests.filter((request) => request.body).length, 0);
+    await h.hidden(false);
+    assert.equal(live.starts, 1);
+    await h.click("live-toggle");
+    await h.sse({ ...h.server, revision: 2, provider: { canSubmitAnswers: false } });
+    assert.equal(live.signal.aborted, true);
+    assert.equal(h.element<HTMLButtonElement>("live-toggle").disabled, true);
+  } finally { await h.close(); }
+
+  let ready!: (value: Awaited<ReturnType<SketchLiveSessionFactory>>) => void;
+  let closed = 0;
+  let started = 0;
+  const pending = await harness(fixture(), async () => new Promise((resolve) => { ready = resolve; }));
+  try {
+    await pending.input("voice-provider", "gpt-live");
+    await pending.click("live-toggle");
+    await pending.input("voice-provider", "azure-speech");
+    await act(async () => ready({
+      async start() { started++; }, close() { closed++; }, context() {}, commentary() {},
+    }));
+    assert.equal(started, 0);
+    assert.equal(closed, 1);
+  } finally { await pending.close(); }
+});
+
+test("failed GPT-live edits remain explicit failures and do not switch providers", async () => {
+  const live = liveFixture();
+  const h = await harness(fixture(), live.create);
+  try {
+    await h.input("voice-provider", "gpt-live");
+    await h.click("live-toggle");
+    h.setPost(async () => { throw new Error("Saved drawing changed elsewhere."); });
+    await act(async () => {
+      live.events.transcript("user", "Make the rectangle wider.", 0, 900);
+      live.events.delegation("failed-edit", 900);
+      await new Promise((resolve) => setTimeout(resolve, 850));
+    });
+    assert.match(h.element("live-error").textContent!, /could not be submitted/);
+    assert.match(live.commentary.at(-1)!, /could not confirm/);
+    assert.equal(h.element<HTMLSelectElement>("voice-provider").value, "gpt-live");
+    assert.equal(h.state.sketch.current!.id, "drawing-1");
+  } finally { await h.close(); }
+});
 
 test("React sketch loads separately without generating, and all manual tools preserve bounded documents", async () => {
   const initial = fixture();
@@ -276,6 +675,122 @@ test("React sketch preserves invalid screen, shape and transition fields across 
     assert.equal(h.element<HTMLInputElement>("purpose").value, "Support the selected requirements.");
     assert.equal(h.element<HTMLInputElement>("x").value, "40");
     assert.equal(trigger.value, "Continue");
+  } finally { await h.close(); }
+});
+
+test("React sketch creates Bezier and spline paths, edits knots, and exports the same curves without handles", async () => {
+  const h = await harness();
+  try {
+    h.enablePng();
+    const board = h.element("board");
+    for (const id of ["quadratic", "cubic", "spline"]) await h.click("add-" + id);
+    assert.equal(board.querySelectorAll("[data-shape-id]").length, 4);
+    assert.equal(board.querySelectorAll("[data-point-index]").length, 4);
+    await h.input("path-points", "6, 6\n12, 18\n24, 6");
+    await h.event(h.element("path-points"), "focusout");
+    await h.input("path-closed", "true");
+    await h.input("path-tension", "0.5");
+    await h.event(h.element("path-tension"), "focusout");
+    const rendered = [...board.querySelectorAll("[data-shape-id] path")].map((path) => path.getAttribute("d"));
+    assert.match(rendered[0]!, / Q /);
+    assert.match(rendered[1]!, / C /);
+    assert.match(rendered[2]!, / C .* Z$/);
+    await h.click("approve");
+    const saved = h.requests.find((request) => request.body?.action === "save")!.body!.document as SketchDocument;
+    assert.deepEqual(saved.screens[0].shapes.slice(1).map((shape) => shape.curve), ["quadratic", "cubic", "catmull-rom"]);
+    assert.equal(saved.screens[0].shapes[3].tension, 0.5);
+    assert.equal(saved.screens[0].shapes[3].closed, true);
+    const source = h.exports[0].source;
+    const svg = decodeURIComponent(source.slice(source.indexOf(",") + 1));
+    assert.equal(svg, renderSketchSvg(saved.screens[0]));
+    assert.doesNotMatch(svg, /data-point-index|sketch-path-handles|polyline/);
+    const exported = new dom.window.DOMParser().parseFromString(svg, "image/svg+xml");
+    assert.deepEqual([...exported.querySelectorAll("[data-shape-id] path")].map((path) => path.getAttribute("d")), rendered);
+  } finally { await h.close(); }
+});
+
+test("React sketch drags Bezier controls in scene coordinates, groups undo, and cancels pointer edits", async () => {
+  const h = await harness();
+  try {
+    await h.click("add-cubic");
+    await h.click("zoom-actual");
+    await h.click("zoom-out");
+    const board = h.element("board");
+    const path = () => board.querySelector("[data-shape-id='path-1'] path")!.getAttribute("d")!;
+    const handle = () => board.querySelector("[data-point-index='1']")!;
+    const original = path();
+    await h.event(handle(), "pointerdown", { pointerId: 10, button: 0, clientX: 34, clientY: 34 });
+    await h.event(board, "pointerup", { pointerId: 10, clientX: 34, clientY: 34 });
+    assert.equal(path(), original, "clicking off-center on a control must not move it");
+    await h.event(handle(), "pointerdown", { pointerId: 11, button: 0, clientX: 32, clientY: 32 });
+    await h.event(board, "pointermove", { pointerId: 11, clientX: 64, clientY: 16 });
+    assert.match(path(), / C 80 20 200 40 200 120/);
+    assert.equal(h.element<HTMLButtonElement>("save").disabled, true);
+    await h.event(board, "pointerup", { pointerId: 11, clientX: 64, clientY: 16 });
+    assert.equal(h.element<HTMLTextAreaElement>("path-points").value.split("\n")[1], "80, 20");
+    await h.click("undo");
+    assert.equal(path(), original);
+    await h.click("redo");
+    const edited = path();
+    await h.event(handle(), "pointerdown", { pointerId: 12, button: 0, clientX: 64, clientY: 16 });
+    await h.event(board, "pointermove", { pointerId: 12, clientX: 96, clientY: 8 });
+    assert.notEqual(path(), edited);
+    await h.event(board, "pointercancel", { pointerId: 12 });
+    assert.equal(path(), edited);
+    await h.click("undo");
+    assert.equal(path(), original, "cancellation must not enter undo history");
+  } finally { await h.close(); }
+});
+
+test("React sketch keeps malformed curve edits visible and blocks save until valid complete segments are supplied", async () => {
+  const h = await harness();
+  try {
+    await h.click("add-quadratic");
+    const path = () => h.element("board").querySelector("[data-shape-id='path-1'] path")!.getAttribute("d")!;
+    const original = path();
+    await h.input("path-points", "10, 20\n30, 40");
+    assert.equal(h.element("path-points").getAttribute("aria-invalid"), "true");
+    assert.equal(h.element<HTMLButtonElement>("save").disabled, true);
+    assert.equal(h.element<HTMLButtonElement>("approve").disabled, true);
+    assert.match(h.element("message").textContent!, /quadratic.*pairs/);
+    await h.sse({ ...h.server, revision: 2 });
+    assert.equal(h.element<HTMLTextAreaElement>("path-points").value, "10, 20\n30, 40");
+    assert.equal(path(), original);
+    await h.input("path-points", "10, 20\n30, 40\n50, 20\n70, 40\n90, 20");
+    assert.equal(h.element("path-points").getAttribute("aria-invalid"), "false");
+    assert.equal(path(), "M 10 20 Q 30 40 50 20 Q 70 40 90 20");
+    await h.click("add-spline");
+    await h.input("path-tension", "1.01");
+    assert.equal(h.element("path-tension").getAttribute("aria-invalid"), "true");
+    assert.equal(h.element<HTMLButtonElement>("save").disabled, true);
+    await h.click("undo");
+    assert.equal(h.element<HTMLInputElement>("path-tension").value, "0");
+    await h.sse({ ...h.server, revision: 3, provider: { ...h.server.provider, canSubmitAnswers: false } });
+    assert.equal(h.element<HTMLInputElement>("path-tension").disabled, true);
+    assert.equal(h.element<HTMLTextAreaElement>("path-points").disabled, true);
+    assert.equal(h.element("board").querySelector("[data-point-index]"), null);
+  } finally { await h.close(); }
+});
+
+test("React sketch renders streamed curve previews without exposing editable handles or replacing saved shapes", async () => {
+  const initial = fixture();
+  const h = await harness(initial);
+  try {
+    const document = structuredClone(initial.document);
+    const screen = document.screens[0];
+    for (const curve of ["quadratic", "cubic", "catmull-rom"] as const) screen.shapes.push(createCurveShape(screen, curve));
+    await h.sse(streaming(h.server, document));
+    await h.selectShape(3);
+    const board = h.element("board");
+    const paths = [...board.querySelectorAll("[data-shape-id] path")].map((path) => path.getAttribute("d"));
+    assert.match(paths[0]!, / Q /);
+    assert.match(paths[1]!, / C /);
+    assert.match(paths[2]!, / C /);
+    assert.equal(board.querySelector("[data-point-index]"), null);
+    assert.equal(h.element<HTMLTextAreaElement>("path-points").disabled, true);
+    await h.sse({ ...initial.state, revision: 2 });
+    assert.equal(board.querySelectorAll("[data-shape-id]").length, 1);
+    assert.equal(board.querySelector("path"), null);
   } finally { await h.close(); }
 });
 
@@ -521,7 +1036,8 @@ test("React sketch drawing tools are larger icon-only buttons with accessible na
   const h = await harness();
   try {
     for (const [id, label] of [["add-rectangle", "Rectangle"], ["add-ellipse", "Ellipse"], ["add-text", "Text"],
-      ["add-line", "Line"], ["add-arrow", "Arrow"], ["freehand", "Freehand"]]) {
+      ["add-line", "Line"], ["add-arrow", "Arrow"], ["add-quadratic", "Quadratic Bezier"],
+      ["add-cubic", "Cubic Bezier"], ["add-spline", "Catmull-Rom spline"], ["freehand", "Freehand"]]) {
       const button = h.element(id);
       assert.equal(button.textContent, "");
       assert.equal(button.getAttribute("aria-label"), label);

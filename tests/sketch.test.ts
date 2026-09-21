@@ -116,6 +116,48 @@ test("sketch preserves accepted Requirements IDs independently of safe scene fil
     assert.throws(() => validateSketchDocument(input, ids), /safe lowercase slug/);
 });
 
+test("sketch curve metadata is optional, path-only, preserved without defaults, and exposed in the schema", () => {
+    const input = document();
+    const points = [{ x: 10, y: 10 }, { x: 20, y: 30 }, { x: 40, y: 10 }];
+    input.screens[0].shapes = [
+        shape({ id: "legacy", kind: "path", points }),
+        shape({ id: "quadratic", kind: "path", points, curve: "quadratic", closed: true }),
+        shape({ id: "cubic", kind: "path", points: [...points, { x: 50, y: 20 }], curve: "cubic", closed: false }),
+        shape({ id: "spline", kind: "path", points, curve: "catmull-rom", tension: 0.5, closed: true }),
+    ];
+    assert.deepEqual(validateSketchDocument(input), input);
+    const svg = renderSketchSvg(input.screens[0]);
+    assert.match(svg, /<path d="M 10 10 L 20 30 L 40 10"/, "legacy filled paths keep their original open stroke");
+    assert.match(svg, /<path d="M 10 10 Q 20 30 40 10 Z"/);
+    assert.match(svg, /<path d="M 10 10 C 20 30 40 10 50 20"/);
+    assert.equal(Object.hasOwn(validateSketchDocument(input).screens[0].shapes[0], "curve"), false);
+    const schema = sketchDocumentSchema.properties.screens.items.properties.shapes.items;
+    assert.deepEqual(schema.properties.curve.enum, ["linear", "quadratic", "cubic", "catmull-rom"]);
+    assert.equal(schema.required.includes("curve"), false);
+    assert.deepEqual(schema.properties.tension, { type: "number", minimum: 0, maximum: 1 });
+});
+
+test("sketch rejects malformed curve segments, non-path metadata, and invalid tension atomically", () => {
+    const points = [{ x: 10, y: 10 }, { x: 20, y: 30 }, { x: 40, y: 10 }];
+    const invalid: Array<Record<string, unknown>> = [
+        { curve: "bezier" }, { curve: null }, { curve: undefined }, { closed: null }, { closed: 1 }, { closed: "true" },
+        { curve: "quadratic", points: points.slice(0, 2) }, { curve: "quadratic", points: [...points, points[0]] },
+        { curve: "cubic", points }, { curve: "cubic", points: [...points, ...points] },
+        { tension: 0 }, { curve: "linear", tension: 0 }, { curve: "quadratic", tension: 0 },
+        ...[-0.01, 1.01, NaN, Infinity, null, "0", undefined].map((tension) => ({ curve: "catmull-rom", tension })),
+        ...["rectangle", "ellipse", "text", "line", "arrow"].flatMap((kind) =>
+            [{ kind, curve: "linear" }, { kind, closed: false }, { kind, tension: 0 }]),
+        { curve: "catmull-rom", pathData: "M 0 0 C 1 2 3 4 5 6" },
+    ];
+    for (const metadata of invalid) {
+        const input = document();
+        Object.assign(input.screens[0].shapes[0], { kind: "path", points }, metadata);
+        const before = structuredClone(input);
+        assert.throws(() => validateSketchDocument(input), /Invalid sketch/, JSON.stringify(metadata));
+        assert.deepEqual(input, before);
+    }
+});
+
 test("sketch text uses solid ink rather than outlined glyphs for wireframe defaults", () => {
     const screen = document().screens[0];
     screen.shapes = [shape({ fill: "none", stroke: "#222222" })];

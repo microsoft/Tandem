@@ -1,4 +1,9 @@
 import type { ArtifactAsset } from "./artifact-assets.js";
+import { sketchPathData } from "./sketch-path.js";
+
+export const SKETCH_CURVES = ["linear", "quadratic", "cubic", "catmull-rom"] as const;
+export type SketchCurve = typeof SKETCH_CURVES[number];
+export interface SketchPoint { x: number; y: number }
 
 export interface SketchShape {
     id: string;
@@ -8,7 +13,10 @@ export interface SketchShape {
     width: number;
     height: number;
     text: string;
-    points: Array<{ x: number; y: number }>;
+    points: SketchPoint[];
+    curve?: SketchCurve;
+    closed?: boolean;
+    tension?: number;
     stroke: string;
     fill: string;
     fontSize: number;
@@ -80,12 +88,13 @@ function invalid(message: string): never {
     throw new Error(`Invalid sketch: ${message}`);
 }
 
-function object(value: unknown, keys: readonly string[]): Record<string, unknown> {
+function object(value: unknown, keys: readonly string[], optional: readonly string[] = []): Record<string, unknown> {
     if (!value || typeof value !== "object" || Array.isArray(value)) return invalid("expected an object.");
     const prototype = Object.getPrototypeOf(value);
     if (prototype !== null && Object.getPrototypeOf(prototype) !== null) return invalid("expected a plain object.");
     const result = value as Record<string, unknown>;
-    if (Object.keys(result).length !== keys.length || keys.some((key) => !Object.hasOwn(result, key))) {
+    if (Object.keys(result).some((key) => !keys.includes(key) && !optional.includes(key))
+        || keys.some((key) => !Object.hasOwn(result, key))) {
         return invalid("unexpected or missing fields.");
     }
     return result;
@@ -148,9 +157,26 @@ function screen(value: unknown): SketchScreen {
     const decisionIds = list(item.decisionIds, "decision references", 1, 200).map(decisionReference);
     unique(decisionIds, "decision references");
     const shapes = list(item.shapes, "screen shapes", 0, 100).map((value): SketchShape => {
-        const shape = object(value, ["id", "kind", "x", "y", "width", "height", "text", "points", "stroke", "fill", "fontSize"]);
+        const shape = object(value, ["id", "kind", "x", "y", "width", "height", "text", "points", "stroke", "fill", "fontSize"],
+            ["curve", "closed", "tension"]);
         if (!KINDS.includes(shape.kind as SketchShape["kind"])) return invalid("unsupported shape kind.");
         const kind = shape.kind as SketchShape["kind"];
+        const path: Pick<SketchShape, "curve" | "closed" | "tension"> = {};
+        if (["curve", "closed", "tension"].some((key) => Object.hasOwn(shape, key)) && kind !== "path") {
+            return invalid("curve, closed and tension are only supported on paths.");
+        }
+        if (Object.hasOwn(shape, "curve")) {
+            if (!SKETCH_CURVES.includes(shape.curve as SketchCurve)) return invalid("unsupported path curve.");
+            path.curve = shape.curve as SketchCurve;
+        }
+        if (Object.hasOwn(shape, "closed")) {
+            if (typeof shape.closed !== "boolean") return invalid("path closed must be a boolean.");
+            path.closed = shape.closed;
+        }
+        if (Object.hasOwn(shape, "tension")) {
+            if (path.curve !== "catmull-rom") return invalid("tension is only supported on Catmull-Rom paths.");
+            path.tension = number(shape.tension, "path tension", 0, 1);
+        }
         // Canvas resizing clips the view, not the saved geometry.
         const x = number(shape.x, "shape x", 0, MAX_SKETCH_DIMENSION);
         const y = number(shape.y, "shape y", 0, MAX_SKETCH_DIMENSION);
@@ -166,11 +192,18 @@ function screen(value: unknown): SketchScreen {
                     y: number(point.y, "point y", 0, MAX_SKETCH_DIMENSION),
                 };
             });
+        if (path.curve === "quadratic" && (points.length - 1) % 2 !== 0) {
+            return invalid("quadratic paths need a start point followed by control/end point pairs (3, 5, 7, ... points).");
+        }
+        if (path.curve === "cubic" && (points.length - 1) % 3 !== 0) {
+            return invalid("cubic paths need a start point followed by control/control/end triples (4, 7, 10, ... points).");
+        }
         return {
             id: slug(shape.id, "shape ID"), kind, x, y, width: w, height: h,
             text: text(shape.text, "shape text", 500, true), points,
             stroke: color(shape.stroke), fill: color(shape.fill),
             fontSize: number(shape.fontSize, "font size", 1, 500),
+            ...path,
         };
     });
     unique(shapes.map((shape) => shape.id), "shape IDs");
@@ -232,6 +265,9 @@ const shapeSchema = {
         width: { type: "number", minimum: 0, maximum: MAX_SKETCH_DIMENSION },
         height: { type: "number", minimum: 0, maximum: MAX_SKETCH_DIMENSION },
         text: labelSchema, points: { type: "array", maxItems: 512, items: pointSchema },
+        curve: { type: "string", enum: [...SKETCH_CURVES] },
+        closed: { type: "boolean" },
+        tension: { type: "number", minimum: 0, maximum: 1 },
         stroke: { type: "string", pattern: "^(#[0-9a-fA-F]{6}|none)$" },
         fill: { type: "string", pattern: "^(#[0-9a-fA-F]{6}|none)$" },
         fontSize: { type: "number", minimum: 1, maximum: 500 },
@@ -294,7 +330,7 @@ export function renderSketchSvg(value: SketchScreen): string {
             const ink = shape.fill === "none" ? shape.stroke : shape.fill;
             primitive = `<text x="${shape.x}" y="${shape.y + Math.min(shape.fontSize, shape.height)}" font-family="sans-serif" font-size="${shape.fontSize}" fill="${ink}" stroke="none" xml:space="preserve">${escape(shape.text)}</text>`;
         } else if (shape.kind === "path") {
-            primitive = `<path d="${shape.points.map((point, index) => `${index ? "L" : "M"} ${point.x} ${point.y}`).join(" ")}" ${style}/>`;
+            primitive = `<path d="${sketchPathData(shape)}" ${style}/>`;
         } else {
             const [start, end] = shape.points;
             primitive = `<line x1="${start.x}" y1="${start.y}" x2="${end.x}" y2="${end.y}" ${style}/>`;

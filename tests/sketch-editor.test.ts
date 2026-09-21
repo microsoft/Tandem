@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createScreen, createShape, resizeScreen, setShapeBounds, shapeBounds, SketchEditor, SKETCH_SIZE_PRESETS } from "../src/renderer/sketch-editor.js";
+import { createCurveShape, createScreen, createShape, parsePathPoints, resizeScreen, setPathPoints, setShapeBounds, shapeBounds, SketchEditor, SKETCH_SIZE_PRESETS } from "../src/renderer/sketch-editor.js";
 import { validateSketchDocument } from "../src/sketch.js";
 import type { SketchDocument } from "../src/sketch.js";
 
@@ -35,6 +35,65 @@ test("manual screen creation preserves accepted DAG identities without screen-sl
     assert.equal(screen.id, "screen-1");
     assert.deepEqual(validateSketchDocument({ version: 1, screens: [screen], transitions: [] }, decisionIds)
         .screens[0].decisionIds, decisionIds);
+});
+
+test("curve tools create valid paths at canvas boundaries and preserve metadata through transforms and undo", () => {
+    for (const dimension of [1, 960, 10000]) {
+        const document = drawing();
+        const screen = document.screens[0];
+        resizeScreen(screen, dimension, dimension);
+        for (const curve of ["quadratic", "cubic", "catmull-rom"] as const) screen.shapes.push(createCurveShape(screen, curve));
+        assert.deepEqual(validateSketchDocument(document), document);
+        assert.deepEqual(screen.shapes.map((shape) => shape.id), ["path-1", "path-2", "path-3"]);
+    }
+    const document = drawing();
+    const screen = document.screens[0];
+    const curve = { ...createCurveShape(screen, "catmull-rom"), tension: 0.5, closed: true };
+    screen.shapes.push(curve);
+    const resized = setShapeBounds(screen, curve, { x: 80, y: 60, width: 80, height: 40 });
+    assert.equal(resized.curve, "catmull-rom");
+    assert.equal(resized.closed, true);
+    assert.equal(resized.tension, 0.5);
+    resized.points.forEach((point, index) => assert.deepEqual(point, {
+        x: 80 + (curve.points[index].x - 40) / 2, y: 60 + (curve.points[index].y - 40) / 2,
+    }));
+    const editor = new SketchEditor();
+    editor.load(document);
+    editor.edit((draft) => { draft.screens[0].shapes[0] = resized; });
+    editor.undo();
+    assert.deepEqual(editor.document, document);
+    editor.redo();
+    assert.deepEqual(editor.document!.screens[0].shapes[0], resized);
+    editor.edit((draft) => resizeScreen(draft.screens[0], 1, 1));
+    assert.deepEqual(editor.document!.screens[0].shapes[0], resized);
+});
+
+test("path coordinate editing updates bounds, rejects partial Bezier segments, and keeps invalid edits out of history", () => {
+    const document = drawing();
+    const screen = document.screens[0];
+    screen.shapes.push(createCurveShape(screen, "quadratic"));
+    const editor = new SketchEditor();
+    editor.load(document);
+    const points = parsePathPoints(" 10, 20\r\n30 40\r\n50, 20 ");
+    editor.edit((draft) => { draft.screens[0].shapes[0] = setPathPoints(draft.screens[0].shapes[0], points); });
+    const shape = editor.document!.screens[0].shapes[0];
+    assert.deepEqual(shapeBounds(shape), { x: 10, y: 20, width: 40, height: 20 });
+    points[0].x = 100;
+    assert.equal(shape.points[0].x, 10);
+    assert.throws(() => editor.edit((draft) => {
+        draft.screens[0].shapes[0] = setPathPoints(shape, shape.points.slice(0, 2));
+    }), /quadratic/);
+    assert.deepEqual(editor.document!.screens[0].shapes[0], shape);
+    editor.undo();
+    assert.deepEqual(editor.document, document);
+    assert.equal(editor.canUndo, false);
+    for (const input of ["", "1, 2, 3", "1,,2", "NaN, 2", "1, Infinity", "1,"]) {
+        assert.throws(() => parsePathPoints(input), /two numbers/);
+    }
+    for (const points of [[], [{ x: 1, y: 2 }], [{ x: -1, y: 0 }, { x: 1, y: 2 }],
+        [{ x: NaN, y: 0 }, { x: 1, y: 2 }], Array.from({ length: 513 }, () => ({ x: 0, y: 0 }))]) {
+        assert.throws(() => setPathPoints(shape, points), /points|coordinates/);
+    }
 });
 
 test("moving and resizing shapes clamps the entire geometry and transforms point coordinates", () => {
