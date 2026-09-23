@@ -9,20 +9,24 @@ import { composeSpeechDraft } from "./speech-input.js";
 
 type CaptureState = "starting" | "listening" | "stopping";
 type Status = { text: string; kind: "idle" | "error" };
-interface Operation {
+interface OperationBase {
   owner: string;
   identity: string;
   draftKey: string;
-  kind: "capture" | "login";
-  input: HTMLTextAreaElement;
   cancel: (message?: string, failed?: boolean) => void;
   blockSubmit?: () => void;
 }
+type Operation = OperationBase & (
+  | { kind: "capture"; input: HTMLTextAreaElement }
+  | { kind: "login" }
+);
 interface SpeechContextValue {
   identity: string;
   enabled: boolean;
   active: Operation | null;
   loginStatus: Status | null;
+  signInPlacement: "inline" | "header";
+  signIn: () => Promise<void>;
   createSession: SpeechSessionFactory;
   acquire: (operation: Operation) => boolean;
   release: (operation: Operation) => void;
@@ -39,12 +43,14 @@ export function useSpeechCoordinator() {
 
 /** One provider per effort root; changing effort identity also releases any microphone or sign-in. */
 export function SpeechProvider({
-  children, createSession = createAzureSpeechSession,
-}: { children: ReactNode; createSession?: SpeechSessionFactory }) {
+  children, createSession = createAzureSpeechSession, signInPlacement = "inline",
+}: { children: ReactNode; createSession?: SpeechSessionFactory; signInPlacement?: "inline" | "header" }) {
   const { state } = useUi();
   const identity = JSON.stringify([state.prototypeId, state.generation]);
   const enabled = state.provider?.canSubmitAnswers !== false && !state.effortReset;
   const current = useRef<Operation | null>(null);
+  const login = useRef<Login | null>(null);
+  const owner = useId();
   const mounted = useRef(true);
   const [active, setActive] = useState<Operation | null>(null);
   const [loginStatus, setLoginStatus] = useState<Status | null>(null);
@@ -62,6 +68,51 @@ export function SpeechProvider({
   const publishLogin = useCallback((status: Status) => {
     if (mounted.current) setLoginStatus(status);
   }, []);
+  const completeLogin = useCallback((record: Login, result: Status) => {
+    if (login.current !== record) return;
+    login.current = null;
+    clearTimeout(record.timer);
+    release(record.operation);
+    record.abort.abort();
+    publishLogin(result);
+  }, [release, publishLogin]);
+  const signIn = useCallback(async () => {
+    if (!enabled || !mounted.current) return;
+    const record: Login = {
+      operation: {
+        owner, identity, draftKey: identity, kind: "login",
+        cancel: (message, failed) => completeLogin(record, {
+          text: message || "Microsoft sign-in cancelled. Your draft is unchanged.", kind: failed ? "error" : "idle",
+        }),
+      },
+      abort: new AbortController(),
+    };
+    if (!acquire(record.operation)) return;
+    login.current = record;
+    setLoginStatus(null);
+    record.timer = setTimeout(() => completeLogin(record, {
+      text: "Microsoft sign-in timed out. Select Sign in to retry.", kind: "error",
+    }), 190_000);
+    try {
+      // The provider opens the system browser; the UI must not create a second popup.
+      const options: RequestInit = {
+        method: "POST", headers: { "Content-Type": "application/json", "X-Tandem-Speech": "1" },
+        body: "{}", cache: "no-store", signal: record.abort.signal,
+      };
+      let response = await fetch("/api/speech/login", options);
+      if (response.status === 404 && !record.abort.signal.aborted) response = await fetch("/api/speech/sign-in", options);
+      const result = await response.json();
+      record.abort.signal.throwIfAborted();
+      if (!response.ok || result.authenticated !== true) {
+        throw new Error(result.error || "Microsoft sign-in was not confirmed. Please retry.");
+      }
+      completeLogin(record, { text: "Signed in to Microsoft. Select Mic when you are ready to speak.", kind: "idle" });
+    } catch (error) {
+      if (login.current === record) completeLogin(record, {
+        text: error instanceof Error ? error.message : "Microsoft sign-in failed. Please retry.", kind: "error",
+      });
+    }
+  }, [enabled, owner, identity, acquire, completeLogin]);
 
   useLayoutEffect(() => {
     mounted.current = true;
@@ -104,9 +155,49 @@ export function SpeechProvider({
   }, [identity, enabled]);
 
   const context = useMemo(() => ({
-    identity, enabled, active, loginStatus, createSession, acquire, release, publishLogin,
-  }), [identity, enabled, active, loginStatus, createSession, acquire, release, publishLogin]);
+    identity, enabled, active, loginStatus, signInPlacement, signIn, createSession, acquire, release, publishLogin,
+  }), [identity, enabled, active, loginStatus, signInPlacement, signIn, createSession, acquire, release, publishLogin]);
   return <SpeechContext.Provider value={context}>{children}</SpeechContext.Provider>;
+}
+
+export function SpeechSignInControl() {
+  const speech = useSpeechCoordinator();
+  const signingIn = speech.active?.kind === "login";
+  const message = signingIn
+    ? "Complete Microsoft sign-in in your browser. Your microphone is off."
+    : speech.loginStatus?.text || "";
+  return <div className="speech-header-sign-in">
+    <button id="speech-sign-in" className="reload-button" type="button"
+      disabled={!speech.enabled || Boolean(speech.active)}
+      title="Sign in with Microsoft for Azure Speech. This does not turn on the microphone."
+      aria-describedby="speech-header-status" onClick={() => { void speech.signIn(); }}>
+      <LogIn size={15} aria-hidden="true" />{signingIn ? "Signing in..." : "Sign in"}
+    </button>
+    {signingIn && <button className="reload-button" type="button" title="Cancel sign-in" aria-label="Cancel Microsoft sign-in"
+      onClick={() => speech.active?.cancel()}><X size={15} aria-hidden="true" /></button>}
+    <span id="speech-header-status" role="status" aria-live="polite" data-status={speech.loginStatus?.kind}
+      className={speech.loginStatus?.kind === "error" ? "speech-status speech-header-error" : "visually-hidden"}>
+      {message}
+    </span>
+  </div>;
+}
+
+export interface VoiceComposerOptions {
+  voiceOptions: ReactNode;
+  actions: ReactNode;
+}
+
+export function VoiceComposer({ input, toggle, voiceOptions, actions, feedback }: VoiceComposerOptions & {
+  input: ReactNode; toggle: ReactNode; feedback: ReactNode;
+}) {
+  return <div className="voice-composer">
+    <div className="voice-composer-row">
+      <div className="voice-composer-microphone">{toggle}{voiceOptions}</div>
+      {input}
+      {actions}
+    </div>
+    {feedback}
+  </div>;
 }
 
 export interface SpeechTextareaProps extends Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "onChange" | "value" | "defaultValue"> {
@@ -117,6 +208,7 @@ export interface SpeechTextareaProps extends Omit<TextareaHTMLAttributes<HTMLTex
   speechKey?: string;
   /** Capture associated selection state here; return a callback to restore it on cancellation. */
   onSpeechStart?: () => void | (() => void);
+  composer?: VoiceComposerOptions;
 }
 interface Capture {
   operation: Operation;
@@ -145,7 +237,7 @@ function isAvailable(input: HTMLTextAreaElement | null) {
 
 export function SpeechTextarea({
   value, onValueChange, ref: forwardedRef, speechKey = "", onSpeechStart,
-  disabled, readOnly, maxLength, onKeyDown, ...attributes
+  disabled, readOnly, maxLength, onKeyDown, composer, ...attributes
 }: SpeechTextareaProps) {
   const context = useContext(SpeechContext);
   if (!context) throw new Error("SpeechTextarea requires a SpeechProvider.");
@@ -156,7 +248,6 @@ export function SpeechTextarea({
   useImperativeHandle(forwardedRef, () => input.current!, []);
   const focusAfterCommit = useRef<{ key: string; position: number } | null>(null);
   const capture = useRef<Capture | null>(null);
-  const login = useRef<Login | null>(null);
   const mounted = useRef(true);
   const [phase, setPhase] = useState<CaptureState | null>(null);
   const [status, setStatus] = useState(initialStatus);
@@ -171,7 +262,7 @@ export function SpeechTextarea({
   function checkAvailability() {
     const next = isAvailable(input.current) && latest.current.enabled;
     if (mounted.current) setAvailable((previous) => previous === next ? previous : next);
-    const operation = capture.current?.operation || login.current?.operation;
+    const operation = capture.current?.operation;
     if (operation && (!next || operation.draftKey !== latest.current.key)) {
       operation.cancel("Speech cancelled because the active conversation changed. Your original draft is unchanged.");
     }
@@ -188,13 +279,11 @@ export function SpeechTextarea({
       mounted.current = false;
       observer.disconnect();
       capture.current?.operation.cancel();
-      login.current?.operation.cancel();
     };
   }, []);
   useLayoutEffect(() => () => {
     focusAfterCommit.current = null;
     capture.current?.operation.cancel("Speech cancelled because the active conversation changed. Your original draft is unchanged.");
-    login.current?.operation.cancel();
   }, [key]);
   useLayoutEffect(() => {
     if (speech.loginStatus && !capture.current) setStatus(speech.loginStatus);
@@ -318,53 +407,6 @@ export function SpeechTextarea({
       cancelCapture(record, error instanceof Error ? error.message : "Could not start speech input. Retry or type your message.", true);
     }
   }
-  function completeLogin(record: Login, result: Status) {
-    if (login.current !== record) return;
-    login.current = null;
-    clearTimeout(record.timer);
-    speech.release(record.operation);
-    record.abort.abort();
-    speech.publishLogin(result);
-    if (mounted.current) setStatus(result);
-  }
-  async function signIn() {
-    const node = input.current;
-    if (!node || !isAvailable(node) || !latest.current.enabled) return;
-    const record: Login = {
-      operation: {
-        owner, identity: speech.identity, draftKey: key, input: node, kind: "login",
-        cancel: (message, failed) => completeLogin(record, {
-          text: message || "Microsoft sign-in cancelled. Your draft is unchanged.", kind: failed ? "error" : "idle",
-        }),
-      },
-      abort: new AbortController(),
-    };
-    if (!speech.acquire(record.operation)) return;
-    login.current = record;
-    record.timer = setTimeout(() => completeLogin(record, {
-      text: "Microsoft sign-in timed out. Select Sign in with Microsoft to retry.", kind: "error",
-    }), 190_000);
-    try {
-      // The server opens Microsoft's system-browser sign-in. Do not open a second, blank popup here.
-      const options: RequestInit = {
-        method: "POST", headers: { "Content-Type": "application/json", "X-Tandem-Speech": "1" },
-        body: "{}", cache: "no-store", signal: record.abort.signal,
-      };
-      let response = await fetch("/api/speech/login", options);
-      // Older providers expose the same sign-in operation under this route.
-      if (response.status === 404 && !record.abort.signal.aborted) response = await fetch("/api/speech/sign-in", options);
-      const result = await response.json();
-      record.abort.signal.throwIfAborted();
-      if (!response.ok || result.authenticated !== true) {
-        throw new Error(result.error || "Microsoft sign-in was not confirmed. Please retry.");
-      }
-      completeLogin(record, { text: "Signed in to Microsoft. Select Mic when you are ready to speak.", kind: "idle" });
-    } catch (error) {
-      if (login.current === record) completeLogin(record, {
-        text: error instanceof Error ? error.message : "Microsoft sign-in failed. Please retry.", kind: "error",
-      });
-    }
-  }
   const ownCapture = speech.active?.owner === owner && speech.active.kind === "capture";
   const signingIn = speech.active?.kind === "login";
   const visibleStatus = signingIn
@@ -377,8 +419,7 @@ export function SpeechTextarea({
   const uiKey = attributes.id || attributes.name || owner;
   const busy = Boolean(speech.active);
 
-  return <>
-    <textarea {...attributes} ref={input} value={value} disabled={disabled} maxLength={maxLength}
+  const textarea = <textarea {...attributes} ref={input} value={value} disabled={disabled} maxLength={maxLength}
       readOnly={readOnly || Boolean(phase)} data-speech-input=""
       aria-describedby={[attributes["aria-describedby"], statusId].filter(Boolean).join(" ")}
       onChange={(event) => {
@@ -398,24 +439,24 @@ export function SpeechTextarea({
           return;
         }
         onKeyDown?.(event);
-      }} />
-    <div className="speech-controls" data-ui-key={`${uiKey}-speech-controls`}>
-      <button type="button" className="speech-toggle" data-ui-key={`${uiKey}-speech-toggle`}
+      }} />;
+  const toggle = <button type="button" className="speech-toggle" data-ui-key={`${uiKey}-speech-toggle`}
         disabled={!available || (busy && !ownCapture) || phase === "stopping"}
         title="Dictate with Azure Speech. Audio is sent to Azure; text is never sent as a message automatically."
         aria-label={ownCapture ? "Stop speech input" : "Start speech input"} aria-pressed={ownCapture}
         aria-describedby={statusId} onClick={() => { if (capture.current) void stop(capture.current); else void start(); }}>
         {phase === "starting" || phase === "stopping" ? <LoaderCircle size={14} aria-hidden="true" />
           : ownCapture ? <Square size={14} aria-hidden="true" /> : <Mic size={14} aria-hidden="true" />}
-        {phase === "starting" ? "Starting..." : phase === "stopping" ? "Finishing..." : ownCapture ? "Stop" : "Mic"}
-      </button>
-      <button type="button" className="speech-sign-in" data-ui-key={`${uiKey}-speech-sign-in`}
+        {!composer && (phase === "starting" ? "Starting..." : phase === "stopping" ? "Finishing..." : ownCapture ? "Stop" : "Mic")}
+      </button>;
+  const feedback = <>
+      {speech.signInPlacement === "inline" && <button type="button" className="speech-sign-in" data-ui-key={`${uiKey}-speech-sign-in`}
         disabled={!available || busy} aria-describedby={statusId}
-        title="Open Microsoft sign-in in your browser. This does not turn on the microphone." onClick={() => { void signIn(); }}>
+        title="Open Microsoft sign-in in your browser. This does not turn on the microphone." onClick={() => { void speech.signIn(); }}>
         <LogIn size={14} aria-hidden="true" />{signingIn ? "Signing in..." : "Sign in with Microsoft"}
-      </button>
+      </button>}
       <button type="button" className="speech-cancel" data-ui-key={`${uiKey}-speech-cancel`}
-        hidden={!ownCapture && !signingIn}
+        hidden={!ownCapture && !(signingIn && speech.signInPlacement === "inline")}
         aria-label={signingIn ? "Cancel Microsoft sign-in" : "Cancel speech and restore draft"}
         onClick={() => speech.active?.cancel()}>
         <X size={14} aria-hidden="true" />{signingIn ? "Cancel sign-in" : "Cancel"}
@@ -427,6 +468,11 @@ export function SpeechTextarea({
         title="Open Tandem in your browser and sign in with Microsoft there, then select Mic. Your draft stays here.">
         <ExternalLink size={14} aria-hidden="true" />Open Tandem in browser
       </a>
-    </div>
+  </>;
+  if (composer) return <VoiceComposer {...composer} input={textarea} toggle={toggle}
+    feedback={<div className="speech-controls voice-composer-feedback" data-ui-key={`${uiKey}-speech-controls`}
+      hidden={!phase && visibleStatus.kind !== "error" && speech.signInPlacement !== "inline"}>{feedback}</div>} />;
+  return <>{textarea}
+    <div className="speech-controls" data-ui-key={`${uiKey}-speech-controls`}>{toggle}{feedback}</div>
   </>;
 }

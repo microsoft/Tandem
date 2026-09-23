@@ -14,7 +14,7 @@ import { ArtifactList, ArtifactsPanel } from "./artifacts-panel.js";
 import { ProcessPanel } from "./process-panel.js";
 import { PlanPanel } from "./plan-panel.js";
 import { ImplementationPanel, TestPanel } from "./execution-panel.js";
-import { SpeechProvider, SpeechTextarea } from "./speech-textarea.js";
+import { SpeechProvider, SpeechSignInControl, SpeechTextarea } from "./speech-textarea.js";
 
 const stageTabs = [
   { stage: "prepare", value: "preparation", id: "preparation", label: "Preparation", icon: Sparkles, className: "preparation-panel" },
@@ -27,6 +27,7 @@ const stageTabs = [
   { stage: "test", value: "test", id: "test", label: "Test", icon: ListChecks, className: "implementation-panel" },
 ] as const;
 type TabId = typeof stageTabs[number]["value"] | "content";
+const minimumContextWidth = 220;
 const tabFor = (stage: LifecycleStageId): TabId => stageTabs.find((tab) => tab.stage === stage)?.value || "content";
 export const isGoalEntry = (state: UiState) => !state.goal?.trim() && state.lifecycle.currentStage === "prepare" && state.preparation?.status === "not-started";
 
@@ -151,7 +152,7 @@ function EffortApp({ state, store, version, connectionError, confirm }: {
       : "Open the installed user-scoped Tandem to " + action + ".",
     confirm, browseStage, selectArtifact, setBusy,
   };
-  return <UiContext.Provider value={value}><SpeechProvider>
+  return <UiContext.Provider value={value}><SpeechProvider signInPlacement="header">
     <Workspace version={version} connectionError={connectionError} store={store} activeTab={activeTab} onTabChange={setActiveTab}
       selectedArtifact={selectedArtifact} contextOpen={contextOpen} setContextOpen={setContextOpen}
       sketchBlocked={sketchBlocked} onSketchBlocked={setSketchBlocked} effortBusy={busy.has("effort")} />
@@ -229,6 +230,7 @@ function Header({ version, connectionError, store, effortBusy }: { version: stri
           if (!current || !isGoalEntry(current) || current.generation === state.generation) throw new Error("Reset has not been confirmed. Reload the project state before retrying.");
         });
       }}><RotateCcw size={15} />{reset.busy ? "Resetting..." : "Reset"}</button>
+    <SpeechSignInControl />
     <span className="build-version" title="Tandem extension version">v{version}</span>
   </div>
     <p id="effort-message" className="effort-message" role="status" data-status={reset.error || state.effortReset?.error ? "error" : "idle"}>
@@ -248,8 +250,8 @@ function Workspace(props: WorkspaceProps) {
   const { activeTab, onTabChange, selectedArtifact, contextOpen, setContextOpen, sketchBlocked } = props;
   const stageAction = useAction("stage");
   const workspace = useRef<HTMLElement>(null);
-  const [width, setWidth] = useState(280);
-  const [maximum, setMaximum] = useState(280);
+  const [width, setWidth] = useState(minimumContextWidth);
+  const [maximum, setMaximum] = useState(minimumContextWidth);
   const [dragging, setDragging] = useState<number | null>(null);
   const [nextAction, setNextAction] = useState<{ id: string; label: string } | null>(null);
   const atStart = isGoalEntry(state);
@@ -266,14 +268,17 @@ function Workspace(props: WorkspaceProps) {
   const complete = !pending && canCompleteStage(state) && (current !== "sketch" || !sketchBlocked);
   const allComplete = lifecycleStages.every((stage) => state.lifecycle.completedStages.includes(stage.id) || skippedStage(state, stage.id));
   const selectedLabel = lifecycleStages.find((stage) => stage.id === viewed)?.label || viewed;
+  const statusBarError = props.connectionError || stageAction.error;
+  const statusBarText = statusBarError || (nextAction ? "Next action: " + nextAction.label
+    : state.status || (atStart ? "Ready to start a project." : "Ready."));
   const narrow = () => window.matchMedia("(max-width: 760px)").matches;
   const resize = (value: number) => {
     if (narrow()) return;
-    const max = Math.max(280, (workspace.current?.getBoundingClientRect().width || 649) - 9 - 360);
-    setMaximum(max); setWidth(Math.round(Math.min(max, Math.max(280, value))));
+    const max = Math.max(minimumContextWidth, (workspace.current?.getBoundingClientRect().width || minimumContextWidth + 369) - 9 - 360);
+    setMaximum(max); setWidth(Math.round(Math.min(max, Math.max(minimumContextWidth, value))));
   };
   useEffect(() => {
-    const update = () => { const max = Math.max(280, (workspace.current?.getBoundingClientRect().width || 649) - 369); setMaximum(max); setWidth((width) => Math.min(max, width)); };
+    const update = () => { const max = Math.max(minimumContextWidth, (workspace.current?.getBoundingClientRect().width || minimumContextWidth + 369) - 369); setMaximum(max); setWidth((width) => Math.min(max, width)); };
     update(); window.addEventListener("resize", update); return () => window.removeEventListener("resize", update);
   }, [atStart]);
   useEffect(() => {
@@ -378,7 +383,7 @@ function Workspace(props: WorkspaceProps) {
         </aside>
         <div id="studio-splitter" className={"splitter" + (dragging !== null ? " is-dragging" : "")} role="separator" tabIndex={0}
           aria-label="Resize requirements and output panels" aria-orientation="vertical" aria-controls="requirements-pane preview-pane"
-          aria-valuemin={280} aria-valuemax={maximum} aria-valuenow={width} title="Drag or use Left and Right arrow keys to resize"
+          aria-valuemin={minimumContextWidth} aria-valuemax={maximum} aria-valuenow={width} title="Drag or use Left and Right arrow keys to resize"
           onPointerDown={(event) => { if (event.button !== 0 || narrow()) return; setDragging(event.pointerId); event.currentTarget.setPointerCapture(event.pointerId); resize(event.clientX - (workspace.current?.getBoundingClientRect().left || 0)); event.preventDefault(); }}
           onPointerMove={(event) => { if (dragging === event.pointerId) resize(event.clientX - (workspace.current?.getBoundingClientRect().left || 0)); }}
           onPointerUp={(event) => { if (dragging === event.pointerId) { setDragging(null); if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); } }}
@@ -404,9 +409,10 @@ function Workspace(props: WorkspaceProps) {
         </section>
       </main>
     </Tabs.Root>}
-    <div id="next-action-bar" className="next-action-bar" hidden={!nextAction}>
-      <span id="next-action-guide" role="status">{nextAction ? "Next action: " + nextAction.label : ""}</span>
-      <button id="show-next-action" type="button" onClick={() => {
+    <div id="next-action-bar" className="next-action-bar" data-status={statusBarError ? "error" : "idle"}>
+      <span id="next-action-guide" role="status" title={statusBarText}>{statusBarText}</span>
+      <button id="show-next-action" type="button" hidden={!nextAction}
+        aria-label="Go to action" title={nextAction ? "Go to action: " + nextAction.label : "Go to action"} onClick={() => {
         if (!nextAction) return;
         if (nextAction.id === "complete-stage") { onTabChange(tabFor(current)); if (narrow()) setContextOpen(true); }
         else { onTabChange(tabFor(current)); setContextOpen(false); }
@@ -414,7 +420,7 @@ function Workspace(props: WorkspaceProps) {
           const target = document.getElementById(nextAction.id);
           target?.scrollIntoView?.({ block: "nearest" }); target?.focus({ preventScroll: true });
         });
-      }}>Go to action<ArrowRight size={16} /></button>
+      }}><ArrowRight size={13} aria-hidden="true" /></button>
     </div>
   </div>;
 }

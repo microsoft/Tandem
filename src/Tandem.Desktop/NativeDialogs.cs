@@ -2,7 +2,7 @@ namespace Tandem.Desktop;
 
 internal sealed class PermissionDialog : Form
 {
-    internal PermissionDialog(string title, string details, string allowText = "Allow once")
+    internal PermissionDialog(string title, string details, string allowText = "Allow once", bool canAllowAllForSession = false)
     {
         Text = "Tandem — " + title;
         StartPosition = FormStartPosition.CenterParent;
@@ -28,7 +28,11 @@ internal sealed class PermissionDialog : Form
         }, 0, 0);
         layout.Controls.Add(new TextBox
         {
-            Text = details, Multiline = true, ReadOnly = true, Dock = DockStyle.Fill,
+            Text = canAllowAllForSession
+                ? "Allow all for this session permits tool actions, including commands, file changes and network access, " +
+                  "until the backend restarts or you select Ask each time. Managed-policy and sandbox consent remain separate.\r\n\r\n" + details
+                : details,
+            Multiline = true, ReadOnly = true, Dock = DockStyle.Fill,
             ScrollBars = ScrollBars.Vertical, BackColor = SystemColors.Window, TabStop = false
         }, 0, 1);
         var buttons = new FlowLayoutPanel
@@ -40,6 +44,11 @@ internal sealed class PermissionDialog : Form
         var allow = new Button { Text = allowText, DialogResult = DialogResult.OK, AutoSize = true };
         buttons.Controls.Add(deny);
         buttons.Controls.Add(allow);
+        if (canAllowAllForSession)
+            buttons.Controls.Add(new Button
+            {
+                Text = "Allow all for this session", DialogResult = DialogResult.Yes, AutoSize = true
+            });
         layout.Controls.Add(buttons, 0, 2);
         Controls.Add(layout);
         AcceptButton = deny;

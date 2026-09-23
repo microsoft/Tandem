@@ -1,7 +1,8 @@
-import { useId, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { ExternalLink, Mic, Square } from "lucide-react";
 import { createSketchLiveSession, type SketchLiveSession, type SketchLiveSessionFactory } from "./sketch-live-session.js";
-import { useSpeechCoordinator } from "./speech-textarea.js";
+import { appendSketchLiveCaption } from "./sketch-live-captions.js";
+import { useSpeechCoordinator, VoiceComposer, type VoiceComposerOptions } from "./speech-textarea.js";
 
 interface Caption { role: "user" | "assistant"; text: string; start: number; end: number }
 interface Props {
@@ -12,12 +13,14 @@ interface Props {
   input: RefObject<HTMLTextAreaElement | null>;
   revise: (instruction: string, signal: AbortSignal) => Promise<string>;
   createSession?: SketchLiveSessionFactory;
+  composer?: VoiceComposerOptions & { input: (caption: string | null) => ReactNode };
 }
 interface Conversation {
   abort: AbortController;
   session?: SketchLiveSession;
   operation: Parameters<ReturnType<typeof useSpeechCoordinator>["acquire"]>[0];
   captions: Caption[];
+  previews: Record<Caption["role"], string>;
   pending: { id: string; offset: number } | null;
   seen: Set<string>;
   consumed: number;
@@ -41,7 +44,7 @@ export function SketchLivePanel(props: Props) {
   const [phase, setPhase] = useState<"idle" | "starting" | "listening">("idle");
   const [status, setStatus] = useState(initialStatus);
   const [error, setError] = useState("");
-  const [captions, setCaptions] = useState<Caption[]>([]);
+  const [captions, setCaptions] = useState({ user: "", assistant: "" });
 
   function available() {
     return mounted.current && latest.current.enabled && container.current?.isConnected
@@ -90,9 +93,9 @@ export function SketchLivePanel(props: Props) {
       setError("No new drawing instruction was transcribed. Please repeat it.");
       return;
     }
-    const spoken = fresh.map((caption) => caption.text).join(" ").trim();
+    const spoken = fresh.map((caption) => caption.text).join("").trim();
     const discussion = record.captions.filter((caption) => caption.role === "assistant").slice(-2)
-      .map((caption) => caption.text).join(" ").slice(-700);
+      .map((caption) => caption.text).join("").slice(-700);
     const instruction = [
       "Apply only the drawing change requested in this spoken user instruction. Conversation is context, not approval.",
       `User: ${spoken}`,
@@ -137,7 +140,7 @@ export function SketchLivePanel(props: Props) {
     if (!input || !available() || !latest.current.canStart || current.current) return;
     const record: Conversation = {
       abort: new AbortController(), captions: [], pending: null, consumed: -1, seen: new Set(),
-      working: false, speaking: false,
+      working: false, speaking: false, previews: { user: "", assistant: "" },
       operation: {
         owner, identity: speech.identity, draftKey: props.identity, input, kind: "capture",
         cancel: (message, failed) => stop(message?.replace("Your original draft is unchanged.", "Submitted drawing work may still finish."), failed),
@@ -150,7 +153,7 @@ export function SketchLivePanel(props: Props) {
     setPhase("starting");
     setStatus("Connecting to GPT-live...");
     setError("");
-    setCaptions([]);
+    setCaptions({ ...record.previews });
     try {
       const session = await (latest.current.createSession ?? createSketchLiveSession)({
         transcript(role, text, start, end) {
@@ -160,12 +163,13 @@ export function SketchLivePanel(props: Props) {
             last.text += text;
             last.end = Math.max(last.end, end);
           } else record.captions.push({ role, text, start, end });
+          record.previews[role] = appendSketchLiveCaption(record.previews[role], text);
           if (record.captions.length > 80) record.captions.splice(0, record.captions.length - 80);
-          if (record.captions.some((caption) => caption.text.length > 8000)) {
+          if (record.previews[role].length > 8000 || record.captions.some((caption) => caption.text.length > 8000)) {
             stop("GPT-live transcript exceeded its limit. Start a new conversation.", true);
             return;
           }
-          setCaptions(record.captions.map((caption) => ({ ...caption })));
+          setCaptions({ ...record.previews });
           if (role === "user") settle(record);
         },
         delegation(id, offset) {
@@ -212,22 +216,27 @@ export function SketchLivePanel(props: Props) {
   }, [props.enabled]);
   useLayoutEffect(() => () => stop("Voice stopped because the active effort changed."), [props.identity]);
 
-  return <div ref={container} className="sketch-live" aria-label="GPT-live sketch conversation">
-    <div className="speech-controls">
-      <button id="sketch-live-toggle" type="button" className="speech-toggle" aria-pressed={phase !== "idle"}
+  const liveCaption = phase === "idle" ? null : `You: ${captions.user.trim()}\nGPT-live: ${captions.assistant.trim()}`;
+  const toggle = <button id="sketch-live-toggle" type="button" className="speech-toggle" aria-pressed={phase !== "idle"}
+        title={phase === "idle" ? "Talk with GPT-live" : "End voice"}
+        aria-label={phase === "idle" ? "Talk with GPT-live" : "End voice"}
         disabled={phase === "idle" && (!props.enabled || !props.canStart || Boolean(speech.active))}
         onClick={() => { if (current.current) stop(); else void start(); }}>
         {phase === "idle" ? <Mic size={14} aria-hidden="true" /> : <Square size={14} aria-hidden="true" />}
-        {phase === "idle" ? "Talk with GPT-live" : "End voice"}
-      </button>
-      <span id="sketch-live-status" className="speech-status" role="status" aria-live="polite">{status}</span>
-    </div>
-    <p className="muted">{initialStatus} Uses Azure CLI sign-in, separate from Azure Speech.</p>
+        {!props.composer && (phase === "idle" ? "Talk with GPT-live" : "End voice")}
+      </button>;
+  const feedbackView = <>
+    <span id="sketch-live-status" className="speech-status" role="status" aria-live="polite">{status}</span>
+    {!props.composer && <p className="muted">{initialStatus} Uses Azure CLI sign-in, separate from Azure Speech.</p>}
     {error && <p id="sketch-live-error" className="sketch-error" role="alert">{error}{" "}
       <a href="/" target="_blank" rel="noopener noreferrer"><ExternalLink size={14} aria-hidden="true" />Open Tandem in browser</a>
     </p>}
-    {captions.length > 0 && <ol className="sketch-live-captions" aria-label="Voice transcript">
-      {captions.map((caption, index) => <li key={index}><strong>{caption.role === "user" ? "You" : "GPT-live"}:</strong> {caption.text}</li>)}
-    </ol>}
+    {!props.composer && liveCaption !== null && <p className="sketch-live-captions" aria-label="Voice transcript">{liveCaption}</p>}
+  </>;
+  return <div ref={container} className={props.composer ? "sketch-live-composer" : "sketch-live"} aria-label="GPT-live sketch conversation">
+    {props.composer
+      ? <VoiceComposer {...props.composer} input={props.composer.input(liveCaption)} toggle={toggle}
+        feedback={<div className="voice-composer-feedback" hidden={phase === "idle" && !error}>{feedbackView}</div>} />
+      : <><div className="speech-controls">{toggle}</div>{feedbackView}</>}
   </div>;
 }

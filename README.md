@@ -38,15 +38,20 @@ The development build needs Node on PATH and the .NET 10 Desktop Runtime.
 `TANDEM_NODE_PATH` may specify a Node executable; `TANDEM_DESKTOP_HOST` may
 specify a different built `host.mjs` for debugging.
 
-**Copilot tool-approval dialogs are disabled in the desktop app.** The backend
-uses the SDK's allow-all handler for shell commands, file reads and writes, URL
-access, MCP/custom tools, memory, hooks, extensions, and factory permissions.
-This is the default for both new and resumed desktop sessions; no initial
-approval or saved opt-in is required. Commands may change files and access the
-network without confirmation, so only open workspaces and tools you trust.
-SDK-managed restrictions are not bypassed: requests that cannot be automatically
-approved fail with a visible error rather than opening a dialog or waiting
-indefinitely. Untracked agent-question tools and their native pop-ups are disabled
+**Tool permissions start in Ask each time**, including resumed desktop sessions.
+Each Copilot permission prompt offers **Deny**, **Allow once**, and, when permitted,
+**Allow all for this session**. The native **Permissions** menu can also enable
+session-wide approval or switch back to **Ask each time**. Allow all covers shell
+commands, file reads and writes, URL access, MCP/custom tools, memory, hooks,
+extensions, and factories; these actions may change files or use the network
+without further confirmation, so only enable it for workspaces and tools you trust.
+This choice stays in memory for the current backend: reloading the page keeps it,
+but closing, restarting, or switching the workspace restores **Ask each time**.
+Switching back affects future approvals, not actions already running.
+Managed-policy and sandbox-bypass requests still require individual consent.
+File-system access errors and active-work/ownership guards are not permission
+prompts and cannot be bypassed by this setting.
+Untracked agent-question tools and their native pop-ups are disabled
 in the dedicated desktop session. Product questions appear in Tandem's tracked
 DAG or prototype-revision clarification UI instead. External-browser confirmation
 and browser/OS microphone permissions remain separate.
@@ -84,6 +89,8 @@ without AI calls, including startup, session recovery, and shutdown. Add
 Use `-- --dotnet` instead to exercise `dotnet run` without a version override.
 These smoke checks require an existing Copilot login; the `--gui` executable
 checks also require `npm run build:desktop`. They do not run live model evaluations.
+The GUI smoke harness supplies one-time consent only for Tandem extension startup
+inside its temporary workspace; the desktop itself still denies unattended prompts.
 
 ## Web UI development
 
@@ -208,6 +215,10 @@ edit sends only changed objects instead of regenerating the entire document.
 The tool-free drawing worker uses the existing factory budget and model
 selection. Complete operations are coalesced into preview updates at 50 ms;
 the initial model response still depends on model and service latency.
+The desktop session enables model streaming explicitly. On runtimes that omit
+the factory ID from worker-start events, Tandem verifies the worker's tool-call
+identity against the factory's direct-agent records before publishing buffered
+updates; unrelated workers cannot contribute to a drawing.
 Previews are temporary, read-only and never constitute saved or approved
 drawings. One immutable revision is saved only after the final operation stream
 passes validation. Failure or cancellation discards the preview and keeps the
@@ -222,7 +233,7 @@ remain supported and are displayed in the dropdown. A smaller canvas hides
 overflow without deleting it; enlarge the canvas or undo to reveal it again.
 Save drawings to persist the new dimensions.
 
-The larger, icon-only drawing tools retain tooltips and accessible labels.
+The compact, icon-only drawing tools retain tooltips and accessible labels.
 **Quadratic Bezier**, **Cubic Bezier**, and **Catmull-Rom spline** tools add
 editable curves using VisionLoop's path modes. Select a path to drag its knots
 or control points, edit coordinates (one `x, y` pair per line), close the path,
@@ -241,6 +252,13 @@ live preview, and saved SVG/PNG all use the same curve geometry.
 change only the view, never drawing geometry, undo history, or export dimensions.
 Fit follows the available viewport in both directions; larger views scroll
 inside it. Selecting another screen starts in Fit mode.
+
+**Object properties**, **Screen transitions**, and **Revision history** share a
+single-selection toggle group immediately after **Actual size (100%)**. Choose
+one to open its right-side pane, or choose it again to close it; all start hidden.
+On narrow layouts the pane overlays the drawing's right edge. The revision input
+area stays at the bottom while the Screens list and drawing fill the remaining
+height; overflowing content scrolls inside its own pane, not the entire Sketch view.
 
 For an existing GUI, sketches describe the same application and proposed changes,
 not a parallel replacement.
@@ -356,9 +374,15 @@ not measured end-to-end latency or credit savings.
 
 ### GPT-live in Sketch
 
-**Sketch voice provider** offers **Azure Speech (dictation)** and **GPT-live
-(conversation and drawing edits)**. This selector affects Sketch only; all other
-stages retain their existing Azure Speech controls.
+Sketch uses a compact microphone, message, and **Send** row. Open **Voice settings**
+with the microphone dropdown or settings button to select **Azure dictation** or
+**GPT-live conversation**. This selector affects Sketch only; all other stages
+retain Azure Speech. **Ctrl+Enter** (or **Command+Enter**) sends a typed drawing
+revision. Voice status and errors appear only when relevant. While GPT-live is
+connecting or listening, the message box is read-only and shows the current
+sentence for **You** and **GPT-live**, using VisionLoop's sentence boundaries
+instead of adding a transcript row for each word. Ending voice restores your
+unsent typed draft.
 
 Select GPT-live, then **Talk with GPT-live** to start the microphone and hear
 spoken replies. Discuss the current screen or ask for layout, label, shape,
@@ -392,7 +416,7 @@ $env:TANDEM_Live__TenantId = "72f988bf-86f1-41af-91ab-2d7cd011db47"
 Your account must have access to this Azure GPT-live deployment. The endpoint
 is restricted to the approved VisionLoop host and Live route; arbitrary
 endpoints and other models are rejected rather than receiving credentials.
-Azure Speech's **Sign in with Microsoft** does not sign in to GPT-live.
+Azure Speech's top-bar **Sign in** button does not sign in to GPT-live.
 On Windows, GPT-live also adds the verified
 `%LOCALAPPDATA%\Programs\AzureCLI\bin` installation to the extension process's
 PATH before authenticating. This works even when Copilot was launched before
@@ -413,7 +437,7 @@ use **Open Tandem in browser** if the embedded canvas blocks microphone access.
 Every conversational input has a **Mic** control: project goals, usages,
 requirement answers, prototype revisions and clarifications, artifact reviews
 (including test design), plan revisions, and implementation strategy adjustments.
-Select **Sign in with Microsoft** to open your default browser, choose your work
+Select **Sign in** on the right of the top bar to open your default browser, choose your work
 account, and complete any MFA prompt. Return to Tandem after it confirms sign-in,
 then click **Mic**, allow microphone access, and speak naturally. Partial text updates
 in place; **Stop** finishes the recognized text so you can edit and send it.
@@ -440,8 +464,8 @@ with PKCE and a local loopback callback. Browser sign-in has a three-minute limi
 does not cancel sign-in. It never starts the microphone or sends your draft.
 
 The selected account and token cache are memory-only for this extension session;
-sign in again after restarting or reloading the extension. Selecting **Sign in
-with Microsoft** again lets you change accounts. Failed or cancelled sign-in
+sign in again after restarting or reloading the extension. Selecting **Sign in**
+again lets you change accounts. Failed or cancelled sign-in
 does not replace an already selected account. Once a browser account is selected,
 Tandem does not silently switch to another identity if its tokens expire.
 Before browser sign-in, existing `DefaultAzureCredential` sources (such as
@@ -475,11 +499,21 @@ state is preserved and reported: repair or restore the named file rather than
 starting over silently.
 
 Cross-process locks and monotonic revisions protect shared repository state.
+On Windows, atomic saves briefly retry file-sharing and access errors without
+deleting the previous saved file. If replacement stays blocked, Tandem preserves
+the saved revision and reports the path; close programs using that file, check
+its write permissions, and retry the operation.
 Active jobs belong to their originating Copilot session and workspace; return
 to that session to resume them. Other sessions may inspect the effort but
 cannot replace its inputs while work is active.
 Stopping work retains its ownership until the runtime confirms termination;
 a failed stop cannot unlock reset, reopening, or replacement execution.
+
+If a drawing request fails while saving state, reopening the effort or retrying
+the drawing request verifies the previous factory run with the SDK before
+releasing its active-work block. Saved drawings, approvals, and run history
+are preserved; running or unverifiable jobs remain blocked to prevent duplicate
+workers.
 
 The top-right **Reset** button returns the current effort to goal entry after
 confirmation. It stops active work before clearing that effort's goal,

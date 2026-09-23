@@ -5,6 +5,7 @@ import type { SketchDocument } from "../src/sketch.js";
 import { renderSketchSvg } from "../src/sketch.js";
 import type { UiContextValue, UiState } from "../src/renderer/ui-context.js";
 import { createCurveShape, createScreen, createShape } from "../src/renderer/sketch-editor.js";
+import { appendSketchLiveCaption } from "../src/renderer/sketch-live-captions.js";
 import type { SketchLiveEvents, SketchLiveSessionFactory } from "../src/renderer/sketch-live-session.js";
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost" });
@@ -13,9 +14,11 @@ function globalValue(name: string, value: unknown) {
   if (!globals.has(name)) globals.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
   Object.defineProperty(globalThis, name, { value, configurable: true, writable: true });
 }
-for (const name of ["window", "document", "navigator", "HTMLElement", "Element", "Node", "MutationObserver", "HTMLInputElement", "HTMLTextAreaElement"]) {
+for (const name of ["window", "document", "navigator", "HTMLElement", "Element", "Node", "NodeFilter", "CustomEvent",
+  "MutationObserver", "HTMLInputElement", "HTMLTextAreaElement", "HTMLSelectElement"]) {
   globalValue(name, dom.window[name as keyof Window]);
 }
+globalValue("getComputedStyle", dom.window.getComputedStyle.bind(dom.window));
 globalValue("IS_REACT_ACT_ENVIRONMENT", true);
 const React = await import("react");
 const { act, useCallback, useState } = React;
@@ -139,7 +142,8 @@ async function harness(initial = fixture(), createLiveSession?: SketchLiveSessio
   }
   await act(async () => { root.render(<App />); });
   const element = <T extends HTMLElement = HTMLElement>(id: string) => {
-    const node = host.querySelector<T>(`#sketch-${id}`);
+    const node = host.querySelector<T>(`#sketch-${id}`)
+      ?? dom.window.document.querySelector<T>(`#sketch-voice-settings #sketch-${id}`);
     assert.ok(node, id);
     return node;
   };
@@ -157,6 +161,7 @@ async function harness(initial = fixture(), createLiveSession?: SketchLiveSessio
     get completionBlocked() { return completionBlocked; },
     async close() {
       await act(async () => root.unmount());
+      await new Promise((resolve) => setTimeout(resolve, 0));
       host.remove();
       if (fetchDescriptor) Object.defineProperty(globalThis, "fetch", fetchDescriptor);
       else Reflect.deleteProperty(globalThis, "fetch");
@@ -167,6 +172,9 @@ async function harness(initial = fixture(), createLiveSession?: SketchLiveSessio
     },
     async click(id: string) { await act(async () => element<HTMLButtonElement>(id).click()); },
     async input(id: string, value: string) {
+      if (id === "voice-provider" && !dom.window.document.getElementById("sketch-voice-settings")) {
+        await act(async () => element<HTMLButtonElement>("voice-options").click());
+      }
       const node = element<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(id);
       const prototype = node instanceof dom.window.HTMLTextAreaElement ? dom.window.HTMLTextAreaElement.prototype
         : node instanceof dom.window.HTMLSelectElement ? dom.window.HTMLSelectElement.prototype : dom.window.HTMLInputElement.prototype;
@@ -460,10 +468,140 @@ function liveFixture() {
     get closes() { return closes; }, get signal() { return signal; } };
 }
 
+test("live captions use VisionLoop sentence boundaries for lowercase, numbers, quotes and CJK", () => {
+  for (const [text, expected] of [
+    ["", ""],
+    [" \r\n ", ""],
+    ["Done. resize", "resize"],
+    ["Done. resize to 3.", "resize to 3."],
+    ["Done. resize to 3.5", "resize to 3.5"],
+    ["Done. open example.com", "open example.com"],
+    ['Done. say "Ready."', 'say "Ready."'],
+    ['Done. say "Ready." next', "next"],
+    ["First line\nnext line", "next line"],
+    ["First line\n ", "First line"],
+    ["\u5148\u753b\u623f\u5b50\u3002\u7136\u540e\u753b\u6811\u3002 ", "\u7136\u540e\u753b\u6811\u3002"],
+    ["\u597d\u4e86\uff01\u8981\u52a0\u82b1\u5712\u55ce\uff1f", "\u8981\u52a0\u82b1\u5712\u55ce\uff1f"],
+    ["Done! <img src=x onerror=alert(1)>", "<img src=x onerror=alert(1)>"],
+  ]) {
+    assert.equal(appendSketchLiveCaption("", text).trim(), expected);
+    let caption = "";
+    let accumulated = "";
+    for (const delta of text) {
+      accumulated += delta;
+      caption = appendSketchLiveCaption(caption, delta);
+      assert.equal(caption.trim(), appendSketchLiveCaption("", accumulated).trim(),
+        `fragmented caption: ${JSON.stringify(accumulated)}`);
+    }
+  }
+});
+
+test("live captions keep whitespace until the next streamed sentence arrives", () => {
+  let caption = "";
+  for (const [delta, expected] of [
+    ["Draw", "Draw"],
+    [" the screen.", "Draw the screen."],
+    [" ", "Draw the screen."],
+    ["next", "next"],
+    [", resize", "next, resize"],
+    [" to 3.", "next, resize to 3."],
+    ["5 meters.", "next, resize to 3.5 meters."],
+    [" \n", "next, resize to 3.5 meters."],
+    ["done! what", "what"],
+    [" next?", "what next?"],
+  ]) {
+    caption = appendSketchLiveCaption(caption, delta);
+    assert.equal(caption.trim(), expected);
+  }
+});
+
+test("GPT-live reuses the read-only input for both speakers and restores the typed draft", async () => {
+  const live = liveFixture();
+  const h = await harness(fixture(), live.create);
+  try {
+    const draft = "Keep my typed draft\nand this second line.";
+    await h.input("instruction", draft);
+    await h.input("voice-provider", "gpt-live");
+    const input = h.element<HTMLTextAreaElement>("instruction");
+    await h.click("live-toggle");
+    assert.equal(h.element("instruction"), input, "voice reuses the existing textarea");
+    assert.equal(input.readOnly, true);
+    assert.equal(input.disabled, false);
+    assert.equal(input.rows, 2);
+    assert.equal(input.value, "You: \nGPT-live: ");
+    assert.equal(input.getAttribute("aria-label"), "Voice transcript: you and GPT-live");
+    assert.equal(h.element<HTMLButtonElement>("revise").disabled, true);
+
+    for (const [role, delta, expected] of [
+      ["user", "which", "You: which\nGPT-live: "],
+      ["assistant", "This is", "You: which\nGPT-live: This is"],
+      ["user", " screen", "You: which screen\nGPT-live: This is"],
+      ["assistant", " the home screen.", "You: which screen\nGPT-live: This is the home screen."],
+      ["user", " is this?", "You: which screen is this?\nGPT-live: This is the home screen."],
+      ["assistant", " ", "You: which screen is this?\nGPT-live: This is the home screen."],
+      ["assistant", "the scale is 3.", "You: which screen is this?\nGPT-live: the scale is 3."],
+      ["assistant", "5.", "You: which screen is this?\nGPT-live: the scale is 3.5."],
+      ["user", " make", "You: make\nGPT-live: the scale is 3.5."],
+      ["user", " it wider.", "You: make it wider.\nGPT-live: the scale is 3.5."],
+    ] as const) {
+      const offset = input.value.length;
+      await act(async () => live.events.transcript(role, delta, offset, offset + 1));
+      assert.equal(input.value, expected);
+    }
+    assert.equal(input.closest("form")!.querySelector(".sketch-live-captions"), null, "no separate transcript list");
+    await h.input("instruction", "An attempted edit must not replace the saved draft.");
+    await h.event(input, "keydown", { key: "Enter", ctrlKey: true });
+    await h.event(input.form!, "submit");
+    assert.equal(h.requests.filter((request) => request.body).length, 0, "captions and typed drafts cannot be submitted during voice");
+
+    await h.sse({ ...h.server, revision: 2, processing: {
+      requestId: "running-edit", action: "revise-sketch", status: "running",
+    } });
+    assert.equal(input.disabled, false, "captions stay selectable while drawing work is running");
+    assert.equal(input.readOnly, true);
+    assert.equal(input.value, "You: make it wider.\nGPT-live: the scale is 3.5.");
+    await h.event(input, "keydown", { key: "Escape" });
+    assert.equal(input.value, draft);
+    assert.equal(input.readOnly, false);
+    assert.equal(input.rows, 1);
+    assert.equal(input.disabled, true, "normal drawing availability is restored");
+
+    await h.sse({ ...h.server, revision: 3, processing: null });
+    await h.click("live-toggle");
+    assert.equal(input.value, "You: \nGPT-live: ", "a new conversation has no stale captions");
+    await act(async () => live.events.error("Connection failed."));
+    assert.equal(input.value, draft);
+    assert.equal(input.readOnly, false);
+    assert.match(h.element("live-error").textContent!, /Connection failed/);
+  } finally { await h.close(); }
+});
+
+test("live caption previews are independent of the bounded transcript history", async () => {
+  const live = liveFixture();
+  const h = await harness(fixture(), live.create);
+  try {
+    await h.input("voice-provider", "gpt-live");
+    await h.click("live-toggle");
+    const sentence = "A sentence " + "with many words ".repeat(20);
+    await act(async () => {
+      for (let index = 0; index < sentence.length; index++) {
+        live.events.transcript("user", sentence[index], index, index + 1);
+        live.events.transcript("assistant", sentence[index], index, index + 1);
+      }
+    });
+    assert.equal(h.element<HTMLTextAreaElement>("instruction").value,
+      `You: ${sentence.trim()}\nGPT-live: ${sentence.trim()}`);
+    await act(async () => live.events.ended());
+    assert.equal(h.element<HTMLTextAreaElement>("instruction").value, "");
+    assert.equal(h.element<HTMLTextAreaElement>("instruction").readOnly, false);
+  } finally { await h.close(); }
+});
+
 test("Sketch alone offers GPT-live, starts explicitly and discusses without editing", async () => {
   const live = liveFixture();
   const h = await harness(fixture(), live.create);
   try {
+    await h.click("voice-options");
     assert.equal(h.element<HTMLSelectElement>("voice-provider").value, "azure-speech");
     await h.input("instruction", "Keep my typed draft");
     await h.input("voice-provider", "gpt-live");
@@ -488,8 +626,13 @@ test("Sketch alone offers GPT-live, starts explicitly and discusses without edit
     await act(async () => oldEvents.error("Some browser audio resources could not be released. Reload the page."));
     assert.match(h.element("live-error").textContent!, /could not be released/, "asynchronous cleanup failures remain visible");
     await h.click("live-toggle");
-    await act(async () => { oldEvents.error("Late failure"); oldEvents.ended(); });
+    await act(async () => {
+      oldEvents.transcript("user", "Stale transcript", 2000, 3000);
+      oldEvents.error("Late failure");
+      oldEvents.ended();
+    });
     assert.equal(live.signal.aborted, false, "late callbacks cannot stop the newer conversation");
+    assert.equal(h.element<HTMLTextAreaElement>("instruction").value, "You: \nGPT-live: ");
     await h.click("live-toggle");
     await h.input("voice-provider", "azure-speech");
     assert.equal(h.element<HTMLTextAreaElement>("instruction").value, "Keep my typed draft");
@@ -527,7 +670,9 @@ test("GPT-live delegates spoken edits through saved revisions, preserves local e
     });
     await act(async () => {
       live.events.activity?.(true);
-      live.events.transcript("user", "Move the rectangle to the right.", 0, 1000);
+      live.events.transcript("user", "Move the rec", 0, 200);
+      live.events.transcript("user", "tangle to the right.", 200, 600);
+      live.events.transcript("user", " then make it blue.", 600, 1000);
       live.events.delegation("edit-1", 1000);
       live.events.delegation("edit-1", 1000);
       await new Promise((resolve) => setTimeout(resolve, 850));
@@ -541,8 +686,8 @@ test("GPT-live delegates spoken edits through saved revisions, preserves local e
     assert.deepEqual(writes.map((request) => request.body!.action), ["save", "revise"]);
     assert.equal(writes[0].body!.document.screens[0].title, "My local screen");
     assert.equal(writes[1].body!.expectedRevision, "local-saved");
-    assert.match(writes[1].body!.instruction, /Move the rectangle to the right/);
-    assert.equal(h.element<HTMLTextAreaElement>("instruction").value, "My unsent text");
+    assert.match(writes[1].body!.instruction, /User: Move the rectangle to the right\. then make it blue\./);
+    assert.equal(h.element<HTMLTextAreaElement>("instruction").value, "You: then make it blue.\nGPT-live: ");
     assert.equal(h.state.sketch.approved, null);
     assert.equal(h.state.lifecycle.currentStage, "sketch");
     assert.equal(h.element("board").querySelector("[data-shape-id] rect")!.getAttribute("x"), "120");
@@ -553,6 +698,8 @@ test("GPT-live delegates spoken edits through saved revisions, preserves local e
     });
     assert.equal(h.requests.filter((request) => request.body).length, 2, "old speech is not replayed");
     assert.match(live.commentary.at(-1)!, /did not catch a new drawing instruction/);
+    await h.click("live-toggle");
+    assert.equal(h.element<HTMLTextAreaElement>("instruction").value, "My unsent text");
   } finally { await h.close(); }
 });
 
@@ -568,6 +715,8 @@ test("GPT-live stops on hidden Sketch, provider changes and late startup, withou
     });
     await h.hidden(true);
     assert.equal(live.signal.aborted, true);
+    assert.equal(h.element<HTMLTextAreaElement>("instruction").value, "");
+    assert.equal(h.element<HTMLTextAreaElement>("instruction").readOnly, false);
     await act(async () => {
       live.events.delegation("late", 1000);
       await new Promise((resolve) => setTimeout(resolve, 800));
@@ -586,9 +735,14 @@ test("GPT-live stops on hidden Sketch, provider changes and late startup, withou
   let started = 0;
   const pending = await harness(fixture(), async () => new Promise((resolve) => { ready = resolve; }));
   try {
+    await pending.input("instruction", "Draft before connecting");
     await pending.input("voice-provider", "gpt-live");
     await pending.click("live-toggle");
+    assert.equal(pending.element<HTMLTextAreaElement>("instruction").readOnly, true);
+    assert.equal(pending.element<HTMLTextAreaElement>("instruction").value, "You: \nGPT-live: ");
+    await pending.click("live-toggle");
     await pending.input("voice-provider", "azure-speech");
+    assert.equal(pending.element<HTMLTextAreaElement>("instruction").value, "Draft before connecting");
     await act(async () => ready({
       async start() { started++; }, close() { closed++; }, context() {}, commentary() {},
     }));

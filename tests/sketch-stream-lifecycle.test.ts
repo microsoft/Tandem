@@ -13,7 +13,7 @@ function deferred<T>() {
     return { resolve, promise };
 }
 
-async function setup() {
+async function setup(legacyEvents = false) {
     const h = await extensionHarness();
     const state = h.api.createState("sample", "A task app");
     state.stage = state.lifecycle.currentStage = "sketch";
@@ -39,6 +39,12 @@ async function setup() {
     const signal = new AbortController().signal;
     const runtime = {
         ...h.session,
+        factory: {
+            getRunDetail: async (runId: string) => {
+                assert.equal(runId, "stream-run");
+                return { runId, agents: [{ runId, agentId: "stream-agent", toolCallId: "bg-stream-tool" }] };
+            },
+        },
         on(callback: (event: SketchWorkerEvent) => void) {
             listeners.add(callback);
             return () => { listeners.delete(callback); };
@@ -69,7 +75,7 @@ async function setup() {
     });
     const emit = (event: SketchWorkerEvent) => { for (const listener of listeners) listener(event); };
     const delta = (text: string) => emit({
-        type: "assistant.message_delta", agentId: "stream-agent",
+        type: "assistant.message_delta", agentId: "bg-stream-tool",
         data: { messageId: "drawing-message", deltaContent: text },
     });
     const operation = (x: number) => JSON.stringify({
@@ -83,8 +89,8 @@ async function setup() {
         await Promise.race([ready.promise, h.api.waitForAnswer("sample").then(() => {
             throw new Error(`Drawing worker did not start: ${h.logs.join("\n")}`);
         })]);
-        emit({ type: "subagent.started", agentId: "stream-agent",
-            data: { factoryRunId: "stream-run", toolCallId: "stream-tool" } });
+        emit({ type: "subagent.started", agentId: "bg-stream-tool",
+            data: { ...(legacyEvents ? {} : { factoryRunId: "stream-run" }), toolCallId: "bg-stream-tool" } });
         return pending;
     };
     return { h, before, url: opened.url, start, delta, operation, output, listeners };
@@ -114,8 +120,8 @@ async function eventReader(url: string, signal: AbortSignal) {
     };
 }
 
-test("a real sketch factory streams intermediate SSE previews without persisting or approving them", { timeout: 15_000 }, async () => {
-    const f = await setup();
+for (const legacyEvents of [false, true]) test(`a sketch factory streams intermediate SSE previews with ${legacyEvents ? "legacy" : "current"} runtime events`, { timeout: 15_000 }, async () => {
+    const f = await setup(legacyEvents);
     const connection = new AbortController();
     try {
         const next = await eventReader(f.url, AbortSignal.any([connection.signal, AbortSignal.timeout(10_000)]));

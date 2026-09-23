@@ -79,6 +79,8 @@ test("desktop sessions disable untracked question tools without changing tool pe
     const f = protocolFixture();
     try {
         const config = desktopSessionConfig("workspace", "runtime", f.protocol);
+        assert.equal(config.streaming, true, "drawing workers inherit streaming from the desktop session");
+        assert.equal(config.includeSubAgentStreamingEvents, true);
         assert.equal(config.onUserInputRequest, undefined, "the native question bridge must not be registered");
         assert.deepEqual(config.excludedTools, ["ask_user"]);
         assert.ok(config.hooks?.onPreToolUse);
@@ -92,8 +94,11 @@ test("desktop sessions disable untracked question tools without changing tool pe
         assert.match(rejected!.permissionDecisionReason!, /Never invent a user answer/);
         assert.equal(await config.hooks.onPreToolUse({ ...hookInput, toolName: "read_file" }, { sessionId: "desktop" }), undefined);
         assert.equal(await config.hooks.onPreToolUse({ ...hookInput, toolName: "run_factory" }, { sessionId: "desktop" }), undefined);
-        assert.deepEqual(await config.onPermissionRequest!(desktopPermissionRequests.read, permissionInvocation), { kind: "approve-once" });
-        assert.deepEqual(f.events, [], "neither a modal question nor a synthetic user answer is emitted");
+        assert.deepEqual(f.events, [], "untracked question tools cannot emit native questions");
+        const permission = config.onPermissionRequest!(desktopPermissionRequests.read, permissionInvocation);
+        assert.equal(f.events[0].type, "permission");
+        f.reply({ type: "permission-response", id: f.events[0].id, approved: true });
+        assert.deepEqual(await permission, { kind: "approve-once", approvedInteractively: true });
         assert.equal(f.protocol.waitingForInput, false);
     } finally { f.protocol.close(); }
 });
@@ -128,57 +133,136 @@ const desktopPermissionRequests = {
 const permissionInvocation = { sessionId: "desktop-test" };
 
 for (const request of Object.values(desktopPermissionRequests)) {
-    test(`desktop automatically approves ${request.kind} without a dialog`, async () => {
+    test(`desktop asks before approving ${request.kind} by default`, async () => {
         const f = protocolFixture();
         try {
             const permission = f.protocol.permission(request, permissionInvocation);
-            if (f.events[0]?.type === "permission")
-                f.reply({ type: "permission-response", id: f.events[0].id, approved: false });
-            assert.deepEqual(await permission, { kind: "approve-once" });
-            assert.deepEqual(f.events, []);
+            assert.equal(f.protocol.permissionMode, "ask");
+            assert.equal(f.protocol.waitingForInput, true);
+            assert.equal(f.events[0].type, "permission");
+            assert.equal(f.events[0].canAllowAllForSession, true);
+            assert.deepEqual(JSON.parse(String(f.events[0].details)), request);
+            f.reply({ type: "permission-response", id: f.events[0].id, approved: true });
+            assert.deepEqual(await permission, { kind: "approve-once", approvedInteractively: true });
+            assert.equal(f.protocol.permissionMode, "ask", "Allow once does not grant future permissions.");
+            assert.equal(f.events.length, 1);
             assert.equal(f.protocol.waitingForInput, false);
         } finally { f.protocol.close(); }
     });
 }
 
-test("desktop allow-all handles concurrent tool requests without a prompt queue or saved opt-in", async () => {
+test("desktop allow-all is explicit, covers all tool kinds, and resets with each backend", async () => {
     for (let cycle = 0; cycle < 2; cycle++) {
         const f = protocolFixture();
         try {
+            assert.equal(f.protocol.permissionMode, "ask");
+            f.reply({ type: "set-permission-mode", mode: "allow-all" });
+            assert.deepEqual(f.events, [{ type: "permission-mode", mode: "allow-all" }]);
+            for (const request of Object.values(desktopPermissionRequests)) {
+                assert.deepEqual(await f.protocol.permission(request, permissionInvocation), { kind: "approve-once" });
+            }
             const results = await Promise.all(Array.from({ length: 32 }, (_, index) =>
                 f.protocol.permission(index % 2 ? shellPermission() : desktopPermissionRequests.read, permissionInvocation)));
             assert.ok(results.every((result) => result.kind === "approve-once"));
-            assert.deepEqual(f.events, []);
+            assert.equal(f.events.length, 1);
             assert.equal(f.protocol.waitingForInput, false);
         } finally { f.protocol.close(); }
     }
 });
 
-test("desktop allow-all reports managed restrictions without prompting or leaving requests pending", async () => {
+test("desktop allow-all still asks for managed-policy and sandbox-bypass requests", async () => {
     const f = protocolFixture();
     try {
+        f.reply({ type: "set-permission-mode", mode: "allow-all" });
         for (const [request, invocation] of [
             [{ ...shellPermission(), managedApprovalRequired: true }, permissionInvocation],
             [{ ...desktopPermissionRequests.read, managedApprovalRequired: true }, permissionInvocation],
             [shellPermission(), { ...permissionInvocation, managedSettingsEnabled: true }],
+            [{ ...shellPermission(), requestSandboxBypass: true }, permissionInvocation],
         ] as const) {
-            const result = await f.protocol.permission(request, invocation);
-            assert.equal(result.kind, "reject");
-            assert.equal(f.events.at(-1)!.type, "error");
-            assert.match(String(f.events.at(-1)!.message), /managed/i);
+            const permission = f.protocol.permission(request, invocation);
+            const event = f.events.at(-1)!;
+            assert.equal(event.type, "permission");
+            assert.equal(event.canAllowAllForSession, false);
+            assert.match(String(event.details), /managed|sandbox/i);
+            f.reply({ type: "permission-response", id: event.id, approved: true, allowAllForSession: true });
+            assert.equal(f.events.at(-1)!.type, "error", "A policy prompt cannot opt into allow-all.");
+            assert.equal(f.protocol.waitingForInput, true);
+            f.reply({ type: "permission-response", id: event.id, approved: true });
+            assert.deepEqual(await permission, { kind: "approve-once", approvedInteractively: true });
             assert.equal(f.protocol.waitingForInput, false);
         }
-        assert.equal(f.events.length, 3);
     } finally { f.protocol.close(); }
 });
 
-test("desktop allow-all does not assert per-request interactive approval", async () => {
+test("Allow all from a prompt releases only ordinary queued permissions, not policy requests or questions", async () => {
     const f = protocolFixture();
     try {
-        assert.deepEqual(await f.protocol.permission(
-            { ...shellPermission(), requestSandboxBypass: true }, permissionInvocation,
-        ), { kind: "approve-once" });
-        assert.deepEqual(f.events, []);
+        const first = f.protocol.permission(shellPermission(), permissionInvocation);
+        const second = f.protocol.permission(desktopPermissionRequests.write, permissionInvocation);
+        const managed = f.protocol.permission({ ...desktopPermissionRequests.read, managedApprovalRequired: true }, permissionInvocation);
+        const question = f.protocol.question({ question: "Continue?", choices: ["Yes"] });
+        const [firstEvent, secondEvent, managedEvent, questionEvent] = f.events;
+        f.reply({ type: "permission-response", id: firstEvent.id, approved: true, allowAllForSession: true });
+        assert.deepEqual(await first, { kind: "approve-once", approvedInteractively: true });
+        assert.deepEqual(await second, { kind: "approve-once" }, "Queued actions were not individually approved.");
+        assert.equal(f.protocol.permissionMode, "allow-all");
+        assert.deepEqual(f.events.filter((event) => event.type === "permission-resolved"),
+            [{ type: "permission-resolved", id: secondEvent.id }]);
+        assert.equal(f.protocol.waitingForInput, true);
+        f.reply({ type: "permission-response", id: managedEvent.id, approved: false });
+        f.reply({ type: "question-response", id: questionEvent.id, answer: "Yes" });
+        assert.deepEqual(await managed, { kind: "reject" });
+        assert.deepEqual(await question, { answer: "Yes", wasFreeform: false });
+        f.reply({ type: "permission-response", id: secondEvent.id, approved: true, allowAllForSession: true });
+        assert.equal(f.events.at(-1)!.type, "error", "Late dialog replies cannot authorize another request.");
+        assert.equal(f.protocol.waitingForInput, false);
+    } finally { f.protocol.close(); }
+});
+
+test("desktop mode revocation fences pending and in-flight automatic approvals", async () => {
+    const f = protocolFixture();
+    try {
+        const pending = f.protocol.permission(shellPermission(), permissionInvocation);
+        const oldId = f.events.at(-1)!.id;
+        f.reply({ type: "set-permission-mode", mode: "allow-all" });
+        f.reply({ type: "set-permission-mode", mode: "ask" });
+        await Promise.resolve();
+        const newEvent = f.events.at(-1)!;
+        assert.equal(newEvent.type, "permission");
+        assert.notEqual(newEvent.id, oldId);
+        f.reply({ type: "permission-response", id: newEvent.id, approved: false });
+        assert.deepEqual(await pending, { kind: "reject" });
+        f.reply({ type: "set-permission-mode", mode: "allow-all" });
+        const automatic = f.protocol.permission(shellPermission(), permissionInvocation);
+        f.reply({ type: "set-permission-mode", mode: "ask" });
+        await Promise.resolve();
+        assert.equal(f.events.at(-1)!.type, "permission");
+        f.reply({ type: "permission-response", id: f.events.at(-1)!.id, approved: false });
+        assert.deepEqual(await automatic, { kind: "reject" });
+    } finally { f.protocol.close(); }
+});
+
+test("desktop invalid replies and oversized permission details cannot grant approval", async () => {
+    const f = protocolFixture();
+    try {
+        f.reply({ type: "set-permission-mode", mode: "always" });
+        assert.equal(f.protocol.permissionMode, "ask");
+        assert.equal(f.events.at(-1)!.type, "error");
+        const pending = f.protocol.permission(shellPermission(), permissionInvocation);
+        const id = f.events.at(-1)!.id;
+        for (const response of [{ approved: "yes" }, { approved: false, allowAllForSession: true },
+            { approved: true, allowAllForSession: "yes" }]) {
+            f.reply({ type: "permission-response", id, ...response });
+            assert.equal(f.protocol.waitingForInput, true);
+            assert.equal(f.protocol.permissionMode, "ask");
+            assert.equal(f.events.at(-1)!.type, "error");
+        }
+        f.reply({ type: "permission-response", id, approved: false });
+        assert.deepEqual(await pending, { kind: "reject" });
+        assert.equal((await f.protocol.permission(shellPermission("x".repeat(64 * 1024)), permissionInvocation)).kind, "reject");
+        assert.match(String(f.events.at(-1)!.message), /too large/);
+        assert.equal(f.protocol.waitingForInput, false);
     } finally { f.protocol.close(); }
 });
 

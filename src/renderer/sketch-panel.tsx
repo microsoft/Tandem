@@ -2,16 +2,16 @@ import {
   createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState,
   type KeyboardEvent, type PointerEvent, type ReactNode,
 } from "react";
-import { Toggle } from "radix-ui";
+import { Popover, Toggle, ToggleGroup } from "radix-ui";
 import {
-  ArrowRight, Check, Circle, Minus, Pencil, PenTool, Plus, Redo2, RefreshCw, Save, Sparkles, Spline, Square, Trash2, Type, Undo2,
+  ArrowRight, Check, ChevronDown, Circle, History, Minus, PanelRight, Pencil, PenTool, Plus, Redo2, RefreshCw, Save, Send, Sparkles, Spline, Square, Trash2, Type, Undo2, Workflow, X,
 } from "lucide-react";
 import { validateSketchDocument } from "../sketch.js";
 import type { SketchCurve, SketchDocument, SketchRevision, SketchScreen, SketchShape, SketchState, SketchTransition } from "../sketch.js";
 import { sketchPathData } from "../sketch-path.js";
 import { createCurveShape, createScreen, createShape, parsePathPoints, renderSketchPng, resizeScreen, setPathPoints, setShapeBounds, shapeBounds, SketchEditor, SKETCH_SIZE_PRESETS } from "./sketch-editor.js";
 import { SketchViewport } from "./sketch-viewport.js";
-import { SpeechTextarea } from "./speech-textarea.js";
+import { SpeechTextarea, useSpeechCoordinator } from "./speech-textarea.js";
 import { SketchLivePanel } from "./sketch-live-panel.js";
 import { sketchLiveContext } from "./sketch-live-context.js";
 import type { SketchLiveSessionFactory } from "./sketch-live-session.js";
@@ -48,6 +48,15 @@ const errorMessage = (cause: unknown) => cause instanceof Error ? cause.message 
 
 interface FieldDraft { value: string; error: string }
 interface FieldEdit { key: string; value: string; keepInput?: boolean }
+interface RequestHistoryItem {
+  id: string;
+  requestId: string;
+  at: string;
+  kind: "generate" | "save" | "approve" | "revise";
+  request: string;
+  response: string;
+  status: "running" | "success" | "error";
+}
 interface LoadState {
   loading: boolean;
   baseRevision: SketchRevision | null;
@@ -153,9 +162,15 @@ const colorChoices = [
   ["none", "None"], ["#ffffff", "White"], ["#eeeeee", "Light gray"],
   ["#999999", "Gray"], ["#333333", "Dark gray"], ["#000000", "Black"],
 ] as const;
+const sidePanes = [
+  { id: "properties", label: "Object properties", target: "sketch-object-properties", Icon: PanelRight },
+  { id: "transitions", label: "Screen transitions", target: "sketch-screen-transitions", Icon: Workflow },
+  { id: "history", label: "Revision history", target: "sketch-revision-history", Icon: History },
+] as const;
 
 export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchLiveSessionFactory } = {}) {
   const ui = useUi();
+  const speech = useSpeechCoordinator();
   const { state, pending, canEdit, guidance } = ui;
   const action = useAction("sketch");
   const reportCompletion = useContext(SketchCompletionContext);
@@ -169,11 +184,17 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
   const draftsRef = useRef(drafts);
   const [selectedScreen, setSelectedScreen] = useState("");
   const [selectedShape, setSelectedShape] = useState("");
+  const [sidePane, setSidePane] = useState<"" | "properties" | "transitions" | "history">("");
+  const propertiesOpen = sidePane === "properties";
   const [drawing, setDrawing] = useState(false);
   const [gesture, setGesture] = useState<Gesture | null>(null);
   const gestureRef = useRef(gesture);
   const [instruction, setInstruction] = useDraft("sketch:instruction", "");
   const [voiceProvider, setVoiceProvider] = useDraft<"azure-speech" | "gpt-live">("sketch:voice-provider", "azure-speech");
+  const [voiceSettingsOpen, setVoiceSettingsOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [requestHistory, setRequestHistory] = useState<RequestHistoryItem[]>([]);
+  const [clearedWorkerError, setClearedWorkerError] = useState("");
   const instructionInput = useRef<HTMLTextAreaElement>(null);
   const instructionRef = useRef(instruction);
   instructionRef.current = instruction;
@@ -212,8 +233,10 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
     && !skipped && !pending && !hasActiveJobs(state) && !action.busy && !loadState.loading
     && !gesture && loadState.loadedKey !== null && loadState.failedKey !== key && (!remoteChanged || dirty || loadState.conflict);
   const worker = ["generate-sketch", "revise-sketch"].includes(state.processing?.action) ? state.processing : null;
+  const workerErrorKey = worker?.status === "error" ? JSON.stringify([worker.requestId ?? "", worker.message ?? "", worker.answer ?? ""]) : "";
+  const workerErrorCleared = Boolean(workerErrorKey && clearedWorkerError === workerErrorKey);
   const failedInstruction = worker?.action === "revise-sketch" && worker.status === "error" && typeof worker.answer === "string"
-    ? worker.answer.trim() : "";
+    && !workerErrorCleared ? worker.answer.trim() : "";
   const retryInstruction = retryDraft || failedInstruction;
   const completionBlocked = hasActiveJobs(state) || action.busy || loadState.loading || dirty || conflict || !available || Boolean(skipped)
     || loadState.loadedKey !== key || loadState.failedKey === key || emptyScreens || !isSketchRevisionApproved(state.sketch);
@@ -255,11 +278,59 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
     return loadRef.current.conflict || (loadRef.current.loadedKey !== null
       && revisionIdentity(loadRef.current.baseRevision) !== revisionIdentity(stateRef.current.sketch.current));
   }
+  function recordHistory(item: RequestHistoryItem) {
+    setRequestHistory((items) => [item, ...items.filter((entry) => entry.id !== item.id)].slice(0, 25));
+  }
+  function updateHistory(id: string, change: Partial<RequestHistoryItem>) {
+    setRequestHistory((items) => items.map((item) => item.id === id ? { ...item, ...change } : item));
+  }
+  function requestLabel(kind: RequestHistoryItem["kind"], value: string) {
+    if (kind === "revise") return value || "Revise drawings";
+    if (kind === "generate") return editor.document ? "Regenerate drawings" : "Generate drawings";
+    if (kind === "approve") return "Approve drawings and continue";
+    return "Save drawings";
+  }
+  function responseLabel(kind: RequestHistoryItem["kind"], result: UiState | undefined) {
+    if (kind === "save") return `Saved ${result?.sketch.current ? `revision ${result.sketch.current.number}` : "drawings"}.`;
+    if (kind === "approve") return "Approved drawings and continued to the next stage.";
+    const processing = result?.processing;
+    if (processing?.message) return processing.message;
+    return kind === "revise" ? "Revision request queued." : "Drawing generation queued.";
+  }
 
   useLayoutEffect(() => {
     reportCompletion(completionBlocked);
   }, [completionBlocked, reportCompletion]);
   useEffect(() => () => reportCompletion(true), [reportCompletion]);
+  useEffect(() => {
+    setRequestHistory([]);
+    setHistoryOpen(false);
+    setRetryDraft("");
+    setClearedWorkerError("");
+  }, [identityOf(state)]);
+  useEffect(() => {
+    if (!worker?.requestId) return;
+    const kind = worker.action === "revise-sketch" ? "revise" : "generate";
+    const requestText = typeof worker.answer === "string" && worker.answer.trim()
+      ? worker.answer.trim() : kind === "revise" ? "Revise drawings" : "Generate drawings";
+    const status = worker.status === "error" ? "error" : worker.status === "success" ? "success" : "running";
+    const response = worker.message || (status === "error" ? "Drawing request failed."
+      : status === "success" ? "Drawing request completed." : "Drawing request is running.");
+    const id = `worker:${worker.requestId}`;
+    setRequestHistory((items) => {
+      const existing = items.find((item) => item.requestId === worker.requestId || item.id === id);
+      if (existing) {
+        return items.map((item) => item === existing ? {
+          ...item, id, requestId: worker.requestId, kind, request: requestText, response, status,
+        } : item);
+      }
+      const item: RequestHistoryItem = {
+        id, requestId: worker.requestId, kind, request: requestText, response, status,
+        at: new Date().toISOString(),
+      };
+      return [item, ...items].slice(0, 25);
+    });
+  }, [worker?.requestId, worker?.action, worker?.status, worker?.message, worker?.answer]);
   useEffect(() => {
     mounted.current = true;
     const beforeUnload = (event: BeforeUnloadEvent) => {
@@ -440,11 +511,24 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
     const identity = identityOf(stateRef.current);
     const expectedGeneration = signal ? stateRef.current.generation : undefined;
     const startRevision = loadRef.current.baseRevision;
+    const historyId = `${Date.now()}-${kind}`;
+    recordHistory({
+      id: historyId, requestId: "", kind, at: new Date().toISOString(),
+      request: requestLabel(kind, requestedInstruction),
+      response: "Request submitted.",
+      status: "running",
+    });
+    action.setError("");
+    setRetryDraft("");
+    if (workerErrorKey) setClearedWorkerError(workerErrorKey);
     operation.current = true;
     return action.run(async () => {
       try {
         if (kind === "generate" && editor.document
-          && !await latest.current.confirm("Generate a new drawing revision? Your saved revision remains in history.", "Regenerate drawings")) return;
+          && !await latest.current.confirm("Generate a new drawing revision? Your saved revision remains in history.", "Regenerate drawings")) {
+          updateHistory(historyId, { response: "Request cancelled.", status: "success" });
+          return;
+        }
         ensureEffort(identity);
         ensureRevision(startRevision);
         ensureSketchWritable();
@@ -472,19 +556,28 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
           }
           ensureSketchWritable();
           await post("/api/stage/complete", { stageId: "sketch" }, identity);
+          updateHistory(historyId, { response: responseLabel("approve", stateRef.current), status: "success" });
         } else if (kind !== "save") {
           const result = await post("/api/sketch", {
             action: kind, expectedRevision: loadRef.current.baseRevision?.id ?? null,
             ...(kind === "revise" ? { instruction: requestedInstruction } : {}),
             ...(expectedGeneration !== undefined ? { expectedGeneration } : {}),
           }, identity);
+          updateHistory(historyId, {
+            requestId: typeof result.processing?.requestId === "string" ? result.processing.requestId : "",
+            response: responseLabel(kind, result),
+            status: ["error", "failed"].includes(result.processing?.status) ? "error" : "running",
+          });
           if (kind === "revise") {
             setRetryDraft("");
             if (retry === undefined && instructionRef.current.trim() === requestedInstruction) setInstruction("");
           }
           return result;
+        } else {
+          updateHistory(historyId, { response: responseLabel("save", stateRef.current), status: "success" });
         }
       } catch (cause) {
+        updateHistory(historyId, { response: errorMessage(cause), status: "error" });
         if (mounted.current && identity === identityOf(stateRef.current)
           && revisionIdentity(loadRef.current.baseRevision) !== revisionIdentity(stateRef.current.sketch.current) && isDirty()) {
           updateLoad({ conflict: true });
@@ -677,10 +770,14 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
     : document && emptyScreens ? "Add at least one shape to every screen before approving. Empty screens can be saved as drafts."
     : dirty ? "Unsaved drawings — save before leaving this browser. Switching tabs keeps your edits."
     : isSketchRevisionApproved(state.sketch) ? "Drawings approved. Finish Sketch to continue if the stage has not advanced."
-    : document ? "Review every screen, edit the drawings, then approve to continue to Prototype."
+    : document ? ""
     : "Generate drawings from the requirements DAG, or add a screen to draw your own.";
   const message = action.error || incoming.error || Object.values(drafts).find((draft) => draft.error)?.error
-    || (worker?.status === "error" ? worker.message || "Drawing generation failed. Retry explicitly." : "");
+    || (worker?.status === "error" && !workerErrorCleared ? worker.message || "Drawing generation failed. Retry explicitly." : "");
+  const activeError = Boolean(message || retryInstruction);
+  const boardHelp = livePreview
+    ? "Live preview is read only. Browse screens and shapes, or zoom while drawing continues. Nothing here is saved or approved yet."
+    : drawing ? "Freehand: drag on the board to draw. Select Freehand again to stop." : "";
   const preview = screen && {
     ...screen,
     shapes: [
@@ -696,28 +793,37 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
   const canvasPreset = SKETCH_SIZE_PRESETS.find((size) => size.width === screen?.width && size.height === screen?.height);
   const revisions = [...new Map([...state.sketch.history, ...(state.sketch.current ? [state.sketch.current] : [])]
     .map((revision) => [revision.id, revision])).values()].reverse();
+  const composer = {
+    voiceOptions: <Popover.Trigger asChild>
+      <button id="sketch-voice-options" className="voice-options-toggle" type="button" aria-label="Voice settings" title="Voice settings">
+        <ChevronDown size={14} aria-hidden="true" />
+      </button>
+    </Popover.Trigger>,
+    actions: <>
+      <button id="sketch-revise" className="plan-button sketch-send" type="submit"
+        title="Send drawing revision (Ctrl+Enter)"
+        disabled={!writable || !document || conflict || !instruction.trim() || invalidFields || speech.active?.kind === "capture"}>
+        <Send size={15} aria-hidden="true" /> Send
+      </button>
+      <button id="sketch-history-toggle" className="voice-settings-button sketch-history-toggle" type="button"
+        data-status={activeError ? "error" : "idle"}
+        aria-label={activeError ? "Open request history and drawing errors" : "Open request history"}
+        title={activeError ? "Drawing request failed. Open request history." : "Request history"}
+        aria-expanded={historyOpen} aria-controls="sketch-request-history-pane"
+        onClick={() => setHistoryOpen((open) => !open)}><History size={17} aria-hidden="true" /></button>
+    </>,
+  };
+  const sendShortcut = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      event.currentTarget.form?.requestSubmit();
+    }
+  };
 
-  return <section onKeyDown={keydown}>
-    <div className="sketch-heading">
-      <div><strong>Screen sketches</strong><p className="muted">Review structure and navigation before building the prototype.</p></div>
-      <div className="sketch-actions">
-        <button id="sketch-generate" className="plan-button secondary" type="button"
-          disabled={!writable || conflict || dirty} onClick={() => void submit("generate")}>
-          <Sparkles size={14} aria-hidden="true" /> {document ? "Regenerate drawings" : "Generate drawings"}
-        </button>
-        <button id="sketch-save" className="plan-button secondary" type="button"
-          disabled={!writable || !document || !editor.dirty || conflict || invalidFields} onClick={() => void submit("save")}>
-          <Save size={14} aria-hidden="true" /> Save drawings
-        </button>
-        <button id="sketch-approve" className="plan-button" type="button"
-          disabled={!writable || emptyScreens || conflict || state.sketch.status === "stale" || invalidFields}
-          onClick={() => void submit("approve")}><Check size={14} aria-hidden="true" /> Approve drawings and continue</button>
-      </div>
-    </div>
-    <p id="sketch-status" className="muted" role="status" aria-live="polite">{status}</p>
-    <p id="sketch-message" className="sketch-error" role="alert" hidden={!message}>{message}</p>
-    <div className="sketch-actions">
-      <button id="sketch-add-screen" type="button" disabled={!writable || (document?.screens.length ?? 0) >= 8 || !acceptedDecisionIds(state).length}
+  return <section className="sketch-stage" onKeyDown={keydown}>
+    <div className="sketch-heading sketch-header-actions" role="group" aria-label="Sketch actions">
+      <button id="sketch-add-screen" className="sketch-icon-button" type="button" title="Add screen" aria-label="Add screen"
+        disabled={!writable || (document?.screens.length ?? 0) >= 8 || !acceptedDecisionIds(state).length}
         onClick={() => {
           let created = "";
           if (edit((draft) => {
@@ -725,14 +831,32 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
             draft.screens.push(item);
             created = item.id;
           })) { setSelectedScreen(created); setSelectedShape(""); }
-        }}><Plus size={14} aria-hidden="true" /> Add screen</button>
-      <button id="sketch-undo" type="button" disabled={!writable || (!editor.canUndo && !invalidFields)} onClick={undo}>
-        <Undo2 size={14} aria-hidden="true" /> Undo</button>
-      <button id="sketch-redo" type="button" disabled={!writable || !editor.canRedo || invalidFields} onClick={redo}>
-        <Redo2 size={14} aria-hidden="true" /> Redo</button>
-      <button id="sketch-reload" type="button" disabled={action.busy || loadState.loading || Boolean(gesture) || hasActiveJobs(state) || !state.sketch}
-        onClick={() => void reload()}><RefreshCw size={14} aria-hidden="true" /> {conflict ? "Discard local edits & load latest" : "Reload saved drawings"}</button>
+        }}><Plus size={16} aria-hidden="true" /></button>
+      <button id="sketch-undo" className="sketch-icon-button" type="button" title="Undo" aria-label="Undo"
+        disabled={!writable || (!editor.canUndo && !invalidFields)} onClick={undo}>
+        <Undo2 size={16} aria-hidden="true" /></button>
+      <button id="sketch-redo" className="sketch-icon-button" type="button" title="Redo" aria-label="Redo"
+        disabled={!writable || !editor.canRedo || invalidFields} onClick={redo}>
+        <Redo2 size={16} aria-hidden="true" /></button>
+      <button id="sketch-reload" className="sketch-icon-button" type="button"
+        title={conflict ? "Discard local edits & load latest" : "Reload saved drawings"}
+        aria-label={conflict ? "Discard local edits & load latest" : "Reload saved drawings"}
+        disabled={action.busy || loadState.loading || Boolean(gesture) || hasActiveJobs(state) || !state.sketch}
+        onClick={() => void reload()}><RefreshCw size={16} aria-hidden="true" /></button>
+      <button id="sketch-generate" className="sketch-icon-button" type="button"
+        title={document ? "Regenerate drawings" : "Generate drawings"} aria-label={document ? "Regenerate drawings" : "Generate drawings"}
+        disabled={!writable || conflict || dirty} onClick={() => void submit("generate")}>
+        <Sparkles size={16} aria-hidden="true" />
+      </button>
+      <button id="sketch-save" className="sketch-icon-button" type="button" title="Save drawings" aria-label="Save drawings"
+        disabled={!writable || !document || !editor.dirty || conflict || invalidFields} onClick={() => void submit("save")}>
+        <Save size={16} aria-hidden="true" />
+      </button>
+      <button id="sketch-approve" className="plan-button" type="button"
+        disabled={!writable || emptyScreens || conflict || state.sketch.status === "stale" || invalidFields}
+        onClick={() => void submit("approve")}><Check size={14} aria-hidden="true" /> Approve drawings and continue</button>
     </div>
+    <p id="sketch-status" className="muted" role="status" aria-live="polite" hidden={!status}>{status}</p>
     <p id="sketch-empty" className="sketch-empty" hidden={Boolean(screen)}>No drawings yet. Generate a first draft or add a screen to begin.</p>
     <div id="sketch-workspace" className="sketch-workspace" hidden={!screen}>
       <aside className="sketch-sidebar" aria-label="Sketch screens and properties">
@@ -771,9 +895,23 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
           </div>
         </details>
       </aside>
-      <div className="sketch-main">
+      <div className="sketch-main" data-side-pane-open={sidePane !== ""}>
         <SketchViewport context={JSON.stringify([identityOf(state), screen?.id])} width={screen?.width ?? 960}
-          height={screen?.height ?? 640} blocked={!screen || Boolean(gesture)} sizeControl={
+          height={screen?.height ?? 640} blocked={!screen || Boolean(gesture)} viewActions={
+            <ToggleGroup.Root id="sketch-pane-selector" className="sketch-pane-controls" type="single"
+              value={sidePane} aria-label="Sketch side pane" disabled={!screen || Boolean(gesture)}
+              onValueChange={(value) => {
+                if (value === "" || value === "properties" || value === "transitions" || value === "history") setSidePane(value);
+              }}>
+              {sidePanes.map(({ id, label, target, Icon }) => <ToggleGroup.Item key={id} id={`sketch-toggle-${id}`}
+                className="sketch-icon-button" type="button" value={id}
+                title={`${sidePane === id ? "Hide" : "Show"} ${label.toLowerCase()}`}
+                aria-label={`${sidePane === id ? "Hide" : "Show"} ${label.toLowerCase()}`}
+                aria-expanded={sidePane === id} aria-controls={target}>
+                <Icon size={20} aria-hidden="true" />
+              </ToggleGroup.Item>)}
+            </ToggleGroup.Root>
+          } sizeControl={
             <select id="sketch-size-preset" className="sketch-size-preset" aria-label="Canvas size" title="Canvas size"
               disabled={!writable || !screen} value={canvasPreset?.id ?? "custom"}
               onChange={(event) => editScreen((item) => {
@@ -804,19 +942,17 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
             <Pencil size={20} aria-hidden="true" />
           </Toggle.Root>
         </div>
-        } help={<p id="sketch-board-help" className="muted">{livePreview
-          ? "Live preview is read only. Browse screens and shapes, or zoom while drawing continues. Nothing here is saved or approved yet."
-          : drawing
-          ? "Freehand: drag on the board to draw. Select Freehand again to stop."
-          : "Select a shape on the board or in the list. Drag to move; drag path points to reshape. Use arrow keys to nudge, or edit coordinates below."}</p>}>
+        } help={boardHelp ? <p id="sketch-board-help" className="muted">{boardHelp}</p> : null}>
           <div ref={board} id="sketch-board" className={`sketch-board${drawing ? " sketch-drawing" : ""}`}
-            tabIndex={0} role="group" aria-label={livePreview ? "Live preview screen drawing (read only)" : "Editable screen drawing"} aria-describedby="sketch-board-help"
+            tabIndex={0} role="group" aria-label={livePreview ? "Live preview screen drawing (read only)" : "Editable screen drawing"} aria-describedby={boardHelp ? "sketch-board-help" : undefined}
             onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp}
             onPointerCancel={(event) => { if (gestureRef.current?.id === event.pointerId) cancelGesture(); }}
             onLostPointerCapture={(event) => { if (gestureRef.current?.id === event.pointerId) cancelGesture(); }}>
             {preview && <SketchSvg screen={preview} selectedShape={selectedShape} editPoints={!drawing && (writable || Boolean(gesture))} />}
           </div>
         </SketchViewport>
+        <aside id="sketch-object-properties" className="sketch-side-pane" aria-label="Object properties" hidden={!propertiesOpen}>
+        <h3>Object properties</h3>
         <fieldset className="sketch-inspector">
           <legend id="sketch-shape-label">{shape ? `${shape.kind} · ${shape.id}` : "Select a shape to edit"}</legend>
           {(["x", "y", "width", "height"] as const).map((field) => <label key={field}>
@@ -885,10 +1021,9 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
             {" "}Drag knots or control points on the board, or edit their coordinates here. Paths allow 2-512 points.
           </p>
         </fieldset>}
-      </div>
-    </div>
-    <details className="sketch-details">
-      <summary>Screen transitions</summary>
+        </aside>
+        <aside id="sketch-screen-transitions" className="sketch-side-pane" aria-label="Screen transitions" hidden={sidePane !== "transitions"}>
+      <h3>Screen transitions</h3>
       <div id="sketch-transitions">
         {document?.transitions.map((transition) => <div key={transition.id} className="sketch-transition">
           {(["fromScreenId", "toScreenId", "trigger", "description"] as const).map((field) => {
@@ -922,46 +1057,88 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
             trigger: "Continue", description: "",
           });
         })}><Plus size={14} aria-hidden="true" /> Add transition</button>
-    </details>
-    <section id="sketch-failed-revision" className="sketch-details" aria-label="Failed drawing revision" hidden={!retryInstruction}>
-      <p id="sketch-failed-instruction" className="muted">{retryInstruction ? "Failed revision instruction: " + retryInstruction : ""}</p>
-      <button id="sketch-retry-revision" type="button"
-        disabled={!writable || !document || conflict || !retryInstruction || invalidFields} onClick={() => void submit("revise", retryInstruction)}>
-        <RefreshCw size={14} aria-hidden="true" /> Retry same revision</button>
-      <p className="muted">Retries the original instruction against these drawings. Local edits are saved first; any new instruction below is kept.</p>
+        </aside>
+        <aside id="sketch-revision-history" className="sketch-side-pane" aria-label="Revision history" hidden={sidePane !== "history"}>
+          <h3>Revision history</h3>
+          <ul id="sketch-history" className="muted">{revisions.map((revision) => <li key={revision.id}>
+            {`Revision ${revision.number} · ${revision.source} · ${revision.createdAt}`}
+            {revision.id === state.sketch.approved?.revisionId ? " · approved" : ""}
+            {revision.id === state.sketch.current?.id ? " · current" : ""}
+          </li>)}</ul>
+        </aside>
+      </div>
+    </div>
+    <div className="sketch-input-pane">
+    <section id="sketch-request-history-pane" className="sketch-request-history-pane"
+      aria-label="Drawing request history" hidden={!historyOpen}>
+      <div className="sketch-history-heading">
+        <h3>Request history</h3>
+        <button type="button" aria-label="Close request history" onClick={() => setHistoryOpen(false)}>
+          <X size={14} aria-hidden="true" />
+        </button>
+      </div>
+      <p id="sketch-message" className="sketch-error" role="alert" hidden={!message}>{message}</p>
+      <section id="sketch-failed-revision" className="sketch-details" aria-label="Failed drawing revision" hidden={!retryInstruction}>
+        <p id="sketch-failed-instruction" className="muted">{retryInstruction ? "Failed revision instruction: " + retryInstruction : ""}</p>
+        <button id="sketch-retry-revision" type="button"
+          disabled={!writable || !document || conflict || !retryInstruction || invalidFields} onClick={() => void submit("revise", retryInstruction)}>
+          <RefreshCw size={14} aria-hidden="true" /> Retry same revision</button>
+        <p className="muted">Retries the original instruction against these drawings. Local edits are saved first; any new instruction below is kept.</p>
+      </section>
+      <ol id="sketch-request-history" className="sketch-request-history">
+        {requestHistory.map((item) => <li key={item.id} data-status={item.status}>
+          <div><strong>{item.kind === "revise" ? "Revision" : item.kind[0].toUpperCase() + item.kind.slice(1)}</strong>
+            <span>{new Date(item.at).toLocaleTimeString()}</span></div>
+          <p><b>Request:</b> {item.request}</p>
+          <p><b>Response:</b> {item.response}</p>
+        </li>)}
+      </ol>
+      <p className="muted" hidden={Boolean(requestHistory.length || message || retryInstruction)}>
+        Send a drawing revision to see its request and response history here.
+      </p>
     </section>
-    <form id="sketch-revise-form" className="sketch-revise-form" onSubmit={(event) => { event.preventDefault(); void submit("revise"); }}>
-      <label htmlFor="sketch-voice-provider">Sketch voice provider</label>
-      <select id="sketch-voice-provider" value={voiceProvider} onChange={(event) => {
-        if (event.target.value === "azure-speech" || event.target.value === "gpt-live") setVoiceProvider(event.target.value);
-      }}>
-        <option value="azure-speech">Azure Speech (dictation)</option>
-        <option value="gpt-live">GPT-live (conversation and drawing edits)</option>
-      </select>
-      <label htmlFor="sketch-instruction">Ask AI to revise these drawings</label>
+    <Popover.Root open={voiceSettingsOpen} onOpenChange={setVoiceSettingsOpen}>
+    <form id="sketch-revise-form" className="sketch-revise-form sketch-composer" onSubmit={(event) => { event.preventDefault(); void submit("revise"); }}>
+      <label className="visually-hidden" htmlFor="sketch-instruction">Describe a drawing change</label>
       {voiceProvider === "azure-speech"
-        ? <SpeechTextarea id="sketch-instruction" rows={2} maxLength={4000} disabled={!writable}
-          value={instruction} onValueChange={setInstruction} placeholder="Describe a layout, label, screen, or navigation change." />
-        : <><textarea ref={instructionInput} id="sketch-instruction" rows={2} maxLength={4000} disabled={!writable}
-          value={instruction} onChange={(event) => setInstruction(event.target.value)}
-          placeholder="Type a revision, or start GPT-live to discuss and edit by voice." />
-          <SketchLivePanel identity={identityOf(state)} input={instructionInput} createSession={createLiveSession}
+        ? <SpeechTextarea ref={instructionInput} id="sketch-instruction" rows={1} maxLength={4000} disabled={!writable}
+          value={instruction} onValueChange={setInstruction} onKeyDown={sendShortcut} composer={composer}
+          placeholder="Describe a drawing change... (Ctrl+Enter)" />
+        : <SketchLivePanel identity={identityOf(state)} input={instructionInput} createSession={createLiveSession}
             enabled={canEdit("sketch") && state.provider?.canSubmitAnswers !== false && !state.effortReset
               && !skipped && !conflict && !invalidFields}
             canStart={writable && Boolean(document)}
-            context={sketchLiveContext(state, editor.document, selectedScreen, selectedShape)} revise={reviseByVoice} />
-        </>}
-      <button id="sketch-revise" className="plan-button secondary" type="submit"
-        disabled={!writable || !document || conflict || !instruction.trim() || invalidFields}>
-        <Sparkles size={14} aria-hidden="true" /> Revise drawings</button>
-      <p className="muted">Local edits are saved first. AI creates a new revision; approval is always explicit.</p>
+            context={sketchLiveContext(state, editor.document, selectedScreen, selectedShape)} revise={reviseByVoice}
+            composer={{ ...composer, input: (caption) => <textarea ref={instructionInput} id="sketch-instruction"
+              rows={caption === null ? 1 : 2} maxLength={caption === null ? 4000 : undefined}
+              disabled={caption === null && !writable} readOnly={caption !== null} data-voice-caption={caption !== null}
+              aria-label={caption === null ? undefined : "Voice transcript: you and GPT-live"}
+              aria-describedby="sketch-live-status"
+              value={caption ?? instruction} onChange={(event) => { if (caption === null) setInstruction(event.target.value); }}
+              onKeyDown={sendShortcut}
+              placeholder="Describe a drawing change... (Ctrl+Enter)" /> }} />}
+      <Popover.Portal>
+        <Popover.Content id="sketch-voice-settings" className="voice-settings-popover" side="top" align="start"
+          sideOffset={8} collisionPadding={12} aria-labelledby="sketch-voice-settings-title">
+          <div className="voice-settings-heading">
+            <h3 id="sketch-voice-settings-title">Voice settings</h3>
+            <Popover.Close asChild><button type="button" aria-label="Close voice settings"><X size={16} aria-hidden="true" /></button></Popover.Close>
+          </div>
+          <label htmlFor="sketch-voice-provider">Voice provider</label>
+          <select id="sketch-voice-provider" value={voiceProvider} disabled={Boolean(speech.active)} onChange={(event) => {
+            if (event.target.value === "azure-speech" || event.target.value === "gpt-live") setVoiceProvider(event.target.value);
+          }}>
+            <option value="azure-speech">Azure dictation</option>
+            <option value="gpt-live">GPT-live conversation</option>
+          </select>
+          <p role="status" aria-live="polite">{speech.active?.kind === "capture" ? "Voice session in progress" : "Microphone off"}</p>
+          <p className="muted">{voiceProvider === "azure-speech"
+            ? "Use Sign in in the top bar for Azure Speech. Audio goes to Azure; dictation does not send your message. Language and Azure resources use the existing host configuration."
+            : "GPT-live uses Azure CLI sign-in and sends audio and sketch context to Azure. Spoken drawing requests can create revisions; approval stays manual."}</p>
+        </Popover.Content>
+      </Popover.Portal>
     </form>
-    <details className="sketch-details"><summary>Revision history</summary>
-      <ul id="sketch-history" className="muted">{revisions.map((revision) => <li key={revision.id}>
-        {`Revision ${revision.number} · ${revision.source} · ${revision.createdAt}`}
-        {revision.id === state.sketch.approved?.revisionId ? " · approved" : ""}
-        {revision.id === state.sketch.current?.id ? " · current" : ""}
-      </li>)}</ul>
-    </details>
+    </Popover.Root>
+    </div>
   </section>;
 }

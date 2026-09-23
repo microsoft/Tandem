@@ -5,13 +5,14 @@ const MIN_ZOOM = 0.01;
 const MAX_ZOOM = 8;
 type ZoomMode = "fit" | "actual" | "custom";
 
-export function SketchViewport({ context, width, height, blocked, sizeControl, tools, help, children }: {
+export function SketchViewport({ context, width, height, blocked, sizeControl, tools, viewActions, help, children }: {
   context: string;
   width: number;
   height: number;
   blocked: boolean;
   sizeControl: ReactNode;
   tools: ReactNode;
+  viewActions?: ReactNode;
   help: ReactNode;
   children: ReactNode;
 }) {
@@ -87,7 +88,7 @@ export function SketchViewport({ context, width, height, blocked, sizeControl, t
       {tools}
       <div className="sketch-view-controls">
         {sizeControl}
-        <div id="sketch-zoom-tools" className="sketch-actions" role="group" aria-label="Canvas zoom controls">
+        <div id="sketch-zoom-tools" className="sketch-actions" role="group" aria-label="Canvas view controls">
           <button id="sketch-zoom-out" className="sketch-icon-button" type="button" title="Zoom out" aria-label="Zoom out"
             disabled={blocked || scale <= MIN_ZOOM} onClick={() => stepZoom(.8)}><ZoomOut size={20} aria-hidden="true" /></button>
           <button id="sketch-zoom-in" className="sketch-icon-button" type="button" title="Zoom in" aria-label="Zoom in"
@@ -101,6 +102,7 @@ export function SketchViewport({ context, width, height, blocked, sizeControl, t
           <button id="sketch-zoom-actual" className="sketch-icon-button" type="button" title="Actual size (100%)" aria-label="Actual size (100%)"
             aria-pressed={scale === 1} disabled={blocked} onClick={() => zoom("actual", 1)}>
             <Scan size={20} aria-hidden="true" /></button>
+          {viewActions}
         </div>
       </div>
     </div>

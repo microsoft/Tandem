@@ -25,7 +25,7 @@ async function cycle(): Promise<{ sessionId: string; snapshot: Snapshot }> {
     const child = spawn(process.execPath, [host, "--workspace", workspace], { cwd: root, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
     const reader = createInterface({ input: child.stdout });
     let stderr = "";
-    let permissionRequests = 0;
+    let permissionMode: string | undefined;
     child.stderr.on("data", (value: Buffer) => { stderr = (stderr + value.toString()).slice(-8000); });
     const exited = new Promise<number | null>((resolveExit, reject) => {
         child.once("exit", resolveExit);
@@ -49,10 +49,10 @@ async function cycle(): Promise<{ sessionId: string; snapshot: Snapshot }> {
                         reject(new Error(event.message));
                     }
                     if (event.type === "ready") resolveReady(event);
+                    if (event.type === "permission-mode") permissionMode = event.mode;
                     if (event.type === "permission") {
-                        permissionRequests++;
-                        child.stdin.write(`${JSON.stringify({ type: "permission-response", id: event.id, approved: false })}\n`);
-                        reject(new Error("The allow-all desktop backend must not emit tool-approval requests."));
+                        // The empty smoke workspace starts no agents; approve startup requests individually.
+                        child.stdin.write(`${JSON.stringify({ type: "permission-response", id: event.id, approved: true })}\n`);
                     }
                     if (event.type === "question") reject(new Error("Idle startup must not ask an agent question."));
                 } catch (error) { reject(error); }
@@ -79,7 +79,7 @@ async function cycle(): Promise<{ sessionId: string; snapshot: Snapshot }> {
         clearTimeout(timer);
         reader.close();
         assert.equal(exitCode, 0, `Desktop shutdown failed. ${stderr}`);
-        assert.equal(permissionRequests, 0, "startup, session recovery, and shutdown must not ask for tool approval");
+        assert.equal(permissionMode, "ask", "startup and resumed backends must not inherit allow-all");
     }
 }
 
@@ -106,7 +106,7 @@ async function guiCycle(reportName: string, navigations: number, overrideHost?: 
     };
     assert.equal(page.success, true);
     assert.equal(page.version, metadata.version, "the desktop version must come from package.json");
-    assert.equal(page.toolApprovalMode, "allow-all");
+    assert.equal(page.toolApprovalMode, "ask");
     assert.equal(page.rendered, true);
     assert.equal(page.topLevelNavigations, navigations, "navigate only when the selected canvas changes");
     const diagnostics = await readFile(join(workspace, ".tandem", "desktop", "desktop.log"), "utf8");
@@ -120,7 +120,29 @@ try {
     assert.equal(second.sessionId, first.sessionId, "desktop must resume its original SDK session");
     assert.equal(second.snapshot.generation, first.snapshot.generation, "restart must not reset the effort");
     if (process.argv.includes("--gui") || process.argv.includes("--dotnet")) {
-        await guiCycle("gui-smoke.json", 1);
+        // Supply isolated startup consent without teaching the native unattended UI to approve requests.
+        const startup = join(workspace, "gui-startup.mjs");
+        await writeFile(startup, `
+            import { spawn } from "node:child_process";
+            import { createInterface } from "node:readline";
+            const child = spawn(process.execPath, [${JSON.stringify(host)}, ...process.argv.slice(2)], {
+                cwd: process.cwd(), stdio: ["pipe", "pipe", "inherit"], windowsHide: true
+            });
+            process.stdin.pipe(child.stdin);
+            createInterface({ input: child.stdout }).on("line", line => {
+                const event = JSON.parse(line);
+                if (event.type !== "permission") { process.stdout.write(line + "\\n"); return; }
+                const request = JSON.parse(event.details);
+                const startupOnly = event.canAllowAllForSession === true &&
+                    ["extension-management", "extension-permission-access"].includes(request.kind) &&
+                    typeof request.extensionName === "string" && /(?:^|:)tandem$/i.test(request.extensionName);
+                if (!startupOnly) throw new Error("Unexpected non-startup permission during GUI smoke.");
+                child.stdin.write(JSON.stringify({ type: "permission-response", id: event.id, approved: true }) + "\\n");
+            });
+            child.on("error", error => { console.error(error); process.exit(1); });
+            child.on("exit", code => process.exit(code ?? 1));
+        `);
+        await guiCycle("gui-smoke.json", 1, startup);
         const fixture = join(workspace, "canvas-transition.mjs");
         await writeFile(fixture, `
             import { createServer } from "node:http";
@@ -128,6 +150,7 @@ try {
             const send = (url) => console.log(JSON.stringify({
                 type: "ready", url, sessionId: "canvas-transition", workspace: process.cwd()
             }));
+            console.log(JSON.stringify({ type: "permission-mode", mode: "ask" }));
             const page = '<title>Tandem</title><header><h1>Tandem</h1></header>' +
                 '<section id="start-panel"><form id="start-form"><input></form></section>';
             const next = createServer((_, response) => {

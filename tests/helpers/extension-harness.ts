@@ -1,6 +1,6 @@
 import { build } from "esbuild";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rm } from "node:fs/promises";
+import fs, { mkdir, readFile, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -116,6 +116,7 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
     let browserTokenRequests = 0;
     let previewHtml = '<html><meta name="tandem-prototype-id" content="sample"></html>';
     let signIn: (signal: AbortSignal) => Promise<void> = async () => {};
+    let rename = fs.rename;
     const require = createRequire(import.meta.url);
     class CanvasError extends Error {
         constructor(readonly code: string, message: string) { super(message); }
@@ -173,6 +174,7 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
                 },
             }),
             require(name: string) {
+                if (name === "node:fs/promises") return { ...fs, rename: (...args: Parameters<typeof fs.rename>) => rename(...args) };
                 if (name === "node:child_process") {
                     const childProcess = require(name);
                     return { ...childProcess, execFileSync(command: string, args: string[], options: unknown) {
@@ -199,6 +201,7 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
             if (requests.length < count) throw new Error("The expected factory dispatch was not observed.");
         };
         return { api, root, requests, logs, session, waitForRequests,
+            setRename(value: typeof fs.rename) { rename = value; },
             setPreviewHtml(value: string) { previewHtml = value; },
             browserSignIns: () => browserSignIns,
             browserTokenRequests: () => browserTokenRequests,

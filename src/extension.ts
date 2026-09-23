@@ -3469,6 +3469,7 @@ async function sketchAction(prototypeId: string, extensionId: string, value: unk
         throw new CanvasError("sketch_action_invalid", "Supply a supported drawing action and its current revision.");
     }
     await recoverRejectedFactoryLaunch(prototypeId);
+    await recoverFailedSketchRun(prototypeId);
     let dispatch: { requestId: string; question: any; answer: string; action: string } | null = null;
     const next = await withAnswerClaim(prototypeId, async () => {
         const state = await loadState(prototypeId);
@@ -5646,6 +5647,60 @@ async function recoverDefaultBatch(state, monitor = false, expectedRevision = un
     return recovered;
 }
 
+function failedSketchReceipt(state: TandemState) {
+    if (state.effortReset || state.lifecycle.currentStage !== "sketch" ||
+        state.processing?.status !== "error" || !isSketchAction(state.processing.action)) return undefined;
+    return state.factoryRuns?.find((receipt) => !receipt.terminal &&
+        receipt.generation === state.generation && receipt.requestId === state.processing.requestId);
+}
+
+async function recoverFailedSketchRun(prototypeId: string, monitor = false): Promise<TandemState> {
+    const observed = await withAnswerClaim(prototypeId, () => loadState(prototypeId));
+    const receipt = failedSketchReceipt(observed);
+    if (!receipt) return observed;
+    const processing = observed.processing;
+    if (receipt.runId && processing.runId && receipt.runId !== processing.runId) {
+        throw new AnswerRequestError(409, "The previous drawing request has conflicting factory run identities. Its saved state was preserved.");
+    }
+    const runId = processing.runId || receipt.runId;
+    let run;
+    try {
+        run = runId ? await session.factory.getRun(runId)
+            : await findAnswerFactoryRun(prototypeId, processing, { attempts: 1, observe: false });
+        if (!run?.runId || (runId && run.runId !== runId)) {
+            throw new Error("The durable factory run could not be correlated.");
+        }
+        if (monitor && !isFactoryRunTerminal(run.status)) {
+            const recoveredRunId = run.runId;
+            run = await session.factory.waitForRun(recoveredRunId);
+            if (run.runId !== recoveredRunId) throw new Error("The SDK returned a different factory run.");
+        }
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new AnswerRequestError(409, `The previous drawing job could not be verified with the SDK. Saved drawings and run ownership were preserved: ${message}`);
+    }
+    if (!isFactoryRunTerminal(run.status)) return observed;
+    return withAnswerClaim(prototypeId, async () => {
+        const current = await loadState(prototypeId);
+        const currentReceipt = failedSketchReceipt(current);
+        if (!currentReceipt || current.generation !== observed.generation ||
+            current.processing.requestId !== processing.requestId ||
+            current.processing.factoryName !== processing.factoryName ||
+            current.processing.runId !== processing.runId || currentReceipt.runId !== receipt.runId) return current;
+        // Only SDK-confirmed termination releases ownership; failure alone is not evidence.
+        const next = {
+            ...current,
+            processing: { ...current.processing, runId: run.runId },
+            factoryRuns: current.factoryRuns.map((item) => item === currentReceipt
+                ? { ...item, runId: run.runId, terminal: true } : item),
+        };
+        await persistState(next);
+        clearSketchPreview(prototypeId, processing.requestId);
+        publishState(prototypeId);
+        return next;
+    });
+}
+
 function recoverAnswerFactory(state, canSubmitAnswers) {
     if (canSubmitAnswers && !state.effortReset && state.lifecycle.currentStage === "prototype" &&
         state.prototypeFlow && state.processing?.status !== "running" && !hasActiveWork(state) &&
@@ -5659,9 +5714,14 @@ function recoverAnswerFactory(state, canSubmitAnswers) {
     if (
         !canSubmitAnswers ||
         state.effortReset ||
-        (processing?.status !== "running" && !canRecoverDefaultBatch(state)) ||
+        (processing?.status !== "running" && !canRecoverDefaultBatch(state) && !failedSketchReceipt(state)) ||
         activeAnswerRuns.has(state.prototypeId)
     ) {
+        return;
+    }
+
+    if (failedSketchReceipt(state)) {
+        trackAnswerRun(state.prototypeId, processing.requestId, recoverFailedSketchRun(state.prototypeId, true));
         return;
     }
 
@@ -10405,7 +10465,7 @@ async function handleRequest(entry, req, res) {
         return;
     }
 
-    if (["/api/speech/token", "/api/speech/sign-in"].includes(requestUrl.pathname)) {
+    if (["/api/speech/token", "/api/speech/login", "/api/speech/sign-in"].includes(requestUrl.pathname)) {
         validateSpeechTokenRequest(req, new URL(entry.url).origin);
         const body = await readRequestBody(req);
         if (Object.keys(body).length) {
@@ -10419,7 +10479,7 @@ async function handleRequest(entry, req, res) {
             sendJson(res, 409, { error: "Open the writable Tandem provider in the session that owns this effort to use speech input." });
             return;
         }
-        if (requestUrl.pathname === "/api/speech/sign-in") {
+        if (requestUrl.pathname === "/api/speech/login" || requestUrl.pathname === "/api/speech/sign-in") {
             const controller = new AbortController();
             const disconnected = () => { if (!res.writableEnded) controller.abort(); };
             res.on("close", disconnected);
@@ -12373,6 +12433,7 @@ const answerFactory = defineFactory({
                     decisionIds: current.decisionGraph.nodes.filter((node) => node.status === "answered"
                         && typeof node.answer === "string" && node.answer.trim()).map((node) => node.id),
                     subscribe: (handler) => ctx.session.on(handler),
+                    getRunDetail: () => ctx.session.factory.getRunDetail(ctx.runId),
                     run: () => ctx.agent(answerFactoryPrompt(args), {
                         label: "Stream app drawings", agent: textWorkerAgent.name, reasoningEffort: "medium",
                     }),

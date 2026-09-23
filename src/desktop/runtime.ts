@@ -14,6 +14,8 @@ export function desktopSessionConfig(
     return {
         workingDirectory: workspace,
         clientName: "Tandem Desktop",
+        streaming: true,
+        includeSubAgentStreamingEvents: true,
         enableConfigDiscovery: true,
         requestCanvasRenderer: true,
         requestExtensions: true,
@@ -71,6 +73,7 @@ export async function runDesktopRuntime(options: {
     signal: AbortSignal;
 }): Promise<void> {
     const { protocol, signal } = options;
+    protocol.send({ type: "permission-mode", mode: protocol.permissionMode });
     const ownership = await claimDesktopWorkspace(options.workspace, (error) => {
         protocol.send({ type: "error", message: `Workspace ownership was lost: ${error.message}` });
         protocol.close();

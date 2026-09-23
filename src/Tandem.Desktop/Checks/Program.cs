@@ -51,6 +51,36 @@ void CheckPermissionDialogs()
         Check(buttons.Length == 2 && buttons.Single(button => button.Text == "Open browser").DialogResult == DialogResult.OK,
             "non-Copilot native consent preserves its original actions");
     }
+    using (var dialog = new PermissionDialog("Allow shell action?", "Get-ChildItem", canAllowAllForSession: true))
+    {
+        var layout = dialog.Controls.OfType<TableLayoutPanel>().Single();
+        var buttons = layout.Controls.OfType<FlowLayoutPanel>().Single().Controls.OfType<Button>().ToArray();
+        var deny = buttons.Single(button => button.Text == "Deny");
+        Check(dialog.AcceptButton == deny && dialog.CancelButton == deny, "tool consent defaults to deny");
+        Check(buttons.Length == 3 &&
+            buttons.Single(button => button.Text == "Allow all for this session").DialogResult == DialogResult.Yes &&
+            buttons.Single(button => button.Text == "Allow once").DialogResult == DialogResult.OK,
+            "tool dialog distinguishes single-request and session approval");
+        Check(layout.Controls.OfType<TextBox>().Single().Text.Contains("until the backend restarts"),
+            "session scope and automatic execution risk are visible before consent");
+    }
+    using (var dialog = new PermissionDialog("Managed permission", "Explicit approval required"))
+    {
+        var buttons = dialog.Controls.OfType<TableLayoutPanel>().Single()
+            .Controls.OfType<FlowLayoutPanel>().Single().Controls.OfType<Button>().ToArray();
+        Check(buttons.Length == 2 && buttons.All(button => button.DialogResult != DialogResult.Yes),
+            "managed-policy and sandbox consent cannot enable allow-all");
+    }
+    using (var window = new MainForm(DesktopOptions.Parse([])))
+    {
+        var permissions = window.Controls.OfType<ToolStrip>().SelectMany(strip => strip.Items.OfType<ToolStripDropDownButton>()).Single();
+        Check(permissions.Text == "Permissions: Ask each time" && !permissions.Enabled,
+            "new windows show Ask each time until a backend reports its mode");
+        var modes = permissions.DropDownItems.OfType<ToolStripMenuItem>().ToArray();
+        Check(modes.Single(item => item.Text == "Ask each time").Checked &&
+            !modes.Single(item => item.Text == "Allow all for this session").Checked,
+            "toolbar exposes both modes without saved opt-in");
+    }
 }
 // Keep WinForms' synchronization context out of the async backend checks below.
 Exception? dialogError = null;
@@ -97,7 +127,8 @@ try
         console.error('Authorization: Bearer test-secret');
         emit({ type: 'status', message: `child:${worker.pid}` });
         emit({ type: 'permission', id: 'permission-1', title: 'Consent required',
-          details: '{"kind":"shell","command":"private-command-argument-marker"}' });
+          details: '{"kind":"shell","command":"private-command-argument-marker"}', canAllowAllForSession: true });
+        emit({ type: 'permission-mode', mode: 'ask' });
         emit({ type: 'ready', url: 'http://127.0.0.1:45678/', workspace: process.cwd(), sessionId: 'check' });
         createInterface({ input: process.stdin }).on('line', line => {
           const command = JSON.parse(line);
@@ -105,6 +136,10 @@ try
             emit({ type: 'status', message: 'question-cancelled' });
           if (command.type === 'permission-response' && command.id === 'permission-1' && command.approved === false)
             emit({ type: 'status', message: 'permission-denied' });
+          if (command.type === 'set-permission-mode' && command.mode === 'allow-all') {
+            emit({ type: 'permission-mode', mode: 'allow-all' });
+            emit({ type: 'permission-resolved', id: 'permission-1' });
+          }
           if (command.type === 'shutdown') {
             writeFileSync(join(process.cwd(), 'shutdown-received'), 'yes');
             process.exit(0);
@@ -115,6 +150,8 @@ try
     var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var denied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var modeChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var permissionResolved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var childPid = 0;
     var receivedPermissionDetails = false;
     var log = new DiagnosticLog();
@@ -125,8 +162,11 @@ try
         {
             if (message.Type == "permission")
             {
-                receivedPermissionDetails = message.Details?.Contains("private-command-argument-marker") == true;
+                receivedPermissionDetails = message.Details?.Contains("private-command-argument-marker") == true &&
+                    message.CanAllowAllForSession == true;
             }
+            if (message.Type == "permission-mode" && message.Mode == "allow-all") modeChanged.TrySetResult();
+            if (message.Type == "permission-resolved" && message.Id == "permission-1") permissionResolved.TrySetResult();
             if (message.Type == "ready") ready.TrySetResult();
             if (message.Message == "question-cancelled") cancelled.TrySetResult();
             if (message.Message == "permission-denied") denied.TrySetResult();
@@ -142,6 +182,10 @@ try
         Check(await backend.SendAsync(new { type = "permission-response", id = "permission-1", approved = false }),
             "send permission denial");
         await Task.WhenAll(cancelled.Task, denied.Task).WaitAsync(TimeSpan.FromSeconds(5));
+        assertions += 2;
+        Check(await backend.SendAsync(new { type = "set-permission-mode", mode = "allow-all" }),
+            "send session permission mode command");
+        await Task.WhenAll(modeChanged.Task, permissionResolved.Task).WaitAsync(TimeSpan.FromSeconds(5));
         assertions += 2;
         await backend.StopAsync();
         Check(File.Exists(Path.Combine(workspace, "shutdown-received")), "graceful shutdown command");

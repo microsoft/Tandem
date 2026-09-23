@@ -11,6 +11,9 @@ internal sealed class MainForm : Form
     private readonly DiagnosticLog _log = new();
     private readonly ToolStripButton _open = new("Open folder…");
     private readonly ToolStripButton _reload = new("Reload page") { Enabled = false };
+    private readonly ToolStripDropDownButton _permissions = new("Permissions: Ask each time") { Enabled = false };
+    private readonly ToolStripMenuItem _askEachTime = new("Ask each time") { Checked = true };
+    private readonly ToolStripMenuItem _allowAll = new("Allow all for this session");
     private readonly ToolStripLabel _workspaceLabel = new("No workspace selected");
     private readonly ToolStripStatusLabel _status = new("Choose a workspace to begin")
     {
@@ -32,7 +35,7 @@ internal sealed class MainForm : Form
     private readonly SemaphoreSlim _promptGate = new(1, 1);
     private readonly System.Windows.Forms.Timer _startupTimer = new() { Interval = 60_000 };
     private readonly System.Windows.Forms.Timer _smokeTimer = new() { Interval = 90_000 };
-    private readonly HashSet<(BackendProcess Backend, string Id)> _pendingRequestIds = [];
+    private readonly Dictionary<(BackendProcess Backend, string Id), (CancellationTokenSource Cancellation, bool Permission)> _pendingRequests = [];
     private BackendProcess? _backend;
     private WebView2? _webView;
     private Uri? _trustedOrigin;
@@ -52,6 +55,8 @@ internal sealed class MainForm : Form
     private bool _smokeChecking;
     private bool _smokeFinished;
     private bool _backendReady;
+    private bool _permissionModeReported;
+    private string _permissionMode = "ask";
 
     internal MainForm(DesktopOptions options)
     {
@@ -64,7 +69,8 @@ internal sealed class MainForm : Form
         var toolbar = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden, Padding = new Padding(8, 5, 8, 5) };
         var diagnostics = new ToolStripButton("Diagnostics");
         var about = new ToolStripButton("About");
-        toolbar.Items.AddRange([_open, _reload, new ToolStripSeparator(), diagnostics, about,
+        _permissions.DropDownItems.AddRange([_askEachTime, _allowAll]);
+        toolbar.Items.AddRange([_open, _reload, _permissions, new ToolStripSeparator(), diagnostics, about,
             new ToolStripSeparator(), _workspaceLabel]);
         var statusStrip = new StatusStrip();
         statusStrip.Items.Add(_status);
@@ -90,10 +96,13 @@ internal sealed class MainForm : Form
             if (_webView?.CoreWebView2 is not null && !_failed) _webView.Reload();
         };
         diagnostics.Click += (_, _) => ShowDiagnostics();
+        _askEachTime.Click += async (_, _) => await ChangePermissionModeAsync("ask");
+        _allowAll.Click += async (_, _) => await ChangePermissionModeAsync("allow-all");
         about.Click += (_, _) => MessageBox.Show(this,
             $"Tandem {Program.Version}\nWindows desktop host\n\n" +
             "Copilot runs in an independent backend for the selected workspace.\n" +
-            "Copilot tool approvals are disabled (allow all).\nOnly open workspaces and tools you trust.",
+            "Tool permissions start in Ask each time. Allow all applies only to the current backend session.\n" +
+            "Only open workspaces and tools you trust.",
             "About Tandem", MessageBoxButtons.OK, MessageBoxIcon.Information);
         _log.Changed += () =>
         {
@@ -167,7 +176,7 @@ internal sealed class MainForm : Form
     private async Task OpenWorkspaceAsync(string workspace)
     {
         _switching = true;
-        _open.Enabled = _retry.Enabled = _reload.Enabled = false;
+        _open.Enabled = _retry.Enabled = _reload.Enabled = _permissions.Enabled = false;
         _startupTimer.Stop();
         CancelPrompts();
         try
@@ -188,7 +197,9 @@ internal sealed class MainForm : Form
             _workspace = Path.GetFullPath(workspace);
             _failed = false;
             _backendReady = false;
+            _permissionModeReported = false;
             _backendSessionId = null;
+            UpdatePermissionMode("ask");
             _topLevelNavigations = 0;
             _workspaceLabel.Text = CompactPath(_workspace);
             _workspaceLabel.ToolTipText = _workspace;
@@ -263,6 +274,12 @@ internal sealed class MainForm : Form
                 if (!string.IsNullOrWhiteSpace(message.Message)) SetStatus(message.Message);
                 break;
             case "ready":
+                if (!_permissionModeReported)
+                {
+                    Fail("The backend needs updating",
+                        "The backend did not report its permission mode. Rebuild the desktop backend before continuing.");
+                    break;
+                }
                 if (!SecurityPolicy.TryReadyOrigin(message.Url, out var origin) ||
                     !MatchesWorkspace(message.Workspace) || string.IsNullOrWhiteSpace(message.SessionId))
                 {
@@ -301,6 +318,21 @@ internal sealed class MainForm : Form
             case "permission":
             case "question":
                 _ = HandleRequestAsync(backend, message, _sessionCancellation.Token);
+                break;
+            case "permission-mode":
+                if (message.Mode is not ("ask" or "allow-all"))
+                {
+                    Fail("Invalid permission mode", "The backend returned an unsupported tool permission mode.");
+                    break;
+                }
+                UpdatePermissionMode(message.Mode);
+                _permissionModeReported = true;
+                _permissions.Enabled = true;
+                break;
+            case "permission-resolved":
+                if (message.Id is not null &&
+                    _pendingRequests.TryGetValue((backend, message.Id), out var pending) && pending.Permission)
+                    pending.Cancellation.Cancel();
                 break;
             case "stopped":
                 Fail("The Tandem backend stopped", "Retry to start a new backend, or open another workspace.");
@@ -430,6 +462,33 @@ internal sealed class MainForm : Form
     private bool IsCurrentTrustedPage() =>
         !_closing && !_failed && _backendReady && SecurityPolicy.IsTrusted(_trustedOrigin, _webView?.Source?.AbsoluteUri);
 
+    private void UpdatePermissionMode(string mode)
+    {
+        _permissionMode = mode;
+        _askEachTime.Checked = mode == "ask";
+        _allowAll.Checked = mode == "allow-all";
+        _permissions.Text = mode == "ask" ? "Permissions: Ask each time" : "Permissions: Allow all (session)";
+        _permissions.ToolTipText = "Tool approvals only. File permissions, active-work protection, managed policy, " +
+            "sandbox consent, microphone access and external-browser confirmation are not bypassed.";
+    }
+
+    private async Task ChangePermissionModeAsync(string mode)
+    {
+        var backend = _backend;
+        var token = _sessionCancellation.Token;
+        if (backend is null || backend.IsStopping || _failed || _closing || _switching || mode == _permissionMode) return;
+        if (mode == "allow-all" && !await AskPermissionAsync("Allow all tool actions for this session?",
+            "Copilot may run commands, change files and access the network without further tool confirmation. " +
+            "Only enable this for workspaces and tools you trust.\n\n" +
+            "This choice is not saved. Closing, restarting or switching the workspace restores Ask each time. " +
+            "You can switch back at any time; already running actions are not cancelled. " +
+            "Managed-policy and sandbox-bypass requests still require individual approval.",
+            token, "Allow all for this session")) return;
+        if (token.IsCancellationRequested || !ReferenceEquals(_backend, backend) || backend.IsStopping) return;
+        _permissions.Enabled = false;
+        await ReplyAsync(backend, new { type = "set-permission-mode", mode });
+    }
+
     private async Task HandleRequestAsync(BackendProcess backend, BackendEvent message, CancellationToken token)
     {
         if (string.IsNullOrWhiteSpace(message.Id) || message.Id.Length > 512)
@@ -438,19 +497,35 @@ internal sealed class MainForm : Form
             return;
         }
         var requestKey = (backend, message.Id);
-        if (!_pendingRequestIds.Add(requestKey))
+        if (_pendingRequests.ContainsKey(requestKey))
         {
             _log.Write("Ignored a duplicate pending native request.");
             return;
         }
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(token);
+        _pendingRequests.Add(requestKey, (cancellation, message.Type == "permission"));
+        token = cancellation.Token;
         try
         {
             if (message.Type == "permission")
             {
-                const string notice = "Rejected a legacy tool-approval request. Rebuild the desktop backend; tool approvals are now handled automatically.";
-                _log.Write(notice);
-                SetStatus(notice);
-                await ReplyAsync(backend, new { type = "permission-response", id = message.Id, approved = false });
+                if (string.IsNullOrWhiteSpace(message.Title) || string.IsNullOrWhiteSpace(message.Details) ||
+                    message.Title.Length > 1024 || message.Details.Length > 60 * 1024)
+                {
+                    _log.Write("Rejected a tool permission with missing or oversized details.");
+                    await ReplyAsync(backend, new { type = "permission-response", id = message.Id, approved = false });
+                    return;
+                }
+                using var dialog = new PermissionDialog(message.Title, message.Details,
+                    canAllowAllForSession: message.CanAllowAllForSession == true);
+                var result = await ShowPromptAsync(dialog, token);
+                if (token.IsCancellationRequested) return;
+                await ReplyAsync(backend, new
+                {
+                    type = "permission-response", id = message.Id,
+                    approved = result == DialogResult.OK || result == DialogResult.Yes,
+                    allowAllForSession = result == DialogResult.Yes && message.CanAllowAllForSession == true
+                });
             }
             else
             {
@@ -481,7 +556,7 @@ internal sealed class MainForm : Form
         }
         finally
         {
-            _pendingRequestIds.Remove(requestKey);
+            _pendingRequests.Remove(requestKey);
         }
     }
 
@@ -507,6 +582,7 @@ internal sealed class MainForm : Form
             return DialogResult.Cancel;
         }
         _pendingPrompts++;
+        var sessionToken = _sessionCancellation.Token;
         var acquired = false;
         try
         {
@@ -521,11 +597,15 @@ internal sealed class MainForm : Form
             if (pauseStartup) _startupTimer.Stop();
             try
             {
+                using var cancellation = token.Register(() => Post(() =>
+                {
+                    if (ReferenceEquals(_activePrompt, dialog) && !dialog.IsDisposed) dialog.Close();
+                }));
                 return dialog.ShowDialog(this);
             }
             finally
             {
-                if (pauseStartup && !_backendReady && !_failed && !_closing && !token.IsCancellationRequested)
+                if (pauseStartup && !_backendReady && !_failed && !_closing && !sessionToken.IsCancellationRequested)
                     _startupTimer.Start();
             }
         }
@@ -575,6 +655,7 @@ internal sealed class MainForm : Form
         _trustedOrigin = null;
         _startupTimer.Stop();
         _reload.Enabled = false;
+        _permissions.Enabled = false;
         CancelPrompts();
         _log.Write(title + ": " + details);
         ShowNotice(title, DiagnosticLog.Sanitize(details));
@@ -681,7 +762,7 @@ internal sealed class MainForm : Form
                 documentReady = page?.GetProperty("documentReady").GetString(),
                 rendered = page?.GetProperty("rendered").GetBoolean() ?? false,
                 topLevelNavigations = _topLevelNavigations,
-                toolApprovalMode = "allow-all",
+                toolApprovalMode = _permissionMode,
                 page, error = error is null ? null : DiagnosticLog.Sanitize(error),
                 timestamp = DateTimeOffset.UtcNow
             };
@@ -705,7 +786,7 @@ internal sealed class MainForm : Form
         _closing = true;
         _startupTimer.Stop();
         _smokeTimer.Stop();
-        _open.Enabled = _reload.Enabled = _retry.Enabled = false;
+        _open.Enabled = _reload.Enabled = _retry.Enabled = _permissions.Enabled = false;
         SetStatus("Stopping Tandem…");
         CancelPrompts();
         try

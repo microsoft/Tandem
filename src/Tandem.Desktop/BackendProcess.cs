@@ -15,6 +15,8 @@ internal sealed record BackendEvent
     public string? Id { get; init; }
     public string? Title { get; init; }
     public string? Details { get; init; }
+    public string? Mode { get; init; }
+    public bool? CanAllowAllForSession { get; init; }
     public string? Question { get; init; }
     public string[]? Choices { get; init; }
     public bool? AllowFreeform { get; init; }
@@ -142,6 +144,8 @@ internal sealed class BackendProcess : IAsyncDisposable
                 case "ready":
                 case "error":
                 case "permission":
+                case "permission-mode":
+                case "permission-resolved":
                 case "question":
                 case "stopped":
                     if (message.Type == "error") _log.Write("Backend error: " + message.Message);

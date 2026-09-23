@@ -2,7 +2,10 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { setTimeout } from "node:timers/promises";
 import lockfile from "proper-lockfile";
+
+const WINDOWS_RENAME_RETRY_DELAYS = [25, 50, 100, 200, 400, 500];
 
 export interface StoredProject {
     version: 1;
@@ -60,8 +63,24 @@ export async function writeJsonAtomically(path: string, value: unknown, beforeCo
         } finally {
             await file.close();
         }
-        beforeCommit();
-        await rename(temporaryPath, path);
+        // Windows readers can briefly deny replacement even while we own the project lock.
+        for (let attempt = 0; ; attempt++) {
+            beforeCommit();
+            try {
+                await rename(temporaryPath, path);
+                break;
+            } catch (error) {
+                if (process.platform !== "win32" || !(error instanceof Error) || !("code" in error) ||
+                    !["EPERM", "EACCES", "EBUSY"].includes(String(error.code))) throw error;
+                const delay = WINDOWS_RENAME_RETRY_DELAYS[attempt];
+                if (delay === undefined) {
+                    throw new ProjectStoreError("state_write_blocked",
+                        `Cannot replace ${path} after retrying because Windows kept it locked or denied access. The saved file has been preserved. Close programs using it, check file permissions, and retry.`,
+                        503, { cause: error });
+                }
+                await setTimeout(delay);
+            }
+        }
     } finally {
         await rm(temporaryPath, { force: true });
     }
