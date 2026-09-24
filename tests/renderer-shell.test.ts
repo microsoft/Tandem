@@ -2,6 +2,57 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { setup, state, blankEffort, decision, response, text, field, disabled, hidden, current, submit, browse } from "./renderer-fixtures.test.js";
 
+test("compact workflow exposes progress and labeled stage icons without changing navigation", async (t) => {
+    const value = state("plan");
+    value.lifecycle.completedStages = value.lifecycle.completedStages.filter((id: string) => id !== "sketch");
+    value.lifecycle.skippedStages = [{ stageId: "sketch", reason: "Existing drawings were supplied." }];
+    const h = await setup(t, value);
+    const progress = h.document.querySelector('[role="progressbar"][aria-label="Lifecycle progress"]')!;
+    assert.equal(progress.getAttribute("aria-valuenow"), "5");
+    assert.equal(progress.getAttribute("aria-valuemax"), "8");
+    assert.equal(progress.getAttribute("aria-valuetext"), "4 complete, 1 skipped, 3 remaining");
+    assert.equal(progress.querySelectorAll('[data-status="complete"]').length, 4);
+    assert.equal(progress.querySelectorAll('[data-status="skipped"]').length, 1);
+    for (const button of h.document.querySelectorAll<HTMLButtonElement>(".stage-step")) {
+        assert.ok(button.getAttribute("aria-label"), "Icon navigation retains the stage name and status");
+        assert.ok(button.querySelector("svg")?.closest('[aria-hidden="true"]'), "Stage icons are decorative");
+    }
+    const skipped = h.document.querySelector<HTMLButtonElement>('[data-stage-id="sketch"]')!;
+    assert.equal(skipped.disabled, true);
+    assert.match(skipped.getAttribute("aria-label")!, /not applicable.*Existing drawings/);
+    await browse(h, "requirements");
+    assert.equal(hidden(h, "design-tree-panel"), false);
+    assert.equal(current(h).lifecycle.currentStage, "plan");
+    assert.equal(h.requests.length, 0);
+});
+
+test("artifact rows retain full metadata and distinguish stale records with icons", async (t) => {
+    const value = state("design");
+    value.artifacts = [{
+        id: "design-spec", stage: "design", kind: "design-spec", title: "An intentionally long product specification title",
+        path: "records/design/specification.md", reviewStatus: "stale", content: "Existing specification",
+    }];
+    const h = await setup(t, value);
+    const button = h.document.querySelector<HTMLButtonElement>('[data-artifact-id="design-spec"]')!;
+    assert.equal(button.dataset.stale, "true");
+    assert.match(button.title, /An intentionally long.*records\/design\/specification\.md.*stale/);
+    assert.ok(button.querySelector('svg[aria-hidden="true"]'));
+    await h.click(button);
+    assert.equal(hidden(h, "content-panel"), false);
+    assert.equal(text(h, "artifact-content"), "Existing specification");
+    assert.equal(h.requests.length, 0);
+});
+
+test("confirmation actions keep visible names alongside decorative icons", async (t) => {
+    const h = await setup(t);
+    await h.click("reset-effort");
+    const buttons = h.document.querySelectorAll('[role="alertdialog"] button');
+    assert.deepEqual(Array.from(buttons, (button) => button.textContent), ["Cancel", "Confirm"]);
+    for (const button of buttons) assert.ok(button.querySelector('svg[aria-hidden="true"]'));
+    await h.confirm(false);
+    assert.equal(h.requests.length, 0);
+});
+
 test("header suppresses reload success text and places version after Reset", async (t) => {
     const value = { ...state(), provider: { canSubmitAnswers: true, canReload: true },
         reloadReceipt: { status: "success", message: "Reloaded latest extension." } };

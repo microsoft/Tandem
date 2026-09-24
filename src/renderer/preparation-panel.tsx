@@ -64,13 +64,13 @@ export function PreparationPanel() {
 
   return <div>
     <section className="preparation-stage-card">
-      <div className="preparation-stage-heading">
+      <div className="preparation-stage-heading" aria-describedby="preparation-stage-progress">
         <div>
           <p className="eyebrow">Environment preparation</p>
           <strong id="preparation-stage-title">
             {preparing ? "Preparing Tandem context" : preparation.status === "failed" ? "Preparation needs attention" : "Preparation results"}
           </strong>
-          <p id="preparation-stage-progress" className="muted">{progress}</p>
+          <p id="preparation-stage-progress" className={preparing || preparation.status === "failed" ? "muted" : "visually-hidden"}>{progress}</p>
         </div>
         <span id="preparation-stage-status" className="preparation-status" data-status={preparation.status}>
           {preparation.status.replace("-", " ")}
@@ -78,7 +78,7 @@ export function PreparationPanel() {
       </div>
       <div className="preparation-stage-grid">
         <div className="preparation-stage-main">
-          <section className="plan-section">
+          <section className="plan-section" aria-describedby="preparation-stage-message">
             <h3>Work items</h3>
             <div id="preparation-work-items" className="implementation-list">
               {(preparation.workItems || []).map((workItem) => {
@@ -93,13 +93,13 @@ export function PreparationPanel() {
                   {(live?.activity || workItem.result) && <p>{live?.activity || workItem.result}</p>}
                 </div>;
               })}
-              {!preparation.workItems?.length && <p className="muted">Preparation work items will appear when analysis starts.</p>}
+              {!preparation.workItems?.length && <p className="muted">No work items yet.</p>}
             </div>
           </section>
           <section className="plan-section">
             <h3>Results</h3>
             <p id="preparation-result-summary" className={preparation.summary ? undefined : "muted"}>
-              {preparation.summary || "Results will appear as preparation completes."}
+              {preparation.summary || "No results yet."}
             </p>
             <div id="preparation-result-suggestions" className="preparation-result-suggestions">
               {!!preparation.suggestedUsages?.length && <>
@@ -139,19 +139,20 @@ export function PreparationPanel() {
                   </time>
                 </div>
               </div>)}
-              {!messages.length && <p className="muted">Preparation progress will appear here.</p>}
+              {!messages.length && <p className="muted">No activity yet.</p>}
             </div>
             <button
               id="retry-preparation"
               className="retry-preparation"
               type="button"
+              aria-describedby="preparation-stage-message"
               hidden={preparation.status !== "failed" || currentStage !== "prepare"}
               disabled={retryDisabled}
               onClick={retry}
             >
               <RotateCcw size={16} aria-hidden="true" /> {action.busy ? "Retrying..." : "Retry preparation"}
             </button>
-            <p id="preparation-stage-message" className="implementation-status" role="status" aria-live="polite"
+            <p id="preparation-stage-message" className={action.error || preparation.error || runtime?.error || ["failed", "needs-attention"].includes(preparation.status) ? "implementation-status" : "visually-hidden"} role="status" aria-live="polite"
               data-status={action.error || preparation.status === "failed" || runtime?.error ? "error" : "idle"}>
               {message}
             </p>

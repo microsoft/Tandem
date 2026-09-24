@@ -78,7 +78,7 @@ interface TestView extends ExecutionView {
 
 const disclosureStyle: CSSProperties = {
   width: "100%", padding: 0, border: 0, background: "transparent",
-  color: "inherit", font: "inherit", textAlign: "left", cursor: "pointer",
+  color: "inherit", textAlign: "left", cursor: "pointer",
 };
 
 function elapsed(startedAt?: string, completedAt?: string) {
@@ -144,7 +144,7 @@ function Activity({ id, events = [], runtime, empty }: {
         <time>{event.at ? new Date(event.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</time>
       </div>
     </div>)}
-    {!activity.length && <p className="muted">{empty}</p>}
+    {!activity.length && <p className="muted" data-status-help={empty}>No activity yet.</p>}
   </div>;
 }
 
@@ -179,8 +179,7 @@ function AgentActivity({ kind, stored = [], runtime, planItems = [], specs = [] 
         <p>{live?.activity || saved?.activity || saved?.summary || "Waiting for activity."}</p>
       </div>;
     })}
-    {!itemIds.size && <p className="muted">{kind === "test"
-      ? "Agents appear here after test execution starts." : "Agents appear here after implementation starts."}</p>}
+    {!itemIds.size && <p className="muted">No agents yet.</p>}
   </div>;
 }
 
@@ -206,9 +205,9 @@ function VerificationEvidence({ execution, kind, draftKey }: {
 }) {
   const records = execution.commandEvidence || [];
   const verdict = execution.independentVerdict;
-  return <section className="plan-section" aria-labelledby={kind + "-verification-heading"}>
+  return <section className="plan-section" aria-labelledby={kind + "-verification-heading"} aria-describedby={kind + "-verification-help"}>
     <h3 id={kind + "-verification-heading"}>Tool-backed verification</h3>
-    <p className="implementation-meta">
+    <p id={kind + "-verification-help"} className="visually-hidden">
       Worker-reported results are not tool-backed verification. Command evidence is bound to its execution request, run, source fingerprint, and input revision.
     </p>
     <div id={kind + "-command-evidence"} className="implementation-list">
@@ -309,10 +308,10 @@ export function ImplementationPanel() {
 
   return <div>
     <div className="implementation-workspace">
-      <div className="implementation-heading">
-        <div className="implementation-heading-copy"><strong>Development execution</strong><span id="implementation-progress">{progress}</span></div>
+      <div className="implementation-heading" aria-describedby="implementation-progress">
+        <div className="implementation-heading-copy"><strong>Development execution</strong><span id="implementation-progress" className={active || failed ? undefined : "visually-hidden"}>{progress}</span></div>
         <div className="implementation-controls">
-          <button id="start-implementation" className="plan-button" type="button" disabled={startDisabled} onClick={() => startOrStop("start")}>
+          <button id="start-implementation" className="plan-button" type="button" aria-describedby="implementation-status" disabled={startDisabled} onClick={() => startOrStop("start")}>
             {["failed", "cancelled"].includes(implementation.status || "") ? <RotateCcw size={16} aria-hidden="true" /> : <Play size={16} aria-hidden="true" />}{" "}
             {["failed", "cancelled"].includes(implementation.status || "") ? "Retry incomplete work"
               : implementation.status === "completed" ? "Implementation complete" : active ? "Agents running..." : "Start implementation"}
@@ -373,15 +372,15 @@ export function ImplementationPanel() {
         <aside className="implementation-sidebar">
           <section className="plan-section">
             <h3>Adjust execution strategy</h3>
-            <form id="implementation-strategy-form" className="implementation-strategy-form" onSubmit={(event) => { event.preventDefault(); submitStrategy(); }}>
+            <form id="implementation-strategy-form" className="implementation-strategy-form inline-composer" aria-describedby="implementation-status" onSubmit={(event) => { event.preventDefault(); submitStrategy(); }}>
               <SpeechTextarea id="implementation-strategy-input" maxLength={4000} disabled={strategyDisabled}
                 placeholder="Change priority, validation depth, coordination, or guidance for the next wave."
-                aria-label="Implementation strategy adjustment" value={draft.value}
+                aria-label="Implementation strategy adjustment" aria-describedby="implementation-status" value={draft.value}
                 onValueChange={(value) => setDraft((current) => ({ value, version: current.version + 1 }))} />
               <div className="plan-actions">
-                <span id="implementation-status" className="implementation-status" role="status" aria-live="polite"
+                <span id="implementation-status" className={action.error || operation || implementation.status === "failed" || implementation.error || runtime?.error ? "implementation-status" : "visually-hidden"} role="status" aria-live="polite"
                   data-status={action.error || implementation.status === "failed" || implementation.error || runtime?.error ? "error" : "idle"}>{status}</span>
-                <button id="submit-implementation-strategy" className="plan-button" type="submit" disabled={strategyDisabled}>
+                <button id="submit-implementation-strategy" className="plan-button" type="submit" aria-describedby="implementation-status" disabled={strategyDisabled}>
                   <Send size={16} aria-hidden="true" /> {operation === "strategy" ? "Queueing..." : "Queue adjustment"}
                 </button>
               </div>
@@ -498,9 +497,9 @@ export function TestPanel() {
 
   return <div>
     <div className="implementation-workspace">
-      <div className="implementation-heading">
-        <div className="implementation-heading-copy"><strong>Integration and interaction tests</strong><span id="test-progress">{progress}</span></div>
-        <button id="start-tests" className="plan-button" type="button" disabled={disabled} onClick={start}>
+      <div className="implementation-heading" aria-describedby="test-progress">
+        <div className="implementation-heading-copy"><strong>Integration and interaction tests</strong><span id="test-progress" className={active || failed ? undefined : "visually-hidden"}>{progress}</span></div>
+        <button id="start-tests" className="plan-button" type="button" aria-describedby="test-status" disabled={disabled} onClick={start}>
           {complete || failed ? <RotateCcw size={16} aria-hidden="true" /> : <Play size={16} aria-hidden="true" />}{" "}
           {complete ? "Run tests again" : active ? "Tests running..." : failed ? "Retry incomplete tests" : "Run tests"}
         </button>
@@ -532,7 +531,7 @@ export function TestPanel() {
                   </>}
                 </ExecutionCard>;
               })}
-              {!specs.length && <p className="muted">Finalize Test design to create executable scenarios.</p>}
+              {!specs.length && <p className="muted" data-status-help="Finalize Test design to create executable scenarios.">No scenarios yet.</p>}
             </div>
           </section>
           <section className="plan-section">
@@ -545,7 +544,7 @@ export function TestPanel() {
           <section className="plan-section">
             <h3>Recent test activity</h3>
             <Activity id="test-events" events={testing.events} runtime={runtime} empty="Test events and factory progress appear here." />
-            <p id="test-status" className="implementation-status" role="status" aria-live="polite"
+            <p id="test-status" className={action.error || action.busy || failed || testing.status === "failed" || testing.error || runtime?.error ? "implementation-status" : "visually-hidden"} role="status" aria-live="polite"
               data-status={action.error || testing.status === "failed" || testing.error || runtime?.error ? "error" : "idle"}>{status}</p>
             <TestErrorDetails key={identity + ":" + runIdentity} testing={testing} runtime={runtime} />
           </section>

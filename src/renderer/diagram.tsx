@@ -77,10 +77,10 @@ export function Diagram({ id, source, onNodeSelect, label = "Diagram", loader = 
   const zoom = (scale: number) => setView({ mode: "scale", scale: Math.max(.25, Math.min(4, scale)) });
   return <>
     {svg && <div className="diagram-toolbar" role="toolbar" aria-label="Diagram zoom controls">
-      <button type="button" aria-label="Zoom out" onClick={() => zoom(view.scale * .8)}><Minus size={16} /></button>
-      <button type="button" aria-label="Zoom in" onClick={() => zoom(view.scale * 1.25)}><Plus size={16} /></button>
-      <button type="button" aria-label="Actual size" onClick={() => zoom(1)}><RotateCcw size={16} />100%</button>
-      <button type="button" aria-label="Fit diagram" onClick={() => setView({ mode: "fit", scale: 1 })}><Maximize size={16} />Fit</button>
+      <button type="button" aria-label="Zoom out" title="Zoom out" onClick={() => zoom(view.scale * .8)}><Minus size={16} aria-hidden="true" /></button>
+      <button type="button" aria-label="Zoom in" title="Zoom in" onClick={() => zoom(view.scale * 1.25)}><Plus size={16} aria-hidden="true" /></button>
+      <button type="button" aria-label="Actual size" title="Actual size" onClick={() => zoom(1)}><RotateCcw size={16} aria-hidden="true" />100%</button>
+      <button type="button" aria-label="Fit diagram" title="Fit diagram" onClick={() => setView({ mode: "fit", scale: 1 })}><Maximize size={16} aria-hidden="true" />Fit</button>
       <span className="diagram-toolbar-output" aria-live="polite">{view.mode === "fit" ? "Fit" : Math.round(view.scale * 100) + "%"}</span>
     </div>}
     <div id={id} ref={host} className="mermaid-host react-diagram" role={onNodeSelect ? "group" : "img"} aria-label={label}

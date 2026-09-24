@@ -30,7 +30,7 @@ test("compact density is shared by all stage headers, panels, controls, and comp
         assert.ok(start >= 0, `Missing ${selector}`);
         return css.slice(start, css.indexOf("}", start));
     };
-    for (const [token, size] of [["space", 8], ["control-height", 32], ["composer-height", 36]]) {
+    for (const [token, size] of [["space", 8], ["card-padding", 10], ["control-height", 30], ["small-control-height", 28], ["tab-height", 36], ["composer-height", 36]]) {
         assert.match(css, new RegExp(`--studio-${token}:\\s*${size}px`));
     }
     assert.match(rules(".topbar"), /min-height:\s*var\(--studio-header-height\)/);
@@ -52,6 +52,23 @@ test("compact density is shared by all stage headers, panels, controls, and comp
     assert.match(rules(".requirements"), /scrollbar-width:\s*thin/);
     assert.match(rules(".requirements"), /scrollbar-gutter:\s*stable/);
     assert.match(rules(".splitter"), /min-width:\s*9px/);
+});
+
+test("compact theme preserves host colors, standalone dark mode, and accessible input variants", async () => {
+    const css = await readFile(new URL("../src/renderer/styles.css", import.meta.url), "utf8");
+    assert.match(css, /--studio-surface:\s*var\(--background-color-default,\s*light-dark\(/);
+    assert.match(css, /--studio-text:\s*var\(--text-color-default,\s*light-dark\(/);
+    assert.match(css, /--studio-muted:\s*var\(--text-color-muted,\s*light-dark\(/);
+    assert.match(css, /:root\[data-color-mode="dark"\][^{]*\{\s*color-scheme:\s*dark/);
+    assert.match(css, /:root\[data-color-mode="light"\][^{]*\{\s*color-scheme:\s*light/);
+    assert.match(css, /@media \(pointer: coarse\)[\s\S]*?--studio-control-height:\s*44px/);
+    assert.match(css, /@media \(forced-colors: active\)/);
+    assert.match(css, /\.choice\[data-state="checked"\][^{]*\{[^}]*background:\s*var\(--studio-accent-soft\)/);
+    assert.match(css, /@container output \(min-width: 880px\)[\s\S]*?\.usage-intake\[data-suggestions="true"\]/);
+    assert.match(css, /\.requirements-intake-panel\[data-substage="dag"\]\s*\{[^}]*max-height:\s*min\(240px, 35vh\);[^}]*overflow:\s*auto/,
+        "Expanded usage history must not push the decision workspace out of reach");
+    assert.match(css, /\.reload-status:not\(\[data-status="error"\]\)/, "Compact headers must not hide reload errors");
+    assert.doesNotMatch(css, /var\(--(?:text-color-default|text-color-muted|background-color-default),\s*#[\da-f]+\)/i);
 });
 
 test("renderer asset injection does not interpret dollar substitution sequences", async () => {

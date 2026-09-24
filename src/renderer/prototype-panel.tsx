@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUpRight, Check, Clock, ExternalLink, LoaderCircle, Play, RefreshCw, Send, Sparkles } from "lucide-react";
+import { ArrowUpRight, Check, Clock, ExternalLink, LoaderCircle, Play, RefreshCw, Send, SkipForward, Sparkles } from "lucide-react";
 import { RadioGroup } from "radix-ui";
 import type { DecisionQuestion } from "../workflow.js";
 import { hasActiveJobs, hasStageData, skippedStage, useAction, useDraft, useUi, type UiState } from "./ui-context.js";
@@ -35,7 +35,7 @@ function Clarification({ question }: { question: DecisionQuestion }) {
   return <div id="revision-question" className="revision-question">
     <p id="revision-question-title" className="revision-question-title">{question.text}</p>
     {question.rationale && <p id="revision-question-rationale" className="rationale">{question.rationale}</p>}
-    <form id="revision-question-form" className="revision-question-form" onSubmit={(event) => {
+    <form id="revision-question-form" className="revision-question-form inline-composer" onSubmit={(event) => {
       event.preventDefault();
       if (blocked) return;
       const answer = draft.detail.trim() || draft.choice;
@@ -205,6 +205,7 @@ export function PrototypePanel() {
         {readyUrl && <a id="open-preview" href={readyUrl} target="_blank" rel="noreferrer"><ExternalLink size={14} />Open preview</a>}
       </div>
       <section id="prototype-progress" className="prototype-progress" aria-label="Prototype progress"
+        aria-describedby="prototype-progress-message"
         hidden={Boolean(unavailable) || (!flow && ((Boolean(readyUrl) && !failedRevision) || state.lifecycle.currentStage !== "prototype"))}>
         <ol id="prototype-milestones" className="prototype-milestones" aria-label="Prototype substages" hidden={!flow && Boolean(readyUrl)}>
           {milestones.map((milestone) => {
@@ -221,14 +222,15 @@ export function PrototypePanel() {
         <div className="prototype-actions">
           <button id="apply-prototype-update" className="plan-button" hidden={!candidate} disabled={blocked} onClick={() => void submitAction("apply-update")}><ArrowUpRight size={16} />Apply update</button>
           <button id="request-prototype-visual" className="plan-button" hidden={!visualVisible} disabled={blocked || unresolved.length > 0 || exhausted} onClick={() => void submitAction("visual")}><Sparkles size={16} />Explore visual direction (optional)</button>
-          <button id="skip-prototype-visual" className="plan-button" hidden={!skipVisible} disabled={blocked} onClick={() => void submitAction("skip-visual")}>Skip visual direction</button>
+          <button id="skip-prototype-visual" className="plan-button secondary" hidden={!skipVisible} disabled={blocked} onClick={() => void submitAction("skip-visual")}><SkipForward size={16} aria-hidden="true" />Skip visual direction</button>
           <button id="retry-prototype-checkpoint" className="plan-button" hidden={!retryVisible} disabled={blocked} onClick={() => void submitAction("retry")}><RefreshCw size={16} />{failed ? "Retry " + milestones.find((item) => item.id === failed.milestone)?.label : failedRevision ? "Retry failed revision" : "Continue prototype work"}</button>
           <button id="extend-prototype-budget" className="plan-button" hidden={!exhausted || building || Boolean(candidate)} disabled={blocked} onClick={() => void submitAction("extend-budget")}><Clock size={16} />Add 15 minutes and retry</button>
         </div>
         <details id="prototype-progress-details" className="prototype-progress-details"><summary>Build details</summary>
           <p id="prototype-budget" className="muted">{flow && `Work window: ${Math.ceil(flow.budget.usedSeconds / 60)} of ${Math.ceil(flow.budget.limitSeconds / 60)} minutes used${building ? " or reserved for active work. Unused reserved time is returned when the job ends." : "."}`}</p>
         </details>
-        <p id="prototype-progress-message" className="muted" role="status" data-essential={Boolean(candidate || failed || failedRevision || question || exhausted && !building)}>{message}</p>
+        <p id="prototype-progress-message" className={candidate || failed || failedRevision || question || exhausted && !building ? "muted" : "visually-hidden"}
+          role="status" data-essential={Boolean(candidate || failed || failedRevision || question || exhausted && !building)}>{message}</p>
       </section>
       <p id="prototype-action-status" className="revision-status" role="status" data-status={action.error ? "error" : "idle"}>{action.error}</p>
       <div id="prototype-building" className="prototype-building" role="status" hidden={!building}>
@@ -262,8 +264,8 @@ export function PrototypePanel() {
         }} />
     </div>
     <section id="prototype-review" className="prototype-review" hidden={!hasStageData(state, "prototype") || Boolean(unavailable)}>
-      <div className="prototype-review-heading"><strong>Feedback</strong><span>Keep exploring; feedback is queued while work runs</span></div>
-      <form id="revision-form" className="revision-form" onSubmit={(event) => {
+      <div className="prototype-review-heading"><strong>Feedback</strong></div>
+      <form id="revision-form" className="revision-form inline-composer" aria-describedby="revision-status" onSubmit={(event) => {
         event.preventDefault();
         if (pending || !canEdit("prototype") || finalizing) return;
         const suggestion = draft.value.trim();
@@ -284,8 +286,8 @@ export function PrototypePanel() {
         });
       }}>
         <SpeechTextarea id="revision-input" value={draft.value} onValueChange={(value) => setDraft((current) => ({ value, version: current.version + 1 }))}
-          rows={1} maxLength={4000} disabled={Boolean(state.effortReset)} placeholder="Describe one change you want to see in the prototype." aria-label="Prototype revision suggestion" />
-        <button id="submit-revision" type="submit" disabled={pending || !canEdit("prototype") || finalizing || unresolved.length >= 50}><Send size={16} />{revisionAction.busy ? "Sending..." : hasActiveJobs(state) || question || candidate || !readyUrl ? "Queue revision" : "Send revision"}</button>
+          rows={1} maxLength={4000} disabled={Boolean(state.effortReset)} placeholder="Describe one change you want to see in the prototype." aria-label="Prototype revision suggestion" aria-describedby="revision-status" />
+        <button id="submit-revision" type="submit" aria-describedby="revision-status" disabled={pending || !canEdit("prototype") || finalizing || unresolved.length >= 50}><Send size={16} />{revisionAction.busy ? "Sending..." : hasActiveJobs(state) || question || candidate || !readyUrl ? "Queue revision" : "Send revision"}</button>
       </form>
       {question && <Clarification key={JSON.stringify(question)} question={question} />}
       <details id="revision-history-details" className="revision-history-details" hidden={!revisions.length}>
@@ -294,7 +296,7 @@ export function PrototypePanel() {
           <li key={revision.id} data-revision-id={revision.id} data-status={revision.status}><strong title={revision.summary}>{revision.suggestion || revision.summary}</strong>
             <span>{{ queued: "Queued", processing: "Building update", clarifying: "Needs clarification", ready: "Update ready - not applied", applied: "Applied", failed: "Failed - retry needed" }[revision.status] || revision.status}</span></li>)}</ul>
       </details>
-      <p id="revision-status" className="revision-status" role="status" data-status={revisionAction.error || unresolved.length >= 50 ? "error" : "idle"}
+      <p id="revision-status" className={revisionAction.error || unresolved.length >= 50 || finalizing || question ? "revision-status" : "visually-hidden"} role="status" data-status={revisionAction.error || unresolved.length >= 50 ? "error" : "idle"}
         data-essential={Boolean(revisionAction.error || unresolved.length >= 50 || !canEdit("prototype") || finalizing || question)}>{revisionMessage}</p>
     </section>
   </>;

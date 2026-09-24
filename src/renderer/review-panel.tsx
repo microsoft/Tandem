@@ -187,7 +187,7 @@ export function ReviewPanel() {
   }
 
   return <section className="design-review-card">
-    <div className="design-review-heading">
+    <div className="design-review-heading" aria-describedby="design-review-stage-status">
       <div className="design-review-title">
         <ol className="design-substages" aria-label="Design substages">
           <li id="product-design-substage" className="design-substage"
@@ -205,13 +205,13 @@ export function ReviewPanel() {
           : `${resolved} resolved · ${unresolved.length} open${queued ? ` · ${queued} queued` : ""}`}</span>
       </div>
       <button id="finish-review" className="finish-review" type="button" hidden={!isDesign}
-        disabled={disabled} onClick={finalize}>
+        disabled={disabled} onClick={finalize} aria-describedby="design-review-stage-status">
         <Check size={16} aria-hidden="true" /> {action.busy || finalizing ? "Capturing specification..."
           : finalized ? kind === "test" ? "Test spec captured" : "Design spec captured"
             : kind === "test" ? "Finish test design" : "Finish product design"}
       </button>
     </div>
-    <p id="design-review-stage-status" className="design-review-status" role="status" aria-live="polite"
+    <p id="design-review-stage-status" className={error || review.processing || finalizing || action.busy ? "design-review-status" : "visually-hidden"} role="status" aria-live="polite"
       data-status={error ? "error" : "idle"}>{status}</p>
     <div id="design-review-threads" className="design-review-threads">
       {review.threads.length === 0 && <p className="design-review-empty">
@@ -220,9 +220,9 @@ export function ReviewPanel() {
             : "Preparing the required project-specific design artifacts for review."}
       </p>}
       {review.threads.map((thread) => <ReviewThreadCard key={`${kind}:${thread.id}`} thread={thread} kind={kind} />)}
-      {scenarios.length > 0 && <section className="plan-section" aria-label="Test design scenarios">
+      {scenarios.length > 0 && <section className="plan-section" aria-label="Test design scenarios" aria-describedby="test-scenario-help">
         <h3>{scenariosApproved ? "Approved test scenarios" : "Test scenarios awaiting finalization"}</h3>
-        <p className="muted">These are scenario specifications, not evidence that tests have passed.</p>
+        <p id="test-scenario-help" className="visually-hidden">These are scenario specifications, not evidence that tests have passed.</p>
         {scenarios.map((scenario) => <details key={scenario.id} className="implementation-card"
           data-ui-key={`review-scenario:${scenario.id}`}>
           <summary className="implementation-card-heading"><strong>{scenario.title}</strong>

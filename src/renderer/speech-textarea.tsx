@@ -445,9 +445,8 @@ export function SpeechTextarea({
         title="Dictate with Azure Speech. Audio is sent to Azure; text is never sent as a message automatically."
         aria-label={ownCapture ? "Stop speech input" : "Start speech input"} aria-pressed={ownCapture}
         aria-describedby={statusId} onClick={() => { if (capture.current) void stop(capture.current); else void start(); }}>
-        {phase === "starting" || phase === "stopping" ? <LoaderCircle size={14} aria-hidden="true" />
+        {phase === "starting" || phase === "stopping" ? <LoaderCircle className="spin" size={14} aria-hidden="true" />
           : ownCapture ? <Square size={14} aria-hidden="true" /> : <Mic size={14} aria-hidden="true" />}
-        {!composer && (phase === "starting" ? "Starting..." : phase === "stopping" ? "Finishing..." : ownCapture ? "Stop" : "Mic")}
       </button>;
   const feedback = <>
       {speech.signInPlacement === "inline" && <button type="button" className="speech-sign-in" data-ui-key={`${uiKey}-speech-sign-in`}
@@ -461,7 +460,7 @@ export function SpeechTextarea({
         onClick={() => speech.active?.cancel()}>
         <X size={14} aria-hidden="true" />{signingIn ? "Cancel sign-in" : "Cancel"}
       </button>
-      <span id={statusId} className="speech-status" role="status" aria-live="polite" data-status={visibleStatus.kind}>
+      <span id={statusId} className={visibleStatus === initialStatus ? "visually-hidden" : "speech-status"} role="status" aria-live="polite" data-status={visibleStatus.kind}>
         {visibleStatus.text}
       </span>
       <a href="/speech" target="_blank" rel="noopener noreferrer" hidden={visibleStatus.kind !== "error"}
@@ -472,7 +471,6 @@ export function SpeechTextarea({
   if (composer) return <VoiceComposer {...composer} input={textarea} toggle={toggle}
     feedback={<div className="speech-controls voice-composer-feedback" data-ui-key={`${uiKey}-speech-controls`}
       hidden={!phase && visibleStatus.kind !== "error" && speech.signInPlacement !== "inline"}>{feedback}</div>} />;
-  return <>{textarea}
-    <div className="speech-controls" data-ui-key={`${uiKey}-speech-controls`}>{toggle}{feedback}</div>
-  </>;
+  return <VoiceComposer input={textarea} toggle={toggle} voiceOptions={null} actions={null}
+    feedback={<div className="speech-controls voice-composer-feedback" data-ui-key={`${uiKey}-speech-controls`}>{feedback}</div>} />;
 }

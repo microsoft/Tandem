@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, Check, ChevronDown, GitBranch, LoaderCircle, Plus, RefreshCw, Send, Sparkles } from "lucide-react";
+import { ArrowRight, Check, ChevronDown, CircleDot, GitBranch, LoaderCircle, LockKeyhole, Plus, RefreshCw, Send, Sparkles } from "lucide-react";
 import { Collapsible, RadioGroup } from "radix-ui";
 import { buildDecisionGraphMermaid } from "../decision-diagram.js";
 import type { DecisionNode } from "../workflow.js";
@@ -130,12 +130,12 @@ function DecisionQuestion({ node, nodes, draft, busy, canEdit, guidance, process
                 ? `Blocked until these prerequisites are answered: ${dependencyNames.join(", ")}.`
                 : "Waiting for this decision to become active."} You can review this question, but cannot answer it yet.
         </p>}
-        {!canEdit && <p className="provider-notice">{guidance}</p>}
+        {!canEdit && <p className="visually-hidden">{guidance}</p>}
         {!question && <p className="muted">No question is available for this decision.</p>}
         {question && !(changing && !canEdit) && <>
             <p className="question" id="decision-question-title">{changing ? "Change this answer" : question.text}</p>
             {question.rationale && !changing && <p className="rationale">{question.rationale}</p>}
-            <form data-draft-key={requirementFormIdentity(node)} onSubmit={(event) => { event.preventDefault(); onSubmit(); }}>
+            <form className="inline-composer" data-draft-key={requirementFormIdentity(node)} onSubmit={(event) => { event.preventDefault(); onSubmit(); }}>
                 {question.choices.length > 0 && <RadioGroup.Root
                     className="choices"
                     name="prototype-choice"
@@ -427,8 +427,8 @@ export function RequirementsPanel() {
                     ? "The remaining decisions are blocked. Review their prerequisites before continuing." : "");
 
     return <>
-        <section id="requirements-substage-section" className="section requirements-intake-panel" aria-label="Requirements">
-            <p className="eyebrow">Requirements</p>
+        <section id="requirements-substage-section" className="section requirements-intake-panel" aria-label="Requirements" aria-describedby="usage-message" data-substage={isUsage ? "usage" : "dag"}>
+            <div className="requirements-intake-heading"><p className="eyebrow"><GitBranch size={14} aria-hidden="true" />Requirements</p>
             <ol className="requirements-substages" aria-label="Requirements substages">
                 <li id="usage-substage" className="requirements-substage" data-status={isUsage ? "active" : "complete"}>
                     <span className="requirements-substage-index">1</span><span>Usage list</span>
@@ -436,15 +436,16 @@ export function RequirementsPanel() {
                 <li id="dag-substage" className="requirements-substage" data-status={isUsage ? "locked" : "active"}>
                     <span className="requirements-substage-index">2</span><span>Decision DAG</span>
                 </li>
-            </ol>
-            <div id="usage-intake" hidden={!isUsage}>
+            </ol></div>
+            <div id="usage-intake" className="usage-intake" data-suggestions={suggestions.length > 0 || suggestionsLoading} hidden={!isUsage}>
+                <div className="usage-entry">
                 <h2 className="usage-title">What should this help you do?</h2>
-                <p id="usage-help" className="usage-intro">Add one goal at a time. Start with your own, or choose a suggestion below.</p>
+                <p id="usage-help" className="visually-hidden">Add one goal at a time. Start with your own, or choose a suggestion below.</p>
                 <ul id="usage-items" className="usage-items">
                     {usageItems.length ? usageItems.map((usage, index) => <li className="usage-item" key={`${index}:${usage}`}>{index + 1}. {usage}</li>)
                         : <li className="muted">No usages added yet.</li>}
                 </ul>
-                <form id="usage-form" className="usage-form" onSubmit={(event) => { event.preventDefault(); void submitUsage("add-usage"); }}>
+                <form id="usage-form" className="usage-form inline-composer" onSubmit={(event) => { event.preventDefault(); void submitUsage("add-usage"); }}>
                     <SpeechTextarea
                         id="usage-input"
                         value={usageDraft.value}
@@ -454,31 +455,34 @@ export function RequirementsPanel() {
                         autoComplete="off"
                         placeholder="I want to..."
                         aria-label="Add one app usage"
-                        aria-describedby="usage-help"
+                        aria-describedby="usage-help usage-message"
                         disabled={busy || !canEdit || !isUsage}
                     />
-                    <button id="add-usage" type="submit" disabled={busy || !canEdit || !isUsage}>
+                    <button id="add-usage" type="submit" disabled={busy || !canEdit || !isUsage} aria-describedby="usage-help usage-message">
                         <Plus size={16} aria-hidden="true" />{busy ? "Working..." : "Add usage"}
                     </button>
                 </form>
-                <div id="usage-suggestion-area" hidden={!suggestions.length && !suggestionsLoading}>
-                    <p className="usage-suggestion-heading"><Sparkles size={16} aria-hidden="true" /> AI suggestions — click to add</p>
-                    <ul id="usage-suggestions" className="usage-suggestions">
-                        {suggestionsLoading && !suggestions.length && <li className="muted">Generating AI suggestions...</li>}
-                        {suggestions.map((suggestion, index) => <li key={`${index}:${suggestion}`}>
-                            <button className="usage-suggestion" type="button" disabled={busy || !canEdit || !isUsage}
-                                onClick={() => void submitUsage("add-usage", suggestion)}>
-                                <Plus size={16} aria-hidden="true" />{suggestion}
-                            </button>
-                        </li>)}
-                    </ul>
-                </div>
                 <button id="generate-dag" className="generate-dag" type="button" disabled={busy || !canEdit || !usageItems.length || !isUsage}
+                    aria-describedby="usage-message"
                     onClick={() => void submitUsage("generate-dag")}>
                     {dagFailed ? <RefreshCw size={16} aria-hidden="true" /> : <GitBranch size={16} aria-hidden="true" />}
                     {activeAction === "generate-dag" || processing?.action === "generate-dag" && workerBusy
                         ? "Generating DAG..." : dagFailed ? "Retry requirements DAG" : "Generate requirements DAG"}
                 </button>
+                </div>
+                <aside id="usage-suggestion-area" aria-label="Suggested usages" hidden={!suggestions.length && !suggestionsLoading}>
+                    <p className="usage-suggestion-heading"><Sparkles size={16} aria-hidden="true" /> AI suggestions</p>
+                    <ul id="usage-suggestions" className="usage-suggestions">
+                        {suggestionsLoading && !suggestions.length && <li className="muted">Generating AI suggestions...</li>}
+                        {suggestions.map((suggestion, index) => <li key={`${index}:${suggestion}`}>
+                            <button className="usage-suggestion" type="button" disabled={busy || !canEdit || !isUsage}
+                                data-status-help="Add this suggestion to the accepted usage list."
+                                onClick={() => void submitUsage("add-usage", suggestion)}>
+                                <Plus size={15} aria-hidden="true" /><span>{suggestion}</span>
+                            </button>
+                        </li>)}
+                    </ul>
+                </aside>
             </div>
             {!isUsage && <Collapsible.Root open={usagesExpanded} onOpenChange={setUsagesExpanded}>
                 <Collapsible.Trigger className="usage-suggestion" type="button">
@@ -491,7 +495,7 @@ export function RequirementsPanel() {
                     </ul>
                 </Collapsible.Content>
             </Collapsible.Root>}
-            <p id="usage-message" className="usage-message" role={usageError || dagFailed ? "alert" : "status"} aria-live="polite"
+            <p id="usage-message" className={usageError || dagFailed || activeAction || workerBusy || suggestionsLoading ? "usage-message" : "visually-hidden"} role={usageError || dagFailed ? "alert" : "status"} aria-live="polite"
                 data-status={usageError || dagFailed ? "error" : "idle"}>{usageMessage}</p>
         </section>
         <div id="design-tree-card" className="design-tree-card" hidden={!nodes.length}>
@@ -520,15 +524,17 @@ export function RequirementsPanel() {
                     {nodes.map((node) => <li key={node.id}>
                         <button type="button" data-ui-key={`decision-text:${node.id}`} data-decision-id={node.id}
                             data-status={node.status} aria-pressed={node.id === selected?.id} onClick={() => selectDecision(node.id)}>
-                            {node.title} · {node.status === "toAnswer" ? "To answer" : node.status}
-                            {node.review ? " · Review required" : ""}
+                            {node.status === "answered" ? <Check size={15} aria-hidden="true" /> : node.status === "active"
+                                ? <CircleDot size={15} aria-hidden="true" /> : <LockKeyhole size={15} aria-hidden="true" />}
+                            <span>{node.title} · {node.status === "toAnswer" ? "To answer" : node.status}
+                                {node.review ? " · Review required" : ""}</span>
                         </button>
                     </li>)}
                 </ol>
                 <p id="design-tree-status" className="diagram-status" role={defaultsError || action.error || defaultsFailed ? "alert" : "status"}
                     aria-live="polite" data-status={defaultsError || action.error || defaultsFailed ? "error" : "idle"}>{graphStatus}</p>
             </div>
-            <aside className="design-tree-inspector" aria-label="Selected decision">
+            <aside className="design-tree-inspector" aria-label="Selected decision" data-status-help={guidance}>
                 <p className="eyebrow">Selected question</p>
                 <div id="question-host" className="question-card" ref={questionHost}>
                     {selected && draft ? <DecisionQuestion
@@ -564,7 +570,7 @@ export function RequirementsPanel() {
                 </div>
             </aside>
         </div>
-        <div id="design-tree-empty" className="content-empty" hidden={nodes.length > 0}>
+        <div id="design-tree-empty" className="visually-hidden" hidden={nodes.length > 0}>
             <p>The requirements DAG will appear after the usage list is captured.</p>
         </div>
     </>;

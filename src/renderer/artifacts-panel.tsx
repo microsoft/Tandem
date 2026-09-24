@@ -1,4 +1,4 @@
-import { MessageCircle, Send } from "lucide-react";
+import { FileText, FileWarning, FolderOpen, MessageCircle, Send } from "lucide-react";
 import type { FormEvent } from "react";
 import type { TandemArtifact } from "../types.js";
 import { lifecycleStages } from "../workflow.js";
@@ -63,7 +63,7 @@ function ArtifactComposer({ artifact }: { artifact: TandemArtifact }) {
     });
   }
 
-  return <form id="design-review-form" className="design-review-composer" onSubmit={submit}
+  return <form id="design-review-form" className="design-review-composer inline-composer" onSubmit={submit} aria-describedby="design-review-status"
     hidden={!editable} data-draft-key={key} aria-busy={action.busy}>
     <select id="review-request-kind" className="review-request-kind" aria-label="Artifact review request type"
       value={requestKind} disabled={!editable}
@@ -75,14 +75,14 @@ function ArtifactComposer({ artifact }: { artifact: TandemArtifact }) {
       {kind === "test" && <option value="test-scenario">Generate a related test scenario</option>}
     </select>
     <SpeechTextarea id="design-review-input" speechKey={key} maxLength={4000} value={draft.prompt}
-      placeholder={placeholder} aria-label="Artifact review question or request" disabled={!editable}
+      placeholder={placeholder} aria-label="Artifact review question or request" aria-describedby="design-review-status" disabled={!editable}
       onValueChange={(prompt) => setDraft((current) => ({ ...current, prompt, version: current.version + 1 }))} />
     <div className="review-composer-actions">
-      <span id="design-review-status" className="design-review-status" role="status" aria-live="polite"
+      <span id="design-review-status" className={action.error || action.busy || review.processing || review.finalizeRequested || review.threads.some((thread) => thread.status === "failed") ? "design-review-status" : "visually-hidden"} role="status" aria-live="polite"
         data-status={action.error ? "error" : "idle"}>
         {action.error || reviewStatus(state, editable, guidance("conduct the review"))}
       </span>
-      <button id="review-submit" className="review-submit" type="submit" disabled={pending || action.busy || !editable}>
+      <button id="review-submit" className="review-submit" type="submit" aria-describedby="design-review-status" disabled={pending || action.busy || !editable}>
         <Send size={14} aria-hidden="true" /> {action.busy ? "Queueing..." : review.processing
           ? requestKind === "question" ? "Queue question" : "Queue artifact"
           : requestKind === "question" ? "Ask question" : "Generate artifact"}
@@ -96,7 +96,7 @@ export function ArtifactList({ selectedArtifactId }: ArtifactSelectionProps) {
   const selected = state.artifacts.some((artifact) => artifact.id === selectedArtifactId)
     ? selectedArtifactId : state.artifacts[0]?.id ?? null;
   return <div id="artifact-list" className="artifact-list">
-      {state.artifacts.length === 0 && <p className="artifact-empty">Your artifacts will appear here as each stage progresses.</p>}
+      {state.artifacts.length === 0 && <p className="artifact-empty">No artifacts yet.</p>}
       {lifecycleStages.map((stage) => {
         const artifacts = state.artifacts.filter((artifact) => (artifact.stage || "requirements") === stage.id);
         if (!artifacts.length) return null;
@@ -106,10 +106,12 @@ export function ArtifactList({ selectedArtifactId }: ArtifactSelectionProps) {
             const meta = [artifact.kind, artifact.path, artifact.reviewStatus === "stale" ? "stale" : ""].filter(Boolean).join(" · ");
             return <li key={artifact.id}>
               <button className="artifact-button" type="button" data-artifact-id={artifact.id}
-                data-ui-key={`artifact:${artifact.id}`} aria-current={artifact.id === selected}
+                data-ui-key={`artifact:${artifact.id}`} aria-current={artifact.id === selected} title={`${artifact.title} · ${meta}`}
+                data-stale={artifact.reviewStatus === "stale"}
                 onClick={() => selectArtifact(artifact.id)}>
-                <span className="artifact-title">{artifact.title}</span>
-                {meta && <span className="artifact-list-meta">{meta}</span>}
+                {artifact.reviewStatus === "stale" ? <FileWarning className="artifact-icon" size={15} aria-hidden="true" /> : <FileText className="artifact-icon" size={15} aria-hidden="true" />}
+                <span className="artifact-copy"><span className="artifact-title">{artifact.title}</span>
+                  {meta && <span className="artifact-list-meta">{meta}</span>}</span>
               </button>
             </li>;
           })}</ul>
@@ -122,7 +124,7 @@ export function ArtifactsPanel({ selectedArtifactId }: ArtifactSelectionProps) {
   const { state, canEdit, guidance } = useUi();
   const artifact = state.artifacts.find((candidate) => candidate.id === selectedArtifactId) || state.artifacts[0];
   if (!artifact) return <div id="content-empty" className="content-empty">
-    <p>Captured artifacts will appear here as the prototype evolves.</p>
+    <div className="empty-state"><FolderOpen size={28} aria-hidden="true" /><strong>No artifacts yet</strong></div>
   </div>;
   const stage = lifecycleStages.find((candidate) => candidate.id === artifact.stage)?.label;
   const meta = [stage, artifact.kind, artifact.path, artifact.reviewStatus === "stale" ? "stale" : ""].filter(Boolean).join(" · ");
@@ -139,16 +141,16 @@ export function ArtifactsPanel({ selectedArtifactId }: ArtifactSelectionProps) {
         <Diagram key={artifact.id} id={`artifact:${artifact.id}`} source={artifact.mermaid} label={`${artifact.title} workflow diagram`} />
       </div>}
       <pre id="artifact-content" className="artifact-content" hidden={!artifact.content}>{artifact.content || ""}</pre>
-      {artifact.stage === "design" && <section id="artifact-review" className="artifact-review">
+      {artifact.stage === "design" && <section id="artifact-review" className="artifact-review" aria-describedby="artifact-review-help">
         <div className="artifact-review-heading">
           <strong><MessageCircle size={16} aria-hidden="true" /> Artifact review</strong>
-          <span>Questions and review decisions stay with this artifact.</span>
+          <span id="artifact-review-help" className="visually-hidden">Questions and review decisions stay with this artifact.</span>
         </div>
         <div id="artifact-review-threads" className="artifact-review-threads">
           {threads.map(({ thread, kind }) => <ReviewThreadCard key={`${artifact.id}:${kind}:${thread.id}`}
             thread={thread} kind={kind} showArtifactLinks={false} />)}
         </div>
-        {!canEdit("design") && <p className="design-review-status" role="status">
+        {!canEdit("design") && <p className="visually-hidden" role="status">
           {reviewStatus(state, false, guidance("conduct the review"))}
         </p>}
         <ArtifactComposer key={`${artifact.id}:${reviewKind}`} artifact={artifact} />

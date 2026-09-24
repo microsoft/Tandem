@@ -34,8 +34,8 @@ interface PlanAgent {
 }
 
 const disclosureStyle: CSSProperties = {
-  width: "100%", padding: "9px 10px", border: 0, background: "transparent",
-  color: "inherit", font: "inherit", textAlign: "left", cursor: "pointer",
+  width: "100%", padding: "var(--studio-control-padding)", border: 0, background: "transparent",
+  color: "inherit", textAlign: "left", cursor: "pointer",
 };
 
 function PlanList({ items, empty }: { items?: string[]; empty: string }) {
@@ -147,17 +147,17 @@ export function PlanPanel() {
 
   return <div>
     <div className="plan-workspace">
-      <div className="plan-heading">
+      <div className="plan-heading" aria-describedby="plan-status">
         <div className="plan-heading-copy">
           <strong>Implementation orchestration</strong>
-          <span id="plan-progress">{progress}</span>
+          <span id="plan-progress" className={processing || hasPlan && !finalized ? undefined : "visually-hidden"}>{progress}</span>
         </div>
         <div className="plan-controls">
           <label className="plan-agent-limit">
             Max agents
             <input id="plan-max-agents" type="number" min={1} max={30} value={maxAgents} disabled={disabled} onChange={(event) => setMaxAgents(event.currentTarget.value)} />
           </label>
-          <button id="generate-plan" className="plan-button" type="button" disabled={disabled}
+          <button id="generate-plan" className="plan-button" type="button" disabled={disabled} aria-describedby="plan-status"
             onClick={() => generate(hasPlan ? "revise" : "generate", hasPlan
               ? "Regenerate the complete plan for the selected agent limit while preserving accepted design scope." : "")}>
             {hasPlan ? <RotateCcw size={16} aria-hidden="true" /> : <Network size={16} aria-hidden="true" />}{" "}
@@ -165,12 +165,12 @@ export function PlanPanel() {
               ? planning.processing?.action === "revise" || operation === "revise" ? "Revising..." : "Generating..."
               : hasPlan ? "Regenerate plan" : "Generate plan"}
           </button>
-          <button id="finalize-plan" className="plan-button secondary" type="button" disabled={finalizeDisabled} onClick={finalize}>
+          <button id="finalize-plan" className="plan-button secondary" type="button" disabled={finalizeDisabled} aria-describedby="plan-status" onClick={finalize}>
             <Check size={16} aria-hidden="true" /> {operation === "finalize" ? "Finalizing..." : finalized ? "Plan finalized" : "Finalize plan"}
           </button>
         </div>
       </div>
-      <p id="plan-status" className="plan-status" role="status" aria-live="polite"
+      <p id="plan-status" className={action.error || processing || action.busy || planning.status === "failed" || planning.error ? "plan-status" : "visually-hidden"} role="status" aria-live="polite"
         data-status={action.error || planning.status === "failed" || planning.error ? "error" : "idle"}>{status}</p>
       <div id="plan-metrics" className="plan-metrics">
         {metrics.map(([value, label]) => <div key={label} className="plan-metric"><strong>{value}</strong><span>{label}</span></div>)}
@@ -178,10 +178,6 @@ export function PlanPanel() {
       <section id="plan-strategy-section" className="plan-section" hidden={!hasPlan}>
         <h3>Orchestration strategy</h3>
         <p id="plan-strategy" className="plan-strategy">{planning.strategy || planning.summary || ""}</p>
-      </section>
-      <section id="plan-dag-section" className="plan-section" hidden={!hasPlan}>
-        <h3>Dependency DAG</h3>
-        {hasPlan && <Diagram id="plan-dag" source={buildPlanMermaid(workItems)} label="Execution plan dependency graph" />}
       </section>
       <div id="plan-columns" className="plan-columns" hidden={!hasPlan}>
         <div className="plan-main">
@@ -223,6 +219,10 @@ export function PlanPanel() {
           </section>
         </aside>
       </div>
+      <section id="plan-dag-section" className="plan-section" hidden={!hasPlan}>
+        <h3>Dependency DAG</h3>
+        {hasPlan && <Diagram id="plan-dag" source={buildPlanMermaid(workItems)} label="Execution plan dependency graph" />}
+      </section>
       <section id="plan-revision-section" className="plan-section" hidden={!hasPlan}>
         <h3>Revise execution plan</h3>
         <form id="plan-revision-form" className="plan-revision-form" onSubmit={(event) => {
@@ -233,7 +233,7 @@ export function PlanPanel() {
         }}>
           <SpeechTextarea id="plan-revision-input" maxLength={4000} disabled={disabled}
             placeholder="Describe how assignments, dependencies, work-item scope, or schedule should change."
-            aria-label="Execution plan revision" value={draft.value}
+            aria-label="Execution plan revision" aria-describedby="plan-status" value={draft.value}
             onValueChange={(value) => setDraft((current) => ({ value, version: current.version + 1 }))} />
           <div className="plan-actions">
             <button id="optimize-plan" className="plan-button secondary" type="button" disabled={disabled}

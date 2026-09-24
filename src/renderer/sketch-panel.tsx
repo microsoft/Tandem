@@ -4,7 +4,7 @@ import {
 } from "react";
 import { Popover, Toggle, ToggleGroup } from "radix-ui";
 import {
-  ArrowRight, Check, ChevronDown, Circle, History, Minus, PanelRight, Pencil, PenTool, Plus, Redo2, RefreshCw, Save, Send, Sparkles, Spline, Square, Trash2, Type, Undo2, Workflow, X,
+  ArrowRight, Check, ChevronDown, Circle, History, Minus, Monitor, PanelRight, Pencil, PenTool, Plus, Redo2, RefreshCw, Save, Send, Sparkles, Spline, Square, Trash2, Type, Undo2, Workflow, X,
 } from "lucide-react";
 import { validateSketchDocument } from "../sketch.js";
 import type { SketchCurve, SketchDocument, SketchRevision, SketchScreen, SketchShape, SketchState, SketchTransition } from "../sketch.js";
@@ -821,7 +821,7 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
   };
 
   return <section className="sketch-stage" onKeyDown={keydown}>
-    <div className="sketch-heading sketch-header-actions" role="group" aria-label="Sketch actions">
+    <div className="sketch-heading sketch-header-actions" role="group" aria-label="Sketch actions" aria-describedby="sketch-status">
       <button id="sketch-add-screen" className="sketch-icon-button" type="button" title="Add screen" aria-label="Add screen"
         disabled={!writable || (document?.screens.length ?? 0) >= 8 || !acceptedDecisionIds(state).length}
         onClick={() => {
@@ -856,15 +856,16 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
         disabled={!writable || emptyScreens || conflict || state.sketch.status === "stale" || invalidFields}
         onClick={() => void submit("approve")}><Check size={14} aria-hidden="true" /> Approve drawings and continue</button>
     </div>
-    <p id="sketch-status" className="muted" role="status" aria-live="polite" hidden={!status}>{status}</p>
-    <p id="sketch-empty" className="sketch-empty" hidden={Boolean(screen)}>No drawings yet. Generate a first draft or add a screen to begin.</p>
+    <p id="sketch-status" className={incoming.preview || loadState.loading || action.busy || ["running", "starting"].includes(worker?.status || "") || conflict || dirty || state.sketch.status === "stale" ? "muted" : "visually-hidden"} role="status" aria-live="polite" hidden={!status}>{status}</p>
+    <p id="sketch-empty" className="sketch-empty" hidden={Boolean(screen)}
+      data-status-help="Generate a first draft or add a screen to begin.">No drawings yet.</p>
     <div id="sketch-workspace" className="sketch-workspace" hidden={!screen}>
       <aside className="sketch-sidebar" aria-label="Sketch screens and properties">
         <h3>Screens</h3>
         <nav id="sketch-screens" className="sketch-list" aria-label="Screens">
           {document?.screens.map((item) => <button key={item.id} type="button" disabled={Boolean(gesture)}
             data-ui-key={`sketch-screen:${item.id}`} aria-pressed={item.id === screen?.id}
-            onClick={() => { setSelectedScreen(item.id); setSelectedShape(""); }}>{item.title || item.id}</button>)}
+            onClick={() => { setSelectedScreen(item.id); setSelectedShape(""); }}><Monitor size={15} aria-hidden="true" /><span>{item.title || item.id}</span></button>)}
         </nav>
         <label htmlFor="sketch-title">Screen title</label>
         <input id="sketch-title" maxLength={500} disabled={!writable || !screen}
@@ -887,11 +888,15 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
           }, { key: screenFieldKey("decisions"), value: event.target.value, keepInput: true })} />
         <details><summary>Shapes (keyboard selection)</summary>
           <div id="sketch-shapes" className="sketch-list" aria-label="Shapes">
-            {screen?.shapes.map((item) => <button key={item.id} type="button" disabled={Boolean(gesture)}
-              data-ui-key={`sketch-shape:${item.id}`} aria-pressed={item.id === selectedShape}
-              onClick={() => { setSelectedShape(item.id); setDrawing(false); }}>
-              {item.kind === "path" ? curveLabels[item.curve ?? "linear"] : item.kind}{item.text ? ": " + item.text : " · " + item.id}
-            </button>)}
+            {screen?.shapes.map((item) => {
+              const ShapeIcon = shapeTools.find((tool) => tool.kind === item.kind
+                && (item.kind !== "path" || tool.curve === item.curve))?.Icon || Pencil;
+              return <button key={item.id} type="button" disabled={Boolean(gesture)}
+                data-ui-key={`sketch-shape:${item.id}`} aria-pressed={item.id === selectedShape}
+                onClick={() => { setSelectedShape(item.id); setDrawing(false); }}>
+                <ShapeIcon size={15} aria-hidden="true" /><span>{item.kind === "path" ? curveLabels[item.curve ?? "linear"] : item.kind}{item.text ? ": " + item.text : " · " + item.id}</span>
+              </button>;
+            })}
           </div>
         </details>
       </aside>
@@ -942,7 +947,7 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
             <Pencil size={20} aria-hidden="true" />
           </Toggle.Root>
         </div>
-        } help={boardHelp ? <p id="sketch-board-help" className="muted">{boardHelp}</p> : null}>
+        } help={boardHelp ? <p id="sketch-board-help" className="visually-hidden">{boardHelp}</p> : null}>
           <div ref={board} id="sketch-board" className={`sketch-board${drawing ? " sketch-drawing" : ""}`}
             tabIndex={0} role="group" aria-label={livePreview ? "Live preview screen drawing (read only)" : "Editable screen drawing"} aria-describedby={boardHelp ? "sketch-board-help" : undefined}
             onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp}
@@ -1013,7 +1018,7 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
               onChange={(event) => editShape((item) => setPathPoints(item, parsePathPoints(event.target.value)),
                 { key: shapeFieldKey("points"), value: event.target.value, keepInput: true })} />
           </label>
-          <p id="sketch-path-help" className="muted">
+          <p id="sketch-path-help" className="visually-hidden">
             {shape.curve === "quadratic" ? "Start point, then control/end pairs. Append complete pairs to add segments."
               : shape.curve === "cubic" ? "Start point, then control/control/end triples. Append complete triples to add segments."
               : shape.curve === "catmull-rom" ? "Knots only; the spline passes through each one. Closed splines wrap smoothly without repeating the first knot. Tension 0 is smooth; 1 gives straight segments."
@@ -1080,10 +1085,10 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
       <p id="sketch-message" className="sketch-error" role="alert" hidden={!message}>{message}</p>
       <section id="sketch-failed-revision" className="sketch-details" aria-label="Failed drawing revision" hidden={!retryInstruction}>
         <p id="sketch-failed-instruction" className="muted">{retryInstruction ? "Failed revision instruction: " + retryInstruction : ""}</p>
-        <button id="sketch-retry-revision" type="button"
+        <button id="sketch-retry-revision" type="button" aria-describedby="sketch-retry-help"
           disabled={!writable || !document || conflict || !retryInstruction || invalidFields} onClick={() => void submit("revise", retryInstruction)}>
           <RefreshCw size={14} aria-hidden="true" /> Retry same revision</button>
-        <p className="muted">Retries the original instruction against these drawings. Local edits are saved first; any new instruction below is kept.</p>
+        <p id="sketch-retry-help" className="visually-hidden">Retries the original instruction against these drawings. Local edits are saved first; any new instruction below is kept.</p>
       </section>
       <ol id="sketch-request-history" className="sketch-request-history">
         {requestHistory.map((item) => <li key={item.id} data-status={item.status}>
@@ -1094,7 +1099,7 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
         </li>)}
       </ol>
       <p className="muted" hidden={Boolean(requestHistory.length || message || retryInstruction)}>
-        Send a drawing revision to see its request and response history here.
+        No drawing requests yet.
       </p>
     </section>
     <Popover.Root open={voiceSettingsOpen} onOpenChange={setVoiceSettingsOpen}>
@@ -1102,7 +1107,7 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
       <label className="visually-hidden" htmlFor="sketch-instruction">Describe a drawing change</label>
       {voiceProvider === "azure-speech"
         ? <SpeechTextarea ref={instructionInput} id="sketch-instruction" rows={1} maxLength={4000} disabled={!writable}
-          value={instruction} onValueChange={setInstruction} onKeyDown={sendShortcut} composer={composer}
+          value={instruction} onValueChange={setInstruction} onKeyDown={sendShortcut} composer={composer} aria-describedby="sketch-status"
           placeholder="Describe a drawing change... (Ctrl+Enter)" />
         : <SketchLivePanel identity={identityOf(state)} input={instructionInput} createSession={createLiveSession}
             enabled={canEdit("sketch") && state.provider?.canSubmitAnswers !== false && !state.effortReset
@@ -1125,14 +1130,14 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
             <Popover.Close asChild><button type="button" aria-label="Close voice settings"><X size={16} aria-hidden="true" /></button></Popover.Close>
           </div>
           <label htmlFor="sketch-voice-provider">Voice provider</label>
-          <select id="sketch-voice-provider" value={voiceProvider} disabled={Boolean(speech.active)} onChange={(event) => {
+          <select id="sketch-voice-provider" value={voiceProvider} disabled={Boolean(speech.active)} aria-describedby="sketch-voice-provider-help" onChange={(event) => {
             if (event.target.value === "azure-speech" || event.target.value === "gpt-live") setVoiceProvider(event.target.value);
           }}>
             <option value="azure-speech">Azure dictation</option>
             <option value="gpt-live">GPT-live conversation</option>
           </select>
-          <p role="status" aria-live="polite">{speech.active?.kind === "capture" ? "Voice session in progress" : "Microphone off"}</p>
-          <p className="muted">{voiceProvider === "azure-speech"
+          {speech.active?.kind === "capture" && <p role="status" aria-live="polite">Voice session in progress</p>}
+          <p id="sketch-voice-provider-help" className="visually-hidden">{voiceProvider === "azure-speech"
             ? "Use Sign in in the top bar for Azure Speech. Audio goes to Azure; dictation does not send your message. Language and Azure resources use the existing host configuration."
             : "GPT-live uses Azure CLI sign-in and sends audio and sketch context to Azure. Spoken drawing requests can create revisions; approval stays manual."}</p>
         </Popover.Content>

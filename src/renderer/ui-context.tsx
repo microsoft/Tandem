@@ -1,4 +1,4 @@
-import { createContext, useContext, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import type { LifecycleStageId, TandemState } from "../types.js";
 import type { SketchPreview } from "../sketch-stream.js";
 
@@ -53,6 +53,51 @@ export function useUi(): UiContextValue {
   const context = useContext(UiContext);
   if (!context) throw new Error("Tandem UI components require a UiContext provider.");
   return context;
+}
+
+function statusHelp(target: Element | null): string {
+  if (!target?.isConnected || target.closest("[hidden], [inert], #next-action-bar")) return "";
+  for (let element: Element | null = target; element && element !== document.body; element = element.parentElement) {
+    const description = (element.getAttribute("aria-describedby") || "").split(/\s+/)
+      .map((id) => document.getElementById(id)?.textContent?.trim()).filter(Boolean).join(" ");
+    const text = element.getAttribute("data-status-help") || description
+      || element.getAttribute("aria-description") || element.getAttribute("title");
+    if (text?.trim()) return text.trim().replace(/\s+/g, " ");
+  }
+  return "";
+}
+
+export function useStatusHelp(view: string): string {
+  const [help, setHelp] = useState("");
+  const hovered = useRef<Element | null>(null);
+  const focused = useRef<Element | null>(null);
+  useEffect(() => {
+    const update = () => setHelp(statusHelp(hovered.current) || statusHelp(focused.current));
+    const element = (target: EventTarget | null) => target instanceof Element ? target : null;
+    const over = (event: PointerEvent) => { hovered.current = element(event.target); update(); };
+    const out = (event: PointerEvent) => { hovered.current = element(event.relatedTarget); update(); };
+    const focus = (event: FocusEvent) => { focused.current = element(event.target); hovered.current = null; update(); };
+    const blur = (event: FocusEvent) => { focused.current = element(event.relatedTarget); update(); };
+    const leave = () => { hovered.current = null; focused.current = null; update(); };
+    document.addEventListener("pointerover", over, true);
+    document.addEventListener("pointerout", out, true);
+    document.addEventListener("focusin", focus);
+    document.addEventListener("focusout", blur);
+    window.addEventListener("blur", leave);
+    return () => {
+      document.removeEventListener("pointerover", over, true);
+      document.removeEventListener("pointerout", out, true);
+      document.removeEventListener("focusin", focus);
+      document.removeEventListener("focusout", blur);
+      window.removeEventListener("blur", leave);
+    };
+  }, []);
+  useEffect(() => {
+    hovered.current = null;
+    focused.current = document.activeElement;
+    setHelp(statusHelp(focused.current));
+  }, [view]);
+  return help;
 }
 
 export function hasActiveJobs(state: UiState): boolean {

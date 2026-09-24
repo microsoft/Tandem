@@ -82,9 +82,10 @@ function ProcessSection({ name, label, children, outer = false }: {
 }
 
 function AcceptanceDetails({ record, current }: { record: AcceptanceRecord; current: boolean }) {
-  return <details data-ui-key={`acceptance:${record.id}`}>
+  return <details data-ui-key={`acceptance:${record.id}`}
+    data-status-help="Acceptance records attribution, not authenticated code-owner approval.">
     <summary>{stageLabel(record.stageId)} · {current ? "Current snapshot" : "Historical snapshot"} · {record.acceptedAt}</summary>
-    <p>Accepted by {record.acceptedBy.label}. This is recorded attribution, not authenticated code-owner approval.</p>
+    <p>Accepted by {record.acceptedBy.label}.</p>
     <pre>{[
       `Acceptance: ${record.id}`,
       `Snapshot: ${record.snapshotPath}`,
@@ -126,8 +127,8 @@ function ToolEvidence() {
     && verdict.runId === state.testing?.runId
     && verdict.inputRevision === state.testing?.inputRevision
     && verdict.sourceFingerprint === state.testing?.sourceFingerprint;
-  return <div id="process-evidence">
-    <p className="muted">Only tool-backed commands and the independent verifier provide verification evidence.
+  return <div id="process-evidence" aria-describedby="process-evidence-help">
+    <p id="process-evidence-help" className="visually-hidden">Only tool-backed commands and the independent verifier provide verification evidence.
       Worker-reported completion is not a passing command result. Historical evidence never establishes a pass for different sources or inputs.</p>
     {(["implementation", "testing"] as const).flatMap((scope) => {
       const runtime = state[scope];
@@ -287,21 +288,21 @@ export function ProcessPanel() {
     : message && state.revision <= message.revision ? message.text : process?.message || "");
 
   return <ProcessSection name="root" label="Handoffs & process" outer>
-    <p className="muted">Finish a stage, then accept its immutable handoff. Exports never commit or publish.</p>
-    {!writable && <p className="stage-message" role="status">{guidance("change process settings or handoffs")}</p>}
+    <p id="handoff-help" className="visually-hidden">Finish a stage, then accept its immutable handoff. Exports never commit or publish.</p>
+    {!writable && <p id="process-readonly-help" className="visually-hidden" role="status">{guidance("change process settings or handoffs")}</p>}
     <label htmlFor="handoff-stage">Completed stage</label>
-    <select id="handoff-stage" value={stage || ""} onChange={(event) => setSelectedStage(event.target.value)}>
+    <select id="handoff-stage" value={stage || ""} aria-describedby="handoff-help" onChange={(event) => setSelectedStage(event.target.value)}>
       {!stages.length && <option value="">No completed stages</option>}
       {stages.map((id) => <option key={id} value={id}>{stageLabel(id)}</option>)}
     </select>
     <label htmlFor="handoff-approver">Accepted by</label>
     <input id="handoff-approver" maxLength={200} placeholder="Your name (recorded attribution)" value={approver}
       disabled={!writable} onChange={(event) => setApprover(event.target.value)} />
-    <button id="accept-handoff" className="complete-stage" type="button"
+    <button id="accept-handoff" className="complete-stage" type="button" aria-describedby={writable ? "handoff-help" : "process-readonly-help"}
       disabled={blocked || !stage || !state.lifecycle.completedStages.includes(stage)} onClick={acceptHandoff}>
       <Check size={14} aria-hidden="true" /> Accept handoff
     </button>
-    <button id="export-handoff" className="complete-stage" type="button" disabled={blocked || !acceptance}
+    <button id="export-handoff" className="complete-stage" type="button" disabled={blocked || !acceptance} aria-describedby="handoff-help"
       onClick={() => acceptance && perform({ action: "export", acceptanceId: acceptance.id }, {
         confirmation: "Export the accepted snapshot and artifacts into tandem-records? Review the bundle before sharing; nothing will be committed.",
       })}>
@@ -396,12 +397,12 @@ export function ProcessPanel() {
         <label htmlFor="verification-checks">Approved commands (JSON array)</label>
         <textarea id="verification-checks" rows={8} spellCheck={false} aria-describedby="verification-help"
           value={fields.checks} disabled={!writable} onChange={(event) => edit("checks", event.target.value)} />
-        <p id="verification-help" className="muted">Each check: id, program, args, stage (implementation or test),
+        <p id="verification-help" className="visually-hidden">Each check: id, program, args, stage (implementation or test),
           afterWorkItems, timeoutSeconds. Only approve commands you trust. No shell interpolation.</p>
-        <p className="muted">Settings are drafts until saved. Actions use the saved adapter; an adapter error never switches to a different adapter.</p>
+        <p id="process-settings-help" className="visually-hidden">Settings are drafts until saved. Actions use the saved adapter; an adapter error never switches to a different adapter.</p>
         {draft && <p className="muted" role="status">Unsaved settings based on revision {draft.baseRevision}.
           {draft.baseRevision !== state.revision ? " The effort has changed; saving may conflict. Reload saved settings to discard this draft." : ""}</p>}
-        <button id="save-process" className="complete-stage" type="submit" disabled={blocked}>
+        <button id="save-process" className="complete-stage" type="submit" disabled={blocked} aria-describedby="process-settings-help">
           <Save size={14} aria-hidden="true" /> Save process settings
         </button>
         <button id="reset-process" className="complete-stage" type="button" disabled={blocked} onClick={reloadSettings}>

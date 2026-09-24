@@ -226,8 +226,8 @@ export function SketchLivePanel(props: Props) {
         {!props.composer && (phase === "idle" ? "Talk with GPT-live" : "End voice")}
       </button>;
   const feedbackView = <>
-    <span id="sketch-live-status" className="speech-status" role="status" aria-live="polite">{status}</span>
-    {!props.composer && <p className="muted">{initialStatus} Uses Azure CLI sign-in, separate from Azure Speech.</p>}
+    <span id="sketch-live-status" className={status === initialStatus ? "visually-hidden" : "speech-status"} role="status" aria-live="polite">{status}</span>
+    {!props.composer && <p className="visually-hidden">{initialStatus} Uses Azure CLI sign-in, separate from Azure Speech.</p>}
     {error && <p id="sketch-live-error" className="sketch-error" role="alert">{error}{" "}
       <a href="/" target="_blank" rel="noopener noreferrer"><ExternalLink size={14} aria-hidden="true" />Open Tandem in browser</a>
     </p>}

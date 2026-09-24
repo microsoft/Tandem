@@ -110,6 +110,27 @@ readable text/source fallback. UI regression tests use jsdom to exercise the
 actual React components, keyboard controls, dialogs, and request payloads.
 Edit `src\renderer` and the build script, not the generated extension.
 
+The shared UI uses a compact workspace scale: 13px body text, 30px desktop
+controls, 36px tabs, and 10px card padding. Workflow stage states, status badges,
+and labeled Lucide icons keep dense screens scannable. Wide Requirements
+screens place suggestions beside the usage list; Plan prioritizes schedules
+and assignments above the dependency diagram, and execution waves share a
+compact row on wide screens. Keep colors in the
+`--studio-*` tokens in `styles.css`: they respect the canvas host's semantic
+colors and provide standalone light/dark fallbacks. Touch action buttons expand to
+44px targets, and keyboard focus, forced colors, and reduced motion remain
+supported. Keep action text visible; icon-only tools require accessible names
+and tooltips. Microphone buttons are icon-only. Secondary instructions appear
+in the status bar when hovering or focusing the associated control, rather than
+occupying a permanent row. Errors, warnings, unsaved changes, and live progress
+remain visible in their panels.
+Keep microphone, input, and single submit actions together in a compact composer
+row; wrap only when space is constrained. Active speech feedback and errors may
+use a separate row. Standard controls, icon buttons, and collapsed composers share
+the 30px control height, 20px line height, and 6px control gap. Derive vertical
+padding from those tokens; multiline editors and navigation tabs retain their
+own heights.
+
 ## Install
 
 ### From a shared Gist
