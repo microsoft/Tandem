@@ -1,0 +1,716 @@
+{
+  "schemaVersion": "captured-native-recovery-fixture/v1",
+  "sourceReceiptSha256": "64cfa1ee3a3ab2f957dcf87f09df7cbdf08656ab461cf58f818801af8b8ea0e5",
+  "note": "Derived SDK serialization regression fixture, not a raw capture. Session/event/message/hook/permission/call identities are deterministic synthetic values with correlations preserved. Owned paths are scrubbed; system-message payload and irrelevant usage/cache/account metadata are omitted. Harmless study prompts, event ordering and tested tool-result serialization shapes are retained. Original native evidence remains private and immutable.",
+  "sessionId": "00000000-0000-4000-8000-000000000001",
+  "live": [
+    {
+      "type": "session.start",
+      "data": {
+        "sessionId": "00000000-0000-4000-8000-000000000001",
+        "version": 1,
+        "producer": "copilot-agent",
+        "copilotVersion": "0.0.0",
+        "startTime": "2026-09-22T15:31:26.843Z",
+        "contextTier": null,
+        "context": {
+          "cwd": "C:\\owned\\serialization-study\\project"
+        },
+        "remoteSteerable": false,
+        "alreadyInUse": false
+      },
+      "id": "00000000-0000-4000-8000-000000000002",
+      "timestamp": "2026-09-22T15:31:27.121Z",
+      "parentId": null
+    },
+    {
+      "type": "session.model_change",
+      "data": {
+        "previousModel": null,
+        "newModel": "gpt-5.6-sol",
+        "previousReasoningEffort": null,
+        "reasoningEffort": null,
+        "previousReasoningSummary": null,
+        "reasoningSummary": null,
+        "source": "startup"
+      },
+      "id": "00000000-0000-4000-8000-000000000003",
+      "timestamp": "2026-09-22T15:31:28.451Z",
+      "parentId": "00000000-0000-4000-8000-000000000002"
+    },
+    {
+      "type": "hook.start",
+      "data": {
+        "hookInvocationId": "00000000-0000-4000-8000-000000000004",
+        "hookType": "userPromptSubmitted",
+        "input": {
+          "sessionId": "00000000-0000-4000-8000-000000000001",
+          "prompt": "This is a bounded serialization study. Perform exactly these two calls sequentially, then stop with a short acknowledgement.\n1. Call serialization_result with {} exactly once.\n2. Call powershell with these EXACT arguments, unchanged: {\"command\":\"node --input-type=module -e \\\"import assert from 'node:assert/strict'; assert.equal(2 + 2, 4)\\\"\",\"description\":\"Verify a quiet exact arithmetic assertion\",\"shellId\":\"serialization-empty-check\",\"mode\":\"sync\",\"initial_wait\":30}.\nNo other tools, retries, follow-up commands, file changes, dependencies, network calls or subagents. If either call fails, report that and stop rather than trying an alternative. The quiet assertion intentionally produces no output.",
+          "timestamp": 1790091090515,
+          "cwd": "C:\\owned\\serialization-study\\project"
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000005",
+      "timestamp": "2026-09-22T15:31:30.515Z",
+      "parentId": "00000000-0000-4000-8000-000000000003"
+    },
+    {
+      "type": "hook.end",
+      "data": {
+        "hookInvocationId": "00000000-0000-4000-8000-000000000004",
+        "hookType": "userPromptSubmitted",
+        "success": true
+      },
+      "id": "00000000-0000-4000-8000-000000000006",
+      "timestamp": "2026-09-22T15:31:30.517Z",
+      "parentId": "00000000-0000-4000-8000-000000000005"
+    },
+    {
+      "type": "hook.start",
+      "data": {
+        "hookInvocationId": "00000000-0000-4000-8000-000000000007",
+        "hookType": "userPromptTransformed",
+        "input": {
+          "sessionId": "00000000-0000-4000-8000-000000000001",
+          "prompt": "This is a bounded serialization study. Perform exactly these two calls sequentially, then stop with a short acknowledgement.\n1. Call serialization_result with {} exactly once.\n2. Call powershell with these EXACT arguments, unchanged: {\"command\":\"node --input-type=module -e \\\"import assert from 'node:assert/strict'; assert.equal(2 + 2, 4)\\\"\",\"description\":\"Verify a quiet exact arithmetic assertion\",\"shellId\":\"serialization-empty-check\",\"mode\":\"sync\",\"initial_wait\":30}.\nNo other tools, retries, follow-up commands, file changes, dependencies, network calls or subagents. If either call fails, report that and stop rather than trying an alternative. The quiet assertion intentionally produces no output.",
+          "transformedPrompt": "<current_datetime>2026-09-22T23:31:30.517+08:00</current_datetime>\n\nThis is a bounded serialization study. Perform exactly these two calls sequentially, then stop with a short acknowledgement.\n1. Call serialization_result with {} exactly once.\n2. Call powershell with these EXACT arguments, unchanged: {\"command\":\"node --input-type=module -e \\\"import assert from 'node:assert/strict'; assert.equal(2 + 2, 4)\\\"\",\"description\":\"Verify a quiet exact arithmetic assertion\",\"shellId\":\"serialization-empty-check\",\"mode\":\"sync\",\"initial_wait\":30}.\nNo other tools, retries, follow-up commands, file changes, dependencies, network calls or subagents. If either call fails, report that and stop rather than trying an alternative. The quiet assertion intentionally produces no output.",
+          "timestamp": 1790091090518,
+          "cwd": "C:\\owned\\serialization-study\\project"
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000008",
+      "timestamp": "2026-09-22T15:31:30.518Z",
+      "parentId": "00000000-0000-4000-8000-000000000006"
+    },
+    {
+      "type": "hook.end",
+      "data": {
+        "hookInvocationId": "00000000-0000-4000-8000-000000000007",
+        "hookType": "userPromptTransformed",
+        "success": true
+      },
+      "id": "00000000-0000-4000-8000-000000000009",
+      "timestamp": "2026-09-22T15:31:30.519Z",
+      "parentId": "00000000-0000-4000-8000-000000000008"
+    },
+    {
+      "type": "user.message",
+      "data": {
+        "content": "This is a bounded serialization study. Perform exactly these two calls sequentially, then stop with a short acknowledgement.\n1. Call serialization_result with {} exactly once.\n2. Call powershell with these EXACT arguments, unchanged: {\"command\":\"node --input-type=module -e \\\"import assert from 'node:assert/strict'; assert.equal(2 + 2, 4)\\\"\",\"description\":\"Verify a quiet exact arithmetic assertion\",\"shellId\":\"serialization-empty-check\",\"mode\":\"sync\",\"initial_wait\":30}.\nNo other tools, retries, follow-up commands, file changes, dependencies, network calls or subagents. If either call fails, report that and stop rather than trying an alternative. The quiet assertion intentionally produces no output.",
+        "transformedContent": "<current_datetime>2026-09-22T23:31:30.517+08:00</current_datetime>\n\nThis is a bounded serialization study. Perform exactly these two calls sequentially, then stop with a short acknowledgement.\n1. Call serialization_result with {} exactly once.\n2. Call powershell with these EXACT arguments, unchanged: {\"command\":\"node --input-type=module -e \\\"import assert from 'node:assert/strict'; assert.equal(2 + 2, 4)\\\"\",\"description\":\"Verify a quiet exact arithmetic assertion\",\"shellId\":\"serialization-empty-check\",\"mode\":\"sync\",\"initial_wait\":30}.\nNo other tools, retries, follow-up commands, file changes, dependencies, network calls or subagents. If either call fails, report that and stop rather than trying an alternative. The quiet assertion intentionally produces no output.",
+        "messageId": "00000000-0000-4000-8000-000000000010",
+        "supportedNativeDocumentMimeTypes": [],
+        "agentMode": "interactive",
+        "delivery": "idle",
+        "interactionId": "00000000-0000-4000-8000-000000000011",
+        "turnId": "0",
+        "parentAgentTaskId": "00000000-0000-4000-8000-000000000012"
+      },
+      "id": "00000000-0000-4000-8000-000000000013",
+      "timestamp": "2026-09-22T15:31:30.519Z",
+      "parentId": "00000000-0000-4000-8000-000000000009"
+    },
+    {
+      "type": "system.message",
+      "data": {},
+      "id": "00000000-0000-4000-8000-000000000014",
+      "timestamp": "2026-09-22T15:31:30.521Z",
+      "parentId": "00000000-0000-4000-8000-000000000013"
+    },
+    {
+      "type": "hook.start",
+      "data": {
+        "hookInvocationId": "00000000-0000-4000-8000-000000000015",
+        "hookType": "sessionStart",
+        "input": {
+          "source": "new",
+          "initialPrompt": "This is a bounded serialization study. Perform exactly these two calls sequentially, then stop with a short acknowledgement.\n1. Call serialization_result with {} exactly once.\n2. Call powershell with these EXACT arguments, unchanged: {\"command\":\"node --input-type=module -e \\\"import assert from 'node:assert/strict'; assert.equal(2 + 2, 4)\\\"\",\"description\":\"Verify a quiet exact arithmetic assertion\",\"shellId\":\"serialization-empty-check\",\"mode\":\"sync\",\"initial_wait\":30}.\nNo other tools, retries, follow-up commands, file changes, dependencies, network calls or subagents. If either call fails, report that and stop rather than trying an alternative. The quiet assertion intentionally produces no output.",
+          "sessionId": "00000000-0000-4000-8000-000000000001",
+          "timestamp": 1790091090522,
+          "cwd": "C:\\owned\\serialization-study\\project"
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000016",
+      "timestamp": "2026-09-22T15:31:30.522Z",
+      "parentId": "00000000-0000-4000-8000-000000000014"
+    },
+    {
+      "type": "hook.end",
+      "data": {
+        "hookInvocationId": "00000000-0000-4000-8000-000000000015",
+        "hookType": "sessionStart",
+        "success": true
+      },
+      "id": "00000000-0000-4000-8000-000000000017",
+      "timestamp": "2026-09-22T15:31:30.525Z",
+      "parentId": "00000000-0000-4000-8000-000000000016"
+    },
+    {
+      "type": "assistant.turn_start",
+      "data": {
+        "turnId": "0",
+        "interactionId": "00000000-0000-4000-8000-000000000011"
+      },
+      "id": "00000000-0000-4000-8000-000000000018",
+      "timestamp": "2026-09-22T15:31:30.526Z",
+      "parentId": "00000000-0000-4000-8000-000000000017"
+    },
+    {
+      "type": "assistant.message",
+      "data": {
+        "messageId": "00000000-0000-4000-8000-000000000019",
+        "originatingMessageId": "00000000-0000-4000-8000-000000000010",
+        "model": "gpt-5.6-sol",
+        "content": "",
+        "toolRequests": [
+          {
+            "toolCallId": "call_fixture_001",
+            "name": "serialization_result",
+            "arguments": {},
+            "type": "function"
+          }
+        ],
+        "interactionId": "00000000-0000-4000-8000-000000000011",
+        "turnId": "0",
+        "rte": true,
+        "apiCallId": "k1wHBgbl6eTlpqtaMdgirNw06q0+SrWDER60MneScHhjy2UuGhQ9AjBihOOg5mwOhLg5SYEoF9X/EW0yflY66XUe++BG8V+ZQ9dv+bbTIpBIG7EYBxDlS22FXqwOBmCw1vvnsD6gfZSYzHW9Rd8XhQCfUAO/9U0WShkGjX1TpfwfiJvzrRxse69RfLoWlhfkrj6JCKWEbV2+5C2vY8bOsuHcc5J/25qULVOnxzKQAWb+BofB+9YJRnnZfmCwipHNT07StIaUcWtQWHd6soNy+UrcInLdOBrhLuMvteyBkZsW4ggMZFzCvz9jpnLFlTZozlAA3TgxFDnfpfSVZgnCvZ9yGnr2Gnt4rwpTSgX/jZlA9wvYr9ZH4hQXThG0BxgW6fwcf6sdxKFd3Rn2pIaRdZci55YROb9C+5SCn8xBlHqO8XTAKaC7S9XYFKMGNDQqf5bqB0XaSQUViBtbJsT0F3/htbaJmH8HAF4Yryckn9Zc8vAf",
+        "serverTools": {
+          "provider": "openai-responses"
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000020",
+      "timestamp": "2026-09-22T15:31:33.310Z",
+      "parentId": "00000000-0000-4000-8000-000000000018"
+    },
+    {
+      "type": "tool.execution_start",
+      "data": {
+        "toolCallId": "call_fixture_001",
+        "toolName": "serialization_result",
+        "arguments": {},
+        "turnId": "0",
+        "model": "gpt-5.6-sol"
+      },
+      "id": "00000000-0000-4000-8000-000000000021",
+      "timestamp": "2026-09-22T15:31:33.312Z",
+      "parentId": "00000000-0000-4000-8000-000000000020"
+    },
+    {
+      "type": "hook.start",
+      "data": {
+        "hookInvocationId": "00000000-0000-4000-8000-000000000022",
+        "hookType": "preToolUse",
+        "input": {
+          "sessionId": "00000000-0000-4000-8000-000000000001",
+          "cwd": "C:\\owned\\serialization-study\\project",
+          "toolCalls": [
+            {
+              "id": "call_fixture_001",
+              "name": "serialization_result",
+              "args": {}
+            }
+          ]
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000023",
+      "timestamp": "2026-09-22T15:31:33.313Z",
+      "parentId": "00000000-0000-4000-8000-000000000021"
+    },
+    {
+      "type": "hook.end",
+      "data": {
+        "hookInvocationId": "00000000-0000-4000-8000-000000000022",
+        "hookType": "preToolUse",
+        "success": true
+      },
+      "id": "00000000-0000-4000-8000-000000000024",
+      "timestamp": "2026-09-22T15:31:33.314Z",
+      "parentId": "00000000-0000-4000-8000-000000000023"
+    },
+    {
+      "type": "external_tool.requested",
+      "data": {
+        "requestId": "00000000-0000-4000-8000-000000000025",
+        "sessionId": "00000000-0000-4000-8000-000000000001",
+        "toolCallId": "call_fixture_001",
+        "toolName": "serialization_result",
+        "arguments": {},
+        "workingDirectory": "C:\\owned\\serialization-study\\project"
+      },
+      "id": "00000000-0000-4000-8000-000000000026",
+      "timestamp": "2026-09-22T15:31:33.315Z",
+      "parentId": "00000000-0000-4000-8000-000000000024"
+    },
+    {
+      "type": "external_tool.completed",
+      "data": {
+        "requestId": "00000000-0000-4000-8000-000000000025"
+      },
+      "id": "00000000-0000-4000-8000-000000000027",
+      "timestamp": "2026-09-22T15:31:33.316Z",
+      "parentId": "00000000-0000-4000-8000-000000000026"
+    },
+    {
+      "type": "hook.start",
+      "data": {
+        "hookInvocationId": "00000000-0000-4000-8000-000000000028",
+        "hookType": "postToolUse",
+        "input": {
+          "sessionId": "00000000-0000-4000-8000-000000000001",
+          "timestamp": 1790091093317,
+          "cwd": "C:\\owned\\serialization-study\\project",
+          "toolName": "serialization_result",
+          "toolArgs": {},
+          "toolResult": {
+            "resultType": "success",
+            "textResultForLlm": "The typed result is saved.",
+            "sessionLog": "The typed result is saved.",
+            "toolTelemetry": {}
+          }
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000029",
+      "timestamp": "2026-09-22T15:31:33.317Z",
+      "parentId": "00000000-0000-4000-8000-000000000027"
+    },
+    {
+      "type": "hook.end",
+      "data": {
+        "hookInvocationId": "00000000-0000-4000-8000-000000000028",
+        "hookType": "postToolUse",
+        "success": true
+      },
+      "id": "00000000-0000-4000-8000-000000000030",
+      "timestamp": "2026-09-22T15:31:33.318Z",
+      "parentId": "00000000-0000-4000-8000-000000000029"
+    },
+    {
+      "type": "tool.execution_complete",
+      "data": {
+        "toolCallId": "call_fixture_001",
+        "model": "gpt-5.6-sol",
+        "interactionId": "00000000-0000-4000-8000-000000000011",
+        "turnId": "0",
+        "rte": true,
+        "success": true,
+        "result": {
+          "content": "The typed result is saved.",
+          "detailedContent": "The typed result is saved."
+        },
+        "toolTelemetry": {}
+      },
+      "id": "00000000-0000-4000-8000-000000000031",
+      "timestamp": "2026-09-22T15:31:33.318Z",
+      "parentId": "00000000-0000-4000-8000-000000000030"
+    },
+    {
+      "type": "assistant.turn_end",
+      "data": {
+        "turnId": "0"
+      },
+      "id": "00000000-0000-4000-8000-000000000032",
+      "timestamp": "2026-09-22T15:31:33.321Z",
+      "parentId": "00000000-0000-4000-8000-000000000031"
+    },
+    {
+      "type": "assistant.turn_start",
+      "data": {
+        "turnId": "1",
+        "interactionId": "00000000-0000-4000-8000-000000000011"
+      },
+      "id": "00000000-0000-4000-8000-000000000033",
+      "timestamp": "2026-09-22T15:31:33.322Z",
+      "parentId": "00000000-0000-4000-8000-000000000032"
+    },
+    {
+      "type": "assistant.message",
+      "data": {
+        "messageId": "00000000-0000-4000-8000-000000000034",
+        "originatingMessageId": "00000000-0000-4000-8000-000000000010",
+        "model": "gpt-5.6-sol",
+        "content": "",
+        "toolRequests": [
+          {
+            "toolCallId": "call_fixture_002",
+            "name": "powershell",
+            "arguments": {
+              "command": "node --input-type=module -e \"import assert from 'node:assert/strict'; assert.equal(2 + 2, 4)\"",
+              "description": "Verify a quiet exact arithmetic assertion",
+              "shellId": "serialization-empty-check",
+              "mode": "sync",
+              "initial_wait": 30
+            },
+            "type": "function",
+            "intentionSummary": "Verify a quiet exact arithmetic assertion",
+            "toolTitle": "Running command"
+          }
+        ],
+        "interactionId": "00000000-0000-4000-8000-000000000011",
+        "turnId": "1",
+        "rte": true,
+        "apiCallId": "qFqrre8lT4CeLMZhYuqUJFkdMzFpIuR+0jvxEnifNkf5mQoPWZuVLhQ9yplCT/yRMCDYoMFvCRExUB2C2ApHHUFs23iSPhOq8CeqLBwHSLzge2w8LAf/TjKZuk+nk1tc/RMRB0kOF4N8O9zuTjTMyMwPCR31JD9t9gqVPwxl3c6HHPozTRS8ZN6AgJgK4Bztiw91F7ahCWZBNxD0xtBdCgpSwqHuz30qYQO+jPA3VpBKo3UplYStPu3nF65a2VDlfnDLc+DLaDIqCJxaZRHz7FkCx2xhZcCYfyXI09kypXGPKzJZhKAUn8f7UmnY7Ps+wsc9gDErdJb4gqpNsvgwfalKEiToU4cwYdp8lx6sIqJLoqVn6rPTwMIHdxq74gTAauXI57I+Z3K/lMagd2UDCUtGdAE0HbLAmPsduK4R+FmAwf6+XHMPL3VaLFh3qlpfGLesS8YIR7b/dAOGAKxNPYuaIoF0K5P537wa0QpXmt6X294F",
+        "serverTools": {
+          "provider": "openai-responses"
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000035",
+      "timestamp": "2026-09-22T15:31:34.992Z",
+      "parentId": "00000000-0000-4000-8000-000000000033"
+    },
+    {
+      "type": "tool.execution_start",
+      "data": {
+        "toolCallId": "call_fixture_002",
+        "toolName": "powershell",
+        "arguments": {
+          "command": "node --input-type=module -e \"import assert from 'node:assert/strict'; assert.equal(2 + 2, 4)\"",
+          "description": "Verify a quiet exact arithmetic assertion",
+          "shellId": "serialization-empty-check",
+          "mode": "sync",
+          "initial_wait": 30
+        },
+        "turnId": "1",
+        "model": "gpt-5.6-sol",
+        "toolTitle": "Running command",
+        "shellToolInfo": {
+          "possiblePaths": [
+            "assert/strict'",
+            "assert.equal"
+          ],
+          "hasWriteFileRedirection": false
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000036",
+      "timestamp": "2026-09-22T15:31:34.994Z",
+      "parentId": "00000000-0000-4000-8000-000000000035"
+    },
+    {
+      "type": "hook.start",
+      "data": {
+        "hookInvocationId": "00000000-0000-4000-8000-000000000037",
+        "hookType": "preToolUse",
+        "input": {
+          "sessionId": "00000000-0000-4000-8000-000000000001",
+          "cwd": "C:\\owned\\serialization-study\\project",
+          "toolCalls": [
+            {
+              "id": "call_fixture_002",
+              "name": "powershell",
+              "args": {
+                "command": "node --input-type=module -e \"import assert from 'node:assert/strict'; assert.equal(2 + 2, 4)\"",
+                "description": "Verify a quiet exact arithmetic assertion",
+                "shellId": "serialization-empty-check",
+                "mode": "sync",
+                "initial_wait": 30
+              }
+            }
+          ]
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000038",
+      "timestamp": "2026-09-22T15:31:34.995Z",
+      "parentId": "00000000-0000-4000-8000-000000000036"
+    },
+    {
+      "type": "hook.end",
+      "data": {
+        "hookInvocationId": "00000000-0000-4000-8000-000000000037",
+        "hookType": "preToolUse",
+        "success": true
+      },
+      "id": "00000000-0000-4000-8000-000000000039",
+      "timestamp": "2026-09-22T15:31:34.997Z",
+      "parentId": "00000000-0000-4000-8000-000000000038"
+    },
+    {
+      "type": "permission.requested",
+      "data": {
+        "requestId": "00000000-0000-4000-8000-000000000040",
+        "permissionRequest": {
+          "kind": "shell",
+          "toolCallId": "call_fixture_002",
+          "fullCommandText": "node --input-type=module -e \"import assert from 'node:assert/strict'; assert.equal(2 + 2, 4)\"",
+          "intention": "Verify a quiet exact arithmetic assertion",
+          "commands": [
+            {
+              "identifier": "node --input-type=module -e \"import assert from 'node:assert/strict'; assert.equal(2 + 2, 4)\"",
+              "readOnly": false
+            }
+          ],
+          "commandSegments": [
+            {
+              "identifier": "node",
+              "fullCommandText": "node --input-type=module -e \"import assert from 'node:assert/strict'"
+            },
+            {
+              "identifier": "assert.equal",
+              "fullCommandText": "assert.equal(2 + 2, 4)"
+            }
+          ],
+          "possiblePaths": [],
+          "canOfferSessionApproval": false,
+          "possibleUrls": [],
+          "hasWriteFileRedirection": false
+        },
+        "promptRequest": {
+          "kind": "commands",
+          "fullCommandText": "node --input-type=module -e \"import assert from 'node:assert/strict'; assert.equal(2 + 2, 4)\"",
+          "intention": "Verify a quiet exact arithmetic assertion",
+          "commandIdentifiers": [
+            "node --input-type=module -e \"import assert from 'node:assert/strict'; assert.equal(2 + 2, 4)\""
+          ],
+          "canOfferSessionApproval": false,
+          "toolCallId": "call_fixture_002"
+        },
+        "agentMode": "interactive",
+        "permissionMode": "manual"
+      },
+      "id": "00000000-0000-4000-8000-000000000041",
+      "timestamp": "2026-09-22T15:31:35.014Z",
+      "parentId": "00000000-0000-4000-8000-000000000039"
+    },
+    {
+      "type": "permission.completed",
+      "data": {
+        "requestId": "00000000-0000-4000-8000-000000000040",
+        "toolCallId": "call_fixture_002",
+        "result": {
+          "kind": "approved"
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000042",
+      "timestamp": "2026-09-22T15:31:35.019Z",
+      "parentId": "00000000-0000-4000-8000-000000000041"
+    },
+    {
+      "type": "hook.start",
+      "data": {
+        "hookInvocationId": "00000000-0000-4000-8000-000000000043",
+        "hookType": "postToolUse",
+        "input": {
+          "sessionId": "00000000-0000-4000-8000-000000000001",
+          "timestamp": 1790091101148,
+          "cwd": "C:\\owned\\serialization-study\\project",
+          "toolName": "powershell",
+          "toolArgs": {
+            "command": "node --input-type=module -e \"import assert from 'node:assert/strict'; assert.equal(2 + 2, 4)\"",
+            "description": "Verify a quiet exact arithmetic assertion",
+            "shellId": "serialization-empty-check",
+            "mode": "sync",
+            "initial_wait": 30
+          },
+          "toolResult": {
+            "textResultForLlm": "\n<shellId: serialization-empty-check completed with exit code 0>",
+            "resultType": "success",
+            "sessionLog": "\n<shellId: serialization-empty-check completed with exit code 0>",
+            "toolTelemetry": {
+              "properties": {
+                "customTimeout": "true",
+                "executionMode": "sync",
+                "detached": "false",
+                "sandboxApplied": "false",
+                "sandboxOptOutRequested": "false"
+              },
+              "metrics": {
+                "commandTimeout": 30000
+              }
+            }
+          }
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000044",
+      "timestamp": "2026-09-22T15:31:41.148Z",
+      "parentId": "00000000-0000-4000-8000-000000000042"
+    },
+    {
+      "type": "hook.end",
+      "data": {
+        "hookInvocationId": "00000000-0000-4000-8000-000000000043",
+        "hookType": "postToolUse",
+        "success": true
+      },
+      "id": "00000000-0000-4000-8000-000000000045",
+      "timestamp": "2026-09-22T15:31:41.149Z",
+      "parentId": "00000000-0000-4000-8000-000000000044"
+    },
+    {
+      "type": "tool.execution_complete",
+      "data": {
+        "toolCallId": "call_fixture_002",
+        "model": "gpt-5.6-sol",
+        "interactionId": "00000000-0000-4000-8000-000000000011",
+        "turnId": "1",
+        "rte": true,
+        "shellExecution": {
+          "exitCode": 0
+        },
+        "success": true,
+        "result": {
+          "content": "\n<shellId: serialization-empty-check completed with exit code 0>",
+          "detailedContent": "\n<shellId: serialization-empty-check completed with exit code 0>",
+          "contents": [
+            {
+              "type": "shell_exit",
+              "shellId": "serialization-empty-check",
+              "exitCode": 0,
+              "cwd": "C:\\owned\\serialization-study\\project"
+            }
+          ]
+        },
+        "toolTelemetry": {
+          "properties": {
+            "customTimeout": "true",
+            "executionMode": "sync",
+            "detached": "false",
+            "sandboxApplied": "false",
+            "sandboxOptOutRequested": "false"
+          },
+          "metrics": {
+            "commandTimeout": 30000
+          }
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000046",
+      "timestamp": "2026-09-22T15:31:41.150Z",
+      "parentId": "00000000-0000-4000-8000-000000000045"
+    },
+    {
+      "type": "assistant.turn_end",
+      "data": {
+        "turnId": "1"
+      },
+      "id": "00000000-0000-4000-8000-000000000047",
+      "timestamp": "2026-09-22T15:31:41.153Z",
+      "parentId": "00000000-0000-4000-8000-000000000046"
+    },
+    {
+      "type": "assistant.turn_start",
+      "data": {
+        "turnId": "2",
+        "interactionId": "00000000-0000-4000-8000-000000000011"
+      },
+      "id": "00000000-0000-4000-8000-000000000048",
+      "timestamp": "2026-09-22T15:31:41.153Z",
+      "parentId": "00000000-0000-4000-8000-000000000047"
+    },
+    {
+      "type": "assistant.message",
+      "data": {
+        "messageId": "00000000-0000-4000-8000-000000000049",
+        "originatingMessageId": "00000000-0000-4000-8000-000000000010",
+        "model": "gpt-5.6-sol",
+        "content": "Both calls completed successfully.",
+        "toolRequests": [],
+        "interactionId": "00000000-0000-4000-8000-000000000011",
+        "turnId": "2",
+        "phase": "final_answer",
+        "rte": true,
+        "apiCallId": "S3p8VO2UJFaYoXeCNaOK25a7Bv3/F8JrLe8r6V0DOMTjcIB95tcEsvf17BhWJsXfJzedpfoyCQQneMDYfgwcijfToPlXDHwwvgUQtRicy2K8HetihIXEm82DedKZ1vKcjkMb39jJ2UUL8OTpsBRgsGmnCEnVYoFFD2JU7BVSEi3VXO5QX2T9+JAciGXr+BwU28a5qtUgK0dXzafaiBuXXI/eAeE4sNgtOOYVMtltrYfxScAw7P6U04fFKnc/9NK+EuwfqYyWf4Oj5chN95dm9pzEqeDNKSV1HCiUfE48IYDnZy1zSHENsAdG/+/gy4Sg05zU+6iynGPT4BXuJy8mM9j8qi94iG1uS+qJio12KfM51zbQhmb6GHv7MQD6EASzQwtsDV19yM2mzOIvV6z7hzBbtYRmiY25427j3kviTjzM1jldeIhnJDgXF0CAH71IpcbL9JAXpKM/k0uCLVlj6Rzh9q9JrRVnwRKLvNXJ2lIWAoEJ",
+        "serverTools": {
+          "provider": "openai-responses"
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000050",
+      "timestamp": "2026-09-22T15:31:43.070Z",
+      "parentId": "00000000-0000-4000-8000-000000000048"
+    },
+    {
+      "type": "assistant.turn_end",
+      "data": {
+        "turnId": "2"
+      },
+      "id": "00000000-0000-4000-8000-000000000051",
+      "timestamp": "2026-09-22T15:31:43.071Z",
+      "parentId": "00000000-0000-4000-8000-000000000050"
+    },
+    {
+      "type": "hook.start",
+      "data": {
+        "hookInvocationId": "00000000-0000-4000-8000-000000000052",
+        "hookType": "agentStop",
+        "input": {
+          "sessionId": "00000000-0000-4000-8000-000000000001",
+          "transcriptPath": "C:\\owned\\serialization-study\\home\\.copilot\\session-state\\00000000-0000-4000-8000-000000000001\\events.jsonl",
+          "stopReason": "end_turn",
+          "stop_hook_active": false,
+          "timestamp": 1790091103073,
+          "cwd": "C:\\owned\\serialization-study\\project"
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000053",
+      "timestamp": "2026-09-22T15:31:43.073Z",
+      "parentId": "00000000-0000-4000-8000-000000000051"
+    },
+    {
+      "type": "hook.end",
+      "data": {
+        "hookInvocationId": "00000000-0000-4000-8000-000000000052",
+        "hookType": "agentStop",
+        "success": true
+      },
+      "id": "00000000-0000-4000-8000-000000000054",
+      "timestamp": "2026-09-22T15:31:43.074Z",
+      "parentId": "00000000-0000-4000-8000-000000000053"
+    },
+    {
+      "type": "hook.start",
+      "data": {
+        "hookInvocationId": "00000000-0000-4000-8000-000000000055",
+        "hookType": "sessionEnd",
+        "input": {
+          "reason": "complete",
+          "sessionId": "00000000-0000-4000-8000-000000000001",
+          "timestamp": 1790091103074,
+          "cwd": "C:\\owned\\serialization-study\\project"
+        }
+      },
+      "id": "00000000-0000-4000-8000-000000000056",
+      "timestamp": "2026-09-22T15:31:43.074Z",
+      "parentId": "00000000-0000-4000-8000-000000000054"
+    },
+    {
+      "type": "hook.end",
+      "data": {
+        "hookInvocationId": "00000000-0000-4000-8000-000000000055",
+        "hookType": "sessionEnd",
+        "success": true
+      },
+      "id": "00000000-0000-4000-8000-000000000057",
+      "timestamp": "2026-09-22T15:31:43.075Z",
+      "parentId": "00000000-0000-4000-8000-000000000056"
+    },
+    {
+      "type": "session.usage_checkpoint",
+      "data": {},
+      "id": "00000000-0000-4000-8000-000000000058",
+      "timestamp": "2026-09-22T15:31:43.076Z",
+      "parentId": "00000000-0000-4000-8000-000000000057"
+    }
+  ],
+  "changes": [
+    {
+      "id": "00000000-0000-4000-8000-000000000031",
+      "result": {
+        "content": "The typed result is saved."
+      }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000046",
+      "result": {
+        "content": "\n<shellId: serialization-empty-check completed with exit code 0>"
+      }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000059",
+      "event": {
+        "type": "session.shutdown",
+        "data": {
+          "shutdownType": "routine"
+        },
+        "id": "00000000-0000-4000-8000-000000000059",
+        "timestamp": "2026-09-22T15:31:43.977Z",
+        "parentId": "00000000-0000-4000-8000-000000000058"
+      }
+    }
+  ]
+}
