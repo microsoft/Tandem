@@ -8,6 +8,7 @@ behavior from earlier design intent.
 
 | Document | Purpose |
 | --- | --- |
+| [Stage 1 integration plan](../../stage1-integration-plan.md) | Designer continues from existing documents and a mocked HTML prototype; intended flow, acceptance checks and open integration choices. |
 | [Two-stage overview slides](../../reference/ux-experiments/tandem-opening-slides-v2.html#6) | Stage 2's agreement-centered development loop. Read the speaker notes for the explicit Implementer, Reviewer and user boundaries. Examples are illustrative, not product test evidence. |
 | [Human-loop prompts and behavior](human-loop-prompts.md) | Request interpretation, role responsibilities, question context, confirmation and native workflow behavior. The executable prompt source is `tandem/public/prompts/human-loop.json`. |
 | [Visual workflow](workflow-redesign.html) | Role ownership, user handoffs and Host-owned transitions. The current implementation guide and prompt contract cover subsequent refinements, including implementation confirmation. |

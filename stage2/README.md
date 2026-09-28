@@ -97,6 +97,9 @@ authorizes another implementation cycle; the user confirms that separately.
 
 ## Stage 1 handoff direction
 
+See the [Stage 1 integration plan](stage1-integration-plan.md)
+for the agreed Designer-led approach, intended flow and remaining decisions.
+
 The integration contract is not finalized. The expected handoff is documents
 plus an HTML prototype with mocked data. Designer should read these as the
 existing Design and continue from its confirmed decisions, rather than restart
