@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Tandem — Make intent visible</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f8faf9; --text: #172d28; --muted: #526860;
+      --teal: #08766d; --orange: #a44918; --purple: #655878;
+      --line: #d6e2dc; --soft: #edf4f1;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+    body { background: #e6eeea; color: var(--text); font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+    button { font: inherit; color: inherit; cursor: pointer; }
+    button:focus-visible, [tabindex]:focus-visible { outline: 3px solid var(--teal); outline-offset: 4px; }
+    .deck { position: absolute; width: 1280px; height: 720px; left: 50%; top: 50%; transform-origin: center; background: var(--bg); box-shadow: 0 15px 80px #172d2812; }
+    .slide { position: absolute; inset: 0; padding: 46px 64px 76px; display: none; }
+    .slide.active { display: block; }
+    .eyebrow { margin: 0 0 16px; font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: .12em; color: var(--teal); }
+    h1, h2 { font-size: 48px; line-height: 1.1; letter-spacing: -.04em; margin: 0 0 16px; font-weight: 700; }
+    h3 { margin: 0; font-size: 24px; line-height: 1.2; letter-spacing: -.025em; font-weight: 650; }
+    p { line-height: 1.5; }
+    .accent { color: var(--teal); }
+    .lead { font-size: 21px; color: var(--muted); margin: 0; }
+    .small { font-size: 18px; color: var(--muted); line-height: 1.45; }
+    .label { font-size: 12px; text-transform: uppercase; letter-spacing: .12em; font-weight: 800; color: var(--muted); }
+    .tag { display: inline-block; border: 1px solid var(--line); border-radius: 20px; padding: 6px 13px; font-size: 16px; background: #fff; }
+    .brand { position: absolute; right: 64px; top: 44px; font-weight: 800; letter-spacing: -.04em; font-size: 24px; color: var(--teal); }
+    .brand small { display: block; font-size: 13px; font-weight: 500; letter-spacing: .01em; }
+    .slide-footer { position: absolute; left: 64px; bottom: 29px; font-size: 12px; color: var(--muted); letter-spacing: .04em; }
+    .speaker-notes { display: none; }
+    .process { display: grid; grid-template-columns: 1.25fr 64px 1fr 64px 1fr; align-items: stretch; margin-top: 44px; }
+    .station { min-height: 234px; padding: 23px; border-radius: 12px; border: 1px solid var(--line); background: #fff; }
+    .station.focus { background: var(--soft); border-color: #8db7a9; }
+    .step { display: block; color: var(--teal); font-size: 14px; font-weight: 700; letter-spacing: .08em; margin-bottom: 12px; }
+    .arrow { align-self: center; text-align: center; font-size: 34px; color: var(--teal); }
+    .docs { display: flex; gap: 9px; margin-top: 20px; }
+    .doc { background: white; border: 1px solid #b9cdc3; border-radius: 4px; flex: 1; padding: 12px 8px; font-size: 16px; box-shadow: 3px 4px 0 #dfeae4; }
+    .doc i { display: block; height: 3px; margin-top: 8px; background: #d1dfd7; }
+    .code { margin-top: 23px; font: 17px/1.7 ui-monospace, Consolas, monospace; color: var(--teal); }
+    .checklist { margin-top: 22px; font-size: 18px; line-height: 1.8; }
+    .ribbon { display: flex; align-items: center; justify-content: space-between; margin-top: 27px; padding: 19px 22px; border-top: 2px solid var(--teal); background: #e9f2ed; font-size: 18px; }
+    .ribbon em { font-size: 18px; font-style: normal; color: var(--muted); }
+    .browser { margin-top: 17px; border: 1px solid #aac4b7; border-radius: 8px; background: white; overflow: hidden; }
+    .browser-bar { border-bottom: 1px solid var(--line); padding: 5px 10px; color: #8ba69b; font-size: 12px; background: #f0f5f2; letter-spacing: 3px; }
+    .browser-body { display: flex; gap: 10px; padding: 13px; align-items: center; }
+    .mini-nav { width: 25px; height: 60px; border-radius: 4px; background: #dbece4; }
+    .mini-content { flex: 1; height: 60px; background: linear-gradient(#eaf0ec 20%, transparent 20%, transparent 35%, #d7e8e0 35%, #d7e8e0 70%, transparent 70%); }
+    .iteration-loop { display: block; width: 100%; height: 66px; overflow: visible; }
+    .iteration-loop path { fill: none; stroke: var(--teal); stroke-width: 2; }
+    .iteration-loop text { fill: var(--teal); font: 16px system-ui, sans-serif; text-anchor: middle; }
+    .optional { margin-top: 19px; display: flex; align-items: center; gap: 15px; font-size: 16px; color: var(--muted); }
+    .optional .dash { width: 60px; border-top: 2px dashed #8ba69b; }
+    .gap-figure { margin-top: 17px; border: 1px solid var(--line); border-radius: 18px; background: #ffffffa6; height: 253px; padding: 12px 18px; }
+    .gap-figure svg { width: 100%; height: 100%; }
+    .fork { display: grid; grid-template-columns: 235px 38px 1fr 1fr; gap: 14px; align-items: center; margin-top: 20px; }
+    .request { font-size: 22px; font-weight: 650; }
+    .interpretation { padding: 15px 19px; border-left: 3px solid var(--purple); background: #f0edf3; }
+    .interpretation.agent { border-color: var(--teal); background: #e9f3ee; }
+    .interpretation strong { display: block; font-size: 18px; margin-bottom: 4px; }
+    .blind-box { margin-top: 22px; display: flex; align-items: center; gap: 17px; color: var(--orange); font-size: 17px; }
+    .box { width: 40px; height: 40px; border: 2px solid var(--orange); transform: rotate(-6deg); display: grid; place-items: center; font-weight: 800; font-size: 25px; border-radius: 5px; }
+    .issues { display: grid; grid-template-columns: 1fr 1fr; gap: 24px 36px; margin-top: 32px; }
+    .issue { display: grid; grid-template-columns: 140px 1fr; gap: 20px; align-items: center; padding: 18px 0; border-top: 1px solid var(--line); min-height: 146px; }
+    .issue svg { width: 140px; height: 96px; }
+    .issue p { font-size: 18px; color: var(--muted); margin: 8px 0 0; }
+    .issue svg text { font: 16px system-ui, sans-serif; }
+    .thesis { margin: 20px 0 0; font-size: 21px; color: var(--teal); font-weight: 650; }
+    .experience { display: grid; grid-template-columns: 610px 1fr; gap: 32px; margin-top: 25px; }
+    figure { margin: 0; }
+    .source-frame { background: white; border: 1px solid #b9cdc3; padding: 8px; border-radius: 12px; }
+    .source-frame img { display: block; width: 100%; height: auto; border-radius: 5px; }
+    .stage-path { display: flex; gap: 18px; align-items: center; margin-top: 16px; font-size: 18px; color: var(--muted); }
+    .stage-path strong { color: var(--teal); }
+    .discovery { margin-top: 18px; }
+    .discovery .source-frame img { height: 278px; object-fit: contain; }
+    .discovery .review-flow { gap: 14px; }
+    .discovery .review-step { padding-top: 0; padding-bottom: 0; }
+    .discovery .down { display: none; }
+    .stage-two .experience { margin-top: 24px; grid-template-columns: 660px 1fr; gap: 28px; }
+    .stage-two .review-flow { gap: 14px; }
+    .stage-two .review-step p { margin-top: 8px; }
+    .stage-two .visual-agreement { padding: 12px; }
+    .stage-two .artifact-view svg { height: 88px; }
+    .stage-two .artifact-pair { gap: 12px; margin-top: 12px; }
+    .stage-two .artifact-pair svg { height: 130px; }
+    .stage-two .boundary { font-size: 18px; }
+    .stage-cycle { margin-top: 14px; padding: 8px 18px; border-top: 2px solid var(--teal); background: var(--soft); font-size: 18px; line-height: 1.4; }
+    .visual-agreement { padding: 16px; background: #fff; border: 1px solid #b9cdc3; border-radius: 12px; }
+    .visual-agreement h3 { font-size: 23px; margin: 0 0 12px; }
+    .artifact-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+    .artifact-view { background: #f0f6f2; border-radius: 8px; padding: 10px; }
+    .artifact-view h4 { margin: 0 0 8px; color: var(--teal); font-size: 16px; font-weight: 650; }
+    .artifact-view svg { display: block; width: 100%; height: 94px; }
+    .artifact-pair svg { height: 120px; }
+    .artifact-view svg text { font: 16px system-ui, sans-serif; fill: var(--text); text-anchor: middle; }
+    .artifact-view svg .detail { font-size: 16px; }
+    .artifact-view.open { background: #fbf1e9; }
+    .artifact-view.open h4 { color: var(--orange); }
+    figcaption { margin-top: 10px; color: var(--muted); font-size: 13px; line-height: 1.4; }
+    .review-flow { display: flex; flex-direction: column; gap: 6px; }
+    .review-step { border-left: 3px solid var(--teal); padding: 5px 0 5px 18px; }
+    .review-step h3 { font-size: 23px; }
+    .review-step p { font-size: 18px; line-height: 1.4; margin: 6px 0 0; color: var(--muted); }
+    .review-step .step { margin-bottom: 4px; }
+    .review-flow .down { margin-left: 19px; color: var(--teal); line-height: 1; }
+    .boundary { background: var(--soft); border: 1px solid #aac4b7; padding: 12px 16px; border-radius: 9px; font-size: 17px; line-height: 1.4; }
+    .anchor-flow { margin-top: 30px; display: grid; grid-template-columns: 1.15fr 44px 1fr 44px 1.25fr; align-items: stretch; }
+    .anchor-node { padding: 20px; border: 1px solid var(--line); border-radius: 14px; background: #fff; min-height: 210px; }
+    .anchor-node:first-child { background: #e9f3ee; border-color: #8db7a9; }
+    .anchor-node .small { margin: 12px 0 0; }
+    .anchor-flow .arrow { align-self: center; }
+    .scenario { margin-top: 16px; font-size: 14px; line-height: 1.8; }
+    .decision-loop { display: flex; align-items: center; justify-content: center; gap: 17px; margin: 18px 30px 0; border: 2px solid #b9977b; border-top: none; padding: 15px 15px 18px; border-radius: 0 0 18px 18px; font-size: 16px; color: var(--orange); }
+    .decision-loop strong { background: #fff2e7; padding: 7px 14px; border-radius: 6px; }
+    .closing { display: flex; justify-content: space-between; align-items: center; margin-top: 24px; }
+    .closing strong { font-size: 25px; letter-spacing: -.03em; }
+    .controls { position: absolute; right: 64px; bottom: 18px; display: flex; align-items: center; gap: 9px; z-index: 5; }
+    .controls button, .script-header button { background: #fff; border: 1px solid #b7c9bf; border-radius: 7px; padding: 7px 12px; font-size: 13px; }
+    .controls button:hover { background: #e1eee6; }
+    #slide-count { font-size: 12px; min-width: 44px; text-align: center; }
+    .progress { position: absolute; bottom: 0; height: 4px; width: 100%; background: #dfe9e3; }
+    #progress-bar { height: 100%; background: var(--teal); transition: width .2s; }
+    .script-panel { position: fixed; z-index: 20; right: 18px; top: 18px; bottom: 72px; width: min(540px, calc(100vw - 36px)); background: #fff; border: 1px solid #aac4b7; border-radius: 15px; box-shadow: 0 12px 80px #172d2840; display: flex; flex-direction: column; }
+    .script-panel[hidden] { display: none; }
+    .script-header { display: flex; gap: 16px; align-items: flex-start; justify-content: space-between; padding: 22px; border-bottom: 1px solid var(--line); }
+    .script-header h2 { font-size: 21px; letter-spacing: -.02em; margin-bottom: 9px; }
+    .script-header p { font-size: 12px; margin: 0; color: var(--muted); }
+    .script-body { overflow: auto; padding: 4px 24px 24px; font-size: 17px; line-height: 1.6; }
+    @media (prefers-reduced-motion: reduce) { #progress-bar { transition: none; } }
+    @media print {
+      @page { size: 13.333in 7.5in; margin: 0; }
+      html, body { height: auto; overflow: visible; background: white; }
+      .deck { position: static; transform: none !important; box-shadow: none; height: auto; }
+      .slide { position: relative; display: block; width: 1280px; height: 720px; break-after: page; }
+      .controls, .progress, .script-panel { display: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <main class="deck" aria-label="Tandem opening presentation, version 2">
+    <section class="slide active" data-title="Describe before building" aria-label="Slide 1 of 6">
+      <p class="eyebrow">01 / Traditional development</p>
+      <div class="brand">Tandem<small>two minds, one direction.</small></div>
+      <h1>Describe first.<br><span class="accent">Then build.</span></h1>
+      <p class="lead">Make expectations explicit before implementation begins.</p>
+      <div class="process">
+        <div class="station focus">
+          <span class="step">01 / DESCRIBE &amp; AGREE</span><h3>Make the plan</h3>
+          <div class="docs" aria-label="Requirements, design and test documents">
+            <div class="doc" aria-label="Requirements">Needs<i></i><i></i><i></i></div>
+            <div class="doc">Design<i></i><i></i><i></i></div>
+            <div class="doc">Test plan<i></i><i></i><i></i></div>
+          </div>
+        </div>
+        <div class="arrow" aria-hidden="true">→</div>
+        <div class="station"><span class="step">02 / IMPLEMENT</span><h3>Write the code</h3><div class="code">function recover() {<br>&nbsp; return restore();<br>}</div></div>
+        <div class="arrow" aria-hidden="true">→</div>
+        <div class="station"><span class="step">03 / VALIDATE</span><h3>Check the result</h3><div class="checklist">✓ Requirements<br>✓ Behavior<br>✓ Acceptance criteria</div></div>
+      </div>
+      <div class="ribbon"><strong>Agreement before investment</strong><em>The trade-off: explaining and reviewing takes effort.</em></div>
+      <div class="slide-footer">Tandem / Make intent visible</div>
+      <aside class="speaker-notes">
+        <p><strong>Opening:</strong> Tandem: two minds, one direction. Our question is how a user and an agent can move quickly without moving toward different outcomes.</p>
+        <p>This is a simplified traditional development path, not a claim that every team works in a waterfall. Requirements, design and test planning describe what should happen before production code is written. Documents may include diagrams and examples, not just prose. Validation then checks the result against those expectations.</p>
+        <p>The benefit is upfront agreement. The cost is the effort of expressing and reviewing detail before people can see a concrete experience. Iterative teams already revisit these decisions; the tension is how to get useful agreement with less burden.</p>
+        <p><strong>Transition:</strong> Vibe coding changes which thing we see first.</p>
+      </aside>
+    </section>
+
+    <section class="slide" data-title="Build before agreement" aria-label="Slide 2 of 6" aria-hidden="true">
+      <p class="eyebrow">02 / The code-first approach</p>
+      <h2>Build first.<br><span class="accent">Discover expectations by reacting.</span></h2>
+      <p class="lead">A fast start makes the application itself the first thing to review.</p>
+      <div class="process" style="margin-top:30px">
+        <div class="station"><span class="step">01 / PROMPT</span><h3>“Add account<br>deletion.”</h3><p class="small">A short request.<br>Many unstated expectations.</p></div>
+        <div class="arrow" aria-hidden="true">→</div>
+        <div class="station focus"><span class="step">02 / GENERATE</span><h3>An application</h3><div class="browser" aria-label="Illustrative generated app"><div class="browser-bar">● ● ●</div><div class="browser-body"><div class="mini-nav"></div><div class="mini-content"></div></div></div></div>
+        <div class="arrow" aria-hidden="true">→</div>
+        <div class="station"><span class="step">03 / INSPECT</span><h3>Try it. React.</h3><p class="small">“Can I undo deletion?”<br>“What happens to my data?”</p><span class="tag">Revise the prompt</span></div>
+      </div>
+      <svg class="iteration-loop" viewBox="0 0 1128 66" preserveAspectRatio="none" role="img" aria-label="Feedback from Inspect returns to Prompt, then the application is generated and inspected again.">
+        <path d="M958 0V34Q958 46 946 46H182Q170 46 170 34V4"/>
+        <path d="M164 12L170 4L176 12"/>
+        <rect x="389" y="33" width="350" height="25" fill="#f8faf9"/>
+        <text x="564" y="51">Revise the prompt. Generate again.</text>
+      </svg>
+      <div class="optional"><span class="dash"></span><span>Some workflows also summarize the implementation into documents afterward.</span></div>
+      <div class="slide-footer">A common starting approach / Not a universal workflow</div>
+      <aside class="speaker-notes">
+        <p>A code-first or vibe-coding approach starts with a prompt, generates an application, and lets the user inspect and iterate. The low barrier to starting is valuable. This is an approach, not a universal description of all agents or all teams.</p>
+        <p>Some workflows also generate documentation from what they implemented. That can be useful for understanding the code, but a description of the implementation is not automatically an agreement about what the user wanted.</p>
+        <p>In this diagram the app is deliberately a schematic, not a screenshot of newly shipped behavior. The account-deletion example carries forward the original deck's question: which meaning of “delete” did the agent choose?</p>
+        <p><strong>Transition:</strong> A runnable result can be coherent and still surprise us in the wrong way.</p>
+      </aside>
+    </section>
+
+    <section class="slide" data-title="The intent gap" aria-label="Slide 3 of 6" aria-hidden="true">
+      <p class="eyebrow">03 / The intent gap</p>
+      <h2>Runnable is not necessarily <span class="accent">intended.</span></h2>
+      <p class="lead">One short request. Two reasonable interpretations.</p>
+      <div class="gap-figure">
+        <svg viewBox="0 0 1080 228" role="img" aria-labelledby="gap-title gap-description">
+          <title id="gap-title">User defaults and agent defaults overlap, but important expectations can differ.</title>
+          <desc id="gap-description">Adapted from the original slide 3: overlapping muted plum and teal circles show shared defaults. A user expects 30-day soft deletion; an agent interprets deletion as immediate purge. The circles are illustrative, not measured.</desc>
+          <defs>
+            <radialGradient id="userGrad" cx="35%" cy="35%" r="65%"><stop offset="0%" stop-color="#655878" stop-opacity=".18"/><stop offset="100%" stop-color="#655878" stop-opacity=".04"/></radialGradient>
+            <radialGradient id="agentGrad" cx="65%" cy="35%" r="65%"><stop offset="0%" stop-color="#08766d" stop-opacity=".22"/><stop offset="100%" stop-color="#08766d" stop-opacity=".04"/></radialGradient>
+          </defs>
+          <circle cx="510" cy="108" r="102" fill="url(#userGrad)" stroke="#655878" stroke-width="2.5"/>
+          <circle cx="570" cy="108" r="102" fill="url(#agentGrad)" stroke="#08766d" stroke-width="2.5"/>
+          <g font-family="Inter, system-ui, sans-serif">
+            <text x="30" y="57" fill="#655878" font-size="24" font-weight="700">User defaults</text>
+            <text x="30" y="86" fill="#526860" font-size="18">Product context · team norms</text>
+            <text x="30" y="112" fill="#526860" font-size="18">Latent expectations</text>
+            <path d="M290 72 H395" stroke="#655878" stroke-width="1.5"/>
+            <text x="775" y="57" fill="#08766d" font-size="24" font-weight="750">Agent defaults</text>
+            <text x="775" y="86" fill="#526860" font-size="18">Repository patterns</text>
+            <text x="775" y="112" fill="#526860" font-size="18">Learned priors · prompt inference</text>
+            <path d="M687 72 H755" stroke="#08766d" stroke-width="1.5"/>
+            <text x="540" y="94" text-anchor="middle" fill="#172d28" font-size="17" font-weight="700">Shared</text>
+            <text x="540" y="120" text-anchor="middle" fill="#172d28" font-size="17" font-weight="700">defaults</text>
+            <circle cx="513" cy="65" r="4" fill="#526860" opacity=".6"/><circle cx="562" cy="65" r="4" fill="#526860" opacity=".6"/>
+            <circle cx="519" cy="146" r="4" fill="#526860" opacity=".6"/><circle cx="564" cy="146" r="4" fill="#526860" opacity=".6"/>
+            <circle cx="433" cy="137" r="7" fill="#a44918"/><circle cx="647" cy="137" r="7" fill="#a44918"/>
+            <path d="M445 137 Q540 190 635 137" fill="none" stroke="#a44918" stroke-width="2" stroke-dasharray="4 4"/>
+            <rect x="456" y="178" width="168" height="27" rx="13" fill="#fff4e9" stroke="#a44918"/>
+            <text x="540" y="197" text-anchor="middle" fill="#a44918" font-size="16" font-weight="700">Intent gap</text>
+            <text x="30" y="205" fill="#526860" font-size="13">Original mental model · illustrative, not measured</text>
+          </g>
+        </svg>
+      </div>
+      <div class="fork">
+        <div class="request">“Add account<br>deletion.”</div><div class="arrow" aria-hidden="true">→</div>
+        <div class="interpretation"><strong>User: 30-day soft delete</strong><span class="small">Block access now. Allow restoration.</span></div>
+        <div class="interpretation agent"><strong>Agent: immediate purge</strong><span class="small">Erase all records. No way back.</span></div>
+      </div>
+      <div class="blind-box"><span class="box" aria-hidden="true">?</span><span>A code-first result can feel like a <strong>blind box / 盲盒</strong>.<br><span class="small">The mismatch becomes concrete only after implementation effort.</span></span></div>
+      <div class="slide-footer">Adapted from the original page 3 / Account-deletion example</div>
+      <aside class="speaker-notes">
+        <p>The original page-three mental model is retained: muted plum user defaults, teal agent defaults, shared assumptions, and a consequential intent gap. The circles are illustrative, not a measured overlap or a claim about accuracy.</p>
+        <p>The user brings product context, team norms and expectations they have not said aloud. The agent brings repository patterns, learned priors and prompt inference. A short prompt can work because much of this overlaps. One important difference can still dominate the outcome.</p>
+        <p>Here the user expects normal access to stop immediately, with 30 days to recover an accidental deletion. The agent might infer immediate permanent purge. Neither interpretation has yet been confirmed. Both implementations could pass tests written for their own assumptions.</p>
+        <p>The first result can feel like opening a blind box, or 盲盒. This is not a claim that all generated first versions are slow. Generation may be fast. The cost is discovering a consequential mismatch only after code, integration or review effort has already been spent.</p>
+        <p><strong>Transition:</strong> Producing more code, documents or tests does not by itself resolve that mismatch.</p>
+      </aside>
+    </section>
+
+    <section class="slide" data-title="Output is not understanding" aria-label="Slide 4 of 6" aria-hidden="true">
+      <p class="eyebrow">04 / Four ways the gap survives</p>
+      <h2>More output <span class="accent">≠ understanding.</span></h2>
+      <p class="lead">The missing signal is agreement about the outcome.</p>
+      <div class="issues">
+        <div class="issue">
+          <svg viewBox="0 0 140 96" role="img" aria-label="Feedback arrives after building"><path d="M8 42 H129" stroke="#a7bfb2" stroke-width="3"/><circle cx="22" cy="42" r="8" fill="#08766d"/><rect x="47" y="27" width="44" height="30" rx="5" fill="#dfebe4"/><path d="M109 15 H135 V46 H123 L114 55 V46 H109Z" fill="#fff0e3" stroke="#a44918"/><text x="122" y="37" text-anchor="middle" fill="#a44918">!</text><text x="8" y="79" fill="#526860">Build … then learn</text></svg>
+          <div><h3>Feedback arrives late</h3><p>Concrete reactions come after implementation choices are embedded.</p></div>
+        </div>
+        <div class="issue">
+          <svg viewBox="0 0 140 96" role="img" aria-label="A large stack of documents is still review work"><g fill="#fff" stroke="#a7bfb2"><rect x="36" y="7" width="72" height="65" rx="4"/><rect x="28" y="15" width="72" height="65" rx="4"/><rect x="20" y="23" width="72" height="65" rx="4"/></g><path d="M32 38 H79 M32 48 H79 M32 58 H79 M32 68 H65" stroke="#08766d" stroke-width="3"/></svg>
+          <div><h3>Documents become homework</h3><p>Long specs make users reconstruct the experience in their heads.</p></div>
+        </div>
+        <div class="issue">
+          <svg viewBox="0 0 140 96" role="img" aria-label="Implementation drifts away from the agreed direction"><path d="M10 75 L129 19" stroke="#08766d" stroke-width="2" stroke-dasharray="5 4"/><path d="M10 75 L44 59 L77 55 L104 63 L129 70" fill="none" stroke="#a44918" stroke-width="3"/><g fill="#a44918"><circle cx="44" cy="59" r="4"/><circle cx="77" cy="55" r="4"/><circle cx="104" cy="63" r="4"/></g><text x="51" y="18" fill="#08766d">Agreement</text><text x="74" y="91" fill="#a44918">Drift</text></svg>
+          <div><h3>Direction drifts over time</h3><p>Local changes can lose the original intent across a long task.</p></div>
+        </div>
+        <div class="issue">
+          <svg viewBox="0 0 140 96" role="img" aria-label="Code and tests can agree on the same wrong assumption"><path d="M70 27 L29 51 M70 27 L111 51" stroke="#a7bfb2" stroke-width="2"/><rect x="25" y="5" width="90" height="25" rx="5" fill="#fff0e3"/><text x="70" y="22" text-anchor="middle" fill="#a44918">Assumption</text><rect x="3" y="52" width="58" height="29" rx="5" fill="#e3efe8"/><rect x="78" y="52" width="58" height="29" rx="5" fill="#e3efe8"/><text x="32" y="71" text-anchor="middle" fill="#08766d">Code ✓</text><text x="107" y="71" text-anchor="middle" fill="#08766d">Tests ✓</text></svg>
+          <div><h3>Tests can confirm the wrong idea</h3><p>Unit tests are useful. Shared assumptions still need user validation.</p></div>
+        </div>
+      </div>
+      <p class="thesis">Internal consistency is not the same as shared intent.</p>
+      <div class="slide-footer">Not less rigor / Better evidence of understanding</div>
+      <aside class="speaker-notes">
+        <p>These are four risks, not inevitable properties of every workflow.</p>
+        <p><strong>First, delayed concrete feedback.</strong> Users may not recognize an assumption until they can see the result. If that happens only after production implementation, correction can involve more than changing a sentence.</p>
+        <p><strong>Second, review burden.</strong> Long specifications make users read, connect details and reconstruct the experience in their heads. That can be as demanding as reviewing code. Journeys, diagrams and interactive previews make the behavior easier to grasp, mismatches easier to spot and feedback more concrete. The point is ease of understanding, not simply producing visuals before producing documents.</p>
+        <p><strong>Third, long-horizon drift.</strong> A succession of locally plausible changes can gradually diverge from the original goal. The remedy is a stable agreement to compare against, not a claim about any newly shipped context or recovery mechanism.</p>
+        <p><strong>Fourth, test interpretation.</strong> Unit tests are essential for checking local behavior. But a purge implementation and purge tests can agree while the user expected recovery. This does not mean the same correctly specified test accepts both. It means tests need expectations grounded in the user's outcomes.</p>
+        <p><strong>Transition:</strong> We want an earlier reviewable experience, without demanding an exhaustive reading assignment.</p>
+      </aside>
+    </section>
+
+    <section class="slide" data-title="Stage 1 — Prototype to a spec" aria-label="Slide 5 of 6" aria-hidden="true">
+      <p class="eyebrow">05 / Tandem · Two stages</p>
+      <h2>Prototype to a spec. <span class="accent">Build against it.</span></h2>
+      <p class="lead">Long docs demand mental reconstruction. Visuals make mismatches easier to see.</p>
+      <div class="stage-path"><strong>Stage 1 · Discover the agreement</strong><span aria-hidden="true">→</span><span>Stage 2 · Keep development anchored</span></div>
+      <div class="experience discovery">
+        <figure>
+          <div class="source-frame"><img src="tandem-opening-slides-v2-assets/model-y-source.png" alt="Model Y prototype with vehicle preview, camera controls, feedback and draft feature specification in the Tandem workspace."></div>
+          <figcaption>Stage 1 illustration: inspect the Model Y prototype, clarify, confirm.<br>Captured in Design with the prototype retained for review—not a live demo.</figcaption>
+        </figure>
+        <div class="review-flow">
+          <div class="review-step"><span class="step">START NATURALLY</span><h3>Statements → targeted Q&amp;A</h3><p>Clarify enough for a useful prototype.</p></div>
+          <span class="down" aria-hidden="true">↓</span>
+          <div class="review-step"><span class="step">LEARN THROUGH EXPERIENCE</span><h3>Prototype ↔ feedback</h3><p>Play. Spot a mismatch. Ask and clarify.<br>Confirm; repeat as needed.</p></div>
+          <span class="down" aria-hidden="true">↓</span>
+          <div class="review-step"><span class="step">FIRST AGREED SPEC</span><h3>Intent, not a transcript</h3><p>Confirmed scope + explicit open questions.<br>Not just what the prototype happened to do.</p></div>
+          <div class="boundary"><strong>Visuals lead; short notes are optional.</strong></div>
+        </div>
+      </div>
+      <div class="slide-footer">Stage 1 / Optimize time and effort to agreement—not code generation speed</div>
+      <aside class="speaker-notes">
+        <p>Tandem's proposal has two distinct stages: prototype to a spec, then build against it. Stage 1 is prototype-led discovery; Stage 2 is iterative, spec-anchored development. We embrace the build-first start without treating generated behavior as agreed intent.</p>
+        <p>Start with the user's statements, then targeted questions about consequential choices needed for a useful first prototype. Let the user play with it. Their feedback sends us back to clarification, confirmation and refinement as needed. This is a discovery loop, not a one-pass handoff.</p>
+        <p>Long documents ask users to reconstruct the experience mentally. A concrete prototype, journey or interaction makes behavior easier to understand, a mismatch easier to notice and feedback easier to give. Visuals carry the essential behavior and choices; short complementary notes are optional, not a long document the user must read first. For a non-GUI system, use request sequences, command journeys or concrete output examples.</p>
+        <p>The original Stage 1 illustration is this Model Y prototype. A short request for a navigatable 3D app becomes a vehicle preview with camera and orbit controls, feedback and a draft feature specification. The screenshot shows Design active with the earlier prototype retained for review. Our two stages are broader than the application's individual tabs. This capture does not establish that every control works or every requirement is accepted.</p>
+        <p>The first agreed spec synthesizes intent, confirmed scope, assumptions and explicitly open questions. It is neither a conversation transcript nor documentation of whatever code the agent generated. User confirmation establishes intent; prototype behavior alone does not. Prototype code may be reused, revised or replaced before production.</p>
+        <p>We aim to optimize time and user effort to the first agreed spec, alongside missed expectations and later rework. This is a proposed working model, not a measured speed advantage or a claim that every capability has shipped.</p>
+        <p><strong>Transition:</strong> Once we agree, the visuals do not disappear. Stage 2 uses linked views of that agreement to govern development. An existing agreed spec can enter Stage 2 directly after checking its scope and gaps.</p>
+      </aside>
+    </section>
+
+    <section class="slide stage-two" data-title="Stage 2 — Build against the agreement" aria-label="Slide 6 of 6" aria-hidden="true">
+      <p class="eyebrow">06 / Stage 2 · Spec-anchored development</p>
+      <h2>Build against <span class="accent">the agreement.</span></h2>
+      <p class="lead">Linked visual artifacts stay the review surface—not a document left behind.</p>
+      <div class="experience">
+        <figure>
+          <div class="visual-agreement">
+            <div class="artifact-view">
+              <h4>User journey / Recover accidental deletion</h4>
+              <svg viewBox="0 0 600 86" role="img" aria-label="Delete account at t0, block normal access immediately, then request recovery subject to the deadline.">
+                <defs><marker id="v2-flow-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0 8 4 0 8Z" fill="#08766d"/></marker></defs>
+                <path d="M174 40H208" stroke="#08766d" stroke-width="2" marker-end="url(#v2-flow-arrow)"/>
+                <path d="M394 40H428" stroke="#08766d" stroke-width="2" marker-end="url(#v2-flow-arrow)"/>
+                <g fill="#fff" stroke="#aac4b7"><rect x="2" y="8" width="172" height="66" rx="8"/><rect x="208" y="8" width="186" height="66" rx="8"/><rect x="428" y="8" width="170" height="66" rx="8"/></g>
+                <text x="88" y="34">Delete account</text><text class="detail" x="88" y="58">t0</text>
+                <text x="301" y="34">Normal access</text><text class="detail" x="301" y="58">Blocked immediately</text>
+                <text x="513" y="34">Request recovery</text><text class="detail" x="513" y="58">Check deadline</text>
+              </svg>
+            </div>
+            <div class="artifact-pair">
+              <div class="artifact-view">
+                <h4>Recovery / Agreed</h4>
+                <svg viewBox="0 0 280 126" role="img" aria-label="Recovery allowed before 30 days, rejected at and after 30 days.">
+                  <text class="detail" x="20" y="20">t0</text><text x="146" y="20">30 days</text>
+                  <rect x="10" y="37" width="136" height="12" rx="3" fill="#08766d"/><rect x="146" y="37" width="124" height="12" rx="3" fill="#a44918"/>
+                  <path d="M146 29V61" stroke="#172d28" stroke-width="2"/>
+                  <text x="76" y="85">Allow recovery</text><text x="210" y="85">Reject</text>
+                  <text class="detail" x="76" y="110">Before deadline</text><text class="detail" x="210" y="110">At / after</text>
+                </svg>
+              </div>
+              <div class="artifact-view open">
+                <h4>Purge / Decisions still open</h4>
+                <svg viewBox="0 0 280 126" role="img" aria-label="Open legal retention and shared asset decisions block permanent purge; expiry does not authorize purge.">
+                  <path d="M68 52V68H140V84 M212 52V68H140" fill="none" stroke="#a44918" stroke-width="2"/>
+                  <g fill="#fff" stroke="#cdb69c"><rect x="3" y="4" width="130" height="48" rx="6"/><rect x="147" y="4" width="130" height="48" rx="6"/></g>
+                  <text class="detail" x="68" y="22">Legal</text><text class="detail" x="68" y="46">retention?</text>
+                  <text class="detail" x="212" y="22">Shared</text><text class="detail" x="212" y="46">assets?</text>
+                  <rect x="21" y="84" width="238" height="35" rx="6" fill="#fff" stroke="#a44918"/><text x="140" y="107">Permanent purge blocked</text>
+                </svg>
+              </div>
+            </div>
+          </div>
+          <figcaption>Account-deletion example · Expiry ≠ purge · Not Tandem session recovery.</figcaption>
+        </figure>
+        <div class="review-flow">
+          <div class="review-step"><span class="step">COMMITMENT 1</span><h3>Agreement stays authoritative</h3><p><strong>Implementer</strong> builds and validates whole journeys.<br><strong>Reviewer</strong> checks Design conformance and over-engineering.</p></div>
+          <div class="review-step"><span class="step">COMMITMENT 2</span><h3>Bring decisions back to the user</h3><p>Reviewer reports; it does not edit code.<br>A new implementation cycle requires <strong>user confirmation</strong>.</p></div>
+          <div class="boundary"><strong>Confirm Design changes before code.</strong><br>Fix drift—not the agreement to excuse it.</div>
+        </div>
+      </div>
+      <div class="stage-cycle"><strong>Agreement → Implementer: build + validate → Reviewer: report → User: decide ↻</strong></div>
+      <div class="slide-footer">Stage 2 / Enter from Stage 1—or directly with an existing agreed spec</div>
+      <aside class="speaker-notes">
+        <p>The reason for visual artifacts first is understanding, not just ordering. Show the experience instead of asking users to decode a long specification. A journey reveals the sequence, a diagram exposes relationships, and an interactive preview makes a response tangible. Users can notice a mismatch and point to it rather than translate prose into a mental simulation. Visuals must carry real behavior and decisions, not merely decorate the same long document. Short optional notes explain what the visuals cannot.</p>
+        <p>This is Stage 2, not the Stage 1 prototype. The first agreed spec now governs implementation and ongoing review. An existing agreed spec may enter here directly after checking scope and gaps; an existing repository without agreed intent is not equivalent. Visuals remain the primary review surface throughout development, with short optional notes.</p>
+        <p>Use visual journeys, screens, interactions and representations of system behavior. For a non-GUI system, that might be a sequence, a state transition or a concrete request-and-response example. The user should be able to inspect, try, point and react. Notes can support that process, but the user is not required to read prose to participate.</p>
+        <p>This borrows the linked artifact set from original slide eight. The journey shows what happens after deletion. The timeline makes the exact recovery boundary inspectable: before 30 days is allowed; at and after the deadline is rejected. The decision map separates unresolved legal retention and shared-asset questions from the agreed recovery policy. Recovery expiry does not authorize permanent purge. These are three views of one agreement, not three specifications free to invent different rules.</p>
+        <p>Compare this with asking the user to reconstruct the same behavior from a long specification. They can point directly to the deadline, the blocked-access step or an unanswered question. That is the reason for visual-first review. The account-deletion policy is illustrative, not a claim about Tandem's own session recovery. A proposed change still requires the user's decision; a rendering alone does not establish agreement.</p>
+        <p><strong>Commitment 1: keep the agreement authoritative.</strong> When intent changes, update and confirm the affected agreement before implementation. Implementer builds the software and executes and validates the agreed user journeys, including interactions across components. If a helper and its tests both use seven days while the agreement says thirty, Implementer corrects that drift and reruns affected scenarios within the authorized implementation work. Do not rewrite the spec to justify the code.</p>
+        <p><strong>Reviewer is read-only and has two responsibilities:</strong> check implementation conformance to the complete agreed Design, and identify material over-engineering beyond it. Reviewer inspects code and the available evidence; executing the user journeys and fixing ordinary code problems remain Implementer's responsibilities. Review is not a separate general bug hunt or test-coverage audit. Reviewer reports findings and coverage limits; it does not edit code, change Design or authorize another implementation cycle.</p>
+        <p><strong>Commitment 2: bring consequential decisions back to the user.</strong> Even faithful implementation of the existing spec can reveal a missing expectation or unconsidered consequence. Shared files might need to remain available to collaborators, for example. Do not invent a default. Pause affected work, make the question explicit, obtain a user decision, and confirm any change to the agreement before continuing. Known conflicts and open questions can need user judgment just as newly discovered gaps can.</p>
+        <p>Agreement is not a document we produce once and forget. The artifacts anchor implementation and review. Different views should express the same agreement, not become separate specifications that silently contradict one another.</p>
+        <p>Implementer's validation follows the user's story across relevant components as well as local units. For this illustrative agreement, normal access is blocked immediately, recovery is possible before 30 days, and recovery is rejected at and after the deadline. Check these outcomes against the agreed boundaries and disclose anything that could not be exercised. Unit tests remain useful; they are one part of the evidence, not proof that every user expectation is satisfied.</p>
+        <p>Recovery expiry does not by itself authorize permanent purge. Legal retention and shared assets can still require decisions. Be explicit about the scope supported by evidence and what remains open.</p>
+        <p>When Review reveals a gap, conflict or consequential question, bring it back to the user. Record the decision and update the agreement if appropriate. If the code simply drifted, propose correcting the implementation, not rewriting the agreement to make that code appear right. A Change Design choice goes to Designer; a Change implementation choice proposes implementation against the agreed Design. Mixed choices go to Designer first. In every case, another implementation cycle requires explicit user confirmation before Planner or code changes.</p>
+        <p>The loop is iterative, not an automatic repair loop: agreement, authorized implementation and story-driven validation, then read-only Review and a user decision where needed. Review ends with a consolidated report and any findings or limitations; it is not user approval. Only a newly authorized implementation cycle performs further corrections and reruns affected scenarios before another Review. Internal fixes during an already authorized implementation cycle do not require a separate confirmation for each edit.</p>
+        <p>This deck describes a working model and direction, not a claim that every supporting product capability has shipped. It does not announce recovery, compaction or rename functionality.</p>
+        <p><strong>Close:</strong> Make intent visible before implementation, keep it anchored during implementation, and validate it through user outcomes. Two minds, one direction.</p>
+      </aside>
+    </section>
+    <nav class="controls" aria-label="Slide controls">
+      <button id="script-toggle" type="button" aria-expanded="false" aria-controls="script-panel" aria-keyshortcuts="N" title="Speaker script (N)">Script / N</button>
+      <button id="previous" type="button" aria-label="Previous slide">←</button>
+      <span id="slide-count" aria-live="polite">1 / 6</span>
+      <button id="next" type="button" aria-label="Next slide">→</button>
+    </nav>
+    <div class="progress" aria-hidden="true"><div id="progress-bar"></div></div>
+  </main>
+  <aside class="script-panel" id="script-panel" aria-labelledby="script-title" hidden>
+    <header class="script-header"><div><h2 id="script-title" aria-live="polite">Presentation script</h2><p>Visible on this screen · N: toggle · Esc: close · ← →: slides</p></div><button id="script-close" type="button" aria-label="Close presentation script">Close</button></header>
+    <div class="script-body" id="script-body" tabindex="0" role="region" aria-labelledby="script-title"></div>
+  </aside>
+  <script>
+    // Navigation and speaker-script behavior retained from the original light deck.
+    (() => {
+      const slides = [...document.querySelectorAll(".slide")];
+      const deck = document.querySelector(".deck");
+      const count = document.getElementById("slide-count");
+      const progress = document.getElementById("progress-bar");
+      const scriptToggle = document.getElementById("script-toggle");
+      const scriptPanel = document.getElementById("script-panel");
+      const scriptTitle = document.getElementById("script-title");
+      const scriptBody = document.getElementById("script-body");
+      let index = 0;
+      const resize = () => { deck.style.transform = `translate(-50%, -50%) scale(${Math.min(innerWidth / 1280, innerHeight / 720)})`; };
+      const updateScript = () => {
+        scriptTitle.textContent = `${index + 1} / ${slides.length} — ${slides[index].dataset.title}`;
+        scriptBody.replaceChildren(...Array.from(slides[index].querySelector(".speaker-notes").children, child => child.cloneNode(true)));
+        scriptBody.scrollTop = 0;
+      };
+      const setScriptOpen = open => {
+        scriptPanel.hidden = !open;
+        scriptToggle.setAttribute("aria-expanded", String(open));
+        if (open) { updateScript(); scriptBody.focus(); }
+        else if (scriptPanel.contains(document.activeElement)) scriptToggle.focus();
+      };
+      const initialIndex = () => {
+        const raw = Number.parseInt(location.hash.slice(1), 10);
+        return Number.isFinite(raw) ? Math.min(Math.max(raw - 1, 0), slides.length - 1) : 0;
+      };
+      const show = (nextIndex, updateHash = true) => {
+        index = (nextIndex + slides.length) % slides.length;
+        slides.forEach((slide, i) => { slide.classList.toggle("active", i === index); slide.setAttribute("aria-hidden", String(i !== index)); });
+        count.textContent = `${index + 1} / ${slides.length}`;
+        progress.style.width = `${(index + 1) / slides.length * 100}%`;
+        document.title = `${slides[index].dataset.title} — Tandem v2`;
+        if (!scriptPanel.hidden) updateScript();
+        if (updateHash) history.replaceState(null, "", `#${index + 1}`);
+      };
+      document.getElementById("previous").addEventListener("click", () => show(index - 1));
+      document.getElementById("next").addEventListener("click", () => show(index + 1));
+      scriptToggle.addEventListener("click", () => setScriptOpen(scriptPanel.hidden));
+      document.getElementById("script-close").addEventListener("click", () => setScriptOpen(false));
+      window.addEventListener("hashchange", () => show(initialIndex(), false));
+      window.addEventListener("resize", resize);
+      window.addEventListener("keydown", event => {
+        if (event.altKey || event.ctrlKey || event.metaKey) return;
+        if (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable]")) return;
+        if (event.key === "Escape" && !scriptPanel.hidden) { event.preventDefault(); setScriptOpen(false); return; }
+        if (event.target instanceof Element && event.target.closest("button") && [" ", "Enter"].includes(event.key)) return;
+        if (scriptPanel.contains(event.target) && ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) return;
+        switch (event.key) {
+          case "ArrowRight": case "ArrowDown": case "PageDown": case " ": event.preventDefault(); show(index + 1); break;
+          case "ArrowLeft": case "ArrowUp": case "PageUp": event.preventDefault(); show(index - 1); break;
+          case "Home": event.preventDefault(); show(0); break;
+          case "End": event.preventDefault(); show(slides.length - 1); break;
+          case "n": case "N": event.preventDefault(); setScriptOpen(scriptPanel.hidden); break;
+        }
+      });
+      let touchStartX;
+      window.addEventListener("touchstart", event => {
+        if (event.target instanceof Element && event.target.closest(".script-panel, .controls")) { touchStartX = undefined; return; }
+        touchStartX = event.changedTouches[0]?.screenX;
+      }, { passive: true });
+      window.addEventListener("touchend", event => {
+        const end = event.changedTouches[0]?.screenX;
+        if (touchStartX === undefined || end === undefined) return;
+        const delta = touchStartX - end;
+        touchStartX = undefined;
+        if (Math.abs(delta) > 60) show(index + (delta > 0 ? 1 : -1));
+      }, { passive: true });
+      resize();
+      show(initialIndex(), false);
+    })();
+  </script>
+</body>
+</html>

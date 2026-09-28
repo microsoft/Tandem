@@ -1,0 +1,55 @@
+{
+  "inputDigest": "a8fcbc20e9d6ef575a83200d538efb1d344d09069d3c3561d306ccd8d985ed5",
+  "expectedInputDigest": "a8fcbc20e9d6ef575a83200d538efb1d344d09069d3c3561d306ccd8d9856baa",
+  "candidate": {
+    "schemaVersion": "change-plan/v2",
+    "id": "tank-game-implementation",
+    "version": 1,
+    "outcome": "Deliver a playable, dependency-free side-view single-player tank game for desktop browsers without modifying the frozen Living Canvas runtime.",
+    "designRevisionId": "cab81b60-5522-48cc-809a-2a1bb919dbe6",
+    "baselineDigest": "52bc9fd3b846f064fc2c4e7a5137072d883aef50e97a470bf13fdfa4b17a8162",
+    "policyDigest": "4a817b3205785ce441fde6ecfc720074c8154a06515f242b1e738ec0c48b6ca6",
+    "items": [
+      {
+        "id": "build-battle-engine", "version": 1,
+        "goal": "Implement a deterministic, browser-independent battle engine for side-view movement, aiming, firing, enemies, waves, lives, scoring, pause, restart, and terminal outcomes.",
+        "scope": ["tank-game/game-engine.mjs", "tank-game/game-engine.test.mjs"],
+        "designRefs": ["design:root"], "dependsOn": [],
+        "criteria": [
+          {"id": "fresh-battle-state", "description": "Starting or restarting creates one fresh running battle with terrain, player, enemies, score, lives, wave, and no retained transient entities."},
+          {"id": "ordered-keyboard-actions", "description": "Supported drive, aim, fire, and pause actions are processed in order; unsupported actions return an explicit error."},
+          {"id": "bounded-side-view-rules", "description": "Player and enemy movement, aiming, projectiles, cooldowns, terrain bounds, collisions, damage, scoring, and wave progression are enforced."},
+          {"id": "pause-freezes-engine", "description": "While paused, simulation updates do not move entities, spawn enemies, apply damage, advance projectiles, or alter score."},
+          {"id": "single-terminal-result", "description": "Each battle emits exactly one victory or defeat result, and losing the final life ends the battle."},
+          {"id": "engine-tests-pass", "description": "Node tests cover start/restart, controls, bounds, firing and hits, scoring, waves, lives, pause/resume, and terminal-result idempotence."}
+        ]
+      },
+      {
+        "id": "build-game-interface", "version": 1,
+        "goal": "Create the playable Canvas 2D game screen, desktop keyboard controls, HUD, overlays, effects, and device-local profile around the battle engine.",
+        "scope": ["tank-game/index.html", "tank-game/styles.css", "tank-game/app.mjs"],
+        "designRefs": ["design:root"], "dependsOn": ["build-battle-engine"],
+        "criteria": [
+          {"id": "arena-first-screen", "description": "The page presents a dominant horizontal Canvas 2D battlefield with player and enemy tank profiles, terrain, shells, and impact feedback."},
+          {"id": "complete-hud", "description": "The visible HUD shows score, best score, lives, wave, pause control, sound control, and the documented keyboard mappings."},
+          {"id": "desktop-controls-work", "description": "A/D or arrows drive, W/S or arrows aim, Space fires, and Escape pauses or resumes without browser scrolling or repeated-key glitches."},
+          {"id": "overlay-state-actions", "description": "Start, pause, victory, and game-over states expose only valid actions, including Resume, Restart, and Play Again where applicable."},
+          {"id": "coherent-animation-loop", "description": "The animation-frame loop advances the engine only while running and renders one coherent engine snapshot per frame."},
+          {"id": "local-profile-contract", "description": "Web Storage persists sound, keyboard mapping, and a monotonic best score; unavailable or invalid storage is surfaced and safe defaults remain playable."}
+        ]
+      },
+      {
+        "id": "document-and-validate-game", "version": 1,
+        "goal": "Add repository entry points and concise usage documentation, then validate the standalone game without changing frozen runtime files.",
+        "scope": ["package.json", "README.md"],
+        "designRefs": ["design:root"], "dependsOn": ["build-game-interface"],
+        "criteria": [
+          {"id": "document-launch", "description": "README documents the game's side-view single-player scope, controls, supported desktop browser use, local-only data, and a direct launch procedure."},
+          {"id": "add-project-check", "description": "The root check script validates existing answer.mjs syntax, game module syntax, and the battle-engine tests without adding dependencies."},
+          {"id": "preserve-frozen-runtime", "description": "No file under tandem, apps/living-canvas, or .github/extensions/living-canvas is modified."},
+          {"id": "full-validation-passes", "description": "The documented root validation command exits successfully and covers all game-engine tests and JavaScript syntax checks."}
+        ]
+      }
+    ]
+  }
+}
