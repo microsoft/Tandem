@@ -477,6 +477,8 @@ summary:focus-visible {
   height: 100%;
 }
 
+.app:has(> .topbar[data-hosted="true"]) { grid-template-rows: minmax(0, 1fr) auto; }
+
 .next-action-bar {
   display: flex;
   align-items: center;

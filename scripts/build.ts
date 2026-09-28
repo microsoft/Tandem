@@ -20,6 +20,9 @@ const extensionRoot = join(
 );
 const desktopRuntime = join(repositoryRoot, "dist", "desktop", "runtime");
 const desktop = process.argv.includes("--desktop");
+const browser = process.argv.includes("--browser");
+if (desktop && browser) throw new Error("Choose one standalone build target at a time.");
+const runtimeDirectory = browser ? join(repositoryRoot, "dist", "browser") : desktopRuntime;
 const clientEntry = join(repositoryRoot, "src", "renderer", "main.tsx");
 const stylesEntry = join(repositoryRoot, "src", "renderer", "styles.css");
 const packageMetadata = JSON.parse(
@@ -60,8 +63,8 @@ const rendererAssetsPlugin: Plugin = {
                 watchFiles: Object.keys(compiled.metafile.inputs).map((path) => resolve(path)),
             };
         });
-        buildApi.onResolve({ filter: /^tandem:client$/ }, () => ({
-            path: "main.tsx",
+        buildApi.onResolve({ filter: /^tandem:(?:client|browser-client)$/ }, (args) => ({
+            path: args.path === "tandem:browser-client" ? "browser-main.tsx" : "main.tsx",
             namespace: "tandem-client",
         }));
         buildApi.onResolve({ filter: /^tandem:styles$/ }, () => ({
@@ -70,9 +73,9 @@ const rendererAssetsPlugin: Plugin = {
         }));
         buildApi.onLoad(
             { filter: /.*/, namespace: "tandem-client" },
-            async () => {
+            async (args) => {
                 const compiled = await build({
-                    entryPoints: [clientEntry],
+                    entryPoints: [args.path === "browser-main.tsx" ? join(repositoryRoot, "src", "browser", "main.tsx") : clientEntry],
                     bundle: true,
                     write: false,
                     metafile: true,
@@ -135,12 +138,20 @@ const rendererAssetsPlugin: Plugin = {
                 };
             },
         );
+        buildApi.onResolve({ filter: /^tandem:browser-styles$/ }, () => ({
+            path: "browser-styles.css", namespace: "tandem-browser-styles",
+        }));
+        buildApi.onLoad({ filter: /.*/, namespace: "tandem-browser-styles" }, async () => {
+            const compiled = await build({ entryPoints: [join(repositoryRoot, "src", "browser", "styles.css")], bundle: true, write: false, minify: true, metafile: true });
+            return { contents: `export default ${JSON.stringify(compiled.outputFiles[0].text)};`, loader: "js",
+                watchFiles: Object.keys(compiled.metafile.inputs).map((path) => resolve(path)) };
+        });
     },
 };
 
 const options: BuildOptions = {
     entryPoints: [join(repositoryRoot, "src", "extension.ts")],
-    outfile: join(desktop ? desktopRuntime : extensionRoot, "extension.mjs"),
+    outfile: join(desktop || browser ? runtimeDirectory : extensionRoot, "extension.mjs"),
     bundle: true,
     platform: "node",
     format: "esm",
@@ -168,16 +179,25 @@ if (process.argv.includes("--watch")) {
     console.info("Watching Tandem TypeScript sources...");
 } else {
     await build(options);
-    if (desktop) {
+    if (desktop || browser) {
         await build({
             entryPoints: [join(repositoryRoot, "src", "desktop", "host.ts")],
-            outfile: join(desktopRuntime, "host.mjs"),
+            outfile: join(runtimeDirectory, "host.mjs"),
             bundle: true, platform: "node", format: "esm", target: "node22",
             external: ["@github/copilot-sdk", "@github/copilot-sdk/*"],
             banner: options.banner,
         });
-        const skillDirectory = join(desktopRuntime, "skills", "tandem");
+        const skillDirectory = join(runtimeDirectory, "skills", "tandem");
         await mkdir(skillDirectory, { recursive: true });
         await copyFile(join(repositoryRoot, "skills", "tandem", "SKILL.md"), join(skillDirectory, "SKILL.md"));
+        if (browser) {
+            await build({
+                entryPoints: [join(repositoryRoot, "src", "browser", "cli.ts")],
+                outfile: join(runtimeDirectory, "cli.mjs"), bundle: true, platform: "node", format: "esm", target: "node22",
+                external: ["@github/copilot-sdk", "@github/copilot-sdk/*", "@github/copilot/*", "koffi"],
+                plugins: [rendererAssetsPlugin], define: { __TANDEM_VERSION__: JSON.stringify(packageMetadata.version) },
+                banner: options.banner,
+            });
+        }
     }
 }

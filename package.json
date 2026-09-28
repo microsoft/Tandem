@@ -4,9 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "tsx --test tests/index.test.ts tests/execution-panels-react.test.tsx tests/requirements-panel.test.ts tests/review-process-panels.test.tsx tests/sketch-panel.test.tsx tests/speech-react.test.ts",
+    "test": "tsx --test tests/index.test.ts tests/execution-panels-react.test.tsx tests/requirements-panel.test.ts tests/review-process-panels.test.tsx tests/sketch-panel.test.tsx tests/speech-react.test.ts tests/browser-ui.test.ts",
     "eval": "tsx scripts/evaluate.ts",
     "build": "tsx scripts/build.ts",
+    "build:browser": "tsx scripts/build.ts --browser",
+    "browser": "npm run build:browser && tsx scripts/browser.ts run",
+    "pack:browser": "npm run check && npm run build:browser && tsx scripts/browser.ts pack",
+    "test:browser": "npm run build:browser && tsx scripts/browser-smoke.ts",
     "build:desktop:runtime": "tsx scripts/build.ts --desktop",
     "build:desktop": "tsx scripts/desktop.ts build",
     "desktop": "npm run build:desktop && tsx scripts/desktop.ts run",
@@ -31,7 +35,9 @@
     "typescript": "7.0.2"
   },
   "dependencies": {
+    "@github/copilot": "1.0.80",
     "@github/copilot-sdk": "1.0.11",
+    "koffi": "3.1.6",
     "@azure/identity": "4.13.2",
     "microsoft-cognitiveservices-speech-sdk": "1.51.0",
     "proper-lockfile": "4.1.2",

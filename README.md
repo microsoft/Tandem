@@ -1,8 +1,110 @@
 # Tandem
 
-Tandem is a standalone Windows Forms app and Copilot canvas for taking an app idea through preparation, requirements,
+Tandem is a standalone Node.js browser app, Windows Forms app, and Copilot canvas for taking an app idea through preparation, requirements,
 approved app sketches, prototype revisions, product and test design, execution planning, implementation,
 and integration/interaction testing.
+
+## Standalone browser app
+
+The browser version runs the same Tandem UI, workflow engine, factories, process
+adapters, and saved artifacts as the Windows app. It needs Node.js 22.12+ and Git,
+but **no .NET, WebView2, or running GitHub Copilot desktop app**. Copilot AI still
+requires authentication, network access, and an eligible account. Project tools
+remain workspace-dependent; GitHub process blocks also need authenticated `gh`.
+Azure Speech and GPT-live retain their separate configuration and authentication.
+
+From this repository:
+
+```powershell
+npm ci
+npm run build:browser
+node .\dist\browser\cli.mjs login
+npm run browser -- --workspace C:\projects\my-app
+```
+
+The launcher opens your default browser. Omit `--workspace` to use the current
+directory. Add `--no-open` to print the private URL without opening a browser.
+The URL contains a launch capability: **do not share it**. Host controls bind
+only to `127.0.0.1`; they are not a remotely accessible web service.
+
+The standalone window uses one header with the Tandem logo and title. Its
+right-aligned icons combine **Open folder**, **Reload page**, **Reload extension**,
+**Reset effort**, **Microsoft sign-in**, **Permissions**, **Diagnostics**, **About**,
+and **Stop**, with tooltips and accessible labels. Page reload and extension
+reload remain distinct; Reset still requires confirmation, and Microsoft
+sign-in is for Azure Speech, not Copilot. The existing application handles these
+actions and reports their progress/errors to the host without receiving its
+private launch capability. An older installed provider without header support
+keeps its original header so no controls are lost. The regular Copilot canvas
+header is unchanged. On narrow screens the icon group scrolls horizontally
+rather than adding another toolbar row.
+The shield icon opens the permission selector and changes to a warning shield
+when **Allow all for this session** is active. Folder selection uses a server-side
+directory browser and absolute path input, not browser file uploads. You can
+navigate to another drive by entering its absolute path, or use **New folder**
+to create a workspace inside the displayed directory. Switching folders
+confirms interruption of the previous backend. Pending tool prompts survive
+browser refresh; stale replies cannot authorize a different workspace.
+Diagnostics refresh while open. On narrow windows, the application area keeps
+the desktop's 900px minimum width and scrolls horizontally, so existing workflow
+controls remain reachable without changing the shared canvas UI.
+
+Tool permissions start in **Ask each time**, with **Deny**, **Allow once**, and
+**Allow all for this session**. Session-wide approval survives page refresh but
+resets when the backend restarts or the workspace changes. Managed-policy and
+sandbox-bypass requests still need individual consent. Permission dialogs work
+during startup, including approval to load the Tandem extension.
+
+**Closing a tab does not stop the backend.** Keep the terminal open; use **Stop**
+in the browser or **Ctrl+C** in the terminal to stop the owned runtime and its
+workers. Windows retains kill-on-close Job Object containment through the
+SDK's existing native FFI dependency, without .NET. Other platforms use owned
+process groups for normal shutdown; browser migration alone is not a promise
+that every project tool or authentication setup is cross-platform.
+
+The browser version resumes the same identities and locks in `.tandem\desktop`
+as the Windows version. It preserves `.tandem\efforts`, accepted exports, and
+run receipts. Close the Windows app before opening that workspace in the browser.
+Diagnostics are redacted and written to `.tandem\desktop\browser.log`.
+The existing Copilot canvas installation and user/project provider precedence
+are unchanged; the package does not overwrite personal extensions or skills.
+
+Microphone access is delegated to the Tandem application frame and still needs
+browser/OS consent. Normal browsers control permission persistence, external
+links, downloads, and developer tools; the native WebView2 restrictions are not
+emulated. Prototype frames do not receive the host's launch capability.
+
+### Package for npx
+
+Build the precompiled standalone npm tarball:
+
+```powershell
+npm run pack:browser
+```
+
+This creates `dist\tandem-standalone-<version>.tgz`, using the version from the
+root `package.json`. Launch that local tarball without installing Tandem globally:
+
+```powershell
+npx --yes --package ".\dist\tandem-standalone-<version>.tgz" tandem login
+npx --yes --package ".\dist\tandem-standalone-<version>.tgz" tandem --workspace C:\projects\my-app
+```
+
+Replace `<version>` with the version printed by packaging. The package includes
+the host, renderer, Tandem extension, and companion skill; npm installs its
+runtime dependencies. The SDK and actual CLI runtime remain explicitly pinned
+to the existing compatible factory API. No factory-to-workflow SDK upgrade is
+part of this migration.
+
+The distribution manifest uses `@tandem/standalone`; creating the tarball does
+**not** publish that npm package or establish ownership of the scope. Before
+publishing a release, choose an authorized package name, bump the root version,
+run the normal `npm run pack`, and rebuild the browser package.
+
+`npm run test:browser` exercises the built runtime's startup, permission
+transport, writable application, session recovery, and shutdown in an isolated
+workspace without AI workers. It requires an existing Copilot sign-in and does
+not change your recent-folder preferences.
 
 ## Standalone Windows app
 

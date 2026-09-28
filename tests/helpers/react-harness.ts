@@ -49,15 +49,22 @@ export function response(body: unknown, status = 200): Response {
   return { ok: status < 400, status, json: async () => body } as Response;
 }
 
-export async function reactHarness(t?: TestContext) {
+export async function reactHarness(t?: TestContext, headerHost?: { origin: string; channel: string }) {
+  const hash = headerHost ? "#" + new URLSearchParams({ "tandem-host": headerHost.origin, "header-channel": headerHost.channel }) : "";
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
-    url: "http://127.0.0.1:4567/", runScripts: "outside-only", pretendToBeVisual: true,
+    url: "http://127.0.0.1:4567/" + hash, runScripts: "outside-only", pretendToBeVisual: true,
   });
   const window = dom.window;
   const document = window.document;
   const requests: Request[] = [];
   const errors: string[] = [];
   const pngExports: { width: number; height: number; source: string }[] = [];
+  const headerMessages: Record<string, any>[] = [];
+  const parent = headerHost ? { postMessage(data: unknown, origin: string) {
+    if (origin !== headerHost.origin) throw new Error("Header message sent to the wrong origin.");
+    headerMessages.push(JSON.parse(JSON.stringify(data)));
+  } } : window;
+  if (headerHost) Object.defineProperty(window, "parent", { value: parent, configurable: true });
   let narrow = false;
   let fetcher: (path: string, options: RequestInit) => Promise<Response> = async () => { throw new Error("Network disabled in renderer tests"); };
   let speechFactory: SpeechSessionFactory = async () => { throw new Error("Speech is not configured in this test"); };
@@ -134,6 +141,13 @@ export async function reactHarness(t?: TestContext) {
       await click(button);
     },
     setFetch(handler: typeof fetcher) { fetcher = handler; },
+    headerMessages,
+    async sendHeaderMessage(data: Record<string, unknown>, origin = headerHost?.origin || "http://127.0.0.1:9000", source: unknown = parent) {
+      const event = new window.MessageEvent("message", { data: { channel: headerHost?.channel, ...data }, origin });
+      Object.defineProperty(event, "source", { value: source });
+      mounted.flushSync(() => window.dispatchEvent(event));
+      await flush();
+    },
     setSpeechFactory(handler: SpeechSessionFactory) { speechFactory = handler; },
     setMermaid(handler: typeof mermaid) { mermaid = handler; },
     setNarrowViewport(value: boolean) { narrow = value; window.dispatchEvent(new window.Event("resize")); },

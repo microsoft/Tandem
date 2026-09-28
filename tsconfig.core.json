@@ -10,6 +10,8 @@
     "src/decision-diagram.ts",
     "src/agent-runner.ts",
     "src/desktop/**/*.ts",
+    "src/browser/**/*.ts",
+    "src/browser/**/*.tsx",
     "src/provider-identity.ts",
     "src/workspace-root.ts",
     "src/canvas-transport.ts",

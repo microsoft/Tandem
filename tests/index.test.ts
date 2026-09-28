@@ -39,3 +39,6 @@ import "./agent-evals.test.js";
 import "./execution-proof.test.js";
 import "./delivery.test.js";
 import "./desktop.test.js";
+import "./browser-host.test.js";
+import "./browser-process.test.js";
+import "./standalone-header.test.js";

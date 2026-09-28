@@ -14,7 +14,9 @@ import { ArtifactList, ArtifactsPanel } from "./artifacts-panel.js";
 import { ProcessPanel } from "./process-panel.js";
 import { PlanPanel } from "./plan-panel.js";
 import { ImplementationPanel, TestPanel } from "./execution-panel.js";
-import { SpeechProvider, SpeechSignInControl, SpeechTextarea } from "./speech-textarea.js";
+import { SpeechProvider, SpeechSignInControl, SpeechTextarea, useSpeechSignInControl } from "./speech-textarea.js";
+import { Brand } from "./brand.js";
+import { useStandaloneHeader } from "./standalone-header.js";
 
 const stageTabs = [
   { stage: "prepare", value: "preparation", id: "preparation", label: "Preparation", icon: Sparkles, className: "preparation-panel" },
@@ -104,10 +106,6 @@ export function App({ store, version, connect = true }: { store: StudioStore; ve
       </AlertDialog.Content></AlertDialog.Portal>
     </AlertDialog.Root>
   </Tooltip.Provider></RenderBoundary>;
-}
-
-function Brand() {
-  return <div className="brand"><div className="mark" aria-hidden="true"><Layers size={18} /></div><div className="brand-copy"><h1>Tandem</h1></div></div>;
 }
 
 function EffortApp({ state, store, version, connectionError, confirm }: {
@@ -203,38 +201,67 @@ function Header({ version, connectionError, store, effortBusy }: { version: stri
   const reloadStatus = reload.error || (state.provider?.canReload !== true
     ? state.provider?.source === "session" ? "Reopen the workspace to update Tandem" : state.provider?.source === "project" ? "Available from the user-installed Tandem" : "Reload unavailable"
     : reloadReceipt?.status === "success" ? "" : reloadReceipt?.message || (reloadRequested ? "Reloading this session..." : "Current session only"));
-  return <header className="topbar"><Brand /><div className="topbar-actions">
+  const reloadDisabled = state.provider?.canReload !== true || reload.busy || reloadRequested || reloadReceipt?.status === "reloading" || effortBusy;
+  const reloadTitle = state.provider?.canReload ? "Restart this session's provider from the latest installed user extension. This does not download updates." : reloadStatus;
+  const reloadLabel = reload.busy ? "Checking..." : reloadRequested || reloadReceipt?.status === "reloading" ? "Reloading..." : "Reload";
+  const resetDisabled = state.provider?.canSubmitAnswers === false || effortBusy;
+  const resetTitle = "Clear the current Tandem effort and return to goal entry";
+  const effortMessage = reset.error || state.effortReset?.error
+    || (state.effortReset ? "Reset is pending. Use Reset to confirm worker termination and finish clearing this effort." : message);
+  const reloadExtension = () => {
+    if (reloadDisabled) return;
+    void reload.run(async () => {
+      const response = await fetch("/api/reload", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Reload request failed.");
+      setReloadRequested(true);
+    });
+  };
+  const resetEffort = async () => {
+    if (resetDisabled) return;
+    if (!await confirm("Reset this Tandem effort? Active work will be stopped before its goal, requirements, artifacts, stage history, handoffs, and settings are cleared. This cannot be undone. Other efforts, repository files, and exported files will not be changed.", "Reset Tandem effort?")) return;
+    void reset.run(async () => {
+      setMessage("Stopping active work and resetting this effort...");
+      await post("/api/effort/reset", { expectedRevision: state.revision ?? 0, generation: state.generation, confirm: true }, 120000);
+      const current = store.getSnapshot().state;
+      if (!current || !isGoalEntry(current) || current.generation === state.generation) throw new Error("Reset has not been confirmed. Reload the project state before retrying.");
+    });
+  };
+  const speech = useSpeechSignInControl();
+  const hosted = useStandaloneHeader({
+    scope: JSON.stringify([state.prototypeId, state.generation, state.provider?.extensionId]),
+    version, lifecycle: isGoalEntry(state) ? "" : `${stageIndex + 1}. ${lifecycleStages[stageIndex].label} | ${state.phase || "discovery"}`,
+    controls: {
+      reload: { label: reloadLabel, title: reloadTitle, disabled: reloadDisabled, busy: reload.busy || reloadRequested || reloadReceipt?.status === "reloading" },
+      reset: { label: reset.busy ? "Resetting..." : "Reset", title: resetTitle, disabled: resetDisabled, busy: reset.busy },
+      signIn: { label: speech.signingIn ? "Signing in..." : "Sign in", title: speech.title, disabled: speech.disabled, busy: speech.signingIn },
+      cancelSignIn: speech.signingIn ? { label: "Cancel Microsoft sign-in", title: "Cancel Microsoft sign-in", disabled: false, busy: false } : null,
+    },
+    messages: [
+      { id: "reload", text: reload.error || reloadReceipt?.status === "error" ? reloadStatus : "", error: true },
+      { id: "effort", text: effortMessage, error: Boolean(reset.error || state.effortReset?.error) },
+      { id: "speech", text: speech.message, error: speech.status === "error" },
+      { id: "connection", text: connectionError, error: true },
+    ].filter((message) => message.text).map((message) => ({ ...message, text: message.text.slice(0, 8192) })),
+  }, { reload: reloadExtension, reset: resetEffort, signIn: speech.signIn, cancelSignIn: speech.cancel });
+  return <header className="topbar" hidden={hosted} data-hosted={hosted || undefined}><Brand /><div className="topbar-actions">
     <div id="lifecycle-status" className="lifecycle" aria-label="Development lifecycle" hidden={isGoalEntry(state)}>
       <span id="current-stage" className="stage" aria-label={"Current lifecycle stage: " + lifecycleStages[stageIndex].label}>
         <span id="current-stage-index" className="stage-index" aria-hidden="true">{stageIndex + 1}</span><span id="stage">{lifecycleStages[stageIndex].label}</span>
       </span><span id="phase" className="phase">{state.phase || "discovery"}</span>
     </div>
     <div className="reload-control" data-status-help={reloadStatus}><button id="reload-extension" className="reload-button" type="button"
-      disabled={state.provider?.canReload !== true || reload.busy || reloadRequested || reloadReceipt?.status === "reloading" || effortBusy}
-      title={state.provider?.canReload ? "Restart this session's provider from the latest installed user extension. This does not download updates." : reloadStatus}
-      onClick={() => void reload.run(async () => {
-        const response = await fetch("/api/reload", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.error || "Reload request failed.");
-        setReloadRequested(true);
-      })}><RefreshCw size={15} aria-hidden="true" />{reload.busy ? "Checking..." : reloadRequested || reloadReceipt?.status === "reloading" ? "Reloading..." : "Reload"}</button>
+      disabled={reloadDisabled} title={reloadTitle}
+      onClick={reloadExtension}><RefreshCw size={15} aria-hidden="true" />{reloadLabel}</button>
       <span id="reload-status" className={reload.error || reloadReceipt?.status === "error" ? "reload-status" : "visually-hidden"} role="status"
         data-status={reload.error || reloadReceipt?.status === "error" ? "error" : "idle"}>{reloadStatus}</span></div>
-    <button id="reset-effort" className="reset-button" type="button" disabled={state.provider?.canSubmitAnswers === false || effortBusy}
-      title="Clear the current Tandem effort and return to goal entry" onClick={async () => {
-        if (!await confirm("Reset this Tandem effort? Active work will be stopped before its goal, requirements, artifacts, stage history, handoffs, and settings are cleared. This cannot be undone. Other efforts, repository files, and exported files will not be changed.", "Reset Tandem effort?")) return;
-        void reset.run(async () => {
-          setMessage("Stopping active work and resetting this effort...");
-          await post("/api/effort/reset", { expectedRevision: state.revision ?? 0, generation: state.generation, confirm: true }, 120000);
-          const current = store.getSnapshot().state;
-          if (!current || !isGoalEntry(current) || current.generation === state.generation) throw new Error("Reset has not been confirmed. Reload the project state before retrying.");
-        });
-      }}><RotateCcw size={15} aria-hidden="true" />{reset.busy ? "Resetting..." : "Reset"}</button>
+    <button id="reset-effort" className="reset-button" type="button" disabled={resetDisabled}
+      title={resetTitle} onClick={resetEffort}><RotateCcw size={15} aria-hidden="true" />{reset.busy ? "Resetting..." : "Reset"}</button>
     <SpeechSignInControl />
     <span className="build-version" title="Tandem extension version">v{version}</span>
   </div>
     <p id="effort-message" className="effort-message" role="status" data-status={reset.error || state.effortReset?.error ? "error" : "idle"}>
-      {reset.error || state.effortReset?.error || (state.effortReset ? "Reset is pending. Use Reset to confirm worker termination and finish clearing this effort." : message)}
+      {effortMessage}
     </p>
     <p id="connection-status" className="connection-status" role="status">{connectionError}</p>
   </header>;

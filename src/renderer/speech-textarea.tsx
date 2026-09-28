@@ -160,24 +160,35 @@ export function SpeechProvider({
   return <SpeechContext.Provider value={context}>{children}</SpeechContext.Provider>;
 }
 
-export function SpeechSignInControl() {
+export function useSpeechSignInControl() {
   const speech = useSpeechCoordinator();
   const signingIn = speech.active?.kind === "login";
   const message = signingIn
     ? "Complete Microsoft sign-in in your browser. Your microphone is off."
     : speech.loginStatus?.text || "";
+  return {
+    signingIn, message, status: speech.loginStatus?.kind,
+    disabled: !speech.enabled || Boolean(speech.active),
+    title: "Sign in with Microsoft for Azure Speech. This does not turn on the microphone.",
+    signIn: speech.signIn,
+    cancel: () => { if (speech.active?.kind === "login") speech.active.cancel(); },
+  };
+}
+
+export function SpeechSignInControl() {
+  const control = useSpeechSignInControl();
   return <div className="speech-header-sign-in">
     <button id="speech-sign-in" className="reload-button" type="button"
-      disabled={!speech.enabled || Boolean(speech.active)}
-      title="Sign in with Microsoft for Azure Speech. This does not turn on the microphone."
-      aria-describedby="speech-header-status" onClick={() => { void speech.signIn(); }}>
-      <LogIn size={15} aria-hidden="true" />{signingIn ? "Signing in..." : "Sign in"}
+      disabled={control.disabled}
+      title={control.title}
+      aria-describedby="speech-header-status" onClick={() => { void control.signIn(); }}>
+      <LogIn size={15} aria-hidden="true" />{control.signingIn ? "Signing in..." : "Sign in"}
     </button>
-    {signingIn && <button className="reload-button" type="button" title="Cancel sign-in" aria-label="Cancel Microsoft sign-in"
-      onClick={() => speech.active?.cancel()}><X size={15} aria-hidden="true" /></button>}
-    <span id="speech-header-status" role="status" aria-live="polite" data-status={speech.loginStatus?.kind}
-      className={speech.loginStatus?.kind === "error" ? "speech-status speech-header-error" : "visually-hidden"}>
-      {message}
+    {control.signingIn && <button className="reload-button" type="button" title="Cancel sign-in" aria-label="Cancel Microsoft sign-in"
+      onClick={control.cancel}><X size={15} aria-hidden="true" /></button>}
+    <span id="speech-header-status" role="status" aria-live="polite" data-status={control.status}
+      className={control.status === "error" ? "speech-status speech-header-error" : "visually-hidden"}>
+      {control.message}
     </span>
   </div>;
 }
