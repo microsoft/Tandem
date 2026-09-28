@@ -461,7 +461,7 @@ cause is retained and the existing runtime stderr warning channel reports that
 additional failure; a successful durable log is not claimed.
 
 Review the active human-loop's static model-facing instructions in
-[`tandem/public/prompts/human-loop.json`](../../tandem/public/prompts/human-loop.json).
+[`tandem/public/prompts/human-loop.json`](../tandem/public/prompts/human-loop.json).
 This is the single editable **non-JavaScript prompt source**, not a new workflow,
 system-prompt override, or prompt optimization.
 

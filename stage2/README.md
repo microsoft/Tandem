@@ -22,8 +22,7 @@ stage2/
     skills/                  Design and implementation guidance
     test/                    Runtime, browser and shared tests
     scripts/                 Packaging and asset build scripts
-  docs/design/               Selected design documentation
-  reference/ux-experiments/  Two-stage overview slides and their image
+  docs/                      Design documentation, overview slides and image
   .github/extensions/tandem/ Original one-line discovery shim
   AGENTS.md                  Instructions scoped to this Stage 2 source tree
 ```
@@ -86,9 +85,9 @@ package in a separate test project following the
 
 - [Current implementation and lifecycle](tandem/README.md): current roles,
   confirmation, permissions, persistence and recovery behavior.
-- [Design reading guide](docs/design/README.md): the selected documents and their
+- [Design reading guide](docs/README.md): the selected documents and their
   relationship to the implementation.
-- [Two-stage overview, Stage 2 slide](reference/ux-experiments/tandem-opening-slides-v2.html#6):
+- [Two-stage overview, Stage 2 slide](docs/tandem-opening-slides-v2.html#6):
   the agreement-centered workflow and explicit responsibility split.
 
 Implementer builds and validates whole user journeys. Reviewer is read-only and

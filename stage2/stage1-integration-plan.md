@@ -115,5 +115,5 @@ No shared-session requirement, new import service or formal exchange schema is
 implied by this plan.
 
 See the [current implementation guide](tandem/README.md),
-[role and confirmation behavior](docs/design/human-loop-prompts.md), and
-[two-stage overview](reference/ux-experiments/tandem-opening-slides-v2.html#6).
+[role and confirmation behavior](docs/human-loop-prompts.md), and
+[two-stage overview](docs/tandem-opening-slides-v2.html#6).

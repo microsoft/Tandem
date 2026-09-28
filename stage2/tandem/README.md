@@ -142,7 +142,7 @@ Design artifacts use portable authoritative source and derived rendering.
 Mermaid, bounded HTML/CSS and SVG retain sandboxing, source-bound annotations,
 capture/upload and stale-source checks. Artifact Expand fills the current
 browser document viewport, not an enclosing application's outer window.
-See [supported formats](../docs/design/supported-artifact-formats.md).
+See [supported formats](../docs/supported-artifact-formats.md).
 Shared-sketch reads and the local sketch inspection surface remain supported.
 
 Conversation and history scroll independently. The Design/Conversation divider

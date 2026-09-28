@@ -14,7 +14,7 @@ Stage 1/user-wide extension without explicit authorization.
 - The old standalone web host, renderer, and inactive Canvas application are retired. Reused TypeScript modules live under `tandem/runtime-src`, skills under `tandem/skills`, and TypeScript tests under `tandem/test/shared`. Do not restore a second application workspace, standalone `npm start` path, or retired-host parity oracle.
 - Before removing more legacy code, trace both direct and transitive imports, dynamic file paths, packaging inputs, and tests. A historical directory name does not make its shared modules unused.
 - Historical teleos prototypes were deliberately not transferred. Their phase models and compatibility contracts do not constrain Tandem Stage 2.
-- `docs/design` mixes current workflow documentation and older design discussions. Check the active extension and tests before treating a note as shipped behavior.
+- `docs/` contains the selected design documents, overview slides and image without nested folders. Check the active extension and tests before treating a note as shipped behavior.
 
 ## Build, package, and test
 
@@ -69,7 +69,7 @@ Passing unit tests, syntax checks, or packaging does not establish native/UI qua
 
 ## Repository conventions
 
-- Shared Design authoring uses `sketch-design/v3` with explicit `artifact/v1` Mermaid, HTML/CSS, or SVG sources. Preserve exact v1/v2 reads and unchanged shared-sketch artifacts. Follow `docs/design/supported-artifact-formats.md`; rendering is derived and annotations remain bound to exact source revisions/digests.
+- Shared Design authoring uses `sketch-design/v3` with explicit `artifact/v1` Mermaid, HTML/CSS, or SVG sources. Preserve exact v1/v2 reads and unchanged shared-sketch artifacts. Follow `docs/supported-artifact-formats.md`; rendering is derived and annotations remain bound to exact source revisions/digests.
 - Extension entrypoints must be named `extension.mjs`. Keep registration/lifecycle wiring there and implementation logic in sibling modules.
 - Never write extension logs to stdout; it carries JSON-RPC. Bind renderer servers to `127.0.0.1` on an ephemeral port and preserve ownership and idempotent opening.
 - The host supplies the matching Copilot SDK. Do not install another SDK merely to satisfy a runtime import. Use the installed SDK's actual supported APIs and exact CLI path.
