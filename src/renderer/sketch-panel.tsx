@@ -739,7 +739,8 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
       event.preventDefault();
       redo();
     } else if (shape && (event.target as Element).closest("#sketch-board, #sketch-shapes")) {
-      if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
+      if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)
+        && (event.target as Element).closest("#sketch-board")) {
         event.preventDefault();
         const step = event.shiftKey ? 10 : 1;
         editShape((item, owner) => {
@@ -856,7 +857,7 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
         disabled={!writable || emptyScreens || conflict || state.sketch.status === "stale" || invalidFields}
         onClick={() => void submit("approve")}><Check size={14} aria-hidden="true" /> Approve drawings and continue</button>
     </div>
-    <p id="sketch-status" className={incoming.preview || loadState.loading || action.busy || ["running", "starting"].includes(worker?.status || "") || conflict || dirty || state.sketch.status === "stale" ? "muted" : "visually-hidden"} role="status" aria-live="polite" hidden={!status}>{status}</p>
+    <p id="sketch-status" className={incoming.preview || loadState.loading || action.busy || conflict || dirty || state.sketch.status === "stale" ? "muted" : "visually-hidden"} role="status" aria-live="polite" hidden={!status}>{status}</p>
     <p id="sketch-empty" className="sketch-empty" hidden={Boolean(screen)}
       data-status-help="Generate a first draft or add a screen to begin.">No drawings yet.</p>
     <div id="sketch-workspace" className="sketch-workspace" hidden={!screen}>
@@ -886,15 +887,37 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
           onChange={(event) => editScreen((item) => {
             item.decisionIds = event.target.value.split(",").map((id) => id.trim()).filter(Boolean);
           }, { key: screenFieldKey("decisions"), value: event.target.value, keepInput: true })} />
-        <details><summary>Shapes (keyboard selection)</summary>
-          <div id="sketch-shapes" className="sketch-list" aria-label="Shapes">
+        <details className="sketch-shape-details">
+          <summary data-status-help="Use Up and Down to select shapes, or Home and End to jump through the list. Use the canvas to nudge the selected shape.">
+            <ChevronDown size={14} aria-hidden="true" /><span>Shapes</span>
+            <span className="section-count">{screen?.shapes.length ?? 0}</span>
+          </summary>
+          <div id="sketch-shapes" className="sketch-tree" role="tree" aria-label="Screen shapes"
+            onKeyDown={(event) => {
+              if (event.altKey || event.ctrlKey || event.metaKey
+                || !["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+              event.preventDefault();
+              event.stopPropagation();
+              if (event.key === "ArrowLeft" || event.key === "ArrowRight") return;
+              const rows = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="treeitem"]:not(:disabled)'));
+              const index = rows.findIndex((row) => row === event.target);
+              const next = event.key === "Home" ? 0 : event.key === "End" ? rows.length - 1
+                : Math.max(0, Math.min(rows.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)));
+              rows[next]?.focus({ preventScroll: true });
+              rows[next]?.scrollIntoView({ block: "nearest", inline: "nearest" });
+            }}>
             {screen?.shapes.map((item) => {
               const ShapeIcon = shapeTools.find((tool) => tool.kind === item.kind
                 && (item.kind !== "path" || tool.curve === item.curve))?.Icon || Pencil;
-              return <button key={item.id} type="button" disabled={Boolean(gesture)}
-                data-ui-key={`sketch-shape:${item.id}`} aria-pressed={item.id === selectedShape}
+              const kind = item.kind === "path" ? curveLabels[item.curve ?? "linear"] : item.kind;
+              const label = item.text.trim() || item.id;
+              return <button key={item.id} type="button" className="sketch-tree-item" role="treeitem" disabled={Boolean(gesture)}
+                data-ui-key={`sketch-shape:${item.id}`} aria-selected={item.id === selectedShape} aria-level={1}
+                aria-label={`${kind}: ${label}`} title={`${kind} · ${label}${label !== item.id ? " · " + item.id : ""}`}
+                tabIndex={item.id === (shape?.id || screen.shapes[0]?.id) ? 0 : -1}
+                onFocus={() => { setSelectedShape(item.id); setDrawing(false); }}
                 onClick={() => { setSelectedShape(item.id); setDrawing(false); }}>
-                <ShapeIcon size={15} aria-hidden="true" /><span>{item.kind === "path" ? curveLabels[item.curve ?? "linear"] : item.kind}{item.text ? ": " + item.text : " · " + item.id}</span>
+                <ShapeIcon size={16} aria-hidden="true" /><span className="sketch-tree-label">{label}</span>
               </button>;
             })}
           </div>

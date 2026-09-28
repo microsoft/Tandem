@@ -129,7 +129,19 @@ row; wrap only when space is constrained. Active speech feedback and errors may
 use a separate row. Standard controls, icon buttons, and collapsed composers share
 the 30px control height, 20px line height, and 6px control gap. Derive vertical
 padding from those tokens; multiline editors and navigation tabs retain their
-own heights.
+own heights. Text editors omit manual resize grips while retaining scrolling and
+focus expansion. A navy header and blue-gray context pane distinguish navigation
+from the work area in both light and dark modes.
+The Sketch shape navigator uses compact, nonshrinking tree rows with type icons
+and truncated labels. Full labels are available on hover; Up/Down and Home/End
+select rows, while arrow keys on the canvas continue to nudge shapes.
+On desktop, the context-pane toggle collapses the sidebar to a stage-only
+activity bar with status indicators and hover labels. Expanding restores its
+width and form drafts. An icon-only Next stage button below the stage icons
+finishes the active stage without expanding the pane, using the same readiness
+checks as the expanded Finish button; the final stage uses a finish checkmark.
+The next-action shortcut still expands the pane when stage completion needs
+attention. Narrow windows retain the project-context drawer.
 
 ## Install
 

@@ -425,7 +425,7 @@ export function ProcessPanel() {
     <ProcessSection name="evidence" label={<><ShieldCheck size={14} aria-hidden="true" /> Tool-backed evidence</>}>
       <ToolEvidence />
     </ProcessSection>
-    <p id="process-message" className="stage-message" role="status" aria-live="polite"
+    <p id="process-message" className="stage-message" title={status || undefined} role="status" aria-live="polite"
       data-status={action.error ? "error" : "idle"}>{status}</p>
   </ProcessSection>;
 }

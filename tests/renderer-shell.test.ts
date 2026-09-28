@@ -333,6 +333,109 @@ test("next-step guidance navigates and focuses without executing its mutation", 
     assert.equal(hidden(h, "next-action-bar"), true);
 });
 
+test("collapsed activity bar completes the active stage without expanding or losing drafts", async (t) => {
+    const value = state();
+    value.requirements.substage = "dag";
+    value.decisionGraph.nodes = [decision("accepted", "answered")];
+    const h = await setup(t, value);
+    await h.input("handoff-approver", "Design owner");
+    await h.click("toggle-context-pane");
+    const button = h.get<HTMLButtonElement>("complete-stage");
+    assert.equal(button.hidden, false);
+    assert.equal(button.disabled, false);
+    assert.equal(button.getAttribute("aria-label"), "Next stage: Finish requirements");
+    assert.equal(button.title, button.getAttribute("aria-label"));
+    assert.ok(button.querySelector('svg.lucide-arrow-right[aria-hidden="true"]'));
+    button.focus();
+    assert.equal(h.document.activeElement, button);
+
+    let release!: (result: Response) => void;
+    h.setFetch(() => new Promise((resolve) => { release = resolve; }));
+    await h.click(button); await h.click(button);
+    assert.equal(button.disabled, true);
+    assert.equal(button.title, "Saving stage output...");
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.requests[0].path, "/api/stage/complete");
+    assert.deepEqual(h.requests[0].body, { stageId: "requirements" });
+    assert.equal(h.get("studio-workspace").dataset.contextCollapsed, "true");
+
+    release(response(state("sketch", 2))); await h.flush();
+    assert.equal(current(h).lifecycle.currentStage, "sketch");
+    assert.equal(hidden(h, "sketch-panel"), false);
+    assert.equal(h.get("studio-workspace").dataset.contextCollapsed, "true");
+    assert.equal(h.get("toggle-context-pane").getAttribute("aria-expanded"), "false");
+    assert.equal(button.disabled, true, "The new stage still requires its own completion evidence");
+    await h.click("toggle-context-pane");
+    assert.equal(text(h, "complete-stage"), "Finish sketch");
+    assert.ok(button.querySelector('svg.lucide-check[aria-hidden="true"]'));
+    assert.equal(field(h, "handoff-approver").value, "Design owner");
+});
+
+test("collapsed completion retains readiness, provider, busy, and historical-view guards", async (t) => {
+    const value = state();
+    value.requirements.substage = "dag";
+    value.decisionGraph.nodes = [decision("accepted", "answered")];
+    const h = await setup(t, value);
+    await h.click("toggle-context-pane");
+    await browse(h, "prepare");
+    assert.equal(hidden(h, "complete-stage"), true);
+    await browse(h, "requirements");
+    assert.equal(hidden(h, "complete-stage"), false);
+    let revision = value.revision;
+    for (const snapshot of [
+        { ...value, provider: { canSubmitAnswers: false } },
+        { ...value, processing: { status: "running", action: "generate-dag" } },
+        { ...value, decisionGraph: { nodes: [decision("unanswered")] } },
+        { ...value, effortReset: { requestId: "reset", generation: value.generation } },
+        state("prepare"),
+    ]) {
+        h.render({ ...snapshot, revision: ++revision }); await h.flush();
+        assert.equal(disabled(h, "complete-stage"), true);
+        await h.click("complete-stage");
+        assert.equal(h.get("studio-workspace").dataset.contextCollapsed, "true");
+    }
+    assert.equal(h.requests.length, 0);
+});
+
+test("collapsed completion surfaces failures and permits retry without expanding", async (t) => {
+    const value = state();
+    value.requirements.substage = "dag";
+    value.decisionGraph.nodes = [decision("accepted", "answered")];
+    const h = await setup(t, value);
+    await h.click("toggle-context-pane");
+    h.setFetch(async () => response({ error: "Stage output could not be saved." }, 409));
+    await h.click("complete-stage");
+    assert.equal(current(h).lifecycle.currentStage, "requirements");
+    assert.equal(h.get("next-action-bar").dataset.status, "error");
+    assert.match(text(h, "next-action-guide"), /Stage output could not be saved/);
+    assert.equal(disabled(h, "complete-stage"), false);
+    assert.equal(h.get("studio-workspace").dataset.contextCollapsed, "true");
+    h.setFetch(async () => response(state("sketch", 2)));
+    await h.click("complete-stage");
+    assert.equal(h.requests.filter((request) => request.path === "/api/stage/complete").length, 2);
+    assert.equal(current(h).lifecycle.currentStage, "sketch");
+    assert.equal(h.get("studio-workspace").dataset.contextCollapsed, "true");
+    assert.equal(h.get("next-action-bar").dataset.status, "idle");
+});
+
+test("collapsed final-stage completion uses a checkmark and cannot advance past the workflow", async (t) => {
+    const value = state("test");
+    value.testing = { ...value.testing, status: "completed", finalizedArtifactId: "test-results", scenarios: [{ id: "passed", status: "passed" }] };
+    const h = await setup(t, value);
+    await h.click("toggle-context-pane");
+    assert.equal(h.get("complete-stage").title, "Finish test");
+    assert.ok(h.get("complete-stage").querySelector('svg.lucide-check[aria-hidden="true"]'));
+    h.setFetch(async () => response({ ...value, revision: 2,
+        lifecycle: { ...value.lifecycle, completedStages: [...value.lifecycle.completedStages, "test"] } }));
+    await h.click("complete-stage");
+    assert.deepEqual(h.requests[0].body, { stageId: "test" });
+    assert.equal(h.get("complete-stage").title, "All stages complete");
+    assert.equal(disabled(h, "complete-stage"), true);
+    assert.equal(h.get("studio-workspace").dataset.contextCollapsed, "true");
+    await h.click("complete-stage");
+    assert.equal(h.requests.length, 1);
+});
+
 test("next-step guidance reveals completion from historical views in compact context", async (t) => {
     const value = state(); value.requirements.substage = "dag"; value.decisionGraph.nodes = [decision("accepted", "answered")];
     const h = await setup(t, value); h.setNarrowViewport(true);

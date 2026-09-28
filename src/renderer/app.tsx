@@ -1,6 +1,6 @@
 import { Component, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ErrorInfo, type ReactNode } from "react";
 import { AlertDialog, Tabs, Tooltip } from "radix-ui";
-import { ArrowRight, Check, ChevronDown, CircleDot, ClipboardList, Code, FileText, FolderOpen, GitBranch, Layers, ListChecks, LockKeyhole, Minus, Monitor, PanelLeft, PencilRuler, Play, RefreshCw, RotateCcw, Sparkles, Target, X } from "lucide-react";
+import { ArrowRight, Check, ChevronDown, CircleDot, ClipboardList, Code, FileText, FolderOpen, GitBranch, Layers, ListChecks, LockKeyhole, Minus, Monitor, PanelLeft, PanelLeftClose, PanelLeftOpen, PencilRuler, Play, RefreshCw, RotateCcw, Sparkles, Target, X } from "lucide-react";
 import { lifecycleStages } from "../workflow.js";
 import type { LifecycleStageId } from "../types.js";
 import { StudioStore } from "./state-store.js";
@@ -251,11 +251,12 @@ function Workspace(props: WorkspaceProps) {
   const stageAction = useAction("stage");
   const workspace = useRef<HTMLElement>(null);
   const [width, setWidth] = useState(minimumContextWidth);
+  const [contextCollapsed, setContextCollapsed] = useState(false);
   const [maximum, setMaximum] = useState(minimumContextWidth);
   const [dragging, setDragging] = useState<number | null>(null);
   const [nextAction, setNextAction] = useState<{ id: string; label: string } | null>(null);
   const atStart = isGoalEntry(state);
-  const contextHelp = useStatusHelp(`${activeTab}:${contextOpen}:${atStart}`);
+  const contextHelp = useStatusHelp(`${activeTab}:${contextOpen}:${contextCollapsed}:${atStart}`);
   const previousAtStart = useRef(atStart);
   useLayoutEffect(() => {
     if (atStart) document.getElementById("start-goal")?.focus();
@@ -268,6 +269,10 @@ function Workspace(props: WorkspaceProps) {
   const readOnly = viewed !== current || state.lifecycle.completedStages.includes(viewed);
   const complete = !pending && canCompleteStage(state) && (current !== "sketch" || !sketchBlocked);
   const allComplete = lifecycleStages.every((stage) => state.lifecycle.completedStages.includes(stage.id) || skippedStage(state, stage.id));
+  const completionLabel = allComplete ? "All stages complete" : stageAction.busy ? "Saving stage output..."
+    : current === "prepare" ? "Preparation runs automatically" : "Finish " + (lifecycleStages.find((stage) => stage.id === current)?.label || current).toLowerCase();
+  const completionHelp = contextCollapsed && !allComplete && !stageAction.busy && !["prepare", "test"].includes(current)
+    ? "Next stage: " + completionLabel : completionLabel;
   const completedCount = lifecycleStages.filter((stage) => state.lifecycle.completedStages.includes(stage.id)).length;
   const selectedLabel = lifecycleStages.find((stage) => stage.id === viewed)?.label || viewed;
   const statusBarError = props.connectionError || stageAction.error;
@@ -275,12 +280,12 @@ function Workspace(props: WorkspaceProps) {
     : state.status || (atStart ? "Ready to start a project." : "Ready."));
   const narrow = () => window.matchMedia("(max-width: 760px)").matches;
   const resize = (value: number) => {
-    if (narrow()) return;
-    const max = Math.max(minimumContextWidth, (workspace.current?.getBoundingClientRect().width || minimumContextWidth + 369) - 9 - 360);
+    if (narrow() || contextCollapsed) return;
+    const max = Math.max(minimumContextWidth, (workspace.current?.getBoundingClientRect().width || minimumContextWidth + 361) - 1 - 360);
     setMaximum(max); setWidth(Math.round(Math.min(max, Math.max(minimumContextWidth, value))));
   };
   useEffect(() => {
-    const update = () => { const max = Math.max(minimumContextWidth, (workspace.current?.getBoundingClientRect().width || minimumContextWidth + 369) - 369); setMaximum(max); setWidth((width) => Math.min(max, width)); };
+    const update = () => { const max = Math.max(minimumContextWidth, (workspace.current?.getBoundingClientRect().width || minimumContextWidth + 361) - 361); setMaximum(max); setWidth((width) => Math.min(max, width)); };
     update(); window.addEventListener("resize", update); return () => window.removeEventListener("resize", update);
   }, [atStart]);
   useEffect(() => {
@@ -331,7 +336,8 @@ function Workspace(props: WorkspaceProps) {
   return <div className="app">
     <Header version={props.version} connectionError={props.connectionError} store={props.store} effortBusy={props.effortBusy} />
     {atStart ? <GoalEntry /> : <Tabs.Root value={activeTab} onValueChange={navigate} asChild>
-      <main id="studio-workspace" ref={workspace} className="workspace" data-context-open={contextOpen} inert={props.effortBusy || Boolean(state.effortReset)}
+      <main id="studio-workspace" ref={workspace} className="workspace" data-context-open={contextOpen} data-context-collapsed={contextCollapsed}
+        inert={props.effortBusy || Boolean(state.effortReset)}
         aria-busy={props.effortBusy || Boolean(state.effortReset)} style={{ "--requirements-width": width + "px" } as CSSProperties}>
         <button id="context-toggle" className="context-toggle" type="button" aria-expanded={contextOpen} aria-controls="requirements-pane" onClick={() => setContextOpen(!contextOpen)}>
           <PanelLeft size={15} aria-hidden="true" /><span>Project context</span><span id="context-stage" className="context-stage">{lifecycleStages.find((stage) => stage.id === current)?.label}</span><ChevronDown className="context-chevron" size={16} aria-hidden="true" />
@@ -339,9 +345,18 @@ function Workspace(props: WorkspaceProps) {
         <aside id="requirements-pane" className="requirements" aria-label="Project context" onKeyDown={(event) => {
           if (event.key === "Escape" && contextOpen) { setContextOpen(false); document.getElementById("context-toggle")?.focus(); event.preventDefault(); }
         }}>
-          <section className="section project-brief" data-status-help={state.status}><p className="eyebrow"><Target size={14} aria-hidden="true" />Project brief</p><p id="goal" className="goal">{state.goal}</p>
-            <p id="status" className={hasActiveJobs(state) || state.processing?.status === "error" ? "status" : "visually-hidden"}>{state.status}</p></section>
-          <section className="section" aria-describedby="stage-browsing stage-message"><div className="section-heading"><p className="eyebrow"><Layers size={14} aria-hidden="true" />Workflow</p>
+          <div className="context-pane-heading">
+            <p className="eyebrow"><Target size={14} aria-hidden="true" />Project brief</p>
+            <button id="toggle-context-pane" className="context-collapse" type="button" aria-controls="requirements-pane"
+              aria-expanded={!contextCollapsed} aria-label={contextCollapsed ? "Expand project context" : "Collapse project context"}
+              title={contextCollapsed ? "Expand project context" : "Collapse to stage activity bar"}
+              onClick={() => { setDragging(null); setContextCollapsed((collapsed) => !collapsed); }}>
+              {contextCollapsed ? <PanelLeftOpen size={16} aria-hidden="true" /> : <PanelLeftClose size={16} aria-hidden="true" />}
+            </button>
+          </div>
+          <section className="section project-brief" data-status-help={state.status}><p id="goal" className="goal" title={state.goal}>{state.goal}</p>
+            <p id="status" className={hasActiveJobs(state) || state.processing?.status === "error" ? "status" : "visually-hidden"} title={state.status}>{state.status}</p></section>
+          <section className="section workflow-section" aria-describedby="stage-browsing stage-message"><div className="section-heading"><p className="eyebrow"><Layers size={14} aria-hidden="true" />Workflow</p>
             <span className="section-count" aria-label={`${completedCount} of ${lifecycleStages.length} stages complete`}>{completedCount}/{lifecycleStages.length}</span></div>
             <ol id="stage-list" className="stage-list">
             {lifecycleStages.map((stage, index) => {
@@ -351,9 +366,11 @@ function Workspace(props: WorkspaceProps) {
               const StageIcon = stageTabs.find((tab) => tab.stage === stage.id)!.icon;
               const StatusIcon = skipped ? Minus : done ? Check : current === stage.id ? CircleDot : LockKeyhole;
               const output = [...(state.lifecycle.history || []), ...(state.lifecycle.outputs || [])].reverse().find((item) => item.stageId === stage.id);
+              const stageHelp = `${stage.label} · ${status}${skipped ? ". " + skipped.reason : output?.path ? " · " + output.path : ""}`;
               return <li key={stage.id}><button className="stage-step" type="button" data-stage-id={stage.id} data-status={status} data-ui-key={"stage:" + stage.id}
                 aria-current={current === stage.id && !allComplete ? "step" : undefined} aria-pressed={viewed === stage.id}
-                disabled={Boolean(skipped) || !hasStageData(state, stage.id)} title={skipped?.reason || output?.path || `${index + 1}. ${stage.label} · ${status}`}
+                disabled={Boolean(skipped) || !hasStageData(state, stage.id)} data-status-help={stageHelp}
+                title={contextCollapsed ? stageHelp : skipped?.reason || output?.path || `${index + 1}. ${stage.label} · ${status}`}
                 aria-label={`${stage.label}, ${status}${skipped ? ". " + skipped.reason : ""}`}
                 onClick={() => browseStage(stage.id)}>
                 <span className="stage-step-index" aria-hidden="true"><StageIcon size={15} /></span>
@@ -362,8 +379,10 @@ function Workspace(props: WorkspaceProps) {
             })}
           </ol>
             <button id="complete-stage" className="complete-stage" type="button" hidden={viewed !== current || Boolean(skippedStage(state, current))} aria-describedby="stage-message"
+              aria-label={completionHelp} title={completionHelp} data-status-help={completionHelp}
               disabled={!complete} onClick={() => { if (complete) void stageAction.run(() => post("/api/stage/complete", { stageId: current })); }}>
-              <Check size={16} aria-hidden="true" />{allComplete ? "All stages complete" : stageAction.busy ? "Saving stage output..." : current === "prepare" ? "Preparation runs automatically" : "Finish " + (lifecycleStages.find((stage) => stage.id === current)?.label || current).toLowerCase()}
+              {contextCollapsed && current !== "test" && !allComplete ? <ArrowRight size={16} aria-hidden="true" /> : <Check size={16} aria-hidden="true" />}
+              <span className="complete-stage-label">{completionLabel}</span>
             </button>
             <p id="stage-browsing" className="visually-hidden">{readOnly ? `Viewing ${selectedLabel} · read only. Reopen explicitly to change its scope.` : ""}</p>
             <button id="reopen-stage" className="complete-stage" type="button" aria-describedby="stage-browsing"
@@ -380,7 +399,7 @@ function Workspace(props: WorkspaceProps) {
                   await post("/api/stage/reopen", { stageId: viewed }); browseStage(viewed);
                 });
               }}><RotateCcw size={16} aria-hidden="true" />Reopen {selectedLabel}</button>
-            <p id="stage-message" className={stageAction.error ? "stage-message" : "visually-hidden"} role="status" data-status={stageAction.error ? "error" : "idle"}>{stageAction.error || (state.lifecycle.outputs?.at(-1) ? "Saved " + state.lifecycle.outputs.at(-1)!.path : current === "prepare" ? "Preparation advances automatically when analysis completes." : "Complete the active stage to unlock the next.")}</p>
+            <p id="stage-message" className={stageAction.error ? "stage-message" : "visually-hidden"} title={stageAction.error || undefined} role="status" data-status={stageAction.error ? "error" : "idle"}>{stageAction.error || (state.lifecycle.outputs?.at(-1) ? "Saved " + state.lifecycle.outputs.at(-1)!.path : current === "prepare" ? "Preparation advances automatically when analysis completes." : "Complete the active stage to unlock the next.")}</p>
           </section>
           <section className="section"><div className="section-heading"><p className="eyebrow"><FolderOpen size={14} aria-hidden="true" />Artifacts</p><span className="section-count">{state.artifacts.length}</span></div><ArtifactList selectedArtifactId={selectedArtifact} /></section>
           <ProcessPanel />
@@ -421,7 +440,7 @@ function Workspace(props: WorkspaceProps) {
       <button id="show-next-action" type="button" hidden={!nextAction}
         aria-label="Go to action" title={nextAction ? "Go to action: " + nextAction.label : "Go to action"} onClick={() => {
         if (!nextAction) return;
-        if (nextAction.id === "complete-stage") { onTabChange(tabFor(current)); if (narrow()) setContextOpen(true); }
+        if (nextAction.id === "complete-stage") { setContextCollapsed(false); onTabChange(tabFor(current)); if (narrow()) setContextOpen(true); }
         else { onTabChange(tabFor(current)); setContextOpen(false); }
         window.requestAnimationFrame(() => {
           const target = document.getElementById(nextAction.id);

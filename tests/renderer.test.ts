@@ -54,6 +54,18 @@ test("compact density is shared by all stage headers, panels, controls, and comp
     assert.match(rules(".splitter"), /min-width:\s*9px/);
 });
 
+test("desktop activity bar keeps completion visible as an icon-only action", async () => {
+    const css = await readFile(new URL("../src/renderer/styles.css", import.meta.url), "utf8");
+    const desktop = css.slice(css.indexOf("@media (min-width: 761px)"), css.indexOf("\n.splitter {"));
+    assert.match(desktop, /\.workflow-section > :not\(\.stage-list\):not\(#complete-stage\)/);
+    assert.match(desktop, /\.complete-stage-label\s*\{\s*display:\s*none/);
+    assert.match(desktop, /#complete-stage\s*\{[^}]*height:\s*44px;[^}]*padding:\s*0;[^}]*gap:\s*0/);
+    assert.match(desktop, /#complete-stage\s*\{[^}]*background:\s*var\(--studio-action-bg\);[^}]*color:\s*var\(--color-white, #fff\)/);
+    assert.match(desktop, /#complete-stage:disabled\s*\{\s*opacity:\s*\.5/);
+    assert.doesNotMatch(css.slice(0, css.indexOf("@media (min-width: 761px)")), /\.complete-stage-label/);
+    assert.match(css, /\[hidden\]\s*\{\s*display:\s*none\s*!important/);
+});
+
 test("compact theme preserves host colors, standalone dark mode, and accessible input variants", async () => {
     const css = await readFile(new URL("../src/renderer/styles.css", import.meta.url), "utf8");
     assert.match(css, /--studio-surface:\s*var\(--background-color-default,\s*light-dark\(/);
