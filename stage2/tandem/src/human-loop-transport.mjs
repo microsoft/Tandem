@@ -72,12 +72,14 @@ export class HumanLoopTransport {
   #nativeAccess;
   #automaticReads = new Set();
   #compaction = new HumanLoopCompaction((event) => this.#notify(event));
+  #createPrivateSession;
 
-  constructor({ owner, client, workspace, store, tools = [], nativeFiles = false, nativeShells = null, verifyOwnership, authorizeTool, permissionHandler, now, onProgress, validateResult, validateAttachment }) {
+  constructor({ owner, client, workspace, store, tools = [], nativeFiles = false, nativeShells = null, verifyOwnership, authorizeTool, permissionHandler, now, onProgress, validateResult, validateAttachment, createPrivateSession }) {
     this.#owner = parseHumanLoopOwner(owner);
     requireCondition(typeof verifyOwnership === "function" && typeof authorizeTool === "function",
       "One-copy transport requires explicit ownership and tool-authority verifiers.");
     this.#client = client; this.#workspace = workspace; this.#store = store;
+    this.#createPrivateSession = createPrivateSession ?? (configuration => client.createSession(configuration));
     this.#verify = verifyOwnership; this.#authorize = authorizeTool; this.#permissionHandler = permissionHandler;
     this.#tools = new Map(tools.map((tool) => [tool.name, tool]));
     requireCondition(this.#tools.size === tools.length && tools.every(({ name }) =>
@@ -353,7 +355,7 @@ export class HumanLoopTransport {
           requireCondition(!proof.events.length && !proof.users.length,
             "Native first-creation retry cannot replace retained history.");
           this.#nativeRegistrationAttempted = true;
-          this.#session = await this.#client.createSession({
+          this.#session = await this.#createPrivateSession({
             ...configuration, ...(preferences.model ? { model: preferences.model } : {}),
           });
         } else {
@@ -366,7 +368,7 @@ export class HumanLoopTransport {
         }
       } else {
         this.#nativeRegistrationAttempted = true;
-        this.#session = await this.#client.createSession(configuration);
+        this.#session = await this.#createPrivateSession(configuration);
       }
       const session = this.#session;
       requireCondition(session.sessionId === this.#owner.privateSessionId && typeof session.abort === "function"

@@ -4,6 +4,8 @@ export function desktopRuntimeEnvironment(source: NodeJS.ProcessEnv = process.en
         "SESSION_ID", "COPILOT_AGENT_SESSION_ID", "COPILOT_EXTENSION_PARENT_PID", "COPILOT_SDK_PATH",
         "COPILOT_TRAMPOLINE_IDENTIFIER", "COPILOT_TRAMPOLINE_PORT", "COPILOT_TRAMPOLINE_TOKEN",
         "COPILOT_CLI_RESOLVED_DIST_DIR", "COPILOT_CLI_BINARY_VERSION",
+        "TANDEM_NODE_MAIN_SESSION_ID",
+        "TANDEM_NODE_EXECUTABLE",
     ]) {
         delete environment[key];
     }

@@ -217,10 +217,16 @@ export async function assertContractSkillsCurrent(
  * Hashes live files, including dirty/untracked bytes, at a settled wave barrier.
  * This traversal is not an atomic filesystem snapshot or an edit history.
  */
-export async function captureWorkspaceFiles(root: string): Promise<Record<string, string>> {
+export async function captureWorkspaceFiles(root: string, options: {
+    excludeDirectory?: (path: string) => boolean | Promise<boolean>;
+    excludeFile?: (path: string) => boolean;
+    maxFiles?: number;
+    maxBytes?: number;
+} = {}): Promise<Record<string, string>> {
     const workspace = resolve(root);
     const files = new Map<string, string>();
     const sourceNames = new Map<string, string>();
+    let bytes = 0;
     async function materialized(path: string) {
         const metadata = await lstat(path);
         if (metadata.isSymbolicLink() || comparable(await realpath(path)) !== comparable(resolve(path))) {
@@ -238,8 +244,14 @@ export async function captureWorkspaceFiles(root: string): Promise<Record<string
             const relativePath = prefix ? win32.join(prefix, entry) : entry;
             const before = await materialized(path);
             if (before.isDirectory()) {
+                if (await options.excludeDirectory?.(path)) continue;
                 await visit(path, relativePath);
             } else if (before.isFile()) {
+                if (options.excludeFile?.(path)) continue;
+                bytes += before.size;
+                if (before.nlink !== 1 || files.size >= (options.maxFiles ?? Infinity) || bytes > (options.maxBytes ?? Infinity)) {
+                    throw new Error("Source snapshot has a hardlink alias or exceeds its bounded file/byte limit.");
+                }
                 const file = await open(path, "r");
                 try {
                     const opened = await file.stat();

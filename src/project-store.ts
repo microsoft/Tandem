@@ -1,6 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises";
+import { copyFile, lstat, mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises";
+import { constants } from "node:fs";
 import { dirname, join } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import lockfile from "proper-lockfile";
@@ -53,12 +55,16 @@ export async function readJsonFile(path: string): Promise<unknown | undefined> {
 }
 
 export async function writeJsonAtomically(path: string, value: unknown, beforeCommit = () => {}): Promise<void> {
+    return writeBytesAtomically(path, Buffer.from(`${JSON.stringify(value, null, 2)}\n`, "utf8"), beforeCommit);
+}
+
+export async function writeBytesAtomically(path: string, bytes: Buffer, beforeCommit = () => {}): Promise<void> {
     await mkdir(dirname(path), { recursive: true });
     const temporaryPath = `${path}.${randomUUID()}.tmp`;
     try {
         const file = await open(temporaryPath, "wx");
         try {
-            await file.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+            await file.writeFile(bytes);
             await file.sync();
         } finally {
             await file.close();
@@ -244,10 +250,14 @@ export class ProjectStore<T extends StoredProject> {
                 }
             };
             for (const name of children) await inspect(join(effort, name));
-            for (const name of children) {
-                this.transactions.getStore()!.assertOwned();
-                await rm(join(effort, name), { recursive: true, force: false });
-            }
+            const archive = join(this.options.root, "effort-history", normalizeProjectId(id), randomUUID());
+            await mkdir(dirname(archive), { recursive: true });
+            await assertDirectory(join(this.options.root, "effort-history"));
+            await assertDirectory(dirname(archive));
+            this.transactions.getStore()!.assertOwned();
+            await rename(effort, archive);
+            await mkdir(effort);
+            await copyFile(join(archive, "state.json"), join(effort, "state.json"), constants.COPYFILE_EXCL);
         });
     }
 

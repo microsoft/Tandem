@@ -74,7 +74,7 @@ void CheckPermissionDialogs()
     using (var window = new MainForm(DesktopOptions.Parse([])))
     {
         var permissions = window.Controls.OfType<ToolStrip>().SelectMany(strip => strip.Items.OfType<ToolStripDropDownButton>()).Single();
-        Check(permissions.Text == "Permissions: Ask each time" && !permissions.Enabled,
+        Check(permissions.Text == "Upstream permissions: Ask each time" && !permissions.Enabled,
             "new windows show Ask each time until a backend reports its mode");
         var modes = permissions.DropDownItems.OfType<ToolStripMenuItem>().ToArray();
         Check(modes.Single(item => item.Text == "Ask each time").Checked &&

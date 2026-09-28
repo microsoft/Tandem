@@ -1,0 +1,2 @@
+# Preserve hashed payload bytes, including bundled vendor whitespace.
+/.github/extensions/tandem/** -text -whitespace

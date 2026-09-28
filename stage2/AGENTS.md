@@ -1,11 +1,12 @@
 # Tandem Stage 2 instructions
 
 These instructions apply within `stage2/`. All paths below are relative to this
-directory, which retains the original source layout. Stage 1's surrounding
-`src/`, root package, generated extension and release process are separate.
-Use this subtree's `tandem/package.json` and lockfile; do not modify Stage 1 to
-build or test Stage 2. Do not activate the nested discovery shim or overwrite the
-Stage 1/user-wide extension without explicit authorization.
+directory, which retains the original source layout. The approved Node integration
+composes this engine with root `src/` through `human-loop-controller.mjs`.
+Root build/pack scripts may package this complete subtree, and root checking may
+emit its type declarations; keep its own package, lockfile and strict build/tests.
+Root `package.json` alone owns the integrated release version. Do not activate
+the nested discovery shim or overwrite a user installation without authorization.
 
 ## Scope and direction
 
@@ -50,7 +51,9 @@ Passing unit tests, syntax checks, or packaging does not establish native/UI qua
 
 ## Active architecture
 
-- `tandem/src/extension.mjs` registers the extension. `human-loop-installation.mjs`, `human-loop-runtime.mjs`, `human-loop-transport.mjs`, and `human-loop-provider.mjs` compose the current product. `human-loop-browser-entry.mjs` exposes the ordinary-browser surface.
+- `tandem/src/extension.mjs` registers the standalone extension. The exported `human-loop-controller.mjs` also composes the original installation/runtime/transport/provider into the Node host without importing that entrypoint for side effects. Only one public Tandem registration is active.
+- The composed upstream mutation/request-admission fence is not a role-completion gate. Acquire it before the local admission queue; never hold one queue while waiting behind a request that needs the other.
+- Preserve immutable host handoff provenance through the optional context provider. Read supplied source as evidence, not executable setup or implementation authorization. Do not copy Stage 2 role prompts into root.
 - The owning Copilot session and Tandem's private native workflow session have distinct responsibilities. Opening Tandem creates its owned session but sends no project request until the user submits one.
 - Main-session chat is not a Tandem request. Only explicit Tandem submission enters its request queue. Do not reintroduce a blanket main-chat question veto or a hidden chat-to-Router bridge.
 - Controlled work requires the private session's real Interactive mode and readiness. Verify installed SDK capabilities rather than guessing APIs or using per-message metadata as a mode switch. Never change the user's mode.

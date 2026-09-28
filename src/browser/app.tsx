@@ -178,8 +178,10 @@ export function BrowserApp({ store, connect = true }: { store: BrowserStore; con
     };
     const request = host?.requests[0];
     const showRequest = request && !dialog && !confirmation;
-    const permissionsDisabled = !active || busy || !host?.workspace || host.phase === "error";
-    const permissionsTitle = `Tool permissions: ${host?.permissionMode === "allow-all" ? "Allow all for this session" : "Ask each time"}`;
+    const privateDevelopment = application.header?.permissionScope === "development";
+    const permissionsDisabled = privateDevelopment || !active || busy || !host?.workspace || host.phase === "error";
+    const permissionsTitle = privateDevelopment ? "Development permissions are controlled inside its private session."
+        : `Upstream tool permissions: ${host?.permissionMode === "allow-all" ? "Allow all for this session" : "Ask each time"}`;
     const displayedVersion = application.header?.version || host?.version;
     return <div className="host-shell">
         <header className="host-header">

@@ -35,12 +35,12 @@ test("speech controls cover conversational fields and exclude process configurat
   const h = await fixture(t, dag());
   const inputs = h.document.querySelectorAll("[data-speech-input]");
   assert.deepEqual(Array.from(inputs).map((input) => input.id || input.getAttribute("name")).sort(), [
-    "implementation-strategy-input", "plan-revision-input", "prototype-detail", "revision-input", "sketch-instruction", "usage-input",
+    "prototype-detail", "revision-input", "sketch-instruction", "usage-input",
   ]);
   assert.equal(h.document.querySelectorAll(".speech-toggle").length, inputs.length);
   assert.equal(h.document.querySelectorAll(".speech-sign-in").length, inputs.length);
   assert.equal(h.get("sketch-instruction").hasAttribute("data-speech-input"), true);
-  for (const name of ["intake-content", "verification-checks", "protected-paths", "handoff-approver"]) {
+  for (const name of ["intake-content", "handoff-approver"]) {
     assert.equal(h.get(name).hasAttribute("data-speech-input"), false);
   }
   assert.equal(h.requests.length, 0);

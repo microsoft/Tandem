@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-    buildGoalOnlyPreparationPrompt, buildPlanningPrompt, buildPreparationHandoffPrompt,
+    buildGoalOnlyPreparationPrompt, buildPreparationHandoffPrompt,
     buildPreparationSourcesPrompt, buildPreparationWorkspacePrompt, buildUsageSuggestionsPrompt,
     tandemWorkerInteractionRules,
 } from "../src/planning-prompts.js";
@@ -17,7 +17,6 @@ test("preparation and intent workers defer product interviews through the shared
         buildPreparationHandoffPrompt(args, workspace, sources),
         buildGoalOnlyPreparationPrompt(args, workspace),
         buildUsageSuggestionsPrompt({ goal: args.goal, usageItems: [] }),
-        buildPlanningPrompt({ prototypeId: "sample", maxAgents: 1, action: "generate", state: {} }),
     ];
     for (const prompt of prompts) {
         assert.ok(prompt.includes(tandemWorkerInteractionRules));

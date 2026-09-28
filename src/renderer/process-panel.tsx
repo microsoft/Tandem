@@ -3,8 +3,8 @@ import { Collapsible } from "radix-ui";
 import { Check, ChevronDown, Download, FileText, FolderOpen, RefreshCw, Save, Send, Settings, ShieldCheck } from "lucide-react";
 import type { AcceptanceRecord } from "../accepted-artifacts.js";
 import type { IndependentVerdict } from "../execution-proof.js";
-import type { AdapterId, ProcessBlock, ProcessSettings, VerificationCheck } from "../process-state.js";
-import type { LifecycleStageId } from "../types.js";
+import type { AdapterId, ProcessBlock, ProcessSettings } from "../process-state.js";
+import type { LifecycleStageId, HistoricalStageId } from "../types.js";
 import type { CommandEvidence } from "../verification.js";
 import { lifecycleStages } from "../workflow.js";
 import { hasActiveJobs, useAction, useDraft, useUi, type UiState } from "./ui-context.js";
@@ -14,12 +14,6 @@ interface SettingsFields {
   statusAdapter: AdapterId;
   intakeAdapter: AdapterId;
   repository: string;
-  autoImplement: boolean;
-  autoTest: boolean;
-  evidenceEnabled: boolean;
-  independentReview: boolean;
-  checks: string;
-  protectedPaths: string;
 }
 
 interface SettingsDraft {
@@ -29,7 +23,8 @@ interface SettingsDraft {
 }
 
 type ProcessRequest =
-  | { action: "configure"; settings: ProcessSettings; expectedRevision: number }
+  | { action: "configure"; settings: Pick<ProcessSettings, "adapters" | "githubRepository">; expectedRevision: number }
+  | { action: "capture-development" }
   | { action: "accept"; stageId: LifecycleStageId; approver: string }
   | { action: "export"; acceptanceId: string }
   | { action: "prepare-handoff" }
@@ -47,16 +42,10 @@ function savedSettings(state: UiState): SettingsFields {
     statusAdapter: settings?.adapters?.status ?? "local",
     intakeAdapter: settings?.adapters?.intake ?? "local",
     repository: settings?.githubRepository || "",
-    autoImplement: settings?.autoStartImplementation || false,
-    autoTest: settings?.autoStartTests || false,
-    evidenceEnabled: settings?.verification?.enabled || false,
-    independentReview: settings?.verification?.independentReview !== false,
-    checks: JSON.stringify(settings?.verification?.checks || [], null, 2),
-    protectedPaths: (settings?.verification?.protectedPaths || []).join("\n"),
   };
 }
 
-function stageLabel(stage: LifecycleStageId): string {
+function stageLabel(stage: HistoricalStageId): string {
   return lifecycleStages.find((candidate) => candidate.id === stage)?.label || stage;
 }
 
@@ -123,27 +112,20 @@ function EvidenceRecord({ record, current, scope }: { record: CommandEvidence; c
 function ToolEvidence() {
   const { state } = useUi();
   const verdict = state.testing?.independentVerdict as IndependentVerdict | null | undefined;
-  const verdictCurrent = verdict && verdict.requestId === state.testing?.requestId
-    && verdict.runId === state.testing?.runId
-    && verdict.inputRevision === state.testing?.inputRevision
-    && verdict.sourceFingerprint === state.testing?.sourceFingerprint;
+  const verdictCurrent = false;
   return <div id="process-evidence" aria-describedby="process-evidence-help">
-    <p id="process-evidence-help" className="visually-hidden">Only tool-backed commands and the independent verifier provide verification evidence.
-      Worker-reported completion is not a passing command result. Historical evidence never establishes a pass for different sources or inputs.</p>
+    <p id="process-evidence-help">Read-only legacy verification history. It is not Stage 2 authority.
+      Current outcomes and evidence references are in the captured Development projection. Worker statements and Review completion are not passing command results.</p>
     {(["implementation", "testing"] as const).flatMap((scope) => {
       const runtime = state[scope];
       const records = (runtime?.commandEvidence || []) as CommandEvidence[];
       return records.map((record) => {
-        const current = Boolean(record.requestId && record.runId && record.inputRevision && record.sourceFingerprint)
-          && record.requestId === runtime?.requestId && record.runId === runtime?.runId
-          && record.inputRevision === runtime?.inputRevision
-          && record.sourceFingerprint === (scope === "implementation" ? runtime?.verifiedSourceFingerprint : runtime?.sourceFingerprint);
-        return <EvidenceRecord key={`${scope}:${record.id}`} record={record} current={current} scope={scope} />;
+        return <EvidenceRecord key={`${scope}:${record.id}`} record={record} current={false} scope={scope} />;
       });
     })}
     <p>{verdict
       ? `Independent verifier: ${verdict.status}. ${verdict.summary}${verdictCurrent ? "" : " Historical verdict; it does not verify the current inputs."}`
-      : "Independent verification has not run. Worker-reported evidence is shown in the implementation and test tabs."}</p>
+      : "No legacy independent verification is recorded."}</p>
     {verdict && <details data-ui-key={`independent-verdict:${verdict.requestId}:${verdict.runId}`}>
       <summary>Independent verifier identities</summary>
       <pre>{`Request: ${verdict.requestId}\nRun: ${verdict.runId}\nSpecification / inputs: ${verdict.inputRevision}\nSources: ${verdict.sourceFingerprint}`}</pre>
@@ -165,14 +147,14 @@ export function ProcessPanel() {
   const fields = draft?.values || savedSettings(state);
   const process = state.process;
   const outputs = state.lifecycle.outputs || [];
-  const stages = [...new Set(outputs.map((output) => output.stageId))];
+  const stages = lifecycleStages.filter(stage => outputs.some(output => output.stageId === stage.id)).map(stage => stage.id);
   const stage = stages.find((candidate) => candidate === selectedStage) || stages.at(-1) || null;
   const selectedOutput = outputs.find((output) => output.stageId === stage);
   const acceptance = (process?.acceptances || []).filter((record) => record.stageId === stage
     && outputs.some((output) => output.stageId === record.stageId && output.path === record.snapshotPath)).at(-1);
   const writable = state.provider?.canSubmitAnswers !== false && !state.effortReset;
   const blocked = action.busy || pending || !writable || hasActiveJobs(state);
-  const completedTest = state.lifecycle.completedStages.includes("test");
+  const developmentCaptured = outputs.some(output => output.stageId === "development");
   const adapters = process?.settings?.adapters;
   const handoffAdapter = adapters?.handoff ?? "local";
   const statusAdapter = adapters?.status ?? "local";
@@ -218,30 +200,13 @@ export function ProcessPanel() {
   function saveSettings(event: FormEvent) {
     event.preventDefault();
     if (blocked) return;
-    let checks: VerificationCheck[];
-    try {
-      const parsed: unknown = JSON.parse(fields.checks);
-      if (!Array.isArray(parsed)) throw new Error("Not an array");
-      checks = parsed as VerificationCheck[];
-    } catch {
-      action.setError("Verification commands must be a valid JSON array.");
-      return;
-    }
     const version = draft?.version ?? 0;
-    const settings: ProcessSettings = {
+    const settings: Pick<ProcessSettings, "adapters" | "githubRepository"> = {
       adapters: { handoff: fields.handoffAdapter, status: fields.statusAdapter, intake: fields.intakeAdapter },
       githubRepository: fields.repository.trim(),
-      autoStartImplementation: fields.autoImplement,
-      autoStartTests: fields.autoTest,
-      verification: {
-        enabled: fields.evidenceEnabled,
-        independentReview: fields.independentReview,
-        checks,
-        protectedPaths: fields.protectedPaths.split(/\r?\n/).map((path) => path.trim()).filter(Boolean),
-      },
     };
     perform({ action: "configure", settings, expectedRevision: draft?.baseRevision ?? state.revision ?? 0 }, {
-      confirmation: "Save these process settings? Enabled verification commands will run with your local user permissions. Acceptance and external publication remain explicit.",
+      confirmation: "Save the selected Local/GitHub adapters? Acceptance, export and external publication remain explicit. Native Development execution is unchanged.",
       accepted: () => setDraft((current) => (current?.version ?? 0) === version ? null : current),
     });
   }
@@ -261,18 +226,14 @@ export function ProcessPanel() {
   }
 
   function acceptHandoff() {
-    if (blocked || !stage || !selectedOutput || !state.lifecycle.completedStages.includes(stage)) return;
+    if (blocked || !stage || !selectedOutput || (stage !== "development" && !state.lifecycle.completedStages.includes(stage))) return;
     if (!approver.trim()) {
       action.setError("Enter the name of the person accepting this handoff.");
       return;
     }
-    const automatic = stage === "plan" && process?.settings?.autoStartImplementation
-      ? " Saved settings will start implementation after this explicit acceptance."
-      : stage === "implement" && process?.settings?.autoStartTests
-        ? " Saved settings will start tests after this explicit acceptance." : "";
     perform({ action: "accept", stageId: stage, approver }, {
       confirmation: `Accept the immutable ${stageLabel(stage)} handoff at ${selectedOutput.path} as ${approver.trim()}? `
-        + `This records attribution, not authenticated code-owner approval. Nothing will be committed or published.${automatic}`,
+        + "This records attribution, not authenticated code-owner approval or a test pass. Nothing will execute, be committed or be published.",
     });
   }
 
@@ -290,7 +251,11 @@ export function ProcessPanel() {
   return <ProcessSection name="root" label="Handoffs & process" outer>
     <p id="handoff-help" className="visually-hidden">Finish a stage, then accept its immutable handoff. Exports never commit or publish.</p>
     {!writable && <p id="process-readonly-help" className="visually-hidden" role="status">{guidance("change process settings or handoffs")}</p>}
-    <label htmlFor="handoff-stage">Completed stage</label>
+    {state.lifecycle.currentStage === "development" && <button id="capture-development" className="complete-stage"
+      type="button" disabled={blocked} onClick={() => perform({ action: "capture-development" })}>
+      <FileText size={14} aria-hidden="true" /> Capture Development outcome for review
+    </button>}
+    <label htmlFor="handoff-stage">Completed upstream stage or captured Development outcome</label>
     <select id="handoff-stage" value={stage || ""} aria-describedby="handoff-help" onChange={(event) => setSelectedStage(event.target.value)}>
       {!stages.length && <option value="">No completed stages</option>}
       {stages.map((id) => <option key={id} value={id}>{stageLabel(id)}</option>)}
@@ -299,7 +264,7 @@ export function ProcessPanel() {
     <input id="handoff-approver" maxLength={200} placeholder="Your name (recorded attribution)" value={approver}
       disabled={!writable} onChange={(event) => setApprover(event.target.value)} />
     <button id="accept-handoff" className="complete-stage" type="button" aria-describedby={writable ? "handoff-help" : "process-readonly-help"}
-      disabled={blocked || !stage || !state.lifecycle.completedStages.includes(stage)} onClick={acceptHandoff}>
+      disabled={blocked || !stage || (stage !== "development" && !state.lifecycle.completedStages.includes(stage))} onClick={acceptHandoff}>
       <Check size={14} aria-hidden="true" /> Accept handoff
     </button>
     <button id="export-handoff" className="complete-stage" type="button" disabled={blocked || !acceptance} aria-describedby="handoff-help"
@@ -313,12 +278,12 @@ export function ProcessPanel() {
       : "No acceptance for this stage revision."}</p>
 
     <ProcessSection name="delivery" label={<><Send size={14} aria-hidden="true" /> Delivery & maintenance</>}>
-      <button id="prepare-delivery" className="complete-stage" type="button" disabled={blocked || !completedTest}
+      <button id="prepare-delivery" className="complete-stage" type="button" disabled={blocked || !developmentCaptured}
         onClick={() => perform({ action: "prepare-handoff" })}>
         <FileText size={14} aria-hidden="true" /> Prepare delivery draft
       </button>
       <pre id="delivery-draft" tabIndex={0}>{process?.deliveryDraft?.body
-        || "Finish Test and accept its handoff to prepare a reviewable delivery draft."}</pre>
+        || "Capture and explicitly accept a Development outcome to prepare a reviewable delivery draft. Export remains a separate action."}</pre>
       {process?.deliveryDraft && <details data-ui-key={`delivery-draft:${process.deliveryDraft.id}`}>
         <summary>Delivery draft provenance</summary>
         <pre>{`Draft: ${process.deliveryDraft.id}\nSources: ${process.deliveryDraft.sourceFingerprint}\nAccepted snapshots: ${process.deliveryDraft.acceptanceIds.join(", ")}`}</pre>
@@ -327,9 +292,9 @@ export function ProcessPanel() {
       <input id="process-reference" placeholder="GitHub PR/issue/run URL or local receipt path / incident ID"
         value={reference} disabled={!writable} onChange={(event) => setReference(event.target.value)} />
       <button id="publish-delivery" className="complete-stage" type="button"
-        disabled={blocked || !completedTest || !process?.deliveryDraft}
+        disabled={blocked || !developmentCaptured || !process?.deliveryDraft}
         onClick={() => {
-          if (!completedTest || !process?.deliveryDraft) return;
+          if (!developmentCaptured || !process?.deliveryDraft) return;
           perform({ action: "handoff", reference, confirm: true }, {
             confirmation: `Publish the displayed delivery draft using ${handoffAdapter}? GitHub posts a comment to the existing PR; Local writes a local bundle. Nothing will be merged or deployed.`,
           });
@@ -383,22 +348,7 @@ export function ProcessPanel() {
         <label htmlFor="process-repository">GitHub repository</label>
         <input id="process-repository" placeholder="owner/repository" maxLength={200} disabled={!writable}
           value={fields.repository} onChange={(event) => edit("repository", event.target.value)} />
-        <label><input id="auto-implement" type="checkbox" checked={fields.autoImplement} disabled={!writable}
-          onChange={(event) => edit("autoImplement", event.target.checked)} /> Start implementation after explicit Plan handoff acceptance</label>
-        <label><input id="auto-test" type="checkbox" checked={fields.autoTest} disabled={!writable}
-          onChange={(event) => edit("autoTest", event.target.checked)} /> Start tests after explicit Implement handoff acceptance</label>
-        <label><input id="evidence-enabled" type="checkbox" checked={fields.evidenceEnabled} disabled={!writable}
-          onChange={(event) => edit("evidenceEnabled", event.target.checked)} /> Require tool-backed verification</label>
-        <label><input id="independent-review" type="checkbox" checked={fields.independentReview} disabled={!writable}
-          onChange={(event) => edit("independentReview", event.target.checked)} /> Independent final verifier</label>
-        <label htmlFor="protected-paths">Protected acceptance files / directories (one per line)</label>
-        <textarea id="protected-paths" rows={3} spellCheck={false} placeholder={"tests\\regressions"}
-          value={fields.protectedPaths} disabled={!writable} onChange={(event) => edit("protectedPaths", event.target.value)} />
-        <label htmlFor="verification-checks">Approved commands (JSON array)</label>
-        <textarea id="verification-checks" rows={8} spellCheck={false} aria-describedby="verification-help"
-          value={fields.checks} disabled={!writable} onChange={(event) => edit("checks", event.target.value)} />
-        <p id="verification-help" className="visually-hidden">Each check: id, program, args, stage (implementation or test),
-          afterWorkItems, timeoutSeconds. Only approve commands you trust. No shell interpolation.</p>
+        <p>Development retains native implementation confirmation, tools and permissions. Legacy automatic starts and verification schedulers are retired.</p>
         <p id="process-settings-help" className="visually-hidden">Settings are drafts until saved. Actions use the saved adapter; an adapter error never switches to a different adapter.</p>
         {draft && <p className="muted" role="status">Unsaved settings based on revision {draft.baseRevision}.
           {draft.baseRevision !== state.revision ? " The effort has changed; saving may conflict. Reload saved settings to discard this draft." : ""}</p>}
@@ -422,7 +372,7 @@ export function ProcessPanel() {
         {process.source.parentEffortId ? ` · Parent effort: ${process.source.parentEffortId}` : ""}</p>}
       {!(process?.acceptances || []).length && !(process?.events || []).length && <p className="muted">No handoffs or process events recorded yet.</p>}
     </ProcessSection>
-    <ProcessSection name="evidence" label={<><ShieldCheck size={14} aria-hidden="true" /> Tool-backed evidence</>}>
+    <ProcessSection name="evidence" label={<><ShieldCheck size={14} aria-hidden="true" /> Historical verification evidence</>}>
       <ToolEvidence />
     </ProcessSection>
     <p id="process-message" className="stage-message" title={status || undefined} role="status" aria-live="polite"

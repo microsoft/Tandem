@@ -1,15 +1,17 @@
 # Tandem Stage 2
 
-This folder contains the independently maintained Stage 2 implementation:
-development against an agreed Design. Stage 1 remains in the surrounding Tandem
-project. This transfer does not integrate their runtimes or change Stage 1.
+This folder maintains Stage 2: development against an agreed Design. The Node
+application now composes it after the surrounding Preparation, Requirements,
+Sketch and Prototype stages. Its backend role engine and original renderer remain
+the source of truth; root `src` owns the upstream bridge, not a replacement engine.
 
 The source was copied from the teleos worktree at commit
 `f0c9fb73c31ee3703fba7f61f09ed083415946e0`. The overview slides include the later,
 uncommitted clarification of Implementer, Reviewer and user responsibilities.
-The original teleos working copy is retained. Application code is unchanged;
-transferred test fixtures resolve renderer assets and writer test modules relative
-to their own files so they also work when launched from the package directory.
+The original teleos working copy is retained. Integration changes extract a reusable
+controller and add narrow provenance/admission and durable native-creation seams.
+Transferred fixtures resolve renderer assets and writer modules relative to their
+own files, including when launched from the package directory.
 
 ## Layout
 
@@ -40,6 +42,8 @@ backed by the Copilot SDK and an owned native CLI Interactive session.
 The complete implementation is included:
 
 - `tandem/src/extension.mjs` registers the canvas and browser entrypoint.
+- `tandem/src/human-loop-controller.mjs` composes the same implementation into the
+  Node host without entrypoint side effects or a second public registration.
 - `tandem/src/human-loop-browser-entry.mjs` owns the regular-browser entry lifecycle.
 - `tandem/src/human-loop-provider.mjs` serves the UI and its local HTTP/event API.
 - `tandem/src/human-loop-installation.mjs` and `human-loop-transport.mjs` manage
@@ -75,10 +79,11 @@ npm --prefix stage2\tandem run package:extension -- C:\staging\tandem-stage2
 ```
 
 Building a package does not install or activate it. The nested discovery shim is
-retained as source; it has not replaced the surrounding project's Stage 1 shim.
-Both products use the `tandem` extension identity. Do not overwrite the Stage 1
-extension or user-wide installation to try Stage 2. Install the complete portable
-package in a separate test project following the
+retained as source and is not activated by the composed Node host. Root packaging
+includes this full payload under its single `tandem` provider. Do not load the
+standalone shim beside that provider or overwrite a user installation to test it.
+For separate standalone testing, install the complete portable package in an
+owned test project following the
 [Stage 2 installation guide](tandem/INSTALL.md).
 
 ## Key design documents
@@ -94,17 +99,20 @@ Implementer builds and validates whole user journeys. Reviewer is read-only and
 checks Design conformance and over-engineering. Review neither repairs code nor
 authorizes another implementation cycle; the user confirms that separately.
 
-## Stage 1 handoff direction
+## Integrated Stage 1 handoff
 
 See the [Stage 1 integration plan](stage1-integration-plan.md)
-for the agreed Designer-led approach, intended flow and remaining decisions.
+for the implemented Designer-led bridge, migration, ownership and qualification boundaries.
 
-The integration contract is not finalized. The expected handoff is documents
-plus an HTML prototype with mocked data. Designer should read these as the
-existing Design and continue from its confirmed decisions, rather than restart
-discovery or infer production requirements from mock shortcuts.
+The host retains exact documents, approved sketch/assets and the displayed
+multi-file prototype source (or explicit no-GUI disposition), with one immutable
+request envelope. Designer reads these as existing intent and continues from
+confirmed decisions rather than restarting discovery or turning mocks into
+production requirements. Original source is not executed or copied over product
+files by the bridge.
 
 Consequential gaps or contradictions return to the user. The existing Design
 refinement and implementation-confirmation flow remains the intended path.
-This describes the agreed integration direction, not a completed importer,
-shared runtime or finalized schema.
+Opening/reloading never submits that request, recovery never replays a retired
+handoff, and a fresh refinement does not reset canonical Design. Native no-model
+API qualification does not establish a live model-driven implementation result.

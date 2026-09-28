@@ -169,7 +169,7 @@ async function patchFile(session, { path, expectedDigest, content }) {
     + `${lines(content).map(line => `+${line}`).join("\n")}\n*** End Patch\n`);
 }
 
-async function fixture(t, script, { onHandoff, onProgress, autoConfirm = true, permissionHandler, filePermissionHandler, nativeShell, nativeControl, nativePermissionRequired = true, omitCancelledNativeCompletion = false, realDesign = false, initialIndex, initialFiles = {}, readDesign, onStop, reviewGraceMs, reviewExcerptCharacters, beforeAdmission } = {}) {
+async function fixture(t, script, { onHandoff, onProgress, autoConfirm = true, permissionHandler, filePermissionHandler, nativeShell, nativeControl, nativePermissionRequired = true, omitCancelledNativeCompletion = false, realDesign = false, initialIndex, initialFiles = {}, readDesign, onStop, reviewGraceMs, reviewExcerptCharacters, beforeAdmission, withRequestAdmission } = {}) {
   const root = await mkdtemp(join(process.cwd(), ".human-loop-runtime-")), project = join(root, "project");
   await mkdir(project); await git(project, "init", "--quiet");
   await writeFile(join(project, ".gitignore"), ".tandem/\n");
@@ -367,6 +367,7 @@ async function fixture(t, script, { onHandoff, onProgress, autoConfirm = true, p
   }
   const session = new Session();
   runtime = new HumanLoopRuntime({
+    withRequestAdmission,
     configuration: { schemaVersion: "human-loop-runtime/v1", owner, runtimeDirectory: join(root, "runtime"),
       node: { path: process.execPath }, sdk: {}, cli: {}, buildId: "fixture" },
     client: { createSession: async (config) => { session.config = config; return session; }, stop: async () => [],
@@ -399,6 +400,36 @@ async function fixture(t, script, { onHandoff, onProgress, autoConfirm = true, p
   const send = (id, message, answers = null) => runtime.send({ id, message, answers, receivedAt: new Date().toISOString() });
   return { runtime, session, project, history, handoffs, errors, send };
 }
+
+test("actual runtime admission takes the shared gate before its queue during mixed handoff/composer requests", { timeout: 20_000 }, async t => {
+  const { AsyncLocalStorage } = await import("node:async_hooks");
+  const scope = new AsyncLocalStorage();
+  let gate = Promise.resolve();
+  const withRequestAdmission = async operation => {
+    if (scope.getStore()) return operation();
+    const previous = gate, release = Promise.withResolvers();
+    gate = previous.then(() => release.promise);
+    await previous;
+    try { return await scope.run(true, operation); } finally { release.resolve(); }
+  };
+  const f = await fixture(t, (packet, session) => packet.binding.role === "router"
+    ? route(session, packet, "answer")
+    : submit(session, packet, "submit_readonly_answer", {
+      kind: "answer", summary: "Read-only fixture response.", report: "No files were changed.", evidenceRefs: [],
+    }), { withRequestAdmission });
+  const entered = Promise.withResolvers(), proceed = Promise.withResolvers();
+  const handoff = withRequestAdmission(async () => {
+    entered.resolve(); await proceed.promise;
+    await f.send("handoff", "Explain the project read-only.");
+  });
+  await entered.promise;
+  const composer = f.send("composer", "Explain the project read-only.");
+  proceed.resolve();
+  await Promise.all([handoff, composer]);
+  await f.runtime.whenIdle();
+  assert.deepEqual((await f.runtime.state()).requests.map(request => request.id), ["handoff", "composer"]);
+  assert.deepEqual(f.errors, []);
+});
 
 export { fixture as createHumanLoopRuntimeFixture };
 

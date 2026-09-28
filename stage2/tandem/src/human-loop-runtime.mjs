@@ -71,15 +71,19 @@ export class HumanLoopRuntime {
   #modelError = null;
   #compactionBusy = false;
   #compactionApproval = null;
+  #contextProvider;
+  #withRequestAdmission;
 
   constructor({ configuration, client, verifyOwnership, verifyAdmission, permissionHandler, onHandoff, onProgress,
-    readDesign, designer, reviewEffects, now }) {
+    readDesign, designer, reviewEffects, now, contextProvider, withRequestAdmission = operation => operation(), createPrivateSession }) {
     requireCondition(configuration?.schemaVersion === "human-loop-runtime/v1" && typeof onHandoff === "function",
       "The new runtime needs versioned one-copy configuration and a real handoff presenter.");
     this.#configuration = configuration; this.#owner = configuration.owner;
     this.#preferences = new HumanLoopPreferences(this.#owner.workspacePath);
     this.#verify = verifyOwnership; this.#verifyAdmission = verifyAdmission ?? verifyOwnership;
     this.#onHandoff = onHandoff; this.#onProgress = onProgress;
+    this.#contextProvider = contextProvider;
+    this.#withRequestAdmission = withRequestAdmission;
     this.#store = new HumanLoopStore(this.#owner);
     this.#workspace = new HumanLoopWorkspace({ owner: this.#owner, verifyOwnership });
     this.#designer = designer ?? new HumanLoopDesigner({ owner: this.#owner, store: this.#store, verifyOwnership });
@@ -96,6 +100,7 @@ export class HumanLoopRuntime {
     }));
     this.#transport = new HumanLoopTransport({
       owner: this.#owner, client, workspace: this.#workspace, store: this.#store, tools, nativeFiles: true, nativeShells: this.#commands,
+      createPrivateSession,
       verifyOwnership, authorizeTool: (packet) => this.#authorizeTool(packet), permissionHandler, now,
       onProgress: (event) => { this.#notify(event); if (event.kind === "native-shell") this.#kick(); },
       validateResult: async (packet, result) => {
@@ -384,6 +389,7 @@ export class HumanLoopRuntime {
     requireCondition(!this.#compactionBusy, "Approved context compaction is in progress; wait before sending.");
     requireCondition(!this.#modelChanging, "A private model change is being verified; retry after Settings settles.");
     requireCondition(this.#opened && !this.#closed && !this.#closing, "The owned runtime is not available for requests.");
+    return this.#withRequestAdmission(async () => {
     const work = this.#admission.then(async () => {
       requireCondition(!await this.#checkModel(false), this.#modelError ?? "Model reconciliation is required.");
       const state = await this.#store.load();
@@ -397,10 +403,12 @@ export class HumanLoopRuntime {
     });
     this.#admission = work.then(() => undefined, () => undefined);
     return work;
+    });
   }
   async executionQueue() { return humanExecutionQueue(await this.#store.load()); }
   async decideImplementation({ confirmationId, decision }) {
     requireCondition(["approved", "design", "cancelled"].includes(decision), "Unknown implementation confirmation decision.");
+    return this.#withRequestAdmission(async () => {
     const work = this.#admission.then(async () => {
       requireCondition(this.#opened && !this.#closed && !this.#closing && !this.#compactionBusy,
         "The owned runtime is unavailable for confirmation.");
@@ -429,6 +437,7 @@ export class HumanLoopRuntime {
     const completion = work.finally(() => { if (this.#confirmationWork === completion) this.#confirmationWork = null; });
     this.#confirmationWork = completion;
     return completion;
+    });
   }
   wake() { this.#availabilityError = null; this.#kick(); }
   async whenIdle() {
@@ -753,6 +762,7 @@ export class HumanLoopRuntime {
         }),
       })),
       acceptance: cycle?.acceptance ?? null, scope: internal?.scope ?? [],
+      ...(this.#contextProvider ? { sourceHandoffs: await this.#contextProvider({ role, request, cycle, state }) } : {}),
       instructions: [
         ...humanLoopPrompts.shared,
         ...instructions[role],
@@ -949,6 +959,10 @@ export class HumanLoopRuntime {
     this.#notify({ kind: "stopped", stopId, mode: "after-step", codeRetained: true });
   }
   async close(closeId = randomUUID(), { releaseStore = true, beforeClose } = {}) {
+    if (!this.#opened && !this.#closed && !this.#closing) {
+      await this.#transport.releaseFailedStartup();
+      throw new Error("The failed private startup was disconnected, but never reached Ready. Its saved ownership remains uncertain; no clean-close checkpoint is claimed.");
+    }
     requireCondition(this.#opened && !this.#closed && !this.#closing, "No open runtime is available to close.");
     this.#closing = true;
     const warnings = [];

@@ -235,7 +235,7 @@ internal sealed class BackendProcess : IAsyncDisposable
     private async Task StopCoreAsync()
     {
         IsStopping = true;
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(40));
         try
         {
             if (_started && !_process.HasExited)

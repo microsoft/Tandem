@@ -3,6 +3,7 @@
   "version": "1.1.15",
   "private": true,
   "type": "module",
+  "engines": { "node": ">=24.0.0" },
   "scripts": {
     "test": "tsx --test tests/index.test.ts tests/execution-panels-react.test.tsx tests/requirements-panel.test.ts tests/review-process-panels.test.tsx tests/sketch-panel.test.tsx tests/speech-react.test.ts tests/browser-ui.test.ts",
     "eval": "tsx scripts/evaluate.ts",
@@ -17,7 +18,7 @@
     "pack:desktop": "npm run pack && npm run build:desktop && tsx scripts/desktop.ts publish",
     "test:desktop": "tsx scripts/desktop.ts check && tsx scripts/desktop-smoke.ts",
     "dev": "tsx scripts/build.ts --watch",
-    "check": "tsc --noEmit && tsc --project tsconfig.core.json",
+    "check": "tsc --project stage2/tandem/tsconfig.types.json && tsc --noEmit && tsc --project tsconfig.core.json",
     "pack": "npm run check && npm run build && tsx scripts/pack.ts"
   },
   "devDependencies": {

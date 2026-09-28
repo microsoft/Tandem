@@ -25,8 +25,8 @@ if (operation === "run") {
     if (!npm) throw new Error("Run distribution packaging through npm run pack:browser.");
     await writeFile(join(output, "package.json"), `${JSON.stringify({
         name: "@tandem/standalone", version: metadata.version, description: "Tandem standalone local browser app",
-        type: "module", license: "MIT", engines: { node: ">=22.12.0" }, bin: { tandem: "cli.mjs" },
-        files: ["cli.mjs", "host.mjs", "extension.mjs", "skills", "README.md", "LICENSE"],
+        type: "module", license: "MIT", engines: { node: ">=24.0.0" }, bin: { tandem: "cli.mjs" },
+        files: ["cli.mjs", "host.mjs", "extension.mjs", "payload.json", "stage2", "skills", "README.md", "LICENSE"],
         dependencies: metadata.dependencies,
     }, null, 2)}\n`);
     await copyFile(join(root, "README.md"), join(output, "README.md"));

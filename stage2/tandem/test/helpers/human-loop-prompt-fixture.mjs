@@ -39,7 +39,8 @@ export function contextHarness(source, { designReferenceCatalog, designGeneratio
   return new Function("designReferenceCatalog", "designGenerationContract", "humanLoopPrompts", "requireCondition", "isPriorityAnswer", `
     return class {
       #designer;
-      constructor(designer) { this.#designer = designer; }
+      #contextProvider;
+      constructor(designer, contextProvider) { this.#designer = designer; this.#contextProvider = contextProvider; }
       ${contextMethod(source).getText()}
       context(...args) { return this.#context(...args); }
     };

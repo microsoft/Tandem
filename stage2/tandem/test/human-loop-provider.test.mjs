@@ -133,11 +133,10 @@ test("delivery surface is provider-bound on every shell URL without startup, wor
 test("private permission UI captures exact IDs, rejects foreign ownership and exposes broker session access with live Off",
   { skip: !browserAvailable, timeout: 60_000 }, async t => {
     const f = await fixture(t), pending = [];
-    const source = (await readFile(new URL("../src/extension.mjs", import.meta.url), "utf8")).replaceAll("\r\n", "\n");
-    const start = source.indexOf("  permissionHandler: (request, invocation, lifetime) => permissions.request(");
-    const end = source.indexOf(",\n  resetPermissions:", start);
-    assert.ok(start >= 0 && end > start);
-    const handler = new Function("permissions", `return ${source.slice(start + "  permissionHandler: ".length, end)};`)(f.permissions);
+    const source = await readFile(new URL("../src/human-loop-controller.mjs", import.meta.url), "utf8");
+    const handlerSource = source.match(/permissionHandler: (\(request, invocation, lifetime\) => permissions\.request\([\s\S]+?\)),\s+resetPermissions:/)?.[1];
+    assert.ok(handlerSource);
+    const handler = new Function("permissions", `return ${handlerSource};`)(f.permissions);
     const request = (id, { signal, sessionId = "private", managedSettingsEnabled = false } = {}) => {
       const result = handler({ kind: "read", path: `${id}.txt`, intention: `Read ${id}`, toolCallId: `call-${id}` },
         { sessionId, managedSettingsEnabled }, { signal, onceOnly: true, nativeSessionGrantEligible: true,

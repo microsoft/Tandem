@@ -38,5 +38,5 @@ test("all background activity participates in ownership and reset guards", () =>
         id: stage, title: stage, kind: stage, stage, path: "", content: "", mermaid: "", language: "markdown", reviewStatus: "current",
     }));
     const output = invalidateArtifacts(artifacts as Parameters<typeof invalidateArtifacts>[0], "prototype");
-    assert.deepEqual(output.map((artifact) => artifact.reviewStatus), ["current", "stale", "stale"]);
+    assert.deepEqual(output.map((artifact) => artifact.reviewStatus),     ["current", "stale", "current"]);
 });

@@ -14,6 +14,7 @@ export class NativeSession {
   processing = false;
   onSend = null;
   rpc = {
+    name: { set: async () => {} },
     mode: { get: async () => "interactive" },
     metadata: { isProcessing: async () => ({ processing: this.processing }), activity: async () => ({ hasActiveWork: false }) },
     queue: { pendingItems: async () => ({ items: [], steeringMessages: [] }) },

@@ -48,6 +48,7 @@ class Session {
   stopPending = false;
   sessionId = "private"; history = []; calls = 0; processing = false; sends = []; onSend = null; onImmediate = null; aborts = 0;
   rpc = {
+    name: { set: async () => {} },
     interruptMainTurn: async input => {
       assert.deepEqual(input, { flushQueued: true });
       await this.abort(); return { interrupted: true };

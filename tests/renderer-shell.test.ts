@@ -3,16 +3,12 @@ import { test } from "node:test";
 import { setup, state, blankEffort, decision, response, text, field, disabled, hidden, current, submit, browse } from "./renderer-fixtures.test.js";
 
 test("compact workflow exposes progress and labeled stage icons without changing navigation", async (t) => {
-    const value = state("plan");
+    const value = state("prototype");
     value.lifecycle.completedStages = value.lifecycle.completedStages.filter((id: string) => id !== "sketch");
     value.lifecycle.skippedStages = [{ stageId: "sketch", reason: "Existing drawings were supplied." }];
     const h = await setup(t, value);
-    const progress = h.document.querySelector('[role="progressbar"][aria-label="Lifecycle progress"]')!;
-    assert.equal(progress.getAttribute("aria-valuenow"), "5");
-    assert.equal(progress.getAttribute("aria-valuemax"), "8");
-    assert.equal(progress.getAttribute("aria-valuetext"), "4 complete, 1 skipped, 3 remaining");
-    assert.equal(progress.querySelectorAll('[data-status="complete"]').length, 4);
-    assert.equal(progress.querySelectorAll('[data-status="skipped"]').length, 1);
+    assert.equal(h.get("stage-list").querySelectorAll("button").length, 5);
+    assert.equal(h.document.querySelectorAll('[data-stage-id="design"], [data-stage-id="plan"], [data-stage-id="implement"], [data-stage-id="test"]').length, 0);
     for (const button of h.document.querySelectorAll<HTMLButtonElement>(".stage-step")) {
         assert.ok(button.getAttribute("aria-label"), "Icon navigation retains the stage name and status");
         assert.ok(button.querySelector("svg")?.closest('[aria-hidden="true"]'), "Stage icons are decorative");
@@ -22,12 +18,12 @@ test("compact workflow exposes progress and labeled stage icons without changing
     assert.match(skipped.getAttribute("aria-label")!, /not applicable.*Existing drawings/);
     await browse(h, "requirements");
     assert.equal(hidden(h, "design-tree-panel"), false);
-    assert.equal(current(h).lifecycle.currentStage, "plan");
+    assert.equal(current(h).lifecycle.currentStage, "prototype");
     assert.equal(h.requests.length, 0);
 });
 
 test("artifact rows retain full metadata and distinguish stale records with icons", async (t) => {
-    const value = state("design");
+    const value = state("prototype");
     value.artifacts = [{
         id: "design-spec", stage: "design", kind: "design-spec", title: "An intentionally long product specification title",
         path: "records/design/specification.md", reviewStatus: "stale", content: "Existing specification",
@@ -62,14 +58,15 @@ test("header suppresses reload success text and places version after Reset", asy
     assert.equal(disabled(h, "reload-extension"), false);
     const actions = h.document.querySelector(".topbar-actions")!;
     assert.equal(actions.lastElementChild!.className, "build-version");
-    assert.equal(actions.lastElementChild!.previousElementSibling, h.get("reset-effort"));
+    assert.ok(h.get("reset-effort").compareDocumentPosition(actions.lastElementChild!) & 4,
+        "Version follows Reset; upstream speech controls may appear between them.");
     h.render({ ...value, revision: 2, reloadReceipt: { status: "error", message: "Could not reload extension." } });
     assert.equal(text(h, "reload-status"), "Could not reload extension.");
     assert.equal(h.get("reload-status").dataset.status, "error");
 });
 
 test("React panels have unique IDs and Radix navigation skips locked tabs", async (t) => {
-    const h = await setup(t, state("plan"));
+    const h = await setup(t, state("prototype"));
     const ids = Array.from(h.document.querySelectorAll("[id]")).map((node) => node.id);
     assert.equal(new Set(ids).size, ids.length, "No duplicate component or tabpanel IDs");
     for (const tab of h.document.querySelectorAll('[role="tab"]')) {
@@ -77,9 +74,9 @@ test("React panels have unique IDs and Radix navigation skips locked tabs", asyn
         assert.ok(panel, "Each tab controls an existing panel");
         assert.equal(panel!.getAttribute("aria-labelledby"), tab.id);
     }
-    h.get("plan-tab").focus();
-    await h.fire(h.get("plan-tab"), "keydown", { key: "ArrowRight" });
-    assert.equal(h.document.activeElement?.id, "content-tab", "Locked Implement and Test tabs are skipped");
+    h.get("live-preview-tab").focus();
+    await h.fire(h.get("live-preview-tab"), "keydown", { key: "ArrowRight" });
+    assert.equal(h.document.activeElement?.id, "content-tab", "Locked Development is skipped");
     assert.equal(h.get("content-panel").hidden, false);
     await h.fire(h.get("content-tab"), "keydown", { key: "Home" });
     assert.equal(h.document.activeElement?.id, "preparation-tab");
@@ -157,8 +154,8 @@ test("invalid and rejected goals retain drafts and read-only goal entry cannot s
 });
 
 test("reset during active work confirms first and only clears local drafts after success", async (t) => {
-    const value = state("implement"); value.implementation.status = "running";
-    const h = await setup(t, { ...value, implementationRuntime: { liveAgentCount: 2 } });
+    const value = state("prototype"); value.processing = { status: "running" };
+    const h = await setup(t, { ...value, preparationRuntime: { liveAgentCount: 2 } });
     assert.equal(disabled(h, "reset-effort"), false);
     await h.input("handoff-approver", "Previous owner");
     await h.input("process-repository", "owner/old");
@@ -178,7 +175,7 @@ test("reset during active work confirms first and only clears local drafts after
     assert.deepEqual(h.requests[0].body, { expectedRevision: 1, generation: "fixture-generation", confirm: true });
     release(response(blankEffort(4, "reset-generation"))); await h.flush();
     assert.equal(hidden(h, "start-panel"), false);
-    assert.equal(current(h).implementationRuntime, undefined);
+    assert.equal(current(h).preparationRuntime, undefined);
     assert.equal(h.document.activeElement, h.get("start-goal"));
     assert.equal(h.render({ ...value, revision: 2 }), false);
     h.render({ ...state("requirements", 5), generation: "reset-generation" }); await h.flush();
@@ -228,18 +225,18 @@ test("persisted reset barriers block ordinary actions while leaving Reset retry 
 });
 
 test("snapshots reject older revisions and late equal-revision provider/runtime responses", async (t) => {
-    const newer = state("design", 3), h = await setup(t, newer);
+    const newer = state("prototype", 3), h = await setup(t, newer);
     h.render(newer, 10);
     assert.equal(h.render(state("prototype", 2), 11), false);
-    assert.equal(current(h).lifecycle.currentStage, "design");
-    h.render({ ...newer, provider: { ...newer.provider, canReload: true }, implementationRuntime: { liveAgentCount: 2 } }, 20);
-    h.render({ ...newer, provider: { ...newer.provider, canReload: false }, implementationRuntime: { liveAgentCount: 1 } }, 19);
+    assert.equal(current(h).lifecycle.currentStage, "prototype");
+    h.render({ ...newer, provider: { ...newer.provider, canReload: true }, preparationRuntime: { liveAgentCount: 2 } }, 20);
+    h.render({ ...newer, provider: { ...newer.provider, canReload: false }, preparationRuntime: { liveAgentCount: 1 } }, 19);
     assert.equal(current(h).provider.canReload, true);
-    assert.equal(current(h).implementationRuntime.liveAgentCount, 2);
+    assert.equal(current(h).preparationRuntime.liveAgentCount, 2);
     assert.equal(disabled(h, "reload-extension"), false);
     const next = { ...newer, revision: 4 }; delete next.provider;
     h.render(next, 21);
-    assert.equal(current(h).implementationRuntime.liveAgentCount, 2);
+    assert.equal(current(h).preparationRuntime.liveAgentCount, 2);
 });
 
 test("legacy snapshots use revision zero and cannot replace revisioned state", async (t) => {
@@ -276,28 +273,6 @@ test("accepted mutations wait for a fresh post-mutation poll, not the older in-f
     await h.flush(); release(response(value)); await Promise.all([old, mutation]); await h.flush();
     assert.equal(reads, 2);
     assert.equal(current(h).revision, 2);
-});
-
-test("stage browsing is read-only; reopening confirms invalidation and blocks during active jobs", async (t) => {
-    const value = state("test"); value.planning.workItems = [{ id: "work", title: "Saved plan" }];
-    value.implementation.workItems = [{ id: "work", status: "completed" }];
-    const h = await setup(t, value);
-    await browse(h, "plan");
-    assert.equal(current(h).lifecycle.currentStage, "test");
-    assert.equal(hidden(h, "plan-panel"), false);
-    assert.equal(disabled(h, "generate-plan"), true);
-    await h.click("generate-plan"); assert.equal(h.requests.length, 0);
-    await h.click("reopen-stage");
-    assert.match(h.document.querySelector('[role="alertdialog"]')!.textContent!, /dependent stage outputs will be marked stale/);
-    await h.confirm(false);
-    h.setFetch(async () => response(state("plan", 2)));
-    await h.click("reopen-stage"); await h.confirm();
-    assert.equal(h.requests[0].path, "/api/stage/reopen");
-    assert.equal(h.requests[0].body.stageId, "plan");
-    const busy = state("test", 3); busy.testing.status = "running";
-    h.render(busy); await browse(h, "plan");
-    assert.equal(disabled(h, "reopen-stage"), true);
-    await h.click("reopen-stage"); assert.equal(h.requests.length, 1);
 });
 
 test("compact context retains drafts and closes on navigation or Escape without mutation", async (t) => {
@@ -418,24 +393,6 @@ test("collapsed completion surfaces failures and permits retry without expanding
     assert.equal(h.get("next-action-bar").dataset.status, "idle");
 });
 
-test("collapsed final-stage completion uses a checkmark and cannot advance past the workflow", async (t) => {
-    const value = state("test");
-    value.testing = { ...value.testing, status: "completed", finalizedArtifactId: "test-results", scenarios: [{ id: "passed", status: "passed" }] };
-    const h = await setup(t, value);
-    await h.click("toggle-context-pane");
-    assert.equal(h.get("complete-stage").title, "Finish test");
-    assert.ok(h.get("complete-stage").querySelector('svg.lucide-check[aria-hidden="true"]'));
-    h.setFetch(async () => response({ ...value, revision: 2,
-        lifecycle: { ...value.lifecycle, completedStages: [...value.lifecycle.completedStages, "test"] } }));
-    await h.click("complete-stage");
-    assert.deepEqual(h.requests[0].body, { stageId: "test" });
-    assert.equal(h.get("complete-stage").title, "All stages complete");
-    assert.equal(disabled(h, "complete-stage"), true);
-    assert.equal(h.get("studio-workspace").dataset.contextCollapsed, "true");
-    await h.click("complete-stage");
-    assert.equal(h.requests.length, 1);
-});
-
 test("next-step guidance reveals completion from historical views in compact context", async (t) => {
     const value = state(); value.requirements.substage = "dag"; value.decisionGraph.nodes = [decision("accepted", "answered")];
     const h = await setup(t, value); h.setNarrowViewport(true);
@@ -451,7 +408,7 @@ test("next-step guidance reveals completion from historical views in compact con
 test("legacy optional history fields and archived Preparation remain browsable", async (t) => {
     const value = state(); delete value.lifecycle.skippedStages; delete value.lifecycle.history;
     const h = await setup(t, value);
-    assert.equal(h.get("stage-list").querySelectorAll("button").length, 8);
+    assert.equal(h.get("stage-list").querySelectorAll("button").length, 5);
     h.render({ ...value, revision: 2, lifecycle: { ...value.lifecycle, completedStages: [],
         history: [{ stageId: "prepare", path: "history\\preparation.md", completedAt: value.updatedAt }] } });
     const button = h.get("stage-list").querySelector<HTMLButtonElement>('[data-stage-id="prepare"]')!;

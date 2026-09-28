@@ -6,8 +6,8 @@ import { setTimeout } from "node:timers/promises";
 import { ARTIFACT_ASSET_LIMITS, MAX_ARTIFACT_ASSETS, validateArtifactAssets, type ArtifactAsset } from "./artifact-assets.js";
 import { executionDigest } from "./execution.js";
 import { normalizeProjectId, ProjectStoreError } from "./project-store.js";
-import type { LifecycleStageId } from "./types.js";
-import { lifecycleStages } from "./workflow.js";
+import type { HistoricalStageId as LifecycleStageId } from "./types.js";
+import { parseHistoricalStageId } from "./workflow.js";
 
 export interface AcceptanceRecord {
     id: string;
@@ -84,9 +84,7 @@ function timestamp(value: unknown): string {
 }
 
 function stageId(value: unknown): LifecycleStageId {
-    const stage = lifecycleStages.find((stage) => stage.id === value);
-    if (!stage) return invalid("Unsupported lifecycle stage.");
-    return stage.id;
+    return parseHistoricalStageId(value);
 }
 
 function effortId(value: unknown): string {
@@ -340,6 +338,7 @@ async function fileBytes(path: string, max: number): Promise<Buffer> {
             if (!bytesRead) break;
             length += bytesRead;
         }
+
         const after = await file.stat({ bigint: true });
         const current = await lstat(path, { bigint: true });
         await directories(dirname(path));
@@ -356,6 +355,8 @@ async function fileBytes(path: string, max: number): Promise<Buffer> {
         await file.close();
     }
 }
+
+export { directories as ensureMaterializedDirectories, fileBytes as readRetainedFile };
 
 async function exists(path: string): Promise<boolean> {
     await directories(dirname(path));
@@ -561,6 +562,17 @@ export async function acceptStageSnapshot(input: AcceptStageSnapshotInput): Prom
             return record;
         });
     });
+}
+
+export async function readAcceptedSnapshot(sharedRoot: string, effort: string, input: AcceptanceRecord): Promise<unknown> {
+    const record = normalizeRecord(input);
+    const id = effortId(effort);
+    const directory = join(sharedRoot, ".tandem", "efforts", id, "accepted", record.id);
+    const saved = await savedAcceptance(directory, id);
+    if (executionDigest({ ...record, exportPath: null }) !== executionDigest({ ...saved.record, snapshotPath: record.snapshotPath })) {
+        return integrity("Accepted snapshot metadata changed.");
+    }
+    return decode((await verifiedSnapshot(directory, id, saved.record, saved.assetFiles)).bytes);
 }
 
 function markdownText(value: string): string {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -36,8 +36,14 @@ test("active extension defers root audit until ownership setup, preserves origin
     }
     async read() { return { status: ready ? "ready" : "new" }; }
     async guardMainTool() { return undefined; }
+    async close() { ready = false; return { status: "closed", warnings: [] }; }
   }
   const url = new URL("../src/extension.mjs", import.meta.url);
+  const controllerUrl = new URL("../src/human-loop-controller.mjs", import.meta.url);
+  const controllerSource = (await readFile(controllerUrl, "utf8"))
+    .replace(/^import[\s\S]*?;\r?\n/gm, "").replaceAll("export function", "function").replaceAll("export async function", "async function")
+    .replace("return { attach, toolHook", "return { originals, flushOriginals, attach, toolHook")
+    .replaceAll("import.meta.url", JSON.stringify(controllerUrl.href));
   let source = await readFile(url, "utf8");
   source = source.replace(/^import[\s\S]*?;\r?\n/gm, "")
     .replaceAll('import.meta.resolve("@github/copilot-sdk")', JSON.stringify("installed-sdk"))
@@ -46,14 +52,14 @@ test("active extension defers root audit until ownership setup, preserves origin
   let extension;
   try {
     extension = await new AsyncFunction("process", "fileURLToPath", "randomUUID", "createCanvas", "joinSession", "PermissionBroker",
-      "HumanLoopInstallation", "HumanLoopRuntime", "HumanLoopEvents", "createHumanLoopProvider", "openBrowserCanvas", "createBrowserEntry", "createNativePermissionLifecycle",
-      `${source}\nreturn {canvas, originals, events, flushOriginals, start};`)(
-      { cwd: () => root }, fileURLToPath, () => "registration", (definition) => definition,
+      "HumanLoopInstallation", "HumanLoopRuntime", "HumanLoopEvents", "createHumanLoopProvider", "openBrowserCanvas", "createBrowserEntry", "createNativePermissionLifecycle", "join", "homedir",
+      `${controllerSource}\n${source}\nreturn {canvas, originals: controller.originals, events: controller.events, flushOriginals: controller.flushOriginals, start: controller.start};`)(
+      { cwd: () => root, env: {} }, fileURLToPath, () => "registration", (definition) => definition,
       async (value) => { registration = value; return main; }, PermissionBroker, Installation, class {}, HumanLoopEvents,
       async (options) => { providerCreates++; providerOptions = options;
         return { url: "http://127.0.0.1:1/", close: async () => { providerCloses++; } }; },
       async (...args) => { browserCalls.push(args); return { instanceId: "browser" }; },
-      createBrowserEntry, createNativePermissionLifecycle,
+      createBrowserEntry, createNativePermissionLifecycle, join, homedir,
     );
     assert.equal(records.length, 0);
     assert.equal(extension.originals.size, 2);

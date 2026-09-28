@@ -378,13 +378,14 @@ for (const { name, packet } of cases) test(`controlled prompt preserves boundari
   const session = {
     sessionId: "private", abort: async () => {}, getEvents: async () => [],
     rpc: {
+      name: { set: async () => {} },
       mode: { get: async () => "interactive" },
       metadata: { isProcessing: async () => ({ processing: false }), activity: async () => ({ hasActiveWork: false }) },
       queue: { pendingItems: async () => ({ items: [], steeringMessages: [] }) },
     },
     send: async (options) => { sends.push(options); return "message"; },
   };
-  const client = { createSession: async (configuration) => {
+  const client = { rpc: { sessions: { save: async () => {} } }, createSession: async (configuration) => {
     assert.equal(Object.hasOwn(configuration, "systemMessage"), false);
     assert.equal(configuration.enableConfigDiscovery, true);
     for (const field of ["availableTools", "excludedTools", "skillDirectories", "disabledSkills", "pluginDirectories", "mcpServers"]) {

@@ -369,7 +369,7 @@ test("no-GUI efforts skip both graphical stages with snapshots and a reason", as
     try {
         await readyRequirements(fixture, true);
         const state = await fixture.api.completeLifecycleStage("sample", "requirements", "project:tandem");
-        assert.equal(state.lifecycle.currentStage, "design");
+        assert.equal(state.lifecycle.currentStage, "development");
         assert.deepEqual(Array.from(state.lifecycle.skippedStages, (stage) => stage.stageId), ["sketch", "prototype"]);
         for (const stageId of ["sketch", "prototype"]) {
             const output = state.lifecycle.outputs.find((entry) => entry.stageId === stageId)!;
@@ -389,8 +389,8 @@ test("legacy progressed efforts retain stage/history without invented sketch app
         state.lifecycle.outputs = [{ stageId: "prototype", path: "existing.json", completedAt: "before" }];
         await fixture.api.persistState(state);
         const migrated = await fixture.api.loadState("sample");
-        assert.equal(migrated.lifecycle.currentStage, "plan");
-        assert.equal(migrated.lifecycle.version, 2);
+        assert.equal(migrated.lifecycle.currentStage, "development");
+        assert.equal(migrated.lifecycle.version, 3);
         assert.ok(migrated.lifecycle.completedStages.includes("sketch"));
         assert.match(migrated.lifecycle.skippedStages.find((entry) => entry.stageId === "sketch")!.reason, /before Sketch/);
         assert.equal(migrated.sketch.approved, null);
@@ -436,7 +436,7 @@ test("legacy non-GUI efforts preserve their applicability reason for Sketch", as
         state.lifecycle.skippedStages = [{ stageId: "prototype", reason: "CLI only.", skippedAt: state.updatedAt }];
         await fixture.api.persistState(state);
         const migrated = await fixture.api.loadState("sample");
-        assert.equal(migrated.lifecycle.currentStage, "design");
+        assert.equal(migrated.lifecycle.currentStage, "development");
         assert.equal(migrated.lifecycle.skippedStages.find((entry) => entry.stageId === "sketch")!.reason, "CLI only.");
     } finally { await fixture.close(); }
 });

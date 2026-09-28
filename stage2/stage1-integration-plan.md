@@ -1,119 +1,149 @@
-# Stage 1 to Stage 2 integration plan
+# Stage 1 / Stage 2 Node integration
 
-Status: agreed direction; implementation and the exact handoff contract remain
-to be finalized. This document does not claim that integration has shipped.
+This document describes the implemented composition of PR #14 into the Node
+application. The maintained Stage 2 engine and original renderer remain here;
+root `src` owns upstream discovery and the integration boundary.
 
-## Core idea: let Designer continue the Design
+## One host, one public provider, one private native session
 
-Stage 1 discovers intent through prototyping. Stage 2 develops against the
-resulting agreement. The bridge is the existing Designer workflow, not a
-separate importer or a restart of discovery.
+The Node/browser launcher uses `src\desktop\runtime.ts` and `workspace.ts`.
+Root `src\extension.ts` makes the single public `joinSession`/`tandem`
+registration. `tandem\src\human-loop-controller.mjs` is an importable composition
+controller, without entrypoint side effects. The standalone Stage 2 entrypoint
+also uses it; neither nested discovery shim is activated by the composed host.
 
-This is analogous to Designer exploring an existing repository. Instead of
-reconstructing a system's Design primarily from code, Designer reads the
-existing design documents and HTML prototype, understands the confirmed
-decisions, and continues from there.
+The controller passes the actual joined main session and exact registered
+hook/permission callbacks to `HumanLoopInstallation`. It owns private startup,
+audit, permission events, browser providers and explicit close. The Node main
+permission broker remains authoritative for upstream work; its registered
+extension callback uses the SDK's `no-result` abstention for that exact main
+session. Private permissions never inherit that grant or the main Allow all flag.
 
-Stage 1 does not need to generate Tandem's internal artifact format. Designer
-uses the ordinary Stage 2 artifact-authoring and publication path to represent
-and refine the existing agreement.
+The private stdio runtime preserves the PR's stores/WAL, roles, result authority,
+native tools/consent, immediate dispatch, missing-result continuation, Stop modes,
+implementation confirmation and no-replay recovery.
 
-## Provisional handoff
+For the qualified Node/CLI combination, composition uses supported native
+`sessions.open` with the exact new private ID/name, saves it, and attaches the
+original configuration with `continuePendingWork: false` and
+`suppressResumeEvent: true`. This avoids an empty `createSession` identity being
+discarded before its first user turn. It adds no dummy turn and adopts no other
+session. Recovery still uses the original missing-session and ownership checks.
 
-The expected input is ordinary project files:
+The main Node launcher keeps its npm CLI loader. The composed extension supplies
+its actual executing native Copilot binary to private runtime discovery when
+running inside that binary. SDK/CLI/Node paths remain canonical, hashed, outside
+the editable project. Actual Node 24+ is required.
 
-- Documents describing intended behavior, scope and decisions.
-- An HTML prototype with mocked data demonstrating interactions and visible states.
-- Any assets needed to understand the prototype.
+## Preserved renderer
 
-The handoff should make clear which decisions are user-confirmed, which are
-proposals or open questions, and which behaviors are merely mock shortcuts.
-That information can be in the documents or the user's request; no fixed
-manifest, filename convention or interchange schema is agreed yet.
+Development uses `createHumanLoopProvider({ surface: "browser" })` and the
+complete original `public\human-loop.html` tree on a separate loopback origin.
+Root React embeds it in a full-size, persistently mounted iframe and hides the
+upstream permanent context pane. There is no React port or third permanent column.
 
-The documents and prototype complement each other. Documents explain rules
-that the mock cannot demonstrate. The prototype makes the experience tangible.
-Neither silently overrides the other when they conflict, and mocked behavior
-is not evidence that backend logic, persistence or integrations work.
+Questions, conversation/history, artifact navigation/expansion, resizing,
+annotations/snapshots, pasted images, quick requests, confirmation, settings,
+compaction, native permissions, processes, both Stop modes and Close stay in the
+original renderer. Opening a view sends no project request.
 
-## Intended user flow
+## Exact upstream handoff
 
-1. The user makes the Stage 1 files available in the project and asks Tandem to
-   continue that Design. Router interprets this as Design work and hands it
-   to Designer, not directly to Planner.
-2. Designer inspects the supplied documents, prototype source and relevant
-   project context read-only. It preserves the original files and distinguishes
-   confirmed intent, open choices and implementation shortcuts.
-3. Designer continues the Design using normal Stage 2 artifacts. It preserves
-   agreed decisions, avoids repeating settled discovery questions, and raises
-   only consequential gaps, conflicts or unclear assumptions through the
-   existing question mechanism. Re-expressing a decision in an artifact is not
-   permission to change it.
-4. Designer publishes the Design and hands control back to the user. Publication
-   alone does not start implementation. The user reviews and refines the Design
-   through the normal conversation and question flow.
-5. When the user requests implementation, the existing confirmation applies
-   to that request and current Design. Only after confirmation does Planner
-   start. Implementer builds and validates the user journeys; Reviewer checks
-   Design conformance and over-engineering and reports without editing code.
+The active lifecycle is:
 
-Example initial request:
+```text
+prepare -> requirements -> sketch -> prototype -> development
+```
 
-> Continue from the Stage 1 design in these documents and the mocked HTML
-> prototype. Preserve the decisions identified as confirmed. Establish the
-> corresponding Tandem Design, and raise consequential gaps or contradictions.
-> Do not implement yet.
+`generate-design-spec` still creates the upstream `draft-feature-spec`.
+`beginPrototypeCompletion` and `completeLifecycleStage` retain checkpoint,
+source, feedback and sketch-approval checks; no-GUI completion uses the same
+handoff boundary with its explicit skip reason.
 
-This is an ordinary request, not a special command. For later mixed
-Change Design / Change implementation answers, keep the existing Design-first,
-then implementation-confirmation behavior.
+`src\development-handoff.ts` retains exact completed snapshot bytes, multi-file
+source and approved assets under target-workspace
+`.tandem\living-canvas\handoffs`. It records hashes, effort/generation/revision,
+shared source root, actual target workspace, mock limitations and an immutable
+request envelope. Credential-like files, dependency installations, browser caches
+and unrelated state are not copied. Live preview URLs are not evidence.
 
-## Minimal implementation approach
+The production prompt in `src\planning-prompts.ts` is also used by the handoff
+evaluation probes. One ordinary `HumanLoopRuntime.send` request asks Router and
+Designer to preserve confirmed intent, read source without executing it, publish
+the normal Design and return consequential gaps. A new handoff refines canonical
+Design. No direct canonical conversion/import or automatic implementation occurs.
 
-Start with a representative Stage 1 handoff and exercise the existing Router
-and Designer path. Reuse existing file inspection, artifact publication,
-questions and implementation confirmation. Change prompts or input-context
-assembly only where this concrete exercise reveals a gap.
+Receipt-backed source references are injected through an optional narrow role
+context provider, so native compaction does not erase provenance. Duplicate
+clicks/tabs/lost responses reconcile the original timestamp/message/request ID.
+Existing ledger state, including `retired`, is authoritative; recovery cannot
+authorize redelivery. Opening an upgraded completed Prototype requires explicit
+continuation. Missing legacy source identity is a visible blocker.
 
-Continuing an already-established Stage 2 Design should refine that Design,
-not replace it with a fresh baseline or discard its history. If the user wants
-to reuse prototype code, that is a later authorized implementation decision;
-it is not an automatic side effect of reading the handoff.
+## Mutation, migration and historical authority
 
-Do not introduce a parallel workflow engine, direct file-to-canonical-state
-conversion, automatic prototype execution, automatic implementation, or a
-requirement for the colleague's Stage 1 to understand Stage 2 internals.
-Inspecting prototype source is distinct from running arbitrary prototype
-scripts; existing permission and rendering boundaries remain in effect.
+`src\development-transition.ts` serializes upstream reset/reopen and explicit
+request admission for the target workspace. Generation/snapshot ownership is
+rechecked before send. The shared fence is acquired before the runtime's local
+admission queue, preventing mixed composer/handoff lock inversion. It is not a
+normal role-settlement or execution-certification gate.
 
-## What to verify before calling the integration complete
+Lifecycle version 3 uses a separate historical parser. Legacy outputs move to
+read-only history with their original lifecycle retained; acceptances/receipts
+retain their IDs and hashes. Old Plan/Test records cannot authorize a native
+cycle. Active or termination-unconfirmed legacy work blocks cutover until its
+original owner settles it. Shared-state scanning distinguishes actual worktree
+owners instead of treating unrelated worktrees as one runtime.
 
-- A handoff containing documents, mocked HTML and assets reaches Designer and
-  produces a useful Design without starting Planner or changing product code.
-- Confirmed decisions survive the handoff; mock data and shortcuts do not
-  silently become production requirements.
-- Missing files, conflicting descriptions and open consequential choices are
-  surfaced honestly, not filled with unapproved assumptions.
-- Revisions continue an existing Design and retain the original handoff files.
-- A distinct implementation request waits for confirmation. Cancel starts no
-  implementation; approval proceeds against the reviewed Design.
-- The resulting implementation and read-only Review use that Design and retain
-  relevant handoff context, with validation limits stated explicitly.
+Unopened saved private ownership is not assumed quiet. Reset/reopen must first
+recover and explicitly settle or close it. Upstream reset archives the effort
+under `.tandem\effort-history`; admitted handoffs and project-bound Stage 2 state
+stay independent. A new upstream handoff refines the same project; unrelated
+canonical projects require separate workspaces.
 
-These are acceptance checks for future integration work, not completed test
-results.
+The old Design/test-review queues, Plan finalization, implementation/test wave
+execution, four downstream factory registrations, worker prompts, panels,
+routes, update fields and recovery callbacks are removed. Stale HTTP paths return
+`410 stage_retired`; removed schema fields cannot dispatch. Shared fingerprint,
+acceptance, scheduling data and upstream prompt helpers remain where still used.
 
-## Still open
+## Outcome projection and explicit publication
 
-Exact handoff filenames and packaging, how Stage 1 marks confirmed decisions,
-and how the user opens the next stage remain to be agreed. Both source trees
-currently use the `tandem` extension identity; source co-location does not
-resolve runtime entrypoint or packaging choices. Decide those separately
-before activating the stages together.
+`src\development-delivery.ts` captures an exact read-only Design/cycle/source
+projection, native command evidence references, outcomes, coverage and limits.
+Readiness, Review completion, empty findings and role statements are not test
+passes. Source/Design drift requires a new capture before acceptance/publication.
 
-No shared-session requirement, new import service or formal exchange schema is
-implied by this plan.
+Capture and human acceptance do not start work. Export into `tandem-records` is
+separate and explicit; preparing a draft does not export. Local/GitHub adapters
+and historical receipts remain behind `ProcessAdapterRegistry`; errors do not
+fall back and export is not Git publication.
 
-See the [current implementation guide](tandem/README.md),
-[role and confirmation behavior](docs/human-loop-prompts.md), and
-[two-stage overview](docs/tandem-opening-slides-v2.html#6).
+## Payload and shutdown
+
+Root build/pack scripts include the entire Stage 2 package graph, renderer,
+vendors/licenses and skills with a composed payload manifest. Staging verifies
+hashes and reacts to asset-only changes. Relative `import.meta.url` resources
+remain relocatable. Root `package.json` owns the release version.
+
+The Node host checks the preferred provider before use; incompatible user/project
+providers fail rather than being overwritten or bypassed. Root `/api/state`
+remains the health contract. Private readiness is `/api/snapshot`.
+
+App Stop, Ctrl+C and workspace switch invoke private close before main
+canvas/client shutdown, within coordinated 30 + 8 second grace periods. View
+close alone is not native close. Saving/closing uncertainty remains explicit;
+unrelated processes and installed providers are never used as cleanup targets.
+
+## Qualification boundaries
+
+Use root `check`, `test`, `build`, Stage 2 build/shared/canvas suites, bridge tests
+and genuinely executed browser cases. Isolated native no-model probes can
+qualify startup, APIs, ownership, same-ID cold recovery and shutdown. Relocated
+npx tests must exercise the actual complete payload, not source-local imports
+in place of packaged modules.
+
+No-model compatibility is not evidence of a model-driven Router/Designer,
+implementation or agreed-journey success. Those live evaluations require explicit
+model and execution/credit limits. Report baseline failures, new failures and
+browser skips separately; do not fabricate successful verification.

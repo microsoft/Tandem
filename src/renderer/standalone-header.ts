@@ -12,6 +12,7 @@ export interface ApplicationHeader {
   scope: string;
   version: string;
   lifecycle: string;
+  permissionScope?: "main" | "development";
   controls: Record<HeaderAction, HeaderControl | null>;
   messages: Array<{ id: string; text: string; error: boolean }>;
 }
@@ -23,6 +24,7 @@ const text = (value: unknown, limit: number): value is string => typeof value ==
 
 export function isApplicationHeader(value: unknown): value is ApplicationHeader {
   if (!record(value) || !text(value.scope, 1024) || !value.scope || !text(value.version, 100)
+    || (value.permissionScope !== undefined && !["main", "development"].includes(String(value.permissionScope)))
     || !text(value.lifecycle, 256) || !record(value.controls) || !Array.isArray(value.messages) || value.messages.length > 8) return false;
   const controls = value.controls;
   return headerActions.every((action) => {

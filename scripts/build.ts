@@ -5,11 +5,13 @@ import {
     type BuildOptions,
     type Plugin,
 } from "esbuild";
-import { copyFile, mkdir, readFile, readdir } from "node:fs/promises";
+import { copyFile, mkdir, readFile, readdir, rm } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { buildSpeechWorker } from "./speech-worker-build.js";
+import { packageExtension } from "../stage2/tandem/scripts/package-extension.mjs";
+import { createPayload } from "../src/payload.js";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const extensionRoot = join(
@@ -28,6 +30,32 @@ const stylesEntry = join(repositoryRoot, "src", "renderer", "styles.css");
 const packageMetadata = JSON.parse(
     await readFile(join(repositoryRoot, "package.json"), "utf8"),
 );
+if (Number(process.versions.node.split(".")[0]) < 24 || process.versions.electron || process.versions.bun) {
+    throw new Error("Tandem requires actual Node 24 or newer, including its preserved Stage 2 runtime.");
+}
+const targetRoot = desktop || browser ? runtimeDirectory : extensionRoot;
+async function stageComposition() {
+    const destination = join(targetRoot, "stage2");
+    await mkdir(targetRoot, { recursive: true });
+    await rm(destination, { recursive: true, force: true });
+    const { manifest } = await packageExtension({ outputDirectory: destination, repositoryRoot: join(repositoryRoot, "stage2") });
+    const skillDirectory = join(targetRoot, "skills", "tandem");
+    await mkdir(skillDirectory, { recursive: true });
+    await copyFile(join(repositoryRoot, "skills", "tandem", "SKILL.md"), join(skillDirectory, "SKILL.md"));
+    await createPayload(targetRoot, packageMetadata.version, [
+        "extension.mjs", "skills/tandem/SKILL.md", "stage2/manifest.json",
+        ...manifest.files.map((file: { path: string }) => `stage2/${file.path}`),
+    ]);
+}
+const compositionPlugin: Plugin = {
+    name: "tandem-stage2-composition",
+    setup(api) {
+        api.onResolve({ filter: /stage2\/tandem\/src\/human-loop-controller\.mjs$/ }, () => ({
+            path: "./stage2/src/human-loop-controller.mjs", external: true,
+        }));
+        api.onEnd(async result => { if (!result.errors.length) await stageComposition(); });
+    },
+};
 const bundledNotices: string[] = [];
 const dependencyRequire = createRequire(
     createRequire(import.meta.url).resolve("proper-lockfile/package.json"),
@@ -155,10 +183,10 @@ const options: BuildOptions = {
     bundle: true,
     platform: "node",
     format: "esm",
-    target: "node20",
+    target: "node24",
     external: ["@github/copilot-sdk/*"],
     loader: { ".html": "text" },
-    plugins: [rendererAssetsPlugin],
+    plugins: [rendererAssetsPlugin, compositionPlugin],
     define: {
         __TANDEM_VERSION__: JSON.stringify(packageMetadata.version),
     },
@@ -183,7 +211,7 @@ if (process.argv.includes("--watch")) {
         await build({
             entryPoints: [join(repositoryRoot, "src", "desktop", "host.ts")],
             outfile: join(runtimeDirectory, "host.mjs"),
-            bundle: true, platform: "node", format: "esm", target: "node22",
+            bundle: true, platform: "node", format: "esm", target: "node24",
             external: ["@github/copilot-sdk", "@github/copilot-sdk/*"],
             banner: options.banner,
         });
@@ -193,7 +221,7 @@ if (process.argv.includes("--watch")) {
         if (browser) {
             await build({
                 entryPoints: [join(repositoryRoot, "src", "browser", "cli.ts")],
-                outfile: join(runtimeDirectory, "cli.mjs"), bundle: true, platform: "node", format: "esm", target: "node22",
+                outfile: join(runtimeDirectory, "cli.mjs"), bundle: true, platform: "node", format: "esm", target: "node24",
                 external: ["@github/copilot-sdk", "@github/copilot-sdk/*", "@github/copilot/*", "koffi"],
                 plugins: [rendererAssetsPlugin], define: { __TANDEM_VERSION__: JSON.stringify(packageMetadata.version) },
                 banner: options.banner,
