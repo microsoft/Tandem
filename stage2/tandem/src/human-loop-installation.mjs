@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { HostStateFile } from "../runtime-src/domain/host-state-file.ts";
 import { getHostStateWal } from "../runtime-src/domain/host-state-wal.ts";
@@ -12,6 +12,7 @@ import { discoverInstalledRuntime } from "./workflow-setup-discovery.mjs";
 import { parseHumanCleanClose } from "./human-loop-close.mjs";
 import { policyHash } from "../runtime-src/domain/workflow/policy.ts";
 import { HumanLoopPreferences } from "./human-loop-preferences.mjs";
+import { privateWorkflowEnvironment } from "./native-evidence-factory.mjs";
 
 const samePath = (left, right) => process.platform === "win32"
   ? resolve(left).toLowerCase() === resolve(right).toLowerCase() : resolve(left) === resolve(right);
@@ -204,14 +205,15 @@ export class HumanLoopInstallation {
       const connection = sdk.RuntimeConnection.forStdio({ path: configuration.cli.path });
       requireCondition(connection?.kind === "stdio", "Private execution requires an explicit stdio runtime.");
       let client;
-      const makeClient = () => client ??= new sdk.CopilotClient({ connection, workingDirectory: this.#root });
+      const makeClient = () => client ??= new sdk.CopilotClient({ connection, workingDirectory: this.#root,
+        env: { ...process.env, [privateWorkflowEnvironment]: configuration.owner.privateSessionId } });
       const suppliedClient = reopening ? new Proxy({}, { get: (_target, property) => {
         const instance = makeClient(), value = instance[property];
         return typeof value === "function" ? value.bind(instance) : value;
       } }) : makeClient();
       this.#runtime = null;
       const candidate = await this.#options.createRuntime({
-        configuration, client: suppliedClient,
+        configuration, client: suppliedClient, factoryBootstrap: { extensionSdkPath: dirname(configuration.sdk.modulePath) },
         verifyOwnership: () => this.verifyOwnership(),
         verifyAdmission: () => this.#verifyMain(),
         permissionHandler: this.#options.permissionHandler,

@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
-import { createCanvas, joinSession } from "@github/copilot-sdk/extension";
+import { createCanvas, defineFactory, joinSession } from "@github/copilot-sdk/extension";
 import { PermissionBroker } from "../runtime-src/permissions/permission-broker.ts";
 import { HumanLoopInstallation } from "./human-loop-installation.mjs";
 import { HumanLoopRuntime } from "./human-loop-runtime.mjs";
@@ -8,6 +8,7 @@ import { HumanLoopEvents, createHumanLoopProvider, projectHumanProgress } from "
 import { openBrowserCanvas } from "./browser-navigation.mjs";
 import { createBrowserEntry } from "./human-loop-browser-entry.mjs";
 import { createNativePermissionLifecycle } from "./native-permission-lifecycle.mjs";
+import { createReviewCollector, createReviewFactory, privateWorkflowEnvironment } from "./native-evidence-factory.mjs";
 
 const repositoryRoot = process.cwd();
 const publicDirectory = fileURLToPath(new URL("../public/", import.meta.url));
@@ -101,39 +102,49 @@ const canvas = createCanvas({
 });
 const toolHook = async (input) => installation?.guardMainTool(input);
 const permissionHandler = (request, invocation) => nativePermissions.request(request, invocation);
-session = await joinSession({
-  canvases: [canvas], tools: [browserEntry.tool],
-  hooks: { onPreToolUse: toolHook, onSessionEnd: async (input, invocation) => {
-    if (input.reason !== "user_exit" || invocation.sessionId !== session?.sessionId) return;
-    ending = true;
-    const closing = [...providers.values()]; providers.clear();
-    await Promise.all([...closing.map(provider => provider.close()), browserEntry.close()]);
-  } },
-  onPermissionRequest: permissionHandler,
-  onEvent: nativePermissions.observe,
-});
-nativePermissions.attach(session.sessionId);
-installation = new HumanLoopInstallation({
-  workspacePath: repositoryRoot, mainSession: session,
-  registration: { session, id: randomUUID(), toolHook, permissionHandler },
-  sdkModulePath: import.meta.resolve("@github/copilot-sdk"),
-  permissionHandler: (request, invocation, lifetime) => permissions.request(request, invocation, lifetime?.signal,
-    lifetime?.onceOnly ? { onceOnly: true, nativeSessionGrantEligible: lifetime.nativeSessionGrantEligible,
-      provenance: lifetime.provenance } : {}),
-  resetPermissions: (sessionId) => permissions.resetSession(sessionId),
-  beforeClose: async () => { auditPaused = true; await flushing; },
-  afterReady: () => { auditPaused = false; },
-  createRuntime: async (options) => new HumanLoopRuntime({
-    ...options,
-    onHandoff: async (handoff) => events.append({ type: "human.handoff", source: "system",
-      summary: handoff.result.outcome.summary, data: { requestId: handoff.requestId, resultId: handoff.result.resultId,
-        kind: handoff.result.outcome.kind } }),
-    onProgress: (event) => {
-      if (event.kind === "state" || event.kind === "assistant-message") { events.touch(); return; }
-      events.append(projectHumanProgress(event));
-    },
-  }),
-});
-session.on(observeOriginal);
-for (const event of await session.getEvents()) observeOriginal(event);
-if (opened) void start().catch((error) => events.append({ type: "human.setup-waiting", source: "system", summary: error.message }));
+if (process.env[privateWorkflowEnvironment]) {
+  if (process.env[privateWorkflowEnvironment] !== process.env.SESSION_ID) {
+    throw new Error("Private factory provider belongs to another native session.");
+  }
+  session = await joinSession({
+    factories: [createReviewFactory(defineFactory)],
+    tools: [createReviewCollector(() => session)],
+  });
+} else {
+  session = await joinSession({
+    canvases: [canvas], tools: [browserEntry.tool],
+    hooks: { onPreToolUse: toolHook, onSessionEnd: async (input, invocation) => {
+      if (input.reason !== "user_exit" || invocation.sessionId !== session?.sessionId) return;
+      ending = true;
+      const closing = [...providers.values()]; providers.clear();
+      await Promise.all([...closing.map(provider => provider.close()), browserEntry.close()]);
+    } },
+    onPermissionRequest: permissionHandler,
+    onEvent: nativePermissions.observe,
+  });
+  nativePermissions.attach(session.sessionId);
+  installation = new HumanLoopInstallation({
+    workspacePath: repositoryRoot, mainSession: session,
+    registration: { session, id: randomUUID(), toolHook, permissionHandler },
+    sdkModulePath: import.meta.resolve("@github/copilot-sdk"),
+    permissionHandler: (request, invocation, lifetime) => permissions.request(request, invocation, lifetime?.signal,
+      lifetime?.onceOnly ? { onceOnly: true, nativeSessionGrantEligible: lifetime.nativeSessionGrantEligible,
+        provenance: lifetime.provenance } : {}),
+    resetPermissions: (sessionId) => permissions.resetSession(sessionId),
+    beforeClose: async () => { auditPaused = true; await flushing; },
+    afterReady: () => { auditPaused = false; },
+    createRuntime: async (options) => new HumanLoopRuntime({
+      ...options,
+      onHandoff: async (handoff) => events.append({ type: "human.handoff", source: "system",
+        summary: handoff.result.outcome.summary, data: { requestId: handoff.requestId, resultId: handoff.result.resultId,
+          kind: handoff.result.outcome.kind } }),
+      onProgress: (event) => {
+        if (event.kind === "state" || event.kind === "assistant-message") { events.touch(); return; }
+        events.append(projectHumanProgress(event));
+      },
+    }),
+  });
+  session.on(observeOriginal);
+  for (const event of await session.getEvents()) observeOriginal(event);
+  if (opened) void start().catch((error) => events.append({ type: "human.setup-waiting", source: "system", summary: error.message }));
+}

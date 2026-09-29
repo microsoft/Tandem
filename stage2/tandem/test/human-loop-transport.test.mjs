@@ -40,6 +40,21 @@ async function observeLongRole(t, f, task) {
 const git = async (root, ...args) => (await promisify(execFile)("git", ["-C", root, ...args])).stdout.trim();
 const design = { revisionId: "design", digest: "a".repeat(64) };
 class Session {
+  factoryRuns = new Map();
+  scopeRoots = new Map();
+  scopeEnds = new Map();
+  cancelledFactories = [];
+  factory = {
+    getRun: async id => structuredClone(this.factoryRuns.get(id)),
+    cancel: async id => {
+      this.cancelledFactories.push(id);
+      const run = this.factoryRuns.get(id);
+      assert.ok(run);
+      run.status = "cancelled";
+      this.emit("factory.run_settled", { runId: id, status: "cancelled" });
+      return structuredClone(run);
+    },
+  };
   internImages = false;
   terminalIdle = true;
   suppressTurnEnd = false;
@@ -402,11 +417,27 @@ function nativeCompletion(f, id, success = true, agentId = null) {
     ...(success ? {} : { error: { message: "Observed native invocation failure." } }) },
   undefined, agentId ? { agentId } : {});
 }
-async function reviewScope(f, id, { start = true } = {}) {
-  const hook = await nativeAdmission(f, id, "task", { agent_type: "tandem-review-scope", mode: "sync",
-    description: id, name: id, prompt: "Review both goals against the complete shared producing Design and implementation." });
+async function reviewFactory(f, id, scopes, start = true) {
+  const args = { scopes: scopes.map(id => ({ id, prompt: "Inspect both Review goals." })) };
+  const hook = await nativeAdmission(f, id, "tandem_collect_review_scopes", args);
+  if (hook.permissionDecision === "deny") return hook;
+  const input = hook.modifiedArgs;
+  assert.equal(input.toolCallId, id);
+  assert.equal(input.packet.binding.role, "reviewer");
+  for (const scope of scopes) f.session.scopeRoots.set(scope, id);
+  if (start) {
+    f.session.factoryRuns.set(`factory:${id}`, { runId: `factory:${id}`, status: "running",
+      result: { binding: input.packet.binding, toolCallId: id, scopes: scopes.map(id => ({ id, evidence: null })) } });
+    f.session.scopeEnds.set(id, new Set());
+    f.session.emit("factory.run_started", { runId: `factory:${id}`, factoryName: "tandem-review-scopes", attempt: 1 });
+  }
+  return {};
+}
+async function reviewScope(f, id, { start = true, factoryId = id } = {}) {
+  const hook = factoryId === id ? await reviewFactory(f, id, [id], start) : {};
   if (hook.permissionDecision !== "deny" && start) f.session.emit("subagent.started", {
-    toolCallId: id, agentName: "tandem-review-scope", executionMode: "sync",
+    toolCallId: `native-factory-child:${id}`, factoryRunId: `factory:${factoryId}`,
+    agentName: "tandem-review-scope", executionMode: "sync",
   }, undefined, { agentId: `agent:${id}` });
   return hook;
 }
@@ -415,15 +446,25 @@ function scopeEnd(f, id, status = "completed") {
     toolCallId: id, agentName: "tandem-review-scope",
     ...(status === "failed" ? { error: "Observed native scope failure." } : status === "cancelled" ? { cancelled: true } : {}),
   }, undefined, { agentId: `agent:${id}` });
+  const root = f.session.scopeRoots.get(id), run = f.session.factoryRuns.get(`factory:${root}`);
+  if (run?.status !== "running" || f.session.scopeEnds.get(root).has(id)) return;
+  f.session.scopeEnds.get(root).add(id);
+  run.result.scopes.find(scope => scope.id === id).evidence = status === "completed" ? `Observed evidence for ${id}` : null;
+  if (f.session.scopeEnds.get(root).size === run.result.scopes.length) {
+    run.status = status === "cancelled" ? "cancelled" : "completed";
+    f.session.emit("factory.run_settled", { runId: run.runId, status: run.status });
+  }
 }
 
-test("Reviewer supports native 3+3+1 batches, holds delayed settlement slots and rejects fourth concurrent or nested work", async t => {
+test("Reviewer admits seven scopes as one native factory, rejects competing factories and denies nested/write/domain work", async t => {
   const f = await fixture(t, { nativeFiles: true });
   const { packet, outcome } = await beginReview(f);
   assert.deepEqual(f.session.config.customAgents[0].tools, ["view", "grep", "glob"]);
-  for (const id of ["one", "two", "three"]) assert.deepEqual(await reviewScope(f, id), {});
+  const ids = ["one", "two", "three", "four", "five", "six", "seven"];
+  assert.deepEqual(await reviewFactory(f, "group", ids), {});
+  for (const id of ids.slice(0, 3)) assert.deepEqual(await reviewScope(f, id, { factoryId: "group" }), {});
   const denied = await reviewScope(f, "fourth");
-  assert.match(denied.permissionDecisionReason, /three native Review scopes/);
+  assert.match(denied.permissionDecisionReason, /Collect the current native factory/);
   nativeCompletion(f, "fourth", false);
   const nested = await nativeAdmission(f, "nested", "task", {}, "agent:one");
   assert.match(nested.permissionDecisionReason, /nested delegation/);
@@ -437,21 +478,17 @@ test("Reviewer supports native 3+3+1 batches, holds delayed settlement slots and
   for (const type of ["assistant.turn_end", "assistant.idle", "session.error"]) f.session.emit(type, {},
     undefined, { agentId: "agent:one" });
   assert.equal((await f.store.load()).activeTask.result, null);
-  nativeCompletion(f, "one");
-  await f.transport.drain();
-  assert.equal((await reviewScope(f, "still-full")).permissionDecision, "deny", "Task return is not child completion.");
-  nativeCompletion(f, "still-full", false);
   scopeEnd(f, "one");
   const duplicate = f.session.history.at(-1);
   f.session.config.onEvent(duplicate);
   scopeEnd(f, "one", "cancelled");
-  for (const id of ["two", "three"]) { scopeEnd(f, id); nativeCompletion(f, id); }
+  for (const id of ["two", "three"]) scopeEnd(f, id);
   await f.transport.drain();
-  for (const id of ["four", "five", "six"]) assert.deepEqual(await reviewScope(f, id), {});
-  for (const id of ["four", "five", "six"]) { scopeEnd(f, id); nativeCompletion(f, id); }
+  for (const id of ["four", "five", "six"]) assert.deepEqual(await reviewScope(f, id, { factoryId: "group" }), {});
+  for (const id of ["four", "five", "six"]) scopeEnd(f, id);
   await f.transport.drain();
-  assert.deepEqual(await reviewScope(f, "seven"), {});
-  scopeEnd(f, "seven"); nativeCompletion(f, "seven"); await f.transport.drain();
+  assert.deepEqual(await reviewScope(f, "seven", { factoryId: "group" }), {});
+  scopeEnd(f, "seven"); nativeCompletion(f, "group"); await f.transport.drain();
   await f.finish(packet, "submit_whole_plan_review", outcome);
   const state = await f.store.load();
   assert.equal(state.handoffs.length, 1);
@@ -484,6 +521,86 @@ test("native Review child pre-hook precedes bridged tool start but remains ident
   scopeEnd(f, "native-order"); nativeCompletion(f, "native-order"); await f.transport.drain();
   assert.equal((await f.session.config.hooks.onPreToolUse(hook, invoke)).permissionDecision, "deny");
   await f.finish(packet, "submit_whole_plan_review", outcome);
+});
+
+test("Review factory admission rejects model/limit/context overrides and old-run resume", async t => {
+  const f = await fixture(t, { nativeFiles: true });
+  const { packet, outcome } = await beginReview(f);
+  const args = { scopes: [{ id: "one", prompt: "Inspect" }] };
+  const invalid = [
+    { ...args, limits: { maxConcurrentSubagents: 4 } },
+    { ...args, model: "other" },
+    { ...args, resumeFromRunId: "old" },
+    { ...args, packet: { binding: {} } },
+    { ...args, name: "unrelated-factory" },
+  ];
+  for (const [index, input] of invalid.entries()) {
+    const id = `invalid-factory-${index}`;
+    assert.equal((await nativeAdmission(f, id, "tandem_collect_review_scopes", input)).permissionDecision, "deny");
+    nativeCompletion(f, id, false);
+  }
+  assert.equal((await nativeAdmission(f, "legacy-task", "task", {
+    agent_type: "tandem-review-scope", mode: "sync", prompt: "Inspect",
+  })).permissionDecision, "deny");
+  nativeCompletion(f, "legacy-task", false);
+  assert.equal((await nativeAdmission(f, "background-factory", "run_factory", {
+    name: "tandem-review-scopes", args,
+  })).permissionDecision, "deny");
+  nativeCompletion(f, "background-factory", false);
+  await f.transport.drain();
+  await f.finish(packet, "submit_whole_plan_review", outcome);
+});
+
+test("factory consent remains native and altered result bindings become unavailable coverage", async t => {
+  const f = await fixture(t, { nativeFiles: true });
+  const { packet, outcome } = await beginReview(f);
+  await reviewScope(f, "bound");
+  const request = { kind: "custom-tool", toolCallId: "bound", toolName: "tandem_collect_review_scopes",
+    toolDescription: "Run the declared read-only factory with at most three workers.", args: {} };
+  assert.equal((await f.session.config.onPermissionRequest({ ...request, kind: "factory" },
+    { sessionId: "private" })).kind, "reject");
+  const consent = f.session.config.onPermissionRequest(request, { sessionId: "private" });
+  await waitFor(() => f.broker.list().length === 1, "native factory consent");
+  assert.match(f.broker.list()[0].description, /Review scopes \(1\): bound.*concurrency limit: 3/);
+  await f.broker.decide(f.broker.list()[0].id, "once");
+  assert.equal((await consent).kind, "approve-once");
+  scopeEnd(f, "bound"); nativeCompletion(f, "bound"); await f.transport.drain();
+  f.session.factoryRuns.get("factory:bound").result.binding.inputDigest = "f".repeat(64);
+  await f.finish(packet, "submit_whole_plan_review", outcome);
+  const report = (await f.store.load()).cycles[0].reviewResult.outcome;
+  assert.equal(report.coverageStatus, "unavailable");
+  assert.match(report.verificationLimits.join("\n"), /differs from its admitted Review/);
+});
+
+test("failed factory cancellation cannot prevent foreground interruption or claim a successful Stop", async t => {
+  const f = await fixture(t, { nativeFiles: true });
+  await beginReview(f);
+  await reviewScope(f, "cancel-fails");
+  t.mock.method(f.session.factory, "cancel", async () => { throw new Error("Factory cancellation unavailable"); });
+  await assert.rejects(f.transport.stop("stop-failed-cancel"), /Factory cancellation unavailable/);
+  assert.equal(f.session.aborts, 1);
+  assert.equal((await f.session.config.hooks.onPreToolUse({
+    sessionId: "agent:cancel-fails", toolName: "view", toolArgs: { path: "app.js" },
+  }, { sessionId: "private" })).permissionDecision, "deny");
+});
+
+test("parent publication does not await a factory and late factory children cannot borrow the next role", async t => {
+  const f = await fixture(t, { nativeFiles: true });
+  const { packet, outcome } = await beginReview(f);
+  await reviewFactory(f, "late-group", ["late-child"]);
+  await f.finish(packet, "submit_whole_plan_review", outcome);
+  assert.deepEqual(f.session.cancelledFactories, ["factory:late-group"]);
+  const state = await f.store.load();
+  assert.equal(state.cycles[0].reviewResult.outcome.coverageStatus, "unavailable");
+  await f.dispatch("host", "present-handoff", { handoffId: state.handoffs[0].id });
+  await f.request();
+  const next = await f.begin("router");
+  f.session.emit("subagent.started", { factoryRunId: "factory:late-group",
+    toolCallId: "late-native-child", agentName: "tandem-review-scope" }, undefined, { agentId: "late-child" });
+  assert.equal((await nativeAdmission(f, "late-read", "view", { path: "app.js" }, "late-child")).permissionDecision, "deny");
+  nativeCompletion(f, "late-read", false, "late-child");
+  await f.finish(next, "submit_human_route", { kind: "route", intent: "answer", cycleId: null,
+    summary: "Independent authorized request.", resolvedQuestions: [] });
 });
 
 for (const callbackFirst of [false, true]) test(`native Review consent precedes tool-start: SDK callback first=${callbackFirst}`, async t => {
@@ -614,6 +731,7 @@ for (const taskReturn of [true, false]) test(`Stop during Review children withdr
   await f.dispatch("user", "request-stop", { stopId: "stop-review" });
   const stopped = await f.transport.stop("stop-review");
   assert.equal(stopped.interrupted, true);
+  assert.deepEqual(f.session.cancelledFactories, ["factory:stopped-child"]);
   if (!taskReturn) {
     assert.equal(f.session.history.some(event => event.type === "tool.execution_complete"
       && event.data.toolCallId === "stopped-child"), false, "Interrupted task return must not be synthesized.");

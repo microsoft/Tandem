@@ -8,6 +8,7 @@ import { PermissionBroker } from "../runtime-src/permissions/permission-broker.t
 import { HumanLoopEvents } from "../src/human-loop-provider.mjs";
 import { createBrowserEntry } from "../src/human-loop-browser-entry.mjs";
 import { createNativePermissionLifecycle } from "../src/native-permission-lifecycle.mjs";
+import { privateWorkflowEnvironment, createReviewCollector, createReviewFactory } from "../src/native-evidence-factory.mjs";
 
 test("active extension defers root audit until ownership setup, preserves originals, and registers no legacy execution tools", async () => {
   const root = await mkdtemp(join(tmpdir(), "human-extension-"));
@@ -46,14 +47,14 @@ test("active extension defers root audit until ownership setup, preserves origin
   let extension;
   try {
     extension = await new AsyncFunction("process", "fileURLToPath", "randomUUID", "createCanvas", "joinSession", "PermissionBroker",
-      "HumanLoopInstallation", "HumanLoopRuntime", "HumanLoopEvents", "createHumanLoopProvider", "openBrowserCanvas", "createBrowserEntry", "createNativePermissionLifecycle",
+      "HumanLoopInstallation", "HumanLoopRuntime", "HumanLoopEvents", "createHumanLoopProvider", "openBrowserCanvas", "createBrowserEntry", "createNativePermissionLifecycle", "privateWorkflowEnvironment",
       `${source}\nreturn {canvas, originals, events, flushOriginals, start};`)(
-      { cwd: () => root }, fileURLToPath, () => "registration", (definition) => definition,
+      { cwd: () => root, env: {} }, fileURLToPath, () => "registration", (definition) => definition,
       async (value) => { registration = value; return main; }, PermissionBroker, Installation, class {}, HumanLoopEvents,
       async (options) => { providerCreates++; providerOptions = options;
         return { url: "http://127.0.0.1:1/", close: async () => { providerCloses++; } }; },
       async (...args) => { browserCalls.push(args); return { instanceId: "browser" }; },
-      createBrowserEntry, createNativePermissionLifecycle,
+      createBrowserEntry, createNativePermissionLifecycle, privateWorkflowEnvironment,
     );
     assert.equal(records.length, 0);
     assert.equal(extension.originals.size, 2);
@@ -147,4 +148,31 @@ test("active extension defers root audit until ownership setup, preserves origin
     assert.deepEqual(order, ["owner-established"]);
     assert.equal(records.length, 4);
   } finally { extension?.events.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("private Tandem entry registers only the factory collector and cannot open another installation", async () => {
+  const url = new URL("../src/extension.mjs", import.meta.url);
+  const source = (await readFile(url, "utf8")).replace(/^import[\s\S]*?;\r?\n/gm, "")
+    .replaceAll('import.meta.resolve("@github/copilot-sdk")', JSON.stringify("installed-sdk"))
+    .replaceAll("import.meta.url", JSON.stringify(url.href));
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  let registration;
+  const execute = async id => new AsyncFunction("process", "fileURLToPath", "createCanvas", "joinSession",
+    "defineFactory", "privateWorkflowEnvironment", "createReviewFactory", "PermissionBroker", "HumanLoopEvents",
+    "createNativePermissionLifecycle", "createBrowserEntry", "HumanLoopInstallation", "createReviewCollector",
+    `${source}\nreturn events;`)(
+    { cwd: () => process.cwd(), env: { [privateWorkflowEnvironment]: "private", SESSION_ID: id } },
+    fileURLToPath, value => value, async value => { registration = value; return {}; }, value => value,
+    privateWorkflowEnvironment, createReviewFactory, PermissionBroker, HumanLoopEvents,
+    createNativePermissionLifecycle, createBrowserEntry,
+    class { constructor() { assert.fail("Nested installation must not be constructed."); } },
+    createReviewCollector,
+  );
+  const events = await execute("private");
+  events.close();
+  assert.deepEqual(Object.keys(registration), ["factories", "tools"]);
+  assert.equal(registration.factories[0].meta.name, "tandem-review-scopes");
+  assert.deepEqual(registration.tools.map(tool => tool.name), ["tandem_collect_review_scopes"]);
+  assert.equal(registration.tools[0].skipPermission, false);
+  await assert.rejects(execute("foreign"), /another native session/);
 });

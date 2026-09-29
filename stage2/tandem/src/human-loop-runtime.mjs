@@ -72,7 +72,7 @@ export class HumanLoopRuntime {
   #compactionBusy = false;
   #compactionApproval = null;
 
-  constructor({ configuration, client, verifyOwnership, verifyAdmission, permissionHandler, onHandoff, onProgress,
+  constructor({ configuration, client, factoryBootstrap, verifyOwnership, verifyAdmission, permissionHandler, onHandoff, onProgress,
     readDesign, designer, reviewEffects, now }) {
     requireCondition(configuration?.schemaVersion === "human-loop-runtime/v1" && typeof onHandoff === "function",
       "The new runtime needs versioned one-copy configuration and a real handoff presenter.");
@@ -95,7 +95,7 @@ export class HumanLoopRuntime {
       ...tool, execute: (args, context) => this.#executeTool(tool, args, context),
     }));
     this.#transport = new HumanLoopTransport({
-      owner: this.#owner, client, workspace: this.#workspace, store: this.#store, tools, nativeFiles: true, nativeShells: this.#commands,
+      owner: this.#owner, client, factoryBootstrap, workspace: this.#workspace, store: this.#store, tools, nativeFiles: true, nativeShells: this.#commands,
       verifyOwnership, authorizeTool: (packet) => this.#authorizeTool(packet), permissionHandler, now,
       onProgress: (event) => { this.#notify(event); if (event.kind === "native-shell") this.#kick(); },
       validateResult: async (packet, result) => {

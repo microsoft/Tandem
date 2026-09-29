@@ -7,7 +7,9 @@ try it on a test repository or a copy of your existing project first.
 ## Before you start
 
 You need Windows with PowerShell, **Node 24+** on PATH, Git, and an authenticated
-Copilot installation that supports extensions. Use an **Interactive** session.
+Copilot installation that supports extensions and native Agent Factories
+(`defineFactory`/`joinSession`, factory observation and cancellation).
+Use an **Interactive** session.
 You can use Tandem in a regular browser or a canvas-capable Copilot app.
 
 ## 1. Build and install the package

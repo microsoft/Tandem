@@ -18,13 +18,14 @@ import { nativeFileTools } from "./human-loop-native-files.mjs";
 import { nativeShellTools, cancelNativeShellTask } from "./human-loop-native-shells.mjs";
 import { NativeShellOutput } from "./native-shell-output.mjs";
 import { captureNativeControlEvidence } from "./human-loop-native-recovery.mjs";
+import { awaitFactoryProvider, parseEvidenceScopes, reviewAgentName, reviewCollectorToolName, reviewFactoryName } from "./native-evidence-factory.mjs";
 
 const safeReason = (error, limit) => (error instanceof Error ? error.message : "Execution validation failed.")
   .replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, limit);
-const reviewAgentName = "tandem-review-scope";
 const reviewScopeTools = ["view", "grep", "glob"];
 const reviewReadTools = new Set([...reviewScopeTools, "rg"]);
-const reviewNativeTools = new Set([...reviewScopeTools, "rg", "task", "read_powershell", "list_powershell"]);
+const reviewNativeTools = new Set([...reviewScopeTools, "rg", reviewCollectorToolName, "read_powershell", "list_powershell"]);
+const factorySettled = new Set(["completed", "error", "halted", "paused", "cancelled"]);
 
 /** New one-copy protocol; shares cancellation, permission brokerage and active budgets with the preserved legacy adapter. */
 export class HumanLoopTransport {
@@ -71,13 +72,17 @@ export class HumanLoopTransport {
   #descendantCalls = new Map();
   #nativeAccess;
   #automaticReads = new Set();
+  #factoryBootstrap;
+  #factoryBatch = null;
+  #retiredFactoryRuns = new Set();
   #compaction = new HumanLoopCompaction((event) => this.#notify(event));
 
-  constructor({ owner, client, workspace, store, tools = [], nativeFiles = false, nativeShells = null, verifyOwnership, authorizeTool, permissionHandler, now, onProgress, validateResult, validateAttachment }) {
+  constructor({ owner, client, factoryBootstrap, workspace, store, tools = [], nativeFiles = false, nativeShells = null, verifyOwnership, authorizeTool, permissionHandler, now, onProgress, validateResult, validateAttachment }) {
     this.#owner = parseHumanLoopOwner(owner);
     requireCondition(typeof verifyOwnership === "function" && typeof authorizeTool === "function",
       "One-copy transport requires explicit ownership and tool-authority verifiers.");
     this.#client = client; this.#workspace = workspace; this.#store = store;
+    this.#factoryBootstrap = factoryBootstrap;
     this.#verify = verifyOwnership; this.#authorize = authorizeTool; this.#permissionHandler = permissionHandler;
     this.#tools = new Map(tools.map((tool) => [tool.name, tool]));
     requireCondition(this.#tools.size === tools.length && tools.every(({ name }) =>
@@ -118,8 +123,8 @@ export class HumanLoopTransport {
     const active = this.#active;
     requireCondition(active?.packet.binding.id === call.reviewTaskId && !active.stopId && !active.result
       && !active.controller.signal.aborted, "The parent Review no longer authorizes child work.");
-    requireCondition([...active.nativeCalls.values()].some(entry =>
-      entry.reviewScope?.agentId === call.agentId && entry.reviewScope.status === "running"),
+    requireCondition(active.reviewBatches.some(batch => batch.status === "running"
+      && batch.children.get(call.agentId)?.status === "running"),
     "The native Review child is no longer running.");
     return active;
   }
@@ -312,7 +317,9 @@ export class HumanLoopTransport {
       const configuration = {
         sessionId: this.#owner.privateSessionId, workingDirectory: this.#owner.workspacePath,
         ...(!proof && preferences.model ? { model: preferences.model } : {}),
-        enableConfigDiscovery: true, requestExtensions: false, tools,
+        enableConfigDiscovery: true, requestExtensions: Boolean(this.#factoryBootstrap), tools,
+        ...(this.#factoryBootstrap ? { enableExperimentalMode: true,
+          extensionSdkPath: this.#factoryBootstrap.extensionSdkPath } : {}),
         customAgents: [{ name: reviewAgentName, description: "Read-only evidence for one scoped Tandem Review.",
           tools: reviewScopeTools, prompt: humanLoopPrompts.reviewScope.join("\n") }],
         onEvent: (event) => this.#observe(event),
@@ -367,6 +374,16 @@ export class HumanLoopTransport {
       } else {
         this.#nativeRegistrationAttempted = true;
         this.#session = await this.#client.createSession(configuration);
+      }
+      if (this.#factoryBootstrap) {
+        requireCondition(this.#session.sessionId === this.#owner.privateSessionId, "Factory bootstrap returned another private session owner.");
+        await awaitFactoryProvider(this.#session);
+        this.#session = await this.#client.resumeSession(this.#owner.privateSessionId, {
+          ...configuration, requestExtensions: false, continuePendingWork: false, suppressResumeEvent: true,
+        });
+        await awaitFactoryProvider(this.#session);
+        requireCondition(typeof this.#session.factory?.getRun === "function"
+          && typeof this.#session.factory?.cancel === "function", "Installed SDK lacks native factory observation/cancellation.");
       }
       const session = this.#session;
       requireCondition(session.sessionId === this.#owner.privateSessionId && typeof session.abort === "function"
@@ -435,7 +452,7 @@ export class HumanLoopTransport {
       continuation: null, missingResultIdle: null,
       stopId: null, stopAcknowledged: false,
       controller: new AbortController(), budget: new PrivateTaskBudget(this.#now), tools: new Set(), grants: new Map(), admittedTools: new Map(), nativeCalls: new Map(),
-      sent: false, notSent: false, resultReady: Promise.withResolvers() };
+      sent: false, notSent: false, reviewBatches: [], resultReady: Promise.withResolvers() };
     active.resultReady.promise.catch(() => {});
     this.#active = active;
     this.#admitting = null;
@@ -539,7 +556,11 @@ export class HumanLoopTransport {
     }
     requireCondition(typeof this.#session.rpc.interruptMainTurn === "function",
       "Installed SDK cannot interrupt the foreground without stopping background apps.");
-    const result = await this.#session.rpc.interruptMainTurn({ flushQueued: true });
+    const cancellation = this.#cancelReviewFactory(active);
+    const [result] = await Promise.all([
+      this.#session.rpc.interruptMainTurn({ flushQueued: true }),
+      cancellation,
+    ]);
     requireCondition(typeof result?.interrupted === "boolean", "Native interruption returned no supported operation outcome.");
     if (active) active.stopAcknowledged = true;
     return { sessionId: this.#owner.privateSessionId, interrupted: result.interrupted };
@@ -555,9 +576,60 @@ export class HumanLoopTransport {
     }
     if (active.continuation?.messageId) this.#retiredMessages.add(active.continuation.messageId);
     for (const id of active.nativeCalls.keys()) this.#retiredCalls.add(id);
-    for (const call of active.nativeCalls.values()) if (call.reviewScope?.agentId) this.#retiredAgents.add(call.reviewScope.agentId);
+    for (const batch of active.reviewBatches) {
+      if (batch.runId) this.#retiredFactoryRuns.add(batch.runId);
+      for (const id of batch.children.keys()) this.#retiredAgents.add(id);
+    }
     if (active.resultCallId) this.#retiredCalls.add(active.resultCallId);
     active.controller.abort(); this.#active = null;
+    void this.#cancelReviewFactory(active).catch(error => this.#notify({ kind: "dispatch-diagnostic",
+      summary: `Native Review factory cancellation was not confirmed: ${error.message}` }));
+  }
+
+  async #cancelReviewFactory(active) {
+    const batch = this.#factoryBatch;
+    if (!active || batch?.active !== active || !batch.runId || factorySettled.has(batch.status)) return;
+    batch.cancelling ??= this.#session.factory.cancel(batch.runId).then(run => {
+      requireCondition(run.runId === batch.runId && factorySettled.has(run.status),
+        "Native factory cancellation did not confirm an ended attempt.");
+      batch.status = run.status;
+    });
+    return batch.cancelling;
+  }
+
+  async #reviewCoverage(active) {
+    for (const batch of active.reviewBatches) {
+      if (batch.status === "completed" && !batch.collected) {
+        try {
+          const run = await this.#session.factory.getRun(batch.runId);
+          requireCondition(run.runId === batch.runId && run.status === "completed"
+            && run.result?.toolCallId === batch.toolCallId
+            && policyHash(run.result.binding) === policyHash(active.packet.binding)
+            && Array.isArray(run.result.scopes) && run.result.scopes.length === batch.scopes.length,
+          "Native factory result differs from its admitted Review.");
+          for (const [index, scope] of batch.scopes.entries()) {
+            const result = run.result.scopes[index];
+            requireCondition(result.id === scope.label && (result.evidence === null || typeof result.evidence === "string"),
+              "Native factory scope identity or evidence is invalid.");
+          }
+          for (const [index, scope] of batch.scopes.entries()) {
+            scope.status = run.result.scopes[index].evidence?.trim() ? "completed" : "failed";
+            scope.reason = scope.status === "completed" ? null : "Native worker returned no usable evidence";
+          }
+          batch.collected = true;
+        } catch (error) {
+          for (const scope of batch.scopes) {
+            scope.status = "failed";
+            scope.reason = safeReason(error, this.#owner.policy.values.resources.reviewReasonCharacters);
+          }
+        }
+      } else if (factorySettled.has(batch.status) && batch.status !== "completed") {
+        for (const scope of batch.scopes) {
+          scope.status = "failed"; scope.reason = batch.reason ?? `Native factory ended as ${batch.status}`;
+        }
+      }
+    }
+    return active.reviewBatches.flatMap(batch => batch.scopes);
   }
 
   async inspectIdle(admission = false) {
@@ -644,7 +716,7 @@ export class HumanLoopTransport {
       const result = parseRoleResult(active.packet.binding.role, args);
       requireCondition(result.inputDigest === active.packet.binding.inputDigest, "Result inputDigest differs from the current Host task.");
       if (result.outcome.kind === "review-result") {
-        const scopes = [...active.nativeCalls.values()].flatMap(call => call.reviewScope ? [call.reviewScope] : []);
+        const scopes = await this.#reviewCoverage(active);
         const failed = scopes.filter(scope => scope.status !== "completed");
         if (failed.length) {
           result.outcome.coverageStatus = failed.length === scopes.length ? "unavailable"
@@ -671,16 +743,24 @@ export class HumanLoopTransport {
       const call = [...active.nativeCalls.values()].find(call => !call.claimed && call.name === name && call.key === admissionKey);
       requireCondition(call, "Native file hook has no matching owned invocation.");
       call.claimed = true;
+      requireCondition(name !== reviewCollectorToolName || active.packet.binding.role === "reviewer",
+        "Only the current Reviewer may collect scoped factory evidence.");
+      requireCondition(name !== "run_factory" || args?.name !== reviewFactoryName,
+        "Use the permission-gated Review collector, not a background Review factory invocation.");
       if (active.packet.binding.role === "reviewer") {
         requireCondition(reviewNativeTools.has(name), "Reviewer permits read-only inspection and its bounded native scope fan-out only.");
-        if (name === "task") {
-          requireCondition(args.agent_type === reviewAgentName && args.mode === "sync"
-            && args.model === undefined && args.reasoning_effort === undefined && args.context_tier === undefined,
-          "Use the read-only tandem-review-scope agent in sync mode, inheriting native model settings.");
-          requireCondition([...active.nativeCalls].filter(([id, entry]) => entry.reviewScope
-            && (active.tools.has(id) || !["completed", "failed", "cancelled"].includes(entry.reviewScope.status))).length < 3,
-          "At most three native Review scopes may remain unsettled. Collect the current batch before another.");
-          call.reviewScope = { label: text(args.description), status: "admitted", agentId: null, reason: null };
+        if (name === reviewCollectorToolName) {
+          requireCondition(args && Object.keys(args).length === 1 && Object.hasOwn(args, "scopes"),
+            "Use only Review scopes without model, limit, context overrides or resume.");
+          const scopes = parseEvidenceScopes(args.scopes);
+          requireCondition(!this.#factoryBatch || factorySettled.has(this.#factoryBatch.status),
+            "Collect the current native factory before starting another group of Review scopes.");
+          const toolCallId = [...active.nativeCalls].find(([, value]) => value === call)[0];
+          call.reviewBatch = { active, toolCallId, runId: null, status: "admitted", children: new Map(),
+            scopes: scopes.map(scope => ({ label: scope.id, status: "admitted", reason: null })) };
+          active.reviewBatches.push(call.reviewBatch);
+          this.#factoryBatch = call.reviewBatch;
+          call.modifiedArgs = { scopes, packet: structuredClone(active.packet), toolCallId };
         }
       }
       await this.#verify(); await this.#authorize(active.packet, name, args);
@@ -691,7 +771,7 @@ export class HumanLoopTransport {
       this.#healthy();
       requireCondition(this.#active === active && !active.stopId && !active.controller.signal.aborted
         && !active.result, "Native file authority ended during admission.");
-      return admission;
+      return call.modifiedArgs ? { ...admission, modifiedArgs: call.modifiedArgs } : admission;
     }
     const tool = this.#tools.get(name);
     requireCondition(tool?.roles.includes(active.packet.binding.role), "Tool is not permitted for this role.");
@@ -807,12 +887,19 @@ export class HumanLoopTransport {
       const call = active.nativeCalls.get(text(request.toolCallId));
       requireCondition(call?.admission && !active.result && !active.stopId
         && !active.controller.signal.aborted && this.#permissionHandler, "Native permission has no live owned invocation.");
+      requireCondition(call.name !== reviewCollectorToolName
+        || request.kind === "custom-tool" && request.toolName === reviewCollectorToolName,
+      "Review collection requires its exact native tool permission.");
       await call.policy.permission?.(call.admission, request);
       await this.#authorize(active.packet, call.name, call.args);
       endWait = active.budget.beginPermission();
       await this.#store.dispatch("runtime", `native-permission-wait:${request.toolCallId}:${active.budget.snapshot().elapsedMs}`,
         "permission-state", { taskId: active.packet.binding.id, waiting: true });
-      const decision = await this.#permissionHandler(request, invocation, { signal: active.controller.signal, onceOnly: true,
+      const described = call.name === reviewCollectorToolName ? {
+        ...request, toolDescription: `${request.toolDescription}\nReview scopes (${call.args.scopes.length}): `
+          + call.args.scopes.map(scope => scope.id).join(", ") + ". Native concurrency limit: 3; no automatic retry.",
+      } : request;
+      const decision = await this.#permissionHandler(described, invocation, { signal: active.controller.signal, onceOnly: true,
         nativeSessionGrantEligible: true,
         provenance: { toolName: call.name, taskId: active.packet.binding.id, requestId: active.packet.binding.requestId,
           role: active.packet.binding.role } });
@@ -843,6 +930,30 @@ export class HumanLoopTransport {
     else active.admittedTools.delete(key);
   }
 
+  #observeFactory(event) {
+    const batch = this.#factoryBatch, data = event.data ?? {};
+    if (event.type === "factory.run_started" && data.factoryName === reviewFactoryName) {
+      requireCondition(batch && !batch.runId && batch.status === "admitted" && data.attempt === 1,
+        "Native factory start has no unique admitted Review invocation.");
+      batch.runId = text(data.runId); batch.status = "running";
+      if (batch.active !== this.#active || batch.active.controller.signal.aborted || batch.active.result) {
+        this.#retiredFactoryRuns.add(batch.runId);
+        void this.#cancelReviewFactory(batch.active).catch(error => this.#notify({ kind: "dispatch-diagnostic",
+          summary: `Late Review factory cancellation was not confirmed: ${error.message}` }));
+      }
+      return true;
+    }
+    if (event.type === "factory.run_settled" && batch?.runId === data.runId) {
+      requireCondition(factorySettled.has(data.status), "Native factory settlement is invalid.");
+      batch.status = data.status;
+      return true;
+    }
+    if (event.type === "tool.execution_complete" && batch?.toolCallId === data.toolCallId && !batch.runId) {
+      batch.status = "error"; batch.reason = data.error?.message ?? "No native factory start was observed";
+    }
+    return event.type.startsWith("factory.");
+  }
+
   #observe(event) {
     try {
       if (this.#released) return;
@@ -854,6 +965,7 @@ export class HumanLoopTransport {
       if (this.#historicEvents.has(event.id) || this.#observedEvents.has(event.id)) return;
       this.#observedEvents.set(event.id, event.type === "user.message" && !event.agentId
         ? event.id : this.#observedEvents.get(event.parentId) ?? null);
+      if (!event.agentId && this.#observeFactory(event)) return;
       if (event.type === "user.message" && this.#retiredMessages.has(event.data?.messageId)) {
         if (event.data.interactionId) this.#retiredInteractions.add(event.data.interactionId);
         return;
@@ -864,18 +976,27 @@ export class HumanLoopTransport {
       }
       if (this.#retiredAgents.has(event.agentId) || this.#retiredInteractions.has(event.data?.interactionId)) return;
       if (event.agentId) {
+        if (event.type === "subagent.started" && event.data?.factoryRunId
+          && (!this.#active || this.#active.resultSubmitted || this.#active.stopId
+            || this.#retiredFactoryRuns.has(event.data.factoryRunId)
+            || event.data.factoryRunId === this.#factoryBatch?.runId && this.#factoryBatch.active !== this.#active)) {
+          this.#retiredAgents.add(event.agentId);
+          return;
+        }
         if (this.#active?.resultSubmitted || this.#active?.stopId) return;
         const active = this.#active, data = event.data ?? {};
-        const sourceCall = active?.nativeCalls.get(data.toolCallId);
-        if (sourceCall?.reviewScope && event.type.startsWith("subagent.")) {
-          const scope = sourceCall.reviewScope;
-          requireCondition(!data.parentId && data.agentName === reviewAgentName
-            && (!scope.agentId || scope.agentId === event.agentId), "Review scope differs from its native root task.");
-          scope.agentId = text(event.agentId);
-          if (event.type === "subagent.started") {
-            requireCondition(scope.status === "admitted", "Native Review scope started after its recorded outcome.");
-            scope.status = "running";
-          }
+        if (event.type === "subagent.started" && active?.packet.binding.role === "reviewer") {
+          const batch = active.reviewBatches.find(batch => batch.runId && batch.runId === data.factoryRunId);
+          requireCondition(batch && batch.status === "running" && !data.parentId && data.agentName === reviewAgentName
+            && !batch.children.has(event.agentId), "Review child differs from its admitted native factory.");
+          batch.children.set(text(event.agentId), { status: "running" });
+        }
+        const reviewScope = active?.reviewBatches.flatMap(batch => {
+          const scope = batch.children.get(event.agentId);
+          return scope ? [scope] : [];
+        })[0];
+        if (reviewScope && event.type.startsWith("subagent.")) {
+          const scope = reviewScope;
           if (event.type === "subagent.completed" && !["completed", "failed", "cancelled"].includes(scope.status)) {
             scope.status = data.cancelled ? "cancelled" : "completed";
             scope.reason = data.cancelled ? "Native scope was cancelled" : null;
@@ -884,8 +1005,6 @@ export class HumanLoopTransport {
             scope.status = "failed"; scope.reason = text(data.error);
           }
         }
-        const reviewScope = active?.packet.binding.role === "reviewer"
-          ? [...active.nativeCalls.values()].find(call => call.reviewScope?.agentId === event.agentId)?.reviewScope : null;
         if (event.type === "permission.requested" && reviewScope && data.permissionRequest?.kind === "read") {
           // Native permissions can precede tool-start delivery, but already carry exact child/call identity.
           const request = data.permissionRequest, callId = text(request.toolCallId);
@@ -1033,10 +1152,6 @@ export class HumanLoopTransport {
         requireCondition(active.tools.has(data.toolCallId) && data.turnId === call.turnId
           && data.interactionId === call.interactionId && (call.admission || data.success === false),
         "Native file completion lacks exact admitted invocation ownership.");
-        if (call.reviewScope && data.success === false && call.reviewScope.status === "admitted") {
-          call.reviewScope.status = "failed";
-          call.reviewScope.reason = data.error?.message ?? "Native task failed before the scope started";
-        }
         this.#enqueue(async () => {
           if (call.admission) {
             await call.policy.settled?.(call.admission, event, call.permissionApproved);

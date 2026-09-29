@@ -42,7 +42,7 @@ async function fixture(t, { ask = false, autoConfirm = true, stopDelivery = null
   let nativeDiagnostics = async () => ({ tasks: [] });
   let coldHistory = (events) => events;
   let resumeState = {};
-  const errors = [], sessions = [];
+  const errors = [], sessions = [], bootstraps = [], clientOptions = [];
   let actualModel = model ?? "one";
   class Session extends NativeSession {
     emit(type, data) {
@@ -135,7 +135,7 @@ async function fixture(t, { ask = false, autoConfirm = true, stopDelivery = null
     }
   }
   class Client {
-    constructor() { counts.clients++; }
+    constructor(input) { counts.clients++; clientOptions.push(input); }
     async createSession(config) {
       counts.creates++;
       if (failCreate) throw new Error("Native creation failed before creating the session.");
@@ -145,6 +145,13 @@ async function fixture(t, { ask = false, autoConfirm = true, stopDelivery = null
     async listModels() { return [{ id: "one" }, { id: "two" }]; }
     async getSessionMetadata(sessionId) { return nativeMissing || (!native && !saved) ? undefined : { sessionId, isRemote: false }; }
     async resumeSession(id, config) {
+      if (native?.config.requestExtensions === true && config.requestExtensions === false) {
+        assert.equal(id, native.sessionId);
+        assert.equal(config.continuePendingWork, false);
+        bootstraps.push({ enabled: native.config, disabled: config });
+        native.config = config;
+        return native;
+      }
       counts.resumes++; assert.equal(config.continuePendingWork, false); assert.equal(id, saved.sessionId);
       native = new Session(config); native.events = structuredClone(saved.events);
       native.queuedItems = structuredClone(saved.queuedItems ?? []);
@@ -199,7 +206,7 @@ async function fixture(t, { ask = false, autoConfirm = true, stopDelivery = null
     if ((await installation.read()).status === "ready") await installation.close();
     await getHostStateWal(workspace).close(); await rm(root, { recursive: true, force: true });
   });
-  return { workspace, options, counts, sessions, send, errors,
+  return { workspace, options, counts, sessions, send, errors, bootstraps, clientOptions,
     setDesign: value => { currentDesign = value; },
     setAsk: value => { ask = value; },
     setCompaction: (work) => { compactWork = work; },
@@ -374,7 +381,7 @@ for (const samePath of [false, true]) test(`compatible selected runtime ${samePa
   assert.deepEqual(JSON.parse(await f.record().read()).runtimeHistory, [original.configuration]);
 });
 
-test("private create and same-ID resume retain repository discovery but opt out of recursive extensions", async t => {
+test("private create and cold resume register the guarded provider then opt out without replay", async t => {
   const f = await fixture(t, { model: "one" });
   const owner = structuredClone(f.installation.configuration.owner);
   const assertPrivate = session => {
@@ -385,6 +392,8 @@ test("private create and same-ID resume retain repository discovery but opt out 
     assert.equal(typeof session.config.onPermissionRequest, "function");
   };
   assertPrivate(f.sessions.at(-1));
+  assert.equal(f.bootstraps.length, 1);
+  assert.equal(f.clientOptions[0].env.TANDEM_PRIVATE_WORKFLOW_SESSION, owner.privateSessionId);
   await f.send("before-private-reopen");
   const before = await f.runtime.conversation(), sends = f.counts.sends;
   await f.installation.close(); await f.reopen(true);
@@ -393,6 +402,15 @@ test("private create and same-ID resume retain repository discovery but opt out 
   assert.equal(f.counts.sends, sends, "Reopen must not replay old work.");
   assert.deepEqual(await f.runtime.conversation(), before);
   assertPrivate(f.sessions.at(-1));
+  assert.equal(f.bootstraps.length, 2);
+  for (const { enabled, disabled } of f.bootstraps) {
+    assert.equal(enabled.requestExtensions, true);
+    assert.equal(enabled.enableExperimentalMode, true);
+    assert.equal(typeof enabled.extensionSdkPath, "string");
+    assert.equal(disabled.requestExtensions, false);
+    assert.equal(disabled.continuePendingWork, false);
+    assert.equal(enabled.hooks, disabled.hooks);
+  }
   assert.equal((await f.send("after-private-reopen")).status, "ready");
   assert.equal(f.counts.sends, sends + 2, "The first explicit post-reopen request starts Router then Agent.");
   assert.deepEqual(f.errors, []);

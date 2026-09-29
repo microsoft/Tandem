@@ -13,7 +13,14 @@ export class NativeSession {
   count = 0;
   processing = false;
   onSend = null;
+  factory = {
+    getRun: async () => assert.fail("This fixture has no factory run."),
+    cancel: async () => assert.fail("This fixture has no factory to cancel."),
+  };
   rpc = {
+    extensions: { list: async () => ({ extensions: [{ name: "tandem", status: "running", pid: process.pid }] }) },
+    tools: { initializeAndValidate: async () => ({}),
+      getCurrentMetadata: async () => ({ tools: [{ name: "tandem_collect_review_scopes" }] }) },
     mode: { get: async () => "interactive" },
     metadata: { isProcessing: async () => ({ processing: this.processing }), activity: async () => ({ hasActiveWork: false }) },
     queue: { pendingItems: async () => ({ items: [], steeringMessages: [] }) },
