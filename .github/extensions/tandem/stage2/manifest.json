@@ -148,8 +148,8 @@
     },
     {
       "path": "public/human-loop-app.js",
-      "bytes": 39125,
-      "sha256": "9306559e92be1a8dfda4dfd296c043afc2c89dee1881d27f4e8748c5338417e9"
+      "bytes": 39266,
+      "sha256": "784117e56a56ce966fd8f22f69ba040ac9e5860327b438461ac300e13c6f0e85"
     },
     {
       "path": "public/human-loop-shell.css",
@@ -358,8 +358,8 @@
     },
     {
       "path": "runtime-src/domain/human-loop/contracts.ts",
-      "bytes": 26796,
-      "sha256": "07c7c9b8b8cc81fee4ef4fc81de3eab6ca66e70f1a94c887a4b0c9b0bc6f00a3"
+      "bytes": 28826,
+      "sha256": "00b884b2e47d797cc8e8429db3712e480765a7ff702183b123dd9ca6c66b165c"
     },
     {
       "path": "runtime-src/domain/human-loop/ledger.ts",
@@ -368,8 +368,8 @@
     },
     {
       "path": "runtime-src/domain/human-loop/model.ts",
-      "bytes": 73173,
-      "sha256": "4a3685d1873b62e9d43a61247b05387385734aff8b0dde21f272359657340f06"
+      "bytes": 76608,
+      "sha256": "9d15075bc2f33161e81c4b12b66567d5080f146079ef10feaf010a5c4a5adcb8"
     },
     {
       "path": "runtime-src/domain/human-loop/tool-contracts.ts",
@@ -618,8 +618,8 @@
     },
     {
       "path": "src/human-loop-recovery.mjs",
-      "bytes": 9342,
-      "sha256": "e27014817f212c8cf9295e96a7ca0a5735162db9592f3aa81130fb4280bc14e7"
+      "bytes": 9529,
+      "sha256": "82d8c6ff53d47191d088f48bc3e9540eb7bd4422694071edc5942685f0cea91a"
     },
     {
       "path": "src/human-loop-review.mjs",
@@ -643,13 +643,13 @@
     },
     {
       "path": "src/human-loop-task.mjs",
-      "bytes": 1173,
-      "sha256": "0f29eab39c7e0e86f13ce908966eb026de98f15c7aea7d9cf7cd854865dbc065"
+      "bytes": 4132,
+      "sha256": "1a50ee20c09945a2148a9c58b962b3124c24dd526035a6fdb9d6113e28b7121e"
     },
     {
       "path": "src/human-loop-transport.mjs",
-      "bytes": 73121,
-      "sha256": "e5950e71492755953c5de18a864845268fedfe31b5b7ad85034359c6b0091268"
+      "bytes": 77440,
+      "sha256": "9e424a4cd36bab5c192067ab8aacc84680861808f14c0277b2b60d50092aa6e5"
     },
     {
       "path": "src/human-loop-workspace.mjs",

@@ -4,10 +4,10 @@ import { policyHash, parsePolicySnapshot, type PolicySnapshot } from '../workflo
 import { choice, integer, list, object, requireCondition, sameSet, strings, text } from '../workflow/validation.ts';
 import {
   HUMAN_LOOP_SCHEMA, parseRequest, bindQuestionOptions, parseRoleResult, parseTaskBinding, parseOwnedEnd, parseInternalPlan,
-  digest, parseSnapshotRef, parseDesignBinding, parseProgress,
+  digest, parseSnapshotRef, parseDesignBinding, parseProgress, parseRoleInputEnvelope, parseNativeUserEvidence,
   type Authority, type HumanRequest, type TaskBinding, type RoleResult, type OwnedEnd, type InternalPlan,
   type InternalAcceptance, type DesignBinding, type SnapshotRef, type QuestionRecord, type QuestionDraft,
-  type QuestionSource, type TaskProgress, type QuestionResolution,
+  type QuestionSource, type TaskProgress, type QuestionResolution, type RoleInput, type NativeUserEvidence,
 } from './contracts.ts';
 
 export interface HumanLoopOwner {
@@ -39,6 +39,7 @@ export interface RoleExecution {
   stagedResult: RoleResult | null;
   terminal: { resultId: string; toolCallId: string; eventId: string; acknowledged: boolean; reason?: 'completion-timeout' } | null;
   turnEnd?: { resultId: string; toolCallId: string; toolEventId: string; eventId: string; turnId: string; interactionId: string };
+  inputs?: RoleInput[];
 }
 export interface Handoff {
   id: string; requestId: string; requestIds: string[]; cycleId: string | null; result: RoleResult; snapshot: SnapshotRef | null;
@@ -117,7 +118,7 @@ export interface HumanLoopState {
   recoveries?: Array<{
     id: string; recoveredAt: string; evidenceRef: string; requestIds: string[]; cycleIds: string[];
     taskId: string | null; stop: HumanStop | null; uncertainty: HumanLoopState['uncertainty'];
-    nativeUsers: Array<{ id: string; messageId: string; turnId: string; interactionId: string }>;
+    nativeUsers: NativeUserEvidence[];
   }>;
   applied: Array<{ id: string; signature: string }>;
 }
@@ -338,6 +339,7 @@ function recordQuestions(state: HumanLoopState, task: RoleExecution, result: Rol
 const authorities: Record<string, Authority> = {
   'receive-request': 'user', 'admit-request': 'host', 'start-cycle': 'host', 'resume-cycle': 'host', 'prepare-replan': 'host',
   'start-role': 'host', 'role-acknowledged': 'runtime', 'role-started': 'runtime', 'permission-state': 'runtime',
+  'role-input-prepared': 'host', 'role-input-bound': 'runtime', 'continuation-acknowledged': 'runtime',
   'submit-result': 'agent', 'report-progress': 'agent', 'confirm-role-end': 'host', 'apply-result': 'host',
   'accept-plan': 'host', 'present-handoff': 'host', 'request-stop': 'user', 'confirm-stop': 'host', 'execution-unknown': 'host',
   'execution-failed': 'host',
@@ -385,10 +387,7 @@ export function transitionHumanLoop(current: HumanLoopState, authority: Authorit
         id: recoveryId, recoveredAt, evidenceRef: text(data.evidenceRef),
         requestIds: requests.map(({ id }) => id), cycleIds: cycles.map(({ id }) => id),
         taskId: state.activeTask?.binding.id ?? null, stop: state.stop, uncertainty: state.uncertainty,
-        nativeUsers: list(data.nativeUsers, (value) => {
-          const user = object(value, ['id', 'messageId', 'turnId', 'interactionId']);
-          return { id: text(user.id), messageId: text(user.messageId), turnId: text(user.turnId), interactionId: text(user.interactionId) };
-        }),
+        nativeUsers: list(data.nativeUsers, parseNativeUserEvidence),
       });
       for (const request of requests) request.status = 'retired';
       for (const cycle of cycles) cycle.phase = 'retired';
@@ -600,16 +599,60 @@ export function transitionHumanLoop(current: HumanLoopState, authority: Authorit
         result: null, stagedResult: null, terminal: null, end: null, after: null };
       break;
     }
+    case 'role-input-prepared': {
+      const data = object(command.data, ['taskId', 'dispatchId', 'inputDigest', 'envelope']);
+      const task = activeTask(state), envelope = parseRoleInputEnvelope(data.envelope);
+      requireHumanRequestRunning(state, task.binding.requestId, task.binding.id);
+      requireCondition(!task.result && !task.end && !task.completion && (envelope.kind === 'initial' || !state.stop)
+        && data.taskId === task.binding.id && data.dispatchId === task.binding.dispatchId && data.inputDigest === task.binding.inputDigest,
+      'Sent-envelope evidence differs from its live immutable task.');
+      const inputs = task.inputs ??= [];
+      requireCondition(envelope.kind === 'initial' ? inputs.length === 0 && task.messageId === null
+        : inputs.length === 1 && inputs[0]?.native && inputs[0].acknowledgementId,
+      'Only the first input and one same-role continuation may be prepared.');
+      inputs.push({ ...envelope, acknowledgementId: null, native: null });
+      break;
+    }
+    case 'role-input-bound': {
+      const data = object(command.data, ['taskId', 'dispatchId', 'kind', 'user', 'turnId', 'startEventId']);
+      const task = activeTask(state), kind = choice(data.kind, ['initial', 'continuation'] as const);
+      const input = task.inputs?.find(input => input.kind === kind), user = parseNativeUserEvidence(data.user);
+      const turnId = text(data.turnId), startEventId = text(data.startEventId);
+      requireCondition(data.taskId === task.binding.id && data.dispatchId === task.binding.dispatchId
+        && !task.result && !task.end && input && !input.native && user.interactionId
+        && (user.turnId === null || user.turnId === turnId)
+        && (!input.acknowledgementId || user.messageId === null || user.messageId === input.acknowledgementId),
+      'Native input lacks its exact prepared envelope, interaction or turn.');
+      const previous = [...state.executions, task].flatMap(task => task.inputs ?? []).flatMap(input => input.native ? [input.native] : []);
+      requireCondition(!previous.some(native => native.user.id === user.id || native.user.interactionId === user.interactionId
+        || native.startEventId === startEventId), 'Native input or start identity was reused.');
+      input.native = { user, turnId, startEventId };
+      break;
+    }
+    case 'continuation-acknowledged': {
+      const data = object(command.data, ['taskId', 'dispatchId', 'messageId']);
+      const task = activeTask(state), input = task.inputs?.find(input => input.kind === 'continuation'), messageId = text(data.messageId);
+      requireCondition(data.taskId === task.binding.id && data.dispatchId === task.binding.dispatchId && input
+        && !input.acknowledgementId && messageId !== task.messageId
+        && (!input.native?.user.messageId || input.native.user.messageId === messageId),
+      'Continuation acknowledgement differs from its owned send.');
+      input.acknowledgementId = messageId; break;
+    }
     case 'role-acknowledged': {
       const data = object(command.data, ['taskId', 'dispatchId', 'messageId']);
       const task = activeTask(state);
       requireCondition(data.taskId === task.binding.id && data.dispatchId === task.binding.dispatchId && !task.messageId, 'Dispatch acknowledgement differs from owned send.');
-      task.messageId = text(data.messageId); break;
+      const input = task.inputs?.find(input => input.kind === 'initial'), messageId = text(data.messageId);
+      requireCondition(!input?.native?.user.messageId || input.native.user.messageId === messageId, 'Acknowledgement conflicts with native input.');
+      if (input) input.acknowledgementId = messageId;
+      task.messageId = messageId; break;
     }
     case 'role-started': {
       const data = object(command.data, ['taskId', 'messageId', 'interactionId']);
       const task = activeTask(state);
       requireCondition(data.taskId === task.binding.id && task.messageId === data.messageId && !task.interactionId, 'Native start lacks exact acknowledged input.');
+      requireCondition(!task.inputs || task.inputs[0]?.native?.user.interactionId === data.interactionId,
+        'Native start differs from the exact sent-envelope binding.');
       task.interactionId = text(data.interactionId);
       if (!task.completion) task.condition = 'running';
       break;
