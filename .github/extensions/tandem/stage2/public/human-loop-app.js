@@ -590,7 +590,7 @@ $('approve-initial-creation').onclick = async () => {
   if (!confirmationId) return;
   initialCreationConfirmation = null; $('initial-creation-approval').close();
   try { await post('/api/runtime/initial-creation/decision', { confirmationId, approve: true }); notice(''); await refresh(); }
-  catch (error) { notice(error.message); await refresh(); }
+  catch (error) { await refresh(); notice(error.message); }
 };
 $('shutdown').onclick = () => post('/api/runtime/close', {}).then(refresh).catch((error) => notice(error.message));
 $('open-project-folder').onclick = async () => {

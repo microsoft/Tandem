@@ -25,7 +25,7 @@
     {
       "path": "stage2/manifest.json",
       "bytes": 23332,
-      "sha256": "0f17caa5789fd665c27ea9282872a24770e935c04cd8eb36a30fb320ebfd3548"
+      "sha256": "1b87692309e4bd113d372683b9f5256dda16cb565c265f1cca65e7d23935fd0c"
     },
     {
       "path": "stage2/package.json",
@@ -165,7 +165,7 @@
     {
       "path": "stage2/public/human-loop-app.js",
       "bytes": 39125,
-      "sha256": "546ba49c3d525656657efee2a4190aaf3491043e92068664f405aa61d357f453"
+      "sha256": "9306559e92be1a8dfda4dfd296c043afc2c89dee1881d27f4e8748c5338417e9"
     },
     {
       "path": "stage2/public/human-loop-shell.css",
@@ -708,5 +708,5 @@
       "sha256": "92b92e76eb4ac3bee96c6bbdde06ed1f7d9c0088576a51db1276c567dbb207f8"
     }
   ],
-  "digest": "e3f74515c25bce31168a14e4c8d30859158ff56cb5470da44817ac861a9e3959"
+  "digest": "623c0e85aea598e11e44efbc0a81f1b3d85807fdd30f05593846d5a207123620"
 }

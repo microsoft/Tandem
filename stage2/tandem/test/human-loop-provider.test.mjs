@@ -166,6 +166,12 @@ test("real browser unused-setup recovery keeps inspection, cancellation and one-
     for (let attempt = 0; decisions.length < 2 && attempt < 100; attempt++) await new Promise(resolve => setTimeout(resolve, 10));
     assert.deepEqual(decisions[1], { confirmationId: "confirmation-1", approve: true });
     assert.deepEqual(f.received, []);
+    f.installation.decideInitialCreationRecovery = async () => { throw new Error("Native storage changed; inspect again before recovery."); };
+    await browser.evaluate('document.querySelector("#inspect-initial-creation").click()');
+    await browser.waitFor('document.querySelector("#initial-creation-approval")?.open === true');
+    await browser.evaluate('document.querySelector("#approve-initial-creation").click()');
+    await browser.waitFor('document.querySelector("#notice")?.textContent.includes("Native storage changed")');
+    assert.deepEqual(f.received, [], "A failed confirmation must retain its diagnosis, not trigger a project request.");
   });
 
 test("delivery surface is provider-bound on every shell URL without startup, workflow dispatch or mutable source", async t => {
