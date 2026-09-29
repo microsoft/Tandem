@@ -18,6 +18,62 @@ Stage 1 does not need to generate Tandem's internal artifact format. Designer
 uses the ordinary Stage 2 artifact-authoring and publication path to represent
 and refine the existing agreement.
 
+## Runtime strategy: foreground owner, private Stage 2 session
+
+Use the existing foreground Copilot session as the entry point for both stages.
+Its Tandem extension brings up the Stage 2 runtime when the user opens Stage 2;
+that runtime creates or recovers its own private native Copilot session.
+The foreground chat need not remain in an active turn while Stage 2 works.
+
+```text
+Foreground Copilot session
+  |
+  +-- Tandem extension / shared entry point
+       |
+       +-- Stage 1 coordinator
+       |    +-- Foreground-session native factories and workers
+       |
+       +-- Stage 2 runtime
+            +-- Owned private Copilot session
+                 +-- Router / Designer / Planner / Implementer / Reviewer
+                 +-- Native Review factory and scoped workers
+```
+
+Here, "background session" means Stage 2's separately owned, persistent native
+session, not a temporary factory worker or a second copy of the foreground
+conversation. Stage 1 keeps its current foreground-session factory model;
+Stage 2 keeps its private role conversation and factory registrations.
+The seven Stage 1 factory types are not a mandatory seven-step launch sequence,
+and they do not need to be moved into Stage 2's private session.
+
+Use **one installed extension entry point** that can open either stage, rather
+than loading competing Stage 1 and Stage 2 providers with the same `tandem`
+identity. Reuse Stage 2's installation/runtime initialization rather than adding
+another session manager, scheduler or orchestration framework.
+
+Preserve these boundaries:
+
+- Bind the Stage 2 private session to its exact owning foreground session and
+  project. Reopening recovers that identity and history, not a replacement
+  session or an automatic replay of old work.
+- Opening Stage 2 only establishes its runtime and surface. Only an explicit
+  submission enters its workflow; foreground chat and Stage 1 completion are
+  not automatically interpreted as implementation requests.
+- Pass explicit references to the Stage 1 Design, prototype and relevant source
+  through the handoff below. Do not assume private workers inherit foreground
+  chat or treat the prototype as already accepted implementation.
+- Retain Stage 2's permissions, implementation confirmation, parent-only
+  publication, Stop and Close behavior. Stage 2 Stop must not cancel unrelated
+  foreground or Stage 1 work.
+- Keep the private-provider no-nesting guard: loading Tandem inside its owned
+  private runtime must not create another Stage 2 runtime or app surface.
+
+This strategy composes the existing ownership models; it is the intended
+integration, not a claim that the shared entry point is already implemented.
+The SDK test-host startup ordering described in the
+[test startup guide](docs/testing-startup-and-reopen.md) is test infrastructure,
+not a requirement for normal users to disable and re-enable the extension.
+
 ## Provisional handoff
 
 The expected input is ordinary project files:
@@ -38,9 +94,10 @@ is not evidence that backend logic, persistence or integrations work.
 
 ## Intended user flow
 
-1. The user makes the Stage 1 files available in the project and asks Tandem to
-   continue that Design. Router interprets this as Design work and hands it
-   to Designer, not directly to Planner.
+1. From the foreground-owned Tandem entry point, the user opens Stage 2,
+   makes the Stage 1 files available in the project and asks Tandem to continue
+   that Design. Stage 2's private Router interprets this as Design work and
+   hands it to Designer, not directly to Planner.
 2. Designer inspects the supplied documents, prototype source and relevant
    project context read-only. It preserves the original files and distinguishes
    confirmed intent, open choices and implementation shortcuts.
@@ -88,6 +145,12 @@ scripts; existing permission and rendering boundaries remain in effect.
 
 ## What to verify before calling the integration complete
 
+- One foreground-owned extension can open either stage without competing
+  providers or recursively creating private runtimes.
+- Stage 2 runs in its own correctly bound private session without requiring
+  an active foreground chat turn. Opening alone submits no project work.
+- Stop and Close respect stage ownership; same-session reopen preserves
+  Stage 2 history and does not replay old roles or factories.
 - A handoff containing documents, mocked HTML and assets reaches Designer and
   produces a useful Design without starting Planner or changing product code.
 - Confirmed decisions survive the handoff; mock data and shortcuts do not
@@ -105,14 +168,16 @@ results.
 
 ## Still open
 
-Exact handoff filenames and packaging, how Stage 1 marks confirmed decisions,
-and how the user opens the next stage remain to be agreed. Both source trees
-currently use the `tandem` extension identity; source co-location does not
-resolve runtime entrypoint or packaging choices. Decide those separately
-before activating the stages together.
+Exact handoff filenames, how Stage 1 marks confirmed decisions, the UI affordance
+for opening Stage 2, and shared-entrypoint module/package composition remain to
+be agreed. The runtime direction is settled above: one foreground-owned entry
+point launches Stage 2 with a separate private session. Both source trees
+currently use the `tandem` identity, so source co-location alone is not the
+shared-entrypoint implementation. Resolve the packaging before activation.
 
-No shared-session requirement, new import service or formal exchange schema is
-implied by this plan.
+Sharing a foreground launch owner does not require merging the stages'
+conversations or factory runs. No new import service or formal exchange schema
+is implied by this plan.
 
 See the [current implementation guide](tandem/README.md),
 [role and confirmation behavior](docs/human-loop-prompts.md), and
