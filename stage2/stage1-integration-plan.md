@@ -18,6 +18,33 @@ Stage 1 does not need to generate Tandem's internal artifact format. Designer
 uses the ordinary Stage 2 artifact-authoring and publication path to represent
 and refine the existing agreement.
 
+## Scope: replace the old delivery stages
+
+Stage 2 **replaces Stage 1's Plan, Implement and Test stages** in the integrated
+product. It is not an additional workflow after those stages have already run.
+Stage 1 supplies preparation, requirements, prototyping and Design; Stage 2
+continues that Design and owns subsequent planning, implementation, validation
+and Review.
+
+```text
+Stage 1: Prepare -> Requirements -> Prototype -> Design
+                                                   |
+                                             explicit handoff
+                                                   |
+Stage 2: conversational Design refinement / confirmed implementation / Review
+```
+
+After handoff, the user changes the Design by talking to the Stage 2 agent and
+using its existing Designer/question flow. There is **no current requirement to
+return to an earlier Stage 1 step**, reopen its lifecycle, or synchronize two
+editable Design authorities. Stage 1 handoff files and history remain available
+as references; Stage 2's published Design becomes the agreement for subsequent
+work. New implementation still requires the existing explicit confirmation.
+
+This does not require removing backward navigation within standalone Stage 1
+now. It means the integration should not add a cross-stage rollback mechanism or
+retain the old Plan/Implement/Test sequence as a competing execution path.
+
 ## Runtime strategy: foreground owner, private Stage 2 session
 
 Use the existing foreground Copilot session as the entry point for both stages.
@@ -41,10 +68,12 @@ Foreground Copilot session
 
 Here, "background session" means Stage 2's separately owned, persistent native
 session, not a temporary factory worker or a second copy of the foreground
-conversation. Stage 1 keeps its current foreground-session factory model;
+conversation. Stage 1's retained discovery/Design operations keep their
+foreground-session factory model;
 Stage 2 keeps its private role conversation and factory registrations.
-The seven Stage 1 factory types are not a mandatory seven-step launch sequence,
-and they do not need to be moved into Stage 2's private session.
+The seven factory types in today's Stage 1 implementation are not a mandatory
+seven-step launch sequence. Its old delivery factories do not need to be moved
+into Stage 2 or run before handoff.
 
 Use **one installed extension entry point** that can open either stage, rather
 than loading competing Stage 1 and Stage 2 providers with the same `tandem`
@@ -113,6 +142,10 @@ is not evidence that backend logic, persistence or integrations work.
    to that request and current Design. Only after confirmation does Planner
    start. Implementer builds and validates the user journeys; Reviewer checks
    Design conformance and over-engineering and reports without editing code.
+6. Later Design changes stay in the Stage 2 conversation and Designer workflow.
+   The user does not need to reopen Stage 1 Requirements or Design before
+   requesting a revision. Follow-on implementation uses the revised agreement
+   and the normal confirmation boundary.
 
 Example initial request:
 
@@ -158,6 +191,10 @@ scripts; existing permission and rendering boundaries remain in effect.
 - Missing files, conflicting descriptions and open consequential choices are
   surfaced honestly, not filled with unapproved assumptions.
 - Revisions continue an existing Design and retain the original handoff files.
+- Stage 2 replaces, rather than follows or duplicates, Stage 1's old
+  Plan/Implement/Test execution path.
+- A later Design change is handled interactively in Stage 2 without requiring
+  backward Stage 1 navigation or overwriting the retained handoff.
 - A distinct implementation request waits for confirmation. Cancel starts no
   implementation; approval proceeds against the reviewed Design.
 - The resulting implementation and read-only Review use that Design and retain
