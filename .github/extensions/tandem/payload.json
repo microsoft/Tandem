@@ -4,8 +4,8 @@
   "files": [
     {
       "path": "extension.mjs",
-      "bytes": 3932336,
-      "sha256": "22a00382a8f5a42d4eae4388a2a29aaa257bd2fb64e412f8c6c6650c83d320bc"
+      "bytes": 3932372,
+      "sha256": "3b4dfbc380912c78d3a9494292dced6a90fddca5c6c0edfb3f9b97fd6e4c5edd"
     },
     {
       "path": "skills/tandem/SKILL.md",
@@ -708,5 +708,5 @@
       "sha256": "92b92e76eb4ac3bee96c6bbdde06ed1f7d9c0088576a51db1276c567dbb207f8"
     }
   ],
-  "digest": "623c0e85aea598e11e44efbc0a81f1b3d85807fdd30f05593846d5a207123620"
+  "digest": "ecf3e4c806b0c474722a5c9b2657bafe5c51e4c1bf43b71f842126719dafacb8"
 }
