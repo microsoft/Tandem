@@ -253,6 +253,22 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
         await start({ retry: input.retry === true });
         return json(response, 200, await snapshot());
       }
+      if (request.method === "POST" && path === "/api/runtime/initial-creation/inspect") {
+        object(await body(request), []);
+        const installation = getInstallation();
+        requireCondition(typeof installation?.requestInitialCreationRecovery === "function", "Unused-setup recovery inspection is unavailable.");
+        return json(response, 200, await installation.requestInitialCreationRecovery());
+      }
+      if (request.method === "POST" && path === "/api/runtime/initial-creation/decision") {
+        const input = object(await body(request), ["confirmationId", "approve"]);
+        requireCondition(typeof input.confirmationId === "string" && typeof input.approve === "boolean",
+          "A fresh explicit unused-setup recovery decision is required.");
+        const installation = getInstallation();
+        requireCondition(typeof installation?.decideInitialCreationRecovery === "function", "Unused-setup recovery is unavailable.");
+        const result = await installation.decideInitialCreationRecovery(input);
+        if (result.recovered) await start();
+        return json(response, 200, result);
+      }
       if (request.method === "POST" && path === "/api/navigation/open") {
         const data = object(await body(request), ["url", "focus"]);
         const address = normalizeNavigationUrl(data.url);

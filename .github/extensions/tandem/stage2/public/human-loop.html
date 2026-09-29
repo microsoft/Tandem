@@ -85,6 +85,14 @@
   <section id="conversation-panel" class="panel activity-panel human-conversation">
     <div class="panel-heading"><h2>Conversation</h2><button id="show-questions" type="button" aria-controls="question-panel" aria-expanded="false">Questions (0)</button><span class="connection"><i class="status-dot"></i><span id="connection-status">Connecting</span></span></div>
     <button id="initialize" type="button" hidden>Initialize runtime</button>
+    <button id="inspect-initial-creation" type="button" hidden>Inspect unused setup recovery</button>
+    <dialog id="initial-creation-approval" aria-labelledby="initial-creation-title" aria-describedby="initial-creation-detail">
+      <h2 id="initial-creation-title">Initialize this unused reserved session once?</h2>
+      <p id="initial-creation-detail"></p>
+      <pre id="initial-creation-identity"></pre>
+      <button id="cancel-initial-creation" type="button" autofocus>Not now</button>
+      <button id="approve-initial-creation" type="button">Authorize one-time initialization</button>
+    </dialog>
     <p id="notice" role="status" hidden></p>
     <p id="compaction-status" role="status" aria-live="polite" hidden></p>
     <section id="question-panel" aria-label="Saved questions" hidden></section>

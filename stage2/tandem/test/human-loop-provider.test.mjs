@@ -94,7 +94,7 @@ async function fixture(t, { onSend, content = sharedDesignExample(), openProject
   });
   const post = (path, value, origin) => fetch(new URL(path, provider.url), { method: "POST",
     headers: { "content-type": "application/json", ...(origin ? { Origin: origin } : {}) }, body: JSON.stringify(value) });
-  return { root, provider, received, state, design, post, events, permissions, openBrowser, runtime, starts: () => starts,
+  return { root, provider, received, state, design, post, events, permissions, openBrowser, runtime, installation, starts: () => starts,
     setInstallationStatus: (value) => { installationStatus = value; events.touch(); } };
 }
 
@@ -115,6 +115,58 @@ test("implementation confirmation has its own endpoint, never a tool-permission 
   assert.equal(response.status, 409);
   assert.equal(decisions.length, 1);
 });
+
+test("unused-setup recovery requires its own exact confirmation and never submits a project request", async t => {
+  const f = await fixture(t), decisions = [];
+  f.installation.requestInitialCreationRecovery = async () => ({
+    confirmationId: "exact-startup", privateSessionId: "reserved-private", mainSessionId: "main", workspacePath: f.root,
+    message: "One-time unused setup only. No implementation or request is sent.", reason: "Original pre-native Git failure.",
+  });
+  f.installation.decideInitialCreationRecovery = async input => {
+    decisions.push(input); return { recovered: input.approve };
+  };
+  const prefix = "/api/runtime/initial-creation";
+  assert.equal((await f.post(`${prefix}/inspect`, { overrideOwner: "other" })).status, 409);
+  const inspection = await (await f.post(`${prefix}/inspect`, {})).json();
+  assert.equal(inspection.privateSessionId, "reserved-private");
+  assert.equal(f.starts(), 0);
+  assert.equal((await f.post(`${prefix}/decision`, { confirmationId: inspection.confirmationId, approve: false })).status, 200);
+  assert.equal(f.starts(), 0);
+  assert.equal((await f.post(`${prefix}/decision`, { confirmationId: inspection.confirmationId, approve: "yes" })).status, 409);
+  assert.equal((await f.post("/api/runtime/start", { retry: true, confirmationId: inspection.confirmationId })).status, 409);
+  assert.equal((await f.post(`${prefix}/decision`, { confirmationId: inspection.confirmationId, approve: true })).status, 200);
+  assert.equal(f.starts(), 1);
+  assert.deepEqual(decisions, [{ confirmationId: "exact-startup", approve: false }, { confirmationId: "exact-startup", approve: true }]);
+  assert.deepEqual(f.received, []);
+});
+
+test("real browser unused-setup recovery keeps inspection, cancellation and one-time approval distinct",
+  { skip: !browserAvailable, timeout: 60_000 }, async t => {
+    const f = await fixture(t), decisions = [];
+    f.installation.read = async () => ({ status: "unknown", canStart: false, canRetry: true, canInspectInitialRecovery: true,
+      reason: "Original pre-native Git validation failed." });
+    f.installation.requestInitialCreationRecovery = async () => ({
+      confirmationId: `confirmation-${decisions.length}`, privateSessionId: "reserved-private", mainSessionId: "main",
+      workspacePath: f.root, message: "Initialize the reserved ID once without replaying a request.", reason: "Original pre-native Git validation failed.",
+    });
+    f.installation.decideInitialCreationRecovery = async input => { decisions.push(input); return { recovered: input.approve }; };
+    const browser = await f.openBrowser();
+    await browser.call("Page.navigate", { url: f.provider.url });
+    await browser.waitFor('document.querySelector("#inspect-initial-creation")?.hidden === false');
+    await browser.evaluate('document.querySelector("#inspect-initial-creation").click()');
+    await browser.waitFor('document.querySelector("#initial-creation-approval")?.open === true');
+    assert.match(await browser.evaluate('document.querySelector("#initial-creation-identity").textContent'), /reserved-private/);
+    assert.equal(f.starts(), 0);
+    await browser.evaluate('document.querySelector("#cancel-initial-creation").click()');
+    for (let attempt = 0; decisions.length < 1 && attempt < 100; attempt++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.deepEqual(decisions, [{ confirmationId: "confirmation-0", approve: false }]);
+    await browser.evaluate('document.querySelector("#inspect-initial-creation").click()');
+    await browser.waitFor('document.querySelector("#initial-creation-approval")?.open === true');
+    await browser.evaluate('document.querySelector("#approve-initial-creation").click()');
+    for (let attempt = 0; decisions.length < 2 && attempt < 100; attempt++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.deepEqual(decisions[1], { confirmationId: "confirmation-1", approve: true });
+    assert.deepEqual(f.received, []);
+  });
 
 test("delivery surface is provider-bound on every shell URL without startup, workflow dispatch or mutable source", async t => {
   const canvas = await fixture(t);

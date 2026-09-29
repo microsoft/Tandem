@@ -75,7 +75,8 @@ export class HumanLoopRuntime {
   #withRequestAdmission;
 
   constructor({ configuration, client, verifyOwnership, verifyAdmission, permissionHandler, onHandoff, onProgress,
-    readDesign, designer, reviewEffects, now, contextProvider, withRequestAdmission = operation => operation(), createPrivateSession }) {
+    readDesign, designer, reviewEffects, now, contextProvider, withRequestAdmission = operation => operation(), createPrivateSession,
+    beforeNativeCreate, afterNativeCreate }) {
     requireCondition(configuration?.schemaVersion === "human-loop-runtime/v1" && typeof onHandoff === "function",
       "The new runtime needs versioned one-copy configuration and a real handoff presenter.");
     this.#configuration = configuration; this.#owner = configuration.owner;
@@ -100,7 +101,7 @@ export class HumanLoopRuntime {
     }));
     this.#transport = new HumanLoopTransport({
       owner: this.#owner, client, workspace: this.#workspace, store: this.#store, tools, nativeFiles: true, nativeShells: this.#commands,
-      createPrivateSession,
+      createPrivateSession, beforeNativeCreate, afterNativeCreate,
       verifyOwnership, authorizeTool: (packet) => this.#authorizeTool(packet), permissionHandler, now,
       onProgress: (event) => { this.#notify(event); if (event.kind === "native-shell") this.#kick(); },
       validateResult: async (packet, result) => {
@@ -172,6 +173,15 @@ export class HumanLoopRuntime {
     await this.#workspace.initialize();
     await this.#verify();
     return state;
+  }
+  async validateInitialCreation() {
+    requireCondition(!this.#opened && !this.#closed && !this.#closing, "A live runtime cannot become a new initial setup.");
+    await this.#verify();
+    const initial = await this.#store.inspectInitialCreation();
+    const design = await this.#readDesign();
+    requireCondition(design.binding.revisionId === null && design.binding.digest === null && design.content === null,
+      "Initial setup recovery cannot replace an existing canonical Design.");
+    if (!initial.initialized) await this.#store.initialize(design.binding);
   }
   async recover(recoveryId, cleanNativeProof = null, allowMissingInitialSession = false) {
     const state = await this.validateRecovery();

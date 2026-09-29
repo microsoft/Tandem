@@ -227,6 +227,25 @@ test("verified migration retains old bytes as backups and new state exists only 
   await closeHostStateWal(root);
 });
 
+test("bounded document history retains all validated versions and refuses truncated recovery evidence", async t => {
+  const { root, wal } = await fixture(t);
+  assert.deepEqual(await wal.history("installation", "state"), []);
+  await wal.mutate("installation", "state", "prepared", () => ({ content: document(1), result: null }));
+  await wal.mutate("unrelated", "state", "other", () => ({ content: document(99), result: null }));
+  await wal.mutate("installation", "state", "failed", () => ({ content: document(2), result: null }));
+  const original = await readFile(wal.path);
+  const history = await wal.history("installation", "state");
+  assert.deepEqual(history.map(({ version, cause, content, seq }) => ({ version, cause, content, seq })),
+    [{ version: 1, cause: "prepared", content: document(1), seq: 1 },
+      { version: 2, cause: "failed", content: document(2), seq: 3 }]);
+  await assert.rejects(wal.history("installation", "state", 1), /no evidence was truncated/);
+  assert.deepEqual(await readFile(wal.path), original);
+  await wal.close();
+  const reopened = getHostStateWal(root);
+  assert.deepEqual(await reopened.history("installation", "state"), history);
+  await reopened.close();
+});
+
 test("specification documents are immutable referenced objects and nested document writes form one group", async (t) => {
   const { root, wal } = await fixture(t);
   const a = new HostStateFile(root, join(root, ".tandem", "living-canvas", "design", "blocks", "use-case.json"), undefined, { artifact: true });

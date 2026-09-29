@@ -61,6 +61,25 @@ export class HumanLoopStore {
     return structuredClone(derived.state);
   }
 
+  async inspectInitialCreation() {
+    const content = await this.#file.read();
+    const derived = content === undefined ? null : this.#derive(content);
+    requireCondition(!derived || derived.ledger.initialDesign.revisionId === null
+      && derived.ledger.initialDesign.digest === null
+      && derived.ledger.events.every(event => event.authority === "host"
+        && event.command.type === "execution-unknown" && event.command.id === "execution-unknown:session")
+      && !derived.state.requests.length && !derived.state.executions.length && !derived.state.cycles.length
+      && !derived.state.questions.length && !derived.state.handoffs.length && !derived.state.stops.length
+      && !derived.state.implementationConfirmations?.length && !derived.state.activeRequestId && !derived.state.activeTask
+      && !derived.state.stop && !derived.state.recoveries?.length,
+    "Initial setup recovery refuses any admitted work, Design, approval or prior recovery; a missing used session must be restored, not recreated.");
+    const messages = await this.messages();
+    requireCondition(messages.every(message => message.requestId === null && message.role === "host" && message.kind === "status"
+      && (message.id === "diagnostic:execution-unknown:session" || message.id.startsWith("recovery-diagnostic:"))),
+    "Initial setup recovery cannot replace retained native or project conversation.");
+    return { initialized: content !== undefined, digest: policyHash({ content: content ?? null, messages }) };
+  }
+
   async dispatch(authority, id, type, data) {
     return this.#dispatch(authority, id, type, data);
   }

@@ -12,7 +12,7 @@ import { parseHumanTask } from "./human-loop-task.mjs";
 import { annotationCapabilities } from "../runtime-src/domain/workflow/annotation-attachment.ts";
 import { isImageAttachment, readRequestAttachment } from "../runtime-src/domain/workflow/image-attachment.ts";
 import { parseNativeClose } from "./human-loop-close.mjs";
-import { readRecoveryHistory, recoveryReadinessSnapshot, retainRecoveryMessages } from "./human-loop-recovery.mjs";
+import { readRecoveryHistory, recoveryReadinessSnapshot, retainRecoveryMessages, verifyNativeSessionAbsent } from "./human-loop-recovery.mjs";
 import { HumanLoopCompaction, compactionInstructions } from "./human-loop-compaction.mjs";
 import { nativeFileTools } from "./human-loop-native-files.mjs";
 import { nativeShellTools, cancelNativeShellTask } from "./human-loop-native-shells.mjs";
@@ -73,13 +73,17 @@ export class HumanLoopTransport {
   #automaticReads = new Set();
   #compaction = new HumanLoopCompaction((event) => this.#notify(event));
   #createPrivateSession;
+  #beforeNativeCreate;
+  #afterNativeCreate;
 
-  constructor({ owner, client, workspace, store, tools = [], nativeFiles = false, nativeShells = null, verifyOwnership, authorizeTool, permissionHandler, now, onProgress, validateResult, validateAttachment, createPrivateSession }) {
+  constructor({ owner, client, workspace, store, tools = [], nativeFiles = false, nativeShells = null, verifyOwnership, authorizeTool, permissionHandler, now, onProgress, validateResult, validateAttachment, createPrivateSession, beforeNativeCreate, afterNativeCreate }) {
     this.#owner = parseHumanLoopOwner(owner);
     requireCondition(typeof verifyOwnership === "function" && typeof authorizeTool === "function",
       "One-copy transport requires explicit ownership and tool-authority verifiers.");
     this.#client = client; this.#workspace = workspace; this.#store = store;
     this.#createPrivateSession = createPrivateSession ?? (configuration => client.createSession(configuration));
+    this.#beforeNativeCreate = beforeNativeCreate;
+    this.#afterNativeCreate = afterNativeCreate;
     this.#verify = verifyOwnership; this.#authorize = authorizeTool; this.#permissionHandler = permissionHandler;
     this.#tools = new Map(tools.map((tool) => [tool.name, tool]));
     requireCondition(this.#tools.size === tools.length && tools.every(({ name }) =>
@@ -262,6 +266,18 @@ export class HumanLoopTransport {
   }
 
   async create() { return this.#openSession(null); }
+  async #createOwnedSession(configuration) {
+    if (this.#beforeNativeCreate) {
+      requireCondition(typeof this.#client.start === "function", "Native creation requires a started private client.");
+      await this.#client.start();
+    }
+    await this.#beforeNativeCreate?.();
+    this.#nativeRegistrationAttempted = true;
+    this.#session = await this.#createPrivateSession(configuration);
+    requireCondition(this.#session.sessionId === this.#owner.privateSessionId, "Native creation returned another private identity.");
+    await this.#afterNativeCreate?.(this.#session.sessionId);
+    return this.#session;
+  }
   async recover(state, cleanNativeProof = null, diagnose, allowMissingInitialSession = false) {
     this.#healthy(); await this.#verify();
     requireCondition(!allowMissingInitialSession || (!cleanNativeProof && !state.executions.length
@@ -270,8 +286,11 @@ export class HumanLoopTransport {
     requireCondition(typeof this.#client.start === "function", "Installed SDK cannot resume the retained native session.");
     await this.#client.start();
     let history = [];
-    try { history = await readRecoveryHistory(this.#client, this.#owner.privateSessionId); }
-    catch (error) { await diagnose("retained-history", safeReason(error, this.#owner.policy.values.resources.reviewReasonCharacters)); }
+    if (allowMissingInitialSession) await verifyNativeSessionAbsent(this.#client, this.#owner.privateSessionId);
+    else {
+      try { history = await readRecoveryHistory(this.#client, this.#owner.privateSessionId); }
+      catch (error) { await diagnose("retained-history", safeReason(error, this.#owner.policy.values.resources.reviewReasonCharacters)); }
+    }
     await retainRecoveryMessages(this.#store, state, history, diagnose);
     const retained = recoveryReadinessSnapshot(this.#owner.privateSessionId, history);
     this.#retiredHistory = new Set(retained.events.map(event => event.id));
@@ -354,21 +373,25 @@ export class HumanLoopTransport {
         if (metadata === undefined && allowMissingInitialSession) {
           requireCondition(!proof.events.length && !proof.users.length,
             "Native first-creation retry cannot replace retained history.");
-          this.#nativeRegistrationAttempted = true;
-          this.#session = await this.#createPrivateSession({
+          await verifyNativeSessionAbsent(this.#client, this.#owner.privateSessionId);
+          this.#session = await this.#createOwnedSession({
             ...configuration, ...(preferences.model ? { model: preferences.model } : {}),
           });
         } else {
+          requireCondition(!allowMissingInitialSession,
+            "Native session metadata conflicts with unused setup evidence; no existing session was adopted.");
+          if (metadata === undefined) throw Object.assign(new Error("The saved local private session is unavailable; no replacement session was created."),
+            { code: "human-loop-native-session-missing" });
           requireCondition(metadata?.sessionId === proof.sessionId && metadata.isRemote !== true,
             "The saved local private session is unavailable; no replacement session was created.");
           this.#nativeRegistrationAttempted = true;
           this.#session = await this.#client.resumeSession(proof.sessionId, {
             ...configuration, continuePendingWork: false, suppressResumeEvent: true,
           });
+          await this.#afterNativeCreate?.(this.#session.sessionId);
         }
       } else {
-        this.#nativeRegistrationAttempted = true;
-        this.#session = await this.#createPrivateSession(configuration);
+        this.#session = await this.#createOwnedSession(configuration);
       }
       const session = this.#session;
       requireCondition(session.sessionId === this.#owner.privateSessionId && typeof session.abort === "function"

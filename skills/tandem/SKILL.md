@@ -223,6 +223,19 @@ Compaction changes model context, not retained evidence. Same-ID recovery retire
 interrupted dispatch eligibility; it never silently restores queued authorization.
 Pending implementation confirmation still requires a fresh user decision.
 
+If first Development startup fails, preserve its original reason and use
+**Retry runtime** inside Development, not repeated handoff sends. New setup
+records the native-creation boundary durably and checks the Git root without
+initializing or committing it. Older unused v2 setup may offer **Inspect unused
+setup recovery**, with a separate exact-owner/ID-bound one-time confirmation.
+Only the user may authorize that operation after the application verifies
+complete startup-only history and authoritative absence of native state.
+It must refuse prior work, native history, issued creation, foreign/live owners
+and indeterminate observations. Never delete/reset WAL files or locks, invent
+an absent session, or reinterpret ordinary Retry as this authorization.
+Recovered Ready preserves audit and the prepared envelope; it does not submit
+the handoff or authorize implementation.
+
 ## Reset, history and delivery
 
 Lifecycle version 3 separates active stages from historical stage IDs. Old

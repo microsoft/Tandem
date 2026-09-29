@@ -89,6 +89,21 @@ async function git(root, args, allowed = [0]) {
   });
 }
 
+export async function verifyHumanLoopWorkspaceRoot(root) {
+  check(resolve(root) === root, "workspace root must use its canonical absolute path.");
+  let current = parse(root).root;
+  directory(await lstat(current, { bigint: true }));
+  for (const part of root.slice(current.length).split(sep).filter(Boolean)) {
+    check((await readdir(current)).includes(part), "workspace root has a path alias.");
+    current = join(current, part);
+    directory(await lstat(current, { bigint: true }));
+  }
+  check(await realpath(root) === root, "workspace root is aliased.");
+  const top = await git(root, ["rev-parse", "--show-toplevel"]);
+  check(resolve(top.text) === root, "owner workspace must be the existing Git worktree root. Initialize Git explicitly if intended; Tandem does not initialize or commit it.");
+  return lstat(root, { bigint: true });
+}
+
 /**
  * One existing workspace, with content-addressed evidence rather than an editable copy.
  * Snapshots retain observed bytes, not an exclusive lease over ordinary project files.
@@ -126,19 +141,8 @@ export class HumanLoopWorkspace {
   }
 
   async #validateRoot() {
-    check(resolve(this.#root) === this.#root, "workspace root must use its canonical absolute path.");
-    let current = parse(this.#root).root;
-    directory(await lstat(current, { bigint: true }));
-    for (const part of this.#root.slice(current.length).split(sep).filter(Boolean)) {
-      check((await readdir(current)).includes(part), "workspace root has a path alias.");
-      current = join(current, part);
-      directory(await lstat(current, { bigint: true }));
-    }
-    check(await realpath(this.#root) === this.#root, "workspace root is aliased.");
-    const stat = await lstat(this.#root, { bigint: true });
+    const stat = await verifyHumanLoopWorkspaceRoot(this.#root);
     check(!this.#rootIdentity || this.#rootIdentity === identity(stat), "workspace root identity changed.");
-    const top = await git(this.#root, ["rev-parse", "--show-toplevel"]);
-    check(resolve(top.text) === this.#root, "owner workspace must be the existing Git worktree root.");
     return stat;
   }
 

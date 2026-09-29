@@ -158,6 +158,45 @@ export class HostStateWal {
   namespaces(): Promise<string[]> {
     return this.#read(() => [...new Set([...this.#cells.keys()].map((id) => JSON.parse(id)[0] as string))].sort());
   }
+  /** Bounded historical evidence from this already verified, exclusively owned journal. */
+  history(namespace: string, key: string, limit = 100): Promise<Array<{
+    seq: number; recordedAt: string; cause: string; digest: string; version: number; content: string | null;
+  }>> {
+    name(namespace); name(key);
+    requireValue(Number.isSafeInteger(limit) && limit > 0 && limit <= 1000, 'history limit must be 1-1000.');
+    if (transaction.getStore()) return Promise.reject(new Error('Host WAL: historical inspection cannot run inside a mutation.'));
+    return this.#serialize(async () => {
+      if (!this.#file && !await exists(this.path)) return [];
+      await this.#ensureWriter(); await this.#assertStable();
+      const entries: Array<{ seq: number; recordedAt: string; cause: string; digest: string; version: number; content: string | null }> = [];
+      let offset = 0, sequence = 0, previousHash: string | null = null;
+      while (offset < this.#offset) {
+        const header = (await this.#readBytes(9, offset)).toString('ascii');
+        requireValue(/^[0-9a-f]{8}:$/.test(header), 'invalid historical frame header.');
+        const length = Number.parseInt(header.slice(0, 8), 16);
+        requireValue(length > 0 && length <= this.#limit && offset + length + 10 <= this.#offset, 'invalid historical frame size.');
+        const bytes = await this.#readBytes(length, offset + 9), content = bytes.toString('utf8');
+        requireValue(Buffer.from(content, 'utf8').equals(bytes)
+          && (await this.#readBytes(1, offset + length + 9))[0] === 10, 'invalid historical frame encoding.');
+        const record = JSON.parse(content) as RecordFrame;
+        const { digest, ...body } = record;
+        requireValue(record.seq === ++sequence && record.previousHash === previousHash
+          && digest === hostStateDigest(JSON.stringify(body))
+          && this.#receipts.get(record.id)?.receipt.digest === digest, 'historical frame differs from verified replay.');
+        previousHash = digest;
+        for (const update of record.updates) if (update.namespace === namespace && update.key === key) {
+          requireValue(entries.length < limit, 'complete document history exceeds the inspection limit; no evidence was truncated.');
+          entries.push({ seq: record.seq, recordedAt: record.recordedAt, cause: record.cause, digest,
+            version: update.version, content: update.content });
+        }
+        offset += length + 10;
+      }
+      requireValue(sequence === this.#seq && previousHash === this.#hash
+        && entries.length === this.#view().version(namespace, key), 'historical document evidence is incomplete.');
+      await this.#assertStable();
+      return entries;
+    });
+  }
   async inventory(after: string | null = null, limit = 100): Promise<{
     schemaVersion: 'host-state-inventory/v1'; path: string; owned: boolean; writerId: string | null; sequence: number | null;
     entries: Array<{ cursor: string; namespace: string; key: string; revision: number; digest: string | null; schema: string | null; deleted: boolean }>;

@@ -138,8 +138,10 @@ async function fixture(t, { ask = false, autoConfirm = true, stopDelivery = null
     constructor() { counts.clients++; }
     async createSession(config) {
       counts.creates++;
-      if (failCreate) throw new Error("Native creation failed before creating the session.");
-      native = new Session(config); sessions.push(native); return native;
+      if (failCreate === true) throw new Error("Native creation failed before creating the session.");
+      native = new Session(config); sessions.push(native);
+      if (failCreate === "after-create") throw new Error("Native creation acknowledgement was lost after creation.");
+      return native;
     }
     async start() {}
     async listModels() { return [{ id: "one" }, { id: "two" }]; }
@@ -219,7 +221,7 @@ async function fixture(t, { ask = false, autoConfirm = true, stopDelivery = null
       saved = { sessionId: native.sessionId, events: [...structuredClone(native.events), ...events],
         sends: structuredClone(native.sends), count: native.count + events.length, queuedItems };
       // This same-process fixture must retire memory ownership that a real process crash destroys.
-      runtime.commands.releaseWriter();
+      (runtime ?? installation.runtime).commands.releaseWriter();
       await getHostStateWal(workspace).close();
     },
     async reopen(cold = false, retry = false) {
@@ -261,22 +263,36 @@ function assertRecovered(current, previous) {
   assert.equal(recoveries.length, oldRecoveries.length + 1);
 }
 
-test("explicit first-start retry creates only the same authoritatively absent private identity and sends nothing", async t => {
+test("an issued native creation with a lost outcome cannot use the create-missing retry path", async t => {
   const f = await fixture(t, { deferred: true, failCreate: true });
   await assert.rejects(f.reopen(), /before creating/);
   const owner = structuredClone(f.installation.configuration.owner);
   assert.equal((await f.installation.read()).canRetry, true);
   await assert.rejects(f.reopen(), /explicit Retry/);
   f.setCreateFailure(false);
-  const [one, two] = await Promise.all([f.reopen(false, true), f.reopen(false, true)]);
-  assert.equal(one, two);
+  await assert.rejects(f.reopen(false, true), /session is unavailable/);
   assert.deepEqual(f.installation.configuration.owner, owner);
-  assert.equal(f.counts.creates, 2);
+  assert.equal(f.counts.creates, 1);
   assert.equal(f.counts.resumes, 0);
   assert.equal(f.counts.sends, 0);
+  assert.equal((await f.installation.read()).status, "unknown");
+  await assert.rejects(f.installation.requestInitialCreationRecovery(), /legacy incomplete/);
+});
+
+test("cold retry of an issued creation resumes an existing exact native identity without a second create", async t => {
+  const f = await fixture(t, { deferred: true, failCreate: "after-create" });
+  await assert.rejects(f.reopen(), /acknowledgement was lost/);
+  const owner = structuredClone(f.installation.configuration.owner);
+  assert.equal(JSON.parse(await f.record().read()).nativeCreation.status, "requested");
+  await f.interrupt();
+  f.setCreateFailure(false);
+  await f.reopen(true, true);
+  assert.deepEqual(f.installation.configuration.owner, owner);
   assert.equal((await f.installation.read()).status, "ready");
-  await f.reopen(false, true);
-  assert.equal(f.counts.creates, 2);
+  assert.equal(JSON.parse(await f.record().read()).nativeCreation.status, "created");
+  assert.equal(f.counts.creates, 1);
+  assert.equal(f.counts.resumes, 1);
+  assert.equal(f.counts.sends, 0);
 });
 
 test("post-create startup retry refuses current native work and resumes the same session after it settles", async t => {
@@ -776,7 +792,7 @@ test("a pre-recovery failure cannot revive a legacy ready record's superseded cl
   f.options.discoverRuntime = discover;
   const sends = f.counts.sends;
   await getHostStateWal(f.workspace).close();
-  await f.reopen(true);
+  await f.reopen(true, true);
   assert.equal((await f.runtime.readiness()).status, "ready");
   assert.equal(f.counts.sends, sends);
   assert.equal((await f.runtime.state()).requests.length, 2);

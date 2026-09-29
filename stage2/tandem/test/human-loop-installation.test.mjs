@@ -41,13 +41,15 @@ async function fixture(t, { failOpen = false } = {}) {
         constructor(input) { clients++; assert.equal(input.workingDirectory, workspace); assert.equal(input.connection.path, cli); }
       },
     }),
-    createRuntime: async ({ configuration, verifyOwnership }) => ({
+    createRuntime: async ({ configuration, verifyOwnership, beforeNativeCreate, afterNativeCreate }) => ({
       sessionId: configuration.owner.privateSessionId,
       async open() {
         starts++; await verifyOwnership();
         const file = new HostStateFile(workspace, join(workspace, ".tandem", "living-canvas", "human-loop", "installation.json"));
         assert.equal(JSON.parse(await file.read()).phase, "creating");
+        await beforeNativeCreate();
         if (failOpen) throw new Error("Private open acknowledgement lost.");
+        await afterNativeCreate(configuration.owner.privateSessionId);
       },
       async isBusy() { return busy; },
       async close() { closes++; await verifyOwnership(); },
@@ -141,14 +143,16 @@ test("cold recovery rejects incompatible records and missing recovery capability
   const original = JSON.parse(await file.read());
   const save = (value) => file.mutate("fixture:installation", () => ({ content: JSON.stringify(value), result: null }));
   for (const phase of ["creating", "ready", "closing", "reopening", "recovering", "unknown"]) {
-    await save({ ...original, phase });
+    const { nativeCreation, initialFailure, ...legacy } = original;
+    await save({ ...legacy, schemaVersion: "human-loop-installation/v2", phase });
     const cold = new HumanLoopInstallation(f.options);
     assert.equal((await cold.read()).status, "saved-state");
-    await assert.rejects(cold.open(), /does not support retained-history recovery/);
+    await assert.rejects(cold.open({ retry: true }), /does not support retained-history recovery/);
   }
-  await save({ ...original, schemaVersion: "human-loop-installation/v1", phase: "closed" });
-  await assert.rejects(new HumanLoopInstallation(f.options).open(), /positively closed/);
-  await save({ ...original, phase: "closed" });
+  const { nativeCreation, initialFailure, ...legacy } = original;
+  await save({ ...legacy, schemaVersion: "human-loop-installation/v1", phase: "closed" });
+  await assert.rejects(new HumanLoopInstallation(f.options).open(), /supported new-model/);
+  await save({ ...legacy, schemaVersion: "human-loop-installation/v2", phase: "closed" });
   await assert.rejects(new HumanLoopInstallation(f.options).open(), /does not support retained-history recovery/);
   assert.equal(f.counts().clients, 0);
 });

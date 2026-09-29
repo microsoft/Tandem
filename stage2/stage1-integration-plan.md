@@ -30,6 +30,35 @@ original configuration with `continuePendingWork: false` and
 discarded before its first user turn. It adds no dummy turn and adopts no other
 session. Recovery still uses the original missing-session and ownership checks.
 
+First native creation is durably fenced in installation v3 with `not-requested`,
+`requested` and `created` receipts, preserving the original reserved private ID.
+A read-only actual-Git-root preflight runs before new setup is persisted.
+Explicit Retry can complete a durably unrequested setup after cold restart; a
+missing issued/created session cannot use that path. Positive same-ID resume can
+settle an issued creation's acknowledgement without creating again.
+
+Legacy v2 `unknown` state cannot prove that no native create was attempted.
+Its separately confirmed **Inspect unused setup recovery** path uses bounded,
+verified complete WAL document history, permits only never-ready startup phases
+and startup-only ledger diagnostics, and rejects other work/Design/approval/native
+control state. Supported native metadata not-found, in-use and complete
+on-disk-storage inventory responses must positively establish absence;
+exceptions or malformed/indeterminate responses never count as empty history.
+The existing ordinary PR history-recovery behavior is not replaced.
+Old normal Stop can record `unknown -> closing -> unknown` without ever opening
+the private session. Only correlated unconfirmed close intents are permitted in
+this inspection; historical Ready/closed states, positive close proofs and
+uncorrelated or invalid close-ID transitions remain disqualifying evidence.
+
+The five-minute one-time confirmation binds exact owner, configuration,
+installation/ledger/inventory and native-absence evidence. Confirmation rechecks
+them, appends its consumption in the native creation receipt immediately before
+the request, and runs the existing named creation and normal recovery transition.
+It neither edits historical WAL frames nor discards the earlier
+`execution-unknown` audit. Cancel, inspection, Retry and handoff reconciliation
+cannot silently authorize it. Recovered Ready sends no handoff or model work;
+the user must explicitly reconcile the retained handoff afterward.
+
 The main Node launcher keeps its npm CLI loader. The composed extension supplies
 its actual executing native Copilot binary to private runtime discovery when
 running inside that binary. SDK/CLI/Node paths remain canonical, hashed, outside

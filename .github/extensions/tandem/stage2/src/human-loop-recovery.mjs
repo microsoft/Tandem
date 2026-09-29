@@ -4,6 +4,30 @@ import { durableNativeEvent, nativeCloseEvents, observedNativeCloseEvent, requir
   parseNativeClose, nativeExecutionEvent } from "./human-loop-close.mjs";
 import { parseHumanTask } from "./human-loop-task.mjs";
 
+export async function verifyNativeSessionAbsent(client, sessionId) {
+  requireCondition(typeof client.start === "function" && typeof client.getSessionMetadata === "function",
+    "Initial setup recovery requires authoritative native session lookup.");
+  await client.start();
+  requireCondition(typeof client.rpc?.sessions?.checkInUse === "function"
+    && typeof client.rpc.sessions.getSizes === "function",
+  "Initial setup recovery requires native in-use and persisted-storage inventory APIs.");
+  requireCondition(await client.getSessionMetadata(sessionId) === undefined,
+    "The reserved private session exists or its metadata is indeterminate; no session was created.");
+  const active = await client.rpc.sessions.checkInUse({ sessionIds: [sessionId] });
+  requireCondition(active && typeof active === "object" && Object.keys(active).length === 1
+    && Array.isArray(active.inUse) && active.inUse.length === 0,
+    "The reserved private identity is active or its ownership is unverified; no session was created.");
+  const inventory = await client.rpc.sessions.getSizes();
+  requireCondition(inventory && typeof inventory === "object" && Object.keys(inventory).length === 1
+    && inventory.sizes && typeof inventory.sizes === "object" && !Array.isArray(inventory.sizes)
+    && Object.values(inventory.sizes).every(bytes => Number.isSafeInteger(bytes) && bytes >= 0)
+    && !Object.hasOwn(inventory.sizes, sessionId),
+  "The reserved private identity has retained native storage or its history is indeterminate; no session was created.");
+  requireCondition(await client.getSessionMetadata(sessionId) === undefined,
+    "Native session metadata changed during absence verification; no session was created.");
+  return { sessionId, metadata: "not-found", inUse: [], storage: "not-found" };
+}
+
 export async function readRecoveryHistory(client, sessionId, { allowEmpty = false } = {}) {
   requireCondition(typeof client.rpc?.sessions?.readPersistedEvents === "function",
     "The installed SDK cannot read saved native history.");

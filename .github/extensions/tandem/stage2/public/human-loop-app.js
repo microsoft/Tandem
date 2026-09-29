@@ -36,6 +36,8 @@ let snapshot, designDigest = null, refreshing = null, sending = false, pending =
 let pendingSubmitted = false, pendingPreviewUrl = null, pendingClipboardId = null;
 let stopRequest = null, stopAttempt = null;
 let controlsConnected = false;
+let initialCreationConfirmation = null;
+let initialCreationInspecting = false;
 const answerPending = new Map();
 let revealedQuestionKey = null;
 const notice = (text) => { $('notice').textContent = text ?? ''; $('notice').hidden = !text; };
@@ -194,6 +196,8 @@ function render() {
   $('initialize').hidden = !installed?.canStart && !installed?.canReopen && !installed?.canRetry;
   $('initialize').textContent = installed?.canRetry ? 'Retry runtime' : installed?.canReopen ? 'Reopen runtime'
     : installed?.status === 'saved-state' ? 'Verify saved runtime' : 'Initialize runtime';
+  $('inspect-initial-creation').hidden = !installed?.canInspectInitialRecovery;
+  $('inspect-initial-creation').disabled = initialCreationInspecting;
   $('shutdown').disabled = !view || !['ready', 'unknown'].includes(installed?.status);
   renderComposer();
   $('connection-status').textContent = 'Live updates';
@@ -559,7 +563,35 @@ function requestWorkflowStop(mode) {
   render();
   return stopRequest;
 }
-$('initialize').onclick = () => post('/api/runtime/start', snapshot.installation?.canRetry ? { retry: true } : {}).then(refresh).catch((error) => notice(error.message));
+$('initialize').onclick = () => post('/api/runtime/start', snapshot.installation?.canRetry ? { retry: true } : {})
+  .then(async () => { notice(''); await refresh(); }).catch((error) => notice(error.message));
+$('inspect-initial-creation').onclick = async () => {
+  if (initialCreationInspecting) return;
+  initialCreationInspecting = true; render();
+  let failure = null;
+  try {
+    const result = await post('/api/runtime/initial-creation/inspect', {});
+    initialCreationConfirmation = result.confirmationId;
+    $('initial-creation-detail').textContent = result.message;
+    $('initial-creation-identity').textContent = `Workspace: ${result.workspacePath}\nMain session: ${result.mainSessionId}\nReserved private session: ${result.privateSessionId}\n\n${result.reason ?? ''}`;
+    $('initial-creation-approval').showModal();
+  } catch (error) { failure = error; }
+  finally { initialCreationInspecting = false; render(); if (failure) notice(failure.message); }
+};
+$('cancel-initial-creation').onclick = () => $('initial-creation-approval').close();
+$('initial-creation-approval').addEventListener('close', () => {
+  const confirmationId = initialCreationConfirmation; initialCreationConfirmation = null;
+  $('inspect-initial-creation').focus({ preventScroll: true });
+  if (confirmationId) void post('/api/runtime/initial-creation/decision', { confirmationId, approve: false })
+    .catch(error => notice(error.message));
+});
+$('approve-initial-creation').onclick = async () => {
+  const confirmationId = initialCreationConfirmation;
+  if (!confirmationId) return;
+  initialCreationConfirmation = null; $('initial-creation-approval').close();
+  try { await post('/api/runtime/initial-creation/decision', { confirmationId, approve: true }); notice(''); await refresh(); }
+  catch (error) { notice(error.message); await refresh(); }
+};
 $('shutdown').onclick = () => post('/api/runtime/close', {}).then(refresh).catch((error) => notice(error.message));
 $('open-project-folder').onclick = async () => {
   $('open-project-folder').disabled = true;

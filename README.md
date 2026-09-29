@@ -178,6 +178,38 @@ saved, then attached with the exact original tools/hooks/permissions and
 `continuePendingWork: false`, `suppressResumeEvent: true`. No dummy user turn is
 used to make a session durable.
 
+### Recover an incomplete first Development startup
+
+New setup checks the actual Git root read-only before reserving native setup.
+Tandem does not run `git init`, change ignore rules or commit for you. An unborn
+Git HEAD is supported. Installation v3 records whether native creation is still
+unrequested, has been issued, or has been confirmed. After a pre-native failure,
+**Retry runtime** can finish initialization using the original reserved private
+ID, after checking that no work or native state exists. An issued creation with
+an unknown outcome is never treated as a fresh create.
+
+Older v2 setup did not retain that boundary. An absent session and an empty
+ledger therefore do not authorize an automatic fallback. If the original setup
+failed before any work, use **Inspect unused setup recovery** in Development.
+The application checks the full installation history, exact owner/configuration,
+startup-only ledger/audit and native metadata, storage inventory and live-owner
+observations. It refuses any prior Ready, confirmed native close/creation, Design, requests, roles,
+cycles, approvals, native state, foreign owner or indeterminate observation.
+No failed native query is interpreted as empty.
+An old Stop/Close intent that returned to `unknown` without a close proof is
+retained as intent, not mistaken for native creation; its IDs and phase transitions
+must match the complete startup history.
+
+If those checks succeed, review the displayed workspace and original reserved
+private ID, then select **Authorize one-time initialization**. This is a separate
+five-minute confirmation, not ordinary Retry, Reconcile, or implementation
+approval. The application rechecks the bound evidence and records consumption
+before issuing creation. Existing WAL frames, handoff files, request IDs and
+startup uncertainty remain retained; it sends no project/model request.
+After **Ready**, explicitly select **Reconcile Design handoff** to admit the
+original prepared handoff. Never delete saved state or locks to bypass a
+rejected recovery check.
+
 ## Acceptance, export and process adapters
 
 Use **Capture Development outcome for review**, inspect the original Development

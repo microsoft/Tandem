@@ -148,8 +148,8 @@
     },
     {
       "path": "public/human-loop-app.js",
-      "bytes": 37194,
-      "sha256": "f9f98ec9df401f09f8c323bb343c25b9e931695fa94d739d443bf7edcc69165f"
+      "bytes": 39125,
+      "sha256": "546ba49c3d525656657efee2a4190aaf3491043e92068664f405aa61d357f453"
     },
     {
       "path": "public/human-loop-shell.css",
@@ -158,8 +158,8 @@
     },
     {
       "path": "public/human-loop.html",
-      "bytes": 12687,
-      "sha256": "de7ae3d6ce12567306e68f39a5b1082cae47f4e83b679250b3dfba164e792298"
+      "bytes": 13305,
+      "sha256": "a7e3c0986e35a72551523684f204ac4a44947a2fccbdc7b6dfac44222fb96090"
     },
     {
       "path": "public/implementation-confirmation.js",
@@ -348,8 +348,8 @@
     },
     {
       "path": "runtime-src/domain/host-state-wal.ts",
-      "bytes": 27558,
-      "sha256": "eecddbee1de888180ab192a05ec644f9fd0da1bab8b1769e33732ef37ae59674"
+      "bytes": 30322,
+      "sha256": "bef662476d58fb9f401615daf5d1f9724533e8e2b4576e8f9a5bf4497c528dbf"
     },
     {
       "path": "runtime-src/domain/human-loop/authorization.ts",
@@ -583,8 +583,8 @@
     },
     {
       "path": "src/human-loop-installation.mjs",
-      "bytes": 19919,
-      "sha256": "89eda58d84458e0876845344b1f8d1348d24fddbe422fdccd242a2eeca59b4ab"
+      "bytes": 37227,
+      "sha256": "a9bbe3521718adf4b034af28b3c6a0cdbbc687f4decfe3f9efa4a89fb98aa668"
     },
     {
       "path": "src/human-loop-native-files.mjs",
@@ -613,13 +613,13 @@
     },
     {
       "path": "src/human-loop-provider.mjs",
-      "bytes": 31975,
-      "sha256": "a22f1609dde2b8e4cf242215d680f393f06b57aec6485e3f22a7df51ccf59e24"
+      "bytes": 33127,
+      "sha256": "6f250f9fa0249d4ae80a537dec0eefc7d658fc2cbcc3fda3f29f5bc844251573"
     },
     {
       "path": "src/human-loop-recovery.mjs",
-      "bytes": 7518,
-      "sha256": "94c937507d7e9a9422e8daffb97c755c7e587a34c67b621b8a17a647818cfe11"
+      "bytes": 9342,
+      "sha256": "e27014817f212c8cf9295e96a7ca0a5735162db9592f3aa81130fb4280bc14e7"
     },
     {
       "path": "src/human-loop-review.mjs",
@@ -628,13 +628,18 @@
     },
     {
       "path": "src/human-loop-runtime.mjs",
-      "bytes": 64187,
-      "sha256": "8310ebd047c34346b5fa09038df58f9d11e9815d1540d5aa7b3334a619afd109"
+      "bytes": 64851,
+      "sha256": "1b4d44a9338f996f13b7742e81358f6ffe2e0e26bcb833e0a787de3918fe3208"
+    },
+    {
+      "path": "src/human-loop-startup.mjs",
+      "bytes": 4004,
+      "sha256": "c44eed8f64ad7a39243e23d47385c82590f4483cf3d8130648962155c1714d87"
     },
     {
       "path": "src/human-loop-store.mjs",
-      "bytes": 9646,
-      "sha256": "11a97976064dffe0b67812d75e0bec1cc54f55731857ce9a4337482934fcf2c1"
+      "bytes": 11182,
+      "sha256": "9d70d08ed947a11f6da6c497cb039c6eb1ec086348d7a1451a9053840f344182"
     },
     {
       "path": "src/human-loop-task.mjs",
@@ -643,13 +648,13 @@
     },
     {
       "path": "src/human-loop-transport.mjs",
-      "bytes": 71699,
-      "sha256": "f568a18e3411674933981e3f335140a88f080f604ac33f25f8ff20f9f868ede2"
+      "bytes": 73121,
+      "sha256": "e5950e71492755953c5de18a864845268fedfe31b5b7ad85034359c6b0091268"
     },
     {
       "path": "src/human-loop-workspace.mjs",
-      "bytes": 23846,
-      "sha256": "a1d2132f010712f49aa9f07312cbded5d5c9d73050640df7cb5daaa8a0c05b7f"
+      "bytes": 23967,
+      "sha256": "45eff1a84509562e998d2cc65f76c30bd5ca664dae2fa2723140c680434c4714"
     },
     {
       "path": "src/native-permission-lifecycle.mjs",
