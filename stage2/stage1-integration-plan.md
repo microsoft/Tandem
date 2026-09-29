@@ -5,8 +5,12 @@ to be finalized. This document does not claim that integration has shipped.
 
 ## Core idea: let Designer continue the Design
 
-Stage 1 discovers intent through prototyping. Stage 2 develops against the
-resulting agreement. The bridge is the existing Designer workflow, not a
+**Stage 1 is optional. Users can open Stage 2 directly and start there**, with
+either a new project or an existing repository. No Stage 1 effort, completed
+stage, prototype, exported bundle or handoff file is required.
+
+When used, Stage 1 discovers intent through prototyping. Stage 2 develops against
+the resulting agreement. The bridge is the existing Designer workflow, not a
 separate importer or a restart of discovery.
 
 This is analogous to Designer exploring an existing repository. Instead of
@@ -27,12 +31,19 @@ continues that Design and owns subsequent planning, implementation, validation
 and Review.
 
 ```text
-Stage 1: Prepare -> Requirements -> Prototype -> Design
-                                                   |
-                                             explicit handoff
-                                                   |
-Stage 2: conversational Design refinement / confirmed implementation / Review
+Direct entry: new project or existing repository -----------------+
+                                                                |
+Optional Stage 1: Prepare -> Requirements -> Prototype -> Design  |
+                                                          |     |
+                                                   handoff|     |
+                                                          v     v
+Stage 2: conversational Design / confirmed implementation / Review
 ```
+
+Direct entry uses the ordinary Stage 2 Router and Designer to establish or refine
+the agreement from the user's request and available project context. It does not
+fabricate completed Stage 1 stages or treat a missing handoff as a setup error.
+The normal Design and implementation-confirmation boundaries still apply.
 
 After handoff, the user changes the Design by talking to the Stage 2 agent and
 using its existing Designer/question flow. There is **no current requirement to
@@ -48,7 +59,8 @@ retain the old Plan/Implement/Test sequence as a competing execution path.
 ## Runtime strategy: foreground owner, private Stage 2 session
 
 Use the existing foreground Copilot session as the entry point for both stages.
-Its Tandem extension brings up the Stage 2 runtime when the user opens Stage 2;
+Its Tandem extension brings up the Stage 2 runtime when the user opens Stage 2,
+whether or not Stage 1 has been used;
 that runtime creates or recovers its own private native Copilot session.
 The foreground chat need not remain in an active turn while Stage 2 works.
 
@@ -123,10 +135,16 @@ is not evidence that backend logic, persistence or integrations work.
 
 ## Intended user flow
 
-1. From the foreground-owned Tandem entry point, the user opens Stage 2,
-   makes the Stage 1 files available in the project and asks Tandem to continue
-   that Design. Stage 2's private Router interprets this as Design work and
-   hands it to Designer, not directly to Planner.
+The shared entry point must expose direct Stage 2 startup without first starting
+Stage 1. From there, users can describe a new project or ask Designer to explore
+an existing repository through the normal Stage 2 conversation.
+
+For the optional Stage 1 handoff:
+
+1. From the foreground-owned Tandem entry point, the user opens Stage 2, makes
+   the Stage 1 files available in the project and asks Tandem to continue that
+   Design. Stage 2's private Router interprets this as Design work and hands it
+   to Designer, not directly to Planner.
 2. Designer inspects the supplied documents, prototype source and relevant
    project context read-only. It preserves the original files and distinguishes
    confirmed intent, open choices and implementation shortcuts.
@@ -178,6 +196,8 @@ scripts; existing permission and rendering boundaries remain in effect.
 
 ## What to verify before calling the integration complete
 
+- A new project and an existing repository can each start directly in Stage 2
+  without any Stage 1 state, prototype or handoff files.
 - One foreground-owned extension can open either stage without competing
   providers or recursively creating private runtimes.
 - Stage 2 runs in its own correctly bound private session without requiring
