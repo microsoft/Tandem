@@ -65,6 +65,7 @@ export class HumanLoopTransport {
   #retiredEnvelopes = new Map();
   #retiredInteractions = new Set();
   #retiredCalls = new Set();
+  #retiredInputs = false;
   #retiredAgents = new Set();
   #nativeFiles;
   #nativeShells;
@@ -293,6 +294,7 @@ export class HumanLoopTransport {
       catch (error) { await diagnose("retained-history", safeReason(error, this.#owner.policy.values.resources.reviewReasonCharacters)); }
     }
     await retainRecoveryMessages(this.#store, state, history, diagnose);
+    this.#retiredInputs = Boolean(state.activeTask || state.executions.length || history.some(event => event.type === "user.message"));
     const retained = recoveryReadinessSnapshot(this.#owner.privateSessionId, history);
     this.#retiredHistory = new Set(retained.events.map(event => event.id));
     await this.#openSession(retained, true, allowMissingInitialSession);
@@ -462,7 +464,7 @@ export class HumanLoopTransport {
       result: null, resultSubmitted: false, submitting: false, resultCallId: null,
       continuation: null, missingResultIdle: null,
       stopId: null, stopAcknowledged: false,
-      controller: new AbortController(), budget: new PrivateTaskBudget(this.#now), tools: new Set(), grants: new Map(), admittedTools: new Map(), nativeCalls: new Map(),
+      controller: new AbortController(), budget: new PrivateTaskBudget(this.#now), tools: new Set(), grants: new Map(), admittedTools: new Map(), nativeCalls: new Map(), nativeRequests: new Map(),
       sent: false, notSent: false, resultReady: Promise.withResolvers() };
     active.resultReady.promise.catch(() => {});
     this.#active = active;
@@ -591,6 +593,8 @@ export class HumanLoopTransport {
         envelope: input.envelope, user: input.user, messageId: input.messageId });
     }
     if (active.continuation?.messageId) this.#retiredMessages.add(active.continuation.messageId);
+    if (active.sent) this.#retiredInputs = true;
+    for (const id of active.nativeRequests.keys()) this.#retiredCalls.add(id);
     for (const id of active.nativeCalls.keys()) this.#retiredCalls.add(id);
     for (const call of active.nativeCalls.values()) if (call.reviewScope?.agentId) this.#retiredAgents.add(call.reviewScope.agentId);
     if (active.resultCallId) this.#retiredCalls.add(active.resultCallId);
@@ -1021,7 +1025,28 @@ export class HumanLoopTransport {
       if (event.type === "tool.execution_complete" && !active) return;
       if (!active?.user && !["user.message", "assistant.turn_start"].includes(event.type)) return;
       if (event.type === "assistant.message") {
-        if (event.agentId || !active?.user || !active.starts.length || typeof data.content !== "string" || !data.content.trim()) return;
+        if (event.agentId || !active?.user || !active.starts.length) return;
+        if (!active.resultSubmitted && !active.stopId && Array.isArray(data.toolRequests) && data.toolRequests.length
+          && typeof data.interactionId === "string" && (data.turnId === undefined || typeof data.turnId === "string")) {
+          requireCondition(!data.parentToolCallId
+            && [active.user, active.continuation?.user].some(user => user?.interactionId === data.interactionId)
+            && active.starts.some(start => (data.turnId === undefined || start.turnId === data.turnId)
+              && start.interactionId === data.interactionId),
+          "Native tool requests have no exact owned assistant turn.");
+          for (const request of data.toolRequests) {
+            if (!this.#nativePolicy(request.name)) continue;
+            const id = text(request.toolCallId), binding = { name: text(request.name), turnId: data.turnId ?? null,
+              interactionId: data.interactionId,
+              key: request.arguments === undefined ? null : policyHash({ name: request.name, args: request.arguments }) };
+            const previous = active.nativeRequests.get(id), called = active.nativeCalls.get(id);
+            requireCondition(!this.#retiredCalls.has(id) && (!previous || policyHash(previous) === policyHash(binding))
+              && (!called || called.name === binding.name && (binding.turnId === null || called.turnId === binding.turnId)
+                && called.interactionId === binding.interactionId && (binding.key === null || called.key === binding.key)),
+            "Native tool request identity changed or belongs to a retired input.");
+            active.nativeRequests.set(id, binding);
+          }
+        }
+        if (typeof data.content !== "string" || !data.content.trim()) return;
         this.#enqueue(async () => {
           await this.#store.recordMessage({ id: `native:${text(event.id)}`, role: active.packet.binding.role,
             requestId: active.packet.binding.requestId, kind: "assistant", content: data.content, timestamp: text(event.timestamp) });
@@ -1044,14 +1069,19 @@ export class HumanLoopTransport {
       requireCondition(active, "Unowned input/execution appeared in the private session.");
       if (event.type === "tool.execution_start") {
         const input = active.continuation?.user ?? active.user;
-        const turns = active.starts.filter(start => start.turnId === data.turnId);
+        const callId = text(data.toolCallId), request = active.nativeRequests.get(callId);
+        const interactionId = data.interactionId === undefined ? request?.interactionId : data.interactionId;
+        const turnId = data.turnId === undefined ? request?.turnId : data.turnId;
+        const turns = active.starts.filter(start => start.turnId === turnId
+          && (interactionId === undefined || start.interactionId === interactionId));
         requireCondition(input && turns.length === 1 && turns[0].interactionId === input.interactionId
-          && (data.interactionId === undefined || data.interactionId === input.interactionId),
+          && (interactionId !== undefined || !this.#retiredInputs)
+          && (!request || request.interactionId === input.interactionId && (request.turnId === null || request.turnId === turnId)
+            && request.name === data.toolName && (request.key === null || request.key === policyHash({ name: data.toolName, args: data.arguments }))),
         "Native file invocation lacks an unambiguous owned role turn.");
-        const callId = text(data.toolCallId);
         requireCondition(!active.nativeCalls.has(callId), "Native file invocation identity was reused.");
         active.nativeCalls.set(callId, { name: data.toolName, args: structuredClone(data.arguments),
-          key: policyHash({ name: data.toolName, args: data.arguments }), turnId: data.turnId,
+          key: policyHash({ name: data.toolName, args: data.arguments }), turnId,
           interactionId: input.interactionId, claimed: false, admission: null });
         active.tools.add(callId);
       } else if (event.type === "user.message") {
@@ -1112,12 +1142,13 @@ export class HumanLoopTransport {
 
   #matchInput(event, expected) {
     const data = event.data ?? {}, user = nativeUserEvidence(event);
+    // parentAgentTaskId is background telemetry; source and event.agentId identify input origin.
     requireCondition(!event.agentId && user.interactionId
       && (user.messageId === null) === (user.turnId === null)
-      && (data.delivery === undefined || data.delivery === "idle")
+      && (data.delivery === undefined || data.delivery === "idle" || data.delivery === "queued")
       && (data.agentMode === undefined || data.agentMode === "interactive")
       && (data.isAutopilotContinuation === undefined || data.isAutopilotContinuation === false)
-      && data.parentAgentTaskId == null && data.source == null
+      && (data.parentAgentTaskId == null || typeof data.parentAgentTaskId === "string") && data.source == null
       && (!expected.messageId || !user.messageId || expected.messageId === user.messageId),
     "Private input has foreign, partial or incompatible native identities.");
     requireCondition(policyHash(humanInputEnvelope(data.content, data.attachments, expected.envelope.kind))

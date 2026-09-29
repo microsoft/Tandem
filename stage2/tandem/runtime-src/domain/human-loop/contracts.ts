@@ -66,7 +66,7 @@ export interface TaskBinding {
 export type NativeUserEvidence =
   | { id: string; messageId: string; turnId: string; interactionId: string }
   | { schemaVersion: 'human-loop-native-user/v2'; id: string; messageId: string | null;
-      turnId: string | null; interactionId: string | null };
+      turnId: string | null; interactionId: string | null; parentAgentTaskId?: string | null };
 export interface RoleInputEnvelope {
   schemaVersion: 'human-role-input/v1'; kind: 'initial' | 'continuation';
   promptDigest: string; promptBytes: number; attachmentsDigest: string;
@@ -77,14 +77,20 @@ export interface RoleInput extends RoleInputEnvelope {
 }
 export function parseNativeUserEvidence(value: unknown): NativeUserEvidence {
   const modern = value !== null && typeof value === 'object' && 'schemaVersion' in value;
-  const data = object(value, [...(modern ? ['schemaVersion'] : []), 'id', 'messageId', 'turnId', 'interactionId']);
+  const telemetry = modern && Object.hasOwn(value, 'parentAgentTaskId');
+  const data = object(value, [...(modern ? ['schemaVersion'] : []), 'id', 'messageId', 'turnId', 'interactionId',
+    ...(telemetry ? ['parentAgentTaskId'] : [])]);
   if (!modern) return { id: text(data.id), messageId: text(data.messageId),
     turnId: text(data.turnId), interactionId: text(data.interactionId) };
   requireCondition(data.schemaVersion === 'human-loop-native-user/v2', 'Incompatible native input evidence.');
-  return { schemaVersion: 'human-loop-native-user/v2', id: text(data.id),
+  const user: NativeUserEvidence = { schemaVersion: 'human-loop-native-user/v2', id: text(data.id),
     messageId: data.messageId === null ? null : text(data.messageId),
     turnId: data.turnId === null ? null : text(data.turnId),
     interactionId: data.interactionId === null ? null : text(data.interactionId) };
+  if (!telemetry) return user;
+  const parentAgentTaskId = data.parentAgentTaskId;
+  requireCondition(parentAgentTaskId === null || typeof parentAgentTaskId === 'string', 'Native input parent telemetry must be a string or null.');
+  return { ...user, parentAgentTaskId };
 }
 export function parseRoleInputEnvelope(value: unknown): RoleInputEnvelope {
   const data = object(value, ['schemaVersion', 'kind', 'promptDigest', 'promptBytes', 'attachmentsDigest']);

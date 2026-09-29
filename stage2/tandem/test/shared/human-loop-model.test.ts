@@ -113,6 +113,8 @@ test('modern native input evidence keeps acknowledgement, event, interaction and
     user: { schemaVersion: 'human-loop-native-user/v2', id: 'native-user', messageId: null, turnId: null,
       interactionId: 'native-interaction' }, turnId: '0', startEventId: 'native-start' };
   assert.throws(() => f.emit('role-input-bound', { ...native, dispatchId: 'foreign' }, 'runtime'), /prepared/);
+  assert.throws(() => f.emit('role-input-bound', { ...native,
+    user: { ...native.user, messageId: 'partial-legacy-identity' } }, 'runtime'), /prepared/);
   f.emit('role-input-bound', native, 'runtime');
   assert.equal(f.state.activeTask!.messageId, null);
   f.emit('role-acknowledged', { taskId: binding.id, dispatchId: binding.dispatchId, messageId: 'sdk-ack' }, 'runtime');

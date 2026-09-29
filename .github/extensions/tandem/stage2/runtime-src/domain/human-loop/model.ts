@@ -620,6 +620,7 @@ export function transitionHumanLoop(current: HumanLoopState, authority: Authorit
       const turnId = text(data.turnId), startEventId = text(data.startEventId);
       requireCondition(data.taskId === task.binding.id && data.dispatchId === task.binding.dispatchId
         && !task.result && !task.end && input && !input.native && user.interactionId
+        && (user.messageId === null) === (user.turnId === null)
         && (user.turnId === null || user.turnId === turnId)
         && (!input.acknowledgementId || user.messageId === null || user.messageId === input.acknowledgementId),
       'Native input lacks its exact prepared envelope, interaction or turn.');

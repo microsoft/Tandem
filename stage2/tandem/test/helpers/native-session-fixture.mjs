@@ -40,6 +40,11 @@ export class NativeSession {
     this.emit("assistant.turn_start", { turnId: this.turnId ?? "0", interactionId: messageId });
   }
   idle() { this.processing = false; this.emit("assistant.idle", {}); }
+  toolRequest(name, args, toolCallId) {
+    this.emit("assistant.message", { messageId: `assistant-${this.count + 1}`, content: "",
+      turnId: this.turnId ?? "0", interactionId: this.interactionId,
+      toolRequests: [{ toolCallId, name, arguments: structuredClone(args) }] });
+  }
   async call(name, args) {
     const tool = this.config.tools.find((tool) => tool.name === name);
     validatePolicyShape(tool.parameters, args);

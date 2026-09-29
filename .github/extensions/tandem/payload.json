@@ -25,7 +25,7 @@
     {
       "path": "stage2/manifest.json",
       "bytes": 23332,
-      "sha256": "260d6dd98247e174e1afebfa5b5b145e809cabb79ed21bdddde444b35482d5b4"
+      "sha256": "3fa395cde1bb0d8c42b6537f312f404a619bdca9c1ec91f6a9c47d3c9daafec5"
     },
     {
       "path": "stage2/package.json",
@@ -374,8 +374,8 @@
     },
     {
       "path": "stage2/runtime-src/domain/human-loop/contracts.ts",
-      "bytes": 28826,
-      "sha256": "00b884b2e47d797cc8e8429db3712e480765a7ff702183b123dd9ca6c66b165c"
+      "bytes": 29287,
+      "sha256": "eb44443acbd3d545b1e6ffef503c078d2157b2c378cebc54e8e1efe725e3ee2b"
     },
     {
       "path": "stage2/runtime-src/domain/human-loop/ledger.ts",
@@ -384,8 +384,8 @@
     },
     {
       "path": "stage2/runtime-src/domain/human-loop/model.ts",
-      "bytes": 76608,
-      "sha256": "9d15075bc2f33161e81c4b12b66567d5080f146079ef10feaf010a5c4a5adcb8"
+      "bytes": 76673,
+      "sha256": "e857922b30cb63894d02bc0e4abbc11b58e012fd4bb6b5896deae924a08cabd0"
     },
     {
       "path": "stage2/runtime-src/domain/human-loop/tool-contracts.ts",
@@ -659,13 +659,13 @@
     },
     {
       "path": "stage2/src/human-loop-task.mjs",
-      "bytes": 4132,
-      "sha256": "1a50ee20c09945a2148a9c58b962b3124c24dd526035a6fdb9d6113e28b7121e"
+      "bytes": 4233,
+      "sha256": "d742dd393dd7c885592b9ed0fc139a5e9f87d71d92bccdb0ff3f7efb5edaeb1d"
     },
     {
       "path": "stage2/src/human-loop-transport.mjs",
-      "bytes": 77440,
-      "sha256": "9e424a4cd36bab5c192067ab8aacc84680861808f14c0277b2b60d50092aa6e5"
+      "bytes": 80200,
+      "sha256": "8f2bcb9c288b0f6eb46aca78858c53d781ec7eed578fd0ad9d11189f08b03a41"
     },
     {
       "path": "stage2/src/human-loop-workspace.mjs",
@@ -708,5 +708,5 @@
       "sha256": "92b92e76eb4ac3bee96c6bbdde06ed1f7d9c0088576a51db1276c567dbb207f8"
     }
   ],
-  "digest": "196373b291bb99d1f2565331624b016bdb1f755a14610bafcb23b1abec42a9da"
+  "digest": "edf0bc00c0cc3eac4f3af8a87e1630e48d133b56f26bf0a2df894b0a7e28525f"
 }

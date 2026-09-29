@@ -75,6 +75,17 @@ attached background app remains running. Immediate delivery does not change
 Tandem's durable request ordering, grant permissions, invoke Stop or add a
 completion gate; native scheduling and process lifetime remain runtime-owned.
 
+Input correlation keeps the SDK send acknowledgement separate from the native
+user-event ID, interaction and turn. The Host durably records the exact prompt
+and attachment envelope before sending; absent SDK fields are never invented.
+An exact owned `queued` input is valid timing evidence, not foreign origin;
+steering, injected source and conflicting identities remain rejected. The SDK's
+`parentAgentTaskId` is telemetry, not an input-origin or permission claim. Numeric
+turn IDs are interaction-scoped. Reused or retired turns require an explicit
+interaction or a matching SDK assistant tool-request ID, never chronological
+`parentId` or the most recent role. This additive evidence preserves old ledger
+reads and does not make acknowledgement or event bookkeeping a result gate.
+
 The September 28 isolated native/full-E2E qualification exercised 23 role
 dispatches exactly once with the same attached app through aggregate
 implementation, Review and later work, plus same-ID Close/reopen/reclose.

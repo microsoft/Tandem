@@ -234,17 +234,18 @@ async function fixture(t, { permission = false, nativeFiles = false, now, termin
     revoke: () => { authorized = false; } };
 }
 
-function capturedDispatch(session, order = ["user", "start", "ack"], change = () => {}) {
+function capturedDispatch(session, order = ["user", "start", "ack"], change = () => {}, turnFor = number => String(number - 1)) {
   const pending = [];
   session.send = async options => {
     session.sends.push(options);
     const number = session.sends.length, acknowledgement = `sdk-ack-${number}`;
     session.messageId = acknowledgement; session.interactionId = `native-interaction-${number}`;
-    session.turnId = String(number - 1);
+    session.turnId = turnFor(number);
     const { turnId, interactionId } = session;
     const user = { content: options.prompt, transformedContent: options.prompt,
       attachments: structuredClone(options.attachments ?? []), supportedNativeDocumentMimeTypes: [],
-      agentMode: "interactive", delivery: "idle", interactionId: session.interactionId };
+      agentMode: "interactive", delivery: "idle", interactionId: session.interactionId,
+      parentAgentTaskId: "00000000-0000-4000-8000-000000000111" };
     change(user, options);
     const emit = type => type === "user"
       ? session.emit("user.message", user)
@@ -275,6 +276,7 @@ for (const order of capturedOrders) test(`captured native input binds exact enve
   assert.equal(Object.hasOwn(user.data, "turnId"), false);
   assert.equal(state.activeTask.messageId, "sdk-ack-1");
   assert.equal(state.activeTask.interactionId, "native-interaction-1");
+  assert.equal(state.activeTask.inputs[0].native.user.parentAgentTaskId, "00000000-0000-4000-8000-000000000111");
   f.session.emit("tool.execution_start", { toolCallId: "owned-read", toolName: "view",
     arguments: { path: "app.js" }, turnId: f.session.turnId });
   assert.deepEqual(await f.session.config.hooks.onPreToolUse({ sessionId: "private", toolName: "view",
@@ -371,6 +373,103 @@ test("captured native tools cannot choose a reused turn by recency", async t => 
   await assert.rejects(f.transport.drain(), /unambiguous owned role turn/);
 });
 
+test("captured queued Host inputs preserve exact initial and continuation ownership without allowing steering", async t => {
+  const f = await fixture(t);
+  capturedDispatch(f.session, undefined, user => { user.delivery = "queued"; });
+  await f.request(); const packet = await f.begin("router");
+  f.session.emit("session.idle", {});
+  await waitFor(() => f.session.sends.length === 2, "owned queued continuation");
+  await f.transport.drain();
+  await f.finish(packet, "submit_human_route", { kind: "route", intent: "answer", cycleId: null,
+    summary: "Delivery describes timing, not foreign origin.", resolvedQuestions: [] });
+  assert.equal((await f.store.load()).uncertainty, null);
+  assert.deepEqual((await f.store.load()).executions[0].inputs.map(input => input.native.user.interactionId),
+    ["native-interaction-1", "native-interaction-2"]);
+});
+
+for (const evidence of ["explicit-interaction", "assistant-request", "assistant-request-without-start-turn", "assistant-request-without-message-turn"]) {
+  test(`captured same-role turn zero reuse requires exact ${evidence}`, async t => {
+    const f = await fixture(t, { nativeFiles: true });
+    capturedDispatch(f.session, undefined, undefined, () => "0");
+    await f.request(); const packet = await f.begin("router");
+    f.session.emit("session.idle", {});
+    await waitFor(() => f.session.sends.length === 2, "same-role repeated turn zero");
+    await f.transport.drain();
+    const callId = "continuation-zero-read", args = { path: "app.js" };
+    if (evidence !== "explicit-interaction") f.session.emit("assistant.message", {
+      messageId: "native-tool-request", content: "",
+      ...(evidence === "assistant-request-without-message-turn" ? {} : { turnId: "0" }), interactionId: f.session.interactionId,
+      toolRequests: [{ name: "view", toolCallId: callId, arguments: args }],
+    });
+    f.session.emit("tool.execution_start", { toolCallId: callId, toolName: "view", arguments: args,
+      ...(evidence === "assistant-request-without-start-turn" ? {} : { turnId: "0" }),
+      ...(evidence === "explicit-interaction" ? { interactionId: f.session.interactionId } : {}) });
+    assert.deepEqual(await f.session.config.hooks.onPreToolUse({ sessionId: "private", toolName: "view",
+      toolArgs: args }, { sessionId: "private" }), {});
+    f.session.emit("tool.execution_complete", { toolCallId: callId, success: true,
+      turnId: "0", interactionId: f.session.interactionId });
+    await f.finish(packet, "submit_human_route", { kind: "route", intent: "answer", cycleId: null,
+      summary: "Tool-call identity disambiguates a repeated numeric turn.", resolvedQuestions: [] });
+    assert.equal((await f.store.load()).uncertainty, null);
+    assert.deepEqual((await f.store.load()).executions[0].inputs.map(input => input.native.turnId), ["0", "0"]);
+  });
+}
+
+for (const variant of ["missing-interaction", "missing-both-turns", "wrong-call", "changed-arguments", "conflicting-interaction"]) {
+  test(`captured repeated-turn tool requests reject ${variant} evidence`, async t => {
+    const f = await fixture(t, { nativeFiles: true });
+    capturedDispatch(f.session, undefined, undefined, () => "0");
+    await f.request(); await f.begin("router");
+    f.session.emit("session.idle", {});
+    await waitFor(() => f.session.sends.length === 2, "same-role repeated turn zero");
+    await f.transport.drain();
+    const request = { messageId: "native-tool-request", content: "", turnId: "0", interactionId: f.session.interactionId,
+      toolRequests: [{ name: "view", toolCallId: "requested-read", arguments: { path: "app.js" } }] };
+    if (variant === "missing-interaction") delete request.interactionId;
+    if (variant === "missing-both-turns") delete request.turnId;
+    f.session.emit("assistant.message", request);
+    f.session.emit("tool.execution_start", { toolCallId: variant === "wrong-call" ? "not-requested" : "requested-read",
+      toolName: "view", ...(variant === "missing-both-turns" ? {} : { turnId: "0" }),
+      arguments: { path: variant === "changed-arguments" ? "other.js" : "app.js" },
+      ...(variant === "conflicting-interaction" ? { interactionId: "native-interaction-1" } : {}) });
+    await assert.rejects(f.transport.drain(), /unambiguous owned role turn/);
+  });
+}
+
+test("captured pending tool-request IDs retire with their role and cannot be rebound to a reused successor turn", async t => {
+  const f = await fixture(t, { nativeFiles: true });
+  capturedDispatch(f.session, undefined, undefined, () => "0");
+  await f.request(); const old = await f.begin("router");
+  f.session.emit("assistant.message", { messageId: "old-assistant", content: "", turnId: "0",
+    interactionId: f.session.interactionId, toolRequests: [{ toolCallId: "late-owned-read", name: "view", arguments: { path: "app.js" } }] });
+  await f.finish(old, "submit_human_route", { kind: "route", intent: "answer", cycleId: null,
+    summary: "A terminal result completes without waiting for another requested tool.", resolvedQuestions: [] });
+  const next = await f.begin("agent"), before = await f.store.load();
+  f.session.emit("tool.execution_start", { toolCallId: "late-owned-read", toolName: "view", turnId: "0",
+    arguments: { path: "app.js" } });
+  await f.transport.drain();
+  assert.equal((await f.session.config.hooks.onPreToolUse({ sessionId: "private", toolName: "view",
+    toolArgs: { path: "app.js" } }, { sessionId: "private" })).permissionDecision, "deny");
+  assert.deepEqual(await f.store.load(), before);
+  assert.deepEqual(await nativeAdmission(f, "fresh-owned-read", "view", { path: "app.js" }), {});
+  nativeCompletion(f, "fresh-owned-read");
+  await f.finish(next, "submit_readonly_answer", { kind: "answer", summary: "Successor retained its own authority.",
+    report: "The late old request was not adopted.", evidenceRefs: [] });
+  assert.equal((await f.store.load()).uncertainty, null);
+});
+
+test("captured unscoped successor turn cannot identify an unknown old invocation by recency", async t => {
+  const f = await fixture(t, { nativeFiles: true });
+  capturedDispatch(f.session, undefined, undefined, () => "0");
+  await f.request(); const old = await f.begin("router");
+  await f.finish(old, "submit_human_route", { kind: "route", intent: "answer", cycleId: null,
+    summary: "First role is complete.", resolvedQuestions: [] });
+  await f.begin("agent");
+  f.session.emit("tool.execution_start", { toolCallId: "unscoped-read", toolName: "view", turnId: "0",
+    arguments: { path: "app.js" } });
+  await assert.rejects(f.transport.drain(), /unambiguous owned role turn/);
+});
+
 test("captured input binding persistence does not become a terminal-result completion gate", async t => {
   const f = await fixture(t);
   capturedDispatch(f.session, ["ack", "user", "start"]);
@@ -395,21 +494,77 @@ test("captured input binding persistence does not become a terminal-result compl
   assert.ok(f.progress.some(event => event.kind === "dispatch-diagnostic"));
 });
 
+test("captured late user and start evidence after terminal release cannot bind or poison the successor", async t => {
+  const f = await fixture(t);
+  const deliverOld = capturedDispatch(f.session, ["ack", "user", "start"]);
+  await f.request(); const old = await f.begin("router");
+  await f.finish(old, "submit_human_route", { kind: "route", intent: "answer", cycleId: null,
+    summary: "The terminal result does not wait for input bookkeeping.", resolvedQuestions: [] });
+  capturedDispatch(f.session);
+  const next = await f.begin("agent"), before = await f.store.load();
+  deliverOld(); await f.transport.drain();
+  assert.deepEqual(await f.store.load(), before);
+  assert.equal((await f.store.load()).activeTask.binding.id, next.binding.id);
+  await f.finish(next, "submit_readonly_answer", { kind: "answer", summary: "New task completed.",
+    report: "Late evidence did not change its authority.", evidenceRefs: [] });
+  assert.equal((await f.store.load()).uncertainty, null);
+});
+
+for (const variant of ["missing-start-interaction", "foreign-session"]) {
+  test(`captured native input rejects ${variant} rather than guessing identity`, async t => {
+    const f = await fixture(t);
+    capturedDispatch(f.session);
+    const emit = f.session.emit.bind(f.session);
+    f.session.emit = (type, data, parent, overrides = {}) => {
+      if (type === "assistant.turn_start" && variant === "missing-start-interaction") {
+        data = { ...data }; delete data.interactionId;
+      }
+      if (type === "user.message" && variant === "foreign-session") overrides.sessionId = "foreign-private";
+      emit(type, data, parent, overrides);
+    };
+    await f.request();
+    await assert.rejects(f.begin("router"), /matching interaction|another private session/);
+    await waitFor(async () => (await f.store.load()).uncertainty, "rejected event identity");
+    assert.equal(f.session.sends.length, 1);
+  });
+}
+
+test("captured descendant input never binds a root role even with the exact Host content and telemetry", async t => {
+  const f = await fixture(t, { nativeFiles: true });
+  capturedDispatch(f.session);
+  const emit = f.session.emit.bind(f.session);
+  f.session.emit = (type, data, parent, overrides = {}) => {
+    emit(type, data, parent, ["user.message", "assistant.turn_start"].includes(type)
+      ? { ...overrides, agentId: "synthetic-child" } : overrides);
+  };
+  await f.request(); const packet = await f.begin("router");
+  assert.equal((await f.store.load()).activeTask.inputs[0].native, null);
+  const denied = await f.session.config.hooks.onPreToolUse({ sessionId: "synthetic-child",
+    toolName: "submit_human_route", toolArgs: { inputDigest: packet.binding.inputDigest } }, { sessionId: "private" });
+  assert.equal(denied.permissionDecision, "deny");
+  assert.match(denied.permissionDecisionReason, /root owned role/);
+  assert.equal((await f.store.load()).activeTask.result, null);
+  assert.equal((await f.store.load()).uncertainty, null);
+});
+
 for (const [name, change] of [
   ["changed content", user => { user.content += " foreign"; }],
   ["missing interaction", user => { delete user.interactionId; }],
   ["steering", user => { user.delivery = "steering"; }],
   ["autopilot", user => { user.isAutopilotContinuation = true; }],
   ["injected source", user => { user.source = "skill"; }],
-  ["background parent", user => { user.parentAgentTaskId = "foreign-agent"; }],
+  ["inter-agent source", user => { user.source = "agent-foreign"; }],
+  ["malformed parent telemetry", user => { user.parentAgentTaskId = 42; }],
   ["foreign mode", user => { user.agentMode = "autopilot"; }],
   ["partial legacy identity", user => { user.messageId = "sdk-ack-1"; }],
+  ["conflicting legacy ACK", user => { user.messageId = "foreign-ack"; user.turnId = "0"; }],
+  ["conflicting legacy turn", user => { user.messageId = "sdk-ack-1"; user.turnId = "foreign-turn"; }],
   ["changed attachments", user => { user.attachments = [{ type: "blob", mimeType: "image/png", data: "Zm9yZWlnbg==" }]; }],
 ]) test(`captured native input fails closed for ${name}`, async t => {
   const f = await fixture(t);
   capturedDispatch(f.session, undefined, change);
   await f.request();
-  await assert.rejects(f.begin("router"), /input|interaction|attachment|identity|ownership/i);
+  await assert.rejects(f.begin("router"), /input|interaction|attachment|identity|ownership|acknowledgement/i);
   await waitFor(async () => (await f.store.load()).uncertainty, "durable rejected native input");
   assert.equal((await f.store.load()).activeTask.result, null);
   assert.equal(f.session.sends.length, 1);
@@ -574,6 +729,8 @@ async function beginReview(f, inspect = async () => {}) {
 }
 
 async function nativeAdmission(f, id, name, args, agentId = null) {
+  if (!agentId) f.session.emit("assistant.message", { messageId: `assistant-${id}`, content: "",
+    turnId: "0", interactionId: f.session.interactionId, toolRequests: [{ name, arguments: args, toolCallId: id }] });
   f.session.emit("tool.execution_start", { toolName: name, arguments: args, toolCallId: id, turnId: "0" },
     undefined, agentId ? { agentId } : {});
   return f.session.config.hooks.onPreToolUse({ sessionId: agentId ?? f.session.sessionId,

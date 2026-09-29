@@ -255,6 +255,7 @@ async function fixture(t, script, { onHandoff, onProgress, autoConfirm = true, p
     async call(name, args) {
       if (["read_powershell", "list_powershell", "stop_powershell"].includes(name)) {
         const toolCallId = `native-${++this.count}`;
+        this.toolRequest(name, args, toolCallId);
         this.emit("tool.execution_start", { toolCallId, toolName: name, arguments: args, turnId: this.turnId });
         let success = false, result = { contents: [] };
         try {
@@ -274,6 +275,7 @@ async function fixture(t, script, { onHandoff, onProgress, autoConfirm = true, p
       }
       if (name === "powershell") {
         const toolCallId = `native-${++this.count}`;
+        this.toolRequest(name, args, toolCallId);
         this.emit("tool.execution_start", { toolCallId, toolName: name, arguments: args, turnId: this.turnId });
         let success = false, result = { contents: [] };
         try {
@@ -304,6 +306,7 @@ async function fixture(t, script, { onHandoff, onProgress, autoConfirm = true, p
       }
       if (["view", "glob", "rg", "apply_patch"].includes(name)) {
         const toolCallId = `native-${++this.count}`;
+        this.toolRequest(name, args, toolCallId);
         this.emit("tool.execution_start", { toolCallId, toolName: name, arguments: args, turnId: this.turnId });
         let success = false;
         try {

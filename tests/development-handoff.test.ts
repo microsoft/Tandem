@@ -23,6 +23,8 @@ import { HumanLoopInstallation, parseHumanLoopConfiguration } from "../stage2/ta
 import { HumanLoopRuntime } from "../stage2/tandem/src/human-loop-runtime.mjs";
 import { HumanLoopStore } from "../stage2/tandem/src/human-loop-store.mjs";
 import { createDurablePrivateSession } from "../stage2/tandem/src/human-loop-controller.mjs";
+import { createHumanTask, humanTaskPrompt } from "../stage2/tandem/src/human-loop-task.mjs";
+import { waitFor } from "../stage2/tandem/test/helpers/native-session-fixture.mjs";
 
 async function fixture(mode: "build" | "validate-existing" | "not-applicable") {
     const root = await mkdtemp(join(tmpdir(), "tandem-handoff-"));
@@ -102,6 +104,9 @@ async function installationFixture(f: Awaited<ReturnType<typeof fixture>>) {
     let nativeSessionId: string | undefined;
     const nativeHistory: unknown[] = [];
     const observations = new Map<string, () => unknown | Promise<unknown>>();
+    type NativeEvent = { id: string; type: string; parentId: string | null; timestamp: string; data: Record<string, unknown> };
+    type SendInput = { prompt: string; mode: string; agentMode: string; attachments?: unknown[] };
+    let onSend: ((input: SendInput, emit: (event: NativeEvent) => void) => Promise<string>) | null = null;
     let creationFailure = false;
     class NoModelClient {
         constructor() { clients++; }
@@ -123,7 +128,8 @@ async function installationFixture(f: Awaited<ReturnType<typeof fixture>>) {
                 : { sizes: nativeSessionId ? { [nativeSessionId]: 1 } : {} },
             readPersistedEvents: async () => ({ cursorStatus: "ok", events: [...nativeHistory], hasMore: false }),
         } };
-        async resumeSession(sessionId: string, config: { requestExtensions: boolean; continuePendingWork: boolean; suppressResumeEvent: boolean }) {
+        async resumeSession(sessionId: string, config: { requestExtensions: boolean; continuePendingWork: boolean;
+            suppressResumeEvent: boolean; onEvent: (event: NativeEvent) => void }) {
             assert.equal(config.requestExtensions, false);
             assert.equal(config.continuePendingWork, false);
             assert.equal(config.suppressResumeEvent, true);
@@ -137,7 +143,11 @@ async function installationFixture(f: Awaited<ReturnType<typeof fixture>>) {
                     permissions: { resetSessionApprovals: async () => ({ success: true }) },
                     tasks: { list: async () => ({ tasks: [] }) },
                 },
-                send: async () => { sends++; assert.fail("Startup and retained-request reconciliation must not send a model turn."); },
+                send: async (input: SendInput) => {
+                    sends++;
+                    if (!onSend) assert.fail("Startup and retained-request reconciliation must not send a model turn.");
+                    return onSend(input, event => { nativeHistory.push(event); config.onEvent(event); });
+                },
             };
         }
         async stop() { return []; }
@@ -159,13 +169,17 @@ async function installationFixture(f: Awaited<ReturnType<typeof fixture>>) {
         loadSdk: async () => ({ RuntimeConnection: { forStdio: () => ({ kind: "stdio" }) }, CopilotClient: NoModelClient }),
         createRuntime: async options => new HumanLoopRuntime({ ...options,
             createPrivateSession: config => createDurablePrivateSession(options.client, config),
+            contextProvider: () => f.store.context(),
             onHandoff: async () => assert.fail("Opening storage must not publish a model outcome."),
         }),
     };
     return { configuration, create: () => new HumanLoopInstallation(options),
         setUnavailable(value: boolean) { unavailable = value; }, counts: () => ({ clients, sends }),
         creations: () => creations, observations, setCreationFailure(value: boolean) { creationFailure = value; },
-        setMainSessionId(value: string) { main.sessionId = value; } };
+        setMainSessionId(value: string) { main.sessionId = value; },
+        appendHistory(events: NativeEvent[]) { nativeHistory.push(...structuredClone(events)); },
+        history: () => structuredClone(nativeHistory),
+        setSendHandler(handler: NonNullable<typeof onSend>) { onSend = handler; } };
 }
 
 async function legacyColdFixture() {
@@ -493,6 +507,104 @@ test("first Prototype handoff precedes the real WAL, installation and runtime wi
         await installation.close();
     } finally {
         await getHostStateWal(f.workspace).close();
+        await f.cleanup();
+    }
+});
+
+test("legacy failed Router input closes and cold-reopens the same ID without replay, then admits one explicit new continuation", { timeout: 30_000 }, async () => {
+    const f = await fixture("build"), native = await installationFixture(f);
+    let installation = native.create();
+    try {
+        execFileSync("git", ["init", "--quiet"], { cwd: f.workspace });
+        await writeFile(join(f.workspace, ".gitignore"), ".tandem/\n");
+        const receipt = await f.store.prepare(f.state), original = await retainedFiles(f.store.directory(receipt.id));
+        let runtime = await installation.open();
+        const privateId = runtime.sessionId;
+        await runtime.store.dispatch("user", "synthetic-original-request", "receive-request", receipt.request);
+        await runtime.store.dispatch("host", "synthetic-original-admission", "admit-request", { requestId: receipt.id });
+        const packet = createHumanTask({ id: "synthetic-failed-router", dispatchId: "synthetic-failed-dispatch",
+            sessionId: privateId, requestId: receipt.id, role: "router", cycleId: null, internalTaskId: null,
+            before: null, design: (await runtime.store.load()).design }, { request: receipt.request, sourceHandoffs: [receipt] });
+        await runtime.store.admitTask(packet);
+        await runtime.store.dispatch("runtime", "synthetic-original-ack", "role-acknowledged", {
+            taskId: packet.binding.id, dispatchId: packet.binding.dispatchId, messageId: "synthetic-sdk-ack",
+        });
+        const timestamp = new Date().toISOString(), prompt = humanTaskPrompt(packet);
+        // Synthetic pre-fix ledger/history, exercised through real Installation, Runtime, store and WAL.
+        native.appendHistory([
+            { id: "synthetic-native-user", type: "user.message", parentId: null, timestamp,
+                data: { content: prompt, transformedContent: prompt, attachments: [], supportedNativeDocumentMimeTypes: [],
+                    agentMode: "interactive", delivery: "idle", interactionId: "synthetic-native-interaction",
+                    parentAgentTaskId: "00000000-0000-4000-8000-000000000111" } },
+            { id: "synthetic-native-start", type: "assistant.turn_start", parentId: "synthetic-native-user", timestamp,
+                data: { turnId: "0", interactionId: "synthetic-native-interaction" } },
+            { id: "synthetic-refused-tool", type: "tool.execution_start", parentId: "synthetic-native-start", timestamp,
+                data: { toolCallId: "synthetic-refused-call", toolName: "read_work_cycle", arguments: {}, turnId: "0" } },
+            { id: "synthetic-refused-completion", type: "tool.execution_complete", parentId: "synthetic-refused-tool", timestamp,
+                data: { toolCallId: "synthetic-refused-call", turnId: "0", interactionId: "synthetic-native-interaction",
+                    success: false, error: { message: "Synthetic pre-fix correlation failure; tool was not admitted." } } },
+        ]);
+        await runtime.store.dispatch("host", "synthetic-original-failure", "execution-unknown", {
+            reason: "Synthetic pre-fix native user event lacked messageId and turnId.", evidenceRef: "synthetic-native-user",
+        });
+        assert.equal((await f.store.admit(receipt.id, runtime)).status, "admitted");
+        const before = await runtime.store.load(), history = native.history();
+        assert.equal(before.activeTask!.messageId, "synthetic-sdk-ack");
+        assert.equal(Object.hasOwn(before.activeTask!, "inputs"), false);
+        const wal = await readFile(getHostStateWal(f.workspace).path);
+        await installation.close();
+        await getHostStateWal(f.workspace).close();
+
+        installation = native.create();
+        runtime = await installation.open();
+        runtime.wake(); await runtime.whenIdle();
+        const recovered = await runtime.store.load();
+        assert.equal(runtime.sessionId, privateId);
+        assert.equal(native.creations(), 1);
+        assert.equal(native.counts().sends, 0);
+        assert.deepEqual(native.history(), history);
+        assert.equal(recovered.requests[0]!.status, "retired");
+        assert.deepEqual(recovered.executions[0], before.activeTask);
+        assert.deepEqual(recovered.recoveries![0]!.uncertainty, before.uncertainty);
+        assert.equal(recovered.recoveries![0]!.nativeUsers[0]!.messageId, null);
+        assert.equal(recovered.recoveries![0]!.nativeUsers[0]!.interactionId, "synthetic-native-interaction");
+        const recoveredUser = recovered.recoveries![0]!.nativeUsers[0]!;
+        assert.ok("schemaVersion" in recoveredUser);
+        assert.equal(recoveredUser.schemaVersion, "human-loop-native-user/v2");
+        assert.equal(recoveredUser.parentAgentTaskId, "00000000-0000-4000-8000-000000000111");
+        assert.equal((await runtime.readiness()).status, "ready");
+        assert.ok((await readFile(getHostStateWal(f.workspace).path)).subarray(0, wal.length).equals(wal));
+        assert.deepEqual(await retainedFiles(f.store.directory(receipt.id)), original);
+        assert.match((await f.store.admit(receipt.id, runtime)).message, /retired/);
+        assert.equal(native.counts().sends, 0, "Idempotent handoff reconciliation is not a retry.");
+
+        let newPacket: ReturnType<typeof createHumanTask> | undefined;
+        native.setSendHandler(async (input, emit) => {
+            assert.equal(input.mode, "immediate"); assert.equal(input.agentMode, "interactive");
+            newPacket = JSON.parse(input.prompt.split("\n").at(-1)!);
+            const timestamp = new Date().toISOString();
+            emit({ id: "new-native-user", type: "user.message", parentId: "synthetic-refused-completion", timestamp,
+                data: { content: input.prompt, attachments: input.attachments ?? [], interactionId: "new-native-interaction",
+                    agentMode: "interactive", delivery: "idle" } });
+            emit({ id: "new-native-start", type: "assistant.turn_start", parentId: "new-native-user", timestamp,
+                data: { turnId: "1", interactionId: "new-native-interaction" } });
+            return "new-sdk-ack";
+        });
+        await runtime.send({ id: "explicit-new-continuation", receivedAt: new Date().toISOString(), answers: null,
+            message: `Continue Design from retained handoff ${receipt.id}; preserve its source and confirmed decisions. Do not implement.` });
+        await waitFor(async () => (await runtime.store.load()).activeTask?.interactionId === "new-native-interaction", "new owned Router dispatch");
+        assert.equal(native.counts().sends, 1);
+        assert.equal(newPacket!.binding.requestId, "explicit-new-continuation");
+        assert.notEqual(newPacket!.binding.id, packet.binding.id);
+        assert.equal(newPacket!.context.sourceHandoffs[0].id, receipt.id);
+        assert.equal(newPacket!.context.sourceHandoffs[0].sourceFingerprint, receipt.prototype.sourceFingerprint);
+        assert.equal((await runtime.store.load()).uncertainty, null);
+        await installation.close();
+        await runtime.whenIdle();
+        assert.equal(native.counts().sends, 1);
+        assert.deepEqual(await retainedFiles(f.store.directory(receipt.id)), original);
+    } finally {
+        if ((await installation.read()).status === "ready") await installation.close();
         await f.cleanup();
     }
 });

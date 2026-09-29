@@ -178,6 +178,22 @@ saved, then attached with the exact original tools/hooks/permissions and
 `continuePendingWork: false`, `suppressResumeEvent: true`. No dummy user turn is
 used to make a session durable.
 
+### Continue after an admitted role failed
+
+An admitted request held as `execution-unknown` is **not unused setup**. Use
+Development **Close** or the host's normal **Stop**, then reopen the updated
+application in the same workspace. Same-ID recovery retains Conversation,
+source handoffs and failure audit while retiring the interrupted request; it
+does not retry that role. Wait for **Ready**, then explicitly send a **new**
+request referencing the retained handoff, for example:
+`Continue Design from retained handoff <id> and its source. Preserve confirmed
+decisions and identify mocks. Do not implement.`
+
+**Reconcile Design handoff** remains idempotent and cannot revive a retired
+request. Do not use unused-setup initialization, delete history, or substitute a
+new private identity to retry admitted work. If Close or reopen fails, retain
+the reported ownership/history error rather than treating it as success.
+
 ### Recover an incomplete first Development startup
 
 New setup checks the actual Git root read-only before reserving native setup.

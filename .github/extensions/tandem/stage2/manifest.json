@@ -358,8 +358,8 @@
     },
     {
       "path": "runtime-src/domain/human-loop/contracts.ts",
-      "bytes": 28826,
-      "sha256": "00b884b2e47d797cc8e8429db3712e480765a7ff702183b123dd9ca6c66b165c"
+      "bytes": 29287,
+      "sha256": "eb44443acbd3d545b1e6ffef503c078d2157b2c378cebc54e8e1efe725e3ee2b"
     },
     {
       "path": "runtime-src/domain/human-loop/ledger.ts",
@@ -368,8 +368,8 @@
     },
     {
       "path": "runtime-src/domain/human-loop/model.ts",
-      "bytes": 76608,
-      "sha256": "9d15075bc2f33161e81c4b12b66567d5080f146079ef10feaf010a5c4a5adcb8"
+      "bytes": 76673,
+      "sha256": "e857922b30cb63894d02bc0e4abbc11b58e012fd4bb6b5896deae924a08cabd0"
     },
     {
       "path": "runtime-src/domain/human-loop/tool-contracts.ts",
@@ -643,13 +643,13 @@
     },
     {
       "path": "src/human-loop-task.mjs",
-      "bytes": 4132,
-      "sha256": "1a50ee20c09945a2148a9c58b962b3124c24dd526035a6fdb9d6113e28b7121e"
+      "bytes": 4233,
+      "sha256": "d742dd393dd7c885592b9ed0fc139a5e9f87d71d92bccdb0ff3f7efb5edaeb1d"
     },
     {
       "path": "src/human-loop-transport.mjs",
-      "bytes": 77440,
-      "sha256": "9e424a4cd36bab5c192067ab8aacc84680861808f14c0277b2b60d50092aa6e5"
+      "bytes": 80200,
+      "sha256": "8f2bcb9c288b0f6eb46aca78858c53d781ec7eed578fd0ad9d11189f08b03a41"
     },
     {
       "path": "src/human-loop-workspace.mjs",

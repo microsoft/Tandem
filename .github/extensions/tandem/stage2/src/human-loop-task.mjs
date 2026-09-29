@@ -44,7 +44,8 @@ export function nativeUserEvidence(event) {
     return parseNativeUserEvidence({ id: event.id, messageId: data.messageId, turnId: data.turnId, interactionId: data.interactionId });
   }
   return parseNativeUserEvidence({ schemaVersion: "human-loop-native-user/v2", id: event.id,
-    messageId: data.messageId ?? null, turnId: data.turnId ?? null, interactionId: data.interactionId ?? null });
+    messageId: data.messageId ?? null, turnId: data.turnId ?? null, interactionId: data.interactionId ?? null,
+    ...(data.parentAgentTaskId !== undefined ? { parentAgentTaskId: data.parentAgentTaskId } : {}) });
 }
 
 export function createHumanTask(identity, context) {
