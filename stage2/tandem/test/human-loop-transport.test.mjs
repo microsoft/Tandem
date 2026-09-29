@@ -8,7 +8,7 @@ import test from "node:test";
 import { HumanLoopStore } from "../src/human-loop-store.mjs";
 import { HumanLoopWorkspace } from "../src/human-loop-workspace.mjs";
 import { HumanLoopTransport } from "../src/human-loop-transport.mjs";
-import { createHumanTask } from "../src/human-loop-task.mjs";
+import { createHumanTask, humanInputEnvelope } from "../src/human-loop-task.mjs";
 import { DEFAULT_POLICY, resolvePolicy } from "../runtime-src/domain/workflow/policy.ts";
 import { PermissionBroker } from "../runtime-src/permissions/permission-broker.ts";
 import { InMemoryEventStore } from "../runtime-src/event-store.ts";
@@ -233,6 +233,187 @@ async function fixture(t, { permission = false, nativeFiles = false, now, termin
   return { root, owner, store, workspace, baseline, transport, session, client, broker, progress, dispatch, begin, finish, request,
     revoke: () => { authorized = false; } };
 }
+
+function capturedDispatch(session, order = ["user", "start", "ack"], change = () => {}) {
+  const pending = [];
+  session.send = async options => {
+    session.sends.push(options);
+    const number = session.sends.length, acknowledgement = `sdk-ack-${number}`;
+    session.messageId = acknowledgement; session.interactionId = `native-interaction-${number}`;
+    session.turnId = String(number - 1);
+    const { turnId, interactionId } = session;
+    const user = { content: options.prompt, transformedContent: options.prompt,
+      attachments: structuredClone(options.attachments ?? []), supportedNativeDocumentMimeTypes: [],
+      agentMode: "interactive", delivery: "idle", interactionId: session.interactionId };
+    change(user, options);
+    const emit = type => type === "user"
+      ? session.emit("user.message", user)
+      : session.emit("assistant.turn_start", { turnId, interactionId });
+    let acknowledged = false;
+    for (const part of order) {
+      if (part === "ack") acknowledged = true;
+      else if (acknowledged) pending.push(() => emit(part));
+      else emit(part);
+    }
+    return acknowledgement;
+  };
+  return () => { for (const emit of pending.splice(0)) emit(); };
+}
+
+const capturedOrders = [
+  ["user", "start", "ack"], ["start", "user", "ack"], ["ack", "user", "start"],
+  ["ack", "start", "user"], ["user", "ack", "start"], ["start", "ack", "user"],
+];
+for (const order of capturedOrders) test(`captured native input binds exact envelope independently of ACK order: ${order.join(",")}`, async t => {
+  const f = await fixture(t, { nativeFiles: true });
+  const deliver = capturedDispatch(f.session, order);
+  await f.request(); const packet = await f.begin("router");
+  deliver(); await f.transport.drain();
+  const state = await f.store.load(), user = f.session.history.find(event => event.type === "user.message");
+  assert.notEqual(user.id, state.activeTask.messageId);
+  assert.equal(Object.hasOwn(user.data, "messageId"), false);
+  assert.equal(Object.hasOwn(user.data, "turnId"), false);
+  assert.equal(state.activeTask.messageId, "sdk-ack-1");
+  assert.equal(state.activeTask.interactionId, "native-interaction-1");
+  f.session.emit("tool.execution_start", { toolCallId: "owned-read", toolName: "view",
+    arguments: { path: "app.js" }, turnId: f.session.turnId });
+  assert.deepEqual(await f.session.config.hooks.onPreToolUse({ sessionId: "private", toolName: "view",
+    toolArgs: { path: "app.js" } }, { sessionId: "private" }), {});
+  f.session.emit("tool.execution_complete", { toolCallId: "owned-read", success: true,
+    turnId: f.session.turnId, interactionId: f.session.interactionId });
+  await f.finish(packet, "submit_human_route", { kind: "route", intent: "answer", cycleId: null,
+    summary: "The real-shaped Router dispatch completed.", resolvedQuestions: [] });
+  assert.equal((await f.store.load()).uncertainty, null);
+  assert.deepEqual((await replayDurableState(f.root)).state, await f.store.load());
+});
+
+for (const order of capturedOrders) test(`captured continuation binds its own input and ACK: ${order.join(",")}`, async t => {
+  const f = await fixture(t, { nativeFiles: true });
+  const deliver = capturedDispatch(f.session, order);
+  await f.request(); const packet = await f.begin("router");
+  deliver(); await f.transport.drain();
+  f.session.emit("session.idle", {});
+  await waitFor(() => f.session.sends.length === 2, "captured continuation");
+  deliver(); await f.transport.drain();
+  await waitFor(async () => (await f.store.load()).activeTask.inputs[1]?.acknowledgementId, "continuation acknowledgement");
+  const inputs = (await f.store.load()).activeTask.inputs;
+  assert.deepEqual(inputs.map(input => [input.kind, input.acknowledgementId, input.native.user.interactionId,
+    input.native.turnId]), [
+    ["initial", "sdk-ack-1", "native-interaction-1", "0"],
+    ["continuation", "sdk-ack-2", "native-interaction-2", "1"],
+  ]);
+  assert.notEqual(inputs[0].promptDigest, inputs[1].promptDigest);
+  f.session.emit("tool.execution_start", { toolCallId: "continuation-read", toolName: "view",
+    arguments: { path: "app.js" }, turnId: "1" });
+  assert.deepEqual(await f.session.config.hooks.onPreToolUse({ sessionId: "private", toolName: "view",
+    toolArgs: { path: "app.js" } }, { sessionId: "private" }), {});
+  f.session.emit("tool.execution_complete", { toolCallId: "continuation-read", success: true,
+    turnId: "1", interactionId: "native-interaction-2" });
+  await f.finish(packet, "submit_human_route", { kind: "route", intent: "answer", cycleId: null,
+    summary: "One continuation reported the required result.", resolvedQuestions: [] });
+  assert.equal(f.session.sends.length, 2);
+  assert.equal((await f.store.load()).uncertainty, null);
+  assert.deepEqual((await replayDurableState(f.root)).state, await f.store.load());
+});
+
+test("captured input duplicate delivery is idempotent but changed same-ID evidence fails closed", async t => {
+  const f = await fixture(t);
+  capturedDispatch(f.session);
+  await f.request(); await f.begin("router");
+  const user = structuredClone(f.session.history.find(event => event.type === "user.message"));
+  const before = await f.store.load();
+  f.session.config.onEvent(user); await f.transport.drain();
+  assert.deepEqual(await f.store.load(), before);
+  user.data.content += " changed";
+  f.session.config.onEvent(user);
+  await assert.rejects(f.transport.drain(), /event identity changed/);
+  await waitFor(async () => (await f.store.load()).uncertainty, "changed event audit");
+});
+
+test("captured input attachments bind inline and interned bytes without accepting changed metadata", () => {
+  const data = Buffer.from("synthetic exact image bytes");
+  const inline = { type: "blob", mimeType: "image/png", displayName: "approved.png", data: data.toString("base64") };
+  const interned = { type: "blob", mimeType: inline.mimeType, displayName: inline.displayName,
+    assetId: `sha256:${createHash("sha256").update(data).digest("hex")}`, byteLength: data.length };
+  const expected = humanInputEnvelope("Exact Host input", [inline]);
+  assert.deepEqual(humanInputEnvelope("Exact Host input", [interned]), expected);
+  for (const change of [{ mimeType: "image/jpeg" }, { displayName: "other.png" }, { byteLength: data.length + 1 }]) {
+    assert.notDeepEqual(humanInputEnvelope("Exact Host input", [{ ...interned, ...change }]), expected);
+  }
+  for (const change of [{ assetId: "sha256:" + "f".repeat(64) }, { byteLength: data.length + 1 }, { data: inline.data + "\n" }]) {
+    assert.throws(() => humanInputEnvelope("Exact Host input", [{ ...inline, ...change }]), /attachment/);
+  }
+  assert.throws(() => humanInputEnvelope("Exact Host input", [{ ...interned, byteLength: undefined }]), /unavailable/);
+});
+
+test("captured continuation cannot reuse the original sent envelope", async t => {
+  const f = await fixture(t);
+  capturedDispatch(f.session, undefined, user => {
+    if (f.session.sends.length === 2) user.content = f.session.sends[0].prompt;
+  });
+  await f.request(); await f.begin("router");
+  f.session.emit("session.idle", {});
+  await waitFor(async () => (await f.store.load()).uncertainty, "changed continuation envelope");
+  assert.equal(f.session.sends.length, 2);
+  assert.equal((await f.store.load()).activeTask.result, null);
+});
+
+test("captured native tools cannot choose a reused turn by recency", async t => {
+  const f = await fixture(t, { nativeFiles: true });
+  capturedDispatch(f.session);
+  await f.request(); await f.begin("router");
+  f.session.emit("session.idle", {});
+  await waitFor(() => f.session.sends.length === 2, "captured continuation");
+  await f.transport.drain();
+  f.session.emit("assistant.turn_start", { turnId: "0", interactionId: f.session.interactionId });
+  f.session.emit("tool.execution_start", { toolCallId: "ambiguous-read", toolName: "view",
+    arguments: { path: "app.js" }, turnId: "0" });
+  await assert.rejects(f.transport.drain(), /unambiguous owned role turn/);
+});
+
+test("captured input binding persistence does not become a terminal-result completion gate", async t => {
+  const f = await fixture(t);
+  capturedDispatch(f.session, ["ack", "user", "start"]);
+  await f.request(); const packet = await f.begin("router");
+  const reached = Promise.withResolvers(), release = Promise.withResolvers(), dispatch = f.store.dispatch.bind(f.store);
+  f.store.dispatch = async (...args) => {
+    if (args[2] === "role-input-bound") { reached.resolve(); await release.promise; }
+    return dispatch(...args);
+  };
+  f.session.emit("user.message", { content: f.session.sends[0].prompt, interactionId: f.session.interactionId, delivery: "idle" });
+  f.session.emit("assistant.turn_start", { turnId: f.session.turnId, interactionId: f.session.interactionId });
+  await reached.promise;
+  try {
+    await f.session.call("submit_human_route", { schemaVersion: "human-role-result/v1", resultId: "early-bound-result",
+      inputDigest: packet.binding.inputDigest, outcome: { kind: "route", intent: "answer", cycleId: null,
+        summary: "Terminal result is authoritative before bookkeeping settles.", resolvedQuestions: [] } });
+    assert.equal((await f.transport.waitForResult(packet.binding.id)).resultId, "early-bound-result");
+  } finally { release.resolve(); }
+  await f.transport.drain();
+  assert.equal((await f.store.load()).uncertainty, null);
+  assert.equal((await f.store.load()).activeTask.completion, "result-submission");
+  assert.ok(f.progress.some(event => event.kind === "dispatch-diagnostic"));
+});
+
+for (const [name, change] of [
+  ["changed content", user => { user.content += " foreign"; }],
+  ["missing interaction", user => { delete user.interactionId; }],
+  ["steering", user => { user.delivery = "steering"; }],
+  ["autopilot", user => { user.isAutopilotContinuation = true; }],
+  ["injected source", user => { user.source = "skill"; }],
+  ["background parent", user => { user.parentAgentTaskId = "foreign-agent"; }],
+  ["foreign mode", user => { user.agentMode = "autopilot"; }],
+  ["partial legacy identity", user => { user.messageId = "sdk-ack-1"; }],
+  ["changed attachments", user => { user.attachments = [{ type: "blob", mimeType: "image/png", data: "Zm9yZWlnbg==" }]; }],
+]) test(`captured native input fails closed for ${name}`, async t => {
+  const f = await fixture(t);
+  capturedDispatch(f.session, undefined, change);
+  await f.request();
+  await assert.rejects(f.begin("router"), /input|interaction|attachment|identity|ownership/i);
+  await waitFor(async () => (await f.store.load()).uncertainty, "durable rejected native input");
+  assert.equal((await f.store.load()).activeTask.result, null);
+  assert.equal(f.session.sends.length, 1);
+});
 
 test("missing-result exception uses one same-role continuation, never assistant idle or post-result idle", { timeout: 30_000 }, async t => {
   const f = await fixture(t);

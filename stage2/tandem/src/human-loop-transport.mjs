@@ -8,7 +8,7 @@ import { parseOwnedQueue } from "../runtime-src/domain/workflow/owned-execution-
 import { validatePolicyShape } from "../runtime-src/domain/workflow/policy-contracts.ts";
 import { policyHash } from "../runtime-src/domain/workflow/policy.ts";
 import { requireCondition, text } from "../runtime-src/domain/workflow/validation.ts";
-import { parseHumanTask } from "./human-loop-task.mjs";
+import { parseHumanTask, humanTaskPrompt, humanInputEnvelope, nativeUserEvidence } from "./human-loop-task.mjs";
 import { annotationCapabilities } from "../runtime-src/domain/workflow/annotation-attachment.ts";
 import { isImageAttachment, readRequestAttachment } from "../runtime-src/domain/workflow/image-attachment.ts";
 import { parseNativeClose } from "./human-loop-close.mjs";
@@ -62,6 +62,7 @@ export class HumanLoopTransport {
   #readingRecovery = false;
   #observedEvents = new Map();
   #retiredMessages = new Set();
+  #retiredEnvelopes = new Map();
   #retiredInteractions = new Set();
   #retiredCalls = new Set();
   #retiredAgents = new Set();
@@ -455,7 +456,9 @@ export class HumanLoopTransport {
     this.#admittedWork = true;
     this.#admitting = this.#store.admitTask(packet);
     await this.#admitting;
-    const active = { packet, messageId: null, user: null, starts: [], acknowledged: false, started: false,
+    const prompt = humanTaskPrompt(packet);
+    const active = { packet, envelope: humanInputEnvelope(prompt, attachments), bound: false,
+      messageId: null, user: null, starts: [], acknowledged: false, started: false,
       result: null, resultSubmitted: false, submitting: false, resultCallId: null,
       continuation: null, missingResultIdle: null,
       stopId: null, stopAcknowledged: false,
@@ -475,6 +478,8 @@ export class HumanLoopTransport {
       requireHumanRequestRunning(await this.#store.load(), binding.requestId, binding.id);
       requireCondition(this.#active === active && !active.stopId && !active.controller.signal.aborted,
         "Native dispatch no longer belongs to the admitted role.");
+      await this.#store.dispatch("host", `input:${binding.dispatchId}:initial`, "role-input-prepared",
+        { taskId: binding.id, dispatchId: binding.dispatchId, inputDigest: binding.inputDigest, envelope: active.envelope });
       requireHumanRequestRunning(await this.#store.load(), binding.requestId, binding.id);
       requireCondition(this.#active === active && !active.stopId && !active.controller.signal.aborted,
         "Stop or ownership changed at the direct dispatch boundary.");
@@ -482,14 +487,11 @@ export class HumanLoopTransport {
       const acknowledgement = this.#session.send({
         mode: "immediate", agentMode: "interactive",
         ...(attachments ? { attachments } : {}),
-        prompt: [
-          ...humanLoopPrompts.wrapper,
-          JSON.stringify(packet),
-        ].join("\n"),
+        prompt,
       }).then(async value => {
         const messageId = text(value);
         if (this.#active !== active || active.resultSubmitted || active.stopId || this.#closing) return messageId;
-        requireCondition(!active.user || active.user.messageId === messageId, "Native acknowledgement conflicts with the delivered task.");
+        requireCondition(!active.user?.messageId || active.user.messageId === messageId, "Native acknowledgement conflicts with the delivered task.");
         active.messageId = messageId;
         await this.#store.dispatch("runtime", `ack:${binding.dispatchId}`, "role-acknowledged", { taskId: binding.id, dispatchId: binding.dispatchId, messageId });
         active.acknowledged = true; this.#pump(); await this.drain();
@@ -520,7 +522,9 @@ export class HumanLoopTransport {
   }
 
   async #continueMissingResult(active) {
-    const continuation = { messageId: null, user: null, acknowledged: false };
+    const prompt = humanTaskPrompt(active.packet, "continuation");
+    const continuation = { envelope: humanInputEnvelope(prompt, [], "continuation"), bound: false,
+      messageId: null, user: null, acknowledged: false, sent: false };
     active.continuation = continuation;
     const current = () => this.#active === active && !active.result
       && !active.stopId && !active.controller.signal.aborted && !this.#closing && !this.#released;
@@ -533,18 +537,24 @@ export class HumanLoopTransport {
       requireCondition(await this.#session.rpc.mode.get() === "interactive", "Private mode changed before continuation.");
       const state = await this.#store.load();
       if (!current() || active.submitting || state.stop) return;
+      const binding = active.packet.binding;
+      await this.#store.dispatch("host", `input:${binding.dispatchId}:continuation`, "role-input-prepared",
+        { taskId: binding.id, dispatchId: binding.dispatchId, inputDigest: binding.inputDigest, envelope: continuation.envelope });
+      if (!current() || active.submitting || (await this.#store.load()).stop) return;
+      continuation.sent = true;
       const messageId = text(await this.#session.send({
         mode: "immediate", agentMode: "interactive",
-        prompt: [...humanLoopPrompts.wrapper, ...humanLoopPrompts.missingResultRecovery,
-          JSON.stringify(active.packet)].join("\n"),
+        prompt,
       }));
       continuation.messageId = messageId;
       if (!current()) {
         this.#retiredMessages.add(messageId);
         return;
       }
-      requireCondition(!continuation.user || continuation.user.messageId === messageId,
+      requireCondition(!continuation.user?.messageId || continuation.user.messageId === messageId,
         "Native continuation acknowledgement differs from its delivered input.");
+      await this.#store.dispatch("runtime", `ack:${binding.dispatchId}:continuation`, "continuation-acknowledged",
+        { taskId: binding.id, dispatchId: binding.dispatchId, messageId });
       continuation.acknowledged = true;
       this.#notify({ kind: "role-continuation", requestId: active.packet.binding.requestId,
         summary: "Continuing the same work once to obtain its required result." });
@@ -574,9 +584,11 @@ export class HumanLoopTransport {
     const active = this.#active;
     requireCondition(active?.packet.binding.id === taskId && (active.resultSubmitted || active.stopAcknowledged || active.notSent || !active.sent),
       "Cannot release another role or an unreported operation.");
-    for (const input of [active.user, active.continuation?.user].filter(Boolean)) {
-      this.#retiredInteractions.add(input.interactionId);
-      this.#retiredMessages.add(input.messageId);
+    for (const input of [active, active.continuation].filter(Boolean)) {
+      if (input.user) this.#retiredInteractions.add(input.user.interactionId);
+      if (input.messageId) this.#retiredMessages.add(input.messageId);
+      if (input.sent) this.#retiredEnvelopes.set(input.envelope.promptDigest, {
+        envelope: input.envelope, user: input.user, messageId: input.messageId });
     }
     if (active.continuation?.messageId) this.#retiredMessages.add(active.continuation.messageId);
     for (const id of active.nativeCalls.keys()) this.#retiredCalls.add(id);
@@ -876,12 +888,24 @@ export class HumanLoopTransport {
       if (this.#readingRecovery) return;
       if (this.#retiredHistory.has(event.id)) return;
       if (this.#closing) return;
-      if (this.#historicEvents.has(event.id) || this.#observedEvents.has(event.id)) return;
+      if (this.#historicEvents.has(event.id)) return;
+      const fingerprint = policyHash(event), seen = this.#seen.get(text(event.id));
+      if (seen) { requireCondition(seen === fingerprint, "Native event identity changed."); return; }
+      this.#seen.set(event.id, fingerprint);
+      // This chain marks idle-event freshness only; it is not input or tool ownership evidence.
       this.#observedEvents.set(event.id, event.type === "user.message" && !event.agentId
         ? event.id : this.#observedEvents.get(event.parentId) ?? null);
-      if (event.type === "user.message" && this.#retiredMessages.has(event.data?.messageId)) {
-        if (event.data.interactionId) this.#retiredInteractions.add(event.data.interactionId);
-        return;
+      if (event.type === "user.message" && !event.agentId) {
+        const digest = typeof event.data?.content === "string" ? humanInputEnvelope(event.data.content).promptDigest : null;
+        const retired = this.#retiredEnvelopes.get(digest);
+        if (retired) {
+          const user = this.#matchInput(event, retired);
+          requireCondition(!retired.user || retired.user.id === user.id, "A retired native input was repeated with a new identity.");
+          retired.user = user; this.#retiredInteractions.add(user.interactionId);
+          return;
+        }
+        requireCondition(!this.#retiredMessages.has(event.data?.messageId)
+          && !this.#retiredInteractions.has(event.data?.interactionId), "Retired native input identity changed its envelope.");
       }
       if (this.#retiredCalls.has(event.data?.toolCallId)) {
         if (event.agentId) this.#retiredAgents.add(event.agentId);
@@ -1018,16 +1042,12 @@ export class HumanLoopTransport {
       if (!["user.message", "assistant.turn_start", "tool.execution_start", "tool.execution_complete"].includes(event.type)) return;
       requireCondition(!event.agentId, "Unowned subagent events are not private task evidence.");
       requireCondition(active, "Unowned input/execution appeared in the private session.");
-      const identity = { id: text(event.id), type: event.type, messageId: data.messageId ?? null,
-        turnId: data.turnId ?? null, interactionId: data.interactionId ?? null,
-        aborted: data.aborted === true, toolCallId: data.toolCallId ?? null, success: data.success ?? null };
-      const fingerprint = policyHash(identity), seen = this.#seen.get(identity.id);
-      if (seen) { requireCondition(seen === fingerprint, "Native event identity changed."); return; }
-      this.#seen.set(identity.id, fingerprint);
       if (event.type === "tool.execution_start") {
         const input = active.continuation?.user ?? active.user;
-        requireCondition(input && active.starts.some(start => start.turnId === data.turnId
-          && start.interactionId === input.interactionId), "Native file invocation lacks an owned role turn.");
+        const turns = active.starts.filter(start => start.turnId === data.turnId);
+        requireCondition(input && turns.length === 1 && turns[0].interactionId === input.interactionId
+          && (data.interactionId === undefined || data.interactionId === input.interactionId),
+        "Native file invocation lacks an unambiguous owned role turn.");
         const callId = text(data.toolCallId);
         requireCondition(!active.nativeCalls.has(callId), "Native file invocation identity was reused.");
         active.nativeCalls.set(callId, { name: data.toolName, args: structuredClone(data.arguments),
@@ -1036,11 +1056,15 @@ export class HumanLoopTransport {
         active.tools.add(callId);
       } else if (event.type === "user.message") {
         const continuation = active.user ? active.continuation : null;
-        const expected = continuation ? continuation.messageId : active.messageId;
-        requireCondition((!active.user || continuation && !continuation.user)
-          && data.messageId && data.turnId && data.interactionId && data.delivery !== "steering"
-          && !data.isAutopilotContinuation && (!expected || data.messageId === expected),
-        "Private input is foreign, synthetic, repeated or unidentified.");
+        const input = continuation ?? active;
+        requireCondition(input.sent && !input.user, "Foreign or repeated private input has no issued Host dispatch.");
+        const identity = this.#matchInput(event, input);
+        requireCondition(![...this.#users.values()].some(user => user.interactionId === identity.interactionId),
+          "Native input reused an existing interaction.");
+        requireCondition(active.starts.filter(start => start.interactionId !== active.user?.interactionId)
+          .every(start => start.interactionId === identity.interactionId
+            && (!identity.turnId || start.turnId === identity.turnId)),
+        "Private input conflicts with its already observed native start.");
         if (continuation) {
           continuation.user = identity;
           active.missingResultIdle = null;
@@ -1050,9 +1074,11 @@ export class HumanLoopTransport {
         const input = active.continuation?.user ?? active.user;
         requireCondition(!active.starts.some(start => start.turnId === data.turnId && start.interactionId === data.interactionId),
           "Native continuation reused a previous turn identity.");
-        requireCondition(data.turnId && data.interactionId
-          && (!input || input.interactionId === data.interactionId), "Native start has no matching interaction.");
-        active.starts.push(identity);
+        const pending = active.continuation?.sent && !active.continuation.user;
+        requireCondition(typeof data.turnId === "string" && data.turnId.length > 0
+          && typeof data.interactionId === "string" && data.interactionId.length > 0
+          && (!input || input.interactionId === data.interactionId || pending), "Native start has no matching interaction.");
+        active.starts.push({ id: text(event.id), turnId: data.turnId, interactionId: data.interactionId });
       } else if (active.nativeCalls.has(data.toolCallId)) {
         const call = active.nativeCalls.get(data.toolCallId);
         requireCondition(active.tools.has(data.toolCallId) && data.turnId === call.turnId
@@ -1084,15 +1110,42 @@ export class HumanLoopTransport {
     }
   }
 
+  #matchInput(event, expected) {
+    const data = event.data ?? {}, user = nativeUserEvidence(event);
+    requireCondition(!event.agentId && user.interactionId
+      && (user.messageId === null) === (user.turnId === null)
+      && (data.delivery === undefined || data.delivery === "idle")
+      && (data.agentMode === undefined || data.agentMode === "interactive")
+      && (data.isAutopilotContinuation === undefined || data.isAutopilotContinuation === false)
+      && data.parentAgentTaskId == null && data.source == null
+      && (!expected.messageId || !user.messageId || expected.messageId === user.messageId),
+    "Private input has foreign, partial or incompatible native identities.");
+    requireCondition(policyHash(humanInputEnvelope(data.content, data.attachments, expected.envelope.kind))
+      === policyHash(expected.envelope), "Private input content or attachments differ from the exact Host dispatch.");
+    return user;
+  }
+
   #pump() {
+    const active = this.#active;
     this.#enqueue(async () => {
-      const active = this.#active;
-      if (!active || active.resultSubmitted || active.submitting || active.stopId) return;
-      if (!active.acknowledged) return;
+      if (!active || this.#active !== active || active.resultSubmitted || active.submitting || active.stopId) return;
       const binding = active.packet.binding;
       if (!active.user) return;
-      requireCondition(active.user.messageId === active.messageId, "Delivered input differs from acknowledgement.");
-      const start = active.starts.find((start) => start.turnId === active.user.turnId && start.interactionId === active.user.interactionId);
+      for (const input of [active, active.continuation].filter(Boolean)) {
+        if (!input.user || input.bound) continue;
+        const start = active.starts.find(start => start.interactionId === input.user.interactionId);
+        if (!start) continue;
+        requireCondition((!input.user.turnId || input.user.turnId === start.turnId)
+          && (!input.messageId || !input.user.messageId || input.user.messageId === input.messageId),
+        "Delivered input differs from its native turn or acknowledgement.");
+        await this.#store.dispatch("runtime", `input-bound:${input.user.id}`, "role-input-bound", {
+          taskId: binding.id, dispatchId: binding.dispatchId, kind: input.envelope.kind,
+          user: input.user, turnId: start.turnId, startEventId: start.id,
+        });
+        input.bound = true;
+      }
+      if (this.#active !== active || !active.acknowledged || !active.bound || active.resultSubmitted || active.submitting || active.stopId) return;
+      const start = active.starts.find(start => start.interactionId === active.user.interactionId);
       if (!start) return;
       if (!active.started) {
         await this.#store.dispatch("runtime", `native-start:${start.id}`, "role-started",
@@ -1106,7 +1159,7 @@ export class HumanLoopTransport {
           void this.#continueMissingResult(active);
           return;
         }
-        if (!active.continuation.acknowledged || !active.continuation.user
+        if (!active.continuation.acknowledged || !active.continuation.bound || !active.continuation.user
           || active.missingResultIdle.inputId !== active.continuation.user.id) return;
       }
       const failure = active.reviewError ?? (active.missingResultIdle && active.continuation?.acknowledged
@@ -1120,7 +1173,7 @@ export class HumanLoopTransport {
         active.result = state.activeTask.result; active.resultSubmitted = true;
         active.resultReady.resolve(active.result);
       }
-    });
+    }, false, active);
   }
 
   async #quiescent() {
@@ -1135,10 +1188,14 @@ export class HumanLoopTransport {
     return !this.#automaticReads.size && !processing.processing && !activity.hasActiveWork
       && parseOwnedQueue(queue).length === 0 && queue.steeringMessages.length === 0;
   }
-  #enqueue(action, retainNativeSettlement = false) {
+  #enqueue(action, retainNativeSettlement = false, inputOwner = null) {
     this.#tail = this.#tail.then(async () => {
       if (!this.#failure || retainNativeSettlement) await action();
-    }).catch((error) => this.#fail("Private event persistence/settlement failed.", error));
+    }).catch((error) => {
+      if (inputOwner && (inputOwner.resultSubmitted || inputOwner.stopId || this.#active !== inputOwner)) {
+        this.#notify({ kind: "dispatch-diagnostic", summary: error.message });
+      } else return this.#fail("Private event persistence/settlement failed.", error);
+    });
   }
   async #fail(prefix, error) {
     if (this.#failure) return this.#failureWrite;

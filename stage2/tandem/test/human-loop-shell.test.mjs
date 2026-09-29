@@ -1961,6 +1961,36 @@ test("Stop stays below the composer at its left edge while Send remains inside a
   assert.deepEqual(browser.exceptions, []);
 });
 
+test("obsolete startup notice clears without masking current workflow or erasing action errors and history",
+  { skip: !browserAvailable, timeout: 60_000 }, async t => {
+    const f = await fixture(t, { onPost: ({ path }) => {
+      if (path === "/api/runtime/close") throw new Error("The current Close operation is unconfirmed.");
+    } });
+    const { browser } = f, original = "Human loop workspace: Git observation failed: not a git repository.";
+    f.current.installation = { status: "unknown", canRetry: true, reason: original };
+    f.current.messages.push({ id: "retained-startup", kind: "status", role: "host", text: original,
+      timestamp: "2026-09-15T00:00:02Z", requestId: null });
+    await browser.call("Page.navigate", { url: f.url });
+    await browser.waitFor("document.querySelector('#notice').textContent.includes('not a git repository')");
+    await browser.evaluate("document.querySelector('#message').value='Retain this explicit new continuation draft.'");
+    f.current.installation = { status: "ready", canStart: false, canReopen: false, reason: null };
+    f.current.workflow.status = "execution-unknown";
+    f.current.workflow.reason = "Private native event ownership is uncertain for the admitted Router.";
+    f.update();
+    await browser.waitFor("document.querySelector('#current-state-detail').textContent.includes('admitted Router')");
+    assert.equal(await browser.evaluate("document.querySelector('#notice').hidden"), true);
+    assert.ok(await browser.evaluate("document.querySelector('#messages').textContent.includes('not a git repository')"));
+    assert.equal(await browser.evaluate("document.querySelector('#message').value"), "Retain this explicit new continuation draft.");
+    assert.deepEqual(f.posts, []);
+    await browser.evaluate("document.querySelector('#shutdown').click()");
+    await browser.waitFor("document.querySelector('#notice').textContent.includes('Close operation is unconfirmed')");
+    f.update();
+    await browser.waitFor("document.querySelector('#connection-status').textContent==='Live updates'");
+    assert.equal(await browser.evaluate("document.querySelector('#notice').textContent"), "The current Close operation is unconfirmed.");
+    assert.deepEqual(f.posts, [{ path: "/api/runtime/close", data: {} }]);
+    assert.deepEqual(browser.exceptions, []);
+  });
+
 test("after-step Stop controls share an intent, retain retry identity and explain pending permission work", { skip: !browserAvailable, timeout: 60_000 }, async (t) => {
   const f = await fixture(t), { browser } = f;
   f.current.accessRequests = [];

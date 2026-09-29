@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import ts from "typescript";
-import { createHumanTask } from "../../src/human-loop-task.mjs";
+import { createHumanTask, humanTaskPrompt } from "../../src/human-loop-task.mjs";
 import { sharedDesign } from "./shared-design-fixture.mjs";
 import { requireCondition } from "../../runtime-src/domain/workflow/validation.ts";
 import { isPriorityAnswer } from "../../runtime-src/domain/human-loop/model.ts";
@@ -26,12 +26,14 @@ export function contextMethod(source) {
 
 export function wrapperExpression(source) {
   const send = findNode(sourceTree(source), node => ts.isMethodDeclaration(node) && node.name.getText() === "#send");
-  return findNode(send, (node) => ts.isPropertyAssignment(node) && node.name.getText() === "prompt"
-    && node.parent.properties?.some(property => property.name?.getText() === "agentMode")).initializer;
+  findNode(send, node => ts.isShorthandPropertyAssignment(node) && node.name.getText() === "prompt"
+    && node.parent.properties?.some(property => property.name?.getText() === "agentMode"));
+  return findNode(send, node => ts.isVariableDeclaration(node) && node.name.getText() === "prompt").initializer;
 }
 
 export function evaluateWrapper(source, packet, humanLoopPrompts) {
-  return new Function("packet", "humanLoopPrompts", `return ${wrapperExpression(source).getText()};`)(packet, humanLoopPrompts);
+  return new Function("packet", "humanLoopPrompts", "humanTaskPrompt",
+    `return ${wrapperExpression(source).getText()};`)(packet, humanLoopPrompts, humanTaskPrompt);
 }
 
 export function contextHarness(source, { designReferenceCatalog, designGenerationContract, humanLoopPrompts }) {

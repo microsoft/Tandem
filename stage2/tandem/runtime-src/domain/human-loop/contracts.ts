@@ -63,6 +63,35 @@ export interface TaskBinding {
   role: HumanRole; internalTaskId: string | null; inputDigest: string;
   before: SnapshotRef | null; design: DesignBinding;
 }
+export type NativeUserEvidence =
+  | { id: string; messageId: string; turnId: string; interactionId: string }
+  | { schemaVersion: 'human-loop-native-user/v2'; id: string; messageId: string | null;
+      turnId: string | null; interactionId: string | null };
+export interface RoleInputEnvelope {
+  schemaVersion: 'human-role-input/v1'; kind: 'initial' | 'continuation';
+  promptDigest: string; promptBytes: number; attachmentsDigest: string;
+}
+export interface RoleInput extends RoleInputEnvelope {
+  acknowledgementId: string | null;
+  native: { user: NativeUserEvidence; turnId: string; startEventId: string } | null;
+}
+export function parseNativeUserEvidence(value: unknown): NativeUserEvidence {
+  const modern = value !== null && typeof value === 'object' && 'schemaVersion' in value;
+  const data = object(value, [...(modern ? ['schemaVersion'] : []), 'id', 'messageId', 'turnId', 'interactionId']);
+  if (!modern) return { id: text(data.id), messageId: text(data.messageId),
+    turnId: text(data.turnId), interactionId: text(data.interactionId) };
+  requireCondition(data.schemaVersion === 'human-loop-native-user/v2', 'Incompatible native input evidence.');
+  return { schemaVersion: 'human-loop-native-user/v2', id: text(data.id),
+    messageId: data.messageId === null ? null : text(data.messageId),
+    turnId: data.turnId === null ? null : text(data.turnId),
+    interactionId: data.interactionId === null ? null : text(data.interactionId) };
+}
+export function parseRoleInputEnvelope(value: unknown): RoleInputEnvelope {
+  const data = object(value, ['schemaVersion', 'kind', 'promptDigest', 'promptBytes', 'attachmentsDigest']);
+  requireCondition(data.schemaVersion === 'human-role-input/v1', 'Incompatible sent-envelope evidence.');
+  return { schemaVersion: data.schemaVersion, kind: choice(data.kind, ['initial', 'continuation'] as const),
+    promptDigest: digest(data.promptDigest), promptBytes: integer(data.promptBytes, 1), attachmentsDigest: digest(data.attachmentsDigest) };
+}
 export interface OwnedEnd {
   taskId: string; dispatchId: string; sessionId: string; messageId: string; interactionId: string;
   endEventId: string; quiescent: true; termination: 'normal' | 'result-abort' | 'user-stop';

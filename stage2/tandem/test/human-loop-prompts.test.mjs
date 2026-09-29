@@ -404,7 +404,7 @@ for (const { name, packet } of cases) test(`controlled prompt preserves boundari
   await native.create();
   await native.send(packet);
   assert.deepEqual(sends, [{ mode: "immediate", agentMode: "interactive", prompt }]);
-  assert.deepEqual(dispatches.map((entry) => entry[2]), ["role-acknowledged"]);
+  assert.deepEqual(dispatches.map((entry) => entry[2]), ["role-input-prepared", "role-acknowledged"]);
 });
 
 test("validated JSON is deeply frozen without changing text", () => {

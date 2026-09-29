@@ -2,7 +2,7 @@ import { requireCondition, text } from "../runtime-src/domain/workflow/validatio
 import { policyHash } from "../runtime-src/domain/workflow/policy.ts";
 import { durableNativeEvent, nativeCloseEvents, observedNativeCloseEvent, requireNativeCloseEvent, requireNativeHistoryOrder,
   parseNativeClose, nativeExecutionEvent } from "./human-loop-close.mjs";
-import { parseHumanTask } from "./human-loop-task.mjs";
+import { parseHumanTask, nativeUserEvidence, humanInputEnvelope } from "./human-loop-task.mjs";
 
 export async function verifyNativeSessionAbsent(client, sessionId) {
   requireCondition(typeof client.start === "function" && typeof client.getSessionMetadata === "function",
@@ -65,10 +65,7 @@ export function recoveryNativeEvidence(sessionId, history, cleanNativeProof = nu
     }
     return { ...observedNativeCloseEvent(original), parentIds: event.parentIds };
   });
-  const users = history.filter(({ type, agentId }) => type === "user.message" && !agentId).map((event) => ({
-    id: text(event.id), messageId: text(event.data?.messageId),
-    turnId: text(event.data?.turnId), interactionId: text(event.data?.interactionId),
-  }));
+  const users = history.filter(({ type, agentId }) => type === "user.message" && !agentId).map(nativeUserEvidence);
   return { sessionId, events, users, digest: policyHash(events) };
 }
 
@@ -98,9 +95,7 @@ export function recoveryReadinessSnapshot(sessionId, history) {
     && typeof event.type === "string" && event.type);
   const unique = [...new Map(identified.map(event => [event.id, event])).values()];
   const events = unique.filter(durableNativeEvent).map(event => observedNativeCloseEvent(event));
-  const users = unique.filter(event => event.type === "user.message" && !event.agentId
-    && ["messageId", "turnId", "interactionId"].every(key => typeof event.data?.[key] === "string" && event.data[key]))
-    .map(event => ({ id: event.id, messageId: event.data.messageId, turnId: event.data.turnId, interactionId: event.data.interactionId }));
+  const users = unique.filter(event => event.type === "user.message" && !event.agentId).map(nativeUserEvidence);
   return { sessionId, events, users, digest: policyHash(events) };
 }
 
@@ -116,8 +111,17 @@ export async function retainRecoveryMessages(store, state, history, diagnose) {
     if (event.type === "user.message") {
       if (event.data?.isAutopilotContinuation) await diagnose("historical-input",
         "Historical synthetic input was retained, not adopted as a new request.");
-      execution = executions.find((task) => task.messageId === event.data?.messageId
+      execution = executions.find((task) => task.messageId && task.messageId === event.data?.messageId
         || task.interactionId && task.interactionId === event.data?.interactionId) ?? null;
+      if (!execution && typeof event.data?.content === "string") {
+        execution = executions.find(task => task.inputs?.some(input => {
+          try {
+            const envelope = humanInputEnvelope(event.data.content, event.data.attachments, input.kind);
+            return envelope.promptDigest === input.promptDigest && envelope.promptBytes === input.promptBytes
+              && envelope.attachmentsDigest === input.attachmentsDigest;
+          } catch { return false; }
+        })) ?? null;
+      }
       const stop = stops.find(({ injection }) => injection?.messageId === event.data?.messageId);
       if (stop) execution = executions.find(({ binding }) => binding.id === stop.taskId) ?? null;
       if (!execution) {

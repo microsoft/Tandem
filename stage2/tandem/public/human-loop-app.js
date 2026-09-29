@@ -38,6 +38,7 @@ let stopRequest = null, stopAttempt = null;
 let controlsConnected = false;
 let initialCreationConfirmation = null;
 let initialCreationInspecting = false;
+let installationNotice = null;
 const answerPending = new Map();
 let revealedQuestionKey = null;
 const notice = (text) => { $('notice').textContent = text ?? ''; $('notice').hidden = !text; };
@@ -202,7 +203,8 @@ function render() {
   renderComposer();
   $('connection-status').textContent = 'Live updates';
   renderStopControl();
-  if (installed?.reason) notice(installed.reason);
+  if (!$('notice').textContent || $('notice').textContent === installationNotice) notice(installed?.reason);
+  installationNotice = installed?.reason ?? null;
   const handoffEntry = snapshot.messages.find((entry) => entry.id === view?.lastHandoff?.id);
   const questionGroups = view?.questionInteractions ?? [];
   const questionRequestId = questionGroups.find(group => group.questions.some(q => q.state === 'open' && q.blockingActive))?.source.requestId;

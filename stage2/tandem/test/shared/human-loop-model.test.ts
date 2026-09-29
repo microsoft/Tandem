@@ -96,6 +96,51 @@ function fixture(liveAuthorization = true, autoConfirm = true) {
   return { get state() { return state; }, ledger, emit, receive, admit, start, submit, end, apply, finish, route, createCycle, accept, planCycle, taskResult, present };
 }
 
+test('modern native input evidence keeps acknowledgement, event, interaction and turn identities distinct', () => {
+  const f = fixture();
+  f.receive('request'); f.admit('request');
+  const binding = { id: 'role-modern', dispatchId: 'dispatch-modern', sessionId: 'private', requestId: 'request',
+    cycleId: null, role: 'router', internalTaskId: null, inputDigest: policyHash('modern'), before: null, design };
+  f.emit('start-role', binding);
+  const envelope = { schemaVersion: 'human-role-input/v1', kind: 'initial', promptDigest: policyHash('exact wrapper'),
+    promptBytes: 42, attachmentsDigest: policyHash([]) };
+  const prepared = { taskId: binding.id, dispatchId: binding.dispatchId, inputDigest: binding.inputDigest, envelope };
+  assert.throws(() => f.emit('role-input-prepared', prepared, 'runtime'), /actor/);
+  assert.throws(() => f.emit('role-input-prepared', { ...prepared, inputDigest: policyHash('changed') }), /immutable/);
+  f.emit('role-input-prepared', prepared);
+  assert.throws(() => f.emit('role-input-prepared', prepared), /first input/);
+  const native = { taskId: binding.id, dispatchId: binding.dispatchId, kind: 'initial',
+    user: { schemaVersion: 'human-loop-native-user/v2', id: 'native-user', messageId: null, turnId: null,
+      interactionId: 'native-interaction' }, turnId: '0', startEventId: 'native-start' };
+  assert.throws(() => f.emit('role-input-bound', { ...native, dispatchId: 'foreign' }, 'runtime'), /prepared/);
+  f.emit('role-input-bound', native, 'runtime');
+  assert.equal(f.state.activeTask!.messageId, null);
+  f.emit('role-acknowledged', { taskId: binding.id, dispatchId: binding.dispatchId, messageId: 'sdk-ack' }, 'runtime');
+  assert.throws(() => f.emit('role-started', { taskId: binding.id, messageId: 'sdk-ack', interactionId: 'foreign' }, 'runtime'), /sent-envelope/);
+  f.emit('role-started', { taskId: binding.id, messageId: 'sdk-ack', interactionId: 'native-interaction' }, 'runtime');
+  f.emit('role-input-prepared', { ...prepared, envelope: { ...envelope, kind: 'continuation', promptDigest: policyHash('continuation') } });
+  assert.throws(() => f.emit('role-input-bound', { ...native, kind: 'continuation' }, 'runtime'), /reused/);
+  f.emit('role-input-bound', { ...native, kind: 'continuation', turnId: '1', startEventId: 'continuation-start',
+    user: { ...native.user, id: 'continuation-user', interactionId: 'continuation-interaction' } }, 'runtime');
+  assert.throws(() => f.emit('continuation-acknowledged', { taskId: binding.id, dispatchId: binding.dispatchId,
+    messageId: 'sdk-ack' }, 'runtime'), /acknowledgement/);
+  f.emit('continuation-acknowledged', { taskId: binding.id, dispatchId: binding.dispatchId, messageId: 'continuation-ack' }, 'runtime');
+  assert.throws(() => f.emit('role-input-prepared', { ...prepared, envelope: { ...envelope, kind: 'continuation' } }), /one same-role/);
+  const inputs = f.state.activeTask!.inputs!;
+  assert.equal(inputs[0]!.acknowledgementId, 'sdk-ack');
+  assert.equal(inputs[0]!.native!.user.id, 'native-user');
+  assert.equal(inputs[0]!.native!.user.messageId, null);
+  assert.equal(inputs[1]!.native!.user.interactionId, 'continuation-interaction');
+  assert.deepEqual(replayHumanLoopLedger(f.ledger).state, f.state);
+});
+
+test('legacy input evidence remains readable without adding invented envelope fields', () => {
+  const f = fixture();
+  f.receive('legacy'); f.admit('legacy'); f.start('router');
+  assert.equal(Object.hasOwn(f.state.activeTask!, 'inputs'), false);
+  assert.deepEqual(replayHumanLoopLedger(f.ledger).state, f.state);
+});
+
 for (const disposition of ['pending', 'approved', 'changed-design'] as const) test(`confirmation recovery preserves only pending human decisions: ${disposition}`, () => {
   const f = fixture(true, false);
   f.receive('proposal'); f.admit('proposal'); const route = f.route('implement');

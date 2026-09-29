@@ -34,8 +34,10 @@ export class NativeSession {
   start() {
     this.processing = true;
     const messageId = `message-${this.sends.length}`;
-    this.emit("user.message", { content: "Owned synthetic task.", messageId, turnId: "0", interactionId: messageId, delivery: "idle" });
-    this.emit("assistant.turn_start", { turnId: "0", interactionId: messageId });
+    const input = this.sends.at(-1);
+    this.emit("user.message", { content: input.prompt, attachments: structuredClone(input.attachments ?? []),
+      interactionId: messageId, agentMode: "interactive", delivery: "idle" });
+    this.emit("assistant.turn_start", { turnId: this.turnId ?? "0", interactionId: messageId });
   }
   idle() { this.processing = false; this.emit("assistant.idle", {}); }
   async call(name, args) {
