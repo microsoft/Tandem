@@ -67,6 +67,14 @@ shared source root, actual target workspace, mock limitations and an immutable
 request envelope. Credential-like files, dependency installations, browser caches
 and unrelated state are not copied. Live preview URLs are not evidence.
 
+Handoffs are retained before native startup. Their exact reserved
+`.tandem\living-canvas\handoffs` subtree is source-artifact storage, not legacy
+Stage 2 WAL documents, even when it contains copied package/source JSON.
+Legacy discovery rejects aliased directory entries before excluding that subtree;
+genuine policy, installation and ledger documents elsewhere still require
+verified quiescent migration. Startup never moves or rewrites an existing handoff,
+and an explicit retry reuses its original request envelope.
+
 The production prompt in `src\planning-prompts.ts` is also used by the handoff
 evaluation probes. One ordinary `HumanLoopRuntime.send` request asks Router and
 Designer to preserve confirmed intent, read source without executing it, publish

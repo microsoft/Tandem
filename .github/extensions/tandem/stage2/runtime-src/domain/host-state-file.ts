@@ -136,7 +136,9 @@ export async function legacyHostFiles(root: string): Promise<string[]> {
       const path = resolve(directory, entry.name);
       if (entry.isSymbolicLink()) throw new Error('Host state migration cannot follow symbolic links.');
       if (entry.isDirectory()) {
+        // Integration handoffs retain source/receipts before the native WAL exists.
         if (path === resolve(root, '.tandem', 'living-canvas', 'host-state')
+          || path === resolve(root, '.tandem', 'living-canvas', 'handoffs')
           || path === resolve(root, '.tandem', 'living-canvas', 'design', 'content')
           || path === resolve(root, '.tandem', 'living-canvas', 'design', '.snapshots')
           || path === resolve(root, '.tandem', 'living-canvas', 'workflow', 'design', 'previews')) continue;

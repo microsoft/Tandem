@@ -25,7 +25,7 @@
     {
       "path": "stage2/manifest.json",
       "bytes": 23170,
-      "sha256": "586563f1eaea0c04f0070c8cf848e16cac14893ac01a5af2064ab3a6706783d0"
+      "sha256": "5bfda47a765ab8e56fa541e6a3fbebe4e797e4d0df3c80c65c6bbb0d6da90b56"
     },
     {
       "path": "stage2/package.json",
@@ -359,8 +359,8 @@
     },
     {
       "path": "stage2/runtime-src/domain/host-state-file.ts",
-      "bytes": 20164,
-      "sha256": "97a05dd095ac44b6b3efb2f3920e2303b6380322a3e94435025c104c7a0d082c"
+      "bytes": 20327,
+      "sha256": "0beca1d3c415fceddfc415cd00cf162516d92c2dcaa48a306c7c5bc428db6a26"
     },
     {
       "path": "stage2/runtime-src/domain/host-state-wal.ts",
@@ -703,5 +703,5 @@
       "sha256": "92b92e76eb4ac3bee96c6bbdde06ed1f7d9c0088576a51db1276c567dbb207f8"
     }
   ],
-  "digest": "c258ee4b5caecc5a1317d6210a27fa6f4e7a8c42bf78470b0d1d7ba90153fd33"
+  "digest": "ffff877216d908b0d1b9750d385c89b4272013177521a717a11b5cc58eed2be6"
 }
