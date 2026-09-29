@@ -178,6 +178,25 @@ then implementation-confirmation behavior.
 
 ## Minimal implementation approach
 
+### Current priority: logic before UX unification
+
+Continue from the colleague's in-progress integration branch when available;
+compare its implementation and known issues against this agreed direction rather
+than starting over.
+
+The current milestone is functional integration: direct Stage 2 entry, correct
+session ownership and lifecycle, explicit handoff, Design continuation, and
+confirmed implementation with correct factory/result handling. Stage 1 and
+Stage 2 do **not** need a consistent visual design, navigation model or polished
+cross-stage experience at this milestone. Temporary UX differences are acceptable;
+unification and polish belong to a later pass.
+
+Keep the minimum controls needed to exercise the logic usable and truthful.
+Incorrect request routing, accidental submissions, bypassed confirmation or
+permissions, ineffective Stop, and lost state are correctness issues, not UX
+polish to defer. Do not expand this integration into a renderer rewrite or broad
+interaction redesign merely to make the two stages look alike.
+
 Start with a representative Stage 1 handoff and exercise the existing Router
 and Designer path. Reuse existing file inspection, artifact publication,
 questions and implementation confirmation. Change prompts or input-context
