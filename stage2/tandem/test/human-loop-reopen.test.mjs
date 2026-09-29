@@ -25,7 +25,7 @@ const question = { id: "scope", context: "Product scope is not decided.", questi
     { id: "large", label: "Large", implication: "Discuss a larger scope." }], allowFreeform: true };
 
 async function fixture(t, { ask = false, autoConfirm = true, stopDelivery = null, model = null, legacyNamespaces = false,
-  deferred = false, failCreate = false, failStartup = false } = {}) {
+  reasoningEffort = null, deferred = false, failCreate = false, failStartup = false } = {}) {
   const root = await mkdtemp(join(process.cwd(), ".human-reopen-")), workspace = join(root, "project");
   await mkdir(workspace); await git(workspace, "init", "--quiet");
   await writeFile(join(workspace, "original.txt"), "existing work\n");
@@ -43,7 +43,7 @@ async function fixture(t, { ask = false, autoConfirm = true, stopDelivery = null
   let coldHistory = (events) => events;
   let resumeState = {};
   const errors = [], sessions = [], bootstraps = [], clientOptions = [];
-  let actualModel = model ?? "one";
+  let actualModel = model ?? "one", actualEffort = reasoningEffort;
   class Session extends NativeSession {
     emit(type, data) {
       const event = { id: `event-${++this.count}`, type, data, parentId: this.events.at(-1)?.id ?? null, timestamp: new Date().toISOString() };
@@ -79,7 +79,8 @@ async function fixture(t, { ask = false, autoConfirm = true, stopDelivery = null
           ...(result.success ? {} : { error: "Fixture compaction failed." }) });
         return result;
       } };
-      if (model) this.rpc.model = { getCurrent: async () => ({ modelId: actualModel }) };
+      if (model) this.rpc.model = { getCurrent: async () => ({ modelId: actualModel, reasoningEffort: actualEffort }),
+        setReasoningEffort: async ({ reasoningEffort }) => { actualEffort = reasoningEffort; return { reasoningEffort }; } };
     }
     async setModel(id) { actualModel = id; }
     async send(input) {
@@ -142,7 +143,7 @@ async function fixture(t, { ask = false, autoConfirm = true, stopDelivery = null
       native = new Session(config); sessions.push(native); return native;
     }
     async start() {}
-    async listModels() { return [{ id: "one" }, { id: "two" }]; }
+    async listModels() { return [{ id: "one", supportedReasoningEfforts: ["low", "high"] }, { id: "two", supportedReasoningEfforts: ["low", "high"] }]; }
     async getSessionMetadata(sessionId) { return nativeMissing || (!native && !saved) ? undefined : { sessionId, isRemote: false }; }
     async resumeSession(id, config) {
       if (native?.config.requestExtensions === true && config.requestExtensions === false) {
@@ -194,7 +195,7 @@ async function fixture(t, { ask = false, autoConfirm = true, stopDelivery = null
   };
   if (legacyNamespaces) await mkdir(join(workspace, ".teleos"));
   let installation = new HumanLoopInstallation(options);
-  if (model) await new HumanLoopPreferences(workspace).update({ model, theme: "dark" });
+  if (model) await new HumanLoopPreferences(workspace).update({ model, reasoningEffort, theme: "dark" });
   if (!deferred) runtime = await installation.open();
   const send = async (id, answers = null) => {
     await runtime.send({ id, message: `Exact request ${id}.`, receivedAt: new Date().toISOString(), answers });
@@ -214,6 +215,7 @@ async function fixture(t, { ask = false, autoConfirm = true, stopDelivery = null
     setColdHistory: (transform) => { coldHistory = transform; },
     setResumeState: value => { resumeState = value; },
     setActualModel: (id) => { actualModel = id; },
+    setActualEffort: value => { actualEffort = value; },
     setCreateFailure: value => { failCreate = value; },
     setStartupFailure: value => { failStartup = value; },
     setDisconnectFailure: value => { failDisconnect = value; },
@@ -939,6 +941,33 @@ test("persisted model preferences allow original automatic creation and same-ses
   await f.runtime.changeModel({ acceptActual: true });
   assert.equal((await new HumanLoopPreferences(f.workspace).read()).model, "one");
   assert.deepEqual(await f.runtime.conversation(), messages);
+});
+
+test("explicit effort survives cold reopen without overwriting native history or replaying work", async t => {
+  const f = await fixture(t, { model: "one", reasoningEffort: "low" });
+  assert.equal(f.sessions[0].config.reasoningEffort, "low");
+  await f.send("first");
+  const identity = f.runtime.sessionId, sends = f.counts.sends, messages = await f.runtime.conversation();
+  await f.installation.close(); await f.reopen(true);
+  assert.equal(f.runtime.sessionId, identity);
+  assert.equal(f.counts.sends, sends);
+  assert.equal((await f.runtime.modelSettings()).actualReasoningEffort, "low");
+  assert.equal(Object.hasOwn(f.sessions.at(-1).config, "reasoningEffort"), false);
+  await f.installation.close(); f.setActualEffort("high"); await f.reopen(true);
+  await assert.rejects(f.runtime.send({}), /reasoning effort differs/);
+  assert.equal(f.counts.creates, 1);
+  await f.runtime.changeModel({ model: "one", reasoningEffort: "low" });
+  assert.equal((await f.runtime.modelSettings()).actualReasoningEffort, "low");
+  assert.deepEqual(await f.runtime.conversation(), messages);
+  const preferences = new HumanLoopPreferences(f.workspace);
+  await preferences.update({ pendingModel: "one", pendingReasoningEffort: "high" });
+  await f.installation.close(); await f.reopen(true);
+  await assert.rejects(f.runtime.send({}), /unconfirmed/);
+  assert.equal((await preferences.read()).pendingReasoningEffort, "high");
+  assert.equal(f.counts.sends, sends);
+  await f.runtime.changeModel({ acceptActual: true });
+  assert.equal((await preferences.read()).reasoningEffort, "low");
+  assert.equal((await preferences.read()).pendingReasoningEffort, null);
 });
 
 test("same-ID reopen retains an actual immediate Stop without reinjection", { timeout: 90_000 }, async (t) => {

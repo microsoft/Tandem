@@ -120,6 +120,18 @@ This establishes a baseline; it does not rewrite the application.
 Review the proposed Design and answer any questions in Tandem. When satisfied,
 send a separate request to implement it. Review permission requests as they appear.
 
+**Settings > Model** selects the private workflow model independently of main chat.
+The optional **Reasoning effort** list contains only levels advertised for that
+model. **No explicit override** preserves native model-selection behavior; Tandem
+does not impose an effort default. Apply is available only while the private
+runtime is idle. The status shows authoritative model and effort readback before
+an explicit choice is saved. A failed or mismatched update retains pending intent
+and blocks new work until you retry or **Accept actual model**.
+
+Saved explicit effort is checked again on same-session reopen, without replaying
+work or silently changing retained native settings. Main-chat effort is not
+evidence of private workflow or Review-worker effort.
+
 ## 4. Close safely
 
 Use **Settings > Diagnostics > Close runtime** and confirm it succeeds before
