@@ -206,7 +206,7 @@ test("read-only, final-spec generation, historical stages and reset block sends 
     const snapshots = [
         { ...value, provider: { canSubmitAnswers: false } },
         { ...value, processing: { action: "generate-design-spec", status: "running" } },
-        { ...value, lifecycle: { ...value.lifecycle, currentStage: "design" } },
+        { ...value, lifecycle: { ...value.lifecycle, currentStage: "development" } },
         { ...value, effortReset: { requestId: "reset" } },
     ];
     for (const [index, snapshot] of snapshots.entries()) {
@@ -218,7 +218,7 @@ test("read-only, final-spec generation, historical stages and reset block sends 
         await submit(h, "revision-form");
         assert.equal(field(h, "revision-input").value, "Keep the draft");
     }
-    assert.equal(h.requests.length, 0);
+    assert.equal(h.requests.filter(request => request.path !== "/api/development/open").length, 0);
 });
 
 test("Finish Prototype requires promoted milestones and resolved feedback, not optional visual work", async (t) => {
@@ -433,7 +433,7 @@ test("same-URL checkpoints reload only after explicit promotion and can restore 
 });
 
 test("not-applicable prototypes never expose start, finish or reopen mutations", async (t) => {
-    const value = state("design"); value.prototypeApproach = { mode: "not-applicable", reason: "Command-line app" };
+    const value = state("development"); value.prototypeApproach = { mode: "not-applicable", reason: "Command-line app" };
     value.lifecycle.skippedStages = [{ stageId: "prototype", reason: "Command-line app", skippedAt: value.updatedAt }];
     value.previewStatus = "ready"; value.previewUrl = "http://127.0.0.1:9999/stale";
     value.artifacts = [{ id: "old-preview", title: "Old preview", stage: "prototype", content: "Old output", mermaid: "" }];
@@ -445,7 +445,7 @@ test("not-applicable prototypes never expose start, finish or reopen mutations",
     await h.click(h.get("artifact-list").querySelector("button")!); assert.equal(hidden(h, "reopen-stage"), true);
     h.render({ ...value, revision: 2, lifecycle: { ...value.lifecycle, currentStage: "prototype" } });
     assert.equal(disabled(h, "complete-stage"), true); await h.click("complete-stage");
-    assert.equal(h.requests.length, 0);
+    assert.equal(h.requests.filter(request => request.path !== "/api/development/open").length, 0);
 });
 
 test("validate-existing uses the safe start route without claiming to replace the app", async (t) => {

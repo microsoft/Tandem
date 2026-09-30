@@ -20,7 +20,7 @@
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3537.50" />
     <Compile Remove="Checks\**\*.cs" />
     <InternalsVisibleTo Include="Tandem.Desktop.Checks" />
-    <Content Include="$(_TandemRepositoryRoot)dist\desktop\runtime\host.mjs;$(_TandemRepositoryRoot)dist\desktop\runtime\extension.mjs"
+    <Content Include="$(_TandemRepositoryRoot)dist\desktop\runtime\host.mjs;$(_TandemRepositoryRoot)dist\desktop\runtime\extension.mjs;$(_TandemRepositoryRoot)dist\desktop\runtime\payload.json"
              Link="runtime\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="$(_TandemRepositoryRoot)dist\desktop\runtime\skills\tandem\SKILL.md"
              Link="runtime\skills\tandem\SKILL.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
@@ -37,6 +37,11 @@
     <Error Condition="!Exists('$(_TandemRepositoryRoot)node_modules\tsx\dist\cli.mjs')" Code="TANDEM002"
            Text="Tandem's Node dependencies are missing. Run npm ci in the repository root, then build again." />
     <Exec Command="npm run build:desktop:runtime" WorkingDirectory="$(_TandemRepositoryRoot)" />
+    <ItemGroup>
+      <Content Include="$(_TandemRepositoryRoot)dist\desktop\runtime\stage2\**\*"
+               Link="runtime\stage2\%(RecursiveDir)%(Filename)%(Extension)"
+               CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
   </Target>
   <Target Name="RemoveUnusedWebView2WpfReference" BeforeTargets="ResolveAssemblyReferences">
     <ItemGroup>

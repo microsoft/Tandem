@@ -26,12 +26,16 @@ test("responsive layout and graph keyboard focus have explicit accessible styles
 test("compact density is shared by all stage headers, panels, controls, and composers", async () => {
     const css = await readFile(new URL("../src/renderer/styles.css", import.meta.url), "utf8");
     const rules = (selector: string) => {
-        const start = css.indexOf(selector + " {");
+        const start = css.search(new RegExp("^" + selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + " \\{", "m"));
         assert.ok(start >= 0, `Missing ${selector}`);
         return css.slice(start, css.indexOf("}", start));
     };
-    for (const [token, size] of [["space", 8], ["card-padding", 10], ["control-height", 30], ["small-control-height", 28], ["tab-height", 36], ["composer-height", 36]]) {
+    for (const [token, size] of [["space", 8], ["card-padding", 10], ["control-height", 30], ["tab-height", 36]]) {
         assert.match(css, new RegExp(`--studio-${token}:\\s*${size}px`));
+    }
+    for (const token of ["small-control-height", "composer-height"]) {
+        assert.match(rules(":root"), new RegExp(`--studio-${token}:\\s*var\\(--studio-control-height\\)`),
+            "Compact controls and composers share the approved control-height token.");
     }
     assert.match(rules(".topbar"), /min-height:\s*var\(--studio-header-height\)/);
     assert.match(rules(".previewbar"), /min-height:\s*var\(--studio-tab-height\)/);
@@ -51,7 +55,8 @@ test("compact density is shared by all stage headers, panels, controls, and comp
     assert.match(rules(".requirements"), /padding-inline-end:\s*4px/);
     assert.match(rules(".requirements"), /scrollbar-width:\s*thin/);
     assert.match(rules(".requirements"), /scrollbar-gutter:\s*stable/);
-    assert.match(rules(".splitter"), /min-width:\s*9px/);
+    assert.match(rules(".splitter"), /min-width:\s*5px/);
+    assert.match(rules(".splitter:focus-visible"), /outline:\s*2px solid var\(--studio-focus\)/);
 });
 
 test("desktop activity bar keeps completion visible as an icon-only action", async () => {

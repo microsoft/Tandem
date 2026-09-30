@@ -143,7 +143,7 @@ test("browser shell preserves the application origin, microphone delegation and 
         assert.equal(control.querySelector("svg")?.getAttribute("aria-hidden"), "true");
     }
     const permissions = header.querySelector<HTMLSelectElement>('select[aria-label="Tool permissions"]')!;
-    assert.equal(permissions.title, "Tool permissions: Ask each time");
+    assert.equal(permissions.title, "Upstream tool permissions: Ask each time");
     assert.equal(permissions.value, "ask");
     await h.click("Reload page");
     assert.notEqual(h.document.querySelector("#tandem-application"), frame);
@@ -178,11 +178,11 @@ test("allow-all and Stop require confirmation while workspace selection remains 
     assert.deepEqual(h.requests[0].body, { type: "set-permission-mode", mode: "allow-all", generation: "generation-one" });
     const permissionControl = h.document.querySelector(".host-permissions")!;
     assert.equal(permissionControl.getAttribute("data-mode"), "allow-all");
-    assert.equal(permissionControl.getAttribute("title"), "Tool permissions: Allow all for this session");
+    assert.equal(permissionControl.getAttribute("title"), "Upstream tool permissions: Allow all for this session");
     assert.ok(permissionControl.querySelector(".lucide-shield-alert"));
     await h.select('select[aria-label="Tool permissions"]', "ask");
     assert.deepEqual(h.requests[1].body, { type: "set-permission-mode", mode: "ask", generation: "generation-one" });
-    assert.equal(permissionControl.getAttribute("title"), "Tool permissions: Ask each time");
+    assert.equal(permissionControl.getAttribute("title"), "Upstream tool permissions: Ask each time");
     await h.click("Open folder");
     assert.ok(h.button("nested"));
     await h.click("Cancel");

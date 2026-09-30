@@ -321,7 +321,9 @@ test("non-GUI Requirements bypass Sketch and Prototype with snapshots and a feat
         state.prototypeApproach = { mode: "not-applicable", reason: "Command-line contract only." };
         await fixture.api.persistState(state);
         const completed = await fixture.api.completeLifecycleStage("sample", "requirements", "project:tandem");
-        assert.equal(completed.lifecycle.currentStage, "design");
+        assert.equal(completed.lifecycle.currentStage, "development");
+        assert.equal(fixture.developmentRequests.length, 1);
+        assert.match(String(fixture.developmentRequests[0].message), /Do not implement/);
         assert.deepEqual(Array.from(completed.lifecycle.skippedStages, (stage) => stage.stageId), ["sketch", "prototype"]);
         assert.equal(completed.lifecycle.outputs.length, 3);
         assert.ok(completed.artifacts.some((artifact) => artifact.id === "draft-feature-spec"));

@@ -11,7 +11,7 @@ internal sealed class MainForm : Form
     private readonly DiagnosticLog _log = new();
     private readonly ToolStripButton _open = new("Open folder…");
     private readonly ToolStripButton _reload = new("Reload page") { Enabled = false };
-    private readonly ToolStripDropDownButton _permissions = new("Permissions: Ask each time") { Enabled = false };
+    private readonly ToolStripDropDownButton _permissions = new("Upstream permissions: Ask each time") { Enabled = false };
     private readonly ToolStripMenuItem _askEachTime = new("Ask each time") { Checked = true };
     private readonly ToolStripMenuItem _allowAll = new("Allow all for this session");
     private readonly ToolStripLabel _workspaceLabel = new("No workspace selected");
@@ -467,8 +467,8 @@ internal sealed class MainForm : Form
         _permissionMode = mode;
         _askEachTime.Checked = mode == "ask";
         _allowAll.Checked = mode == "allow-all";
-        _permissions.Text = mode == "ask" ? "Permissions: Ask each time" : "Permissions: Allow all (session)";
-        _permissions.ToolTipText = "Tool approvals only. File permissions, active-work protection, managed policy, " +
+        _permissions.Text = mode == "ask" ? "Upstream permissions: Ask each time" : "Upstream permissions: Allow all (session)";
+        _permissions.ToolTipText = "Preparation through Prototype only; Development has its own private permission controls. File permissions, active-work protection, managed policy, " +
             "sandbox consent, microphone access and external-browser confirmation are not bypassed.";
     }
 

@@ -1,15 +1,21 @@
-import type { LifecycleStageId, LifecycleState, TandemArtifact } from "./types.js";
+import type { HistoricalStageId, LifecycleStageId, TandemArtifact } from "./types.js";
 
 export const lifecycleStages: { id: LifecycleStageId; label: string }[] = [
     { id: "prepare", label: "Preparation" },
     { id: "requirements", label: "Requirements" },
     { id: "sketch", label: "Sketch" },
     { id: "prototype", label: "Prototype" },
-    { id: "design", label: "Design" },
-    { id: "plan", label: "Plan" },
-    { id: "implement", label: "Implement" },
-    { id: "test", label: "Test" },
+    { id: "development", label: "Development" },
 ];
+
+export const retiredStages = ["design", "plan", "implement", "test"] as const;
+export function isRetiredStage(value: unknown): value is typeof retiredStages[number] {
+    return retiredStages.some((stage) => stage === value);
+}
+export function parseHistoricalStageId(value: unknown): HistoricalStageId {
+    if (lifecycleStages.some((stage) => stage.id === value) || isRetiredStage(value)) return value as HistoricalStageId;
+    throw new Error("Unsupported historical lifecycle stage; its record was preserved.");
+}
 
 export interface JobOwner {
     sessionId: string;
@@ -57,15 +63,6 @@ export function hasActiveWork(state: ActivityState): boolean {
         ["starting", "running"].includes(state.testing?.status || "");
 }
 
-export function reopenTestLifecycle(lifecycle: LifecycleState): LifecycleState {
-    return {
-        ...lifecycle, currentStage: "test",
-        completedStages: lifecycle.completedStages.filter((stage) => stage !== "test"),
-        outputs: lifecycle.outputs.filter((output) => output.stageId !== "test"),
-        history: [...lifecycle.history, ...lifecycle.outputs.filter((output) => output.stageId === "test")],
-    };
-}
-
 export function sameOwner(left: JobOwner | null, right: JobOwner): boolean {
     const canonical = (path: string) => {
         const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
@@ -77,7 +74,7 @@ export function sameOwner(left: JobOwner | null, right: JobOwner): boolean {
 export function invalidateArtifacts(artifacts: TandemArtifact[], stageId: LifecycleStageId): TandemArtifact[] {
     const index = lifecycleStages.findIndex((stage) => stage.id === stageId);
     return artifacts.map((artifact) =>
-        lifecycleStages.findIndex((stage) => stage.id === artifact.stage) >= index
+        !isRetiredStage(artifact.stage) && lifecycleStages.findIndex((stage) => stage.id === artifact.stage) >= index
             ? { ...artifact, reviewStatus: "stale" }
             : artifact);
 }

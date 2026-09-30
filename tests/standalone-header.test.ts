@@ -54,7 +54,7 @@ test("hosted reset uses the existing confirmation and cannot bypass stale or rea
     assert.equal(h.document.querySelector('[role="alertdialog"]'), null);
     assert.ok(h.headerMessages.some((message) => message.type === "tandem:header:error"));
     await h.sendHeaderMessage({ type: "tandem:header:action", scope: value.scope, action: "reset" });
-    assert.match(h.document.querySelector('[role="alertdialog"]')!.textContent!, /cannot be undone/);
+    assert.match(h.document.querySelector('[role="alertdialog"]')!.textContent!, /current state and files will be archived/);
     assert.equal(h.requests.length, 0);
     await h.confirm(false);
     assert.equal(h.requests.length, 0);

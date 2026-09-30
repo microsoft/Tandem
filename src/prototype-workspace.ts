@@ -1,8 +1,9 @@
 import { constants } from "node:fs";
 import { copyFile, lstat, mkdir, readFile, readdir, realpath, symlink, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, normalize, parse, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, normalize, parse, relative, resolve, sep } from "node:path";
 import { prototypePreviewBridgeSource } from "./prototype-bridge.js";
 import { isPrototypeRuntimeDirectory, prototypeRuntimePath } from "./prototype-runtime.js";
+import { captureWorkspaceFiles } from "./worker-contracts.js";
 
 const preparationMarker = ".tandem-prototype-workspace.json";
 const completionMarker = ".tandem-prototype-workspace.complete.json";
@@ -80,6 +81,14 @@ function isDependencyPath(path: string, projectRoot: string, storageRoot: string
 function isPrivateFile(name: string): boolean {
     return /^\.env(?:\.|$)/i.test(name) || [".npmrc", ".pypirc", ".netrc", "id_rsa", "id_ed25519"].includes(name.toLowerCase()) ||
         /\.(?:pem|key|p12|pfx)$/i.test(name);
+}
+
+export function capturePrototypeSourceFiles(root: string): Promise<Record<string, string>> {
+    return captureWorkspaceFiles(root, {
+        maxFiles: maxSourceFiles, maxBytes: maxSourceBytes,
+        excludeDirectory: (path) => ignoredDirectories.has(basename(path).toLowerCase()) || isPrototypeRuntimeDirectory(path),
+        excludeFile: (path) => isPrivateFile(basename(path)),
+    });
 }
 
 async function readMarker(path: string): Promise<unknown> {

@@ -83,7 +83,7 @@ test("explicit reopening preserves history and invalidates downstream work", asy
         assert.deepEqual(Array.from(reopened.lifecycle.completedStages), ["prepare"]);
         assert.equal(reopened.lifecycle.history[0].path, "old-snapshot.json");
         assert.equal(reopened.artifacts[0].content, "Keep history");
-        assert.equal(reopened.artifacts[0].reviewStatus, "stale");
+        assert.equal(reopened.artifacts[0].reviewStatus, "current", "Historical records retain their original identity/status, without Stage 2 authority.");
         assert.equal(reopened.previewStatus, "waiting");
         assert.notEqual(reopened.generation, state.generation);
     } finally { await fixture.close(); }

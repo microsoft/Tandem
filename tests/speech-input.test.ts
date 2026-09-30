@@ -14,8 +14,11 @@ async function fixture(t: TestContext, value = state()) {
   });
   h.render(value);
   await h.flush();
-  const control = (input: HTMLTextAreaElement, kind = ".speech-toggle") =>
-    input.nextElementSibling!.querySelector<HTMLButtonElement>(kind)!;
+  const control = (input: HTMLTextAreaElement, kind = ".speech-toggle") => {
+    const node = input.closest(".voice-composer")?.querySelector<HTMLButtonElement>(kind);
+    assert.ok(node, `Missing ${kind} for speech input ${input.id || input.name}`);
+    return node;
+  };
   const start = async (input: HTMLTextAreaElement) => {
     input.setSelectionRange(input.value.length, input.value.length);
     await h.click(control(input));
@@ -35,12 +38,18 @@ test("speech controls cover conversational fields and exclude process configurat
   const h = await fixture(t, dag());
   const inputs = h.document.querySelectorAll("[data-speech-input]");
   assert.deepEqual(Array.from(inputs).map((input) => input.id || input.getAttribute("name")).sort(), [
-    "implementation-strategy-input", "plan-revision-input", "prototype-detail", "revision-input", "sketch-instruction", "usage-input",
+    "prototype-detail", "revision-input", "sketch-instruction", "usage-input",
   ]);
   assert.equal(h.document.querySelectorAll(".speech-toggle").length, inputs.length);
-  assert.equal(h.document.querySelectorAll(".speech-sign-in").length, inputs.length);
+  assert.equal(h.document.querySelectorAll(".speech-sign-in").length, 0, "Per-field sign-in is replaced by the shared header action.");
+  assert.equal(h.document.querySelectorAll("#speech-sign-in").length, 1);
+  for (const input of inputs) {
+    const toggle = h.control(input as HTMLTextAreaElement);
+    assert.equal(toggle.getAttribute("aria-label"), "Start speech input");
+    assert.ok(h.document.getElementById(toggle.getAttribute("aria-describedby")!));
+  }
   assert.equal(h.get("sketch-instruction").hasAttribute("data-speech-input"), true);
-  for (const name of ["intake-content", "verification-checks", "protected-paths", "handoff-approver"]) {
+  for (const name of ["intake-content", "handoff-approver"]) {
     assert.equal(h.get(name).hasAttribute("data-speech-input"), false);
   }
   assert.equal(h.requests.length, 0);
@@ -53,12 +62,12 @@ test("explicit Microsoft sign-in retains drafts through polling without requesti
   await h.input(input, "Keep this thought");
   let release!: (value: Response) => void;
   h.setFetch(() => new Promise((resolve) => { release = resolve; }));
-  await h.click(h.control(input, ".speech-sign-in"));
+  await h.click("speech-sign-in");
   assert.equal(h.requests.length, 1);
   assert.equal(h.requests[0].path, "/api/speech/login");
   assert.equal(input.readOnly, false);
   assert.equal(h.control(input).disabled, true);
-  await h.click(h.control(input, ".speech-sign-in"));
+  await h.click("speech-sign-in");
   await h.click(h.control(input));
   assert.equal(h.sessions.length, 0);
   Object.defineProperty(h.document, "visibilityState", { value: "hidden", configurable: true });
@@ -81,13 +90,13 @@ test("sign-in cancellation and errors are visible and leave the draft untouched"
     signal = options.signal;
     signal!.addEventListener("abort", () => reject(new Error("Aborted")));
   }));
-  await h.click(h.control(input, ".speech-sign-in"));
-  await h.click(h.control(input, ".speech-cancel"));
+  await h.click("speech-sign-in");
+  await h.click(h.document.querySelector('.speech-header-sign-in [aria-label="Cancel Microsoft sign-in"]')!);
   assert.equal(signal!.aborted, true);
   assert.equal(input.value, "Original");
   assert.match(h.control(input, ".speech-status").textContent!, /cancelled/);
   h.setFetch(async () => response({ error: "Your organization requires an approved desktop application." }, 503));
-  await h.click(h.control(input, ".speech-sign-in"));
+  await h.click("speech-sign-in");
   assert.match(h.control(input, ".speech-status").textContent!, /approved desktop application/);
   assert.equal(h.control(input, ".speech-status").dataset.status, "error");
   assert.equal(input.value, "Original");
@@ -206,25 +215,33 @@ test("prototype clarification speech cancellation restores the selected answer",
   assert.equal(h.requests.length, 0);
 });
 
-test("switching artifacts restores the original review before binding the next artifact", async (t) => {
-  const value = state("design");
+test("browsing historical artifacts cancels speech without changing retained reviews or the active draft", async (t) => {
+  const value = state("prototype");
   value.artifacts = ["first", "second"].map((id) => ({
     id, title: id, stage: "design", kind: "contract", content: id, reviewStatus: "current", path: "", language: "", mermaid: "",
   }));
   const h = await fixture(t, value);
   const buttons = h.get("artifact-list").querySelectorAll("button");
-  await h.click(buttons[0]);
-  let input = h.get<HTMLTextAreaElement>("design-review-input");
-  await h.input(input, "Original review");
+  const input = h.get<HTMLTextAreaElement>("revision-input");
+  await h.input(input, "Original prototype feedback");
   const capture = await h.start(input);
   capture.events.transcript("must not transfer", false); await h.flush();
-  await h.click(buttons[1]);
+  await h.click(buttons[0]);
   assert.equal(capture.closed, true);
-  assert.equal(h.get<HTMLTextAreaElement>("design-review-input").value, "");
+  assert.equal(h.get("artifact-content").textContent, "first");
+  assert.match(h.get("content-panel").textContent!, /Read-only legacy evidence/);
+  assert.equal(h.get("content-panel").querySelector("textarea, .speech-toggle"), null);
+  assert.equal(h.document.getElementById("design-review-input"), null, "Retired review editing is not reintroduced.");
+  await h.click(buttons[1]);
+  assert.equal(h.get("artifact-content").textContent, "second");
   capture.events.transcript("late callback", true); await h.flush();
   await h.click(buttons[0]);
-  input = h.get<HTMLTextAreaElement>("design-review-input");
-  assert.equal(input.value, "Original review");
+  assert.equal(h.get("artifact-content").textContent, "first");
+  await h.click("live-preview-tab");
+  assert.equal(input.value, "Original prototype feedback");
+  assert.equal(h.store.getSnapshot().state!.lifecycle.currentStage, "prototype");
+  assert.deepEqual(h.store.getSnapshot().state!.artifacts, value.artifacts);
+  assert.equal(h.requests.length, 0);
 });
 
 test("overlong speech fails visibly without truncating or submitting", async (t) => {

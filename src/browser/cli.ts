@@ -30,6 +30,9 @@ async function openBrowser(url: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
+    if (Number(process.versions.node.split(".")[0]) < 24 || process.versions.electron || process.versions.bun) {
+        throw new Error("Tandem requires actual Node 24 or newer. Install Node 24+ and relaunch; no runtime was started.");
+    }
     const { values, positionals } = parseArgs({
         options: { workspace: { type: "string" }, "no-open": { type: "boolean" },
             help: { type: "boolean", short: "h" }, version: { type: "boolean", short: "v" } },

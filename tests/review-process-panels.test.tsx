@@ -5,7 +5,6 @@ import React, { act, useState } from "react";
 import { createProcessState } from "../src/process-state.js";
 import { ArtifactList, ArtifactsPanel } from "../src/renderer/artifacts-panel.js";
 import { ProcessPanel } from "../src/renderer/process-panel.js";
-import { ReviewPanel } from "../src/renderer/review-panel.js";
 import { SpeechProvider } from "../src/renderer/speech-textarea.js";
 import { DraftProvider, UiContext, type UiContextValue, type UiState } from "../src/renderer/ui-context.js";
 import type { AcceptanceRecord } from "../src/accepted-artifacts.js";
@@ -18,7 +17,7 @@ afterEach(async () => {
 function fixture(): UiState {
   return {
     prototypeId: "review-fixture", generation: "first-generation", revision: 1,
-    lifecycle: { currentStage: "design", completedStages: ["prepare", "requirements", "sketch", "prototype"],
+    lifecycle: { currentStage: "prototype", completedStages: ["prepare", "requirements", "sketch"],
       outputs: [], skippedStages: [], history: [] },
     design: { substage: "product" }, designReview: { threads: [] }, testDesignReview: { threads: [], scenarios: [] },
     artifacts: ["a", "b"].map((id) => ({
@@ -31,7 +30,7 @@ function fixture(): UiState {
 }
 
 function acceptance(id: string, path: string): AcceptanceRecord {
-  return { id, stageId: "plan", snapshotPath: path, snapshotHash: "snapshot-hash", acceptedAt: "now",
+  return { id, stageId: "prototype", snapshotPath: path, snapshotHash: "snapshot-hash", acceptedAt: "now",
     acceptedBy: { label: "Owner", sessionId: "owner-session" }, source: { commit: null, fingerprint: "sources" },
     producer: { version: "1", configurationHash: "config" }, upstream: [], artifactHashes: [], exportPath: null };
 }
@@ -84,7 +83,7 @@ async function harness(initial = fixture()) {
     return <UiContext.Provider value={context}>
       <DraftProvider key={`${state.prototypeId}:${state.generation}`}><SpeechProvider>
         <ArtifactList selectedArtifactId={selection} />
-        <ReviewPanel /><ArtifactsPanel selectedArtifactId={selection} /><ProcessPanel />
+        <ArtifactsPanel selectedArtifactId={selection} /><ProcessPanel />
       </SpeechProvider></DraftProvider>
     </UiContext.Provider>;
   }
@@ -132,99 +131,6 @@ async function harness(initial = fixture()) {
   };
 }
 
-test("review composers retain per-artifact drafts, kind selections, and replacement input after acceptance", async () => {
-  const state = fixture();
-  const h = await harness(state);
-  await h.input("#design-review-input", "Question A");
-  await h.input("#review-request-kind", "contract");
-  await h.click('[data-artifact-id="b"]');
-  await h.input("#design-review-input", "Question B");
-  await h.render({ ...state, revision: 2 });
-  await h.click('[data-artifact-id="a"]');
-  assert.equal(h.get<HTMLTextAreaElement>("#design-review-input").value, "Question A");
-  assert.equal(h.get<HTMLSelectElement>("#review-request-kind").value, "contract");
-  let release!: (state: UiState) => void;
-  h.setSend(() => new Promise((resolve) => { release = resolve; }));
-  await h.submit("#design-review-form");
-  assert.deepEqual(h.requests[0], { endpoint: "/api/design-review",
-    body: { prompt: "Question A", type: "artifact", artifactKind: "contract", artifactId: "a" } });
-  await h.click("#finish-review");
-  assert.equal(h.requests.length, 1, "Finalization must not overtake a queued request");
-  await h.input("#design-review-input", "Replacement A");
-  await act(async () => { release(state); });
-  assert.equal(h.get<HTMLTextAreaElement>("#design-review-input").value, "Replacement A");
-  await h.click('[data-artifact-id="b"]');
-  assert.equal(h.get<HTMLTextAreaElement>("#design-review-input").value, "Question B");
-});
-
-test("late review success clears only its original artifact draft across artifact switches", async () => {
-  const state = fixture();
-  const h = await harness(state);
-  await h.input("#design-review-input", "Accepted A");
-  let release!: (state: UiState) => void;
-  h.setSend(() => new Promise((resolve) => { release = resolve; }));
-  await h.submit("#design-review-form");
-  await h.click('[data-artifact-id="b"]');
-  await h.input("#design-review-input", "Keep B");
-  await act(async () => { release(state); });
-  assert.equal(h.get<HTMLTextAreaElement>("#design-review-input").value, "Keep B");
-  await h.click('[data-artifact-id="a"]');
-  assert.equal(h.get<HTMLTextAreaElement>("#design-review-input").value, "");
-});
-
-test("late review responses cannot clear the replacement generation's draft", async () => {
-  const state = fixture();
-  const h = await harness(state);
-  await h.input("#design-review-input", "Original generation");
-  let release!: (state: UiState) => void;
-  h.setSend(() => new Promise((resolve) => { release = resolve; }));
-  await h.submit("#design-review-form");
-  await h.render({ ...state, revision: 2, generation: "new-generation" });
-  await h.input("#design-review-input", "New generation");
-  await act(async () => { release(state); });
-  assert.equal(h.get<HTMLTextAreaElement>("#design-review-input").value, "New generation");
-});
-
-test("test design guards product threads and finalization until test threads resolve", async () => {
-  const state = fixture();
-  state.design.substage = "test";
-  state.designReview = { threads: [{ id: "product", type: "question", status: "answered", prompt: "Old", reviewArtifactId: "a" }] };
-  const h = await harness(state);
-  assert.match(h.get("#design-review-stage-status").textContent!, /automatically before finalization/);
-  assert.equal(h.get<HTMLButtonElement>("#finish-review").disabled, true);
-  assert.equal(h.get("#artifact-review-threads").querySelector('[data-thread-action]'), null);
-  state.testDesignReview.threads = [{ id: "test", type: "artifact", artifactKind: "test-scenario",
-    status: "answered", prompt: "Integration", artifactIds: ["a"] }];
-  await h.render({ ...state, revision: 2 });
-  await h.click('#artifact-review-threads [data-thread-action="resolve"]');
-  assert.deepEqual(h.requests[0], { endpoint: "/api/design-review/thread", body: { threadId: "test", action: "resolve" } });
-  state.testDesignReview.threads[0].status = "resolved";
-  await h.render({ ...state, revision: 3 });
-  assert.equal(h.get<HTMLButtonElement>("#finish-review").disabled, false);
-  await h.input("#review-request-kind", "test-scenario");
-  await h.input("#design-review-input", "Also validate malformed input");
-  await h.submit("#design-review-form");
-  assert.equal(h.requests[1].body.artifactKind, "test-scenario");
-});
-
-test("review retry, reopen, and finalization errors are visible without mutating historical stages", async () => {
-  const state = fixture();
-  state.designReview.threads = [{ id: "retry", type: "question", status: "failed", prompt: "Question", error: "Worker failed" }];
-  const h = await harness(state);
-  await h.click('#design-review-threads [data-thread-action="retry"]');
-  assert.equal(h.requests[0].body.action, "retry");
-  state.designReview.threads[0].status = "resolved";
-  await h.render({ ...state, revision: 2 });
-  await h.click('#design-review-threads [data-thread-action="reopen"]');
-  assert.equal(h.requests[1].body.action, "reopen");
-  h.setSend(async () => { throw new Error("Could not capture specification"); });
-  await h.click("#finish-review");
-  assert.match(h.get("#design-review-stage-status").textContent!, /Could not capture specification/);
-  await h.render({ ...state, revision: 3, lifecycle: { ...state.lifecycle, currentStage: "plan", completedStages: [...state.lifecycle.completedStages, "design"] } });
-  assert.equal(h.get("#design-review-threads").querySelector("[data-thread-action]"), null);
-  assert.equal(h.get<HTMLFormElement>("#design-review-form").hidden, true);
-});
-
 test("process settings retain their dirty base revision on conflicts and preserve replacement drafts", async () => {
   const state = fixture();
   const h = await harness(state);
@@ -242,19 +148,17 @@ test("process settings retain their dirty base revision on conflicts and preserv
   let release!: (state: UiState) => void;
   h.setSend(() => new Promise((resolve) => { release = resolve; }));
   await h.submit('form[aria-label="Process settings"]');
-  await h.input("#verification-checks", "[unfinished");
+  await h.input("#process-repository", "replacement/repository");
   await act(async () => { release(state); });
-  assert.equal(h.get<HTMLTextAreaElement>("#verification-checks").value, "[unfinished");
-  await h.submit('form[aria-label="Process settings"]');
-  assert.match(h.get("#process-message").textContent!, /valid JSON array/);
+  assert.equal(h.get<HTMLInputElement>("#process-repository").value, "replacement/repository");
   assert.equal(h.requests.length, 2);
 });
 
-test("handoff export selects only the current acceptance and confirms exports and automatic dispatch", async () => {
+test("handoff export selects only current acceptance and never authorizes automatic dispatch", async () => {
   const state = fixture();
-  state.lifecycle.currentStage = "implement";
-  state.lifecycle.completedStages.push("design", "plan");
-  state.lifecycle.outputs = [{ stageId: "plan", path: ".tandem\\plan-r2.json", completedAt: "now" }];
+  state.lifecycle.currentStage = "development";
+  state.lifecycle.completedStages.push("prototype");
+  state.lifecycle.outputs = [{ stageId: "prototype", path: ".tandem\\plan-r2.json", completedAt: "now" }];
   state.process.acceptances = [acceptance("old", ".tandem\\plan-r1.json")];
   const h = await harness(state);
   assert.equal(h.get<HTMLButtonElement>("#export-handoff").disabled, true);
@@ -271,13 +175,13 @@ test("handoff export selects only the current acceptance and confirms exports an
   await h.render({ ...state, revision: 3 });
   await h.input("#handoff-approver", "Owner");
   await h.click("#accept-handoff");
-  assert.match(h.confirmations.at(-1)!, /start implementation after this explicit acceptance/);
+  assert.match(h.confirmations.at(-1)!, /Nothing will execute/);
   assert.equal(h.requests[1].body.approver, "Owner");
 });
 
 test("publication is explicit, receipts survive adapter changes, and GitHub intake omits local JSON", async () => {
   const state = fixture();
-  state.lifecycle.completedStages.push("test");
+  state.lifecycle.outputs = [{ stageId: "development", path: ".tandem\\development-r1.json", completedAt: "now" }];
   state.process.deliveryDraft = { id: "draft", body: "Review before publishing", sourceFingerprint: "sources", acceptanceIds: [] };
   state.process.settings.adapters = { handoff: "github", status: "local", intake: "github" };
   state.process.receipts = [{ id: "receipt", adapter: "local", block: "handoff", recordedAt: "now",
@@ -325,9 +229,7 @@ test("provider read-only controls preserve history, block mutations, and disting
     }] };
   const h = await harness(state);
   assert.equal(h.get<HTMLButtonElement>("#save-process").disabled, true);
-  assert.equal(h.get<HTMLButtonElement>("#finish-review").disabled, true);
   await h.submit('form[aria-label="Process settings"]');
-  await h.submit("#design-review-form");
   assert.equal(h.requests.length, 0);
   assert.match(h.get("#process-evidence").textContent!, /historical \/ different inputs/);
   assert.match(h.get("#process-evidence").textContent!, /Specification \/ inputs: old-spec/);
@@ -352,9 +254,8 @@ test("approved scenario specifications remain readable and artifact content is e
   }] };
   state.artifacts[0].content = '<script>alert("not executable")</script>';
   const h = await harness(state);
-  assert.match(h.text(), /Approved test scenarios/);
-  assert.match(h.text(), /not evidence that tests have passed/);
-  assert.match(h.text(), /Accepted response/);
+  assert.match(h.text(), /Read-only legacy evidence/);
+  assert.match(h.text(), /does not authorize Development/);
   assert.equal(h.get("#artifact-content").querySelector("script"), null);
   assert.equal(h.get("#artifact-content").textContent, state.artifacts[0].content);
 });

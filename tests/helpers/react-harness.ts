@@ -166,12 +166,12 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
 }
 
 export function state(stage: UiState["lifecycle"]["currentStage"] = "requirements", revision = 1): UiState {
-  const stages: UiState["lifecycle"]["currentStage"][] = ["prepare", "requirements", "sketch", "prototype", "design", "plan", "implement", "test"];
+  const stages: UiState["lifecycle"]["currentStage"][] = ["prepare", "requirements", "sketch", "prototype", "development"];
   return {
     version: 1, prototypeId: "fixture", revision, updatedAt: `2026-09-06T00:00:${String(revision).padStart(2, "0")}Z`,
     generation: "fixture-generation", jobOwner: null, openResetRequestId: null, stage, phase: "discovery", status: "",
     goal: "Build a useful project",
-    lifecycle: { version: 2, currentStage: stage, completedStages: stages.slice(0, stages.indexOf(stage)), outputs: [], skippedStages: [], history: [] },
+    lifecycle: { version: 3, currentStage: stage, completedStages: stages.slice(0, stages.indexOf(stage)), outputs: [], skippedStages: [], history: [] },
     provider: { canSubmitAnswers: true, extensionId: "fixture", canReload: false },
     preparation: { status: stage === "prepare" ? "not-started" : "ready", summary: "", error: "", workItems: [], messages: [], checks: [], sources: [], suggestedUsages: [], processing: null },
     prototypeApproach: { mode: stage === "prepare" ? "undecided" : "build", reason: "Fixture prototype approach" },

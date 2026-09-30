@@ -9,6 +9,7 @@ import type { DesktopEvent } from "../desktop/protocol.js";
 import { parseBackendEvent, type BackendCommand } from "./contracts.js";
 import { errorMessage } from "./local-state.js";
 import { createProcessTree } from "./process-tree.js";
+import { PRIVATE_CLOSE_DEADLINE_MS, MAIN_CLOSE_DEADLINE_MS } from "../desktop/runtime.js";
 
 export interface Backend {
     send(command: BackendCommand): Promise<void>;
@@ -110,7 +111,7 @@ export const startBackend: BackendFactory = async (options) => {
                         options.diagnostic("Backend shutdown timed out; terminating only its owned process tree.");
                         closeTree();
                         resolve();
-                    }, 10_000);
+                    }, PRIVATE_CLOSE_DEADLINE_MS + MAIN_CLOSE_DEADLINE_MS + 2_000);
                 })]);
             } finally { clearTimeout(timer); }
             let finalTimer: ReturnType<typeof setTimeout> | undefined;

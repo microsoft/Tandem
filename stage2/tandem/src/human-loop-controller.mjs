@@ -1,0 +1,199 @@
+import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
+import { join } from "node:path";
+import { homedir } from "node:os";
+import { PermissionBroker } from "../runtime-src/permissions/permission-broker.ts";
+import { HumanLoopInstallation } from "./human-loop-installation.mjs";
+import { HumanLoopRuntime } from "./human-loop-runtime.mjs";
+import { HumanLoopEvents, createHumanLoopProvider, projectHumanProgress } from "./human-loop-provider.mjs";
+import { createNativePermissionLifecycle } from "./native-permission-lifecycle.mjs";
+
+export async function createDurablePrivateSession(client, configuration) {
+  if (typeof client.start !== "function") throw new Error("Installed SDK cannot start the private native client.");
+  await client.start();
+  if (typeof client.rpc?.sessions?.open !== "function"
+    || typeof client.rpc?.sessions?.save !== "function" || typeof client.resumeSession !== "function") {
+    throw new Error("Installed SDK lacks named, durable private-session creation APIs.");
+  }
+  const opened = await client.rpc.sessions.open({ kind: "create", options: {
+    sessionId: configuration.sessionId, name: "Tandem Development",
+    workingDirectory: configuration.workingDirectory, clientName: "Tandem Development",
+  } });
+  if (opened.status !== "created" || opened.sessionId !== configuration.sessionId) {
+    throw new Error("Native creation did not confirm the exact new private identity; no session was adopted.");
+  }
+  await client.rpc.sessions.save({ sessionId: configuration.sessionId });
+  return client.resumeSession(configuration.sessionId, {
+    ...configuration, continuePendingWork: false, suppressResumeEvent: true,
+  });
+}
+
+/** Composition only: native scheduling, admission, consent and recovery remain runtime-owned. */
+export function createHumanLoopController(options) {
+  const repositoryRoot = options.workspacePath;
+  const publicDirectory = options.publicDirectory ?? fileURLToPath(new URL("../public/", import.meta.url));
+  const events = new HumanLoopEvents();
+  const permissions = new PermissionBroker(events);
+  const nativePermissions = createNativePermissionLifecycle({
+    permissions,
+    reportError: error => events.append({ type: "human.permission-sync-failed", source: "system", summary: error.message }),
+  });
+  const providers = new Map(), providerStarts = new Map(), originals = new Map(), seenOriginals = new Set();
+  let session, installation, starting, flushing, closing, auditPaused = false, ending = false;
+  const reportError = error => events.append({ type: "human.setup-waiting", source: "system", summary: error.message });
+  const toolHook = async input => installation?.guardMainTool(input);
+  const permissionHandler = (request, invocation) => options.mainPermissionHandler
+    ? options.mainPermissionHandler(request, invocation) : nativePermissions.request(request, invocation);
+
+  function observeOriginal(event) {
+    if (event.agentId || !["user.message", "assistant.message"].includes(event.type)
+      || typeof event.data?.content !== "string" || !event.data.content || seenOriginals.has(event.id)) return;
+    originals.set(event.id, event);
+    if (installation?.runtime) void flushOriginals().catch(error =>
+      events.append({ type: "human.audit-failed", source: "system", summary: error.message }));
+  }
+  async function flushOriginals() {
+    if (flushing) return flushing;
+    const runtime = installation?.runtime;
+    if (!runtime || auditPaused) return;
+    flushing = (async () => {
+      if ((await installation.read()).status !== "ready") return;
+      for (const [id, event] of originals) {
+        if (auditPaused) break;
+        await runtime.store.recordMessage({ id: `main:${id}`, requestId: null,
+          role: event.type === "user.message" ? "host-user" : "host-assistant",
+          kind: event.type === "user.message" ? "user" : "assistant", content: event.data.content, timestamp: event.timestamp });
+        originals.delete(id); seenOriginals.add(id);
+      }
+      events.touch();
+    })().finally(() => { flushing = null; });
+    return flushing;
+  }
+  async function attach(joinedSession) {
+    if (session) throw new Error("The Development controller is already bound to its real main session.");
+    session = joinedSession;
+    nativePermissions.attach(session.sessionId);
+    installation = new HumanLoopInstallation({
+      workspacePath: repositoryRoot, mainSession: session,
+      registration: { session, id: randomUUID(), toolHook, permissionHandler },
+      sdkModulePath: options.sdkModulePath,
+      runtimeRoot: options.runtimeRoot ?? join(process.env.COPILOT_HOME ?? join(homedir(), ".copilot"), "living-canvas", "human-loop-runtime"),
+      ...(options.cliPath ? { cliPath: options.cliPath } : {}),
+      ...(options.nodePath ? { nodePath: options.nodePath } : {}),
+      permissionHandler: (request, invocation, lifetime) => permissions.request(request, invocation, lifetime?.signal,
+        lifetime?.onceOnly ? { onceOnly: true, nativeSessionGrantEligible: lifetime.nativeSessionGrantEligible,
+          provenance: lifetime.provenance } : {}),
+      resetPermissions: sessionId => permissions.resetSession(sessionId),
+      beforeClose: async () => { auditPaused = true; await flushing; },
+      afterReady: () => { auditPaused = false; },
+      createRuntime: async runtimeOptions => new HumanLoopRuntime({
+        ...runtimeOptions, contextProvider: options.contextProvider, withRequestAdmission: options.withRequestAdmission,
+        createPrivateSession: configuration => createDurablePrivateSession(runtimeOptions.client, configuration),
+        onHandoff: async handoff => {
+          events.append({ type: "human.handoff", source: "system", summary: handoff.result.outcome.summary,
+            data: { requestId: handoff.requestId, resultId: handoff.result.resultId, kind: handoff.result.outcome.kind } });
+          await options.onHandoff?.(handoff);
+        },
+        onProgress: event => {
+          if (event.kind === "state" || event.kind === "assistant-message") { events.touch(); return; }
+          events.append(projectHumanProgress(event));
+        },
+      }),
+    });
+    session.on(observeOriginal);
+    for (const event of await session.getEvents()) observeOriginal(event);
+  }
+  async function start(openOptions = {}) {
+    if (ending) throw new Error("The owning session is closing.");
+    if (!installation) throw new Error("Development is still attaching to the current main session.");
+    if (starting) return starting;
+    starting = (async () => {
+      await options.beforeStart?.();
+      const runtime = await installation.open(openOptions);
+      events.enablePersistence(repositoryRoot);
+      for (const event of await session.getEvents()) observeOriginal(event);
+      await flushOriginals();
+      runtime.wake();
+      const readiness = await runtime.readiness();
+      events.append({ type: readiness.status === "ready" ? "human.ready" : "human.setup-waiting", source: "system",
+        summary: readiness.status === "ready" ? "Ready for new instructions. Previous work is not resumed by recovery."
+          : readiness.reason ?? "The workflow is not Ready." });
+      return runtime;
+    })().finally(() => { starting = null; });
+    return starting;
+  }
+  async function openView(id, providerOptions = {}) {
+    if (ending) throw new Error("The owning session is closing.");
+    if (providers.has(id)) return providers.get(id);
+    if (providerStarts.has(id)) return providerStarts.get(id);
+    const opening = (async () => {
+      const original = await createHumanLoopProvider({ repositoryRoot, publicDirectory, getInstallation: () => installation,
+        events, permissions, start, ...providerOptions });
+      let closeWork;
+      const provider = { ...original, close: () => closeWork ??= (async () => {
+        if (providers.get(id) === provider) providers.delete(id);
+        await original.close();
+      })() };
+      if (ending) { await provider.close(); throw new Error("The owning session began closing while the view opened."); }
+      providers.set(id, provider);
+      return provider;
+    })().finally(() => providerStarts.delete(id));
+    providerStarts.set(id, opening);
+    return opening;
+  }
+  async function closeView(id) {
+    const provider = providers.get(id);
+    if (provider) { providers.delete(id); await provider.close(); }
+  }
+  async function status() {
+    return installation ? { installation: await installation.read(),
+      workflow: installation.runtime ? await installation.runtime.readiness() : null,
+      owner: installation.configuration ? {
+        mainSessionId: installation.configuration.owner.mainSessionId,
+        privateSessionId: installation.configuration.owner.privateSessionId,
+        workspacePath: installation.configuration.owner.workspacePath,
+      } : null }
+      : { installation: { status: "attaching" }, workflow: null };
+  }
+  async function assertQuiet() {
+    if (starting || closing) throw new Error("Development is opening or closing. Wait for its ownership boundary.");
+    const current = await status();
+    if (current.installation.status === "saved-state" || !["new", "prepared", "ready", "closed"].includes(current.installation.status)) {
+      throw new Error("Retained Development ownership must be opened and explicitly settled or closed before upstream discovery can change.");
+    }
+    if (current.installation.status === "unknown") throw new Error("Development shutdown or ownership is uncertain; resolve it in its owning session.");
+    if (installation?.runtime && current.installation.status !== "closed") {
+      const state = await installation.runtime.store.load();
+      if (state.activeTask || state.activeRequestId || state.stop || state.uncertainty
+        || state.requests.some(request => ["waiting", "active", "handoff-pending"].includes(request.status))
+        || state.implementationConfirmations?.some(confirmation => confirmation.status === "pending")) {
+        throw new Error("Finish, cancel or explicitly close Development before changing upstream discovery.");
+      }
+      await installation.runtime.transport.inspectIdle();
+    }
+  }
+  async function close() {
+    if (closing) return closing;
+    ending = true;
+    closing = (async () => {
+      const errors = [];
+      if (starting) try { await starting; } catch (error) { errors.push(error); }
+      await Promise.allSettled([...providerStarts.values()]);
+      let result = { status: "not-started", warnings: [] };
+      if (installation?.runtime) {
+        const current = await installation.read();
+        if (current.status !== "closed") {
+          try { result = await installation.close(); } catch (error) { errors.push(error); }
+        } else result = { status: "closed", warnings: current.reason ? [current.reason] : [] };
+      }
+      const views = [...providers.values()]; providers.clear();
+      const settled = await Promise.allSettled(views.map(provider => provider.close()));
+      errors.push(...settled.filter(value => value.status === "rejected").map(value => value.reason));
+      if (errors.length) throw new AggregateError(errors, errors.map(error => error.message).join(" "));
+      return result;
+    })();
+    try { return await closing; } finally { closing = null; }
+  }
+  return { attach, toolHook, permissionHandler, observe: nativePermissions.observe, start, openView, closeView,
+    status, assertQuiet, close, reportError, events, get installation() { return installation; } };
+}

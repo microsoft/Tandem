@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
-import type { LifecycleStageId, TandemState } from "../types.js";
+import type { HistoricalStageId, LifecycleStageId, TandemState } from "../types.js";
 import type { SketchPreview } from "../sketch-stream.js";
 
 export interface RuntimeAgent {
@@ -21,6 +21,7 @@ export interface RuntimeSnapshot {
 }
 
 export interface UiState extends TandemState {
+  developmentBlocker?: string | null;
   provider?: {
     canSubmitAnswers?: boolean;
     canReload?: boolean;
@@ -29,8 +30,6 @@ export interface UiState extends TandemState {
     reloadMessage?: string;
   };
   preparationRuntime?: RuntimeSnapshot | null;
-  implementationRuntime?: RuntimeSnapshot | null;
-  testRuntime?: RuntimeSnapshot | null;
   sketchPreview?: SketchPreview | null;
 }
 
@@ -115,7 +114,7 @@ export function hasActiveJobs(state: UiState): boolean {
       || (review?.threads || []).some((thread: { status: string }) => ["queued", "processing"].includes(thread.status)));
 }
 
-export function skippedStage(state: UiState, stage: LifecycleStageId) {
+export function skippedStage(state: UiState, stage: HistoricalStageId) {
   return (state.lifecycle.skippedStages || []).find((entry) => entry.stageId === stage)
     || (["sketch", "prototype"].includes(stage) && state.prototypeApproach?.mode === "not-applicable"
       ? { stageId: stage, reason: state.prototypeApproach.reason || "No graphical interface needs sketch or prototype validation." }
@@ -127,10 +126,7 @@ export function hasStageData(state: UiState, stage: LifecycleStageId): boolean {
     || (state.lifecycle.completedStages || []).includes(stage)
     || (state.lifecycle.history || []).some((entry) => entry.stageId === stage)
     || (state.artifacts || []).some((artifact) => artifact.stage === stage)
-    || (stage === "sketch" && Boolean(state.sketch?.current))
-    || (stage === "plan" && (state.planning?.workItems || []).length > 0)
-    || (stage === "implement" && (state.implementation?.workItems || []).length > 0)
-    || (stage === "test" && (state.testing?.scenarios || []).length > 0);
+    || (stage === "sketch" && Boolean(state.sketch?.current));
 }
 
 export function useAction(key: string) {
