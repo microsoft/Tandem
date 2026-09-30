@@ -37,6 +37,10 @@ const withdrawnResult = (): PermissionRequestResult => ({
   feedback: 'This permission request was withdrawn because its owning task no longer permits this action.',
 });
 
+function permissionResult(approved: PermissionRequestResult | { kind: 'attributed'; result: PermissionRequestResult }): PermissionRequestResult {
+  return approved.kind === 'attributed' ? approved.result : approved;
+}
+
 function canApproveAll(
   request: PermissionRequest,
   invocation: PermissionInvocation,
@@ -207,7 +211,7 @@ export class PermissionBroker {
     if (options.nativeCompletion?.aborted) return { kind: 'no-result' };
     if (signal?.aborted) return withdrawnResult();
     if (allEligible && grantRequestId && canApproveAll(request, invocation)) {
-      const result = await approveAll(request, invocation);
+      const result = permissionResult(await approveAll(request, invocation));
       if (options.nativeCompletion?.aborted) return { kind: 'no-result' };
       if (signal?.aborted || generation !== (this.#sessionGenerations.get(invocation.sessionId) ?? 0)) return withdrawnResult();
       if (result.kind !== 'no-result' && this.#approveAllForSessions.get(invocation.sessionId) === grantRequestId) {
@@ -323,7 +327,7 @@ export class PermissionBroker {
         if (!queued.view.canApproveAll || queued.invocation.sessionId !== pending.invocation.sessionId) {
           continue;
         }
-        const result = await approveAll(queued.request, queued.invocation);
+        const result = permissionResult(await approveAll(queued.request, queued.invocation));
         if (generation !== (this.#sessionGenerations.get(sessionId) ?? 0)
           || this.#approveAllForSessions.get(sessionId) !== id) return;
         if (result.kind === 'no-result') {

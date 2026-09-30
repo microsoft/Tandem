@@ -271,7 +271,10 @@ test("Sketch gates provider ownership, historical stages, workers, stale require
     assert.match(text(h, "sketch-status"), /Read only/);
     h.render({ ...value, revision: 4, processing: { action: "revise-sketch", status: "running", message: "Drawing new screens" } });
     assert.equal(disabled(h, "sketch-approve"), true);
-    assert.equal(hidden(h, "next-action-bar"), true);
+    assert.equal(hidden(h, "next-action-bar"), false, "The footer remains available for worker status.");
+    assert.equal(hidden(h, "show-next-action"), true);
+    await h.click("show-next-action");
+    assert.equal(h.requests.length, 1, "Running work must not dispatch through next-action navigation.");
     assert.match(text(h, "sketch-status"), /Drawing new screens/);
     h.render({ ...value, revision: 5, sketch: { ...value.sketch, status: "stale" } });
     assert.equal(disabled(h, "sketch-generate"), false);
@@ -312,6 +315,16 @@ test("failed Sketch revisions retry persisted instruction and retain new unsent 
     assert.equal(hidden(h, "sketch-failed-revision"), false);
     assert.match(text(h, "sketch-failed-instruction"), /Move navigation left/);
     assert.match(text(h, "next-action-guide"), /Retry the failed drawing revision/);
+    assert.equal(hidden(h, "sketch-request-history-pane"), true);
+    await h.click("show-next-action");
+    await new Promise((resolve) => h.window.requestAnimationFrame(resolve)); await h.flush();
+    assert.equal(hidden(h, "sketch-request-history-pane"), false);
+    assert.equal(h.document.activeElement, h.get("sketch-retry-revision"));
+    assert.equal(h.requests.length, 1, "Guidance only reveals/focuses the retry; it does not resubmit.");
+    assert.equal(field(h, "sketch-instruction").value, "A different unsent instruction");
+    await h.click("show-next-action");
+    assert.equal(hidden(h, "sketch-request-history-pane"), false, "Repeated navigation does not collapse the target.");
+    assert.equal(h.requests.length, 1);
     let release!: (r: Response) => void;
     h.setFetch(() => new Promise((resolve) => { release = resolve; }));
     await h.click("sketch-retry-revision"); await h.click("sketch-retry-revision");

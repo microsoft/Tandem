@@ -110,7 +110,10 @@ test("goal entry waits for an explicit valid start and retains drafts, focus and
     assert.equal(hidden(h, "start-panel"), false);
     assert.equal(hidden(h, "studio-workspace"), true);
     assert.equal(hidden(h, "lifecycle-status"), true);
-    assert.equal(hidden(h, "next-action-bar"), true);
+    assert.equal(hidden(h, "next-action-bar"), false, "Status help stays available at goal entry.");
+    assert.equal(hidden(h, "show-next-action"), true);
+    await h.click("show-next-action");
+    assert.equal(h.requests.length, 0);
     assert.equal(disabled(h, "start-effort"), true);
     await h.input("start-goal", "   "); await submit(h, "start-form");
     assert.match(text(h, "start-message"), /Enter a project goal/);
@@ -211,7 +214,9 @@ test("persisted reset barriers block ordinary actions while leaving Reset retry 
     const h = await setup(t, value);
     assert.equal(h.get("studio-workspace").hasAttribute("inert"), true);
     assert.equal(disabled(h, "reset-effort"), false);
-    assert.equal(hidden(h, "next-action-bar"), true);
+    assert.equal(hidden(h, "next-action-bar"), false, "Reset does not remove the status/help surface.");
+    assert.equal(hidden(h, "show-next-action"), true);
+    await h.click("show-next-action");
     assert.match(text(h, "effort-message"), /termination is unconfirmed/);
     await h.input("usage-input", "Should not submit"); await submit(h, "usage-form");
     assert.equal(h.requests.length, 0);
@@ -297,6 +302,7 @@ test("next-step guidance navigates and focuses without executing its mutation", 
     const value = state("prepare"); value.preparation.status = "failed"; value.preparation.error = "Could not inspect workspace";
     const h = await setup(t, value); h.setNarrowViewport(true);
     assert.equal(hidden(h, "next-action-bar"), false);
+    assert.equal(hidden(h, "show-next-action"), false);
     assert.match(text(h, "next-action-guide"), /Retry preparation/);
     assert.equal(text(h, "preparation-stage-progress"), "Could not inspect workspace");
     await h.click("context-toggle"); await h.click("show-next-action");
@@ -305,7 +311,10 @@ test("next-step guidance navigates and focuses without executing its mutation", 
     assert.equal(h.document.activeElement, h.get("retry-preparation"));
     assert.equal(h.requests.length, 0);
     h.render({ ...value, revision: 2, preparation: { ...value.preparation, status: "running" } });
-    assert.equal(hidden(h, "next-action-bar"), true);
+    assert.equal(hidden(h, "next-action-bar"), false, "Running work can still expose status help.");
+    assert.equal(hidden(h, "show-next-action"), true);
+    await h.click("show-next-action");
+    assert.equal(h.requests.length, 0);
 });
 
 test("collapsed activity bar completes the active stage without expanding or losing drafts", async (t) => {

@@ -463,8 +463,8 @@
     },
     {
       "path": "runtime-src/permissions/permission-broker.ts",
-      "bytes": 16868,
-      "sha256": "846cdbbf0f37c5b8f99fbe584d994dfe8c8fe8857a4e56c5d453f75c2d1e0e6e"
+      "bytes": 17127,
+      "sha256": "ada99d4d9b8a5ba14195573f958922da7ce653c4ec82bafa1d49bb87bcefe5cd"
     },
     {
       "path": "skills/backbone-designer/SKILL.md",

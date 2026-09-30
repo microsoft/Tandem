@@ -4,8 +4,8 @@
   "files": [
     {
       "path": "extension.mjs",
-      "bytes": 3932372,
-      "sha256": "3b4dfbc380912c78d3a9494292dced6a90fddca5c6c0edfb3f9b97fd6e4c5edd"
+      "bytes": 3932666,
+      "sha256": "02245dfb91aaf97ad6db7ea44519f59a392c3361cd47630eb3885bf1dead885e"
     },
     {
       "path": "skills/tandem/SKILL.md",
@@ -25,7 +25,7 @@
     {
       "path": "stage2/manifest.json",
       "bytes": 23332,
-      "sha256": "3fa395cde1bb0d8c42b6537f312f404a619bdca9c1ec91f6a9c47d3c9daafec5"
+      "sha256": "4eb6b70eba722df3a5b594b86b3a5b2476a75b263226da0328b6e65220946e72"
     },
     {
       "path": "stage2/package.json",
@@ -479,8 +479,8 @@
     },
     {
       "path": "stage2/runtime-src/permissions/permission-broker.ts",
-      "bytes": 16868,
-      "sha256": "846cdbbf0f37c5b8f99fbe584d994dfe8c8fe8857a4e56c5d453f75c2d1e0e6e"
+      "bytes": 17127,
+      "sha256": "ada99d4d9b8a5ba14195573f958922da7ce653c4ec82bafa1d49bb87bcefe5cd"
     },
     {
       "path": "stage2/skills/backbone-designer/SKILL.md",
@@ -708,5 +708,5 @@
       "sha256": "92b92e76eb4ac3bee96c6bbdde06ed1f7d9c0088576a51db1276c567dbb207f8"
     }
   ],
-  "digest": "edf0bc00c0cc3eac4f3af8a87e1630e48d133b56f26bf0a2df894b0a7e28525f"
+  "digest": "f354d73c85d0831d6b69823432a2c771067c7780647f920b51399e605893a5df"
 }

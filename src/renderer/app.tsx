@@ -269,7 +269,7 @@ function Workspace(props: WorkspaceProps) {
   const [contextCollapsed, setContextCollapsed] = useState(false);
   const [maximum, setMaximum] = useState(minimumContextWidth);
   const [dragging, setDragging] = useState<number | null>(null);
-  const [nextAction, setNextAction] = useState<{ id: string; label: string } | null>(null);
+  const [nextAction, setNextAction] = useState<{ id: string; label: string; revealId: string | null } | null>(null);
   const atStart = isGoalEntry(state);
   const developmentView = activeTab === "development";
   const contextHelp = useStatusHelp(`${activeTab}:${contextOpen}:${contextCollapsed}:${atStart}`);
@@ -311,7 +311,7 @@ function Workspace(props: WorkspaceProps) {
     return () => document.body.classList.remove("is-resizing");
   }, [dragging]);
   useLayoutEffect(() => {
-    const candidates: [string, string][] = pending || atStart || state.provider?.canSubmitAnswers === false ? [] : {
+    const candidates: [string, string, string?][] = pending || atStart || state.provider?.canSubmitAnswers === false ? [] : {
       prepare: [["retry-preparation", "Retry preparation"]],
       requirements: state.requirements?.substage !== "dag" ? state.requirements?.usageItems?.length
         ? [["generate-dag", state.processing?.action === "generate-dag" && state.processing.status === "error"
@@ -319,21 +319,24 @@ function Workspace(props: WorkspaceProps) {
         : state.decisionGraph.nodes.some((node) => node.status === "active")
           ? [["decision-submit", "Answer the active requirement decision"], ["complete-stage", "Finish requirements collection"]]
           : [["complete-stage", "Finish requirements collection"]],
-      sketch: [["sketch-retry-revision", "Retry the failed drawing revision"], ["complete-stage", "Finish Sketch and continue to Prototype"],
+      sketch: [["sketch-retry-revision", "Retry the failed drawing revision", "sketch-history-toggle"], ["complete-stage", "Finish Sketch and continue to Prototype"],
         ["sketch-approve", "Approve drawings and continue"], ["sketch-generate", "Generate screen drawings"]],
       prototype: [["apply-prototype-update", "Apply the prepared prototype update"], ["extend-prototype-budget", "Review an additional prototype work window"],
         ["retry-prototype-checkpoint", "Retry incomplete prototype work"], ["start-prototype", "Start the prototype build"],
         ["submit-clarification", "Answer the prototype clarification"], ["complete-stage", "Finish prototype iteration"]],
       development: state.development ? [] : [["continue-design", "Continue Design from the completed Prototype"]],
-    }[current] as [string, string][];
+    }[current] as [string, string, string?][];
     const update = () => {
-      const candidate = candidates.find(([id]) => {
+      const candidate = candidates.find(([id, , revealId]) => {
         const button = document.getElementById(id) as HTMLButtonElement | null;
-        return button && !button.disabled && (id === "complete-stage" || (!button.hidden
-          && !button.parentElement?.closest('[hidden]:not([role="tabpanel"])')));
+        if (!button || button.disabled) return false;
+        const hidden = button.closest('[hidden]:not([role="tabpanel"])');
+        if (id === "complete-stage" || !hidden) return true;
+        const reveal = revealId ? document.getElementById(revealId) as HTMLButtonElement | null : null;
+        return reveal && !reveal.disabled && hidden.id === reveal.getAttribute("aria-controls");
       });
-      const next = candidate ? { id: candidate[0], label: candidate[1] } : null;
-      setNextAction((current) => current?.id === next?.id && current?.label === next?.label ? current : next);
+      const next = candidate ? { id: candidate[0], label: candidate[1], revealId: candidate[2] ?? null } : null;
+      setNextAction((current) => current?.id === next?.id && current?.label === next?.label && current?.revealId === next?.revealId ? current : next);
     };
     update();
     const observer = new MutationObserver(update);
@@ -458,6 +461,8 @@ function Workspace(props: WorkspaceProps) {
         if (!nextAction) return;
         if (nextAction.id === "complete-stage") { setContextCollapsed(false); onTabChange(tabFor(current)); if (narrow()) setContextOpen(true); }
         else { onTabChange(tabFor(current)); setContextOpen(false); }
+        const reveal = nextAction.revealId ? document.getElementById(nextAction.revealId) : null;
+        if (reveal?.getAttribute("aria-expanded") === "false") reveal.click();
         window.requestAnimationFrame(() => {
           const target = document.getElementById(nextAction.id);
           target?.scrollIntoView?.({ block: "nearest" }); target?.focus({ preventScroll: true });

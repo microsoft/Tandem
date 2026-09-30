@@ -88,7 +88,9 @@ Whole-graph defaults require explicit confirmation and one bounded reconciliatio
 Failed or conflicting answers remain visible, not silently accepted.
 
 Sketch retains its editable screen drawings, revision history, explicit approval
-and approved image assets. Prototype keeps the existing staged structure,
+and approved image assets. Next-action guidance opens request history and focuses
+a failed revision's Retry control without resubmitting it or replacing an unsent
+instruction. Prototype keeps the existing staged structure,
 interaction, optional visual refinement, queued feedback and Apply update flow.
 `build` produces a mock UI; `validate-existing` works from the existing GUI's
 copied source; `not-applicable` preserves a reason and feature specification

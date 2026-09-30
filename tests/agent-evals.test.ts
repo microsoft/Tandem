@@ -149,9 +149,11 @@ test("PR triggers include every source, test, and workflow while live stays manu
     const workflow = await readFile(resolve(".github", "workflows", "agent-evals.yml"), "utf8");
     const pullRequest = workflow.split("  workflow_dispatch:")[0];
     for (const path of [
-        "src/**", "tests/**", "scripts/evaluate.ts", "skills/**", ".github/workflows/**",
+        "src/**", "stage2/**", "tests/**", "scripts/evaluate.ts", "skills/**", ".github/workflows/**",
         ".github/copilot-instructions.md", "package.json", "package-lock.json", "tsconfig*.json",
     ]) assert.ok(pullRequest.includes(`- "${path}"`));
+    assert.deepEqual([...workflow.matchAll(/node-version:\s*"([^"]+)"/g)].map(match => match[1]), ["24", "24"],
+        "Deterministic and protected live jobs use the application's supported Node runtime.");
     assert.match(workflow, /if: github\.event_name == 'workflow_dispatch' && github\.ref == format/);
     assert.match(workflow, /environment: copilot-evals/);
     assert.match(workflow, /secrets\.COPILOT_EVAL_TOKEN/);

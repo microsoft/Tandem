@@ -6,6 +6,7 @@ on:
       - "skills/**"
       - ".github/copilot-instructions.md"
       - "src/**"
+      - "stage2/**"
       - "scripts/evaluate.ts"
       - "tests/**"
       - ".github/workflows/**"
@@ -45,7 +46,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
           cache: npm
       - run: npm ci && npm run check && npm test
       - name: Validate fixture inventory without model calls
@@ -69,7 +70,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
           cache: npm
       - run: npm ci
       # Matches the released CLI installed with this repository's SDK 1.0.11.
