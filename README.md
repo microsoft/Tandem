@@ -1,177 +1,326 @@
 # Tandem
 
-Tandem is a Copilot canvas for taking an app idea through preparation, requirements,
-prototype revisions, product and test design, execution planning, implementation,
-and integration/interaction testing.
+Tandem takes software intent through **Preparation -> Requirements -> Sketch ->
+Prototype -> Development**. Development embeds the Stage 2 human-loop application
+from PR #14, including its original Design/Conversation UI and native role workflow.
+The former Design, Plan, Implement and Test stage engine is retired.
 
-## Install
+## Standalone Node/browser app
 
-### From a shared Gist
+Use actual **Node 24+**, Git, and a Copilot account with the required model access.
+The browser launcher needs neither .NET nor a running Copilot desktop app.
+Windows and PowerShell are the currently qualified Stage 2 environment. Other
+platforms are not qualified merely because the outer browser launcher supports them.
 
-1. In GitHub Copilot, open the command palette.
-2. Choose **Install extension from gist...**.
-3. Paste the shared Tandem Gist URL.
-4. Choose **User** to make it available across projects, then reload extensions if
-   prompted.
-
-The Gist installs the canvas app. For the full guided workflow, also install the
-companion `tandem` skill from the ZIP bundle:
-
-- macOS/Linux: `~/.copilot/skills/tandem/SKILL.md`
-- Windows: `%USERPROFILE%\.copilot\skills\tandem\SKILL.md`
-
-### From the ZIP bundle
-
-1. Extract `extensions/tandem` into
-   `~/.copilot/extensions/tandem`.
-2. Extract `skills/tandem` into
-   `~/.copilot/skills/tandem`.
-3. Reload Copilot extensions or restart Copilot.
-
-For a repository-only installation, put the extension at
-`.github/extensions/tandem` and the skill at
-`.github/skills/tandem`.
-
-## Use
-
-Open a Git repository in Copilot and enter:
-
-```text
-/tandem Build an app that helps my team triage customer requests.
+```powershell
+npm ci
+npm run build:browser
+node .\dist\browser\cli.mjs login
+npm run browser -- --workspace C:\projects\my-app
 ```
 
-Copilot opens **Tandem** immediately. Its automatic Preparation stage then inspects
-the workspace, analyzes authoritative sources for named concepts, and chooses
-whether to build a new GUI, validate an existing GUI, bypass Prototype, or ask
-Requirements to decide. Work through the stages in order:
+Omit `--workspace` to use the current folder. `--no-open` prints a private launch
+URL instead of opening a browser. **Do not share that URL.** The host and both
+application surfaces bind only to `127.0.0.1`.
 
-You can also open Tandem without a goal. A new effort shows a start page where
-you enter a goal and click **Start project**. Opening or refreshing that page
-does not run agents; submitting the goal starts Preparation.
+Open folder, page reload, diagnostics, and Stop remain host controls. Closing a
+tab leaves the backend running. **Stop**, **Ctrl+C**, and workspace switching
+attempt private Development shutdown before closing the main session. Native
+save, native close, and uncertain local persistence are separate outcomes; inspect
+Diagnostics after a failure. The host allows 30 seconds for private close and
+another 8 seconds for main-client shutdown, within its owned-process deadline.
+It never terminates unrelated processes.
 
-The Preparation tab shows live work-item and factory progress, source links,
-environment checks, blockers, and final results. When analysis completes, Tandem
-passes its usage suggestions, assumptions, and deferred work into Requirements.
+The Node runtime still lives under `src\desktop` for compatibility with the
+Windows host. Those modules are Node code, not a .NET dependency.
 
-1. Review Preparation results and its suggested usages.
-2. Add one usage sentence at a time, then generate and resolve the requirements
-   DAG.
-3. Review the new or existing live interface and submit revisions until it is
-   ready. For no-GUI work, Prototype is disabled with an explanation and Design
-   opens after Requirements.
-4. Review the automatically generated Product design artifacts, then the
-   integration and interaction test-design drafts. Resolve their review threads
-   before finishing each substage to capture `design-spec` and `test-spec`.
-5. Generate and finalize the execution plan.
-6. Start implementation agents and monitor their work.
-7. Run integration and interaction tests, then finish the lifecycle.
+### Permissions and ownership
 
-Failed test runs provide a **Show error details** button with the run status,
-failed scenarios, agent summaries, captured evidence, and error events.
+The main Node session owns Preparation through Prototype. Its native permission
+broker starts in **Ask each time**. Main-session Allow all does **not** approve
+Development operations. Development owns a separate real Interactive session,
+with the PR's private permission broker, once-only consent and native enforcement.
+Its model, compaction, permissions, Stop and Close controls are inside Development.
+Main permission, Reset, speech and extension-reload controls are scoped or disabled
+while viewing Development.
 
-In a narrow canvas, **Project context** opens the goal, stages, artifacts, and
-process settings without pushing the workspace off screen. Select a stage or
-artifact to return to its workspace, or press Escape to close project context.
-The next-step bar's **Go to action** button reveals and focuses the suggested
-control; it never submits an answer, starts a worker, or completes a stage.
-Stage tabs scroll horizontally and support arrow-key navigation.
+One composed public `tandem` provider owns both surfaces. The Node host retains
+user > project > session preference when those providers are present. It checks
+the selected provider's protocol, version and complete payload digest. An older
+preferred installation produces an explicit conflict; the host does not silently
+bypass it or overwrite a user installation.
 
-Tandem stores durable project state under `.tandem`. Add that
-directory to `.gitignore` unless you intentionally want to version the state.
+Main-session chat is not a Development request. Opening, refreshing or recovering
+Development initializes its owned runtime but sends no project request. Existing
+state belonging to another main session or workspace fails visibly without
+rebinding an identity.
 
-Finishing Requirements starts **Structure**, the first progressive Prototype
-checkpoint. A minimally clickable wireframe appears before **Interaction** builds
-the primary journey. **Visual direction** is optional: request lightweight theme
-refinement after trying the interaction. These are milestones inside Prototype,
-not extra lifecycle approval stages. Non-GUI efforts still bypass Prototype.
+### Local npx package
 
-The last working preview remains available during later builds and failures.
-Each checkpoint uses an isolated source snapshot under
-`.tandem/efforts/<prototypeId>/previews/<requestId>/`; existing-GUI validation uses
-a snapshot of the same application, not a replacement application. **Update
-ready** lets you apply the next preview at a natural pause. Cooperative previews
-can restore their route, ordinary form fields, scroll, and application-provided
-camera or selection state; sensitive fields are never carried across updates.
-Ordinary dependency installations can be reused read-only. Workspace-linked
-installations are copied locally and their package links are redirected to the
-new checkpoint, so monorepos do not execute mutable source from an older preview.
+```powershell
+npm run pack:browser
+npx --yes --package ".\dist\tandem-standalone-<version>.tgz" tandem --workspace C:\projects\my-app
+```
 
-All Tandem stages share compact header, navigation, card spacing, and control
-sizes. Conversation fields expand on focus; specifications and diagrams retain
-their reading space. Live prototype adds inline milestone and build status and
-a preview that fills the remaining workspace height. **Build details** and
-**Revision history** expand on demand; update/retry actions and errors remain
-visible. The feedback field expands when focused without replacing the preview.
+The tarball contains the host, composed extension, complete Stage 2 module tree,
+`runtime-src`, original renderer, offline vendors/licenses, skills and hash
+manifests. Keep the entire package together. Session staging checks all manifest
+entries; an asset-only change invalidates the cache.
 
-Feedback is saved immediately, even during generation or a clarification. The
-queue records which preview the suggestion refers to and processes one revision
-at a time. A failed step retries from its prepared files without rebuilding
-successful checkpoints. A failed optional visual refinement can be skipped.
-Each prototype worker has at most 300 seconds and 10,000 AI credits; the work window permits
-900 cumulative execution seconds, including retries. Continuing beyond that
-window requires an explicit budget extension. Waiting for user feedback does not
-consume the work window. Budget and checkpoint progress survive provider reloads.
-If an older installation reports `unknown field limits`, reload the updated
-extension and retry the checkpoint. Tandem repairs that known rejected-launch
-record without resetting the effort. Unconfirmed transport failures remain
-locked until the runtime can establish whether a worker actually started.
+The main Node process uses the pinned npm CLI loader. When running inside the
+native Copilot extension process, the composition explicitly uses that exact
+executing native Copilot binary for the private stdio connection, rather than
+asking the embedded executable to run a JavaScript npm loader.
 
-Browser profiles and tool caches belong in each checkpoint's separate
-`.tandem/efforts/<prototypeId>/runtime/<requestId>/` directory. Checkpoint copies
-and new source fingerprints exclude recognized browser profiles and legacy
-`.browser-checkpoint` / `.vite-checkpoint` caches, so Windows-locked metrics do
-not block an update. A failed copy retries from its last fully prepared source,
-preserving unfinished application changes rather than copying partial output.
+Creating a tarball does not publish it. Root `package.json` is the release-version
+authority. Before an authorized release, bump with
+`npm version patch --no-git-tag-version` (or the intended increment), run
+`npm run pack`, and rebuild the browser package. Source implementation alone
+does not require a release bump or installation update.
 
-Finish Prototype after applying the Interaction update and resolving outstanding
-feedback; Visual direction is not required unless requested. This produces the
-feature-spec handoff for technical Design. Requirements remain usable when
-diagram rendering is unavailable.
+## Workflow
 
-Generating the requirements DAG keeps your usage list until Tandem accepts a
-valid, unanswered graph. An accepted graph opens Requirements and focuses its
-first decision. If generation fails, the usage panel shows the actual error and
-**Retry requirements DAG** instead of remaining on **Generating DAG...**.
-Worker completion alone does not mean the DAG was accepted.
+Preparation inspects the workspace and necessary authoritative sources, then
+offers optional first-person usages. Generic goals in an empty workspace do not
+require external research. Requirements collects accepted usages and a
+dependency-aware decision graph; recommendations are not answers until selected.
+Whole-graph defaults require explicit confirmation and one bounded reconciliation.
+Failed or conflicting answers remain visible, not silently accepted.
 
-**Use whole-graph defaults** replaces the sequential **All as Recommended** loop.
-The confirmation lists the exact current recommendations for **all unanswered
-nodes**, including dependent decisions. Tandem saves this approval atomically with
-the effort generation and snapshot revision, then runs one semantic reconciliation
-job (one subagent, at most 300 seconds and 128 AI credits). A stale snapshot,
-duplicate click, or missing/non-curated recommendation cannot start a second job.
-**Use this answer** still answers only the selected question.
+Sketch retains its editable screen drawings, revision history, explicit approval
+and approved image assets. Next-action guidance opens request history and focuses
+a failed revision's Retry control without resubmitting it or replacing an unsent
+instruction. Prototype keeps the existing staged structure,
+interaction, optional visual refinement, queued feedback and Apply update flow.
+`build` produces a mock UI; `validate-existing` works from the existing GUI's
+copied source; `not-applicable` preserves a reason and feature specification
+without fabricating a graphical prototype.
 
-The worker checks the frozen defaults together against existing answers and
-returns only conflicts, affected replacement questions, assumption/deferred
-patches, and the prototype approach when relevant—not a complete state, ledger,
-or diagram. Tandem validates that change set and locally derives node statuses,
-the next eligible question, Confirmed, and the shared Design tree rendering.
-Unchanged accepted answers and unrelated artifacts are retained. Changed or
-conflicting decisions and their descendants become unresolved with the prior
-selection and reason visible; unseen recommendations are never auto-selected.
-Topology changes require explicit review rather than automatic restructuring.
+### Finish Prototype and continue Design
 
-Saved defaults are not accepted answers until reconciliation succeeds. A failed
-worker exposes **Retry whole-graph defaults**, which reuses the exact saved
-approval if its inputs still match. Reload reconnects to the durable run rather
-than dispatching another batch. **Review current whole-graph defaults** offers a
-new confirmation if the failed batch's semantic inputs changed. Requirements completion checks outstanding run
-receipts against the SDK, so a terminal applied result is not blocked by an
-unobserved receipt; genuinely active or unidentified workers still block.
-Batch reconciliation never completes Requirements or builds a prototype. The
-existing explicit **Finish Requirements** behavior above is unchanged.
+The existing `generate-design-spec` action is retained: it creates
+`draft-feature-spec` in Prototype, not a downstream technical Design stage.
+Completion checks the displayed checkpoint, source fingerprint, applicable sketch
+approval and outstanding feedback. A URL alone is not source evidence. An offline
+preview does not invalidate a retained, source-bound checkpoint.
 
-Regression tests prove a single factory/subagent call and a compatible change set
-under 200 response characters. These are protocol/count checks with a mock worker,
-not measured end-to-end latency or credit savings.
+The host retains an immutable bounded handoff under the **target worktree's**
+`.tandem\living-canvas\handoffs`. It includes exact completed snapshot bytes,
+artifact hashes, confirmed/assumed/deferred decisions, approved drawings/assets,
+mock shortcuts and the displayed multi-file source. Dependency installations,
+browser/runtime caches, credential-like files and unrelated operational state
+are excluded. Missing, changed or aliased input fails explicitly.
+
+Stage 1's shared state root and the actual target worktree are recorded
+separately. Stage 2 implements in the real target workspace, not in the shared
+snapshot directory. Original inputs are preserved.
+
+One exact request ID, timestamp and message are persisted **before** admission.
+Duplicate clicks, tabs and lost acknowledgements reconcile that envelope.
+Recovery retirement is never permission to deliver it again. Reopening an
+already-completed Prototype or legacy downstream effort offers an explicit
+continuation; opening the app alone does not send it. A legacy preview without
+an exact source identity must be revisited before continuation.
+
+The ordinary request goes through `HumanLoopRuntime.send`, Router and Designer.
+Designer reads the supplied documents/source without running prototype scripts,
+then publishes through the existing Stage 2 design tools. A later handoff refines
+the current canonical Design rather than replacing the project.
+
+**Design publication returns control to the user.** Implementation needs a
+separate request and the PR's exact human confirmation before Planner/baseline
+capture. Cancelling confirmation sends no model turn. Implementer runs the agreed
+checks and journeys; Reviewer is read-only Design-conformance and over-engineering
+review. There is no independent final Test stage. Readiness, Review completion,
+empty findings and worker statements are not evidence that tests passed.
+
+### Development UI
+
+Development serves the unchanged Stage 2 document and assets on their own
+loopback origin, in a full-size iframe. The upstream permanent context pane is
+hidden rather than creating a third column. The iframe remains mounted when
+browsing upstream history so unsent text survives navigation.
+
+The original artifact views, questions, conversation/history, keyboard resizing,
+annotation snapshots, pasted images, quick requests, implementation confirmation,
+model/appearance settings, compaction, permissions, process controls, Stop after
+this step, Stop now and Close remain Stage 2 controls. Closing a view is not the
+same as closing its native runtime.
+
+## State, migration and recovery
+
+Operational data is ignored `.tandem` data, not Git publication:
+
+- Shared upstream efforts and snapshots: `.tandem\efforts\<effortId>`.
+- Archived upstream resets: `.tandem\effort-history\<effortId>\<archiveId>`.
+- Project-bound Stage 2 installation, WAL, canonical Design and ledger:
+  `.tandem\living-canvas`.
+- Immutable admitted source handoffs: `.tandem\living-canvas\handoffs`.
+- Node/Windows main-session identity and workspace lock: `.tandem\desktop`.
+
+Lifecycle version 3 has five active stages and a separate historical-stage
+parser. Old snapshots, artifacts, acceptances, receipts, code and original
+identities remain read-only evidence; they do not become Stage 2 authorization.
+Active or termination-unconfirmed legacy work blocks cutover until its original
+owner settles it. Work owned by a different worktree is not silently adopted.
+
+Reset/reopen use a shared upstream-mutation/request-admission boundary, not a
+second role scheduler. They recheck private readiness under that boundary.
+Unopened saved Development ownership must be recovered and explicitly settled or
+closed before changing upstream discovery. Reset archives upstream files; it
+does not erase canonical Design, conversation or admitted handoffs. Use a different
+workspace for an unrelated canonical project.
+
+The private runtime retains the PR's same-ID recovery, terminal-result authority,
+immediate dispatch and native permission enforcement. It retires interrupted
+dispatch eligibility instead of replaying work. A still-valid pending
+implementation confirmation remains pending, never automatically approved.
+Empty private sessions are created through supported named native creation,
+saved, then attached with the exact original tools/hooks/permissions and
+`continuePendingWork: false`, `suppressResumeEvent: true`. No dummy user turn is
+used to make a session durable.
+
+### Continue after an admitted role failed
+
+An admitted request held as `execution-unknown` is **not unused setup**. Use
+Development **Close** or the host's normal **Stop**, then reopen the updated
+application in the same workspace. Same-ID recovery retains Conversation,
+source handoffs and failure audit while retiring the interrupted request; it
+does not retry that role. Wait for **Ready**, then explicitly send a **new**
+request referencing the retained handoff, for example:
+`Continue Design from retained handoff <id> and its source. Preserve confirmed
+decisions and identify mocks. Do not implement.`
+
+**Reconcile Design handoff** remains idempotent and cannot revive a retired
+request. Do not use unused-setup initialization, delete history, or substitute a
+new private identity to retry admitted work. If Close or reopen fails, retain
+the reported ownership/history error rather than treating it as success.
+
+### Recover an incomplete first Development startup
+
+New setup checks the actual Git root read-only before reserving native setup.
+Tandem does not run `git init`, change ignore rules or commit for you. An unborn
+Git HEAD is supported. Installation v3 records whether native creation is still
+unrequested, has been issued, or has been confirmed. After a pre-native failure,
+**Retry runtime** can finish initialization using the original reserved private
+ID, after checking that no work or native state exists. An issued creation with
+an unknown outcome is never treated as a fresh create.
+
+Older v2 setup did not retain that boundary. An absent session and an empty
+ledger therefore do not authorize an automatic fallback. If the original setup
+failed before any work, use **Inspect unused setup recovery** in Development.
+The application checks the full installation history, exact owner/configuration,
+startup-only ledger/audit and native metadata, storage inventory and live-owner
+observations. It refuses any prior Ready, confirmed native close/creation, Design, requests, roles,
+cycles, approvals, native state, foreign owner or indeterminate observation.
+No failed native query is interpreted as empty.
+An old Stop/Close intent that returned to `unknown` without a close proof is
+retained as intent, not mistaken for native creation; its IDs and phase transitions
+must match the complete startup history.
+
+If those checks succeed, review the displayed workspace and original reserved
+private ID, then select **Authorize one-time initialization**. This is a separate
+five-minute confirmation, not ordinary Retry, Reconcile, or implementation
+approval. The application rechecks the bound evidence and records consumption
+before issuing creation. Existing WAL frames, handoff files, request IDs and
+startup uncertainty remain retained; it sends no project/model request.
+After **Ready**, explicitly select **Reconcile Design handoff** to admit the
+original prepared handoff. Never delete saved state or locks to bypass a
+rejected recovery check.
+
+## Acceptance, export and process adapters
+
+Use **Capture Development outcome for review**, inspect the original Development
+outcome and captured artifact, then explicitly accept it. The projection binds
+the exact Design, cycle, source snapshots, implementation/review outcomes,
+coverage, unresolved questions, native command references and verification limits.
+Failed, partial, unavailable and unverified outcomes stay labeled.
+
+Acceptance records attribution, not authenticated code-owner approval or a test
+pass. It does not start work. **Export accepted handoff** is a separate explicit
+operation writing `tandem-records`. Preparing a delivery draft does not export.
+Source/Design drift requires a fresh capture and review before acceptance or
+publication.
+
+`ProcessAdapterRegistry` remains authoritative for independently selected Local
+and GitHub handoff/status/intake blocks. Switching an adapter retains existing
+references and receipts. Errors never substitute another adapter. GitHub requires
+authenticated `gh`. Reviewed external publication is explicit; export itself
+never commits, pushes, merges or deploys. Legacy automatic implementation/test
+settings and verification records are historical only, with no executable
+scheduler or mutable UI.
 
 ## Speech input
+
+These controls belong to upstream discovery. Development preserves the PR's own
+composer and private-session controls; main speech sign-in never authorizes it.
+
+### GPT-live in Sketch
+
+Sketch uses a compact microphone, message, and **Send** row. Open **Voice settings**
+with the microphone dropdown or settings button to select **Azure dictation** or
+**GPT-live conversation**. This selector affects Sketch only; all other stages
+retain Azure Speech. **Ctrl+Enter** (or **Command+Enter**) sends a typed drawing
+revision. Voice status and errors appear only when relevant. While GPT-live is
+connecting or listening, the message box is read-only and shows the current
+sentence for **You** and **GPT-live**, using VisionLoop's sentence boundaries
+instead of adding a transcript row for each word. Ending voice restores your
+unsent typed draft.
+
+Select GPT-live, then **Talk with GPT-live** to start the microphone and hear
+spoken replies. Discuss the current screen or ask for layout, label, shape,
+canvas-size or navigation changes. Like VisionLoop, GPT-live delegates drawing
+work to the app rather than directly executing model-generated commands.
+Tandem saves local drawing edits first, runs its bounded streaming sketch worker,
+and shows drawing operations incrementally before saving the completed revision.
+Typed drafts remain untouched; a live preview is not a saved or approved result.
+Voice never accepts requirements, approves drawings, advances stages or publishes.
+Review the drawing and use **Approve drawings and continue** yourself.
+The initial scene summary is included in session startup. Later context and
+spoken work updates carry the provider's delegation ID; manual changes are
+included at the next delegation rather than sent as unsolicited append commands.
+
+GPT-live uses VisionLoop's native Live WebSocket protocol, **gpt-live-1**, mono
+16 kHz PCM audio, and Azure CLI / Microsoft Entra authentication. It is not the
+OpenAI Realtime/WebRTC API. The extension holds the Entra token; only a short-lived,
+single-use loopback connection ticket reaches the page. Its configuration is
+separate from Azure Speech:
+
+```powershell
+$env:Path += ";$env:LOCALAPPDATA\Programs\AzureCLI\bin" # For a per-user Azure CLI installation
+az login --tenant 72f988bf-86f1-41af-91ab-2d7cd011db47
+# Optional overrides in the environment that launches Tandem / Copilot:
+$env:TANDEM_Live__Endpoint = "https://cloudgpt-ins.openai.azure.com/openai/v1/"
+$env:TANDEM_Live__Model = "gpt-live-1"
+$env:TANDEM_Live__Voice = "marin"
+$env:TANDEM_Live__TenantId = "72f988bf-86f1-41af-91ab-2d7cd011db47"
+```
+
+Your account must have access to this Azure GPT-live deployment. The endpoint
+is restricted to the approved VisionLoop host and Live route; arbitrary
+endpoints and other models are rejected rather than receiving credentials.
+Azure Speech's top-bar **Sign in** button does not sign in to GPT-live.
+On Windows, GPT-live also adds the verified
+`%LOCALAPPDATA%\Programs\AzureCLI\bin` installation to the extension process's
+PATH before authenticating. This works even when Copilot was launched before
+Azure CLI was added to PATH; it does not change your persistent Windows PATH.
+
+**Live audio, captions and a bounded summary of the current sketch are sent to
+Azure.** The provider session requests `store: false`. Tandem keeps conversation
+captions in page memory, not audio files; a delegated drawing instruction is
+handled by the normal sketch revision workflow. Connections stop after ten
+minutes, when Sketch is hidden, when the effort/provider changes, or when you
+select **End voice** or press Escape. Stopping voice does not cancel a drawing
+worker already submitted. Failures are visible and never switch providers or
+reconnect automatically. A microphone-capable browser with Web Audio is required;
+use **Open Tandem in browser** if the embedded canvas blocks microphone access.
+
+### Azure Speech dictation
 
 Every conversational input has a **Mic** control: project goals, usages,
 requirement answers, prototype revisions and clarifications, artifact reviews
 (including test design), plan revisions, and implementation strategy adjustments.
-Select **Sign in with Microsoft** to open your default browser, choose your work
+Select **Sign in** on the right of the top bar to open your default browser, choose your work
 account, and complete any MFA prompt. Return to Tandem after it confirms sign-in,
 then click **Mic**, allow microphone access, and speak naturally. Partial text updates
 in place; **Stop** finishes the recognized text so you can edit and send it.
@@ -198,8 +347,8 @@ with PKCE and a local loopback callback. Browser sign-in has a three-minute limi
 does not cancel sign-in. It never starts the microphone or sends your draft.
 
 The selected account and token cache are memory-only for this extension session;
-sign in again after restarting or reloading the extension. Selecting **Sign in
-with Microsoft** again lets you change accounts. Failed or cancelled sign-in
+sign in again after restarting or reloading the extension. Selecting **Sign in**
+again lets you change accounts. Failed or cancelled sign-in
 does not replace an already selected account. Once a browser account is selected,
 Tandem does not silently switch to another identity if its tokens expire.
 Before browser sign-in, existing `DefaultAzureCredential` sources (such as
@@ -223,250 +372,53 @@ browser** beside the error and grant microphone permission there; the same effor
 and chat inputs are available. Unsent drafts are page-local, so copy any draft
 you want to keep before switching windows.
 
-## State and recovery
+## Optional Windows Forms host
 
-Effort state is stored at `.tandem/efforts/<prototypeId>/state.json`; the active
-effort pointer is separate at `.tandem/metadata/current.json`. Stage snapshots
-are versioned under each effort's `stages/` directory. Existing flat state files
-are migrated on first use without deleting the originals. Invalid or unsupported
-state is preserved and reported: repair or restore the named file rather than
-starting over silently.
+The existing Windows Forms/WebView2 host remains available with .NET 10 and the
+WebView2 Evergreen Runtime, using the same Node 24+ backend:
 
-Cross-process locks and monotonic revisions protect shared repository state.
-Active jobs belong to their originating Copilot session and workspace; return
-to that session to resume them. Other sessions may inspect the effort but
-cannot replace its inputs while work is active.
-Stopping work retains its ownership until the runtime confirms termination;
-a failed stop cannot unlock reset, reopening, or replacement execution.
-
-The top-right **Reset** button returns the current effort to goal entry after
-confirmation. It stops active work before clearing that effort's goal,
-requirements, artifacts, stage history, accepted handoffs, and process settings.
-Other Tandem efforts, repository files, and exported `tandem-records` bundles
-are not changed. Reset cannot be undone. If worker termination cannot be
-confirmed, Tandem keeps the effort and shows an error instead of clearing it.
-Use the owning session and writable provider when active work belongs there.
-Finalized Preparation history migrated from older versions does not require its
-archived factory run to remain available. Active or unconfirmed run receipts
-still require termination confirmation. **Reload** remains available while a
-reset is pending and preserves the reset barrier.
-
-Preparation uses the same durable ownership and request/run fencing. An interrupted
-job without a recoverable identity is surfaced for explicit retry, never recreated
-silently. Rehydrating a canvas cannot repeat its original reset request.
-
-Completed stages can be inspected without changing execution state. Explicitly
-reopening a stage preserves its snapshots and marks dependent artifacts stale.
-Later execution results must be regenerated against the revised inputs.
-Running completed tests again reopens Test and archives its previous completion
-snapshot. Finish Test again after the new run succeeds to accept its new evidence.
-
-## Accepted handoffs and process blocks
-
-Open **Handoffs & process** in the sidebar (inside **Project context** in a narrow canvas). The working lifecycle
-is unchanged by default: automatic implementation, automatic tests, and
-tool-backed verification are opt-in.
-
-After completing a stage, select it and enter the name of the person accepting
-its handoff. Acceptance freezes the completed snapshot, source fingerprint,
-upstream acceptance hashes, and the current Tandem version/configuration hash.
-The name is recorded attribution, not authenticated code-owner approval.
-Existing completed stages are not retroactively claimed as approved.
-
-**Export accepted handoff** writes an immutable, reviewable bundle under
-`tandem-records/<effort>/<acceptance>/`. It contains a manifest, the full snapshot,
-and human-readable artifacts. Nothing is staged, committed, pushed, or uploaded.
-Keep `.tandem` ignored as operational state; intentionally commit selected
-`tandem-records` bundles when the repository is the authoritative artifact record.
-Generated bundles are excluded from execution source fingerprints and protected
-by their own hashes. Editing or reopening the underlying work requires fresh
-evidence and acceptance; historical bundles remain available.
-
-### Pluggable Local and GitHub blocks
-
-Each block has its own saved adapter selection. Switching adapters preserves all
-acceptances, receipts, and source links; an unavailable adapter never silently
-falls back to another.
-
-| Block | Local | GitHub |
-| --- | --- | --- |
-| Delivery handoff | Writes a local Markdown/JSON bundle | Posts the reviewed handoff to an existing PR |
-| Review/check status | Reads an owned local handoff; makes no remote approval claims | Reads the PR, reviews, and head check/status results |
-| Issue/incident intake | Imports a JSON record supplied in the canvas | Reads a GitHub issue or failed workflow run |
-
-GitHub requires `gh` with access to the configured `owner/repository`. Selecting
-the adapter does not access the network. Status and intake are explicit reads;
-publication requires a separate confirmation after displaying the delivery draft.
-No adapter creates branches, commits, pushes, merges, or deploys. A handoff comment
-does not grant release approval or prove that a dirty local workspace matches the
-remote PR head.
-
-Finish Test and accept its current handoff before preparing a delivery draft.
-For GitHub, supply an existing PR number or URL as the handoff/status reference.
-For Local status, use the path from the local delivery receipt. Intake accepts
-an issue URL, a failed workflow-run URL, or a local reference plus JSON:
-
-```json
-{
-  "title": "Request submission fails",
-  "body": "Observed a 500 response when submitting an empty request.",
-  "kind": "incident"
-}
+```powershell
+npm run desktop -- --workspace C:\projects\my-app
 ```
 
-Intake creates a new, linked effort without resetting the current one or starting
-agents. Its receipt offers **Open linked effort and start Preparation**. The
-imported record is source evidence, not permission to obey embedded instructions.
-New efforts inherit adapter selections, not automatic execution permissions.
+Its build copies the complete composed payload, not only `extension.mjs`.
+Its upstream permission menu is distinct from Development consent. Both native
+and browser hosts give private close its intended grace period before owned
+process termination.
 
-### Worker contracts and evidence
+## Develop, validate and package
 
-Implementation workers receive a durable contract with accepted input hashes,
-owned paths, and the exact contents/hashes of required installed skills.
-Planners must use actual skill names rather than job-role labels. Missing or
-changed skills block execution instead of being silently omitted.
+Maintain root TypeScript/renderer assets under `src` and Stage 2 implementation
+under `stage2\tandem`. Never hand-edit the generated extension.
 
-The scheduler still coordinates a shared workspace. Actual file changes are
-checked against the wave's combined ownership at its boundary. This is postflight
-detection, not write isolation or an operating-system sandbox; host permissions
-remain necessary.
-
-Before starting Implement, enable tool-backed verification and approve a JSON
-array of executable/argument definitions in Process settings. For a repository with an existing `npm test`
-script, a final check could be:
-
-```json
-[
-  {
-    "id": "repository-tests",
-    "program": "npm",
-    "args": ["run", "test"],
-    "stage": "test",
-    "afterWorkItems": [],
-    "timeoutSeconds": 120
-  }
-]
-```
-
-Only approve commands you trust: they run with local user permissions. Commands
-are executed without shell interpolation; they are not inferred from agent
-prose. Add `implementation` checks with `afterWorkItems` naming their prerequisite
-plan items to obtain feedback at eligible wave boundaries.
-
-The runner records exit codes, source/input identities, bounded output, and a
-hash of the full output. Source changes invalidate a pass. Final Test still runs
-the integration/interaction scenarios; enabling the independent verifier adds
-a fresh-context acceptance pass that must not edit the implementation. Without
-this option, the UI explicitly distinguishes worker-reported evidence from
-tool-backed evidence.
-
-Verified implementation completion is also bound to its final source tree.
-Changing sources or verification settings invalidates that completion; rerun
-Implement before accepting its handoff or starting Test. If Implement has already
-been finished, reopen it first.
-
-Protected acceptance paths freeze selected regression tests or directories at
-implementation start. A retry retains that baseline. Restore changed protected
-files, or explicitly reopen Plan to review a new baseline; retrying is not
-permission to weaken the tests. Changing a command or reopening Implement does
-not replace the protected baseline.
-
-Automatic handoffs start implementation only after explicit Plan handoff
-acceptance, and tests only after explicit Implement handoff acceptance. Existing
-durable request identities prevent replacement or duplicate dispatch. If launch
-cannot complete, the accepted handoff remains recorded and the stage's Start
-control provides the explicit retry path.
-
-The sidebar separates readiness-to-acceptance waiting time from available
-factory execution time and model-reported AIU consumption. Missing metering is
-shown as unavailable, not zero. Reopening counts and historical receipts remain
-available when work is revised.
-
-## Requirements
-
-- A current GitHub Copilot app or CLI with extension canvas and agent factory
-  support.
-- A Git repository for project state and implementation work.
-- Permission to run local loopback HTTP servers and agent factories.
-
-## Develop and package
-
-The maintainable source is under `src/`. The renderer is separated by concern:
-
-- `src/renderer/index.html` contains the semantic document structure.
-- `src/renderer/styles.css` contains the complete canvas theme and layout.
-- `src/renderer/client.ts` contains browser behavior and state rendering.
-- `src/renderer.ts` assembles the generated client and source assets.
-- `src/project-store.ts` owns transactions, migration, revision checks, and durable writes.
-- `src/workflow.ts` owns authoritative decisions, activity ownership, and artifact invalidation.
-- `src/agent-runner.ts` owns serializable worker-result boundaries.
-- `src/execution.ts` owns execution identity and evidence fingerprints.
-- `src/scheduling.ts` owns dependency normalization and conflict-safe scheduling.
-- `src/canvas-transport.ts` owns bounded JSON requests and responses.
-- `src/requirements-reconciliation.ts` owns the frozen default-batch contract,
-  strict semantic change-set validation, and Requirements input freshness digest.
-- `src/decision-diagram.ts` shares deterministic DAG rendering between persistence
-  and the canvas; Requirements normalization derives status and Confirmed locally.
-- `src/accepted-artifacts.ts` owns immutable acceptance and explicit exports.
-- `src/process-state.ts` owns process settings, receipts, and gate events.
-- `src/worker-contracts.ts` binds skills and checks actual ownership.
-- `src/verification.ts` captures approved command evidence.
-- `src/execution-proof.ts` validates evidence and independent verdicts.
-- `src/process-adapters.ts` registers interchangeable Local/GitHub blocks.
-- `src/delivery.ts` builds and fences reviewable delivery drafts.
-- `src/planning-prompts.ts` is shared by production workers and agent evaluations.
-
-Copilot still requires the generated
-`.github/extensions/tandem/extension.mjs` at the extension root for discovery.
-The extension directory otherwise contains only deployable runtime files.
-
-```text
-npm install
+```powershell
 npm run check
 npm test
 npm run build
-npm run pack
+npm --prefix .\stage2\tandem run build
+npm --prefix .\stage2\tandem test
 ```
 
-- `npm run dev` watches the TypeScript source and rebuilds `extension.mjs`.
-- `npm run check` includes a strict TypeScript boundary for the extracted core.
-- `npm test` runs Node's built-in regression runner through the existing `tsx`
-  toolchain, using isolated state directories and mocked agent execution.
-- `npm run build` type-compiles and minifies the browser TypeScript, inlines the
-  HTML and CSS, and bundles the assembled renderer with `src/extension.ts` into
-  `.github/extensions/tandem/extension.mjs`.
-- `npm run pack` type-checks, builds, and writes
-  `dist/tandem-extension.zip` with the deployable extension, project source
-  under `source/`, companion skill, and this guide.
+Root checking emits Stage 2 type declarations using its strict configuration
+before checking the composition; it does not inline or rewrite its runtime.
+`npm run build:browser` and `npm run build:desktop:runtime` stage the same complete
+payload. `npm run pack` creates the extension ZIP. Install its complete
+`extensions\tandem` directory and matching `skills\tandem\SKILL.md` together
+only when explicitly authorized; copying the single generated entrypoint is
+insufficient. Large complete payloads may exceed the canvas gist size limits.
 
-## Agent evaluations
+Bridge tests cover source retention, exact request reconciliation, migration,
+retired routes, native capability/provider conflicts, payload hashes and delivery.
+Stage 2 owns its role/runtime, confirmation, Stop/reopen, WAL and browser tests.
+Browser fixtures must actually execute to establish UI coverage; skips are not
+qualification. Native no-model startup/control/recovery qualification is distinct
+from a model-driven Design/implementation journey.
 
-`npm run eval` lists the behavioral fixtures without making model calls.
-The evaluation suite uses the same preparation and planning prompt builders as
-the product, deterministic outcome graders, and isolated tool-disabled sessions.
-It complements the mocked orchestration regressions; it is not an end-to-end
-implementation benchmark.
+`npm run eval` is a no-network inventory of synthetic Preparation and
+Prototype-to-Designer probes using the production prompt builders. Live
+evaluations still require explicit `--live`, `--model`, `--max-cases`,
+`--timeout-seconds` and `--max-ai-credits`. No mock result or worker report
+establishes native end-to-end success.
 
-Live model evaluations require explicit opt-in, a model, caller-specified
-case/time limits, and an observed-usage AI-credit ceiling:
-
-```text
-npm run eval -- --live --model MODEL --max-cases N --timeout-seconds N --max-ai-credits N
-```
-
-The credit ceiling sums reported usage across cases and stops further calls
-when reached. It is a **soft ceiling**, not a guaranteed cap on in-flight charges.
-Missing usage fails closed rather than claiming a budgeted success.
-See `npm run eval -- --help` for details.
-Results are retained under `.tandem/evals`. The agent-evals workflow runs
-deterministic regressions on relevant changes and provides a separately
-configured live evaluation path; credentials and paid runs are not enabled by
-installing Tandem.
-
-## Release
-
-The version shown in Tandem's top-right corner comes from `package.json`. Before
-publishing or deploying a release, bump that package version with
-`npm version patch --no-git-tag-version` (or the intended minor/major increment),
-then run `npm run pack`. Deploy both the generated extension and companion skill
-so the user-scoped provider does not override the release with stale files.
+See [Stage 2 integration](stage2/stage1-integration-plan.md) and
+[Stage 2 instructions](stage2/AGENTS.md) for the composition boundary and invariants.

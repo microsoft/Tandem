@@ -133,8 +133,48 @@ test("generation prompts distinguish commands from authoritative decision answer
         const prompt = h.api.answerFactoryPrompt({ ...args, action: "generate-dag" });
         assert.match(prompt, /Set answer\nto null on EVERY generated node/);
         assert.match(prompt, /Do not copy the usage-intake question or node/);
+        assert.match(prompt, /Unselected suggestions\nare not scope/);
+        assert.match(prompt, /Do not conduct a separate interview/);
+        assert.match(prompt, /Defer exact business names, hours, addresses/);
+        assert.doesNotMatch(prompt, /Ask exactly one next high-impact question/);
         assert.doesNotMatch(prompt, /Include the submitted answer|Treat the answer as an authoritative/);
         const answerPrompt = h.api.answerFactoryPrompt({ ...args, action: "answer-decision" });
         assert.match(answerPrompt, /Include the submitted answer only on its matching decision node/);
     } finally { await h.close(); }
+});
+
+test("usage intents are saved immediately without accepting suggestions or waiting for a background interview", async () => {
+    const h = await extensionHarness();
+    const entry = await h.api.startServer("intent-entry", "sample", "project:tandem", true);
+    try {
+        const initial = h.api.createState("sample", "Build a coffee shop website");
+        initial.stage = "requirements";
+        initial.lifecycle.currentStage = "requirements";
+        initial.lifecycle.completedStages = ["prepare"];
+        initial.preparation.status = "ready";
+        initial.requirements.suggestions = ["I want to order coffee online."];
+        await h.api.persistState(initial);
+        const intents = ["I want to find the shop's opening hours.", "I want to browse the drinks menu."];
+        for (const [index, intent] of intents.entries()) {
+            const response = await fetch(new URL("api/answer", entry.url), {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ questionId: "usage-intake", action: "add-usage", answer: intent }),
+                signal: AbortSignal.timeout(5_000),
+            });
+            assert.equal(response.status, 202);
+            await h.waitForRequests(index + 1);
+            const saved = await h.api.loadState("sample");
+            assert.deepEqual(Array.from(saved.requirements.usageItems), intents.slice(0, index + 1));
+            assert.equal(saved.requirements.substage, "usage");
+            assert.equal(saved.decisionGraph.nodes.length, 0);
+            assert.equal(saved.suggestionProcessing?.status, "running");
+        }
+        const saved = await h.api.loadState("sample");
+        assert.ok(!saved.requirements.usageItems.includes(initial.requirements.suggestions[0]));
+        assert.deepEqual(Array.from(saved.confirmed), []);
+    } finally {
+        clearInterval(entry.heartbeat);
+        await new Promise<void>((resolve, reject) => entry.server.close((error) => error ? reject(error) : resolve()));
+        await h.close();
+    }
 });

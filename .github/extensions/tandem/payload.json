@@ -1,0 +1,712 @@
+{
+  "schemaVersion": "tandem-composed-payload/v1",
+  "version": "1.1.15",
+  "files": [
+    {
+      "path": "extension.mjs",
+      "bytes": 3932666,
+      "sha256": "02245dfb91aaf97ad6db7ea44519f59a392c3361cd47630eb3885bf1dead885e"
+    },
+    {
+      "path": "skills/tandem/SKILL.md",
+      "bytes": 14603,
+      "sha256": "175280eba654176a3fb00d5d53ccd779d57ba5420c602802d6ba48939db405d5"
+    },
+    {
+      "path": "stage2/INSTALL.md",
+      "bytes": 6684,
+      "sha256": "20dc05f9ccb56245ed29ae115b4a379b4a0f98a823eb7252029bfd9f15e41c99"
+    },
+    {
+      "path": "stage2/extension.mjs",
+      "bytes": 30,
+      "sha256": "337c49aa81e969297a46183ec5bfae2563338b2abc198754f8025957dbceddb4"
+    },
+    {
+      "path": "stage2/manifest.json",
+      "bytes": 23332,
+      "sha256": "4eb6b70eba722df3a5b594b86b3a5b2476a75b263226da0328b6e65220946e72"
+    },
+    {
+      "path": "stage2/package.json",
+      "bytes": 42,
+      "sha256": "609158e6c5fbc237939fa3ddf7faab80ab690bdc0c8d584414a885130103c4e8"
+    },
+    {
+      "path": "stage2/public/annotation-capture.js",
+      "bytes": 8294,
+      "sha256": "b75dad31fb138f03edd792a49d77f23f7acb181d1ec967a2608c97045ed49b9d"
+    },
+    {
+      "path": "stage2/public/annotation-controller.js",
+      "bytes": 16782,
+      "sha256": "6220bd9f2eebbbfbfd8598667f7a4dc327462ed8d20ea8a2b41016d1f563a4dc"
+    },
+    {
+      "path": "stage2/public/annotation-model.js",
+      "bytes": 3440,
+      "sha256": "bdc508e1085c852d70825ee44a35e5f7a6561958939835ba429e0fc3d72338a5"
+    },
+    {
+      "path": "stage2/public/artifacts/contract.js",
+      "bytes": 190,
+      "sha256": "e7c0ebef88577ea5b8fe3a3252f0173c6f3d13321aa7555232bfc31ebf63d364"
+    },
+    {
+      "path": "stage2/public/artifacts/document-views.js",
+      "bytes": 9980,
+      "sha256": "3a91dda789c8b687f0b80f4d7325c7569463daf863bb97fd014ce7240fb6ef77"
+    },
+    {
+      "path": "stage2/public/artifacts/documents.js",
+      "bytes": 4330,
+      "sha256": "f0949db1790d2ba6a316c59ad654d3110026cb9722cc2fdd24cecc7e77d0665d"
+    },
+    {
+      "path": "stage2/public/artifacts/index.js",
+      "bytes": 15040,
+      "sha256": "e4e47f8ae74cf0b5e18fc555e4a262d974807e09fe693b81b5c81b0df4785bf8"
+    },
+    {
+      "path": "stage2/public/artifacts/renderer.js",
+      "bytes": 46,
+      "sha256": "a0ade1d3cfd87778d90e0839df57c5035ef8741c9ea925f06b5d76e450afc9df"
+    },
+    {
+      "path": "stage2/public/artifacts/validation.js",
+      "bytes": 26855,
+      "sha256": "63d776a9ff79992709edbed51cdf919b920cf8d35ac3551f937efc5f90669f5c"
+    },
+    {
+      "path": "stage2/public/artifacts/vendor/LICENSES.json",
+      "bytes": 244512,
+      "sha256": "0aac28aa1438404c3749a8f97c3bbeb5a1f4f1437ee8dd2c004a1727e3ad81c3"
+    },
+    {
+      "path": "stage2/public/artifacts/vendor/documents.js",
+      "bytes": 354900,
+      "sha256": "f1141e91c35da6fb84520443aadf5e872c1fc9a98d6652c1e9942297e68a07b7"
+    },
+    {
+      "path": "stage2/public/artifacts/vendor/jpeg.js",
+      "bytes": 13716,
+      "sha256": "65c113eeb0090c8c9dbf56457ea4ae0d83f94dbbf15621bddc896d478e25088c"
+    },
+    {
+      "path": "stage2/public/artifacts/vendor/mermaid.js",
+      "bytes": 2720693,
+      "sha256": "4bf67357b65e170347b019dde97cdc05f2bd2973982674692ee26a1634fb4db4"
+    },
+    {
+      "path": "stage2/public/artifacts/vendor/parsers.js",
+      "bytes": 371074,
+      "sha256": "d28763e2a5a1961e2c787f15a93198c778b1b9ff9bc0c94755c6b9722e66eb7e"
+    },
+    {
+      "path": "stage2/public/assistant-response.js",
+      "bytes": 2097,
+      "sha256": "c78077b3f30f9af7ab7ceadc985eed8ded44cd7d77d21064ab51879496af9266"
+    },
+    {
+      "path": "stage2/public/background-processes.js",
+      "bytes": 6334,
+      "sha256": "acdb39dec9e807a2462061a5530ac18ccd06b217f949b6b03a08b9e3ba1a9eac"
+    },
+    {
+      "path": "stage2/public/branding/tandem-blue-dark-original.jpg",
+      "bytes": 44518,
+      "sha256": "3815d81cbf55c13ba76bfb63600d6d24a50378d12401f3a571eafeab6b304636"
+    },
+    {
+      "path": "stage2/public/branding/tandem-blue-dark.png",
+      "bytes": 61272,
+      "sha256": "863a95324a840b86e9bc4161469470fb98750e880e667032b5b347ee6de4bc14"
+    },
+    {
+      "path": "stage2/public/branding/tandem-blue-light-original.jpg",
+      "bytes": 47113,
+      "sha256": "4620af75c80ffa0da2b5861355cda54bee89a4f21beb191106e1e77e68a1d7d0"
+    },
+    {
+      "path": "stage2/public/branding/tandem-blue-light.png",
+      "bytes": 69851,
+      "sha256": "b5266f9bbd5ac8466828a58c487f5916781f6921055871940e4f1576829a1d5d"
+    },
+    {
+      "path": "stage2/public/branding/tandem-mark-transparent.png",
+      "bytes": 57391,
+      "sha256": "75b43c685d23aa9c55549afff573ec56af0963bbeae0cfe1d94bd9f599145dd9"
+    },
+    {
+      "path": "stage2/public/branding/tandem-mark.png",
+      "bytes": 79358,
+      "sha256": "514f00a2adf86d7bd7d5580790bae8c456fe904c7f52d6ae5424195120814b15"
+    },
+    {
+      "path": "stage2/public/branding/tandem-original.jpg",
+      "bytes": 30843,
+      "sha256": "3add413098bb0971cd751b6d79dccc50469c2d39afda0a6371065c24184eab0c"
+    },
+    {
+      "path": "stage2/public/composer-enter.js",
+      "bytes": 770,
+      "sha256": "7076591ff358bb2839e3d682bef5c0d1642ffc2abf78d9b7f6d57e57170a1cfb"
+    },
+    {
+      "path": "stage2/public/composer-image.js",
+      "bytes": 2167,
+      "sha256": "ea14c5876c29108d5dda7ab4c7b503a229b5604ede3b6c9be647961c3c9dd1dd"
+    },
+    {
+      "path": "stage2/public/experience.css",
+      "bytes": 30560,
+      "sha256": "a3f1d3f8902b12bf174eb7178a3840a0d0c4adae184ba7cc2e478a348a8e0787"
+    },
+    {
+      "path": "stage2/public/human-loop-app.js",
+      "bytes": 39266,
+      "sha256": "784117e56a56ce966fd8f22f69ba040ac9e5860327b438461ac300e13c6f0e85"
+    },
+    {
+      "path": "stage2/public/human-loop-shell.css",
+      "bytes": 41560,
+      "sha256": "eca46500bb97eb5fbf2abc5510f2c3c3eb8bf1f43fba1db96eaf619741821810"
+    },
+    {
+      "path": "stage2/public/human-loop.html",
+      "bytes": 13305,
+      "sha256": "a7e3c0986e35a72551523684f204ac4a44947a2fccbdc7b6dfac44222fb96090"
+    },
+    {
+      "path": "stage2/public/implementation-confirmation.js",
+      "bytes": 5119,
+      "sha256": "be384280434ec95494e62e616e2811cf5a2c339b2edb57b84601e8436caaebcc"
+    },
+    {
+      "path": "stage2/public/link-navigation.js",
+      "bytes": 3144,
+      "sha256": "33049dbdc94260db9e1b0d893b2942c45de8f858a00e2cbfecc6862102997c6f"
+    },
+    {
+      "path": "stage2/public/markdown.js",
+      "bytes": 4614,
+      "sha256": "37b4cad04fe6c6ec3846d55e8ac92a8f0d26210e4ed778dcb778cceeb33668f4"
+    },
+    {
+      "path": "stage2/public/panel-splitter.js",
+      "bytes": 3678,
+      "sha256": "7ac57550cfd5723235f63eb4fd2377eaf991136799c44fcc6a86cc380d397170"
+    },
+    {
+      "path": "stage2/public/permission-presentation.js",
+      "bytes": 9030,
+      "sha256": "f9734d2143735b2bdf7821be1cf83b9300b636aefbbdfa00cb64856214a841fc"
+    },
+    {
+      "path": "stage2/public/prompts/human-loop.js",
+      "bytes": 2223,
+      "sha256": "5f8e0c8691a2ac69dd818c6a6b4db8bddf9951a6f02c656ecc0c7c43f44c9d8f"
+    },
+    {
+      "path": "stage2/public/prompts/human-loop.json",
+      "bytes": 43604,
+      "sha256": "5029275f8cf22066ce2af88450e65e24c80d173e6fab8e6f9d544349fcd477d4"
+    },
+    {
+      "path": "stage2/public/question-presentation.js",
+      "bytes": 1005,
+      "sha256": "320f6d2c63cd305f5937e6b821875ea4bcc4b21a71c19a57602a619fd600ed40"
+    },
+    {
+      "path": "stage2/public/renderers/conversation.js",
+      "bytes": 22194,
+      "sha256": "dbad4bbec1200f23ad8aff89ce15dda141b98146475111951af0d42ee3efbb80"
+    },
+    {
+      "path": "stage2/public/renderers/history-icons.js",
+      "bytes": 2596,
+      "sha256": "9daaa05b9719ad18ab0268feac1f5df250d5d57f6718195ecd6b89e455eda429"
+    },
+    {
+      "path": "stage2/public/renderers/history-popover.js",
+      "bytes": 7421,
+      "sha256": "6cb4cca08e9d57f91b0fe3f454d598df385d8d9384c07da4aa8fd8e6953b136b"
+    },
+    {
+      "path": "stage2/public/renderers/human-loop-history.js",
+      "bytes": 8239,
+      "sha256": "6b78eea99098d577c99e3d6315b80f6518d1a2fb616a379049af2e0cbe5a21af"
+    },
+    {
+      "path": "stage2/public/renderers/human-loop.css",
+      "bytes": 5382,
+      "sha256": "9f8c44fbe1da6a524a6a77d85d1e9c2106ac6ab991576dc9f835fff30863b3a8"
+    },
+    {
+      "path": "stage2/public/renderers/human-loop.js",
+      "bytes": 27518,
+      "sha256": "239681ac376979a8cfbe22f717638e54ffc61e87b9c76e97786c3f8281cd6177"
+    },
+    {
+      "path": "stage2/public/renderers/shared-design.js",
+      "bytes": 18236,
+      "sha256": "8babf4b9a3eb55183b94034e27148b957e4d8a9ea9b92a50ad94e073b54c6316"
+    },
+    {
+      "path": "stage2/public/review-decisions.js",
+      "bytes": 2870,
+      "sha256": "8acee9da096624b642083b9b3aaeed591e3d19ef592578d645cec6adc80270bd"
+    },
+    {
+      "path": "stage2/public/sketch/contract.js",
+      "bytes": 17868,
+      "sha256": "def9051d99a68bcfb7ab017d2f7f17ca4f8ca8de6b4034a6ed0f5d45f0090b39"
+    },
+    {
+      "path": "stage2/public/sketch/debugger.js",
+      "bytes": 6925,
+      "sha256": "b92e535e459f556edc912ef84c6ecc2b20bf1b395c3f6d2a1fce579e44c92537"
+    },
+    {
+      "path": "stage2/public/sketch/design-contract.js",
+      "bytes": 8762,
+      "sha256": "0c40729c118d2a5f34ec97a45ef5bd9d72868bf1b9843ef1482f8b2f5ea1720d"
+    },
+    {
+      "path": "stage2/public/sketch/example.html",
+      "bytes": 4870,
+      "sha256": "e4733d7ec90574d9cb102a5788d8d4ebf4fa62417a26c2560167cabee3d60a0e"
+    },
+    {
+      "path": "stage2/public/sketch/geometry-v2.js",
+      "bytes": 10375,
+      "sha256": "fc6bd49295098928b1aec3d77422691dc680a689585bbbb2aaa994d890f6f70f"
+    },
+    {
+      "path": "stage2/public/sketch/icons.js",
+      "bytes": 817,
+      "sha256": "8e8c2abc1016dfea2993c0749210d6f5d451d88a13f440a11d8a9311223a0958"
+    },
+    {
+      "path": "stage2/public/sketch/renderer.js",
+      "bytes": 54891,
+      "sha256": "2f71fd16a0c7666e50ba244f037cd53af94302ff9ccee39cd24ee5138891efd9"
+    },
+    {
+      "path": "stage2/public/sketch/templates.js",
+      "bytes": 9940,
+      "sha256": "a4d1f405c6d24be8f1d77fb8b37270bcfc49c1cec5c9d2b9799b1a41ecd6b016"
+    },
+    {
+      "path": "stage2/public/snapshot-annotation-controller.js",
+      "bytes": 15788,
+      "sha256": "78347e0460e67df61d1ab6b4a169a4a60524db84145829582ca146c3fe15d6da"
+    },
+    {
+      "path": "stage2/public/styles.css",
+      "bytes": 72597,
+      "sha256": "4d455338dec1be66fa60fb3f2996dace7e3e4f089e301827a353d0c2e4967c5f"
+    },
+    {
+      "path": "stage2/public/workflow-stop-control.js",
+      "bytes": 2296,
+      "sha256": "1ed88ef98bd6b23bdd8b4f5732613a88a17708efe3863b01e323bcfd7630ac2c"
+    },
+    {
+      "path": "stage2/runtime-src/canvas-event.ts",
+      "bytes": 338,
+      "sha256": "7da8c0de6b7816068634d920d0c81879a5e13e831a390fd9b9e85fd826eb831b"
+    },
+    {
+      "path": "stage2/runtime-src/domain/backbone/artifact-store.ts",
+      "bytes": 48914,
+      "sha256": "352d67015e45191bd4961f3e53a9d9af81ea1c36212f82c68e361d90a1f9c50b"
+    },
+    {
+      "path": "stage2/runtime-src/domain/backbone/contract-block.ts",
+      "bytes": 14958,
+      "sha256": "4e44ae7faa696b321fe033cb5878fc1449508af07a758fa7528b7265b60c4261"
+    },
+    {
+      "path": "stage2/runtime-src/domain/backbone/flow-block.ts",
+      "bytes": 7662,
+      "sha256": "bd7d975c7b6091e35b135b32440eca9cc54a15c51a48a623aa4539651bc39feb"
+    },
+    {
+      "path": "stage2/runtime-src/domain/backbone/gui-block.ts",
+      "bytes": 3606,
+      "sha256": "1f1e0d6317bb5ea492e6cf6d4487875ee49984dd151418eca5aa6937ad52fb1e"
+    },
+    {
+      "path": "stage2/runtime-src/domain/backbone/proposal.ts",
+      "bytes": 20723,
+      "sha256": "da9ec3836c44dac74e46ee20dfc67120a10ab62545e57c101a8eaa23bd033a3d"
+    },
+    {
+      "path": "stage2/runtime-src/domain/backbone/schema-primitives.ts",
+      "bytes": 2718,
+      "sha256": "70f9bbae71e82b5cadf326f2a0c8c1dd78590c5b1251fd33dac78c132a51606c"
+    },
+    {
+      "path": "stage2/runtime-src/domain/backbone/system-block.ts",
+      "bytes": 2432,
+      "sha256": "eb526db9de1899bfd6d28ae59407a97fef0e233d1ae488725b1a61bf7b1857fe"
+    },
+    {
+      "path": "stage2/runtime-src/domain/backbone/use-case-block.ts",
+      "bytes": 2475,
+      "sha256": "c5a30a7489300864966074f4aa4abb2a623d204450d4a0cd1684b65bf7f00d91"
+    },
+    {
+      "path": "stage2/runtime-src/domain/host-state-file.ts",
+      "bytes": 20327,
+      "sha256": "0beca1d3c415fceddfc415cd00cf162516d92c2dcaa48a306c7c5bc428db6a26"
+    },
+    {
+      "path": "stage2/runtime-src/domain/host-state-wal.ts",
+      "bytes": 30322,
+      "sha256": "bef662476d58fb9f401615daf5d1f9724533e8e2b4576e8f9a5bf4497c528dbf"
+    },
+    {
+      "path": "stage2/runtime-src/domain/human-loop/authorization.ts",
+      "bytes": 1886,
+      "sha256": "1ba0b487ec701c4c25b81cbb56c188cf7d43db18249bc421c566f3ed7bded928"
+    },
+    {
+      "path": "stage2/runtime-src/domain/human-loop/contracts.ts",
+      "bytes": 29287,
+      "sha256": "eb44443acbd3d545b1e6ffef503c078d2157b2c378cebc54e8e1efe725e3ee2b"
+    },
+    {
+      "path": "stage2/runtime-src/domain/human-loop/ledger.ts",
+      "bytes": 1753,
+      "sha256": "4a1ef21b0fffa09c1d372a73c1a99a785cd1224734a4a5e33cf3b5c038c5b6a4"
+    },
+    {
+      "path": "stage2/runtime-src/domain/human-loop/model.ts",
+      "bytes": 76673,
+      "sha256": "e857922b30cb63894d02bc0e4abbc11b58e012fd4bb6b5896deae924a08cabd0"
+    },
+    {
+      "path": "stage2/runtime-src/domain/human-loop/tool-contracts.ts",
+      "bytes": 7731,
+      "sha256": "dbcddc939783773965992086f325abe030e03a5b5953b8cb4b6cbe4f8d75c449"
+    },
+    {
+      "path": "stage2/runtime-src/domain/implementation-review.ts",
+      "bytes": 19379,
+      "sha256": "621c14f75f9f0a6e757420f1a3268f490b6daa38b0168d939069a2475146d122"
+    },
+    {
+      "path": "stage2/runtime-src/domain/product-paths.ts",
+      "bytes": 6883,
+      "sha256": "ad11bfc2b957b76600c5f56d3b9376da7ba60a618c2c6c5af45b056652732b50"
+    },
+    {
+      "path": "stage2/runtime-src/domain/workflow/annotation-attachment.ts",
+      "bytes": 14786,
+      "sha256": "3f1d48365f6d3b736dbe4eff0950e5fc39180ed4e6c10d958e2fec9bd6185628"
+    },
+    {
+      "path": "stage2/runtime-src/domain/workflow/change-plan.ts",
+      "bytes": 9428,
+      "sha256": "488e3c1d6a91a7d003eb43456e2f610f4a054de4179e01bf480cea9cf5b83f78"
+    },
+    {
+      "path": "stage2/runtime-src/domain/workflow/foundation-storage.ts",
+      "bytes": 9627,
+      "sha256": "834d4768d529c75994911e1b61c83b0313f5e3891d9f6bdc70f3b52a6672e771"
+    },
+    {
+      "path": "stage2/runtime-src/domain/workflow/image-attachment.ts",
+      "bytes": 7088,
+      "sha256": "682464c9afdd5d65b7a143156bfd2efbd66c0c0d9d2c6ca10cc0204c615dd2c6"
+    },
+    {
+      "path": "stage2/runtime-src/domain/workflow/operation.ts",
+      "bytes": 35665,
+      "sha256": "e1c1e367210260fed62475d77fa874d030619b358d457f1b3c657ce868296c0c"
+    },
+    {
+      "path": "stage2/runtime-src/domain/workflow/owned-execution-primitives.ts",
+      "bytes": 2210,
+      "sha256": "22e254a0b41e4eb00fa2ee7b301449c54a559fc517145eb23e2eea9c4449de81"
+    },
+    {
+      "path": "stage2/runtime-src/domain/workflow/policy-contracts.ts",
+      "bytes": 13868,
+      "sha256": "85ff461214fa573aaa73d130dd366a849150c2a70e4e615b9f7fad1bfcbbbf56"
+    },
+    {
+      "path": "stage2/runtime-src/domain/workflow/policy.ts",
+      "bytes": 15397,
+      "sha256": "d122b8cfedec264b8ef36c09071e87d6d1648465cd68723ae9d812fcfa73a46c"
+    },
+    {
+      "path": "stage2/runtime-src/domain/workflow/private-design.ts",
+      "bytes": 2579,
+      "sha256": "614eea170411603745bfa220fa65954379c70155d8b61c0340c7b94839dbe29e"
+    },
+    {
+      "path": "stage2/runtime-src/domain/workflow/private-execution-contract.ts",
+      "bytes": 28459,
+      "sha256": "034c977300aec62d8b4d48fcfccd336236a608714d16987b7dfc45d88b4d8a49"
+    },
+    {
+      "path": "stage2/runtime-src/domain/workflow/private-task-budget.ts",
+      "bytes": 1329,
+      "sha256": "ad8d81acdffa6932fc1437c2f0ba74ec749d5af3a5088e6ba9767b95efc43d10"
+    },
+    {
+      "path": "stage2/runtime-src/domain/workflow/project-policy-store.ts",
+      "bytes": 6286,
+      "sha256": "6bf0f594537178002b1af70e7f1b5f2e8ece1eb0e242254736374ab30cfd5e34"
+    },
+    {
+      "path": "stage2/runtime-src/domain/workflow/retained-work.ts",
+      "bytes": 2726,
+      "sha256": "12e639353ce37659379999126d4fa43e90389addcc3f39d571d673eca6f51547"
+    },
+    {
+      "path": "stage2/runtime-src/domain/workflow/validation.ts",
+      "bytes": 1999,
+      "sha256": "e548e5c41b347aea2470e12478f97ac090e5bd71a221f2fd2362980f931e2d67"
+    },
+    {
+      "path": "stage2/runtime-src/event-store.ts",
+      "bytes": 9066,
+      "sha256": "3f52f8870f32bf61bfa891cc6b1146e81c9be4c72f4b9ccb8accb2b63c68f390"
+    },
+    {
+      "path": "stage2/runtime-src/permissions/permission-broker.ts",
+      "bytes": 17127,
+      "sha256": "ada99d4d9b8a5ba14195573f958922da7ce653c4ec82bafa1d49bb87bcefe5cd"
+    },
+    {
+      "path": "stage2/skills/backbone-designer/SKILL.md",
+      "bytes": 7716,
+      "sha256": "a5294fdd319ba3df3b5b6ffdedfc4be659fc41fb064e17af83eb76b3002760b2"
+    },
+    {
+      "path": "stage2/skills/contract-designer/SKILL.md",
+      "bytes": 3312,
+      "sha256": "0d927eba155babaee2c6683d77db92d66e1918fa09aec395262efbe15587d64a"
+    },
+    {
+      "path": "stage2/skills/control-flow-designer/SKILL.md",
+      "bytes": 3091,
+      "sha256": "a3d86bc1b16f2a3f71b93df04c2b1b5a9c3211b3ada64c3ed3c37dd63dd936d3"
+    },
+    {
+      "path": "stage2/skills/deployment-designer/SKILL.md",
+      "bytes": 1106,
+      "sha256": "688535a0a0118cd57989e1c32fd7e0c476212bc16f72383279b487eeae3f45ff"
+    },
+    {
+      "path": "stage2/skills/design-impact-classifier/SKILL.md",
+      "bytes": 4553,
+      "sha256": "784168b8497cd94d7784f493d11cf8d94c1efb554883fab5151d0a318dfa701e"
+    },
+    {
+      "path": "stage2/skills/gui-designer/SKILL.md",
+      "bytes": 1871,
+      "sha256": "f04811f39647a5e2499f88638cc3efe2c458564167368d7d6f90229a62d3efb7"
+    },
+    {
+      "path": "stage2/skills/implementation-gap-reviewer/SKILL.md",
+      "bytes": 3967,
+      "sha256": "b486355d4ac745b1b7b522b7ba17190f023abb6f26a9f55b28fbc726c38c31a3"
+    },
+    {
+      "path": "stage2/skills/implementation-index-maintainer/SKILL.md",
+      "bytes": 2924,
+      "sha256": "eb556599405a0053a9d85123f748678db41e01a2b3dde9621227538b25bc503a"
+    },
+    {
+      "path": "stage2/skills/implementation-lifecycle-reconciler/SKILL.md",
+      "bytes": 2718,
+      "sha256": "dcbee59ee921df65e03a3d0e743b49f1aef08f3cf08dc598998ad361a0c60ce6"
+    },
+    {
+      "path": "stage2/skills/implementation-reviewer/SKILL.md",
+      "bytes": 4617,
+      "sha256": "8889b0abfbd462b7a55644f25bc6ea520ef22c4a6797c7c5e0a8b969e68882a7"
+    },
+    {
+      "path": "stage2/skills/module-designer/SKILL.md",
+      "bytes": 1230,
+      "sha256": "94cfb68604ec7fbb9c8a361f60a0d2c9a39c362bbdc86ff9181fb05d5f3ce140"
+    },
+    {
+      "path": "stage2/skills/stack-designer/SKILL.md",
+      "bytes": 1939,
+      "sha256": "371375e95fcc8016c4731d06dd9aa86896763371e3ffc29f8be91e5638edb71b"
+    },
+    {
+      "path": "stage2/skills/storage-contract-designer/SKILL.md",
+      "bytes": 2227,
+      "sha256": "93b6e83e2604fa9d7302feedf5f867683fedabd82586cf4863a76b01dc5a7976"
+    },
+    {
+      "path": "stage2/skills/use-case-designer/SKILL.md",
+      "bytes": 2083,
+      "sha256": "7ad244efddcc35ffe4d6108594e998472900ce5ddf29b692e1c918d3ae6cc5c8"
+    },
+    {
+      "path": "stage2/src/browser-navigation.mjs",
+      "bytes": 2338,
+      "sha256": "c7cf8918c6ebba5341f0fef90de887cd82effa86c2341095edc488d5184eb412"
+    },
+    {
+      "path": "stage2/src/extension.mjs",
+      "bytes": 2048,
+      "sha256": "948ccc262c8389ac9174c9d599feb80369cd93e3aaef02537ba9d6c965faf5c1"
+    },
+    {
+      "path": "stage2/src/human-loop-answers.mjs",
+      "bytes": 203,
+      "sha256": "56d6d688111bcd210baab640ea4ca971ba16f343aa991103f63310198a7265cb"
+    },
+    {
+      "path": "stage2/src/human-loop-browser-entry.mjs",
+      "bytes": 2077,
+      "sha256": "abc291840d973c25fd91ed04fd2b3972b026608999d2c27a25a70a764b68c7be"
+    },
+    {
+      "path": "stage2/src/human-loop-close.mjs",
+      "bytes": 28761,
+      "sha256": "c5b034a8ef0caa3225452ae7cf69b1ebd08dcf024b9a7f43c97332f1dd9f8273"
+    },
+    {
+      "path": "stage2/src/human-loop-compaction.mjs",
+      "bytes": 2491,
+      "sha256": "9100354d90d0ad7e6ca1b2b1e94517f1b0ba7b3636bcfd4231d9a606c8793889"
+    },
+    {
+      "path": "stage2/src/human-loop-controller.mjs",
+      "bytes": 11687,
+      "sha256": "fa09e4a9665ea0a260c86cbb063066f8a563c8d77bec9db45f747889a6656b5d"
+    },
+    {
+      "path": "stage2/src/human-loop-design-store.mjs",
+      "bytes": 4667,
+      "sha256": "016ff5dec6188026b8380199f8633990291f8e9a1898cf2aadacdfe56c785810"
+    },
+    {
+      "path": "stage2/src/human-loop-design.mjs",
+      "bytes": 13527,
+      "sha256": "4f9d4941cc7119e0e251d1c5feeb42817e58058cd1929db9eb9400645c8390cf"
+    },
+    {
+      "path": "stage2/src/human-loop-installation.mjs",
+      "bytes": 37227,
+      "sha256": "a9bbe3521718adf4b034af28b3c6a0cdbbc687f4decfe3f9efa4a89fb98aa668"
+    },
+    {
+      "path": "stage2/src/human-loop-native-files.mjs",
+      "bytes": 71,
+      "sha256": "6b2f9b9c98ac66eb6cac0a4628e318be1852bc314c22180a5c15531105a5c146"
+    },
+    {
+      "path": "stage2/src/human-loop-native-recovery.mjs",
+      "bytes": 7105,
+      "sha256": "11ff730f9efda1ffa0318e7242844f71711efc7b17665679957ada54513acc25"
+    },
+    {
+      "path": "stage2/src/human-loop-native-shells.mjs",
+      "bytes": 38352,
+      "sha256": "9da583dda0e364e919dc75de02eef3dc9e03284c59d57c43a7cc65fce1e1476d"
+    },
+    {
+      "path": "stage2/src/human-loop-native-writer.mjs",
+      "bytes": 7462,
+      "sha256": "e47580fa0f3dcf39365df90d1e28231fdda2f234be2d55143001f7c6918defd0"
+    },
+    {
+      "path": "stage2/src/human-loop-preferences.mjs",
+      "bytes": 2191,
+      "sha256": "0c1737f55018236200d9190b25ae70448edaaf2a8367d12747f6a43a4cd3bdc4"
+    },
+    {
+      "path": "stage2/src/human-loop-provider.mjs",
+      "bytes": 33127,
+      "sha256": "6f250f9fa0249d4ae80a537dec0eefc7d658fc2cbcc3fda3f29f5bc844251573"
+    },
+    {
+      "path": "stage2/src/human-loop-recovery.mjs",
+      "bytes": 9529,
+      "sha256": "82d8c6ff53d47191d088f48bc3e9540eb7bd4422694071edc5942685f0cea91a"
+    },
+    {
+      "path": "stage2/src/human-loop-review.mjs",
+      "bytes": 14985,
+      "sha256": "f2edea1c2c7a187fc079eac0c699bb571850d55dd983c2a86aa4f2e4f29acdb2"
+    },
+    {
+      "path": "stage2/src/human-loop-runtime.mjs",
+      "bytes": 64851,
+      "sha256": "1b4d44a9338f996f13b7742e81358f6ffe2e0e26bcb833e0a787de3918fe3208"
+    },
+    {
+      "path": "stage2/src/human-loop-startup.mjs",
+      "bytes": 4004,
+      "sha256": "c44eed8f64ad7a39243e23d47385c82590f4483cf3d8130648962155c1714d87"
+    },
+    {
+      "path": "stage2/src/human-loop-store.mjs",
+      "bytes": 11182,
+      "sha256": "9d70d08ed947a11f6da6c497cb039c6eb1ec086348d7a1451a9053840f344182"
+    },
+    {
+      "path": "stage2/src/human-loop-task.mjs",
+      "bytes": 4233,
+      "sha256": "d742dd393dd7c885592b9ed0fc139a5e9f87d71d92bccdb0ff3f7efb5edaeb1d"
+    },
+    {
+      "path": "stage2/src/human-loop-transport.mjs",
+      "bytes": 80200,
+      "sha256": "8f2bcb9c288b0f6eb46aca78858c53d781ec7eed578fd0ad9d11189f08b03a41"
+    },
+    {
+      "path": "stage2/src/human-loop-workspace.mjs",
+      "bytes": 23967,
+      "sha256": "45eff1a84509562e998d2cc65f76c30bd5ca664dae2fa2723140c680434c4714"
+    },
+    {
+      "path": "stage2/src/native-permission-lifecycle.mjs",
+      "bytes": 3259,
+      "sha256": "ccb8431ff5f9ccc381367983e96fb6069402f3eaeee7f814043f5fc3be99fa97"
+    },
+    {
+      "path": "stage2/src/native-shell-output.mjs",
+      "bytes": 3699,
+      "sha256": "5433e0c9f0d863f08d12332b05a6a87f88fd3cad52d15303a3d8608bd0f4051c"
+    },
+    {
+      "path": "stage2/src/open-project-folder.mjs",
+      "bytes": 1306,
+      "sha256": "985154fe3259e04e29fbe3a45d1fd82c3aa3a6f4dc7010fae3e4850578a434df"
+    },
+    {
+      "path": "stage2/src/workflow-command-runner.mjs",
+      "bytes": 24000,
+      "sha256": "09d1472c05a2e7bf33c620c01b768571ec87f17cca94a6539a248c67b0e4ed18"
+    },
+    {
+      "path": "stage2/src/workflow-runtime-enrollment.mjs",
+      "bytes": 15946,
+      "sha256": "b65de3e0c7a082a7b4c38c48b6dc4013645a1478f07802dbac57719d7aeca817"
+    },
+    {
+      "path": "stage2/src/workflow-runtime-preconditions.mjs",
+      "bytes": 1841,
+      "sha256": "76911bf5e29c847ccd6f2017df7c98b20ead75bb6713fbcccdc4342c03e3235b"
+    },
+    {
+      "path": "stage2/src/workflow-setup-discovery.mjs",
+      "bytes": 14852,
+      "sha256": "92b92e76eb4ac3bee96c6bbdde06ed1f7d9c0088576a51db1276c567dbb207f8"
+    }
+  ],
+  "digest": "f354d73c85d0831d6b69823432a2c771067c7780647f920b51399e605893a5df"
+}

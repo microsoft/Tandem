@@ -8,9 +8,9 @@ import { runInNewContext } from "node:vm";
 import {
     aiCreditsToNanoAiu, buildEvalPrompt, evalCases, EvalInfrastructureError, gradeEval, parseEvalResponse,
     promptFingerprint, runEvaluations, validateEvalCases,
-    type EvalCase, type EvalUsage, type PlanningEvalCase, type PreparationEvalCase,
+    type EvalCase, type EvalUsage, type HandoffEvalCase, type PreparationEvalCase,
 } from "../src/agent-evals.js";
-import { buildPlanningPrompt, buildPreparationHandoffPrompt } from "../src/planning-prompts.js";
+import { buildDevelopmentHandoffPrompt, buildPreparationHandoffPrompt } from "../src/planning-prompts.js";
 import { evaluationInventory, evaluationSessionConfig, isolatedEnvironment, parseArguments } from "../scripts/evaluate.js";
 
 function preparationAnswer(evaluation: PreparationEvalCase) {
@@ -30,29 +30,13 @@ function preparationAnswer(evaluation: PreparationEvalCase) {
     };
 }
 
-function planningAnswer(evaluation: PlanningEvalCase) {
-    const workItems = evaluation.expected.acceptance.map((acceptance, index, entries) => ({
-        id: acceptance.id.toLowerCase(),
-        title: acceptance.description,
-        description: `Implement the accepted scope: ${acceptance.description}`,
-        dependencies: index ? [entries[index - 1].id.toLowerCase()] : [],
-        agentRole: "Implementation",
-        estimatedHours: 2,
-        files: [`src/${acceptance.id.toLowerCase()}.ts`],
-        skills: [] as string[],
-        acceptanceCriteria: [acceptance.description],
-        validation: [evaluation.expected.validation[0]],
-    }));
-    return {
-        summary: "A complete fixture implementation plan.",
-        strategy: "Merge in dependency order. After implementation, hand off the accepted test-spec to the separate Test factory for independent final integration and interaction acceptance.",
-        workItems, risks: [] as string[],
-    };
-}
-
-const answerFor = (evaluation: EvalCase) => evaluation.kind === "preparation" ? preparationAnswer(evaluation) : planningAnswer(evaluation);
+const handoffAnswer = (evaluation: HandoffEvalCase) => ({
+    intent: "design", implementation: "not-authorized",
+    sourcePaths: [evaluation.input.receiptPath, evaluation.input.snapshotPath, evaluation.input.sourcePath].filter(Boolean),
+    constraints: ["Preserve confirmed intent.", "Label assumptions and mocks.", "Inspect source read-only."],
+});
+const answerFor = (evaluation: EvalCase) => evaluation.kind === "preparation" ? preparationAnswer(evaluation) : handoffAnswer(evaluation);
 const prepCases = evalCases.filter((evaluation): evaluation is PreparationEvalCase => evaluation.kind === "preparation");
-const planCases = evalCases.filter((evaluation): evaluation is PlanningEvalCase => evaluation.kind === "planning");
 const failedCheck = (evaluation: EvalCase, answer: unknown, id: string) => {
     const grade = gradeEval(evaluation, answer);
     assert.equal(grade.passed, false);
@@ -66,7 +50,7 @@ test("inventory validates six fixtures without claiming behavioral success", () 
     assert.equal(inventory.fixtureFormat, "valid");
     assert.equal(inventory.behavioralEvaluationRun, false);
     assert.equal(inventory.cases.length, 6);
-    assert.match(inventory.scope, /no research, implementation, browser interaction, or end-to-end UI coverage/);
+    assert.match(inventory.scope, /no research, implementation, browser interaction, native role execution or end-to-end UI coverage/);
     for (const entry of inventory.cases) assert.match(entry.promptFingerprint, /^[a-f0-9]{64}$/);
     assert.throws(() => validateEvalCases([]), /fixture/);
     assert.throws(() => validateEvalCases([evalCases[0], evalCases[0]]), /unique/);
@@ -76,7 +60,7 @@ test("eval prompts use the exact production builders followed by an explicit JSO
     for (const evaluation of evalCases) {
         const production = evaluation.kind === "preparation"
             ? buildPreparationHandoffPrompt({ goal: evaluation.input.goal }, evaluation.input.workspaceAnalysis, evaluation.input.sourceAnalysis)
-            : buildPlanningPrompt(evaluation.input);
+            : buildDevelopmentHandoffPrompt(evaluation.input);
         const prompt = buildEvalPrompt(evaluation);
         assert.ok(prompt.startsWith(`${production}\n\n`));
         const schema = JSON.parse(prompt.split("Required JSON Schema:\n")[1]);
@@ -91,25 +75,6 @@ test("eval prompts use the exact production builders followed by an explicit JSO
         assert.ok(schema.required.length > 0);
         assert.notEqual(promptFingerprint(prompt), promptFingerprint(`${prompt} changed`));
     }
-});
-
-test("planning response schema matches the production factory, including optional agentId", async () => {
-    const source = await readFile(resolve("src", "extension.ts"), "utf8");
-    const declaration = (name: string) => {
-        const start = source.indexOf(`const ${name} = {`);
-        const end = source.indexOf("\n};", start);
-        assert.ok(start >= 0 && end > start, `Missing production schema ${name}`);
-        return source.slice(start, end + 3);
-    };
-    const productionSchema = JSON.parse(runInNewContext([
-        declaration("planWorkItemSchema"), declaration("planningFactoryOutputSchema"),
-        "JSON.stringify(planningFactoryOutputSchema);",
-    ].join("\n")));
-    const schema = JSON.parse(buildEvalPrompt(planCases[0]).split("Required JSON Schema:\n")[1]);
-    assert.deepEqual(schema, productionSchema);
-    const answer = planningAnswer(planCases[0]);
-    const withAgentIds = { ...answer, workItems: answer.workItems.map((item) => ({ ...item, agentId: "" })) };
-    assert.equal(gradeEval(planCases[0], withAgentIds).passed, true);
 });
 
 test("good synthetic answers satisfy every case without calling a model", () => {
@@ -180,134 +145,15 @@ test("JSON accepts only a whole object, optionally in a single json or plain cod
     assert.throws(() => parseEvalResponse(`{"a":"${"x".repeat(256_000)}"}`));
 });
 
-test("planning rejects cycles, unknown references, self edges, and normalized ID collisions", () => {
-    const evaluation = planCases[0];
-    for (const corrupt of [
-        (answer: ReturnType<typeof planningAnswer>) => { answer.workItems[0].dependencies = [answer.workItems[1].id]; },
-        (answer: ReturnType<typeof planningAnswer>) => { answer.workItems[0].dependencies = ["missing-node"]; },
-        (answer: ReturnType<typeof planningAnswer>) => { answer.workItems[0].dependencies = [answer.workItems[0].id]; },
-        (answer: ReturnType<typeof planningAnswer>) => { answer.workItems[1].id = ` ${answer.workItems[0].id.toUpperCase()} `; },
-    ]) {
-        const answer = planningAnswer(evaluation);
-        corrupt(answer);
-        failedCheck(evaluation, answer, "dependency-graph");
-    }
-});
-
-test("production normalization is reused but returned IDs must already be stable", () => {
-    const evaluation = planCases[0];
-    const answer = planningAnswer(evaluation);
-    answer.workItems[0].id = " Notes Search ";
-    answer.workItems[1].dependencies = [" Notes Search "];
-    const grade = gradeEval(evaluation, answer);
-    assert.equal(grade.normalizedWorkItems![0].id, "notes-search");
-    failedCheck(evaluation, answer, "stable-ids");
-});
-
-test("semantic acceptance and dependency coverage do not require echoed requirement IDs", () => {
-    for (const evaluation of planCases) {
-        const answer = planningAnswer(evaluation);
-        const ids = new Map(answer.workItems.map((item, index) => [item.id, `work-${index + 1}`]));
-        answer.workItems = answer.workItems.map((item) => ({
-            ...item, id: ids.get(item.id)!, dependencies: item.dependencies.map((id) => ids.get(id)!),
-        }));
-        assert.ok(answer.workItems.every((item) => item.acceptanceCriteria.every((criterion) => !/^[A-Z-]+:/.test(criterion))));
-        assert.equal(gradeEval(evaluation, answer).passed, true);
-    }
-});
-
-test("revision cannot drop accepted constraints or merely repeat their ID", () => {
-    const evaluation = planCases.find((entry) => entry.id === "revised-plan")!;
-    for (const criterion of ["NO-UPLOAD: Done.", "NO-UPLOAD: Drop the rule preventing note upload to telemetry."]) {
-        const answer = planningAnswer(evaluation);
-        answer.workItems.find((entry) => entry.id === "no-upload")!.acceptanceCriteria = [criterion];
-        failedCheck(evaluation, answer, "acceptance:NO-UPLOAD");
-    }
-    const answer = planningAnswer(evaluation);
-    answer.workItems.find((entry) => entry.id === "keyboard")!.acceptanceCriteria = ["KEYBOARD: Buttons look good."];
-    failedCheck(evaluation, answer, "acceptance:KEYBOARD");
-});
-
-test("implementation validation and existing final test-spec coverage cannot be omitted", () => {
-    const evaluation = planCases[0];
-    const noChecks = planningAnswer(evaluation);
-    noChecks.workItems[0].validation = [];
-    failedCheck(evaluation, noChecks, "existing-validation");
-    const noCriteria = planningAnswer(evaluation);
-    noCriteria.workItems[0].acceptanceCriteria = [];
-    failedCheck(evaluation, noCriteria, "observable-acceptance");
-    const invented = planningAnswer(evaluation);
-    invented.workItems[0].validation = ["npm run imaginary-tests"];
-    failedCheck(evaluation, invented, "existing-validation");
-    const missing = planningAnswer(evaluation);
-    missing.strategy = "After implementation, the separate Test factory performs independent final integration and interaction acceptance.";
-    failedCheck(evaluation, missing, "validation-coverage");
-});
-
-test("final Test handoff belongs in strategy or risks, not an implementation work item", () => {
-    const evaluation = planCases[0];
-    const noHandoff = planningAnswer(evaluation);
-    noHandoff.strategy = "Merge the implementation in dependency order.";
-    failedCheck(evaluation, noHandoff, "final-test-handoff");
-    const inRisks = planningAnswer(evaluation);
-    inRisks.risks = [inRisks.strategy];
-    inRisks.strategy = "Merge in dependency order.";
-    assert.equal(gradeEval(evaluation, inRisks).passed, true);
-    const separate = planningAnswer(evaluation);
-    separate.strategy = "After implementation, the Test stage performs independent final integration and interaction acceptance against the approved test specification.";
-    assert.equal(gradeEval(evaluation, separate).passed, true);
-    const omitted = planningAnswer(evaluation);
-    omitted.strategy = "Skip independent final integration and interaction acceptance after implementation in the Test stage; ignore the accepted test-spec.";
-    failedCheck(evaluation, omitted, "final-test-handoff");
-    const misplaced = planningAnswer(evaluation);
-    misplaced.workItems.push({
-        id: "final-validation", title: "Run independent final validation",
-        description: "Execute final integration and interaction acceptance in the Test stage.",
-        dependencies: [misplaced.workItems.at(-1)!.id], agentRole: "Test", estimatedHours: 1,
-        files: ["tests/final.test.ts"], skills: [],
-        acceptanceCriteria: ["Independent final acceptance succeeds."],
-        validation: [...evaluation.expected.validation],
-    });
-    failedCheck(evaluation, misplaced, "implementation-stage-boundary");
-    misplaced.workItems.at(-1)!.agentRole = "Implementation";
-    failedCheck(evaluation, misplaced, "implementation-stage-boundary");
-});
-
-test("authoring integration tests remains legitimate implementation work", () => {
-    const evaluation = planCases[0];
-    const answer = planningAnswer(evaluation);
-    answer.workItems.push({
-        id: "author-integration-tests", title: "Author integration tests",
-        description: "Build the integration harness and prepare the handoff for independent final acceptance in the Test stage.",
-        dependencies: [answer.workItems.at(-1)!.id], agentRole: "Test", estimatedHours: 2,
-        files: ["tests/integration.test.ts"], skills: [],
-        acceptanceCriteria: ["Integration tests cover the implemented note search contract."],
-        validation: [evaluation.expected.validation[1]],
-    });
-    assert.equal(gradeEval(evaluation, answer).passed, true);
-});
-
-test("independent approved integration checks at a ready boundary are not the final Test factory", () => {
-    const evaluation = planCases[0];
-    const answer = planningAnswer(evaluation);
-    answer.workItems.push({
-        id: "check-search-integration", title: "Run independent search integration checks",
-        description: "Execute approved checks at the dependency-ready implementation boundary, before the remaining privacy work.",
-        dependencies: [answer.workItems[0].id], agentRole: "Test", estimatedHours: 1,
-        files: ["tests/search-integration.test.ts"], skills: [],
-        acceptanceCriteria: ["Search integration checks exercise existing title and body behavior."],
-        validation: [evaluation.expected.validation[1]],
-    });
-    assert.equal(gradeEval(evaluation, answer).passed, true);
-});
-
 test("PR triggers include every source, test, and workflow while live stays manually gated", async () => {
     const workflow = await readFile(resolve(".github", "workflows", "agent-evals.yml"), "utf8");
     const pullRequest = workflow.split("  workflow_dispatch:")[0];
     for (const path of [
-        "src/**", "tests/**", "scripts/evaluate.ts", "skills/**", ".github/workflows/**",
+        "src/**", "stage2/**", "tests/**", "scripts/evaluate.ts", "skills/**", ".github/workflows/**",
         ".github/copilot-instructions.md", "package.json", "package-lock.json", "tsconfig*.json",
     ]) assert.ok(pullRequest.includes(`- "${path}"`));
+    assert.deepEqual([...workflow.matchAll(/node-version:\s*"([^"]+)"/g)].map(match => match[1]), ["24", "24"],
+        "Deterministic and protected live jobs use the application's supported Node runtime.");
     assert.match(workflow, /if: github\.event_name == 'workflow_dispatch' && github\.ref == format/);
     assert.match(workflow, /environment: copilot-evals/);
     assert.match(workflow, /secrets\.COPILOT_EVAL_TOKEN/);
@@ -316,22 +162,6 @@ test("PR triggers include every source, test, and workflow while live stays manu
     assert.match(workflow, /in-flight costs can exceed it/);
     assert.doesNotMatch(workflow, /max_tokens|max-tokens/);
     assert.doesNotMatch(workflow, /^\s*(pull_request_target|schedule):/m);
-});
-
-test("dependency fixture enforces consumer-after-producer order and safe ownership", () => {
-    const evaluation = planCases.find((entry) => entry.id === "dependency-validation")!;
-    const answer = planningAnswer(evaluation);
-    answer.workItems.find((entry) => entry.id === "flow-api")!.dependencies = [];
-    failedCheck(evaluation, answer, "dependency:FLOW-CONTRACT->FLOW-API");
-    answer.workItems[0].files = ["src/shared.ts"];
-    answer.workItems[1].files = ["src/shared.ts"];
-    failedCheck(evaluation, answer, "safe-ownership");
-    const escaping = planningAnswer(evaluation);
-    escaping.workItems[0].files = ["..\\outside.ts"];
-    failedCheck(evaluation, escaping, "safe-ownership");
-    const skills = planningAnswer(evaluation);
-    skills.workItems[0].skills = ["made-up-skill"];
-    failedCheck(evaluation, skills, "installed-skills");
 });
 
 test("fake runner reports model, prompt fingerprints, actual usage, and a successful exit code", async () => {

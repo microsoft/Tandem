@@ -1,6 +1,6 @@
 import { build } from "esbuild";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rm } from "node:fs/promises";
+import fs, { mkdir, readFile, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,11 +17,15 @@ interface CanvasContext {
 
 interface HarnessApi {
     createState(id: string, goal?: string): TandemState;
+    createLegacyState(id: string, goal?: string): TandemState;
     loadState(id: string): Promise<TandemState>;
     persistState(state: TandemState): Promise<void>;
     completeLifecycleStage(id: string, stage: string, provider: string): Promise<TandemState>;
     reopenLifecycleStage(id: string, stage: string, provider: string): Promise<TandemState>;
     beginPrototypeBuild(id: string, provider: string): Promise<TandemState>;
+    sketchAction(id: string, provider: string, input: Record<string, unknown>): Promise<TandemState>;
+    ensureSketchStarted(state: TandemState, writable: boolean): Promise<TandemState>;
+    readSketchImage(input: unknown): Promise<{ resultType: string; textResultForLlm: string; binaryResultsForLlm: { type: string; mimeType: string; data: string }[] }>;
     prototypeAction(id: string, provider: string, input: Record<string, unknown>): Promise<TandemState>;
     queuePrototypeRevision(id: string, provider: string, input: Record<string, unknown>): Promise<{ revisionId: string }>;
     stageCompletionError(state: TandemState, stage: string, options?: { requirePrototypeSpec: boolean }): string | null;
@@ -38,17 +42,17 @@ interface HarnessApi {
     waitForPreparation(id: string): Promise<void>;
     waitForAnswer(id: string): Promise<void>;
     recoverAnswerFactory(state: TandemState, writable: boolean): void;
-    seedDefaultDesignReview(state: TandemState, createdAt?: string): TandemState;
-    ensureDefaultDesignReview(state: TandemState, writable: boolean): Promise<TandemState>;
-    waitForDesignReview(id: string): Promise<void>;
     answerFactoryPrompt(args: unknown): string;
     answerFactory: { run(ctx: Record<string, unknown>): Promise<unknown> };
+    usageSuggestionFactory: { run(ctx: Record<string, unknown>): Promise<unknown> };
+    textWorkerAgent: { name: string; tools: string[]; infer: boolean; prompt: string };
     processAction(id: string, provider: string, input: unknown): Promise<TandemState>;
     preparationFactory: {
         meta: { argsSchema: { properties: Record<string, unknown> } };
         run(ctx: Record<string, unknown>): Promise<unknown>;
     };
-    waitForExecution(id: string): Promise<void>;
+    continueDevelopment(id: string, provider: string, input?: Record<string, unknown>): Promise<TandemState>;
+    assertDevelopmentAvailable(): Promise<void>;
     isCanvasRehydration(ctx: { instanceId: string; reason?: unknown }): boolean;
     setSession(session: unknown): void;
     resetEffort(id: string, provider: string, input: unknown): Promise<TandemState>;
@@ -56,6 +60,7 @@ interface HarnessApi {
     openTandem(ctx: CanvasContext & { sessionId: string; reason?: string }): Promise<{ url: string }>;
     startServer(instance: string, id: string, provider: string, writable: boolean): Promise<{
         url: string; server: import("node:http").Server; heartbeat: ReturnType<typeof setInterval>;
+        live: { close(): void };
     }>;
     closeServers(): Promise<void>;
     runEffortFactory(id: string, requestId: string, request: FactoryLaunchRequest): Promise<unknown>;
@@ -68,14 +73,15 @@ async function compile(): Promise<string> {
     const source = (await readFile(join(sourceRoot, "extension.ts"), "utf8")).replaceAll("\r\n", "\n");
     const end = source.indexOf("session = await joinSession(");
     if (end === -1) throw new Error("The extension session entry point could not be located.");
-    const prefix = source.slice(0, end).replaceAll("import.meta.url", JSON.stringify("file:///project/.github/extensions/tandem/extension.mjs"));
+    const prefix = source.slice(0, end).replaceAll("import.meta.url", JSON.stringify("file:///project/.github/extensions/tandem/extension.mjs"))
+        .replaceAll('import.meta.resolve("@github/copilot-sdk")', JSON.stringify("file:///fixture-sdk/index.mjs"));
     const openStart = source.lastIndexOf("open: async (ctx) => {");
     const openEnd = source.indexOf(",\n            onClose:", openStart);
     if (openStart === -1 || openEnd === -1) throw new Error("The canvas open handler could not be located.");
     const openHandler = source.slice(openStart + "open: ".length, openEnd);
     const result = await build({
         stdin: {
-            contents: `${prefix}\nmodule.exports = { createState, loadState, persistState, completeLifecycleStage, reopenLifecycleStage, beginPrototypeBuild, prototypeAction, queuePrototypeRevision, stageCompletionError, applyFactoryResult, updateTandem, readRequestBody, verifyPreviewIdentity, applyCanvasReset, isCanvasRehydration, ensurePreparationStarted, bindPreparationRun, recordPreparationWorkItem, settlePreparationRun, recoverPreparationFactory, recoverAnswerFactory, seedDefaultDesignReview, ensureDefaultDesignReview, preparationFactory, resetEffort, startEffort, startServer, runEffortFactory, waitForEffortRun, openTandem: ${openHandler}, async closeServers() { for (const entry of servers.values()) { clearInterval(entry.heartbeat); for (const client of entry.clients) client.end(); await new Promise(resolve => entry.server.close(resolve)); } servers.clear(); }, waitForPreparation(id) { return activePreparationRuns.get(id); }, waitForAnswer(id) { return activeAnswerRuns.get(id); }, waitForDesignReview(id) { return activeDesignReviewRuns.get(id); }, waitForExecution(id) { return Promise.all([activeImplementationRuns.get(id), activeTestRuns.get(id)]); }, answerFactory, answerFactoryPrompt, processAction, setSession(value) { session = value; } };`,
+            contents: `${prefix}\nmodule.exports = { createState, createLegacyState(id, goal) { const state = createState(id, goal); delete state.lifecycle.version; return state; }, loadState, persistState, completeLifecycleStage, reopenLifecycleStage, beginPrototypeBuild, sketchAction, ensureSketchStarted, readSketchImage, prototypeAction, queuePrototypeRevision, stageCompletionError, applyFactoryResult, updateTandem, readRequestBody, verifyPreviewIdentity, applyCanvasReset, isCanvasRehydration, ensurePreparationStarted, bindPreparationRun, recordPreparationWorkItem, settlePreparationRun, recoverPreparationFactory, recoverAnswerFactory, preparationFactory, usageSuggestionFactory, textWorkerAgent, resetEffort, startEffort, startServer, runEffortFactory, waitForEffortRun, continueDevelopment, openTandem: ${openHandler}, async closeServers() { for (const entry of servers.values()) { clearInterval(entry.heartbeat); entry.live.close(); for (const client of entry.clients) client.end(); await new Promise(resolve => entry.server.close(resolve)); } servers.clear(); }, waitForPreparation(id) { return activePreparationRuns.get(id); }, waitForAnswer(id) { return activeAnswerRuns.get(id); }, answerFactory, answerFactoryPrompt, processAction, setSession(value) { session = value; handoffs = new DevelopmentHandoffs(WORKSPACE_ROOT, SHARED_PROJECT_ROOT, value.sessionId); } };`,
             loader: "ts", resolveDir: sourceRoot,
         },
         bundle: true, platform: "node", target: "node20", format: "cjs", write: false,
@@ -83,6 +89,10 @@ async function compile(): Promise<string> {
         plugins: [{
             name: "fake-identity",
             setup(api) {
+                api.onResolve({ filter: /human-loop-controller\.mjs$/ }, () => ({ path: "development", namespace: "fake" }));
+                api.onLoad({ filter: /^development$/, namespace: "fake" }, () => ({
+                    contents: "export const createHumanLoopController = options => globalThis.developmentFixture(options);",
+                }));
                 api.onResolve({ filter: /^@azure\/identity$/ }, () => ({ path: "identity", namespace: "fake" }));
                 api.onResolve({ filter: /^\.\/speech-browser\.js$/ }, () => ({ path: "browser", namespace: "fake" }));
                 api.onLoad({ filter: /^identity$/, namespace: "fake" }, () => ({
@@ -96,19 +106,24 @@ async function compile(): Promise<string> {
         logLevel: "silent",
         define: { __TANDEM_VERSION__: JSON.stringify("test") },
     });
-    return result.outputFiles[0].text;
+    return result.outputFiles[0].text + "\nmodule.exports.assertDevelopmentAvailable = assertDevelopmentAvailable;";
 }
 
-export async function extensionHarness(speechEnvironment: Record<string, string> = {}, sharedRoot?: string) {
+export async function extensionHarness(speechEnvironment: Record<string, string> = {}, sharedRoot?: string, rendererHtml = "", workspaceRoot?: string) {
     const root = sharedRoot || resolve("node_modules", "tandem-test-fixtures", randomUUID());
     await mkdir(root, { recursive: true });
+    const workspace = workspaceRoot ?? root;
+    await mkdir(workspace, { recursive: true });
     const requests: unknown[] = [];
+    const developmentRequests: Array<Record<string, unknown>> = [];
+    let beforeDevelopmentStart: () => Promise<void> = async () => {};
     const logs: string[] = [];
     let speechTokenRequests = 0;
     let browserSignIns = 0;
     let browserTokenRequests = 0;
     let previewHtml = '<html><meta name="tandem-prototype-id" content="sample"></html>';
     let signIn: (signal: AbortSignal) => Promise<void> = async () => {};
+    let rename = fs.rename;
     const require = createRequire(import.meta.url);
     class CanvasError extends Error {
         constructor(readonly code: string, message: string) { super(message); }
@@ -129,8 +144,24 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
     };
     try {
         runInNewContext(await (compiled ??= compile()), {
-            module, exports: module.exports, console, URL, Buffer, AbortController, AbortSignal, Response, Error, TextDecoder,
+            module, exports: module.exports, console, URL, Buffer, AbortController, AbortSignal, Response, Error, TextDecoder, TextEncoder, structuredClone,
             setTimeout, clearTimeout, setInterval, clearInterval,
+            developmentFixture: () => ({
+                toolHook: async () => undefined, permissionHandler: async () => ({ kind: "denied-no-approval-rule-and-could-not-request-from-user" }),
+                observe: () => {}, assertQuiet: async () => {
+                    if (developmentRequests.length) throw new Error("Finish or close Development before changing upstream discovery.");
+                },
+                status: async () => ({ installation: { status: "new" }, workflow: null }),
+                close: async () => ({ status: "closed", warnings: [] }),
+                start: async () => { await beforeDevelopmentStart(); return {
+                    sessionId: "fixture-private",
+                    store: { load: async () => ({
+                        owner: { mainSessionId: session.sessionId, privateSessionId: "fixture-private", workspacePath: workspace },
+                        requests: developmentRequests.map(request => ({ ...request, status: "waiting" })), recoveries: [],
+                    }) },
+                    send: async (request: Record<string, unknown>) => { developmentRequests.push(request); return request; },
+                }; },
+            }),
             speechIdentity: {
                 DefaultAzureCredential: class {
                     async getToken() {
@@ -156,7 +187,7 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
             fetch: async () => new Response(previewHtml),
             process: new Proxy(process, {
                 get(target, key) {
-                    if (key === "cwd") return () => root;
+                    if (key === "cwd") return () => workspace;
                     if (key === "env") return {
                         ...target.env, TANDEM_Speech__ResourceId: "", TANDEM_Speech__Region: "",
                         TANDEM_Speech__Language: "", ...speechEnvironment,
@@ -166,6 +197,7 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
                 },
             }),
             require(name: string) {
+                if (name === "node:fs/promises") return { ...fs, rename: (...args: Parameters<typeof fs.rename>) => rename(...args) };
                 if (name === "node:child_process") {
                     const childProcess = require(name);
                     return { ...childProcess, execFileSync(command: string, args: string[], options: unknown) {
@@ -179,7 +211,7 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
                     CanvasError, defineFactory: (value: unknown) => value,
                     isFactoryRunTerminal: (status: string) => ["completed", "failed", "cancelled", "halted", "error"].includes(status),
                 };
-                if (name === "./renderer.js") return { renderTandemHtml: () => "" };
+                if (name === "./renderer.js") return { renderTandemHtml: () => rendererHtml };
                 return require(name);
             },
         });
@@ -191,7 +223,9 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
             }
             if (requests.length < count) throw new Error("The expected factory dispatch was not observed.");
         };
-        return { api, root, requests, logs, session, waitForRequests,
+        return { api, root, requests, developmentRequests, logs, session, waitForRequests,
+            setBeforeDevelopmentStart(handler: () => Promise<void>) { beforeDevelopmentStart = handler; },
+            setRename(value: typeof fs.rename) { rename = value; },
             setPreviewHtml(value: string) { previewHtml = value; },
             browserSignIns: () => browserSignIns,
             browserTokenRequests: () => browserTokenRequests,

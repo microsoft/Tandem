@@ -1,8 +1,8 @@
 import { executionDigest } from "./execution.js";
 import { ProjectStoreError } from "./project-store.js";
 import { validateAcceptanceRecords, type AcceptanceRecord } from "./accepted-artifacts.js";
-import type { LifecycleStageId, TandemState } from "./types.js";
-import { lifecycleStages } from "./workflow.js";
+import type { HistoricalStageId as LifecycleStageId, TandemState } from "./types.js";
+import { parseHistoricalStageId } from "./workflow.js";
 import { ownershipPath } from "./scheduling.js";
 
 export type ProcessBlock = "handoff" | "status" | "intake";
@@ -159,7 +159,7 @@ export function normalizeProcessState(value: unknown): ProcessState {
     if (source.version !== 1) return processError("Unsupported process state version. The saved state is preserved.");
     const events = listValue(source.events, "process events", 5000).map((value): ProcessEvent => {
         const event = objectValue(value);
-        const stage = lifecycleStages.find((stage) => stage.id === event.stage)?.id;
+        const stage = parseHistoricalStageId(event.stage);
         const kind = event.kind as ProcessEvent["kind"];
         if (!stage || !["ready", "accepted", "scheduled", "reopened", "configuration", "handoff", "intake"].includes(kind)) {
             return processError("Invalid process event.");

@@ -22,3 +22,13 @@ declare module "tandem:speech-worker" {
     const content: string;
     export default content;
 }
+
+declare module "tandem:browser-client" {
+    const content: string;
+    export default content;
+}
+
+declare module "tandem:browser-styles" {
+    const content: string;
+    export default content;
+}

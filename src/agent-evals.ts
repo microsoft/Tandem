@@ -1,21 +1,14 @@
 import { createHash } from "node:crypto";
-import { buildPlanningPrompt, buildPreparationHandoffPrompt } from "./planning-prompts.js";
-import { executionGraph, executionId, ownershipConflicts, ownershipPath } from "./scheduling.js";
+import { buildDevelopmentHandoffPrompt, buildPreparationHandoffPrompt } from "./planning-prompts.js";
 
 /**
- * Synthetic, prompt-only requirements/planning probes, not end-to-end UI tests.
+ * Synthetic, prompt-only preparation/Design-handoff probes, not native or UI tests.
  * Graders check structural invariants and case-specific semantic indicators, not
  * exact prose or a model's claim that its answer "passed".
  */
-export const evaluationScope = "Fixture-based preparation handoff and execution planning only; no research, implementation, browser interaction, or end-to-end UI coverage.";
+export const evaluationScope = "Fixture-based preparation and Prototype-to-Designer handoff only; no research, implementation, browser interaction, native role execution or end-to-end UI coverage.";
 
 type PrototypeMode = "build" | "validate-existing" | "not-applicable" | "undecided";
-interface Acceptance {
-    id: string;
-    description: string;
-    /** Every group must match; alternatives within a group are ORed. */
-    indicators: string[][];
-}
 interface Prerequisite {
     label: string;
     indicators: string[][];
@@ -36,17 +29,11 @@ export interface PreparationEvalCase extends CaseBase {
     };
     expected: { prototypeMode: PrototypeMode; usageIndicators: string[][]; missingPrerequisites: Prerequisite[] };
 }
-export interface PlanningEvalCase extends CaseBase {
-    kind: "planning";
-    input: Parameters<typeof buildPlanningPrompt>[0];
-    expected: {
-        acceptance: Acceptance[];
-        validation: string[];
-        installedSkills: string[];
-        dependencyPairs: Array<{ prerequisite: string; consumer: string }>;
-    };
+export interface HandoffEvalCase extends CaseBase {
+    kind: "handoff";
+    input: Parameters<typeof buildDevelopmentHandoffPrompt>[0];
 }
-export type EvalCase = PreparationEvalCase | PlanningEvalCase;
+export type EvalCase = PreparationEvalCase | HandoffEvalCase;
 
 const noSources = { summary: "Synthetic fixture only. No external sources have been researched.", sources: [] };
 const preparationCase = (
@@ -66,21 +53,6 @@ const preparationCase = (
     },
     expected: { prototypeMode: mode, usageIndicators, missingPrerequisites },
 });
-
-const revisedAcceptance: Acceptance[] = [
-    { id: "NOTES-SEARCH", description: "Search locally stored notes by title and body.", indicators: [["search", "filter"], ["note"], ["title"], ["body", "content"]] },
-    { id: "OFFLINE", description: "All note operations continue offline, without a network or cloud dependency.", indicators: [["offline", "without.*network", "no.*network"], ["note", "operation", "search"]] },
-    { id: "KEYBOARD", description: "Keyboard-only users can operate search and navigate results.", indicators: [["keyboard"], ["search", "result"], ["navigat", "operat", "focus"]] },
-    { id: "NO-UPLOAD", description: "Private note contents are never uploaded or sent to telemetry.", indicators: [["never", "no\\b", "not\\b", "without", "prevent"], ["upload", "telemetry", "transmit"], ["note", "content", "private"]] },
-];
-const graphAcceptance: Acceptance[] = [
-    { id: "FLOW-CONTRACT", description: "Define a shared typed task record contract with id, title, and status.", indicators: [["typed", "type", "schema"], ["task"], ["id"], ["title"], ["status"]] },
-    { id: "FLOW-API", description: "An in-memory task API uses the shared contract to list tasks and update status.", indicators: [["in.memory"], ["task"], ["list"], ["status", "update"], ["contract", "schema", "type"]] },
-    { id: "FLOW-UI", description: "A task board consumes the API, displays tasks, and updates task status.", indicators: [["board", "ui"], ["api"], ["display", "render", "list"], ["status"], ["update", "change"]] },
-    { id: "FLOW-ERROR", description: "A failed task update leaves visible error feedback and preserves prior state.", indicators: [["fail", "error"], ["visible", "feedback", "message"], ["preserv", "retain", "unchanged", "rollback"]] },
-];
-const noteValidation = ["npm run check", "npm test -- notes", "Manual check: offline keyboard search and no network upload"];
-const taskValidation = ["npm run check", "npm test -- tasks", "Manual check: task board update success and failure"];
 
 export const evalCases: readonly EvalCase[] = [
     preparationCase(
@@ -111,53 +83,16 @@ export const evalCases: readonly EvalCase[] = [
             { label: "Playwright browser runtime", indicators: [["playwright", "browser"], ["runtime", "install", "tool"]] },
         ],
     ),
-    {
-        id: "revised-plan", title: "Revision preserves accepted constraints", kind: "planning",
+    ...(["build", "not-applicable"] as const).map((mode): HandoffEvalCase => ({
+        id: mode === "build" ? "prototype-handoff" : "no-gui-handoff",
+        title: mode === "build" ? "Prototype continues through Designer" : "No-GUI Design continuation",
+        kind: "handoff",
         input: {
-            prototypeId: "eval-notes", maxAgents: 2, action: "revise",
-            instruction: "Split the search work into independently reviewable units. This changes implementation sequencing, not scope: retain all accepted offline, keyboard accessibility, and privacy constraints.",
-            state: {
-                goal: "Add local note search to an offline-first notes GUI.",
-                acceptedDesignSpec: revisedAcceptance.map(({ id, description }) => ({ id, description })),
-                acceptedTestSpec: { checks: noteValidation, finalAcceptanceStage: "Test", independentFinalValidation: true },
-                contracts: { note: "{ id: string; title: string; body: string }", persistence: "existing local storage only" },
-                repository: { files: ["src/notes.ts", "src/search.ts", "src/search-view.ts", "tests/notes.test.ts"], installedSkills: [], existingChecks: noteValidation },
-                planning: {
-                    status: "ready",
-                    workItems: [{
-                        id: "note-search", dependencies: [], files: ["src/search.ts", "src/search-view.ts"],
-                        acceptanceCriteria: revisedAcceptance.map(({ id, description }) => `${id}: ${description}`),
-                        validation: noteValidation,
-                    }],
-                },
-            },
+            handoffId: "fixture-handoff", receiptPath: "C:\\fixture\\receipt.json",
+            snapshotPath: "C:\\fixture\\snapshot.json", sourcePath: mode === "build" ? "C:\\fixture\\source" : null,
+            disposition: mode, goal: "Preserve the confirmed workflow and explicitly labeled mocks.",
         },
-        expected: { acceptance: revisedAcceptance, validation: noteValidation, installedSkills: [], dependencyPairs: [] },
-    },
-    {
-        id: "dependency-validation", title: "Contract DAG with complete validation", kind: "planning",
-        input: {
-            prototypeId: "eval-tasks", maxAgents: 3, action: "generate",
-            state: {
-                goal: "Implement a mock-driven task board with observable update success and failure.",
-                acceptedDesignSpec: graphAcceptance.map(({ id, description }) => ({ id, description })),
-                acceptedTestSpec: { checks: taskValidation, finalAcceptanceStage: "Test", independentFinalValidation: true },
-                contracts: { task: "Not implemented yet; the API consumes the shared task contract, and the UI consumes the API." },
-                architecture: "The contract precedes API implementation; API behavior precedes the board integration. No real service or credentials.",
-                repository: {
-                    files: ["src/task-contract.ts", "src/task-api.ts", "src/task-board.ts", "tests/tasks.test.ts"],
-                    installedSkills: [], existingChecks: taskValidation,
-                },
-            },
-        },
-        expected: {
-            acceptance: graphAcceptance, validation: taskValidation, installedSkills: [],
-            dependencyPairs: [
-                { prerequisite: "FLOW-CONTRACT", consumer: "FLOW-API" },
-                { prerequisite: "FLOW-API", consumer: "FLOW-UI" },
-            ],
-        },
-    },
+    })),
 ];
 
 type Schema = {
@@ -202,17 +137,11 @@ const preparationSchema = object({
         reason: { ...text, maxLength: 500 },
     }),
 });
-const planningSchema = object({
-    summary: text, strategy: text,
-    workItems: list(object({
-        id: text, title: text, description: text,
-        dependencies: list(), agentRole: text, agentId: { type: "string" },
-        estimatedHours: { type: "number", minimum: 0.5, maximum: 80 },
-        files: list(text, 0, 50), skills: list(text, 0, 20),
-        acceptanceCriteria: list(),
-        validation: list(text, 0, 20),
-    }, ["agentId"]), 1, 30),
-    risks: list(text, 0, 50),
+const handoffSchema = object({
+    intent: { type: "string", enum: ["design"] },
+    sourcePaths: list(text, 1, 4),
+    constraints: list(text, 1, 10),
+    implementation: { type: "string", enum: ["not-authorized"] },
 });
 
 /** Uses the production builders verbatim, then appends only the response contract. */
@@ -221,13 +150,13 @@ export function buildEvalPrompt(evaluation: EvalCase): string {
         ? buildPreparationHandoffPrompt(
             { goal: evaluation.input.goal }, evaluation.input.workspaceAnalysis, evaluation.input.sourceAnalysis,
         )
-        : buildPlanningPrompt(evaluation.input);
+        : buildDevelopmentHandoffPrompt(evaluation.input);
     return [
         production,
         "",
         "Return exactly one JSON object. An optional single ```json or unlabelled ``` fence is supported; no surrounding prose or extra fields.",
         "Required JSON Schema:",
-        JSON.stringify(evaluation.kind === "preparation" ? preparationSchema : planningSchema, null, 2),
+        JSON.stringify(evaluation.kind === "preparation" ? preparationSchema : handoffSchema, null, 2),
     ].join("\n");
 }
 
@@ -287,41 +216,11 @@ interface PreparationOutput {
     deferred: string[];
     prototypeApproach: { mode: string; reason: string };
 }
-interface PlanItem {
-    id: string; title: string; description: string; dependencies: string[]; agentRole: string;
-    estimatedHours: number; files: string[]; skills: string[]; acceptanceCriteria: string[]; validation: string[];
-}
-interface PlanningOutput { summary: string; strategy: string; workItems: PlanItem[]; risks: string[] }
 
 const matchesIndicators = (text: string, groups: string[][]): boolean =>
     groups.every((alternatives) => alternatives.some((pattern) => new RegExp(pattern, "i").test(text)));
 const normalizedWords = (text: string): string =>
     text.toLowerCase().replace(/^i want to\s+/, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
-const coversAcceptance = (item: PlanItem, acceptance: Acceptance): boolean =>
-    item.acceptanceCriteria.some((criterion) => matchesIndicators(criterion, acceptance.indicators) &&
-        !/\b(omit|drop|out of scope|skip implementing|not implement)\b/i.test(criterion));
-
-function finalTestHandoff(text: string): boolean {
-    return matchesIndicators(text, [
-        ["independen", "separate"], ["final", "acceptance"], ["integration"],
-        ["interaction", "acceptance"], ["\\btest\\b"],
-        ["handoff", "hand.off", "remain", "reserv", "leave", "defer", "after", "separate", "follow"],
-    ]) && !/\b(skip|omit|drop|cancel)\b[^.!?\n]*\b(?:final|acceptance|test)\b/i.test(text);
-}
-
-function schedulesFinalTest(item: PlanItem): boolean {
-    // Authoring tests or preparing a handoff is implementation work; executing
-    // the separate final Test pass is not, regardless of the item's agent role.
-    if (/^(add|build|write|author|implement|prepare|provide|create)\b/i.test(item.title)) return false;
-    const assignment = `${item.title} ${item.description}`;
-    const finalScope = /\bfinal\b/i.test(assignment) &&
-        /\b(acceptance|validation|integration|interaction)\b/i.test(assignment);
-    return finalScope && (
-        /^(test|qa|validation)$/i.test(item.agentRole) ||
-        /\btest(?:[- ](?:stage|factory|phase))\b/i.test(assignment) ||
-        /\bindependent\b/i.test(item.title)
-    );
-}
 
 function distinctUsages(usages: string[]): boolean {
     const words = usages.map((usage) => new Set(normalizedWords(usage).split(" ")));
@@ -335,7 +234,7 @@ function distinctUsages(usages: string[]): boolean {
 export function gradeEval(evaluation: EvalCase, result: unknown): EvalGrade {
     const checks: EvalCheck[] = [];
     const check = (id: string, passed: boolean, detail: string) => checks.push({ id, passed, detail });
-    const errors = schemaErrors(evaluation.kind === "preparation" ? preparationSchema : planningSchema, result);
+    const errors = schemaErrors(evaluation.kind === "preparation" ? preparationSchema : handoffSchema, result);
     check("response-schema", errors.length === 0, errors.length ? errors.slice(0, 8).join("; ") : "Required structured response present.");
     if (errors.length) return { passed: false, checks };
     if (evaluation.kind === "preparation") {
@@ -370,64 +269,15 @@ export function gradeEval(evaluation: EvalCase, result: unknown): EvalGrade {
         return { passed: checks.every((entry) => entry.passed), checks };
     }
 
-    const answer = result as PlanningOutput;
-    let items: PlanItem[];
-    try { items = executionGraph(answer.workItems) as PlanItem[]; }
-    catch {
-        check("dependency-graph", false, "Execution IDs must remain unique after production normalization; dependencies must exist and be acyclic.");
-        return { passed: false, checks };
-    }
-    check("dependency-graph", true, "Validated and normalized with production executionGraph.");
-    check("stable-ids", answer.workItems.every((item) => item.id === executionId(item.id) && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(item.id)) &&
-        answer.workItems.every((item) => item.dependencies.every((id) => id === executionId(id))),
-    "Plan IDs must already be stable kebab-case; references must be normalized.");
-    const byId = new Map(items.map((item) => [item.id, item]));
-    const ancestors = (id: string, found = new Set<string>()): Set<string> => {
-        for (const dependency of byId.get(id)!.dependencies) {
-            if (!found.has(dependency)) { found.add(dependency); ancestors(dependency, found); }
-        }
-        return found;
-    };
-    for (const acceptance of evaluation.expected.acceptance) {
-        const covered = items.some((item) => coversAcceptance(item, acceptance));
-        check(`acceptance:${acceptance.id}`, covered, acceptance.description);
-    }
-    const knownChecks = new Set(evaluation.expected.validation);
-    check("observable-acceptance", items.every((item) => item.acceptanceCriteria.length > 0),
-        "Every implementation work item must have observable acceptance criteria.");
-    check("existing-validation", items.every((item) => item.validation.length > 0 && item.validation.every((value) => knownChecks.has(value))),
-        "Every work item must plan at least one existing fixture check; invented commands or claimed results do not count.");
-    const handoff = [answer.strategy, ...answer.risks].join("\n");
-    const independentTestHandoff = finalTestHandoff(handoff);
-    const retainsTestSpec = /\btest[- ]?spec(?:ification)?\b|\bacceptedTestSpec\b|\b(?:accepted|approved) (?:test|acceptance) (?:checks|suite|scenarios)\b/i.test(handoff);
-    check("validation-coverage", evaluation.expected.validation.every((value) =>
-        items.some((item) => item.validation.includes(value)) || (independentTestHandoff && retainsTestSpec)),
-    "Accepted checks must be planned in implementation or retained via the existing test-spec's independent Test handoff.");
-    check("installed-skills", items.every((item) => item.skills.every((skill) => evaluation.expected.installedSkills.includes(skill))),
-        "Do not invent installed skills.");
-    check("final-test-handoff", independentTestHandoff,
-        "Explain the separate independent final integration/interaction acceptance handoff to Test in strategy or risks.");
-    check("implementation-stage-boundary", items.every((item) => !schedulesFinalTest(item)),
-        "All returned work items execute in Implement; do not schedule the separate final Test acceptance factory as a work item.");
-    for (const { prerequisite, consumer } of evaluation.expected.dependencyPairs) {
-        const producerAcceptance = evaluation.expected.acceptance.find((entry) => entry.id === prerequisite)!;
-        const consumerAcceptance = evaluation.expected.acceptance.find((entry) => entry.id === consumer)!;
-        const producers = items.filter((item) => coversAcceptance(item, producerAcceptance));
-        const consumers = items.filter((item) => coversAcceptance(item, consumerAcceptance));
-        check(`dependency:${prerequisite}->${consumer}`, producers.length > 0 && consumers.length > 0 &&
-            consumers.every((item) => producers.some((producer) => producer.id !== item.id && ancestors(item.id).has(producer.id))),
-        "The consuming work item must depend transitively on a distinct prerequisite-producing item.");
-    }
-    let safeOwnership = true;
-    try {
-        items.forEach((item) => item.files.forEach(ownershipPath));
-        safeOwnership = items.every((item) => item.files.length > 0) &&
-            items.every((left, index) => items.slice(index + 1).every((right) =>
-                ancestors(left.id).has(right.id) || ancestors(right.id).has(left.id) ||
-                !ownershipConflicts(left.files, right.files)));
-    } catch { safeOwnership = false; }
-    check("safe-ownership", safeOwnership, "Owned paths stay in the workspace, with no overlapping ownership among dependency-independent work.");
-    return { passed: checks.every((entry) => entry.passed), checks, normalizedWorkItems: items as unknown as Array<Record<string, unknown>> };
+    const answer = result as { intent: string; sourcePaths: string[]; constraints: string[]; implementation: string };
+    check("design-only", answer.intent === "design" && answer.implementation === "not-authorized",
+        "A Prototype handoff cannot authorize implementation.");
+    check("source-identities", [evaluation.input.receiptPath, evaluation.input.snapshotPath, evaluation.input.sourcePath]
+        .filter((path): path is string => path !== null).every(path => answer.sourcePaths.includes(path)),
+        "Retain the supplied exact source paths.");
+    check("intent-boundaries", [/confirm/i, /assum|mock|shortcut/i, /read.only/i].every(pattern => pattern.test(answer.constraints.join("\n"))),
+        "Preserve confirmed decisions, label assumptions/mocks and inspect inputs read-only.");
+    return { passed: checks.every(entry => entry.passed), checks };
 }
 
 /** Inventory validation is not a behavioral pass and never invokes an agent. */
@@ -438,18 +288,10 @@ export function validateEvalCases(cases: readonly EvalCase[]): void {
         if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(evaluation.id) || ids.has(evaluation.id)) throw new Error("Fixture case IDs must be unique kebab-case.");
         ids.add(evaluation.id);
         if (!evaluation.title.trim() || !buildEvalPrompt(evaluation).trim()) throw new Error("Fixture title and production prompt are required.");
-        const groups = evaluation.kind === "preparation"
-            ? [...evaluation.expected.usageIndicators, ...evaluation.expected.missingPrerequisites.flatMap((entry) => entry.indicators)]
-            : evaluation.expected.acceptance.flatMap((entry) => entry.indicators);
-        if (!groups.length || groups.some((group) => !group.length || group.some((pattern) => !pattern.trim()))) throw new Error("Fixtures need semantic grading indicators.");
-        groups.flat().forEach((pattern) => new RegExp(pattern, "i"));
-        if (evaluation.kind === "planning") {
-            const requirementIds = evaluation.expected.acceptance.map((entry) => entry.id);
-            if (!requirementIds.length || new Set(requirementIds).size !== requirementIds.length ||
-                !evaluation.expected.validation.length || evaluation.expected.validation.some((entry) => !entry.trim()) ||
-                evaluation.expected.dependencyPairs.some((pair) => !requirementIds.includes(pair.prerequisite) || !requirementIds.includes(pair.consumer))) {
-                throw new Error("Planning fixtures require unique acceptance IDs, existing checks, and valid dependency expectations.");
-            }
+        if (evaluation.kind === "preparation") {
+            const groups = [...evaluation.expected.usageIndicators, ...evaluation.expected.missingPrerequisites.flatMap(entry => entry.indicators)];
+            if (!groups.length || groups.some(group => !group.length || group.some(pattern => !pattern.trim()))) throw new Error("Fixtures need semantic grading indicators.");
+            groups.flat().forEach(pattern => new RegExp(pattern, "i"));
         }
     }
 }

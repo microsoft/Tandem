@@ -171,8 +171,8 @@ test("one bounded factory reconciles every dependent snapshot default without du
         assert.equal(persisted.factoryRuns[0].terminal, true);
         f.h.api.setSession(f.h.session);
         const completed = await f.h.api.completeLifecycleStage("sample", "requirements", "project:tandem");
-        assert.equal(completed.lifecycle.currentStage, "prototype", "completion remains an explicit separate operation");
-        assert.equal(completed.processing.action, "build-prototype", "existing explicit completion behavior is preserved");
+        assert.equal(completed.lifecycle.currentStage, "sketch", "completion remains an explicit separate operation");
+        assert.equal(completed.processing.action, "generate-sketch", "completion schedules drawings before a prototype");
         await f.h.waitForRequests(2);
     } finally { await f.close(); }
 });
@@ -311,8 +311,8 @@ test("reload recovers the existing run without another worker and repairs an uno
         assert.ok((await reloaded.api.loadState("sample")).jobOwner);
         reloaded.api.setSession({ ...reloaded.session, factory: { getRun: async () => run } });
         const completed = await reloaded.api.completeLifecycleStage("sample", "requirements", "project:tandem");
-        assert.equal(completed.lifecycle.currentStage, "prototype");
-        assert.equal(completed.processing.action, "build-prototype");
+        assert.equal(completed.lifecycle.currentStage, "sketch");
+        assert.equal(completed.processing.action, "generate-sketch");
         await reloaded.waitForRequests();
         assert.equal((await reloaded.api.loadState("sample")).factoryRuns![0].terminal, true);
     } finally { await reloaded.close(); await f.close(); }

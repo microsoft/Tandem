@@ -1,0 +1,83 @@
+@import "../renderer/styles.css";
+
+html, body, #root { height: 100%; margin: 0; padding: 0; overflow: hidden; }
+.host-shell { height: 100%; display: flex; flex-direction: column; min-width: 0; }
+.host-header { display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 5px 12px; background: var(--studio-header); color: #f1f5fb; }
+.host-brand { flex-shrink: 0; white-space: nowrap; }
+.host-workspace { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.host-version { font-size: 11px; color: #c8d4e6; }
+.host-lifecycle { font-size: 11px; color: #c8d4e6; white-space: nowrap; }
+.host-header-actions { display: flex; min-width: 0; align-items: center; gap: var(--studio-control-gap); margin-inline-start: auto; overflow-x: auto; scrollbar-width: thin; padding: 3px; }
+.host-shell button, .host-dialog button { display: inline-flex; align-items: center; justify-content: center; gap: var(--studio-control-gap); border: 1px solid var(--studio-border); border-radius: 5px; padding: var(--studio-control-padding); background: var(--studio-surface); color: var(--studio-text); cursor: pointer; }
+.host-shell button:disabled, .host-dialog button:disabled { opacity: .5; cursor: default; }
+.host-shell button:not(:disabled):hover, .host-dialog button:not(:disabled):hover { border-color: var(--studio-accent); background: var(--studio-accent-soft); }
+.host-shell .host-primary, .host-dialog .host-primary { background: var(--studio-action-bg); border-color: var(--studio-action-bg); color: #fff; }
+.host-shell .host-primary:not(:disabled):hover, .host-dialog .host-primary:not(:disabled):hover { background: #29499f; color: #fff; }
+.host-header .host-icon-button, .host-permissions {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: var(--studio-control-height); height: var(--studio-control-height); padding: 0;
+  border: 1px solid transparent; border-radius: 5px; background: transparent; color: inherit;
+}
+.host-header .host-icon-button:not(:disabled):hover, .host-permissions:not([data-disabled="true"]):hover {
+  border-color: rgb(255 255 255 / 24%); background: rgb(255 255 255 / 10%);
+}
+.host-header .host-icon-button:focus-visible, .host-permissions:has(select:focus-visible) { outline: 2px solid #b6cbff; outline-offset: 2px; }
+.host-permissions { position: relative; }
+.host-permissions select { position: absolute; inset: -1px; width: calc(100% + 2px); height: calc(100% + 2px); opacity: 0; cursor: pointer; }
+.host-permissions[data-mode="allow-all"] { color: #ffd682; }
+.host-permissions[data-disabled="true"] { opacity: .5; }
+.host-permissions select:disabled { cursor: default; }
+.host-main { display: flex; flex: 1; min-height: 0; min-width: 0; overflow: auto; }
+.host-main > iframe { width: 100%; min-width: 900px; flex-shrink: 0; height: 100%; border: 0; }
+.host-notice { width: min(640px, 100%); padding: 40px 24px; margin: auto; text-align: center; overflow: auto; max-height: 100%; }
+.host-notice h1 { font-size: 22px; margin: 12px 0; }
+.host-notice p { overflow-wrap: anywhere; }
+.host-muted { color: var(--studio-muted); }
+.host-notice-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+.host-status { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 16px; padding: 4px 10px; border-top: 1px solid var(--studio-border); background: var(--studio-panel); font-size: 11px; color: var(--studio-muted); }
+.host-status > span { overflow-wrap: anywhere; }
+.host-banner { padding: 8px 12px; border-bottom: 1px solid var(--studio-border); max-height: 20vh; overflow: auto; overflow-wrap: anywhere; white-space: pre-wrap; }
+.host-error { color: var(--studio-danger); white-space: pre-wrap; overflow-wrap: anywhere; }
+.host-banner.host-error { background: var(--studio-danger-soft); }
+.host-warning { color: var(--studio-warning); background: var(--studio-warning-soft); }
+.host-shell .host-pending { margin: 4px 10px; border-color: var(--studio-warning); color: var(--studio-warning); }
+.host-dialog { box-sizing: border-box; max-height: calc(100dvh - 32px); overflow: auto; }
+.host-dialog-wide { width: min(760px, calc(100vw - 32px)); max-width: calc(100vw - 32px); }
+.host-dialog h2 { padding-inline-end: 30px; }
+.host-dialog .host-dialog-close { position: absolute; top: 12px; right: 12px; width: 30px; padding: 0; }
+.host-dialog label { display: flex; flex-direction: column; gap: 4px; }
+.host-dialog input, .host-dialog textarea, .host-dialog select { min-width: 0; padding: 4px 8px; color: var(--studio-text); background: var(--studio-surface); border: 1px solid var(--studio-border); border-radius: 5px; }
+.host-dialog textarea { min-height: 90px; resize: vertical; }
+.host-permission-details, .host-log { font: 12px/1.5 var(--font-mono, ui-monospace, monospace); white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; border: 1px solid var(--studio-border); border-radius: 5px; background: var(--studio-panel); overflow: auto; max-height: 44vh; }
+.host-log { min-height: 180px; }
+.host-permission-actions, .host-dialog .dialog-actions { flex-wrap: wrap; }
+.host-folder-path > div { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.host-folder-path input { flex: 1; }
+.host-recent { margin-top: 12px; }
+.host-folder-heading { display: flex; align-items: center; justify-content: space-between; margin: 12px 0 6px; }
+.host-folder-heading > div, .host-new-folder > div { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.host-new-folder { margin-bottom: 10px; }
+.host-new-folder input { flex: 1; margin-top: 4px; }
+.host-folder-list { display: flex; flex-direction: column; gap: 2px; min-height: 120px; max-height: 30vh; overflow: auto; border: 1px solid var(--studio-border); padding: 4px; border-radius: 5px; }
+.host-folder-list > button { justify-content: flex-start; text-align: left; border-color: transparent; flex-shrink: 0; overflow-wrap: anywhere; }
+.host-folder-list > p { padding: 8px; color: var(--studio-muted); }
+.host-bootstrap-error { padding: 32px; color: var(--studio-danger); }
+@media (max-width: 680px) {
+  .host-header { gap: 8px; padding-inline: 8px; }
+  .host-workspace, .host-version, .host-lifecycle { display: none; }
+  .host-header-actions { gap: 4px; }
+  .host-status > span:last-child { display: none; }
+  .host-notice { padding: 24px 16px; }
+}
+@media (pointer: coarse) {
+  .host-shell button, .host-shell select, .host-dialog button, .host-dialog input, .host-dialog select { min-height: 44px; }
+  .host-header .host-icon-button, .host-permissions { width: 44px; height: 44px; }
+  .host-dialog .host-dialog-close { width: 44px; }
+}
+@media (max-width: 380px) { .host-brand .brand-copy { display: none; } }
+@media (prefers-reduced-motion: reduce) { .host-shell *, .host-dialog * { animation: none !important; transition: none !important; } }
+@media (forced-colors: active) {
+  .host-header { border-bottom: 1px solid CanvasText; }
+  .host-shell button, .host-dialog button, .host-permissions { border-color: ButtonText; }
+  .host-header .host-icon-button:focus-visible, .host-permissions:has(select:focus-visible) { outline-color: Highlight; }
+}

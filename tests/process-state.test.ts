@@ -19,6 +19,27 @@ test("legacy efforts have local adapters and no automatic execution", () => {
     assert.throws(() => normalizeProcessState({ version: 2 }), /Unsupported/);
 });
 
+test("retired automatic execution settings cannot dispatch and historical profiles survive adapter changes", async () => {
+    const h = await extensionHarness();
+    try {
+        const state = h.api.createState("legacy-settings");
+        state.process.settings.autoStartImplementation = true;
+        state.implementation.protectedSources = { "tests\\regression.ts": "original-hash" };
+        await h.api.persistState(state);
+        await assert.rejects(h.api.processAction(state.prototypeId, "project:tandem", {
+            action: "configure", expectedRevision: state.revision, settings: state.process.settings,
+        }), /retired/);
+        const next = await h.api.processAction(state.prototypeId, "project:tandem", {
+            action: "configure", expectedRevision: state.revision,
+            settings: { adapters: { handoff: "github", status: "local", intake: "local" }, githubRepository: "example/repo" },
+        });
+        assert.equal(next.process.settings.autoStartImplementation, true, "Read-only historical setting is not erased or executable.");
+        assert.equal(next.implementation.protectedSources["tests\\regression.ts"], "original-hash");
+        assert.equal(h.requests.length, 0);
+        assert.equal(h.developmentRequests.length, 0);
+    } finally { await h.close(); }
+});
+
 test("process block selection is independent and invalid configuration fails closed", () => {
     const initial = createProcessState().settings;
     const settings = normalizeProcessSettings({ ...initial, adapters: { handoff: "github", status: "local", intake: "github" } });
@@ -41,7 +62,7 @@ test("process mutation validates provider, revision and active-job ownership", a
     try {
         const state = h.api.createState("process", "A goal");
         await h.api.persistState(state);
-        const settings = { ...state.process.settings, adapters: { handoff: "github", status: "local", intake: "local" } };
+        const settings = { githubRepository: "", adapters: { handoff: "github", status: "local", intake: "local" } };
         const next = await h.api.processAction("process", "project:tandem", { action: "configure", expectedRevision: state.revision, settings });
         assert.equal(next.process.settings.adapters.handoff, "github");
         assert.equal((await h.api.loadState("process")).process.settings.adapters.handoff, "github");
@@ -53,7 +74,7 @@ test("process mutation validates provider, revision and active-job ownership", a
         }), /active Tandem provider/);
         await assert.rejects(h.api.processAction("process", "project:tandem", {
             action: "accept", expectedRevision: next.revision, stageId: "plan", approver: "Owner",
-        }), /Finish the stage/);
+        }), /read-only history/);
     } finally { await h.close(); }
 });
 
@@ -61,7 +82,7 @@ test("explicit acceptance and export persist without committing or changing the 
     const h = await extensionHarness();
     try {
         execFileSync("git", ["init", "--quiet", h.root]);
-        const state = h.api.createState("accept", "Preserve accepted intent");
+        const state = h.api.createLegacyState("accept", "Preserve accepted intent");
         state.stage = "prototype";
         state.lifecycle.currentStage = "prototype";
         state.lifecycle.completedStages = ["prepare", "requirements"];
@@ -134,98 +155,5 @@ test("local intake is idempotent, preserves the active effort and does not start
         assert.ok(request.args && typeof request.args === "object" && "intake" in request.args);
         assert.equal(JSON.parse(JSON.stringify(request.args.intake)).content, "Observed a 500 response.");
         assert.ok(Object.hasOwn(h.api.preparationFactory.meta.argsSchema.properties, "intake"));
-    } finally { await h.close(); }
-});
-
-for (const stage of ["plan", "implement"] as const) {
-    test(`${stage} automation requires explicit acceptance and never repeats the same accepted handoff`, async () => {
-        const h = await extensionHarness();
-        try {
-            execFileSync("git", ["init", "--quiet", h.root]);
-            const state = h.api.createState("automatic", "Exercise explicit handoff automation");
-            state.stage = stage === "plan" ? "implement" : "test";
-            state.lifecycle.currentStage = state.stage;
-            state.lifecycle.completedStages = ["prepare", "requirements", "prototype", "design", "plan",
-                ...(stage === "implement" ? ["implement" as const] : [])];
-            state.planning = {
-                ...state.planning, status: "complete", finalizedArtifactId: "execution-plan",
-                workItems: [{ id: "feature", title: "Feature", description: "Implement one behavior",
-                    dependencies: [], files: ["feature.ts"], skills: [], acceptanceCriteria: ["Expected behavior"],
-                    validation: ["Existing check"], estimatedHours: 1, agentRole: "implementation" }],
-            };
-            state.testDesignReview = {
-                ...state.testDesignReview, finalizedArtifactId: "test-spec",
-                scenarios: [{ id: "flow", title: "Flow", description: "Exercise behavior", type: "interaction",
-                    dependencies: [], steps: ["Exercise the flow"], expectedOutcome: "Expected behavior", validation: ["Existing check"] }],
-            };
-            const path = join(h.root, ".tandem", "efforts", state.prototypeId, "stages", `${stage}-r1.json`);
-            await mkdir(dirname(path), { recursive: true });
-            await writeJsonAtomically(path, {
-                version: 1, prototypeId: state.prototypeId, stageId: stage, revision: 1, completedAt: new Date().toISOString(),
-                result: { goal: state.goal, artifacts: [] },
-            });
-            state.lifecycle.outputs = [{ stageId: stage, path: relative(h.root, path), completedAt: new Date().toISOString() }];
-            await h.api.persistState(state);
-            const configured = await h.api.processAction(state.prototypeId, "project:tandem", {
-                action: "configure", expectedRevision: state.revision,
-                settings: { ...state.process.settings, autoStartImplementation: stage === "plan", autoStartTests: stage === "implement" },
-            });
-            assert.equal(h.requests.length, 0);
-            h.api.setSession({
-                ...h.session,
-                rpc: { ...h.session.rpc, factory: { run: async (request: unknown) => {
-                    h.requests.push(request);
-                    return { runId: "automatic-run", status: "error", error: "Fixture launch failed" };
-                } } },
-                factory: { getRunDetail: async () => ({
-                    runId: "automatic-run", consumed: { activeMs: 12, nanoAiu: 0 }, agents: [],
-                }) },
-            });
-            await h.api.processAction(state.prototypeId, "project:tandem", {
-                action: "accept", stageId: stage, approver: "Owner", expectedRevision: configured.revision,
-            });
-            await h.api.waitForExecution(state.prototypeId);
-            assert.equal(h.requests.length, 1);
-            const failed = await h.api.loadState(state.prototypeId);
-            assert.equal((stage === "plan" ? failed.implementation : failed.testing).status, "failed");
-            assert.equal(failed.process.acceptances.length, 1, "Dispatch failure must preserve the accepted handoff");
-            await h.api.processAction(state.prototypeId, "project:tandem", {
-                action: "accept", stageId: stage, approver: "Owner", expectedRevision: failed.revision,
-            });
-            await h.api.waitForExecution(state.prototypeId);
-            assert.equal(h.requests.length, 1, "Retry is explicit Start, not another dispatch of the same acceptance");
-        } finally { await h.close(); }
-    });
-}
-
-test("protected paths remain locked through Implement reopening and can be reviewed after reopening Plan", async () => {
-    const h = await extensionHarness();
-    try {
-        const state = h.api.createState("protected", "Protect accepted regression tests");
-        state.stage = "test";
-        state.lifecycle.currentStage = "test";
-        state.lifecycle.completedStages = ["prepare", "requirements", "prototype", "design", "plan", "implement"];
-        const profile = {
-            enabled: true, independentReview: false, protectedPaths: ["tests"],
-            checks: [{ id: "test", program: "node", args: ["--version"], stage: "test" as const, afterWorkItems: [], timeoutSeconds: 10 }],
-        };
-        state.process.settings.verification = profile;
-        state.implementation.verificationProfile = profile;
-        state.implementation.protectedSources = { "tests\\regression.ts": "0".repeat(64) };
-        await h.api.persistState(state);
-        const settings = { ...state.process.settings, verification: { ...profile, protectedPaths: [] } };
-        await assert.rejects(h.api.processAction(state.prototypeId, "project:tandem", {
-            action: "configure", expectedRevision: state.revision, settings,
-        }), /Reopen Plan/);
-        const reopened = await h.api.reopenLifecycleStage(state.prototypeId, "implement", "project:tandem");
-        assert.equal(reopened.implementation.protectedSources["tests\\regression.ts"], "0".repeat(64));
-        await assert.rejects(h.api.processAction(state.prototypeId, "project:tandem", {
-            action: "configure", expectedRevision: reopened.revision, settings,
-        }), /Reopen Plan/);
-        const plan = await h.api.reopenLifecycleStage(state.prototypeId, "plan", "project:tandem");
-        const updated = await h.api.processAction(state.prototypeId, "project:tandem", {
-            action: "configure", expectedRevision: plan.revision, settings,
-        });
-        assert.equal(updated.process.settings.verification.protectedPaths.length, 0);
     } finally { await h.close(); }
 });

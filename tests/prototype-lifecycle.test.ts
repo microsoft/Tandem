@@ -4,7 +4,7 @@ import { writeFile, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { extensionHarness } from "./helpers/extension-harness.js";
 
-test("completing requirements schedules exactly one prototype build and guards replacement", async () => {
+test("completing requirements schedules exactly one sketch job and guards replacement", async () => {
     const fixture = await extensionHarness();
     try {
         const state = fixture.api.createState("sample", "Sample app");
@@ -16,11 +16,11 @@ test("completing requirements schedules exactly one prototype build and guards r
         await fixture.api.persistState(state);
         const pending = await fixture.api.completeLifecycleStage("sample", "requirements", "project:tandem");
         await fixture.waitForRequests();
-        assert.equal(pending.lifecycle.currentStage, "prototype");
-        assert.equal(pending.processing.action, "build-prototype");
-        assert.equal(pending.previewStatus, "starting");
+        assert.equal(pending.lifecycle.currentStage, "sketch");
+        assert.equal(pending.processing.action, "generate-sketch");
+        assert.equal(pending.previewStatus, "waiting");
         assert.equal(fixture.requests.length, 1);
-        await assert.rejects(fixture.api.beginPrototypeBuild("sample", "project:tandem"), /already active/);
+        await assert.rejects(fixture.api.beginPrototypeBuild("sample", "project:tandem"), /Prototype stage/);
         await assert.rejects(fixture.api.updateTandem({ instanceId: "view", extensionId: "project:tandem", input: { prototypeId: "sample", reset: true } }), /active Tandem/);
         fixture.session.sessionId = "different-session";
         await assert.rejects(fixture.api.updateTandem({ instanceId: "view", extensionId: "project:tandem", input: { prototypeId: "sample", reset: true } }), /another session/);
@@ -30,7 +30,7 @@ test("completing requirements schedules exactly one prototype build and guards r
 test("prototype results cannot rewrite requirements and must publish a verified preview", { timeout: 10000 }, async () => {
     const fixture = await extensionHarness();
     try {
-        const state = fixture.api.createState("sample", "User goal");
+        const state = fixture.api.createLegacyState("sample", "User goal");
         state.lifecycle.completedStages = ["requirements"];
         state.lifecycle.currentStage = "prototype";
         state.stage = "prototype";
@@ -69,7 +69,7 @@ test("prototype results cannot rewrite requirements and must publish a verified 
 test("explicit reopening preserves history and invalidates downstream work", async () => {
     const fixture = await extensionHarness();
     try {
-        const state = fixture.api.createState("sample", "User goal");
+        const state = fixture.api.createLegacyState("sample", "User goal");
         state.lifecycle.completedStages = ["requirements", "prototype", "design", "plan"];
         state.lifecycle.currentStage = "implement";
         state.stage = "implement";
@@ -83,7 +83,7 @@ test("explicit reopening preserves history and invalidates downstream work", asy
         assert.deepEqual(Array.from(reopened.lifecycle.completedStages), ["prepare"]);
         assert.equal(reopened.lifecycle.history[0].path, "old-snapshot.json");
         assert.equal(reopened.artifacts[0].content, "Keep history");
-        assert.equal(reopened.artifacts[0].reviewStatus, "stale");
+        assert.equal(reopened.artifacts[0].reviewStatus, "current", "Historical records retain their original identity/status, without Stage 2 authority.");
         assert.equal(reopened.previewStatus, "waiting");
         assert.notEqual(reopened.generation, state.generation);
     } finally { await fixture.close(); }
@@ -102,7 +102,7 @@ test("UTF-8 request input survives transport chunk boundaries", async () => {
 test("feedback stays durable and idempotent while the first build or a clarification is active", async () => {
     const fixture = await extensionHarness();
     try {
-        const state = fixture.api.createState("sample", "Sample app");
+        const state = fixture.api.createLegacyState("sample", "Sample app");
         state.stage = state.lifecycle.currentStage = "prototype";
         state.lifecycle.completedStages = ["prepare", "requirements"];
         state.prototypeApproach = { mode: "build", reason: "New UI" };
@@ -133,7 +133,7 @@ test("feedback stays durable and idempotent while the first build or a clarifica
 test("later timeout retains the first preview and retry only rebuilds the failed milestone", async () => {
     const fixture = await extensionHarness();
     try {
-        const state = fixture.api.createState("sample", "Sample app");
+        const state = fixture.api.createLegacyState("sample", "Sample app");
         state.stage = state.lifecycle.currentStage = "prototype";
         state.lifecycle.completedStages = ["prepare", "requirements"];
         state.prototypeApproach = { mode: "build", reason: "New UI" };
@@ -198,7 +198,7 @@ test("later timeout retains the first preview and retry only rebuilds the failed
 test("a checkpoint cannot publish another checkpoint's identity", async () => {
     const fixture = await extensionHarness();
     try {
-        const state = fixture.api.createState("sample", "Sample app");
+        const state = fixture.api.createLegacyState("sample", "Sample app");
         state.stage = state.lifecycle.currentStage = "prototype";
         state.lifecycle.completedStages = ["prepare", "requirements"];
         state.prototypeApproach = { mode: "build", reason: "New UI" };
@@ -225,7 +225,7 @@ test("a checkpoint cannot publish another checkpoint's identity", async () => {
 test("queued feedback is reconciled in order and the active item survives snapshot truncation", async () => {
     const fixture = await extensionHarness();
     try {
-        const state = fixture.api.createState("sample", "Sample app");
+        const state = fixture.api.createLegacyState("sample", "Sample app");
         state.stage = state.lifecycle.currentStage = "prototype";
         state.lifecycle.completedStages = ["prepare", "requirements"];
         state.prototypeApproach = { mode: "build", reason: "New UI" };
@@ -265,7 +265,7 @@ test("queued feedback is reconciled in order and the active item survives snapsh
 test("new prototype state rejects direct preview replacement", async () => {
     const fixture = await extensionHarness();
     try {
-        const state = fixture.api.createState("sample", "Sample app");
+        const state = fixture.api.createLegacyState("sample", "Sample app");
         state.stage = state.lifecycle.currentStage = "prototype";
         state.lifecycle.completedStages = ["prepare", "requirements"];
         state.prototypeApproach = { mode: "build", reason: "New UI" };
@@ -281,7 +281,7 @@ test("new prototype state rejects direct preview replacement", async () => {
 test("legacy previews can queue feedback through an open clarification without losing it", async () => {
     const fixture = await extensionHarness();
     try {
-        const state = fixture.api.createState("sample", "Existing app");
+        const state = fixture.api.createLegacyState("sample", "Existing app");
         state.stage = state.lifecycle.currentStage = "prototype";
         state.lifecycle.completedStages = ["prepare", "requirements"];
         state.previewStatus = "ready";
@@ -309,7 +309,7 @@ test("legacy previews can queue feedback through an open clarification without l
 test("a prepared revision is not marked applied until its preview is promoted", async () => {
     const fixture = await extensionHarness();
     try {
-        const state = fixture.api.createState("sample", "Existing app");
+        const state = fixture.api.createLegacyState("sample", "Existing app");
         state.stage = state.lifecycle.currentStage = "prototype";
         state.lifecycle.completedStages = ["prepare", "requirements"];
         state.previewStatus = "ready";

@@ -1,15 +1,17 @@
 import type { DecisionGraph, DecisionQuestion, JobOwner } from "./workflow.js";
 import type { ProcessState } from "./process-state.js";
 import type { PrototypeFlow } from "./prototype-flow.js";
+import type { SketchState } from "./sketch.js";
+import type { ArtifactAsset } from "./artifact-assets.js";
 
 export type LifecycleStageId =
     | "prepare"
     | "requirements"
+    | "sketch"
     | "prototype"
-    | "design"
-    | "plan"
-    | "implement"
-    | "test";
+    | "development";
+
+export type HistoricalStageId = LifecycleStageId | "design" | "plan" | "implement" | "test";
 
 export type TandemPhase = "discovery" | "building" | "iterating" | "complete";
 
@@ -72,30 +74,32 @@ export interface PreparationState {
 }
 
 export interface LifecycleOutput {
-    stageId: LifecycleStageId;
+    stageId: HistoricalStageId;
     path: string;
     completedAt: string;
 }
 
 export interface SkippedLifecycleStage {
-    stageId: LifecycleStageId;
+    stageId: HistoricalStageId;
     reason: string;
     skippedAt: string;
 }
 
 export interface LifecycleState {
+    version?: 3;
     currentStage: LifecycleStageId;
     completedStages: LifecycleStageId[];
     outputs: LifecycleOutput[];
     skippedStages: SkippedLifecycleStage[];
     history: LifecycleOutput[];
+    migration?: { version: 1; original: Record<string, unknown> };
 }
 
 export interface TandemArtifact {
     id: string;
     title: string;
     kind: string;
-    stage: LifecycleStageId;
+    stage: HistoricalStageId;
     path: string;
     language: string;
     content: string;
@@ -103,6 +107,7 @@ export interface TandemArtifact {
     sourceThreadIds?: string[];
     reviewStatus?: "current" | "stale";
     sourceRevision?: number;
+    assets?: ArtifactAsset[];
 }
 
 export interface TandemState {
@@ -135,6 +140,7 @@ export interface TandemState {
     assumed: string[];
     deferred: string[];
     artifacts: TandemArtifact[];
+    sketch: SketchState;
     process: ProcessState;
     previewUrl: string | null;
     previewStatus: "waiting" | "starting" | "ready" | "error";
@@ -149,5 +155,6 @@ export interface TandemState {
     processing: any;
     suggestionProcessing: any;
     reloadReceipt: any;
+    development?: { handoffId: string; requestId: string; snapshotPath: string } | null;
     updatedAt: string;
 }

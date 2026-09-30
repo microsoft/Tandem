@@ -32,14 +32,18 @@ archive.file(join(extensionRoot, "copilot-extension.json"), {
 archive.file(join(extensionRoot, "extension.mjs"), {
     name: "extensions/tandem/extension.mjs",
 });
+archive.file(join(extensionRoot, "payload.json"), { name: "extensions/tandem/payload.json" });
+archive.directory(join(extensionRoot, "stage2"), "extensions/tandem/stage2");
+archive.directory(join(extensionRoot, "skills"), "extensions/tandem/skills");
 archive.file(join(repositoryRoot, "README.md"), {
     name: "extensions/tandem/README.md",
 });
 archive.file(join(repositoryRoot, "skills", "tandem", "SKILL.md"), {
     name: "skills/tandem/SKILL.md",
 });
-archive.glob("src/**/*", { cwd: repositoryRoot }, { prefix: "source" });
+archive.glob("src/**/*", { cwd: repositoryRoot, ignore: ["**/bin/**", "**/obj/**"] }, { prefix: "source" });
 archive.glob("scripts/**/*", { cwd: repositoryRoot }, { prefix: "source" });
+archive.glob("stage2/**/*", { cwd: repositoryRoot, ignore: ["**/node_modules/**", "**/.tandem/**"] }, { prefix: "source" });
 archive.glob("tests/**/*", { cwd: repositoryRoot }, { prefix: "source" });
 for (const fileName of [
     "package.json",

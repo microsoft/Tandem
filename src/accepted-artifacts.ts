@@ -3,10 +3,11 @@ import { constants } from "node:fs";
 import { lstat, mkdir, open, readdir, rmdir } from "node:fs/promises";
 import { dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
 import { setTimeout } from "node:timers/promises";
+import { ARTIFACT_ASSET_LIMITS, MAX_ARTIFACT_ASSETS, validateArtifactAssets, type ArtifactAsset } from "./artifact-assets.js";
 import { executionDigest } from "./execution.js";
 import { normalizeProjectId, ProjectStoreError } from "./project-store.js";
-import type { LifecycleStageId } from "./types.js";
-import { lifecycleStages } from "./workflow.js";
+import type { HistoricalStageId as LifecycleStageId } from "./types.js";
+import { parseHistoricalStageId } from "./workflow.js";
 
 export interface AcceptanceRecord {
     id: string;
@@ -83,9 +84,7 @@ function timestamp(value: unknown): string {
 }
 
 function stageId(value: unknown): LifecycleStageId {
-    const stage = lifecycleStages.find((stage) => stage.id === value);
-    if (!stage) return invalid("Unsupported lifecycle stage.");
-    return stage.id;
+    return parseHistoricalStageId(value);
 }
 
 function effortId(value: unknown): string {
@@ -210,9 +209,23 @@ interface SnapshotArtifact {
     content: string;
     language: string;
     mermaid: string;
+    assets: ArtifactAsset[];
 }
 
-function snapshotArtifacts(bytes: Buffer, effort: string, stage: LifecycleStageId, path: string): SnapshotArtifact[] {
+interface AssetFile {
+    artifactId: string;
+    asset: ArtifactAsset;
+    path: string;
+}
+
+function assetFile(artifactId: string, asset: ArtifactAsset): AssetFile {
+    const extension = asset.path.slice(asset.path.lastIndexOf(".") + 1);
+    return { artifactId, asset, path: `assets/${asset.hash}.${extension}` };
+}
+
+function snapshotContent(bytes: Buffer, effort: string, stage: LifecycleStageId, path: string): {
+    artifacts: SnapshotArtifact[]; assetFiles: AssetFile[];
+} {
     const snapshot = object(decode(bytes));
     const location = snapshotLocation(path, stage, effort);
     if (snapshot.version !== 1 || snapshot.prototypeId !== effort || snapshot.stageId !== stage) {
@@ -225,6 +238,7 @@ function snapshotArtifacts(bytes: Buffer, effort: string, stage: LifecycleStageI
     text(result.goal, "snapshot goal", 20000, true, true);
     const artifacts = list(stage === "prepare" && result.artifacts === undefined ? [] : result.artifacts, 30);
     const selected: SnapshotArtifact[] = [];
+    const assetFiles: AssetFile[] = [];
     for (const value of artifacts) {
         const artifact = object(value);
         const artifactStage = stageId(artifact.stage);
@@ -234,17 +248,32 @@ function snapshotArtifacts(bytes: Buffer, effort: string, stage: LifecycleStageI
             content: text(artifact.content, "artifact content", 200000, true, true),
             language: text(artifact.language, "artifact language", 80, true),
             mermaid: text(artifact.mermaid, "artifact diagram", 50000, true, true),
+            assets: validateArtifactAssets(artifact.assets),
         };
         text(artifact.kind, "artifact kind", 80, true);
         text(artifact.path, "artifact source path", 500, true);
+        for (const asset of validated.assets) {
+            if (!asset.path.startsWith(`.tandem/efforts/${effort}/sketches/`)) {
+                return invalid("Snapshot assets must belong to the accepted effort.");
+            }
+            assetFiles.push(assetFile(validated.id, asset));
+        }
         if (artifactStage === stage) selected.push(validated);
     }
     if (new Set(selected.map((artifact) => artifact.id)).size !== selected.length) return invalid("Duplicate stage artifact IDs.");
-    return selected;
+    // A snapshot can contain upstream artifacts as well as the accepted stage.
+    // Every reference in those exact snapshot bytes must be covered by the bundle.
+    validateArtifactAssets(assetFiles.map((file) => file.asset));
+    return { artifacts: selected, assetFiles };
 }
 
 function artifactHashes(artifacts: SnapshotArtifact[]): AcceptanceRecord["artifactHashes"] {
-    return pairs(artifacts.map((artifact) => ({ id: artifact.id, hash: executionDigest(artifact.content) })), 30, false);
+    return pairs(artifacts.map((artifact) => ({
+        id: artifact.id,
+        hash: executionDigest(artifact.assets.length
+            ? { version: 1, content: artifact.content, assets: artifact.assets }
+            : artifact.content),
+    })), 30, false);
 }
 
 function hasCode(error: unknown, code: string): boolean {
@@ -309,6 +338,7 @@ async function fileBytes(path: string, max: number): Promise<Buffer> {
             if (!bytesRead) break;
             length += bytesRead;
         }
+
         const after = await file.stat({ bigint: true });
         const current = await lstat(path, { bigint: true });
         await directories(dirname(path));
@@ -325,6 +355,8 @@ async function fileBytes(path: string, max: number): Promise<Buffer> {
         await file.close();
     }
 }
+
+export { directories as ensureMaterializedDirectories, fileBytes as readRetainedFile };
 
 async function exists(path: string): Promise<boolean> {
     await directories(dirname(path));
@@ -373,11 +405,21 @@ async function locked<T>(parent: string, id: string, operation: () => Promise<T>
 async function verifyFiles(directory: string, files: Map<string, Buffer>): Promise<void> {
     await directories(directory);
     const names = await readdir(directory);
-    if (names.length !== files.size || names.some((name) => !files.has(name))) {
+    const expectedNames = new Set([...files.keys()].map((name) => name.split("/")[0]));
+    if (names.length !== expectedNames.size || names.some((name) => !expectedNames.has(name))) {
         throw new ProjectStoreError("acceptance_conflict", "The immutable bundle contains missing or unexpected files; it was preserved.", 409);
     }
+    const assetNames = [...files.keys()].filter((name) => name.startsWith("assets/")).map((name) => name.slice(7));
+    if (assetNames.length) {
+        const assetDirectory = join(directory, "assets");
+        await directories(assetDirectory);
+        const actual = await readdir(assetDirectory);
+        if (actual.length !== assetNames.length || actual.some((name) => !assetNames.includes(name))) {
+            throw new ProjectStoreError("acceptance_conflict", "The immutable asset directory contains missing or unexpected files; it was preserved.", 409);
+        }
+    }
     for (const [name, bytes] of files) {
-        if (!(await fileBytes(join(directory, name), Math.max(bytes.length, MAX_MANIFEST_BYTES))).equals(bytes)) {
+        if (!(await fileBytes(join(directory, ...name.split("/")), bytes.length)).equals(bytes)) {
             return integrity("The immutable bundle differs from its accepted bytes; it was preserved.");
         }
     }
@@ -392,48 +434,99 @@ async function createFiles(directory: string, files: Map<string, Buffer>): Promi
         if (hasCode(error, "EEXIST")) throw new ProjectStoreError("acceptance_conflict", "The immutable destination already exists; it was preserved.", 409);
         throw error;
     }
+    let assetsCreated = false;
     for (const [name, bytes] of files) {
         await directories(directory);
-        const file = await open(join(directory, name), "wx", 0o600);
+        if (name.startsWith("assets/") && !assetsCreated) {
+            await mkdir(join(directory, "assets"));
+            assetsCreated = true;
+        }
+        const path = join(directory, ...name.split("/"));
+        await directories(dirname(path));
+        const file = await open(path, "wx", 0o600);
         try { await file.writeFile(bytes); await file.sync(); }
         finally { await file.close(); }
     }
     await verifyFiles(directory, files);
 }
 
-function savedManifest(effort: string, record: AcceptanceRecord): Buffer {
+function savedManifest(effort: string, record: AcceptanceRecord, assetFiles: AssetFile[] = []): Buffer {
     const acceptance = portableRecord(normalizeRecord({ ...record, exportPath: null }));
     return jsonBytes({
-        version: 1, effortId: effort, acceptance, acceptanceHash: executionDigest(acceptance),
+        version: assetFiles.length ? 2 : 1, effortId: effort, acceptance, acceptanceHash: executionDigest(acceptance),
         snapshot: { path: "snapshot.json", hash: acceptance.snapshotHash },
+        ...(assetFiles.length ? { assetFiles } : {}),
         attribution: ATTRIBUTION,
     });
 }
 
-async function savedAcceptance(directory: string, effort: string): Promise<AcceptanceRecord> {
+function manifestAssets(value: unknown): AssetFile[] {
+    const files = list(value, MAX_ARTIFACT_ASSETS).map((value) => {
+        const file = object(value, ["artifactId", "asset", "path"]);
+        const artifactId = text(file.artifactId, "asset artifact ID", 120);
+        const asset = validateArtifactAssets([file.asset])[0];
+        const expected = assetFile(artifactId, asset);
+        if (file.path !== expected.path) return integrity("An archived asset has an invalid bundle-relative path.");
+        return expected;
+    });
+    validateArtifactAssets(files.map((file) => file.asset));
+    if (!files.length) return invalid("An asset manifest must contain its asset references.");
+    return files;
+}
+
+async function savedAcceptance(directory: string, effort: string): Promise<{
+    record: AcceptanceRecord; assetFiles: AssetFile[];
+}> {
     const bytes = await fileBytes(join(directory, "manifest.json"), MAX_MANIFEST_BYTES);
-    const manifest = object(decode(bytes), ["version", "effortId", "acceptance", "acceptanceHash", "snapshot", "attribution"]);
+    const manifest = object(decode(bytes));
+    if (manifest.version !== 1 && manifest.version !== 2) return invalid("Unsupported acceptance manifest version.");
+    object(manifest, [
+        "version", "effortId", "acceptance", "acceptanceHash", "snapshot",
+        ...(manifest.version === 2 ? ["assetFiles"] : []), "attribution",
+    ]);
+    const assetFiles = manifest.version === 2 ? manifestAssets(manifest.assetFiles) : [];
     const record = normalizeRecord(manifest.acceptance);
-    if (record.exportPath !== null || !bytes.equals(savedManifest(effort, record))) {
+    if (record.exportPath !== null || !bytes.equals(savedManifest(effort, record, assetFiles))) {
         return integrity("The saved acceptance manifest or its metadata hash has changed.");
     }
     snapshotLocation(record.snapshotPath, record.stageId, effort);
-    return record;
+    return { record, assetFiles };
 }
 
-async function verifiedSnapshot(directory: string, effort: string, record: AcceptanceRecord): Promise<{
-    bytes: Buffer; artifacts: SnapshotArtifact[];
+async function verifiedAssetBytes(root: string, assetFiles: AssetFile[], archived: boolean): Promise<Map<string, Buffer>> {
+    const files = new Map<string, Buffer>();
+    for (const { asset, path } of assetFiles) {
+        if (archived && files.has(path)) continue;
+        const source = archived ? path : asset.path;
+        const bytes = await fileBytes(join(root, ...source.split("/")), ARTIFACT_ASSET_LIMITS[asset.mediaType]);
+        if (sha256(bytes) !== asset.hash) return integrity("An artifact asset differs from its recorded SHA256 hash.");
+        const existing = files.get(path);
+        if (existing && !existing.equals(bytes)) return integrity("Content-addressed asset references disagree.");
+        files.set(path, bytes);
+    }
+    return files;
+}
+
+async function verifiedSnapshot(
+    directory: string, effort: string, record: AcceptanceRecord, assetFiles: AssetFile[],
+): Promise<{
+    bytes: Buffer; artifacts: SnapshotArtifact[]; assetFiles: AssetFile[]; assets: Map<string, Buffer>;
 }> {
     const bytes = await fileBytes(join(directory, "snapshot.json"), MAX_SNAPSHOT_BYTES);
     if (sha256(bytes) !== record.snapshotHash) return integrity("The archived snapshot hash has changed.");
-    const artifacts = snapshotArtifacts(bytes, effort, record.stageId, record.snapshotPath);
+    const content = snapshotContent(bytes, effort, record.stageId, record.snapshotPath);
+    const { artifacts } = content;
     if (executionDigest(artifactHashes(artifacts)) !== executionDigest(record.artifactHashes)) {
         return integrity("The accepted artifact hashes do not match the snapshot.");
     }
+    if (executionDigest(content.assetFiles) !== executionDigest(assetFiles)) {
+        return integrity("The archived asset mapping does not cover the snapshot references.");
+    }
+    const assets = await verifiedAssetBytes(directory, assetFiles, true);
     await verifyFiles(directory, new Map([
-        ["snapshot.json", bytes], ["manifest.json", savedManifest(effort, record)],
+        ["snapshot.json", bytes], ...assets, ["manifest.json", savedManifest(effort, record, assetFiles)],
     ]));
-    return { bytes, artifacts };
+    return { bytes, artifacts, assetFiles, assets };
 }
 
 /** Explicitly archive an existing stage revision; no state, lifecycle, or Git mutation. */
@@ -445,7 +538,8 @@ export async function acceptStageSnapshot(input: AcceptStageSnapshotInput): Prom
         const metadata = provenance(input);
         await roots(input.workspaceRoot, input.sharedRoot);
         const bytes = await fileBytes(join(input.sharedRoot, ...location.portable.split("/")), MAX_SNAPSHOT_BYTES);
-        const artifacts = snapshotArtifacts(bytes, effort, stage, location.original);
+        const { artifacts, assetFiles } = snapshotContent(bytes, effort, stage, location.original);
+        const assets = await verifiedAssetBytes(input.sharedRoot, assetFiles, false);
         const identity = {
             stageId: stage, snapshotPath: location.original, snapshotHash: sha256(bytes),
             ...metadata, artifactHashes: artifactHashes(artifacts),
@@ -455,19 +549,30 @@ export async function acceptStageSnapshot(input: AcceptStageSnapshotInput): Prom
         return locked(parent, id, async () => {
             const directory = join(parent, id);
             if (await exists(directory)) {
-                const record = await savedAcceptance(directory, effort);
+                const { record, assetFiles: archivedAssets } = await savedAcceptance(directory, effort);
                 if (record.id !== id) return integrity("The stored acceptance identity has changed.");
-                const saved = await verifiedSnapshot(directory, effort, record);
+                const saved = await verifiedSnapshot(directory, effort, record, archivedAssets);
                 if (!saved.bytes.equals(bytes)) return integrity("The stored snapshot differs from the requested acceptance.");
                 return { ...record, snapshotPath: location.original };
             }
             const record: AcceptanceRecord = { id, ...identity, acceptedAt: new Date().toISOString(), exportPath: null };
             await createFiles(directory, new Map([
-                ["snapshot.json", bytes], ["manifest.json", savedManifest(effort, record)],
+                ["snapshot.json", bytes], ...assets, ["manifest.json", savedManifest(effort, record, assetFiles)],
             ]));
             return record;
         });
     });
+}
+
+export async function readAcceptedSnapshot(sharedRoot: string, effort: string, input: AcceptanceRecord): Promise<unknown> {
+    const record = normalizeRecord(input);
+    const id = effortId(effort);
+    const directory = join(sharedRoot, ".tandem", "efforts", id, "accepted", record.id);
+    const saved = await savedAcceptance(directory, id);
+    if (executionDigest({ ...record, exportPath: null }) !== executionDigest({ ...saved.record, snapshotPath: record.snapshotPath })) {
+        return integrity("Accepted snapshot metadata changed.");
+    }
+    return decode((await verifiedSnapshot(directory, id, saved.record, saved.assetFiles)).bytes);
 }
 
 function markdownText(value: string): string {
@@ -483,8 +588,23 @@ function fenced(content: string, language: string): string {
     return `${fence}${/^[a-zA-Z0-9_+-]*$/.test(language) ? language : ""}\n${content}\n${fence}`;
 }
 
-function exportedFiles(effort: string, record: AcceptanceRecord, snapshot: Buffer, artifacts: SnapshotArtifact[]): Map<string, Buffer> {
-    const files = new Map<string, Buffer>([["snapshot.json", snapshot]]);
+function assetMarkdown(files: AssetFile[], images: boolean): string[] {
+    if (!files.length) return [];
+    return [
+        "", "## Attached assets", "",
+        ...files.flatMap(({ asset, path }) => [
+            `- [${markdownText(asset.id)} (${asset.mediaType})](${path})`,
+            ...(images && asset.mediaType !== "application/json"
+                ? ["", `![${markdownText(asset.id)}](${path})`, ""] : []),
+        ]),
+    ];
+}
+
+function exportedFiles(
+    effort: string, record: AcceptanceRecord, snapshot: Buffer, artifacts: SnapshotArtifact[],
+    assetFiles: AssetFile[], assets: Map<string, Buffer>,
+): Map<string, Buffer> {
+    const files = new Map<string, Buffer>([["snapshot.json", snapshot], ...assets]);
     const artifactFiles = artifacts.map((artifact, index) => {
         const slug = artifact.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "artifact";
         const path = `${String(index + 1).padStart(3, "0")}-${slug}.md`;
@@ -492,7 +612,8 @@ function exportedFiles(effort: string, record: AcceptanceRecord, snapshot: Buffe
             ? artifact.content : fenced(artifact.content, artifact.language);
         const bytes = Buffer.from([
             `# ${markdownText(artifact.title)}`, "", content,
-            ...(artifact.mermaid ? ["", fenced(artifact.mermaid, "mermaid")] : []), "",
+            ...(artifact.mermaid ? ["", fenced(artifact.mermaid, "mermaid")] : []),
+            ...assetMarkdown(artifact.assets.map((asset) => assetFile(artifact.id, asset)), true), "",
         ].join("\n"));
         files.set(path, bytes);
         return { id: artifact.id, path, contentHash: executionDigest(artifact.content), fileHash: sha256(bytes) };
@@ -507,13 +628,19 @@ function exportedFiles(effort: string, record: AcceptanceRecord, snapshot: Buffe
         "manifest.json records approval attribution, producing configuration, upstream acceptance hashes, and bundle-relative files.",
         "Its acceptance.snapshotPath remains the original path relative to the shared project root.",
         "snapshot.json preserves the original bytes and may contain sensitive project content. Review this bundle before sharing it.",
+        ...(assetFiles.length ? [
+            "assetFiles maps every original snapshot asset reference to its verified, content-addressed file in assets/.",
+            "Attached assets are frozen copies; exporting never reads the live sketch files.",
+        ] : []),
+        ...assetMarkdown(assetFiles, false),
         "",
     ].join("\n"));
     files.set("README.md", readme);
     const acceptance = portableRecord(record);
     files.set("manifest.json", jsonBytes({
-        version: 1, effortId: effort, acceptance, acceptanceHash: executionDigest(acceptance),
+        version: assetFiles.length ? 2 : 1, effortId: effort, acceptance, acceptanceHash: executionDigest(acceptance),
         snapshot: { path: "snapshot.json", hash: record.snapshotHash },
+        ...(assetFiles.length ? { assetFiles } : {}),
         artifactFiles, readme: { path: "README.md", hash: sha256(readme) }, attribution: ATTRIBUTION,
     }));
     return files;
@@ -534,10 +661,10 @@ export async function exportAcceptedSnapshot(
         const snapshot = await locked(parent, record.id, async () => {
             const directory = join(parent, record.id);
             const saved = await savedAcceptance(directory, effort);
-            if (executionDigest(portableRecord({ ...record, exportPath: null })) !== executionDigest(saved)) {
+            if (executionDigest(portableRecord({ ...record, exportPath: null })) !== executionDigest(saved.record)) {
                 return integrity("The supplied approval or provenance differs from the saved manifest.");
             }
-            const snapshot = await verifiedSnapshot(directory, effort, saved);
+            const snapshot = await verifiedSnapshot(directory, effort, saved.record, saved.assetFiles);
             const original = await fileBytes(join(sharedRoot, ...location.portable.split("/")), MAX_SNAPSHOT_BYTES);
             if (!original.equals(snapshot.bytes)) return integrity("The original stage snapshot changed after acceptance.");
             return snapshot;
@@ -546,7 +673,7 @@ export async function exportAcceptedSnapshot(
         const exportParent = join(workspaceRoot, "tandem-records", effort);
         await locked(exportParent, record.id, async () => {
             const directory = join(exportParent, record.id);
-            const files = exportedFiles(effort, exported, snapshot.bytes, snapshot.artifacts);
+            const files = exportedFiles(effort, exported, snapshot.bytes, snapshot.artifacts, snapshot.assetFiles, snapshot.assets);
             if (await exists(directory)) await verifyFiles(directory, files);
             else await createFiles(directory, files);
         });
