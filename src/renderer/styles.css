@@ -495,6 +495,16 @@ summary:focus-visible {
   height: 100%;
 }
 
+.project-effort-control { position: relative; flex: none; font-size: 12px; }
+.project-effort-control summary { cursor: pointer; padding: 2px 8px; }
+.project-effort-control > div {
+  position: absolute; bottom: calc(100% + 8px); right: 0; z-index: 50;
+  width: min(360px, calc(100vw - 24px)); max-height: 70vh; overflow: auto;
+  padding: 12px; background: var(--studio-surface); color: var(--studio-text);
+  border: 1px solid var(--studio-border); border-radius: 6px;
+}
+.project-effort-control label, .project-effort-control select { display: block; width: 100%; margin-bottom: 8px; }
+
 .app:has(> .topbar[data-hosted="true"]) { grid-template-rows: minmax(0, 1fr) auto; }
 
 .next-action-bar {

@@ -52,6 +52,19 @@ The private stdio runtime preserves the PR's stores/WAL, roles, result authority
 native tools/consent, immediate dispatch, missing-result continuation, Stop modes,
 implementation confirmation and no-replay recovery.
 
+The composed **Project effort** control supplies one plain selected value to both
+stages. Each stage independently implements validation against its own model,
+native application/readback and persistence. No shared effort manager or
+cross-stage preference access is used. Stage 1 owns `src\main-session-effort.ts`;
+Stage 2 exposes `validateReasoningEffort`, `selectReasoningEffort` and
+`reasoningEffortStatus` through its controller, backed by its own preferences
+and runtime. Saving Stage 2 intent neither starts it nor reserves an identity.
+Explicit opening applies/verifies the saved choice when a compatible model is
+available; missing/unconfirmed models and partial application remain visible.
+Busy changes are rejected, not scheduled. Model choices remain independent,
+private history/confirmation/ownership rules remain intact, and the standalone
+Stage 2 selector remains independently usable.
+
 Stage 1 no longer assigns arbitrary execution-time ceilings to Preparation,
 suggestions, answers, Sketch or Prototype workflows. New Prototype checkpoints
 are unbounded rather than spending a cumulative 15-minute work window. Old

@@ -118,6 +118,8 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
     const requests: unknown[] = [];
     const developmentRequests: Array<Record<string, unknown>> = [];
     const developmentOpens: string[] = [];
+    let mainReasoningEffort: string | undefined;
+    let developmentReasoningEffort: string | null = null, developmentEffortActive = false, developmentEffortError: string | null = null;
     let beforeDevelopmentStart: () => Promise<void> = async () => {};
     const logs: string[] = [];
     let speechTokenRequests = 0;
@@ -136,7 +138,12 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
         openCanvases: [] as { instanceId: string }[],
         log: async (message: string) => { logs.push(message); },
         rpc: {
-            model: { getCurrent: async () => ({ modelId: "fixture-model" }) },
+            model: {
+                getCurrent: async () => ({ modelId: "fixture-model", reasoningEffort: mainReasoningEffort }),
+                list: async () => ({ list: [{ id: "fixture-model", supportedReasoningEfforts: ["low", "high"] }] }),
+                setReasoningEffort: async ({ reasoningEffort }: { reasoningEffort: string }) => { mainReasoningEffort = reasoningEffort; return { reasoningEffort }; },
+            },
+            metadata: { isProcessing: async () => ({ processing: false }), activity: async () => ({ hasActiveWork: false }) },
             extensions: { list: async () => ({ extensions: [{ id: "project:tandem", status: "running" }] }) },
             workflow: { run: async (request: FactoryLaunchRequest) => {
                 assertFactoryRequestEnvelope(request);
@@ -155,6 +162,17 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
                     if (developmentRequests.length) throw new Error("Finish or close Development before changing upstream discovery.");
                 },
                 status: async () => ({ installation: { status: "new" }, workflow: null }),
+                validateReasoningEffort: async () => {
+                    if (developmentRequests.length) throw new Error("Private native work is busy.");
+                },
+                selectReasoningEffort: async (effort: string) => {
+                    if (developmentEffortError) throw new Error(developmentEffortError);
+                    developmentReasoningEffort = effort;
+                },
+                reasoningEffortStatus: async () => ({ desired: developmentReasoningEffort,
+                    actual: developmentEffortActive ? developmentReasoningEffort : null, model: developmentEffortActive ? "private-model" : null,
+                    supported: ["low", "high"], status: developmentEffortError ? "error" : developmentReasoningEffort === null ? "unset" : developmentEffortActive ? "applied" : "pending",
+                    error: developmentEffortError }),
                 openView: async (id: string) => { developmentOpens.push(id); return { url: "http://127.0.0.1:8765/" }; },
                 reportError: (error: Error) => { logs.push(error.message); },
                 close: async () => ({ status: "closed", warnings: [] }),
@@ -229,6 +247,8 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
             if (requests.length < count) throw new Error("The expected factory dispatch was not observed.");
         };
         return { api, root, requests, developmentRequests, developmentOpens, logs, session, waitForRequests,
+            setDevelopmentEffortActive(value: boolean) { developmentEffortActive = value; },
+            setDevelopmentEffortError(value: string | null) { developmentEffortError = value; },
             setBeforeDevelopmentStart(handler: () => Promise<void>) { beforeDevelopmentStart = handler; },
             setRename(value: typeof fs.rename) { rename = value; },
             setPreviewHtml(value: string) { previewHtml = value; },

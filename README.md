@@ -136,6 +136,24 @@ They are validated against the native model catalog and forwarded to SDK
 creation/resume, with actual readback checked before opening the canvas.
 Omitting them preserves native defaults and saved main-session selection.
 This does not configure or overwrite the separate private Development session.
+
+Use **Project effort** in the bottom action bar for one explicit reasoning-effort
+choice across both stages. Models remain independently selected. Root
+`MainSessionEffort` owns Stage 1 validation, SDK application/readback and
+`.tandem\desktop\reasoning-effort.json`; Development's controller/runtime and
+preferences own the equivalent Stage 2 implementation. Integration passes only
+the selected value through their explicit interfaces, not shared effort logic
+or access to the other stage's preference files.
+Saving a choice before Development opens retains intent without creating a
+private identity or starting work. On explicit open, select a compatible private
+model if none is verified. Settings shows both actual readbacks and pending/error
+states; **Refresh status** rereads them without starting work. Busy or unsupported
+changes are rejected. A partial application is visible and is not rolled back
+silently or retried automatically. Saved explicit choices survive ordinary
+reopen; unresolved private model intent must still be reconciled, and workflow
+history is never replaced. With no shared choice, existing defaults are unchanged.
+Standalone Stage 2 retains its own editable effort selector and needs no Stage 1.
+
 The native host also retires a pending tool-consent card when its exact native
 worker is cancelled or its native permission request has already completed.
 Correlation uses the owning session and exact native request envelope, request,

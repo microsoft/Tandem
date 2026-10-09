@@ -21,10 +21,21 @@ export interface HumanLoopController {
   openView(id: string, options?: { surface?: "browser" }): Promise<{ url: string; close(): Promise<void> }>;
   closeView(id: string): Promise<void>;
   assertQuiet(): Promise<void>;
+  validateReasoningEffort(effort: string): Promise<void>;
+  selectReasoningEffort(effort: string): Promise<DevelopmentEffortStatus>;
+  reasoningEffortStatus(): Promise<DevelopmentEffortStatus>;
   close(): Promise<{ status: string; warnings: string[] }>;
   status(): Promise<{ installation: { status: string; reason?: string | null }; workflow: { status: string; reason?: string | null } | null }>;
   reportError(error: Error): void;
   installation?: { runtime: HumanLoopRuntimeHandle | null; configuration: { owner: HumanLoopState["owner"] } | null };
+}
+export interface DevelopmentEffortStatus {
+  desired: string | null;
+  actual: string | null;
+  model: string | null;
+  supported: string[];
+  status: string;
+  error: string | null;
 }
 export function createHumanLoopController(options: {
   workspacePath: string;
@@ -36,6 +47,7 @@ export function createHumanLoopController(options: {
   mainPermissionHandler?: NonNullable<SessionConfig["onPermissionRequest"]>;
   withRequestAdmission?<T>(operation: () => Promise<T>): Promise<T>;
   beforeStart?(): Promise<void>;
+  projectEffortControl?: boolean;
   contextProvider?(input: { role: HumanRole; request: RequestRecord; cycle: WorkCycle | null; state: HumanLoopState }): Promise<unknown>;
   onHandoff?(handoff: Handoff): Promise<void>;
 }): HumanLoopController;

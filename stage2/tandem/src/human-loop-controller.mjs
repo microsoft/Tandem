@@ -7,6 +7,7 @@ import { HumanLoopInstallation } from "./human-loop-installation.mjs";
 import { HumanLoopRuntime } from "./human-loop-runtime.mjs";
 import { HumanLoopEvents, createHumanLoopProvider, projectHumanProgress } from "./human-loop-provider.mjs";
 import { createNativePermissionLifecycle } from "./native-permission-lifecycle.mjs";
+import { HumanLoopPreferences, validateProjectReasoningEffort } from "./human-loop-preferences.mjs";
 
 export async function createDurablePrivateSession(client, configuration, onCreated) {
   if (typeof client.start !== "function") throw new Error("Installed SDK cannot start the private native client.");
@@ -30,6 +31,7 @@ export function createHumanLoopController(options) {
   const repositoryRoot = options.workspacePath;
   const publicDirectory = options.publicDirectory ?? fileURLToPath(new URL("../public/", import.meta.url));
   const events = new HumanLoopEvents();
+  const preferences = new HumanLoopPreferences(repositoryRoot);
   const permissions = new PermissionBroker(events);
   const nativePermissions = createNativePermissionLifecycle({
     permissions,
@@ -86,6 +88,7 @@ export function createHumanLoopController(options) {
       afterReady: () => { auditPaused = false; },
       createRuntime: async runtimeOptions => new HumanLoopRuntime({
         ...runtimeOptions, contextProvider: options.contextProvider, withRequestAdmission: options.withRequestAdmission,
+        projectEffortControl: options.projectEffortControl === true,
         createPrivateSession: configuration => createDurablePrivateSession(runtimeOptions.client, configuration, runtimeOptions.afterNativeCreate),
         onHandoff: async handoff => {
           events.append({ type: "human.handoff", source: "system", summary: handoff.result.outcome.summary,
@@ -108,6 +111,7 @@ export function createHumanLoopController(options) {
     starting = (async () => {
       await options.beforeStart?.();
       const runtime = await installation.open(openOptions);
+      if (options.projectEffortControl) await runtime.applyProjectEffort();
       events.enablePersistence(repositoryRoot);
       for (const event of await session.getEvents()) observeOriginal(event);
       await flushOriginals();
@@ -170,6 +174,33 @@ export function createHumanLoopController(options) {
       await installation.runtime.transport.inspectIdle();
     }
   }
+  async function validateReasoningEffort(effort) {
+    validateProjectReasoningEffort(effort);
+    if (!options.projectEffortControl) throw new Error("Project effort control is not enabled for this provider.");
+    if (starting || closing) throw new Error("Development is opening or closing.");
+    const current = await status();
+    if (!["new", "prepared", "ready", "closed"].includes(current.installation.status)) throw new Error("Open and reconcile the original Development owner before changing its effort.");
+    if ((await preferences.read()).pendingModel) throw new Error("Reconcile the pending private model before changing project effort.");
+    if (installation?.runtime && current.installation.status !== "closed") await installation.runtime.validateProjectEffort(effort);
+  }
+  async function selectReasoningEffort(effort) {
+    await validateReasoningEffort(effort);
+    const current = await status();
+    if (installation?.runtime && current.installation.status !== "closed") await installation.runtime.selectProjectEffort(effort);
+    else await preferences.update({ projectReasoningEffort: effort });
+    events.touch();
+    return reasoningEffortStatus();
+  }
+  async function reasoningEffortStatus() {
+    const preference = await preferences.read(), desired = preference.projectReasoningEffort;
+    const current = await status();
+    const settings = installation?.runtime && current.installation.status !== "closed" ? await installation.runtime.modelSettings() : null;
+    const actual = settings?.actualReasoningEffort ?? null;
+    return { desired, actual, model: settings?.actual ?? null,
+      supported: settings?.models.find(item => item.id === settings.actual)?.supportedReasoningEfforts ?? [],
+      status: settings?.error ? "error" : desired === null ? "unset" : actual === desired ? "applied" : "pending",
+      error: settings?.error ?? null };
+  }
   async function close() {
     if (closing) return closing;
     ending = true;
@@ -193,5 +224,6 @@ export function createHumanLoopController(options) {
     try { return await closing; } finally { closing = null; }
   }
   return { attach, toolHook, permissionHandler, observe: nativePermissions.observe, start, openView, closeView,
-    status, assertQuiet, close, reportError, events, get installation() { return installation; } };
+    status, assertQuiet, close, reportError, events, validateReasoningEffort, selectReasoningEffort, reasoningEffortStatus,
+    get installation() { return installation; } };
 }

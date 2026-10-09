@@ -46,6 +46,7 @@ import {
 } from "./planning-prompts.js";
 import { inspectEmptyPreparationWorkspace } from "./preparation.js";
 import { NativeWorkflowActivity, workflowBinding } from "./workflow-activity.js";
+import { MainSessionEffort } from "./main-session-effort.js";
 import {
     emptySketchState, readSketchState, sketchDocumentSchema, validateSketchDocument,
     type SketchDocument, type SketchRevision,
@@ -180,20 +181,57 @@ let handoffs: DevelopmentHandoffs;
 const developmentTransition = new DevelopmentTransition(WORKSPACE_ROOT);
 const nodePermissionOwner = process.env.TANDEM_NODE_MAIN_SESSION_ID;
 const workflowActivity = new NativeWorkflowActivity();
+const mainEffort = new MainSessionEffort(WORKSPACE_ROOT, () => session);
+let projectEffortChanging = false;
 const development = createHumanLoopController({
     workspacePath: WORKSPACE_ROOT,
     sdkModulePath: import.meta.resolve("@github/copilot-sdk"),
     privateExtensionPath: fileURLToPath(import.meta.url),
+    projectEffortControl: true,
     ...(/^copilot(?:\.exe)?$/i.test(basename(process.execPath)) ? { cliPath: process.execPath } : {}),
     ...(process.env.TANDEM_NODE_EXECUTABLE ? { nodePath: process.env.TANDEM_NODE_EXECUTABLE } : {}),
-    beforeStart: assertDevelopmentAvailable,
+    beforeStart: async () => {
+        if (projectEffortChanging) throw new Error("Wait for the project effort choice before opening Development.");
+        await assertDevelopmentAvailable();
+    },
     contextProvider: () => handoffs.context(),
     ...(nodePermissionOwner ? { mainPermissionHandler: nodeMainConsent(nodePermissionOwner, () => session?.sessionId) } : {}),
     withRequestAdmission: operation => developmentTransition.run(async () => {
+        if (projectEffortChanging) throw new Error("Wait for the project effort choice to finish applying.");
         await assertDevelopmentAvailable();
+        const desired = await mainEffort.desired();
+        if (desired !== null && (await development.reasoningEffortStatus()).desired !== desired) {
+            throw new Error("Project effort is not synchronized with Development. Apply it again through the project control.");
+        }
         return operation();
     }),
 });
+
+async function projectEffortStatus() {
+    const [stage1, stage2] = await Promise.all([mainEffort.status(), development.reasoningEffortStatus()]);
+    return { desired: stage1.desired, stage1, stage2, changing: projectEffortChanging };
+}
+
+async function changeProjectEffort(effort: unknown) {
+    if (typeof effort !== "string") throw new Error("Choose one reasoning effort.");
+    if (projectEffortChanging) throw new Error("A project effort change is already in progress.");
+    projectEffortChanging = true;
+    try {
+        return await developmentTransition.run(async () => {
+            await assertDevelopmentAvailable();
+            await Promise.all([mainEffort.validate(effort), development.validateReasoningEffort(effort)]);
+            const outcomes = await Promise.allSettled([mainEffort.select(effort), development.selectReasoningEffort(effort)]);
+            const errors = outcomes.flatMap((outcome, index) => outcome.status === "rejected"
+                ? [`Stage ${index + 1}: ${outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)}`] : []);
+            const settings = await projectEffortStatus();
+            for (const [index, stage] of [settings.stage1, settings.stage2].entries()) {
+                if (stage.status === "error") errors.push(`Stage ${index + 1}: ${stage.error}`);
+            }
+            if (errors.length) throw new Error(`Project effort was not fully applied. ${errors.join(" ")} Read both stage states before retrying.`);
+            return { ...settings, changing: false };
+        });
+    } finally { projectEffortChanging = false; }
+}
 
 async function assertDevelopmentAvailable() {
     let efforts;
@@ -1487,6 +1525,8 @@ async function recordEffortFactoryReceipt(prototypeId, requestId, generation, ru
 
 async function runEffortFactory(prototypeId: string, requestId: string, request: FactoryLaunchRequest) {
     assertFactoryRequestEnvelope(request);
+    if (projectEffortChanging) throw new Error("Wait for the project effort choice before starting Stage1 work.");
+    await mainEffort.assertApplied();
     let launched;
     let generation;
     await withAnswerClaim(prototypeId, async () => {
@@ -1570,6 +1610,8 @@ async function observeEffortRun(prototypeId, runId, run) {
 }
 
 async function resumeEffortRun(prototypeId, runId) {
+    if (projectEffortChanging) throw new Error("Wait for the project effort choice before resuming Stage1 work.");
+    await mainEffort.assertApplied();
     let resumed;
     await withAnswerClaim(prototypeId, async () => {
         const current = await loadState(prototypeId);
@@ -6238,6 +6280,17 @@ async function handleRequest(entry, req, res) {
         return;
     }
     const requestUrl = new URL(req.url || "/", "http://127.0.0.1");
+    if (requestUrl.pathname === "/api/settings/project-effort") {
+        if (!(await isPreferredAnswerProvider(entry.extensionId))) throw new CanvasError("read_only_provider", "Use the writable provider for project settings.");
+        if (req.method === "GET") { sendJson(res, 200, await projectEffortStatus()); return; }
+        if (req.method === "POST") {
+            const input = await readRequestBody(req);
+            if (!isObject(input) || Object.keys(input).some(key => key !== "effort")) throw new Error("Supply only the selected effort.");
+            try { await changeProjectEffort(input.effort); sendJson(res, 200, await projectEffortStatus()); }
+            catch (error) { sendJson(res, 409, { error: error instanceof Error ? error.message : "Effort update failed.", settings: await projectEffortStatus() }); }
+            return;
+        }
+    }
     if (/^\/api\/(?:design-review|plan|implementation|test)(?:\/|$)/.test(requestUrl.pathname)) {
         sendJson(res, 410, { code: "stage_retired", error: "The Design/Plan/Implement/Test pipeline is retired. Use Development's native requests and confirmations." });
         return;
@@ -7869,4 +7922,5 @@ session = await joinSession({
 });
 handoffs = new DevelopmentHandoffs(WORKSPACE_ROOT, SHARED_PROJECT_ROOT, session.sessionId);
 await development.attach(session);
+await mainEffort.applySaved().catch(error => logSafely(`Saved main reasoning effort is pending: ${error.message}`, "warning"));
 }

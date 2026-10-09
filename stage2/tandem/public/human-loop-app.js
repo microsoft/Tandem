@@ -52,7 +52,7 @@ let settingsBusy = false, settingsLoaded = false, settingsLoading = null, settin
 let settingsModel = null, effortModel = null;
 function renderReasoningEffort() {
   const id = $('setting-model').value, model = settingsModel;
-  const selected = effortModel === id ? $('setting-effort').value
+  const selected = model?.effortManaged ? model.projectReasoningEffort ?? model.actualReasoningEffort ?? '' : effortModel === id ? $('setting-effort').value
     : model?.pending === id ? model.pendingReasoningEffort : model?.desired === id ? model.desiredReasoningEffort : '';
   const levels = model?.models.find(item => item.id === id)?.supportedReasoningEfforts ?? [];
   const unset = make('option', 'No explicit override'); unset.value = '';
@@ -60,7 +60,7 @@ function renderReasoningEffort() {
     const option = make('option', level); option.value = level; return option;
   }));
   $('setting-effort').value = levels.includes(selected) ? selected : '';
-  $('setting-effort').disabled = settingsBusy || !model?.canChange || !model.canSetReasoningEffort || !levels.length;
+  $('setting-effort').disabled = Boolean(model?.effortManaged) || settingsBusy || !model?.canChange || !model.canSetReasoningEffort || !levels.length;
   effortModel = id;
 }
 function settingsError(error) {
@@ -91,6 +91,7 @@ function applySettings(value) {
   $('model-setting-status').textContent = [
     `Actual private model: ${model.actual ?? 'not yet verified'}.`,
     `Actual reasoning effort: ${model.actualReasoningEffort ?? 'not explicitly reported'}.`,
+    model.effortManaged ? `Reasoning effort is controlled by the project effort control (${model.projectReasoningEffort ?? 'no shared choice yet'}).` : '',
     model.desired ? `Saved selection: ${model.desired}.` : '',
     model.desiredReasoningEffort ? `Saved reasoning effort: ${model.desiredReasoningEffort}.` : '',
     model.pending ? `Pending selection: ${model.pending}.` : '',

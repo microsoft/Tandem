@@ -13,6 +13,7 @@ import { ArtifactList, ArtifactsPanel } from "./artifacts-panel.js";
 import { ProcessPanel } from "./process-panel.js";
 import { DevelopmentPanel } from "./development-panel.js";
 import { WorkflowActivity } from "./workflow-activity.js";
+import { ProjectEffortControl } from "./project-effort.js";
 import { SpeechProvider, SpeechSignInControl, SpeechTextarea, useSpeechSignInControl } from "./speech-textarea.js";
 import { Brand } from "./brand.js";
 import { useStandaloneHeader } from "./standalone-header.js";
@@ -470,6 +471,7 @@ function Workspace(props: WorkspaceProps) {
     </Tabs.Root>}
     <div id="next-action-bar" className="next-action-bar" data-status={statusBarError ? "error" : "idle"}>
       <span id="next-action-guide" role="status" title={statusBarText}>{statusBarText}</span>
+      <ProjectEffortControl />
       <button id="show-next-action" type="button" hidden={!nextAction}
         aria-label="Go to action" title={nextAction ? "Go to action: " + nextAction.label : "Go to action"} onClick={() => {
         if (!nextAction) return;
