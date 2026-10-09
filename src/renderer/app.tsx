@@ -12,6 +12,7 @@ import { PrototypePanel, prototypeCompletionBlocked } from "./prototype-panel.js
 import { ArtifactList, ArtifactsPanel } from "./artifacts-panel.js";
 import { ProcessPanel } from "./process-panel.js";
 import { DevelopmentPanel } from "./development-panel.js";
+import { WorkflowActivity } from "./workflow-activity.js";
 import { SpeechProvider, SpeechSignInControl, SpeechTextarea, useSpeechSignInControl } from "./speech-textarea.js";
 import { Brand } from "./brand.js";
 import { useStandaloneHeader } from "./standalone-header.js";
@@ -386,6 +387,7 @@ function Workspace(props: WorkspaceProps) {
           </div>
           <section className="section project-brief" data-status-help={state.status}><p id="goal" className="goal" title={state.goal}>{state.goal}</p>
             <p id="status" className={hasActiveJobs(state) || state.processing?.status === "error" ? "status" : "visually-hidden"} title={state.status}>{state.status}</p></section>
+          <WorkflowActivity />
           <section className="section workflow-section" aria-describedby="stage-browsing stage-message"><div className="section-heading"><p className="eyebrow"><Layers size={14} aria-hidden="true" />Workflow</p>
             <span className="section-count" aria-label={`${completedCount} of ${lifecycleStages.length} stages complete`}>{completedCount}/{lifecycleStages.length}</span></div>
             <ol id="stage-list" className="stage-list">

@@ -1,5 +1,6 @@
 import "./project-store.test.js";
 import "./workflow.test.js";
+import "./workflow-activity.test.js";
 import "./prototype-lifecycle.test.js";
 import "./factory-dispatch.test.js";
 import "./prototype-flow.test.js";

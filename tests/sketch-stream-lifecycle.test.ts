@@ -92,6 +92,8 @@ async function setup(legacyEvents = false) {
         })]);
         emit({ type: "subagent.started", agentId: "bg-stream-tool",
             data: { ...(legacyEvents ? {} : { workflowRunId: "stream-run" }), toolCallId: "bg-stream-tool" } });
+        emit({ type: "assistant.message_start", agentId: "bg-stream-tool",
+            data: { messageId: "drawing-message", phase: "final_answer" } });
         return pending;
     };
     return { h, before, url: opened.url, start, delta, operation, output, listeners };

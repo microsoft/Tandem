@@ -45,6 +45,7 @@ import {
     type PrototypeSketchInput,
 } from "./planning-prompts.js";
 import { inspectEmptyPreparationWorkspace } from "./preparation.js";
+import { NativeWorkflowActivity, workflowBinding } from "./workflow-activity.js";
 import {
     emptySketchState, readSketchState, sketchDocumentSchema, validateSketchDocument,
     type SketchDocument, type SketchRevision,
@@ -178,6 +179,7 @@ let session;
 let handoffs: DevelopmentHandoffs;
 const developmentTransition = new DevelopmentTransition(WORKSPACE_ROOT);
 const nodePermissionOwner = process.env.TANDEM_NODE_MAIN_SESSION_ID;
+const workflowActivity = new NativeWorkflowActivity();
 const development = createHumanLoopController({
     workspacePath: WORKSPACE_ROOT,
     sdkModulePath: import.meta.resolve("@github/copilot-sdk"),
@@ -6113,11 +6115,13 @@ async function preparationRuntimeState(entry) {
     const state = await loadState(entry.prototypeId);
     const payload = publicState(entry, state);
     const runId = state.preparation.processing?.runId;
-    if (!runId) return { ...payload, preparationRuntime: null };
+    if (!runId) return { ...payload, preparationRuntime: null, workflowRuntime: null };
     try {
         const detail = await session.workflow.getRunDetail(runId);
+        const binding = workflowBinding(state);
         return {
             ...payload,
+            workflowRuntime: binding?.runId === runId ? workflowActivity.snapshot(binding, detail) : null,
             preparationRuntime: {
                 runId,
                 status: detail.status,
@@ -6151,6 +6155,10 @@ async function preparationRuntimeState(entry) {
         );
         return {
             ...payload,
+            workflowRuntime: workflowBinding(state)?.runId === runId ? {
+                ...workflowBinding(state), status: "unavailable", lastNativeActivityAt: null, agents: [],
+                error: "Live native activity is unavailable. This does not mean the workflow failed.",
+            } : null,
             preparationRuntime: {
                 runId,
                 status: "unavailable",
@@ -6161,6 +6169,20 @@ async function preparationRuntimeState(entry) {
                 error: message,
             },
         };
+    }
+}
+
+async function workflowRuntimeState(entry) {
+    const state = await loadState(entry.prototypeId);
+    const payload = publicState(entry, state), binding = workflowBinding(state);
+    if (!binding) return { ...payload, workflowRuntime: null };
+    try {
+        const detail = await session.workflow.getRunDetail(binding.runId);
+        return { ...payload, workflowRuntime: workflowActivity.snapshot(binding, detail) };
+    } catch (error) {
+        await logSafely(`Native workflow activity is unavailable: ${error instanceof Error ? error.message : "Unknown SDK error"}`, "warning");
+        return { ...payload, workflowRuntime: { ...binding, status: "unavailable", lastNativeActivityAt: null, agents: [],
+            error: "Live native activity is unavailable. This does not mean the workflow failed." } };
     }
 }
 
@@ -6336,6 +6358,11 @@ async function handleRequest(entry, req, res) {
     ) {
         await refreshEntryAnswerCapability(entry);
         sendJson(res, 200, await preparationRuntimeState(entry));
+        return;
+    }
+    if (req.method === "GET" && requestUrl.pathname === "/api/workflow/status") {
+        await refreshEntryAnswerCapability(entry);
+        sendJson(res, 200, await workflowRuntimeState(entry));
         return;
     }
 
@@ -7838,7 +7865,7 @@ session = await joinSession({
         }),
     ],
     onPermissionRequest: development.permissionHandler,
-    onEvent: development.observe,
+    onEvent: event => { development.observe(event); workflowActivity.observe(event); },
 });
 handoffs = new DevelopmentHandoffs(WORKSPACE_ROOT, SHARED_PROJECT_ROOT, session.sessionId);
 await development.attach(session);

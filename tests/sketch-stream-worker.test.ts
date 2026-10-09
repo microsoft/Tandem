@@ -31,9 +31,10 @@ function harness(base: SketchDocument | null = sketchDocument(), getRunDetail = 
         failed: (error) => failures.push(error),
     });
     const emit = (event: SketchWorkerEvent) => handler?.(event);
-    const start = (run = "drawing-run", agentId = "drawing-agent", parentId?: string) => emit({
-        type: "subagent.started", agentId, data: { workflowRunId: run, toolCallId: "drawing-tool", parentId },
-    });
+    const start = (run = "drawing-run", agentId = "drawing-agent", parentId?: string) => {
+        emit({ type: "subagent.started", agentId, data: { workflowRunId: run, toolCallId: "drawing-tool", parentId } });
+        emit({ type: "assistant.message_start", agentId, data: { messageId: "drawing-message", phase: "final_answer" } });
+    };
     const delta = (text: string, agentId = "drawing-agent", messageId = "drawing-message") => emit({
         type: "assistant.message_delta", agentId, data: { messageId, deltaContent: text },
     });
@@ -64,6 +65,51 @@ test("drawing operations become visible before the worker settles and full messa
     assert.equal(h.failures.length, 0);
 });
 
+test("explicit native commentary stays separate from drawing deltas and authoritative final NDJSON", async () => {
+    const h = harness();
+    h.start();
+    h.emit({ type: "assistant.intent", agentId: "drawing-agent", data: { intent: "Laying out the screens." } });
+    h.emit({ type: "assistant.message_start", agentId: "drawing-agent",
+        data: { messageId: "progress", phase: "commentary" } });
+    h.delta("The layout is ready.", "drawing-agent", "progress");
+    h.emit({ type: "assistant.message", agentId: "drawing-agent",
+        data: { messageId: "progress", phase: "commentary", content: "The layout is ready." } });
+    assert.equal(h.previews.length, 0);
+    h.emit({ type: "assistant.message_start", agentId: "drawing-agent",
+        data: { messageId: "drawing-message", phase: "final_answer" } });
+    h.delta(operation() + done);
+    assert.equal(h.previews.length, 1);
+    h.resolve(operation() + done);
+    assert.equal((await h.result).screens[0].shapes[0].x, 90);
+    assert.equal(h.failures.length, 0);
+});
+
+test("untagged prose cannot be guessed away as progress or rescued by a valid final payload", async () => {
+    const h = harness();
+    h.start();
+    h.delta("The layout is ready.\n");
+    h.resolve(operation() + done);
+    await assert.rejects(h.result);
+    assert.equal(h.previews.length, 0);
+});
+
+test("optional or later native phase buffers commentary without parsing it as drawing operations", async () => {
+    const h = harness();
+    h.emit({ type: "subagent.started", agentId: "drawing-agent", data: { workflowRunId: "drawing-run", toolCallId: "drawing-tool" } });
+    h.emit({ type: "assistant.message_start", agentId: "drawing-agent", data: { messageId: "late-phase" } });
+    h.delta("The layout is ready.\n", "drawing-agent", "late-phase");
+    assert.equal(h.previews.length, 0);
+    assert.equal(h.failures.length, 0);
+    h.emit({ type: "assistant.message", agentId: "drawing-agent",
+        data: { messageId: "late-phase", phase: "commentary", content: "The layout is ready.\n" } });
+    h.emit({ type: "assistant.message_start", agentId: "drawing-agent",
+        data: { messageId: "drawing-message", phase: "final_answer" } });
+    h.delta(operation() + done);
+    h.resolve(operation() + done);
+    assert.equal((await h.result).screens[0].shapes[0].x, 90);
+    assert.equal(h.failures.length, 0);
+});
+
 test("root, unrelated factories and nested agents cannot contribute drawing commands", async () => {
     const h = harness();
     h.start("other-run", "other");
@@ -84,6 +130,9 @@ test("drawing streams support tool-call correlation on runtimes without an agent
     h.emit({ type: "subagent.started", data: { workflowRunId: "drawing-run", toolCallId: "drawing-tool" } });
     h.emit({ type: "assistant.message_delta",
         data: { messageId: "drawing-message", parentToolCallId: "drawing-tool", deltaContent: operation() } });
+    assert.equal(h.previews.length, 0, "Unphased text waits for completed-message classification.");
+    h.emit({ type: "assistant.message",
+        data: { messageId: "drawing-message", parentToolCallId: "drawing-tool", content: operation() } });
     assert.equal(h.previews.length, 1);
     h.resolve(operation() + done);
     await h.result;
@@ -94,6 +143,7 @@ test("worker starts without factory IDs stream after verified factory lookup, be
     const detail = new Promise<Parameters<typeof verify>[0]>((resolve) => { verify = resolve; });
     const h = harness(sketchDocument(), () => detail);
     h.emit({ type: "subagent.started", agentId: "drawing-agent", data: { toolCallId: "drawing-tool" } });
+    h.emit({ type: "assistant.message_start", agentId: "drawing-agent", data: { messageId: "drawing-message", phase: "final_answer" } });
     h.delta(operation().slice(0, 45));
     h.delta(operation().slice(45));
     assert.equal(h.previews.length, 0, "unverified workers must not publish drawings");
@@ -115,6 +165,7 @@ test("factory lookup excludes unrelated and nested workers even if their labels 
     const h = harness();
     for (const [agentId, toolCallId] of [["other-agent", "other-tool"], ["drawing-agent", "drawing-tool"]]) {
         h.emit({ type: "subagent.started", agentId, data: { toolCallId, agentName: "general-purpose" } });
+        h.emit({ type: "assistant.message_start", agentId, data: { messageId: "drawing-message", phase: "final_answer" } });
         h.delta(agentId === "drawing-agent" ? operation() : "not drawing operations\n", agentId);
     }
     h.emit({ type: "subagent.started", agentId: "nested",

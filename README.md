@@ -142,6 +142,18 @@ Correlation uses the owning session and exact native request envelope, request,
 tool, agent and available workflow identities. A stale card cannot grant
 once-only or session-wide approval; unrelated workers and ordinary completion
 keep their existing consent behavior.
+Stage 1's activity view uses native workflow/worker/tool/permission observations
+and their original timestamps. It shows operation, elapsed request time, pending
+consent and the age of the last native activity; polling is not productive work.
+Unavailable or silent activity is reported honestly and never triggers automatic
+failure, retry or cancellation. Short public model updates are requested at
+meaningful milestones. Reasoning and raw prompts are not projected, and progress
+is never completion or verification evidence. Native commentary stays separate
+from final structured output and drawing NDJSON; untagged prose is not guessed
+away to make an invalid result pass.
+Explicitly tagged drawing data still streams immediately. If native message
+phase is absent or arrives later, text is buffered until message classification
+or the authoritative result instead of guessing whether prose is progress.
 
 The existing `generate-design-spec` action is retained: it creates
 `draft-feature-spec` in Prototype, not a downstream technical Design stage.

@@ -27,6 +27,10 @@ test("preparation and intent workers defer product interviews through the shared
     assert.match(prompts[1], /Do not interview the user for product scope/);
     assert.match(prompts[2], /Suggested usages\nare optional proposals, never accepted requirements/);
     assert.match(prompts[4], /Do not\nassume extra locations, ordering, payments/);
+    assert.match(tandemWorkerInteractionRules, /short user-facing sentence at meaningful milestones/);
+    assert.match(tandemWorkerInteractionRules, /Never prepend or mix/);
+    assert.match(tandemWorkerInteractionRules, /no separate progress channel, keep the result format pure/);
+    assert.match(tandemWorkerInteractionRules, /private\nreasoning, prompts or credentials/);
 });
 
 test("usage suggestion generation selects the tool-free worker and returns proposals without an interview", async () => {

@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import type { HistoricalStageId, LifecycleStageId, TandemState } from "../types.js";
 import type { SketchPreview } from "../sketch-stream.js";
+import type { WorkflowActivitySnapshot } from "../workflow-activity.js";
 
 export interface RuntimeAgent {
   id?: string;
@@ -31,6 +32,7 @@ export interface UiState extends TandemState {
   };
   preparationRuntime?: RuntimeSnapshot | null;
   sketchPreview?: SketchPreview | null;
+  workflowRuntime?: WorkflowActivitySnapshot | null;
 }
 
 export interface UiContextValue {

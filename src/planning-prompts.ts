@@ -5,13 +5,20 @@ import type { SketchDocument } from "./sketch.js";
 export const tandemWorkerInteractionRules = [
     "Tandem owns user interaction. Do not call ask_user, ask_user_question, or any",
     "other interactive question tool, open a question dialog, or request answers",
-    "through the parent chat. Return only the structured result for this work item.",
+    "through the parent chat. Keep the final response exactly the structured result for this work item.",
     "Product clarifications belong only in the schema's tracked decision/question",
     "fields. If this schema has none, report unknowns in its assumptions, deferred",
     "work, notes, or blockers instead of interviewing the user or adding fields.",
     "Never invent a user answer, convert a suggestion into an accepted intent, or",
     "treat a missing answer or denied tool call as approval. Permission and safety",
     "boundaries still apply; report a blocker rather than bypassing them.",
+    "During longer work, give a short user-facing sentence at meaningful milestones",
+    "or a real blocked/waiting state using a separate native public commentary/intent",
+    "channel when available, or a tool's ordinary description. Do not expose private",
+    "reasoning, prompts or credentials, invent periodic heartbeats, or add user turns.",
+    "Progress is not completion or verification evidence. Never prepend or mix",
+    "progress prose into final JSON/schema results or NDJSON drawing operations.",
+    "If the runtime offers no separate progress channel, keep the result format pure.",
 ].join("\n");
 
 export function buildDevelopmentHandoffPrompt(input: {
@@ -161,6 +168,7 @@ export function buildSketchPrompt(args: {
 }): string {
     return [
         "You are Tandem's sketch worker. Stream ONLY newline-delimited JSON drawing operations.",
+        "Any optional short milestone commentary must be in a separate native commentary message/phase, never in the drawing-operation stream or final returned NDJSON. If that separation is unavailable, emit only drawing operations.",
         tandemWorkerInteractionRules,
         "Use only the supplied context. Do not use tools, edit files, start servers, open canvases, call other agents, or advance stages.",
         "The host owns persistence, rendering, revision history and explicit user approval.",

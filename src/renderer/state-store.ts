@@ -1,6 +1,7 @@
 import { lifecycleStages } from "../workflow.js";
 import type { UiState } from "./ui-context.js";
 import { SketchPreviewTracker, sketchPreviewIdentity } from "./sketch-preview.js";
+import { workflowBinding } from "../workflow-activity.js";
 
 export interface StudioSnapshot {
   state: UiState | null;
@@ -54,7 +55,7 @@ export class StudioStore {
     const changed = !previous || revision > previousRevision
       || (revision === 0 && state.updatedAt !== previous.updatedAt);
     const next = changed ? { ...state, revision } : { ...previous };
-    for (const field of ["provider", "preparationRuntime", "developmentBlocker"] as const) {
+    for (const field of ["provider", "preparationRuntime", "workflowRuntime", "developmentBlocker"] as const) {
       if (sequence >= this.lastTransportSequence && Object.hasOwn(state, field)) {
         // Each transport-only field retains its own declared type.
         Object.assign(next, { [field]: state[field] });
@@ -68,7 +69,7 @@ export class StudioStore {
         ? state.sketchPreview : undefined);
     next.sketchPreview = preview.preview;
     this.lastTransportSequence = Math.max(this.lastTransportSequence, sequence);
-    const transportChanged = !previous || ["provider", "preparationRuntime", "developmentBlocker", "sketchPreview"].some(
+    const transportChanged = !previous || ["provider", "preparationRuntime", "workflowRuntime", "developmentBlocker", "sketchPreview"].some(
       (field) => JSON.stringify(Reflect.get(next, field)) !== JSON.stringify(Reflect.get(previous, field)));
     if (changed || transportChanged) this.publish({ state: next as UiState, connectionError: preview.error });
     else this.setConnectionError(preview.error);
@@ -84,7 +85,8 @@ export class StudioStore {
     const sequence = ++this.sequence;
     this.requestSequence = sequence;
     const stage = this.snapshot.state?.lifecycle.currentStage;
-    const endpoint = stage === "prepare" ? "/api/preparation/status" : "/api/state";
+    const endpoint = stage === "prepare" ? "/api/preparation/status"
+      : stage !== "development" && this.snapshot.state && workflowBinding(this.snapshot.state) ? "/api/workflow/status" : "/api/state";
     this.request = this.fetcher(endpoint, { cache: "no-store", signal: AbortSignal.timeout(15000) })
       .then(async (response) => {
         if (!response.ok) throw new Error("Could not load studio state.");

@@ -29,7 +29,7 @@ export function PreparationPanel() {
   const editable = canEdit("prepare");
   const retryDisabled = pending || action.busy || !editable || hasActiveJobs(state);
   const liveByWorkItem = new Map(
-    (runtime?.agents || []).map((agent) => [String(agent.label || "").replace(/^prepare:/, ""), agent]),
+    (preparing ? runtime?.agents || [] : []).map((agent) => [String(agent.label || "").replace(/^prepare:/, ""), agent]),
   );
   const messages = [
     ...(preparation.messages || []).map((message) => ({

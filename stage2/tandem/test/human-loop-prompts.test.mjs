@@ -20,6 +20,7 @@ const terminalInstruction = "Structured progress is not completion. Submit the e
 const oldTerminalInstruction = "Structured progress is not completion. Submit the exact role result; the Host ends the role after its matching tool completes.";
 const nativeRoleInstruction = "Follow this role's responsibilities. Normal Copilot permissions still apply. Reviewer and its scoped children are read-only; other native tools retain their ordinary contracts. Tandem domain tools retain role-specific contracts. Internal plan acceptance is Host provenance, not user approval.";
 const oldRoleInstruction = "Use only this role's permitted tools. Internal plan acceptance is Host provenance, not user approval.";
+const progressInstruction = humanLoopPrompts.wrapper.find(line => line.startsWith("During longer work,"));
 const currentPrompts = () => structuredClone(humanLoopPrompts);
 const runtime = await readFile(new URL("../src/human-loop-runtime.mjs", import.meta.url), "utf8");
 const transport = await readFile(new URL("../src/human-loop-transport.mjs", import.meta.url), "utf8");
@@ -29,7 +30,7 @@ test("format and answer-authorization guidance preserve unrelated role instructi
   const { cooperativeStop, roles, reviewScope, designRules, missingResultRecovery, ...unchanged } = humanLoopPrompts;
   const { roles: oldRoles, designRules: oldDesignRules, ...oldUnchanged } = baseline.prompts;
   assert.deepEqual({ ...unchanged, shared: unchanged.shared.filter(line => !line.startsWith("recordedQuestionAnswers")).slice(0, oldUnchanged.shared.length),
-    wrapper: unchanged.wrapper.filter((line) => line !== recoveryContext)
+    wrapper: unchanged.wrapper.filter((line) => line !== recoveryContext && line !== progressInstruction)
     .map(line => line === terminalInstruction ? oldTerminalInstruction
       : line === nativeRoleInstruction ? oldRoleInstruction
         : line.startsWith("Keep command permissions separate.") ? "Keep command permissions separate. Do not invent the next user request, delegate, or alter Host state." : line) }, oldUnchanged);
@@ -58,6 +59,15 @@ test("format and answer-authorization guidance preserve unrelated role instructi
   assert.equal(generationContract.rules, humanLoopPrompts.sketchRules);
   for (const rule of designRules) assert.ok(designGenerationContract.rules.includes(rule));
   assert.deepEqual(cases.map(({ name }) => name), baseline.cases.map(({ name }) => name));
+});
+
+test("all roles receive natural public milestone guidance without changing result authority", () => {
+  assert.match(progressInstruction, /short, concrete user-facing progress sentence.*meaningful milestones/);
+  assert.match(progressInstruction, /Do not expose private reasoning, prompts or credentials/);
+  assert.match(progressInstruction, /not completion or verification evidence/);
+  assert.match(progressInstruction, /Keep progress separate from terminal tool arguments/);
+  for (const { name, packet } of cases) assert.ok(evaluateWrapper(transport, packet, humanLoopPrompts).includes(progressInstruction), name);
+  assert.ok(humanLoopPrompts.wrapper.includes(terminalInstruction));
 });
 
 test("every effective role receives shared plain-language guidance without changing machine contracts", () => {
