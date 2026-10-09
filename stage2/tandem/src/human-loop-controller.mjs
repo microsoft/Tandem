@@ -74,6 +74,7 @@ export function createHumanLoopController(options) {
       workspacePath: repositoryRoot, mainSession: session,
       registration: { session, id: randomUUID(), toolHook, permissionHandler },
       sdkModulePath: options.sdkModulePath,
+      privateExtensionPath: options.privateExtensionPath ?? fileURLToPath(new URL("./extension.mjs", import.meta.url)),
       runtimeRoot: options.runtimeRoot ?? join(process.env.COPILOT_HOME ?? join(homedir(), ".copilot"), "living-canvas", "human-loop-runtime"),
       ...(options.cliPath ? { cliPath: options.cliPath } : {}),
       ...(options.nodePath ? { nodePath: options.nodePath } : {}),

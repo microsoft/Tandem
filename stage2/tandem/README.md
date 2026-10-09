@@ -114,11 +114,21 @@ establish native behavior. Earlier enqueue-failure receipts remain historical.
 
 Reviewer checks complete agreed-Design conformance and material over-engineering,
 not a third general quality/test audit. It may review directly or use meaningful
-native read-only scopes, at most three concurrently and more total in batches.
+native read-only scopes through the permission-gated `tandem_collect_review_scopes`
+tool. Its native workflow schedules at most three workers concurrently, without
+a total-three cap or a Tandem worker scheduler.
 It first publishes scopes, then reconciles them into one report. Children cannot
 delegate or publish canonical results. Partial/all-child failure and whole-parent
 failure retain implementation/findings, disclose incomplete coverage and release
 the attempt without mandatory successful review retry.
+
+The foreground and private session use the same entrypoint. The private
+registration exposes only the Review workflow and collector, never another
+canvas or runtime. For the composed Node host, bootstrap stages an idempotent
+import shim in the private session's own extension directory, enables native
+extension discovery, and reattaches the exact private hook/permission
+configuration after registration. Mismatched retained shims fail explicitly;
+no user installation or project extension is overwritten.
 
 Native `view`, `glob`, `rg`, `apply_patch` and PowerShell tools execute ordinary
 engineering work. Read-only roles cannot patch files. Native editing requires

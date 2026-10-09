@@ -29,6 +29,7 @@ export interface HumanLoopController {
 export function createHumanLoopController(options: {
   workspacePath: string;
   sdkModulePath: string;
+  privateExtensionPath?: string;
   cliPath?: string;
   nodePath?: string;
   runtimeRoot?: string;

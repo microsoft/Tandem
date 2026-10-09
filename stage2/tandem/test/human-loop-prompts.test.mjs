@@ -117,7 +117,7 @@ test("effective Reviewer packets have optional bounded scopes and exactly two re
     /General bug hunting, test-coverage audits and correctness verification are not Review responsibilities/,
     /Three is a concurrency ceiling, not a mandatory split or total-task limit.*small or cohesive work directly/,
     /fewer than three.*every child applies BOTH goals/,
-    /batches of up to THREE unsettled tasks.*3\+3\+1.*Do not divide equally by file count/,
+    /tandem_collect_review_scopes.*awaits the native tandem-review-scopes workflow.*native scheduling runs at most THREE workers concurrently.*no total-three cap.*Do not divide equally by file count/,
     /do not poll, rediscover agents, relaunch failed scopes, or repeat every child review sequentially/,
     /taking over platform\/other actors' responsibilities/,
     /Safe, robust and future-proof are not blanket authorization/,

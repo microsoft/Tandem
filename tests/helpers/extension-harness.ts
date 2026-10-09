@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import fs, { mkdir, readFile, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { runInNewContext } from "node:vm";
 import type { TandemState } from "../../src/types.js";
 import type { PreparationToken } from "../../src/agent-runner.js";
@@ -71,9 +71,9 @@ let compiled: Promise<string> | undefined;
 async function compile(): Promise<string> {
     const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "src");
     const source = (await readFile(join(sourceRoot, "extension.ts"), "utf8")).replaceAll("\r\n", "\n");
-    const end = source.indexOf("session = await joinSession(");
+    const end = source.indexOf("const privateRegistration = privateReviewRegistration(");
     if (end === -1) throw new Error("The extension session entry point could not be located.");
-    const prefix = source.slice(0, end).replaceAll("import.meta.url", JSON.stringify("file:///project/.github/extensions/tandem/extension.mjs"))
+    const prefix = source.slice(0, end).replaceAll("import.meta.url", JSON.stringify(pathToFileURL(join(sourceRoot, "..", ".github", "extensions", "tandem", "extension.mjs")).href))
         .replaceAll('import.meta.resolve("@github/copilot-sdk")', JSON.stringify("file:///fixture-sdk/index.mjs"));
     const openStart = source.lastIndexOf("open: async (ctx) => {");
     const openEnd = source.indexOf(",\n            onClose:", openStart);

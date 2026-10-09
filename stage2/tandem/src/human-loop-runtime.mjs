@@ -74,7 +74,7 @@ export class HumanLoopRuntime {
   #contextProvider;
   #withRequestAdmission;
 
-  constructor({ configuration, client, verifyOwnership, verifyAdmission, permissionHandler, onHandoff, onProgress,
+  constructor({ configuration, client, workflowBootstrap, verifyOwnership, verifyAdmission, permissionHandler, onHandoff, onProgress,
     readDesign, designer, reviewEffects, now, contextProvider, withRequestAdmission = operation => operation(), createPrivateSession,
     beforeNativeCreate, afterNativeCreate }) {
     requireCondition(configuration?.schemaVersion === "human-loop-runtime/v1" && typeof onHandoff === "function",
@@ -100,7 +100,7 @@ export class HumanLoopRuntime {
       ...tool, execute: (args, context) => this.#executeTool(tool, args, context),
     }));
     this.#transport = new HumanLoopTransport({
-      owner: this.#owner, client, workspace: this.#workspace, store: this.#store, tools, nativeFiles: true, nativeShells: this.#commands,
+      owner: this.#owner, client, workflowBootstrap, workspace: this.#workspace, store: this.#store, tools, nativeFiles: true, nativeShells: this.#commands,
       createPrivateSession, beforeNativeCreate, afterNativeCreate,
       verifyOwnership, authorizeTool: (packet) => this.#authorizeTool(packet), permissionHandler, now,
       onProgress: (event) => { this.#notify(event); if (event.kind === "native-shell") this.#kick(); },

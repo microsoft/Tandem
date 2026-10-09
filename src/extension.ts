@@ -64,6 +64,7 @@ import {
 import { createProcessAdapters } from "./process-adapters.js";
 import { assertDeliveryCurrent, prepareDeliveryDraft } from "./delivery.js";
 import { createHumanLoopController } from "../stage2/tandem/src/human-loop-controller.mjs";
+import { privateReviewRegistration } from "../stage2/tandem/src/native-evidence-workflow.mjs";
 import { DevelopmentHandoffs } from "./development-handoff.js";
 import { DevelopmentTransition } from "./development-transition.js";
 import { nodeMainConsent } from "./main-consent.js";
@@ -180,6 +181,7 @@ const nodePermissionOwner = process.env.TANDEM_NODE_MAIN_SESSION_ID;
 const development = createHumanLoopController({
     workspacePath: WORKSPACE_ROOT,
     sdkModulePath: import.meta.resolve("@github/copilot-sdk"),
+    privateExtensionPath: fileURLToPath(import.meta.url),
     ...(/^copilot(?:\.exe)?$/i.test(basename(process.execPath)) ? { cliPath: process.execPath } : {}),
     ...(process.env.TANDEM_NODE_EXECUTABLE ? { nodePath: process.env.TANDEM_NODE_EXECUTABLE } : {}),
     beforeStart: assertDevelopmentAvailable,
@@ -7462,6 +7464,10 @@ const answerFactory = defineWorkflow({
     },
 });
 
+const privateRegistration = privateReviewRegistration(defineWorkflow, () => session);
+if (privateRegistration) {
+    session = await joinSession(privateRegistration);
+} else {
 session = await joinSession({
     streaming: true,
     includeSubAgentStreamingEvents: true,
@@ -7849,3 +7855,4 @@ session = await joinSession({
 });
 handoffs = new DevelopmentHandoffs(WORKSPACE_ROOT, SHARED_PROJECT_ROOT, session.sessionId);
 await development.attach(session);
+}
