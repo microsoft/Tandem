@@ -218,3 +218,32 @@ log). Such a missing previously created identity remains a visible recovery
 failure; Tandem does not silently replace it or broaden unused-setup authority.
 Used-session same-ID recovery is separately qualified and must not be presented
 as proof that this zero-input upstream limitation is resolved.
+
+## Integration check, 2026-10-09
+
+The agreed boundary is the clarified one above: optional Stage 1 supplies Q&A
+and prototype evidence, not formal Design. The older proposal's Stage 1 Design
+wording is superseded; restoring that stage is not remaining work.
+
+| Requirement | Current evidence | Remaining qualification |
+| --- | --- | --- |
+| Direct Stage 2 entry for new/existing projects | Renderer/server regressions and actual no-model opens preserve empty upstream history and submit no request. | Unused-session cold persistence limitation above. |
+| One foreground owner and separate private runtime | Actual private collector registration has no Tandem canvas or foreground tools; duplicate opens share one view. | No second engine or provider migration is planned. |
+| Prototype evidence reaches Designer without implementation | Immutable source/asset tests pass; bounded native Router/Designer runs accepted the retained synthetic no-GUI handoff and published Design. | A fresh real Stage 1 Q&A-to-HTML/assets-to-Designer journey has not been run on this build. |
+| Later Design changes remain in Stage 2 | A native explicit revision published a new Design while retaining prior decisions, source references and an unanswered semantics question. | No cross-stage rollback is required. |
+| Exact ownership, Stop, Close and no replay | Used-session native Stop/Close and cold reopens preserve both IDs, Design, conversation and historical events with no new model request. | Do not generalize this result to zero-input sessions. |
+| Explicit implementation confirmation and read-only Review | Existing runtime/state-machine tests retain confirmation, cancellation, producing-Design binding and parent-only results. | Full current-build Planner/Implementer/Reviewer execution is outside the Design-only qualification. |
+| Optional private reasoning effort | Settings/cold-reopen tests and native no-model selection verify advertised effort, actual readback and retained pending intent. | No implicit model or effort substitution is allowed. |
+| Native scoped Review workflow | Scoped collector, concurrent cancellation, explicit Stop retry and late-child tests pass; real no-model bootstrap and workflow lifecycle events are verified. | Live multiworker Review against an implemented project remains unqualified on this integration. |
+
+The final root suite passed 853 tests. The full Stage 2 run separately recorded
+211 shared tests passing and 1,022 canvas tests with 1,015 passes, five failures
+and two skips. Three failures passed isolated timing rechecks. The remaining
+retired-native-Close expectation and standalone Sketch debugger failure
+reproduced on the unchanged merged-main source; they were not hidden or repaired
+as part of this integration. Focused final feature suites passed after the
+subsequent ports. These results do not imply a full generated-application pass.
+
+Publishing a release, updating installed user extensions and broader UX
+unification remain separate work. No export, GitHub publication or deployment
+is implied by these qualification runs.
