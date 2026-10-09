@@ -135,6 +135,7 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
         openCanvases: [] as { instanceId: string }[],
         log: async (message: string) => { logs.push(message); },
         rpc: {
+            model: { getCurrent: async () => ({ modelId: "fixture-model" }) },
             extensions: { list: async () => ({ extensions: [{ id: "project:tandem", status: "running" }] }) },
             workflow: { run: async (request: FactoryLaunchRequest) => {
                 assertFactoryRequestEnvelope(request);

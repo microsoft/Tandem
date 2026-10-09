@@ -1,10 +1,30 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { assertFactoryRequestEnvelope, rejectedFactoryLaunch } from "../src/agent-runner.js";
+import { assertFactoryRequestEnvelope, rejectedFactoryLaunch, workflowReasoningEffort } from "../src/agent-runner.js";
 import { extensionHarness } from "./helpers/extension-harness.js";
 
 const schemaRejection = "unknown field `limits`, expected one of `name`, `args`, `options`";
 const provider = "project:tandem";
+
+test("workflow workers honor explicit owning-session effort and retain defaults only when unset", async () => {
+    for (const defaultEffort of ["low", "medium"] as const) {
+        for (const reasoningEffort of [undefined, "low", "high"]) {
+            const current = { modelId: "fixture-model", ...(reasoningEffort ? { reasoningEffort } : {}) };
+            const session = { rpc: { model: { getCurrent: async () => current } } };
+            assert.equal(await workflowReasoningEffort(session, defaultEffort), reasoningEffort ?? defaultEffort);
+        }
+    }
+    for (const reasoningEffort of ["", "  "]) {
+        await assert.rejects(workflowReasoningEffort({ rpc: { model: {
+            getCurrent: async () => ({ modelId: "fixture-model", reasoningEffort }),
+        } } }, "medium"), /invalid reasoning effort/);
+    }
+    await assert.rejects(workflowReasoningEffort({ rpc: { model: {
+        getCurrent: async () => { throw new Error("Owning model snapshot unavailable"); },
+    } } }, "low"), /Owning model snapshot unavailable/);
+    // @ts-expect-error An incompatible native API must reject rather than invent a default.
+    await assert.rejects(workflowReasoningEffort({ rpc: { model: {} } }, "low"), /getCurrent/);
+});
 
 async function prototypeFixture() {
     const fixture = await extensionHarness();

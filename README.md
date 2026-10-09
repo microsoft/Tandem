@@ -114,6 +114,12 @@ without fabricating a graphical prototype.
 
 ### Finish Stage 1; open Development when ready
 
+Stage 1 workers honor the owning native session's explicitly selected reasoning
+effort. If unset, they keep their existing per-worker low/medium defaults.
+Failure to read that selection is an error, not permission to substitute a default.
+The read-only Development status endpoint includes `mainSessionModel`, the
+owning SDK's current model/effort snapshot; reading it starts no work.
+
 The existing `generate-design-spec` action is retained: it creates
 `draft-feature-spec` in Prototype, not a downstream technical Design stage.
 Completion checks the displayed checkpoint, source fingerprint, applicable sketch

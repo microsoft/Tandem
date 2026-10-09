@@ -42,10 +42,13 @@ async function requestPreparation(fixture: Awaited<ReturnType<typeof extensionHa
     return { pending, args: request.args };
 }
 
-test("automatic Preparation binds its run before agents and writes a versioned Requirements handoff", async () => {
+for (const effort of [undefined, "low"]) test(`automatic Preparation binds its run, preserves ${effort ?? "default"} effort and writes a versioned Requirements handoff`, async () => {
     const fixture = await extensionHarness();
     try {
         await writeFile(join(fixture.root, "package.json"), '{"name":"existing-app"}');
+        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, model: {
+            getCurrent: async () => ({ modelId: "fixture-model", ...(effort ? { reasoningEffort: effort } : {}) }),
+        } } });
         const state = fixture.api.createState("sample", "Build an app");
         await fixture.api.persistState(state);
         const pending = await fixture.api.ensurePreparationStarted(state, true);
@@ -66,9 +69,10 @@ test("automatic Preparation binds its run before agents and writes a versioned R
         const result = await fixture.api.preparationFactory.run({
             args: request.args, runId: "prepare-run", phase() {}, log() {},
             step: async (key: string, work: () => Promise<unknown>) => { keys.push(key); return work(); },
-            agent: async (_prompt: string, options: { label: string; agent?: string }) => {
+            agent: async (_prompt: string, options: { label: string; agent?: string; reasoningEffort: string }) => {
                 assert.equal((await fixture.api.loadState("sample")).preparation.processing?.runId, "prepare-run");
                 assert.equal(options.agent, options.label === "prepare:requirements" ? fixture.api.textWorkerAgent.name : undefined);
+                assert.equal(options.reasoningEffort, effort ?? (options.label === "prepare:workspace" ? "low" : "medium"));
                 return results.shift();
             },
         });

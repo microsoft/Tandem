@@ -834,6 +834,10 @@ for (const stage of ["prepare", "requirements"] as const) test(`direct Developme
     const entry = await h.api.startServer("direct", "direct", "project:tandem", true);
     try {
         const before = await h.api.loadState("direct");
+        const status = await fetch(new URL("api/development/status", entry.url));
+        assert.equal(status.status, 200);
+        assert.deepEqual((await status.json()).mainSessionModel, { modelId: "fixture-model" });
+        assert.equal(h.developmentOpens.length, 0, "Reading the owning model does not initialize Development.");
         for (let attempt = 0; attempt < 2; attempt++) {
             const opened = await fetch(new URL("api/development/open", entry.url), {
                 method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",

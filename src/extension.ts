@@ -24,7 +24,7 @@ import {
 import type { HistoricalStageId, LifecycleStageId, LifecycleState, TandemState } from "./types.js";
 import { ProjectStore, ProjectStoreError, normalizeProjectId, readJsonFile, writeJsonAtomically } from "./project-store.js";
 import {
-    assertFactoryRequestEnvelope, jsonResult, rejectedFactoryLaunch,
+    assertFactoryRequestEnvelope, jsonResult, rejectedFactoryLaunch, workflowReasoningEffort,
     type FactoryLaunchRequest, type PreparationToken,
 } from "./agent-runner.js";
 import {
@@ -6239,7 +6239,7 @@ async function handleRequest(entry, req, res) {
     if (requestUrl.pathname.startsWith("/api/development/")) {
         if (!(await isPreferredAnswerProvider(entry.extensionId))) throw new CanvasError("read_only_provider", "Open the writable provider for Development.");
         if (req.method === "GET" && requestUrl.pathname === "/api/development/status") {
-            sendJson(res, 200, await development.status());
+            sendJson(res, 200, { ...await development.status(), mainSessionModel: await session.rpc.model.getCurrent() });
             return;
         }
         if (req.method === "POST" && requestUrl.pathname === "/api/development/open") {
@@ -7093,7 +7093,7 @@ const preparationFactory = defineWorkflow({
             const analysis: unknown = jsonResult(await ctx.agent(preparationWorkspacePrompt(args), {
                 label: "prepare:workspace",
                 schema: preparationWorkspaceOutputSchema,
-                reasoningEffort: "low",
+                reasoningEffort: await workflowReasoningEffort(session, "low"),
             }));
             if (!isObject(analysis)) throw new Error("Preparation returned an invalid workspace analysis.");
             return { summary: analysis.summary, checks: analysis.checks };
@@ -7130,7 +7130,7 @@ const preparationFactory = defineWorkflow({
                         },
                         required: ["requiresSourceResearch", "handoff"],
                     },
-                    reasoningEffort: "low",
+                    reasoningEffort: await workflowReasoningEffort(session, "low"),
                 })))
             : null;
         if (workspaceAnalysis.emptyWorkspace === true &&
@@ -7153,7 +7153,7 @@ const preparationFactory = defineWorkflow({
             jsonResult(await ctx.agent(preparationSourcesPrompt(args, workspaceAnalysis), {
                 label: "prepare:sources",
                 schema: preparationSourcesOutputSchema,
-                reasoningEffort: "medium",
+                reasoningEffort: await workflowReasoningEffort(session, "medium"),
             })),
         );
         await recordPreparationWorkItem(
@@ -7183,7 +7183,7 @@ const preparationFactory = defineWorkflow({
                     label: "prepare:requirements",
                     agent: textWorkerAgent.name,
                     schema: preparationFactoryOutputSchema,
-                    reasoningEffort: "medium",
+                    reasoningEffort: await workflowReasoningEffort(session, "medium"),
                 },
             )),
         );
@@ -7281,7 +7281,7 @@ const usageSuggestionFactory = defineWorkflow({
                     },
                     required: ["suggestions"],
                 },
-                reasoningEffort: "low",
+                reasoningEffort: await workflowReasoningEffort(session, "low"),
             },
         ) as Promise<any>;
     },
@@ -7417,8 +7417,9 @@ const answerFactory = defineWorkflow({
                         && typeof node.answer === "string" && node.answer.trim()).map((node) => node.id),
                     subscribe: (handler) => ctx.session.on(handler),
                     getRunDetail: () => ctx.session.workflow.getRunDetail(ctx.runId),
-                    run: () => ctx.agent(answerFactoryPrompt(args), {
-                        label: "Stream app drawings", agent: textWorkerAgent.name, reasoningEffort: "medium",
+                    run: async () => ctx.agent(answerFactoryPrompt(args), {
+                        label: "Stream app drawings", agent: textWorkerAgent.name,
+                        reasoningEffort: await workflowReasoningEffort(session, "medium"),
                     }),
                     preview: (document, sequence) => {
                         ctx.signal.throwIfAborted();
@@ -7446,7 +7447,7 @@ const answerFactory = defineWorkflow({
                 label: args.action === "apply-defaults" ? "Reconcile whole-graph defaults" : "Process Tandem answer",
                 schema: args.state.processing?.prototypeCheckpointId ? prototypeCheckpointOutputSchema
                     : args.action === "apply-defaults" ? requirementsChangeSetSchema : answerFactoryOutputSchema,
-                reasoningEffort: "medium",
+                reasoningEffort: await workflowReasoningEffort(session, "medium"),
             }) as Promise<ReturnType<typeof jsonResult>>;
         });
         if (!isObject(result)) {

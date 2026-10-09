@@ -49,16 +49,17 @@ async function setup(legacyEvents = false) {
             listeners.add(callback);
             return () => { listeners.delete(callback); };
         },
-        rpc: { ...h.session.rpc, workflow: {
+        rpc: { ...h.session.rpc, model: { getCurrent: async () => ({ modelId: "fixture-model", reasoningEffort: "low" }) }, workflow: {
             run: async (request) => {
                 h.requests.push(request);
                 const result = await h.api.answerFactory.run({
                     args: request.args, runId: "stream-run", signal, session: runtime,
                     log() {}, phase() {},
                     step: async (_key: string, producer: () => Promise<unknown>) => producer(),
-                    agent: async (prompt: string, options: { schema?: unknown; agent?: string }) => {
+                    agent: async (prompt: string, options: { schema?: unknown; agent?: string; reasoningEffort: string }) => {
                         assert.equal(options.schema, undefined, "a whole-document schema would buffer the response");
                         assert.equal(options.agent, h.api.textWorkerAgent.name);
+                        assert.equal(options.reasoningEffort, "low");
                         assert.match(prompt, /newline-delimited JSON drawing operations/);
                         ready.resolve();
                         return output.promise;

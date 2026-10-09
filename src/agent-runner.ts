@@ -11,6 +11,18 @@ export interface PreparationToken {
     runId: string | null;
 }
 
+export async function workflowReasoningEffort(
+    session: { rpc: { model: Pick<Awaited<ReturnType<typeof joinSession>>["rpc"]["model"], "getCurrent"> } },
+    defaultEffort: "low" | "medium",
+): Promise<string> {
+    const { reasoningEffort } = await session.rpc.model.getCurrent();
+    if (reasoningEffort === undefined) return defaultEffort;
+    if (typeof reasoningEffort !== "string" || !reasoningEffort.trim()) {
+        throw new Error("The owning session returned an invalid reasoning effort; the worker was not started.");
+    }
+    return reasoningEffort;
+}
+
 export function assertFactoryRequestEnvelope(request: FactoryLaunchRequest): void {
     if (!request || typeof request !== "object" || typeof request.name !== "string" || !request.name.trim() ||
         !Object.hasOwn(request, "args") || Object.keys(request).some((key) => !["name", "args", "options"].includes(key))) {

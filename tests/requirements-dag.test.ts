@@ -27,7 +27,9 @@ test("DAG generation does not turn usage intake into a decision, and a rejected 
         await h.api.persistState(initial);
         let fail = true;
         let attempts = 0;
-        h.api.setSession({ ...h.session, rpc: { ...h.session.rpc, workflow: {
+        h.api.setSession({ ...h.session, rpc: { ...h.session.rpc, model: {
+            getCurrent: async () => ({ modelId: "fixture-model", reasoningEffort: "low" }),
+        }, workflow: {
             run: async (request: any) => {
                 h.requests.push(request);
                 attempts++;
@@ -46,7 +48,10 @@ test("DAG generation does not turn usage intake into a decision, and a rejected 
                         args: request.args, runId,
                         phase() {}, log() {},
                         step: (_name: string, run: () => Promise<unknown>) => run(),
-                        agent: async () => result,
+                        agent: async (_prompt, options) => {
+                            assert.equal(options.reasoningEffort, "low");
+                            return result;
+                        },
                     });
                     return { status: "completed", runId, result: accepted };
                 } catch (error) {
