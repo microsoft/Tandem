@@ -117,6 +117,9 @@ without fabricating a graphical prototype.
 Stage 1 workers honor the owning native session's explicitly selected reasoning
 effort. If unset, they keep their existing per-worker low/medium defaults.
 Failure to read that selection is an error, not permission to substitute a default.
+Stage 1 workflow results are consumed by the extension with native completion
+notifications disabled. Success or failure updates Tandem's UI and receipts;
+it must not independently wake a foreground model turn.
 The read-only Development status endpoint includes `mainSessionModel`, the
 owning SDK's current model/effort snapshot; reading it starts no work.
 Programmatic browser hosts can explicitly pass

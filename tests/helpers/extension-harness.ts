@@ -64,6 +64,7 @@ interface HarnessApi {
     }>;
     closeServers(): Promise<void>;
     runEffortFactory(id: string, requestId: string, request: FactoryLaunchRequest): Promise<unknown>;
+    resumeEffortRun(id: string, runId: string): Promise<unknown>;
     waitForEffortRun(id: string, runId: string): Promise<unknown>;
 }
 
@@ -106,7 +107,7 @@ async function compile(): Promise<string> {
         logLevel: "silent",
         define: { __TANDEM_VERSION__: JSON.stringify("test") },
     });
-    return result.outputFiles[0].text + "\nmodule.exports.assertDevelopmentAvailable = assertDevelopmentAvailable;";
+    return result.outputFiles[0].text + "\nmodule.exports.assertDevelopmentAvailable = assertDevelopmentAvailable; module.exports.resumeEffortRun = resumeEffortRun;";
 }
 
 export async function extensionHarness(speechEnvironment: Record<string, string> = {}, sharedRoot?: string, rendererHtml = "", workspaceRoot?: string) {

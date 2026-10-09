@@ -1499,7 +1499,10 @@ async function runEffortFactory(prototypeId: string, requestId: string, request:
         await persistState({ ...current, factoryRuns: [...(current.factoryRuns || []),
             { requestId, generation, runId: null, terminal: false }] });
         // Dispatch while owning the claim, but release it before awaiting SDK callbacks.
-        launched = Promise.resolve().then(() => session.rpc.workflow.run(request))
+        // The extension consumes the durable result; a native notification would start an unrelated foreground turn.
+        launched = Promise.resolve().then(() => session.rpc.workflow.run({
+            ...request, options: { ...request.options, notifyOnComplete: false },
+        }))
             .then((run) => ({ run }), (error: unknown) => ({ error }));
     });
     const outcome = await launched;
@@ -1585,7 +1588,7 @@ async function resumeEffortRun(prototypeId, runId) {
             await persistState({ ...current, factoryRuns: receipts.map((item) =>
                 item.runId === runId ? { ...item, terminal: false } : item) });
         }
-        resumed = session.workflow.resume(runId);
+        resumed = session.workflow.resume(runId, { notifyOnComplete: false });
     });
     const run = await resumed;
     const current = await loadState(prototypeId);

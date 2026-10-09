@@ -58,6 +58,30 @@ test("factory RPC limits use the SDK options envelope, and malformed launches fa
     } finally { await fixture.close(); }
 });
 
+test("extension-owned workflow outcomes do not wake the foreground model and preserve exact limits", async () => {
+    const fixture = await extensionHarness();
+    try {
+        const state = fixture.api.createState("sample", "An explicit UI request");
+        state.preparation.status = "running";
+        state.preparation.processing = { requestId: "owned-request", generation: state.generation,
+            runId: null, requestedAt: state.updatedAt, completedAt: null };
+        await fixture.api.persistState(state);
+        const request = { name: "owned-workflow", args: { requestId: "owned-request" },
+            options: { notifyOnComplete: true, limits: { timeoutSeconds: 240, maxConcurrentSubagents: 1, maxTotalSubagents: 3 } } };
+        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, workflow: {
+            run: async (actual) => {
+                assert.equal(actual.options.notifyOnComplete, false);
+                assert.deepEqual(JSON.parse(JSON.stringify(actual.options.limits)), request.options.limits);
+                assert.equal(actual.args, request.args);
+                return { runId: "owned-run", status: "completed", result: { confirmed: true } };
+            },
+        } } });
+        const result = await fixture.api.runEffortFactory("sample", "owned-request", request);
+        assert.equal(result.status, "completed");
+        assert.equal(request.options.notifyOnComplete, true, "Caller input is not rewritten.");
+        assert.equal((await fixture.api.loadState("sample")).factoryRuns[0].terminal, true);
+    } finally { await fixture.close(); }
+});
 test("a definite pre-launch rejection releases its receipt and retries the prepared checkpoint", async () => {
     const fixture = await prototypeFixture();
     try {
@@ -90,6 +114,30 @@ test("a definite pre-launch rejection releases its receipt and retries the prepa
         assert.equal(request.options.limits.timeoutSeconds, 300);
         assert.equal(request.options.limits.maxAiCredits, 10_000);
         assert.equal(Object.hasOwn(request, "limits"), false);
+    } finally { await fixture.close(); }
+});
+
+test("owned workflow resume disables foreground notifications without changing its limits or identity", async () => {
+    const fixture = await extensionHarness();
+    try {
+        const state = fixture.api.createState("sample", "Resume the owned stage only");
+        state.preparation.status = "running";
+        state.preparation.processing = { requestId: "saved-request", generation: state.generation,
+            runId: "saved-run", requestedAt: state.updatedAt, completedAt: null };
+        state.factoryRuns = [{ requestId: "saved-request", generation: state.generation, runId: "saved-run", terminal: false }];
+        await fixture.api.persistState(state);
+        fixture.api.setSession({ ...fixture.session, workflow: {
+            resume: async (runId, options) => {
+                assert.equal(runId, "saved-run");
+                assert.deepEqual(JSON.parse(JSON.stringify(options)), { notifyOnComplete: false });
+                return { runId, status: "completed", result: {} };
+            },
+        } });
+        await fixture.api.resumeEffortRun("sample", "saved-run");
+        const receipt = (await fixture.api.loadState("sample")).factoryRuns[0];
+        assert.equal(receipt.runId, "saved-run");
+        assert.equal(receipt.requestId, "saved-request");
+        assert.equal(receipt.terminal, true);
     } finally { await fixture.close(); }
 });
 
