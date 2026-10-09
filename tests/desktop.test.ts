@@ -171,6 +171,127 @@ const desktopPermissionRequests = {
 } satisfies { [Kind in PermissionRequest["kind"]]: Extract<PermissionRequest, { kind: Kind }> };
 const permissionInvocation = { sessionId: "desktop-test" };
 
+function nativePermission(f: ReturnType<typeof protocolFixture>, request: PermissionRequest, requestId: string,
+    agentId = "worker-a", sessionId = permissionInvocation.sessionId) {
+    f.protocol.observeNativeEvent(sessionId, { type: "subagent.started", agentId, data: { workflowRunId: `workflow-${agentId}` } });
+    f.protocol.observeNativeEvent(sessionId, { type: "permission.requested", agentId, data: { requestId, permissionRequest: request } });
+}
+const cancelledWorker = (f: ReturnType<typeof protocolFixture>, agentId = "worker-a", sessionId = permissionInvocation.sessionId) =>
+    f.protocol.observeNativeEvent(sessionId, { type: "subagent.completed", agentId, data: { cancelled: true } });
+
+test("native cancellation dismisses exact pending consent and stale Allow all cannot approve it", async () => {
+    const f = protocolFixture();
+    try {
+        const request = { ...shellPermission(), toolCallId: "owned-tool" };
+        nativePermission(f, request, "native-request");
+        const permission = f.protocol.permission(request, permissionInvocation);
+        await Promise.resolve();
+        const id = f.events.find(event => event.type === "permission")!.id;
+        cancelledWorker(f);
+        assert.equal((await permission).kind, "reject");
+        assert.equal(f.protocol.waitingForInput, false);
+        assert.ok(f.events.some(event => event.type === "permission-resolved" && event.id === id));
+        assert.ok(f.events.some(event => event.type === "status" && /dismissed/.test(String(event.message))));
+        f.reply({ type: "permission-response", id, approved: true, allowAllForSession: true });
+        assert.equal(f.events.at(-1)!.type, "error");
+        assert.equal(f.protocol.permissionMode, "ask");
+    } finally { f.protocol.close(); }
+});
+
+test("callback before native attribution waits and a previously cancelled worker never receives a prompt", async () => {
+    const f = protocolFixture();
+    try {
+        const request = { ...shellPermission(), toolCallId: "late-attribution" };
+        const permission = f.protocol.permission(request, permissionInvocation);
+        await Promise.resolve();
+        assert.equal(f.events.length, 0);
+        cancelledWorker(f);
+        nativePermission(f, request, "native-late");
+        assert.equal((await permission).kind, "reject");
+        assert.equal(f.events.filter(event => event.type === "permission").length, 0);
+    } finally { f.protocol.close(); }
+});
+
+test("cancellation racing an already clicked UI approval fences the SDK decision", async () => {
+    const f = protocolFixture();
+    try {
+        const request = { ...shellPermission(), toolCallId: "racing-tool" };
+        nativePermission(f, request, "native-race");
+        const permission = f.protocol.permission(request, permissionInvocation);
+        await Promise.resolve();
+        f.reply({ type: "permission-response", id: f.events.find(event => event.type === "permission")!.id, approved: true });
+        cancelledWorker(f);
+        assert.equal((await permission).kind, "reject");
+    } finally { f.protocol.close(); }
+});
+
+test("cancelling one native worker leaves independent consent and normal completion intact", async () => {
+    const f = protocolFixture();
+    try {
+        const a = { ...shellPermission("Get-Date"), toolCallId: "tool-a" };
+        const b = { ...shellPermission("Get-Location"), toolCallId: "tool-b" };
+        nativePermission(f, a, "request-a", "worker-a");
+        nativePermission(f, b, "request-b", "worker-b");
+        const first = f.protocol.permission(a, permissionInvocation), second = f.protocol.permission(b, permissionInvocation);
+        await Promise.resolve();
+        const secondId = f.events.filter(event => event.type === "permission")[1].id;
+        cancelledWorker(f, "worker-b", "different-session");
+        cancelledWorker(f, "worker-a");
+        assert.equal((await first).kind, "reject");
+        assert.equal(f.protocol.waitingForInput, true);
+        f.protocol.observeNativeEvent(permissionInvocation.sessionId, { type: "subagent.completed",
+            agentId: "worker-b", data: { cancelled: false } });
+        f.reply({ type: "permission-response", id: secondId, approved: true });
+        assert.deepEqual(await second, { kind: "approve-once", approvedInteractively: true });
+    } finally { f.protocol.close(); }
+});
+
+test("native permission completion retires the UI without sending another decision", async () => {
+    const f = protocolFixture();
+    try {
+        const request = { ...shellPermission(), toolCallId: "retired-tool" };
+        nativePermission(f, request, "native-retired");
+        const permission = f.protocol.permission(request, permissionInvocation);
+        await Promise.resolve();
+        const id = f.events.find(event => event.type === "permission")!.id;
+        f.protocol.observeNativeEvent(permissionInvocation.sessionId, { type: "permission.completed",
+            data: { requestId: "native-retired", result: { kind: "denied" } } });
+        assert.deepEqual(await permission, { kind: "no-result" });
+        assert.ok(f.events.some(event => event.type === "permission-resolved" && event.id === id));
+        assert.equal(f.protocol.waitingForInput, false);
+    } finally { f.protocol.close(); }
+});
+
+test("Close releases a permission callback still waiting for native attribution", async () => {
+    const f = protocolFixture();
+    const permission = f.protocol.permission({ ...shellPermission(), toolCallId: "not-yet-attributed" }, permissionInvocation);
+    f.protocol.close();
+    assert.equal((await permission).kind, "reject");
+});
+
+test("native permission identity remains session-specific and sequential requests do not reuse an old decision", async () => {
+    const f = protocolFixture();
+    try {
+        const request = { ...shellPermission(), toolCallId: "sequential-tool" };
+        const first = f.protocol.permission(request, permissionInvocation);
+        nativePermission(f, request, "foreign-request", "worker-a", "foreign-session");
+        await Promise.resolve();
+        assert.equal(f.events.length, 0);
+        nativePermission(f, request, "first-request");
+        await Promise.resolve();
+        f.reply({ type: "permission-response", id: f.events.find(event => event.type === "permission")!.id, approved: false });
+        assert.equal((await first).kind, "reject");
+        f.protocol.observeNativeEvent(permissionInvocation.sessionId, { type: "permission.completed", data: { requestId: "first-request" } });
+        nativePermission(f, request, "next-request");
+        const second = f.protocol.permission(request, permissionInvocation);
+        await Promise.resolve();
+        const prompts = f.events.filter(event => event.type === "permission");
+        assert.equal(prompts.length, 2);
+        f.reply({ type: "permission-response", id: prompts[1].id, approved: true });
+        assert.deepEqual(await second, { kind: "approve-once", approvedInteractively: true });
+    } finally { f.protocol.close(); }
+});
+
 for (const request of Object.values(desktopPermissionRequests)) {
     test(`desktop asks before approving ${request.kind} by default`, async () => {
         const f = protocolFixture();

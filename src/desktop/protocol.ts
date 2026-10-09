@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createInterface, type Interface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import { approveAll, type PermissionHandler, type PermissionRequest, type SessionConfig } from "@github/copilot-sdk";
+import { NativePermissionLifetimes, type NativePermissionScope } from "./native-permission-lifetime.js";
 
 type UserInputHandler = NonNullable<SessionConfig["onUserInputRequest"]>;
 type UserInputRequest = Parameters<UserInputHandler>[0];
@@ -34,8 +35,9 @@ export class DesktopProtocol {
     private readonly reader: Interface;
     private readonly pending = new Map<string, {
         type: string; resolve(value: Reply): void; reject(error: Error): void;
-        canAutoApprove: boolean;
+        canAutoApprove: boolean; scope?: NativePermissionScope;
     }>();
+    private readonly permissionLifetimes = new NativePermissionLifetimes(scope => this.expirePermissionScope(scope));
     private closed = false;
     private mode: DesktopPermissionMode = "ask";
 
@@ -51,6 +53,20 @@ export class DesktopProtocol {
 
     get waitingForInput(): boolean { return !this.closed && this.pending.size > 0; }
     get permissionMode(): DesktopPermissionMode { return this.mode; }
+
+    observeNativeEvent(sessionId: string, event: { type: string; agentId?: string; data: unknown }): void {
+        this.permissionLifetimes.observe(sessionId, event);
+    }
+
+    private expirePermissionScope(scope: NativePermissionScope): void {
+        for (const [id, pending] of this.pending) {
+            if (pending.scope !== scope) continue;
+            this.pending.delete(id);
+            this.send({ type: "permission-resolved", id });
+            this.send({ type: "status", message: "This native permission is no longer actionable; its pending consent was dismissed." });
+            pending.resolve({ approved: false });
+        }
+    }
 
     private receive(line: string): void {
         try {
@@ -68,6 +84,7 @@ export class DesktopProtocol {
             const request = this.pending.get(value.id);
             if (!request || request.type !== value.type) throw new Error("Desktop response does not match a pending request.");
             if (value.type === "permission-response") {
+                if (request.scope?.cancelled || request.scope?.retired) throw new Error("Native work ended; this permission is no longer active.");
                 if (typeof value.approved !== "boolean" ||
                     (value.allowAllForSession !== undefined && typeof value.allowAllForSession !== "boolean")) {
                     throw new Error("Invalid desktop permission response.");
@@ -90,16 +107,18 @@ export class DesktopProtocol {
         if (mode !== "allow-all") return;
         for (const [id, request] of this.pending) {
             if (request.type !== "permission-response" || !request.canAutoApprove) continue;
+            if (request.scope?.cancelled || request.scope?.retired) { this.expirePermissionScope(request.scope); continue; }
             this.pending.delete(id);
             this.send({ type: "permission-resolved", id });
             request.resolve({ approved: true, approvedInteractively: false });
         }
     }
 
-    private ask(event: DesktopEvent & { id: string }, responseType: string, canAutoApprove = false): Promise<Reply> {
+    private ask(event: DesktopEvent & { id: string }, responseType: string, canAutoApprove = false, scope?: NativePermissionScope): Promise<Reply> {
         if (this.closed) return Promise.reject(new Error("The desktop window is closed."));
+        if (scope?.cancelled || scope?.retired) return Promise.resolve({ approved: false });
         return new Promise((resolve, reject) => {
-            this.pending.set(event.id, { type: responseType, resolve, reject, canAutoApprove });
+            this.pending.set(event.id, { type: responseType, resolve, reject, canAutoApprove, scope });
             this.send(event);
         });
     }
@@ -108,11 +127,19 @@ export class DesktopProtocol {
         if (this.closed) throw new Error("The desktop window is closed.");
         const managed = invocation.managedSettingsEnabled || request.managedApprovalRequired;
         const bypass = "requestSandboxBypass" in request && request.requestSandboxBypass;
+        const scope = this.permissionLifetimes.claim(invocation.sessionId, request);
+        if (scope) await scope.ready;
+        const cancelled = () => scope?.cancelled === true;
+        const cancelledResult = () => ({ kind: "reject" as const, feedback: "Native work was cancelled or its tool identity changed. This permission is no longer active." });
         let canAutoApprove = !managed && !bypass && request.kind !== "extension-env-access";
         for (;;) {
+            if (scope?.retired) return { kind: "no-result" };
+            if (cancelled()) return cancelledResult();
             if (this.closed) return { kind: "reject" };
             if (this.mode === "allow-all" && canAutoApprove) {
                 const result = await approveAll(request, invocation);
+                if (scope?.retired) return { kind: "no-result" };
+                if (cancelled()) return cancelledResult();
                 if (this.closed) return { kind: "reject" };
                 if (result.kind === "no-result") canAutoApprove = false;
                 else if (this.mode === "allow-all") return result;
@@ -131,7 +158,9 @@ export class DesktopProtocol {
                 this.send({ type: "error", message: feedback });
                 return { kind: "reject", feedback };
             }
-            const reply = await this.ask(event, "permission-response", canAutoApprove);
+            const reply = await this.ask(event, "permission-response", canAutoApprove, scope);
+            if (scope?.retired) return { kind: "no-result" };
+            if (cancelled()) return cancelledResult();
             if (this.closed || reply.approved !== true) return { kind: "reject" };
             if (reply.approvedInteractively === true) return { kind: "approve-once", approvedInteractively: true };
             // A mode change released this prompt; recheck it before automatic approval.
@@ -155,6 +184,7 @@ export class DesktopProtocol {
             else request.reject(new Error("The desktop window is closing."));
         }
         this.pending.clear();
+        this.permissionLifetimes.close();
         this.reader.close();
         this.input.destroy();
     }

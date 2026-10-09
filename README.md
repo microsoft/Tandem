@@ -136,6 +136,12 @@ They are validated against the native model catalog and forwarded to SDK
 creation/resume, with actual readback checked before opening the canvas.
 Omitting them preserves native defaults and saved main-session selection.
 This does not configure or overwrite the separate private Development session.
+The native host also retires a pending tool-consent card when its exact native
+worker is cancelled or its native permission request has already completed.
+Correlation uses the owning session and exact native request envelope, request,
+tool, agent and available workflow identities. A stale card cannot grant
+once-only or session-wide approval; unrelated workers and ordinary completion
+keep their existing consent behavior.
 
 The existing `generate-design-spec` action is retained: it creates
 `draft-feature-spec` in Prototype, not a downstream technical Design stage.

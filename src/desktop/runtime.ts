@@ -171,6 +171,7 @@ export async function runDesktopRuntime(options: {
             }
         }
         const config = desktopSessionConfig(ownership.workspace, options.runtimeDirectory, protocol, options.modelSelection);
+        config.onEvent = event => protocol.observeNativeEvent(ownership.sessionId, event);
         session = await openDesktopSession(client, ownership, config);
         await ownership.save();
         if (options.modelSelection) {
