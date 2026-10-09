@@ -79,3 +79,20 @@ test("unopened saved ownership and uncertainty are not quiet upstream reset boun
   read.mock.mockImplementation(async () => ({ status: "new" }));
   await controller.assertQuiet();
 });
+
+test("duplicate Development opens share one view without initializing or submitting private work", async t => {
+  const root = await mkdtemp(join(tmpdir(), "tandem-direct-view-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const controller = createHumanLoopController({ workspacePath: root, sdkModulePath: "fixture-only" });
+  t.after(() => controller.close());
+  const [first, duplicate] = await Promise.all([
+    controller.openView("development-browser", { surface: "browser" }),
+    controller.openView("development-browser", { surface: "browser" }),
+  ]);
+  assert.equal(first, duplicate);
+  assert.equal(await controller.openView("development-browser"), first);
+  assert.equal(controller.installation, undefined);
+  const state = await fetch(new URL("api/snapshot", first.url)).then(response => response.json());
+  assert.equal(state.installation.status, "attaching");
+  assert.equal(state.workflow, null);
+});

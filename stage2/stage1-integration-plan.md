@@ -4,6 +4,21 @@ This document describes the implemented composition of PR #14 into the Node
 application. The maintained Stage 2 engine and original renderer remain here;
 root `src` owns upstream discovery and the integration boundary.
 
+## Agreed stage boundary
+
+Stage 1 is optional. New and existing Git projects may open Development directly,
+without a Stage 1 goal, lifecycle completion, prototype or handoff. Stage 1, when
+used, collects Q&A, confirmed intent and prototype evidence; sketches support
+that prototype. It does not author a competing formal Design. Stage 2 Designer
+owns the canonical Design, and later changes stay in its conversation.
+
+The direct-open control and Development tab only open the runtime/view. Active
+upstream work, legacy ownership uncertainty and read-only providers remain
+blocked. Opening never fabricates Stage 1 completion or sends a project request.
+Ordinary Stage 2 messages may reference documents and source directly. The
+optional **Continue Design from Prototype** route remains a separate, strict,
+immutable receipt-backed handoff, not a general file importer.
+
 ## One host, one public provider, one private native session
 
 The Node/browser launcher uses `src\desktop\runtime.ts` and `workspace.ts`.
@@ -85,11 +100,16 @@ original renderer. Opening a view sends no project request.
 
 ## Exact upstream handoff
 
-The active lifecycle is:
+The optional upstream lifecycle is:
 
 ```text
 prepare -> requirements -> sketch -> prototype -> development
 ```
+
+Direct Development navigation does not rewrite that saved upstream lifecycle or
+mark any skipped stage complete. Stage 1's `draft-feature-spec` and prototype
+are evidence for Designer, not an accepted canonical Design or implementation
+authorization.
 
 `generate-design-spec` still creates the upstream `draft-feature-spec`.
 `beginPrototypeCompletion` and `completeLifecycleStage` retain checkpoint,
@@ -191,3 +211,10 @@ No-model compatibility is not evidence of a model-driven Router/Designer,
 implementation or agreed-journey success. Those live evaluations require explicit
 model and execution/credit limits. Report baseline failures, new failures and
 browser skips separately; do not fabricate successful verification.
+
+The current stable CLI can discard the native journal of a session closed before
+its first user input, even after explicit name/save (and a non-ephemeral host
+log). Such a missing previously created identity remains a visible recovery
+failure; Tandem does not silently replace it or broaden unused-setup authority.
+Used-session same-ID recovery is separately qualified and must not be presented
+as proof that this zero-input upstream limitation is resolved.

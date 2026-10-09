@@ -7,6 +7,54 @@ import { test, type TestContext } from "node:test";
 import { reactHarness, state, response } from "./helpers/react-harness.js";
 import { browserAvailable, openFixtureBrowser } from "../stage2/tandem/test/helpers/browser-fixture.mjs";
 
+test("fresh projects open Development directly without creating Stage1 state or a handoff", async t => {
+    const h = await reactHarness(t);
+    const value = state("prepare");
+    value.goal = "";
+    h.setFetch(async path => {
+        assert.equal(path, "/api/development/open");
+        return response({ url: "http://127.0.0.1:8765/" });
+    });
+    h.render(value); await h.flush();
+    assert.equal(h.requests.length, 0);
+    await h.click("open-development");
+    const frame = h.get<HTMLIFrameElement>("development-frame");
+    assert.equal(frame.src, "http://127.0.0.1:8765/");
+    assert.equal(h.document.querySelector("#continue-design"), null);
+    assert.ok(h.get("capture-development"), "Direct projects retain the explicit capture/delivery controls.");
+    await h.fire(h.get("preparation-tab"), "mousedown", { button: 0 });
+    assert.equal(h.get("studio-workspace").hidden, true);
+    assert.ok(h.get("open-development"));
+    await h.click("open-development");
+    assert.equal(h.get("development-frame"), frame);
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.store.getSnapshot().state.lifecycle.currentStage, "prepare");
+    assert.deepEqual(h.store.getSnapshot().state.lifecycle.completedStages, []);
+    assert.deepEqual(h.errors, []);
+});
+
+test("idle unfinished Stage1 can browse Development but active work and read-only ownership cannot open it", async t => {
+    const h = await reactHarness(t);
+    h.setFetch(async path => {
+        assert.equal(path, "/api/development/open");
+        return response({ url: "http://127.0.0.1:8765/" });
+    });
+    const value = state("requirements");
+    h.render({ ...value, preparation: { ...value.preparation, status: "running" } }); await h.flush();
+    await h.fire(h.get("development-tab"), "mousedown", { button: 0 });
+    assert.equal(h.requests.length, 0);
+    assert.match(h.document.body.textContent!, /Finish upstream work/);
+    h.render({ ...value, revision: 2, provider: { ...value.provider, canSubmitAnswers: false } }); await h.flush();
+    assert.equal(h.requests.length, 0);
+    assert.match(h.document.body.textContent!, /writable provider/);
+    h.render({ ...value, revision: 3 }); await h.flush();
+    assert.equal(h.requests.length, 1);
+    assert.ok(h.get("development-frame"));
+    assert.equal(h.document.querySelector("#continue-design"), null);
+    assert.equal(h.store.getSnapshot().state.lifecycle.currentStage, "requirements");
+    assert.deepEqual(h.errors, []);
+});
+
 test("Development mounts one isolated full workspace and navigation keeps its original frame", async t => {
     const h = await reactHarness(t);
     h.setFetch(async path => {
@@ -20,8 +68,8 @@ test("Development mounts one isolated full workspace and navigation keeps its or
     assert.equal(h.get("studio-workspace").dataset.development, "true");
     assert.equal(h.get<HTMLButtonElement>("reset-effort").disabled, true);
     assert.equal(h.document.querySelector('[data-stage-id="design"]'), null);
-    await h.click("preparation-tab");
-    await h.click("development-tab");
+    await h.fire(h.get("preparation-tab"), "mousedown", { button: 0 });
+    await h.fire(h.get("development-tab"), "mousedown", { button: 0 });
     assert.ok(h.get("development-frame") === frame, "Unsent private state is retained with its iframe.");
     assert.equal(h.requests.length, 1);
     assert.deepEqual(h.errors, []);

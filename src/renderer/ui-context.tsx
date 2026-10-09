@@ -129,6 +129,15 @@ export function hasStageData(state: UiState, stage: LifecycleStageId): boolean {
     || (stage === "sketch" && Boolean(state.sketch?.current));
 }
 
+export function canBrowseStage(state: UiState, stage: LifecycleStageId): boolean {
+  return stage === "development" || (hasStageData(state, stage) && !skippedStage(state, stage));
+}
+
+export function canOpenDevelopment(state: UiState): boolean {
+  return state.provider?.canSubmitAnswers !== false && !state.effortReset
+    && !state.developmentBlocker && !hasActiveJobs(state) && !state.factoryRuns?.some(run => !run.terminal);
+}
+
 export function useAction(key: string) {
   const { setBusy } = useUi();
   const running = useRef(false);

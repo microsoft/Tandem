@@ -116,6 +116,7 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
     await mkdir(workspace, { recursive: true });
     const requests: unknown[] = [];
     const developmentRequests: Array<Record<string, unknown>> = [];
+    const developmentOpens: string[] = [];
     let beforeDevelopmentStart: () => Promise<void> = async () => {};
     const logs: string[] = [];
     let speechTokenRequests = 0;
@@ -152,6 +153,8 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
                     if (developmentRequests.length) throw new Error("Finish or close Development before changing upstream discovery.");
                 },
                 status: async () => ({ installation: { status: "new" }, workflow: null }),
+                openView: async (id: string) => { developmentOpens.push(id); return { url: "http://127.0.0.1:8765/" }; },
+                reportError: (error: Error) => { logs.push(error.message); },
                 close: async () => ({ status: "closed", warnings: [] }),
                 start: async () => { await beforeDevelopmentStart(); return {
                     sessionId: "fixture-private",
@@ -223,7 +226,7 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
             }
             if (requests.length < count) throw new Error("The expected factory dispatch was not observed.");
         };
-        return { api, root, requests, developmentRequests, logs, session, waitForRequests,
+        return { api, root, requests, developmentRequests, developmentOpens, logs, session, waitForRequests,
             setBeforeDevelopmentStart(handler: () => Promise<void>) { beforeDevelopmentStart = handler; },
             setRename(value: typeof fs.rename) { rename = value; },
             setPreviewHtml(value: string) { previewHtml = value; },

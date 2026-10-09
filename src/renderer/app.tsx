@@ -4,7 +4,7 @@ import { ArrowRight, Check, ChevronDown, CircleDot, ClipboardList, Code, FileTex
 import { lifecycleStages } from "../workflow.js";
 import type { LifecycleStageId } from "../types.js";
 import { StudioStore } from "./state-store.js";
-import { DraftProvider, hasActiveJobs, hasStageData, skippedStage, UiContext, useAction, useDraft, useStatusHelp, useUi, type UiContextValue, type UiState } from "./ui-context.js";
+import { canBrowseStage, canOpenDevelopment, DraftProvider, hasActiveJobs, skippedStage, UiContext, useAction, useDraft, useStatusHelp, useUi, type UiContextValue, type UiState } from "./ui-context.js";
 import { PreparationPanel } from "./preparation-panel.js";
 import { RequirementsPanel } from "./requirements-panel.js";
 import { SketchPanel, SketchCompletionContext, isSketchRevisionApproved } from "./sketch-panel.js";
@@ -110,7 +110,7 @@ function EffortApp({ state, store, version, connectionError, confirm }: {
     return next;
   }), []);
   const browseStage = useCallback((stage: LifecycleStageId) => {
-    if (!hasStageData(state, stage) || skippedStage(state, stage)) return;
+    if (!canBrowseStage(state, stage)) return;
     setActiveTab(tabFor(stage)); setContextOpen(false);
   }, [state]);
   const selectArtifact = useCallback((id: string) => { setSelectedArtifact(id); setActiveTab("content"); setContextOpen(false); }, []);
@@ -143,7 +143,7 @@ function EffortApp({ state, store, version, connectionError, confirm }: {
   </SpeechProvider></UiContext.Provider>;
 }
 
-function GoalEntry() {
+function GoalEntry({ openDevelopment }: { openDevelopment: () => void }) {
   const { state, pending, post } = useUi();
   const action = useAction("effort");
   const [goal, setGoal] = useDraft("start-goal", "");
@@ -169,6 +169,11 @@ function GoalEntry() {
             data-status-help="Starting runs AI preparation: Tandem inspects the workspace and relevant sources, then opens Requirements. Implementation comes later."><Play size={16} aria-hidden="true" />{action.busy ? "Starting..." : "Start project"}</button></div>
         <p id="start-message" className="start-message" role="status" data-status={action.error ? "error" : "idle"}>{action.error || (!writable ? "Open the writable Tandem provider to start this project." : "")}</p>
       </form>
+      <button id="open-development" className="plan-button secondary" type="button"
+        disabled={pending || !canOpenDevelopment(state)} onClick={openDevelopment}>
+        <Code size={16} aria-hidden="true" />Open Development directly
+      </button>
+      <p className="muted">Preparation and prototyping are optional. Start a new project or continue an existing repository in Development; opening sends no project request.</p>
     </div>
   </main>;
 }
@@ -272,6 +277,8 @@ function Workspace(props: WorkspaceProps) {
   const [nextAction, setNextAction] = useState<{ id: string; label: string; revealId: string | null } | null>(null);
   const atStart = isGoalEntry(state);
   const developmentView = activeTab === "development";
+  const [developmentOpened, setDevelopmentOpened] = useState(developmentView);
+  useEffect(() => { if (developmentView) setDevelopmentOpened(true); }, [developmentView]);
   const contextHelp = useStatusHelp(`${activeTab}:${contextOpen}:${contextCollapsed}:${atStart}`);
   const previousAtStart = useRef(atStart);
   useLayoutEffect(() => {
@@ -347,14 +354,16 @@ function Workspace(props: WorkspaceProps) {
   }, [state, pending, atStart, current]);
   function navigate(tab: string) {
     const target = stageTabs.find((item) => item.value === tab);
-    if (target && (!hasStageData(state, target.stage) || skippedStage(state, target.stage))) return;
+    if (target && !canBrowseStage(state, target.stage)) return;
     onTabChange(tab as TabId);
     setContextOpen(false);
   }
   return <div className="app">
     <Header version={props.version} connectionError={props.connectionError} store={props.store} effortBusy={props.effortBusy} developmentView={developmentView} />
-    {atStart ? <GoalEntry /> : <Tabs.Root value={activeTab} onValueChange={navigate} asChild>
+    {atStart && !developmentView && <GoalEntry openDevelopment={() => navigate("development")} />}
+    {(!atStart || developmentView || developmentOpened) && <Tabs.Root value={activeTab} onValueChange={navigate} asChild>
       <main id="studio-workspace" ref={workspace} className="workspace" data-development={developmentView} data-context-open={contextOpen} data-context-collapsed={contextCollapsed}
+        hidden={atStart && !developmentView}
         inert={props.effortBusy || Boolean(state.effortReset)}
         aria-busy={props.effortBusy || Boolean(state.effortReset)} style={{ "--requirements-width": width + "px" } as CSSProperties}>
         <button id="context-toggle" className="context-toggle" type="button" aria-expanded={contextOpen} aria-controls="requirements-pane" onClick={() => setContextOpen(!contextOpen)}>
@@ -380,14 +389,14 @@ function Workspace(props: WorkspaceProps) {
             {lifecycleStages.map((stage, index) => {
               const skipped = skippedStage(state, stage.id);
               const done = state.lifecycle.completedStages.includes(stage.id);
-              const status = skipped ? "not applicable" : done ? "complete" : current === stage.id ? "active" : "locked";
+              const status = skipped ? "not applicable" : done ? "complete" : current === stage.id ? "active" : stage.id === "development" ? "available" : "locked";
               const StageIcon = stageTabs.find((tab) => tab.stage === stage.id)!.icon;
               const StatusIcon = skipped ? Minus : done ? Check : current === stage.id ? CircleDot : LockKeyhole;
               const output = [...(state.lifecycle.history || []), ...(state.lifecycle.outputs || [])].reverse().find((item) => item.stageId === stage.id);
               const stageHelp = `${stage.label} · ${status}${skipped ? ". " + skipped.reason : output?.path ? " · " + output.path : ""}`;
               return <li key={stage.id}><button className="stage-step" type="button" data-stage-id={stage.id} data-status={status} data-ui-key={"stage:" + stage.id}
                 aria-current={current === stage.id && !allComplete ? "step" : undefined} aria-pressed={viewed === stage.id}
-                disabled={Boolean(skipped) || !hasStageData(state, stage.id)} data-status-help={stageHelp}
+                disabled={!canBrowseStage(state, stage.id)} data-status-help={stageHelp}
                 title={contextCollapsed ? stageHelp : skipped?.reason || output?.path || `${index + 1}. ${stage.label} · ${status}`}
                 aria-label={`${stage.label}, ${status}${skipped ? ". " + skipped.reason : ""}`}
                 onClick={() => browseStage(stage.id)}>
@@ -438,7 +447,7 @@ function Workspace(props: WorkspaceProps) {
         <section id="preview-pane" className="preview" aria-label="Stage workspace">
           <div className="previewbar"><Tabs.List className="preview-tabs" aria-label="Stage workspace">
             {stageTabs.map((tab) => <Tabs.Trigger key={tab.value} value={tab.value} id={tab.id + "-tab"} data-tab={tab.value}
-              className="preview-tab" disabled={!hasStageData(state, tab.stage) || Boolean(skippedStage(state, tab.stage))}
+              className="preview-tab" disabled={!canBrowseStage(state, tab.stage)}
               title={skippedStage(state, tab.stage)?.reason || tab.label} aria-label={tab.label}
               aria-controls={tab.id + "-panel"} onFocus={(event) => event.currentTarget.scrollIntoView?.({ block: "nearest", inline: "nearest" })}>
               <tab.icon size={15} aria-hidden="true" /><span className="tab-label">{tab.label}</span></Tabs.Trigger>)}

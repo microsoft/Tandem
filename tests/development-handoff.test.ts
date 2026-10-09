@@ -813,6 +813,65 @@ test("a stale generation cannot create a new handoff or submit work", async () =
     } finally { await h.close(); }
 });
 
+for (const stage of ["prepare", "requirements"] as const) test(`direct Development HTTP open preserves ${stage} without handoff or model work`, async () => {
+    const h = await extensionHarness();
+    const state = h.api.createState("direct", stage === "prepare" ? "" : "An existing project");
+    state.stage = state.lifecycle.currentStage = stage;
+    state.lifecycle.completedStages = stage === "prepare" ? [] : ["prepare"];
+    if (stage === "requirements") state.preparation.status = "ready";
+    await h.api.persistState(state);
+    const entry = await h.api.startServer("direct", "direct", "project:tandem", true);
+    try {
+        const before = await h.api.loadState("direct");
+        for (let attempt = 0; attempt < 2; attempt++) {
+            const opened = await fetch(new URL("api/development/open", entry.url), {
+                method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+            });
+            assert.equal(opened.status, 200, await opened.clone().text());
+            assert.deepEqual(await opened.json(), { url: "http://127.0.0.1:8765/" });
+        }
+        assert.equal(JSON.stringify(await h.api.loadState("direct")), JSON.stringify(before));
+        assert.deepEqual(h.developmentOpens, ["development-browser", "development-browser"]);
+        assert.equal(h.developmentRequests.length, 0);
+        assert.equal(h.requests.length, 0);
+        await assert.rejects(h.api.continueDevelopment("direct", "project:tandem"), /Complete Prototype/);
+        assert.equal(h.developmentRequests.length, 0, "Opening directly does not weaken the strict Prototype handoff.");
+    } finally {
+        clearInterval(entry.heartbeat);
+        await new Promise<void>((resolve, reject) => entry.server.close(error => error ? reject(error) : resolve()));
+        await h.close();
+    }
+});
+
+test("direct Development HTTP open still excludes active upstream work and a read-only provider", async () => {
+    const h = await extensionHarness();
+    const state = h.api.createState("active");
+    state.preparation.status = "running";
+    await h.api.persistState(state);
+    const entry = await h.api.startServer("active", "active", "project:tandem", true);
+    try {
+        const post = () => fetch(new URL("api/development/open", entry.url), {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+        });
+        const active = await post();
+        assert.notEqual(active.status, 200);
+        assert.match(await active.text(), /Finish upstream work/);
+        state.preparation.status = "not-started";
+        await h.api.persistState(state);
+        h.api.setSession({ ...h.session, rpc: { ...h.session.rpc,
+            extensions: { list: async () => ({ extensions: [{ id: "user:tandem", status: "running" }] }) } } });
+        const readOnly = await post();
+        assert.notEqual(readOnly.status, 200);
+        assert.match(await readOnly.text(), /writable provider/);
+        assert.deepEqual(h.developmentOpens, []);
+        assert.equal(h.developmentRequests.length, 0);
+    } finally {
+        clearInterval(entry.heartbeat);
+        await new Promise<void>((resolve, reject) => entry.server.close(error => error ? reject(error) : resolve()));
+        await h.close();
+    }
+});
+
 test("shared upstream storage does not make another worktree's active work a local cutover blocker", async () => {
     const root = await mkdtemp(join(tmpdir(), "tandem-shared-worktrees-"));
     const shared = join(root, "shared"), local = join(root, "local"), other = join(root, "other");

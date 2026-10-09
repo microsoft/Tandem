@@ -1,8 +1,10 @@
 # Tandem
 
-Tandem takes software intent through **Preparation -> Requirements -> Sketch ->
-Prototype -> Development**. Development embeds the Stage 2 human-loop application
-from PR #14, including its original Design/Conversation UI and native role workflow.
+Tandem can open **Development directly** for a new or existing Git project.
+Optional Stage 1 collects Q&A, confirmed intent and prototype evidence through
+**Preparation -> Requirements -> Sketch -> Prototype**. It does not own formal
+Design. Stage 2 Development owns canonical Design, confirmed implementation and
+Review, using its original Design/Conversation UI and native role workflow.
 The former Design, Plan, Implement and Test stage engine is retired.
 
 ## Standalone Node/browser app
@@ -86,6 +88,13 @@ authority. Before an authorized release, bump with
 does not require a release bump or installation update.
 
 ## Workflow
+
+Choose **Open Development directly** on the initial screen, or the Development
+tab from idle upstream discovery. No goal, completed Prototype or handoff is
+required. Opening creates or recovers the owned private runtime but sends no
+project request. Use its conversation to describe a new project or reference
+existing documents and source. Active upstream work and foreign/read-only
+ownership still block opening; implementation still needs explicit confirmation.
 
 Preparation inspects the workspace and necessary authoritative sources, then
 offers optional first-person usages. Generic goals in an empty workspace do not

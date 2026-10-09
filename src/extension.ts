@@ -2350,6 +2350,13 @@ function assertEffortRevision(state, input) {
 }
 
 async function startEffort(prototypeId, extensionId, input) {
+    return developmentTransition.run(async () => {
+        await development.assertQuiet();
+        return startEffortLocked(prototypeId, extensionId, input);
+    });
+}
+
+async function startEffortLocked(prototypeId, extensionId, input) {
     validateEffortRequest(input, "start");
     if (!(await isPreferredAnswerProvider(extensionId))) {
         throw new AnswerRequestError(409, "Start the effort from its writable Tandem provider.");
@@ -6240,7 +6247,7 @@ async function handleRequest(entry, req, res) {
         if (req.method === "POST" && requestUrl.pathname === "/api/development/open") {
             const state = await loadState(entry.prototypeId);
             assertLegacyCutover(state);
-            if (state.lifecycle.currentStage !== "development") throw new CanvasError("prototype_incomplete", "Complete Prototype before opening Development.");
+            if (hasActiveWork(state)) throw new CanvasError("upstream_active", "Finish upstream work before starting Development in this workspace.");
             await assertDevelopmentAvailable();
             const provider = await development.openView("development-browser", { surface: "browser" });
             void development.start().catch(development.reportError);

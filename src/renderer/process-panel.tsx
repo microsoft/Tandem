@@ -133,7 +133,7 @@ function ToolEvidence() {
   </div>;
 }
 
-export function ProcessPanel() {
+export function ProcessPanel({ development = false }: { development?: boolean } = {}) {
   const ui = useUi();
   const { state, pending, post, confirm, guidance } = ui;
   const scope = JSON.stringify([state.prototypeId, state.generation, "process"]);
@@ -251,7 +251,7 @@ export function ProcessPanel() {
   return <ProcessSection name="root" label="Handoffs & process" outer>
     <p id="handoff-help" className="visually-hidden">Finish a stage, then accept its immutable handoff. Exports never commit or publish.</p>
     {!writable && <p id="process-readonly-help" className="visually-hidden" role="status">{guidance("change process settings or handoffs")}</p>}
-    {state.lifecycle.currentStage === "development" && <button id="capture-development" className="complete-stage"
+    {(development || state.lifecycle.currentStage === "development") && <button id="capture-development" className="complete-stage"
       type="button" disabled={blocked} onClick={() => perform({ action: "capture-development" })}>
       <FileText size={14} aria-hidden="true" /> Capture Development outcome for review
     </button>}

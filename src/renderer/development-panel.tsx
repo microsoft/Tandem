@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useAction, useUi } from "./ui-context.js";
+import { canOpenDevelopment, useAction, useUi } from "./ui-context.js";
 import { ProcessPanel } from "./process-panel.js";
 
 export function DevelopmentPanel({ active }: { active: boolean }) {
@@ -8,7 +8,7 @@ export function DevelopmentPanel({ active }: { active: boolean }) {
     const [url, setUrl] = useState<string | null>(null);
     const [error, setError] = useState("");
     const opening = useRef(false);
-    const eligible = state.lifecycle.currentStage === "development" && state.provider?.canSubmitAnswers !== false;
+    const eligible = canOpenDevelopment(state);
     const snapshot = state.lifecycle.outputs.find(output => output.stageId === "prototype");
     const open = async () => {
         if (opening.current || url || !eligible) return;
@@ -28,18 +28,20 @@ export function DevelopmentPanel({ active }: { active: boolean }) {
         finally { opening.current = false; }
     };
     useEffect(() => { if (active) void open(); }, [active, eligible]);
-    if (!eligible && !url) return <div className="development-empty">Complete Prototype to open Development.</div>;
+    if (!eligible && !url) return <div className="development-empty" role="status">{state.developmentBlocker
+        || (state.provider?.canSubmitAnswers === false ? "Open the writable provider for Development."
+            : "Finish upstream work or its pending reset before opening Development.")}</div>;
     return <div className="development-workspace">
         <div className="development-toolbar">
             <span>Design, implementation and Review share one private session. Opening this view sends no project request.</span>
             {snapshot && <button id="continue-design" type="button" className="plan-button"
-                disabled={!eligible || action.busy || Boolean(state.developmentBlocker)}
+                disabled={!eligible || state.lifecycle.currentStage !== "development" || action.busy}
                 onClick={() => void action.run(async () => {
                     await post("/api/development/continue", { generation: state.generation,
                         expectedRevision: state.revision, snapshotPath: snapshot.path }, 120000);
                     await refresh();
                 })}>{state.development ? "Reconcile Design handoff" : "Continue Design from Prototype"}</button>}
-            <details className="development-process"><summary>Acceptance and delivery</summary>{active && <ProcessPanel />}</details>
+            <details className="development-process"><summary>Acceptance and delivery</summary>{active && <ProcessPanel development />}</details>
         </div>
         {(error || action.error || state.developmentBlocker) && <div role="alert" className="development-error">
             {error || action.error || state.developmentBlocker}
