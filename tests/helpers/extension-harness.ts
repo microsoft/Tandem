@@ -140,7 +140,7 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
         rpc: {
             model: {
                 getCurrent: async () => ({ modelId: "fixture-model", reasoningEffort: mainReasoningEffort }),
-                list: async () => ({ list: [{ id: "fixture-model", supportedReasoningEfforts: ["low", "high"] }] }),
+                list: async () => ({ list: [{ id: "fixture-model", capabilities: { supports: { reasoning_effort: ["low", "high"] } } }] }),
                 setReasoningEffort: async ({ reasoningEffort }: { reasoningEffort: string }) => { mainReasoningEffort = reasoningEffort; return { reasoningEffort }; },
             },
             metadata: { isProcessing: async () => ({ processing: false }), activity: async () => ({ hasActiveWork: false }) },

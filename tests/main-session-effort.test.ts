@@ -12,7 +12,7 @@ async function fixture(t: TestContext) {
     const session = { rpc: {
         model: {
             getCurrent: async () => ({ modelId: state.model, reasoningEffort: state.effort }),
-            list: async () => ({ list: [{ id: "main-model", supportedReasoningEfforts: ["low", "high"] }] }),
+            list: async () => ({ list: [{ id: "main-model", capabilities: { supports: { reasoning_effort: ["low", "high"] } } }] }),
             setReasoningEffort: async ({ reasoningEffort }: { reasoningEffort: string }) => {
                 state.changes++;
                 if (state.fail) throw new Error("SDK write failed");

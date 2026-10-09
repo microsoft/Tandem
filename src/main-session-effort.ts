@@ -59,7 +59,11 @@ export class MainSessionEffort {
         if (!Array.isArray(list)) throw new Error("The main model catalog is invalid.");
         const model = list.find(value => record(value) && value.id === native.modelId);
         if (!record(model)) throw new Error("The selected main model is unavailable in the authenticated catalog.");
-        const advertised = model.supportedReasoningEfforts ?? [];
+        const capabilities = model.capabilities;
+        if (capabilities !== undefined && !record(capabilities)) throw new Error("The main model capabilities are invalid.");
+        const supports = record(capabilities) ? capabilities.supports : undefined;
+        if (supports !== undefined && !record(supports)) throw new Error("The main model support metadata is invalid.");
+        const advertised = record(supports) ? supports.reasoning_effort ?? [] : [];
         if (!Array.isArray(advertised)) throw new Error("The main model advertised invalid effort levels.");
         const supported: string[] = [];
         for (const value of advertised) {
