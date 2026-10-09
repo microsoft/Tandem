@@ -19,7 +19,9 @@ test("prototype checkpoints publish the first slice and require explicit later p
     let flow = newPrototypeFlow();
     assert.equal(nextPrototypeMilestone(flow), "structure");
     flow = reservePrototypeCheckpoint(flow, pending("first", "structure"));
-    assert.equal(flow.budget.usedSeconds, 300);
+    assert.equal(flow.budget.usedSeconds, 0);
+    assert.equal(flow.checkpoints[0].timeoutSeconds, null);
+    assert.equal(flow.budget.limitSeconds, null);
     flow = settlePrototypeCheckpoint(flow, "first", {
         status: "ready", previewUrl: "http://localhost:1", summary: "Wireframe", focus: "Try navigation",
     }, "2026-09-09T00:00:20Z");
@@ -40,7 +42,7 @@ test("prototype checkpoints publish the first slice and require explicit later p
     assert.equal(nextPrototypeMilestone({ ...flow, visualRequested: true }), "visual");
 });
 
-test("failure preserves the working checkpoint and cannot consume an unlimited budget", () => {
+test("failure preserves the working checkpoint and records elapsed time without a product cap", () => {
     let flow = reservePrototypeCheckpoint(newPrototypeFlow(), pending("first", "structure"));
     flow = settlePrototypeCheckpoint(flow, "first", {
         status: "ready", previewUrl: "http://localhost:1", summary: "Ready", focus: "",
@@ -50,13 +52,32 @@ test("failure preserves the working checkpoint and cannot consume an unlimited b
         status: "failed", previewUrl: null, summary: "Timed out", focus: "",
     }, "2026-09-09T01:00:00Z");
     assert.equal(flow.displayedCheckpointId, "first");
-    assert.equal(flow.budget.usedSeconds, 310);
+    assert.equal(flow.budget.usedSeconds, 3610);
     assert.equal(nextPrototypeMilestone(flow), "interaction");
     assert.throws(() => settlePrototypeCheckpoint(flow, "failed", {
         status: "ready", previewUrl: "http://localhost:3", summary: "", focus: "",
     }, "2026-09-09T01:00:00Z"), /no longer owns/);
-    flow.budget.usedSeconds = 900;
-    assert.throws(() => reservePrototypeCheckpoint(flow, pending("retry", "interaction", "first")), /exhausted/);
+    const retried = reservePrototypeCheckpoint(flow, pending("retry", "interaction", "first"));
+    assert.equal(retried.checkpoints.at(-1)!.timeoutSeconds, null);
+    assert.equal(retried.budget.usedSeconds, 3610);
+    assert.deepEqual(readPrototypeFlow(JSON.parse(JSON.stringify(retried))), retried);
+});
+
+test("exhausted historical budgets and timed-out checkpoints survive explicit unbounded retry", () => {
+    const old: PrototypeCheckpoint = { ...pending("legacy", "structure"), timeoutSeconds: 300,
+        status: "failed", summary: "Workflow limit timeoutSeconds=300 was reached", completedAt: "2026-09-09T00:05:00Z" };
+    const historical = { ...newPrototypeFlow(), checkpoints: [old], budget: { limitSeconds: 900, usedSeconds: 900 } };
+    assert.deepEqual(readPrototypeFlow(historical), historical);
+    const retried = reservePrototypeCheckpoint(historical, pending("new", "structure"));
+    assert.deepEqual(retried.checkpoints[0], old);
+    assert.deepEqual(retried.budget, historical.budget);
+    const settled = settlePrototypeCheckpoint(retried, "new", {
+        status: "ready", previewUrl: "http://localhost:1", summary: "New request completed", focus: "",
+    }, "2026-09-09T01:00:00Z");
+    assert.equal(settled.budget.usedSeconds, 4500);
+    assert.equal(settled.budget.limitSeconds, 900, "Historical policy is retained, not enforced or reset.");
+    assert.deepEqual(readPrototypeFlow(settled), settled);
+    assert.throws(() => readPrototypeFlow({ ...historical, budget: { limitSeconds: 900, usedSeconds: 1000 } }), /invalid/);
 });
 
 test("legacy states remain readable and corrupted checkpoint references fail visibly", () => {

@@ -52,7 +52,7 @@ test("progressive Prototype reports honest milestones and keeps its iframe while
     const displayed = frame(h);
     assert.equal(displayed.hidden, false); assert.equal(displayed.src, value.previewUrl);
     assert.equal(text(h, "prototype-building-title"), "Building Interaction");
-    assert.match(text(h, "prototype-budget"), /used or reserved for active work/);
+    assert.match(text(h, "prototype-budget"), /no automatic execution-time cap/);
     assert.equal(h.get("prototype-milestones").querySelector<HTMLElement>('[aria-current="step"]')!.dataset.milestone, "interaction");
     await h.input("revision-input", "Keep this draft");
     field(h, "revision-input").focus(); field(h, "revision-input").setSelectionRange(2, 5);
@@ -291,18 +291,17 @@ for (const legacy of [true, false]) test(`${legacy ? "legacy" : "progressive"} f
     assert.equal(hidden(h, "retry-prototype-checkpoint"), true);
 });
 
-test("extending an exhausted prototype work window requires explicit confirmation", async (t) => {
+test("historically exhausted work remains visible and allows only explicit new retry without extending a cap", async (t) => {
     const value = progressivePrototype(); value.prototypeFlow.activeCheckpointId = null;
     value.prototypeFlow.checkpoints[1] = checkpoint("interaction", "interaction", "failed"); value.prototypeFlow.budget.usedSeconds = 900;
     const h = await setup(t, value), displayed = frame(h);
-    assert.equal(hidden(h, "extend-prototype-budget"), false);
-    assert.equal(hidden(h, "retry-prototype-checkpoint"), true);
-    await h.click("extend-prototype-budget");
-    assert.match(h.document.querySelector('[role="alertdialog"]')!.textContent!, /15-minute AI work window/);
-    await h.confirm(false); assert.equal(h.requests.length, 0);
+    assert.equal(h.document.querySelector("#extend-prototype-budget"), null);
+    assert.equal(hidden(h, "retry-prototype-checkpoint"), false);
+    assert.match(text(h, "prototype-budget"), /Legacy 15-minute budget retained for history, not enforced/);
+    assert.equal(h.requests.length, 0);
     h.setFetch(async () => response({ ...value, revision: 2 }));
-    await h.click("extend-prototype-budget"); await h.confirm();
-    assert.equal(h.requests[0].body.action, "extend-budget");
+    await h.click("retry-prototype-checkpoint");
+    assert.equal(h.requests[0].body.action, "retry");
     assert.equal(frame(h), displayed); assert.equal(disabled(h, "revision-input"), false);
 });
 
@@ -319,8 +318,8 @@ test("failed optional visual work can be skipped without losing history, preview
     assert.deepEqual(h.requests[0].body, { action: "skip-visual", expectedRevision: 1 });
     assert.equal(hidden(h, "skip-prototype-visual"), true);
     assert.equal(hidden(h, "retry-prototype-checkpoint"), true);
-    assert.equal(hidden(h, "extend-prototype-budget"), false);
-    assert.equal(disabled(h, "request-prototype-visual"), true);
+    assert.equal(h.document.querySelector("#extend-prototype-budget"), null);
+    assert.equal(disabled(h, "request-prototype-visual"), false);
     assert.equal(disabled(h, "complete-stage"), false);
     assert.match(text(h, "prototype-milestones"), /Visual directionSkipped \(optional\)/);
     assert.doesNotMatch(text(h, "prototype-progress-message"), /latest update failed/);

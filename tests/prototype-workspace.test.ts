@@ -562,7 +562,7 @@ test("checkpoint production prompt differentiates milestone scope and binds isol
     const structure = buildPrototypeCheckpointPrompt(args);
     for (const expected of [
         "STRUCTURE: deliver the smallest real clickable primary journey ASAP.",
-        "Bounded execution budget: 300 seconds", workspacePath, "last-good published preview remains running",
+        workspacePath, "last-good published preview remains running",
         "manual Update promotion", "No canvases", "Edit ONLY", "shared dependencies are",
         "NOT recursive target deletion", "Never reuse a live published preview port", "actually fetch the EXACT preview URL",
         'name="tandem-prototype-id" content="demo"', 'name="tandem-prototype-checkpoint" content="candidate"',
@@ -577,7 +577,8 @@ test("checkpoint production prompt differentiates milestone scope and binds isol
     assert.ok(!structure.includes("INTERACTION: improve"));
     const interaction = buildPrototypeCheckpointPrompt({ ...args, checkpoint: { ...args.checkpoint, milestone: "interaction", timeoutSeconds: 120 } });
     assert.match(interaction, /INTERACTION: improve one primary end-to-end workflow/);
-    assert.match(interaction, /120 seconds/);
+    assert.doesNotMatch(structure, /Bounded execution budget|never more than 300|Stop within the time budget/);
+    assert.doesNotMatch(interaction, /120 seconds|Bounded execution budget|Stop within the time budget/);
     assert.match(interaction, /deterministic mock/);
     assert.ok(!interaction.includes("STRUCTURE: deliver"));
     const visual = buildPrototypeCheckpointPrompt({ ...args, checkpoint: { ...args.checkpoint, milestone: "visual" } });

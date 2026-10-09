@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUpRight, Check, Clock, ExternalLink, LoaderCircle, Play, RefreshCw, Send, SkipForward, Sparkles } from "lucide-react";
+import { ArrowUpRight, Check, ExternalLink, LoaderCircle, Play, RefreshCw, Send, SkipForward, Sparkles } from "lucide-react";
 import { RadioGroup } from "radix-ui";
 import type { DecisionQuestion } from "../workflow.js";
 import { hasActiveJobs, hasStageData, skippedStage, useAction, useDraft, useUi, type UiState } from "./ui-context.js";
@@ -69,7 +69,7 @@ function Clarification({ question }: { question: DecisionQuestion }) {
 
 export function PrototypePanel() {
   const ui = useUi();
-  const { state, pending, post, canEdit, confirm, guidance } = ui;
+  const { state, pending, post, canEdit, guidance } = ui;
   const latest = useRef(state);
   latest.current = state;
   const latestUi = useRef(ui);
@@ -101,13 +101,12 @@ export function PrototypePanel() {
       || (["build-prototype", "submit-revision", "clarify-revision"].includes(state.processing?.action) && state.processing?.status === "running"));
   const url = flow ? displayed?.previewUrl || (displayed ? state.previewUrl : null) : state.previewUrl;
   const readyUrl = originOf(url) && !unavailable && !undecided ? url : null;
-  const exhausted = Boolean(flow && flow.budget.usedSeconds >= flow.budget.limitSeconds);
   const milestonesReady = milestoneReady(state, "structure") && milestoneReady(state, "interaction")
     && (!flow?.visualRequested || milestoneReady(state, "visual"));
   const blocked = pending || !canEdit("prototype") || hasActiveJobs(state) || finalizing || Boolean(question);
   const validation = state.prototypeApproach?.mode === "validate-existing";
   const startVisible = !unavailable && !building && !readyUrl && !flow && state.previewStatus !== "ready" && state.lifecycle.currentStage === "prototype";
-  const retryVisible = Boolean(flow || failedRevision) && !candidate && !question && !building && !exhausted
+  const retryVisible = Boolean(flow || failedRevision) && !candidate && !question && !building
     && Boolean(failed || failedRevision || !milestonesReady || unresolved.length);
   const visualVisible = Boolean(flow && !flow.visualRequested && !building && !hasActiveJobs(state) && milestoneReady(state, "interaction") && !candidate);
   const skipVisible = Boolean(flow?.visualRequested && failed?.milestone === "visual" && !failed.revisionId && !hasActiveJobs(state));
@@ -156,10 +155,8 @@ export function PrototypePanel() {
 
   async function submitAction(kind: string) {
     if (blocked) return;
-    if (kind === "extend-budget" && !await confirm("Add another 15-minute AI work window and retry paused prototype work? Your current preview and queued feedback will be kept.")) return;
     await action.run(async () => {
-      if (!latestUi.current.canEdit("prototype") || hasActiveJobs(latest.current)
-        || (kind === "extend-budget" && latest.current.revision !== state.revision)) {
+      if (!latestUi.current.canEdit("prototype") || hasActiveJobs(latest.current)) {
         throw new Error("The prototype changed. Review its current state before retrying.");
       }
       const checkpointId = kind === "apply-update" ? candidate?.id : kind === "retry" ? failed?.id : null;
@@ -183,7 +180,6 @@ export function PrototypePanel() {
     : building ? readyUrl ? "Your working preview stays available while the next checkpoint builds." : "Building the first runnable checkpoint. No preview is available yet; you can already queue feedback."
     : failed ? "The latest update failed. " + failed.summary + (readyUrl ? " Your working preview is unchanged." : "")
     : failedRevision ? "A feedback revision failed. Retry the failed revision to continue."
-    : exhausted && (!milestonesReady || unresolved.length) ? "Prototype work is paused at its work-window limit. Your preview and queued feedback are kept."
     : milestonesReady ? "Structure and Interaction are ready. Finish Prototype, or optionally explore visual direction."
     : "Start with Structure, then test one complete Interaction. Visual direction is optional.";
   const revisionMessage = revisionAction.error || (state.lifecycle.currentStage !== "prototype"
@@ -221,16 +217,15 @@ export function PrototypePanel() {
         </ol>
         <div className="prototype-actions">
           <button id="apply-prototype-update" className="plan-button" hidden={!candidate} disabled={blocked} onClick={() => void submitAction("apply-update")}><ArrowUpRight size={16} />Apply update</button>
-          <button id="request-prototype-visual" className="plan-button" hidden={!visualVisible} disabled={blocked || unresolved.length > 0 || exhausted} onClick={() => void submitAction("visual")}><Sparkles size={16} />Explore visual direction (optional)</button>
+          <button id="request-prototype-visual" className="plan-button" hidden={!visualVisible} disabled={blocked || unresolved.length > 0} onClick={() => void submitAction("visual")}><Sparkles size={16} />Explore visual direction (optional)</button>
           <button id="skip-prototype-visual" className="plan-button secondary" hidden={!skipVisible} disabled={blocked} onClick={() => void submitAction("skip-visual")}><SkipForward size={16} aria-hidden="true" />Skip visual direction</button>
           <button id="retry-prototype-checkpoint" className="plan-button" hidden={!retryVisible} disabled={blocked} onClick={() => void submitAction("retry")}><RefreshCw size={16} />{failed ? "Retry " + milestones.find((item) => item.id === failed.milestone)?.label : failedRevision ? "Retry failed revision" : "Continue prototype work"}</button>
-          <button id="extend-prototype-budget" className="plan-button" hidden={!exhausted || building || Boolean(candidate)} disabled={blocked} onClick={() => void submitAction("extend-budget")}><Clock size={16} />Add 15 minutes and retry</button>
         </div>
         <details id="prototype-progress-details" className="prototype-progress-details"><summary>Build details</summary>
-          <p id="prototype-budget" className="muted">{flow && `Work window: ${Math.ceil(flow.budget.usedSeconds / 60)} of ${Math.ceil(flow.budget.limitSeconds / 60)} minutes used${building ? " or reserved for active work. Unused reserved time is returned when the job ends." : "."}`}</p>
+          <p id="prototype-budget" className="muted">{flow && `Recorded checkpoint time: ${Math.ceil(flow.budget.usedSeconds / 60)} minutes. New work has no automatic execution-time cap.${flow.budget.limitSeconds === null ? "" : ` Legacy ${Math.ceil(flow.budget.limitSeconds / 60)}-minute budget retained for history, not enforced.`}`}</p>
         </details>
-        <p id="prototype-progress-message" className={candidate || failed || failedRevision || question || exhausted && !building ? "muted" : "visually-hidden"}
-          role="status" data-essential={Boolean(candidate || failed || failedRevision || question || exhausted && !building)}>{message}</p>
+        <p id="prototype-progress-message" className={candidate || failed || failedRevision || question ? "muted" : "visually-hidden"}
+          role="status" data-essential={Boolean(candidate || failed || failedRevision || question)}>{message}</p>
       </section>
       <p id="prototype-action-status" className="revision-status" role="status" data-status={action.error ? "error" : "idle"}>{action.error}</p>
       <div id="prototype-building" className="prototype-building" role="status" hidden={!building}>

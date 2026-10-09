@@ -6,6 +6,21 @@ import { extensionHarness } from "./helpers/extension-harness.js";
 const schemaRejection = "unknown field `limits`, expected one of `name`, `args`, `options`";
 const provider = "project:tandem";
 
+test("programmatic Stage1 definitions have no product execution-time deadline", async () => {
+    const fixture = await extensionHarness();
+    try {
+        for (const workflow of [fixture.api.preparationFactory, fixture.api.usageSuggestionFactory, fixture.api.answerFactory]) {
+            assert.equal(workflow.meta.limits.timeoutSeconds, undefined);
+        }
+        const state = fixture.api.createState("sample", "A tracker");
+        await fixture.api.persistState(state);
+        await fixture.api.ensurePreparationStarted(state, true);
+        await fixture.waitForRequests();
+        const request = fixture.requests[0] as { options: { limits: { timeoutSeconds?: number } } };
+        assert.equal(request.options.limits.timeoutSeconds, undefined);
+    } finally { await fixture.close(); }
+});
+
 test("workflow workers honor explicit owning-session effort and retain defaults only when unset", async () => {
     for (const defaultEffort of ["low", "medium"] as const) {
         for (const reasoningEffort of [undefined, "low", "high"]) {
@@ -111,7 +126,7 @@ test("a definite pre-launch rejection releases its receipt and retries the prepa
         assert.notEqual(retried.processing.requestId, failed.processing.requestId);
         assert.equal(retried.prototypeFlow!.checkpoints[1].sourceCheckpointId, failed.prototypeFlow!.checkpoints[0].id);
         const request = fixture.requests[1] as { options: { limits: { timeoutSeconds: number; maxAiCredits: number } } };
-        assert.equal(request.options.limits.timeoutSeconds, 300);
+        assert.equal(request.options.limits.timeoutSeconds, undefined);
         assert.equal(request.options.limits.maxAiCredits, 10_000);
         assert.equal(Object.hasOwn(request, "limits"), false);
     } finally { await fixture.close(); }

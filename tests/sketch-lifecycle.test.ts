@@ -53,7 +53,7 @@ test("Requirements generates drawings once and cannot start Prototype before exp
         await fixture.waitForRequests();
         assert.deepEqual(JSON.parse(JSON.stringify((fixture.requests[0] as { options: unknown }).options)), {
             notifyOnComplete: false,
-            limits: { maxConcurrentSubagents: 1, maxTotalSubagents: 1, timeoutSeconds: 300, maxAiCredits: 128 },
+            limits: { maxConcurrentSubagents: 1, maxTotalSubagents: 1, maxAiCredits: 128 },
         });
         await fixture.api.waitForAnswer("sample");
         const draft = await fixture.api.loadState("sample");

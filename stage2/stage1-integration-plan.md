@@ -52,6 +52,14 @@ The private stdio runtime preserves the PR's stores/WAL, roles, result authority
 native tools/consent, immediate dispatch, missing-result continuation, Stop modes,
 implementation confirmation and no-replay recovery.
 
+Stage 1 no longer assigns arbitrary execution-time ceilings to Preparation,
+suggestions, answers, Sketch or Prototype workflows. New Prototype checkpoints
+are unbounded rather than spending a cumulative 15-minute work window. Old
+limits, failures and charged-time records remain readable history, never an
+automatic-resume authorization or a gate on a new explicit Retry. Explicit
+caller-supplied limits and bounded startup, RPC and Close observations remain
+distinct. Worker completion and source verification requirements are unchanged.
+
 Initial creation uses SDK `createSession` with the exact reserved private ID and
 full configuration, records native creation, explicitly names it and saves it.
 It adds no dummy turn and adopts no other session. A later naming/save failure

@@ -58,7 +58,7 @@ import { fingerprintPrototypeWorkspace, PROTOTYPE_FINGERPRINT_PREFIX } from "./p
 import {
     newPrototypeFlow, nextPrototypeMilestone, prototypeCheckpoint, prototypeFlowCompletionError, prototypeRetrySource,
     prototypeMilestoneLabels, promotePrototypeCheckpoint, readPrototypeFlow,
-    reservePrototypeCheckpoint, settlePrototypeCheckpoint, PROTOTYPE_WORK_WINDOW_SECONDS,
+    reservePrototypeCheckpoint, settlePrototypeCheckpoint,
     type PrototypeCheckpoint, type PrototypeFlow, type PrototypeMilestone,
 } from "./prototype-flow.js";
 import { createProcessAdapters } from "./process-adapters.js";
@@ -2161,7 +2161,6 @@ async function runPreparationFactory(prototypeId, state, resumeFromRunId = null)
             limits: {
                 maxConcurrentSubagents: 1,
                 maxTotalSubagents: 3,
-                timeoutSeconds: 240,
                 maxAiCredits: 1024000,
             },
         },
@@ -3482,9 +3481,6 @@ async function dispatchPrototypeCheckpoint(prototypeId: string, extensionId: str
         const milestone: PrototypeMilestone | null = failed && options.retry ? failed.milestone
             : revision && base ? base.milestone : nextPrototypeMilestone(flow);
         if (!milestone) return state;
-        if (flow.budget.usedSeconds >= flow.budget.limitSeconds) {
-            throw new CanvasError("prototype_budget_exhausted", "The prototype work window is used up. Your preview and feedback are saved. Extend the budget explicitly to continue.");
-        }
         const now = new Date().toISOString();
         const requestId = randomUUID();
         const source = failed && options.retry ? prototypeRetrySource(flow, failed) : base;
@@ -3548,15 +3544,6 @@ async function continuePrototypeWork(prototypeId: string) {
         state.prototypeFlow.pendingCheckpointId || paused) return;
     if (!nextPrototypeMilestone(state.prototypeFlow) &&
         !state.prototypeReview.revisions.some((item) => item.status === "queued")) return;
-    if (state.prototypeFlow.budget.usedSeconds >= state.prototypeFlow.budget.limitSeconds) {
-        await withAnswerClaim(prototypeId, async () => {
-            const current = await loadState(prototypeId);
-            if (hasActiveWork(current)) return;
-            await persistState({ ...current, status: "Prototype work budget reached. Your working preview and queued feedback are saved. Extend the work window to continue." });
-            publishState(prototypeId);
-        });
-        return;
-    }
     await dispatchPrototypeCheckpoint(prototypeId, PROVIDER_EXTENSION_ID);
 }
 
@@ -3591,9 +3578,6 @@ async function prototypeAction(prototypeId: string, extensionId: string, input: 
             if (flow.pendingCheckpointId || !flow.checkpoints.some((item) => item.milestone === "interaction" && item.status === "ready")) {
                 throw new CanvasError("prototype_interaction_required", "Apply the Interaction checkpoint before choosing Visual direction.");
             }
-            if (flow.budget.usedSeconds >= flow.budget.limitSeconds) {
-                throw new CanvasError("prototype_budget_exhausted", "Extend the work budget before requesting optional Visual direction.");
-            }
             flow = { ...flow, visualRequested: true };
         } else if (action === "skip-visual") {
             const last = flow.checkpoints.at(-1);
@@ -3602,10 +3586,7 @@ async function prototypeAction(prototypeId: string, extensionId: string, input: 
             }
             flow = { ...flow, visualRequested: false };
         } else if (action === "extend-budget") {
-            if (!Number.isInteger(input.expectedRevision) || input.expectedRevision !== state.revision) {
-                throw new CanvasError("prototype_budget_stale", "Review the current budget before extending it.");
-            }
-            flow = { ...flow, budget: { ...flow.budget, limitSeconds: flow.budget.limitSeconds + PROTOTYPE_WORK_WINDOW_SECONDS } };
+            throw new CanvasError("prototype_budget_retired", "Prototype work no longer has an automatic time limit. Use Retry or Continue explicitly; historical budgets are unchanged.");
         } else throw new CanvasError("invalid_prototype_action", "Choose a supported prototype action.");
         review.designSpecArtifactId = null;
         const updated = { ...state, prototypeFlow: flow, prototypeReview: review, previewUrl,
@@ -3617,7 +3598,7 @@ async function prototypeAction(prototypeId: string, extensionId: string, input: 
         publishState(prototypeId);
         return updated;
     });
-    if ((action === "extend-budget" || action === "visual") &&
+    if (action === "visual" &&
         !next.prototypeReview.question && !next.prototypeFlow.pendingCheckpointId) {
         return dispatchPrototypeCheckpoint(prototypeId, extensionId, { retry: true });
     }
@@ -4693,9 +4674,9 @@ async function runAnswerFactory(
         },
         ...(checkpoint ? {
             options: { limits: { maxConcurrentSubagents: 1, maxTotalSubagents: 1,
-                timeoutSeconds: checkpoint.timeoutSeconds, maxAiCredits: 10_000 } },
+                maxAiCredits: 10_000 } },
         } : action === "apply-defaults" || isSketchAction(action) ? {
-            options: { limits: { maxConcurrentSubagents: 1, maxTotalSubagents: 1, timeoutSeconds: 300, maxAiCredits: 128 } },
+            options: { limits: { maxConcurrentSubagents: 1, maxTotalSubagents: 1, maxAiCredits: 128 } },
         } : {}),
     });
     const currentRequest = await recordFactoryRunId(
@@ -7059,7 +7040,6 @@ const preparationFactory = defineWorkflow({
         limits: {
             maxConcurrentSubagents: 1,
             maxTotalSubagents: 3,
-            timeoutSeconds: 240,
             maxAiCredits: 1024000,
         },
     },
@@ -7250,7 +7230,6 @@ const usageSuggestionFactory = defineWorkflow({
         limits: {
             maxConcurrentSubagents: 1,
             maxTotalSubagents: 1,
-            timeoutSeconds: 120,
             maxAiCredits: 1024000,
         },
     },
@@ -7355,7 +7334,6 @@ const answerFactory = defineWorkflow({
         limits: {
             maxConcurrentSubagents: 1,
             maxTotalSubagents: 30,
-            timeoutSeconds: 300,
             maxAiCredits: 1024000,
         },
     },

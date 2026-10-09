@@ -141,8 +141,9 @@ specification, not invented screens.
 ## Prototype
 
 The prototype is a separate artifact, not the Tandem discovery UI itself. Keep
-the existing structure/interaction/optional-visual checkpoints, finite work
-window, durable feedback queue and explicit **Apply update** controls. Retain
+the existing structure/interaction/optional-visual checkpoints, durable feedback
+queue and explicit **Apply update** controls. New work has no product-imposed
+execution-time cap; silence is not failure or permission to retry. Retain
 the working displayed checkpoint if a later attempt fails.
 
 For `validate-existing`, work from the same existing GUI's copied source; do not

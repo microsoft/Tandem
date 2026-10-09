@@ -3,6 +3,25 @@ import { test } from "node:test";
 import { writeFile, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { extensionHarness } from "./helpers/extension-harness.js";
+import { newPrototypeFlow } from "../src/prototype-flow.js";
+
+test("retired budget extension cannot rewrite historical limits or secretly launch work", async () => {
+    const fixture = await extensionHarness();
+    try {
+        const state = fixture.api.createState("sample", "Retain failed work");
+        state.stage = state.lifecycle.currentStage = "prototype";
+        state.lifecycle.completedStages = ["prepare", "requirements", "sketch"];
+        state.preparation.status = "ready";
+        state.prototypeFlow = { ...newPrototypeFlow(), budget: { limitSeconds: 900, usedSeconds: 900 } };
+        await fixture.api.persistState(state);
+        const before = JSON.stringify(await fixture.api.loadState("sample"));
+        await assert.rejects(fixture.api.prototypeAction("sample", "project:tandem", {
+            action: "extend-budget", expectedRevision: state.revision,
+        }), /no longer has an automatic time limit/);
+        assert.equal(JSON.stringify(await fixture.api.loadState("sample")), before);
+        assert.equal(fixture.requests.length, 0);
+    } finally { await fixture.close(); }
+});
 
 test("completing requirements schedules exactly one sketch job and guards replacement", async () => {
     const fixture = await extensionHarness();
@@ -145,7 +164,7 @@ test("later timeout retains the first preview and retry only rebuilds the failed
                 if (count === 2 || count === 4) return { status: "failed", runId: `run-${count}`, error: "Factory limit timeoutSeconds=300 was reached" };
                 const checkpoint = request.args.state.prototypeFlow!.checkpoints.at(-1)!;
                 fixture.setPreviewHtml(`<meta name="tandem-prototype-id" content="sample"><meta name="tandem-prototype-checkpoint" content="${checkpoint.id}">`);
-                assert.ok(request.options.limits.timeoutSeconds <= 300);
+                assert.equal(request.options.limits.timeoutSeconds, undefined);
                 assert.equal(Object.hasOwn(request, "limits"), false);
                 return { status: "completed", runId: `run-${count}`, result: {
                     summary: `${checkpoint.milestone} ready`, focus: "Try the primary action.",

@@ -120,6 +120,13 @@ Failure to read that selection is an error, not permission to substitute a defau
 Stage 1 workflow results are consumed by the extension with native completion
 notifications disabled. Success or failure updates Tandem's UI and receipts;
 it must not independently wake a foreground model turn.
+New Stage 1 workflows have no product-imposed execution-time cap. The former
+240/120/300-second limits and cumulative 15-minute Prototype gate are retired,
+including worker instructions to stop at those deadlines. Existing failed runs,
+checkpoint limits and charged-time records remain historical evidence; only an
+explicit new Retry creates unbounded work. No history is reset and no old run
+is automatically resumed. Explicit caller-supplied limits, native concurrency,
+permission checks and bounded startup/RPC/shutdown observations are unchanged.
 The read-only Development status endpoint includes `mainSessionModel`, the
 owning SDK's current model/effort snapshot; reading it starts no work.
 Programmatic browser hosts can explicitly pass
