@@ -98,7 +98,10 @@ function EffortApp({ state, store, version, connectionError, confirm }: {
   state: UiState; store: StudioStore; version: string; connectionError: string; confirm: UiContextValue["confirm"];
 }) {
   const [busy, setBusyKeys] = useState<Set<string>>(() => new Set());
-  const [activeTab, setActiveTab] = useState<TabId>(() => tabFor(state.lifecycle.currentStage));
+  const [activeTab, setActiveTab] = useState<TabId>(() =>
+    state.lifecycle.currentStage === "development" && !state.development
+      && state.lifecycle.outputs.some(output => output.stageId === "prototype")
+      ? "content" : tabFor(state.lifecycle.currentStage));
   const [selectedArtifact, setSelectedArtifact] = useState<string | null>(null);
   const [contextOpen, setContextOpen] = useState(false);
   const previousStage = useRef(state.lifecycle.currentStage);
@@ -118,7 +121,7 @@ function EffortApp({ state, store, version, connectionError, confirm }: {
     const stage = state.lifecycle.currentStage;
     if (previousStage.current !== stage) {
       const previous = previousStage.current;
-      setActiveTab((current) => current === tabFor(previous) ? tabFor(stage) : current);
+      setActiveTab((current) => stage !== "development" && current === tabFor(previous) ? tabFor(stage) : current);
       previousStage.current = stage;
     }
   }, [state.lifecycle.currentStage]);
@@ -293,8 +296,8 @@ function Workspace(props: WorkspaceProps) {
   const complete = !pending && canCompleteStage(state) && (current !== "sketch" || !sketchBlocked);
   const allComplete = lifecycleStages.every((stage) => state.lifecycle.completedStages.includes(stage.id) || skippedStage(state, stage.id));
   const completionLabel = allComplete ? "All stages complete" : stageAction.busy ? "Saving stage output..."
-    : current === "prototype" ? "Finish Prototype and continue Design"
-    : current === "requirements" && state.prototypeApproach.mode === "not-applicable" ? "Finish Requirements and continue Design"
+    : current === "prototype" ? "Finish Prototype and save outputs"
+    : current === "requirements" && state.prototypeApproach.mode === "not-applicable" ? "Finish Requirements and save outputs"
     : current === "prepare" ? "Preparation runs automatically" : "Finish " + (lifecycleStages.find((stage) => stage.id === current)?.label || current).toLowerCase();
   const completionHelp = contextCollapsed && !allComplete && !stageAction.busy && !["prepare", "development"].includes(current)
     ? "Next stage: " + completionLabel : completionLabel;

@@ -3314,7 +3314,9 @@ async function completeLifecycleStage(prototypeId, requestedStageId, extensionId
                 completedStages.length === LIFECYCLE_STAGES.length
                     ? "All lifecycle stages are complete."
                     : skipPrototype
-                      ? `Requirements completed. Sketch and Prototype are not applicable: ${state.prototypeApproach.reason} Development is now enabled.`
+                      ? `Requirements saved. Sketch and Prototype are not applicable: ${state.prototypeApproach.reason} Stage 1 is complete. You can close now and open Development later with these files as input.`
+                    : currentStage === "development"
+                      ? "Prototype outputs saved. Stage 1 is complete. You can close now and open Development later with these files as input."
                     : `${LIFECYCLE_STAGES.find((stage) => stage.id === stageId).label} completed. ${LIFECYCLE_STAGES.find((stage) => stage.id === currentStage).label} is now enabled.`,
             updatedAt: completedAt,
         };
@@ -3330,10 +3332,6 @@ async function completeLifecycleStage(prototypeId, requestedStageId, extensionId
     ) {
         return beginPrototypeBuild(prototypeId, extensionId);
     }
-    if (completed.lifecycle.currentStage === "development") return continueDevelopment(prototypeId, extensionId, {
-        generation: completed.generation, expectedRevision: completed.revision,
-        snapshotPath: completed.lifecycle.outputs.find(output => output.stageId === "prototype")?.path,
-    });
     return completed;
 }
 

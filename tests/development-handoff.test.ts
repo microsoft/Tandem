@@ -416,7 +416,8 @@ test("Reconcile preserves the failed-start diagnosis and cannot silently retry o
         h.setBeforeDevelopmentStart(async () => {
             throw new Error("Original pre-native Git failure. Select Retry runtime inside Development.");
         });
-        await assert.rejects(h.api.completeLifecycleStage(state.prototypeId, "requirements", "project:tandem"), /Original pre-native Git failure/);
+        await h.api.completeLifecycleStage(state.prototypeId, "requirements", "project:tandem");
+        await assert.rejects(h.api.continueDevelopment(state.prototypeId, "project:tandem"), /Original pre-native Git failure/);
         const saved = await h.api.loadState(state.prototypeId);
         await assert.rejects(h.api.continueDevelopment(state.prototypeId, "project:tandem"), /Original pre-native Git failure.*Retry runtime/);
         const retried = await h.api.loadState(state.prototypeId);
@@ -512,6 +513,16 @@ test("first Prototype handoff precedes the real WAL, installation and runtime wi
         assert.deepEqual(await retained.read(receipt.id), receipt);
         assert.deepEqual(native.counts(), { clients: 1, sends: 0 }, "Reusing an already-retired handoff must not replay it.");
         await installation.close();
+        const used = await runtime.store.load(), nativeEvents = native.history();
+        const walBefore = await readFile(journal);
+        const handoffsBefore = await retainedFiles(f.store.root);
+        native.setMainSessionId("different-main");
+        await assert.rejects(native.create().open(), /another main session/);
+        assert.deepEqual(await runtime.store.load(), used);
+        assert.deepEqual(await readFile(journal), walBefore, "A fresh host cannot rewrite used Stage2 ownership or history.");
+        assert.deepEqual(native.history(), nativeEvents);
+        assert.equal(native.creations(), 1);
+        assert.deepEqual(await retainedFiles(f.store.root), handoffsBefore);
     } finally {
         await getHostStateWal(f.workspace).close();
         await f.cleanup();
@@ -843,6 +854,58 @@ for (const stage of ["prepare", "requirements"] as const) test(`direct Developme
     }
 });
 
+test("synthetic fresh provider opens Development from finished Stage1 files without retaining the Stage1 connection", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tandem-stage-independence-"));
+    const first = await extensionHarness({}, root);
+    let fresh: Awaited<ReturnType<typeof extensionHarness>> | undefined;
+    let entry: Awaited<ReturnType<typeof first.api.startServer>> | undefined;
+    try {
+        const state = first.api.createState("portable-input", "A command-line tool");
+        state.stage = state.lifecycle.currentStage = "requirements";
+        state.lifecycle.completedStages = ["prepare"];
+        state.preparation.status = "ready";
+        state.requirements = { substage: "dag", usageItems: ["Use the command"], suggestions: [] };
+        state.decisionGraph.nodes = [{ id: "choice", title: "Command behavior", dependencies: [],
+            question: null, answer: "Use the CLI", status: "answered" }];
+        state.prototypeApproach = { mode: "not-applicable", reason: "CLI only" };
+        await first.api.persistState(state);
+        first.setBeforeDevelopmentStart(async () => { throw new Error("No Stage2 connection may exist yet."); });
+        const completed = await first.api.completeLifecycleStage(state.prototypeId, "requirements", "project:tandem");
+        const files = await retainedFiles(join(root, ".tandem", "efforts"));
+        assert.ok(completed.development == null);
+        assert.equal(first.developmentRequests.length, 0);
+        await assert.rejects(access(join(root, ".tandem", "living-canvas")), { code: "ENOENT" });
+        await first.close();
+
+        fresh = await extensionHarness({}, root);
+        fresh.api.setSession({ ...fresh.session, sessionId: "fresh-provider-fixture" });
+        const loaded = await fresh.api.loadState(state.prototypeId);
+        assert.equal(loaded.generation, completed.generation);
+        assert.deepEqual(await retainedFiles(join(root, ".tandem", "efforts")), files);
+        for (const output of loaded.lifecycle.outputs) {
+            const document = JSON.parse(await readFile(join(root, output.path), "utf8"));
+            assert.equal(document.result.decisionGraph.nodes[0].answer, "Use the CLI");
+        }
+        entry = await fresh.api.startServer("later-view", state.prototypeId, "project:tandem", true);
+        const opened = await fetch(new URL("api/development/open", entry.url), {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+        });
+        assert.equal(opened.status, 200, await opened.clone().text());
+        assert.equal(fresh.developmentOpens.length, 1);
+        assert.equal(fresh.developmentRequests.length, 0, "Files remain optional inputs, not automatic request or implementation authority.");
+        assert.equal(fresh.requests.length, 0);
+        assert.ok((await fresh.api.loadState(state.prototypeId)).development == null);
+        assert.deepEqual(await retainedFiles(join(root, ".tandem", "efforts")), files);
+    } finally {
+        if (entry) {
+            clearInterval(entry.heartbeat); entry.live.close();
+            await new Promise<void>((resolve, reject) => entry.server.close(error => error ? reject(error) : resolve()));
+        }
+        await first.close(); await fresh?.close();
+        await rm(root, { recursive: true, force: true });
+    }
+});
+
 test("direct Development HTTP open still excludes active upstream work and a read-only provider", async () => {
     const h = await extensionHarness();
     const state = h.api.createState("active");
@@ -903,9 +966,10 @@ test("Reset racing a prepared handoff waits for admission and cannot erase admit
             question: null, answer: "Use the CLI", status: "answered" }];
         state.prototypeApproach = { mode: "not-applicable", reason: "CLI only" };
         await h.api.persistState(state);
+        await h.api.completeLifecycleStage("race", "requirements", "project:tandem");
         const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
         h.setBeforeDevelopmentStart(async () => { entered.resolve(); await release.promise; });
-        const handoff = h.api.completeLifecycleStage("race", "requirements", "project:tandem");
+        const handoff = h.api.continueDevelopment("race", "project:tandem");
         await entered.promise;
         const prepared = await h.api.loadState("race");
         let resetSettled = false;

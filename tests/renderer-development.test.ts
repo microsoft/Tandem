@@ -55,6 +55,35 @@ test("idle unfinished Stage1 can browse Development but active work and read-onl
     assert.deepEqual(h.errors, []);
 });
 
+for (const stage of ["requirements", "prototype"] as const) test(`${stage} completion and later reopen show retained output without automatically opening Stage2`, async t => {
+    const h = await reactHarness(t);
+    const before = state(stage);
+    if (stage === "requirements") before.prototypeApproach = { mode: "not-applicable", reason: "CLI input fixture." };
+    h.render(before); await h.flush();
+    const completed = { ...before, revision: 2, stage: "development" as const, lifecycle: {
+        ...before.lifecycle, currentStage: "development" as const,
+        completedStages: state("development").lifecycle.completedStages,
+        outputs: [{ stageId: "prototype" as const, path: ".tandem/efforts/fixture/stages/prototype-r2.json", completedAt: before.updatedAt }],
+    } };
+    h.render(completed); await h.flush();
+    assert.equal(h.get(stage === "prototype" ? "live-preview-panel" : "design-tree-panel").hidden, false,
+        "Completing upstream work cannot activate the private surface.");
+    assert.equal(h.requests.length, 0);
+    const reopened = await reactHarness(t);
+    reopened.setFetch(async path => {
+        assert.equal(path, "/api/development/open");
+        return response({ url: "http://127.0.0.1:8765/" });
+    });
+    reopened.render(completed); await reopened.flush();
+    assert.equal(reopened.get("content-panel").hidden, false);
+    assert.equal(reopened.requests.length, 0);
+    assert.equal(reopened.document.querySelector("#development-frame"), null);
+    await reopened.fire(reopened.get("development-tab"), "mousedown", { button: 0 });
+    assert.equal(reopened.requests.length, 1, "An explicit later Open initializes the runtime but does not submit the handoff.");
+    assert.ok(reopened.get("continue-design"));
+    assert.equal(reopened.get<HTMLIFrameElement>("development-frame").src, "http://127.0.0.1:8765/");
+});
+
 test("Development mounts one isolated full workspace and navigation keeps its original frame", async t => {
     const h = await reactHarness(t);
     h.setFetch(async path => {

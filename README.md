@@ -112,7 +112,7 @@ interaction, optional visual refinement, queued feedback and Apply update flow.
 copied source; `not-applicable` preserves a reason and feature specification
 without fabricating a graphical prototype.
 
-### Finish Prototype and continue Design
+### Finish Stage 1; open Development when ready
 
 The existing `generate-design-spec` action is retained: it creates
 `draft-feature-spec` in Prototype, not a downstream technical Design stage.
@@ -120,7 +120,21 @@ Completion checks the displayed checkpoint, source fingerprint, applicable sketc
 approval and outstanding feedback. A URL alone is not source evidence. An offline
 preview does not invalidate a retained, source-bound checkpoint.
 
-The host retains an immutable bounded handoff under the **target worktree's**
+**Finish Prototype and save outputs** (or **Finish Requirements and save
+outputs** for a non-GUI project) saves Stage 1 evidence without opening a private
+Stage 2 session or submitting a Design request. Completion keeps the current
+upstream view; reopening completed Stage 1 without a handoff shows its saved
+artifacts. You may shut down at this point.
+
+Later, open Development explicitly and reference the saved Q&A, snapshot,
+approved drawings or prototype source files in a normal message. Stage 1's
+connection need not survive: these files are input/evidence, not permission to
+adopt a previous Stage 2 run, its canonical Design or session authority. Existing
+used Stage 2 work still requires its original owner and same-ID recovery; this
+does not bypass the desktop workspace's main-session ownership rules.
+
+Alternatively, **Continue Design from Prototype** explicitly asks the current
+host to retain an immutable bounded handoff under the **target worktree's**
 `.tandem\living-canvas\handoffs`. It includes exact completed snapshot bytes,
 artifact hashes, confirmed/assumed/deferred decisions, approved drawings/assets,
 mock shortcuts and the displayed multi-file source. Dependency installations,
@@ -131,7 +145,7 @@ Stage 1's shared state root and the actual target worktree are recorded
 separately. Stage 2 implements in the real target workspace, not in the shared
 snapshot directory. Original inputs are preserved.
 
-One exact request ID, timestamp and message are persisted **before** admission.
+For that optional strict route, one exact request ID, timestamp and message are persisted **before** admission.
 Duplicate clicks, tabs and lost acknowledgements reconcile that envelope.
 Recovery retirement is never permission to deliver it again. Reopening an
 already-completed Prototype or legacy downstream effort offers an explicit

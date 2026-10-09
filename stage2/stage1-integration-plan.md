@@ -19,6 +19,20 @@ Ordinary Stage 2 messages may reference documents and source directly. The
 optional **Continue Design from Prototype** route remains a separate, strict,
 immutable receipt-backed handoff, not a general file importer.
 
+Stage 1 and Stage 2 do not require continuous connections between them. Finishing
+Stage 1 saves Q&A/prototype files and neither creates a private runtime nor
+submits a Design request. The user may shut down and later start Stage 2 with
+those retained files as explicitly supplied input. Initial navigation for an
+unhanded completed Prototype shows saved artifacts; upstream completion does not
+automatically activate Development.
+
+This is artifact portability, not transfer of run authority. An existing used
+Stage 2 installation, Design, conversation, permissions and native history keep
+their exact owners and same-ID recovery rules. Ordinary file references need no
+Stage 1 connection; they do not rebind an old receipt or bypass the desktop
+workspace's main-session claim. The optional strict continuation binds a new,
+explicit request to the current target and preserves all source checks.
+
 ## One host, one public provider, one private native session
 
 The Node/browser launcher uses `src\desktop\runtime.ts` and `workspace.ts`.
@@ -114,7 +128,8 @@ authorization.
 `generate-design-spec` still creates the upstream `draft-feature-spec`.
 `beginPrototypeCompletion` and `completeLifecycleStage` retain checkpoint,
 source, feedback and sketch-approval checks; no-GUI completion uses the same
-handoff boundary with its explicit skip reason.
+saved-output boundary with its explicit skip reason. Neither completion path
+invokes `continueDevelopment`; only the explicit continuation does so.
 
 `src\development-handoff.ts` retains exact completed snapshot bytes, multi-file
 source and approved assets under target-workspace
@@ -123,7 +138,7 @@ shared source root, actual target workspace, mock limitations and an immutable
 request envelope. Credential-like files, dependency installations, browser caches
 and unrelated state are not copied. Live preview URLs are not evidence.
 
-Handoffs are retained before native startup. Their exact reserved
+When explicitly requested, handoffs are retained before native startup. Their exact reserved
 `.tandem\living-canvas\handoffs` subtree is source-artifact storage, not legacy
 Stage 2 WAL documents, even when it contains copied package/source JSON.
 Legacy discovery rejects aliased directory entries before excluding that subtree;
@@ -218,6 +233,10 @@ log). Such a missing previously created identity remains a visible recovery
 failure; Tandem does not silently replace it or broaden unused-setup authority.
 Used-session same-ID recovery is separately qualified and must not be presented
 as proof that this zero-input upstream limitation is resolved.
+Completing Stage 1 no longer creates an unused private session just to preserve
+a connection to Stage 2. This avoids that unnecessary exposure, but does not
+repair journal loss for an explicitly opened, unused Stage 2 session or relax
+main-session ownership/recovery.
 
 ## Integration check, 2026-10-09
 
@@ -228,6 +247,7 @@ wording is superseded; restoring that stage is not remaining work.
 | Requirement | Current evidence | Remaining qualification |
 | --- | --- | --- |
 | Direct Stage 2 entry for new/existing projects | Renderer/server regressions and actual no-model opens preserve empty upstream history and submit no request. | Unused-session cold persistence limitation above. |
+| Stage 1 finishes independently; Stage 2 may start later from files | Both completion paths and initial/stage-change navigation have regression coverage. A fresh native Node host and real Edge showed retained synthetic Stage 1 artifacts without private startup; explicit Development navigation then reached Ready with unchanged input files and zero requests. | Upstream Q&A was a synthetic fixture, not a live Stage 1 journey. Existing used Stage 2 ownership is not transferred; unused native journal loss remains separate. |
 | One foreground owner and separate private runtime | Actual private collector registration has no Tandem canvas or foreground tools; duplicate opens share one view. | No second engine or provider migration is planned. |
 | Prototype evidence reaches Designer without implementation | Immutable source/asset tests pass; bounded native Router/Designer runs accepted the retained synthetic no-GUI handoff and published Design. | A fresh real Stage 1 Q&A-to-HTML/assets-to-Designer journey has not been run on this build. |
 | Later Design changes remain in Stage 2 | A native explicit revision published a new Design while retaining prior decisions, source references and an unanswered semantics question. | No cross-stage rollback is required. |
@@ -253,6 +273,22 @@ both missing dependencies returning HTTP 200. Both exact original failing
 selectors also passed three consecutive isolated runs. These are targeted
 follow-up results, not a claim that the full Stage 2 suite was rerun or that a
 generated application passed end-to-end.
+
+The independent-stage follow-up passed 134 completion, handoff, ownership,
+prototype and renderer regressions, plus 74 neighboring navigation, artifact and
+effort-lifecycle tests, root type checks and root/Stage 2 builds. The native
+no-model probe used production completion on synthetic
+no-GUI Q&A, closed that fixture provider, and then used the supported fresh
+Node launcher with no previous native main/private identity. Real Edge opened
+the retained artifact view without a private installation; an explicit
+Development tab selection created the new private session without a request,
+handoff, Design or implementation confirmation. Saved file hashes were unchanged,
+normal Close succeeded, and both loopback endpoints and the owned browser were
+closed. This does not claim a used desktop identity was replaced or cold-resumed,
+or that Designer actually read the files without a submitted model request.
+Separate used-state regression rejects a different main owner while preserving
+the exact WAL, retained handoff and history. Historical full-suite totals above
+remain unchanged.
 
 Publishing a release, updating installed user extensions and broader UX
 unification remain separate work. No export, GitHub publication or deployment

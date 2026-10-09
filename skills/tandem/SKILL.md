@@ -1,6 +1,6 @@
 ---
 name: tandem
-description: "Guide intent through Preparation, Requirements, approved Sketch, Prototype, and the native Development workspace for Design, implementation and Review."
+description: "Optional Q&A and prototype discovery, or direct native Development for Design, implementation and Review."
 priority: 100
 categories:
   - prototyping
@@ -29,9 +29,11 @@ invocation:
 
 This is the loaded Tandem skill. Do not invoke the skill again.
 
-The active lifecycle is **Preparation -> Requirements -> Sketch -> Prototype ->
-Development**. Development is PR #14's original human-loop application, not a
-renamed version of the old Design/Plan/Implement/Test factory pipeline.
+Stage 1 is optional: **Preparation -> Requirements -> Sketch -> Prototype**
+collects Q&A and prototype evidence, not formal Design. Stage 2 can open directly
+or later with saved Stage 1 files as explicit input. Development is PR #14's
+original human-loop application, not a renamed version of the old
+Design/Plan/Implement/Test factory pipeline.
 
 ## Invocation and intent
 
@@ -48,7 +50,8 @@ at the permitted upstream reset boundary. Without a goal, open without reset
 to restore the effort or show goal entry. Do not inspect the workspace, research
 sources or interview the user before opening.
 
-If the user supplied no goal, let them enter it and click **Start project**.
+If the user supplied no goal, let them enter it and click **Start project**, or
+choose **Open Development directly** without starting Stage 1.
 Opening a blank effort starts no agents. A supplied goal starts the bounded
 Preparation work owned by Tandem; let progress and results remain in its UI.
 Do not launch a second engine, create replacement sessions, or perform its
@@ -159,15 +162,23 @@ A preview URL is convenient, not durable source evidence. The displayed
 checkpoint and actual multi-file source fingerprint must match. Do not reduce
 a React or multi-file prototype to an invented `index.html`.
 
-**Finish Prototype and continue Design** retains `generate-design-spec`, which
+**Finish Prototype and save outputs** retains `generate-design-spec`, which
 creates `draft-feature-spec` at Prototype. It is not the retired technical
 Design stage. Resolve outstanding feedback, pending checkpoints and applicable
 sketch approval first. An offline preview does not invalidate already recorded,
 source-bound input; absent or changed required files are explicit blockers.
 
+Finishing Prototype (or non-GUI Requirements) saves output only. It must not
+start a private Stage 2 session or submit a Design request. The user can close
+Stage 1 and later explicitly open Development with the saved documents/source
+as ordinary file references. No Stage 1 connection has to remain alive.
+Files are evidence, not authority to replace an existing used Stage 2 owner,
+import canonical Design or replay an old request.
+
 ## Prototype handoff to Development
 
-The host freezes an immutable receipt and exact documents/source under the
+As an optional strict route, explicit **Continue Design from Prototype** asks
+the current host to freeze an immutable receipt and exact documents/source under the
 target workspace's `.tandem\living-canvas\handoffs`. The receipt identifies the
 effort, generation, completed snapshot revision/hash, artifact and asset hashes,
 approved sketch, displayed checkpoint/source manifest, original shared state

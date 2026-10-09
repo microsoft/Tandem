@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { readFile, rename, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { extensionHarness } from "./helpers/extension-harness.js";
 import { sketchDocument, screenPng } from "./helpers/sketch-lifecycle-fixture.js";
 import { SketchStore } from "../src/sketch-store.js";
 import { buildPrototypeCheckpointPrompt, buildSketchPrompt } from "../src/planning-prompts.js";
+import { newPrototypeFlow } from "../src/prototype-flow.js";
+import { fingerprintPrototypeWorkspace } from "../src/prototype-runtime.js";
 
 async function readyRequirements(fixture: Awaited<ReturnType<typeof extensionHarness>>, noGui = false) {
     const state = fixture.api.createState("sample", "A task app");
@@ -71,6 +73,52 @@ test("Requirements generates drawings once and cannot start Prototype before exp
         assert.equal(prototype.prototypeFlow!.checkpoints[0].sketchRevisionId, approved.sketch.current!.id);
         const request = fixture.requests[1] as { args: { sketchInput: { document: unknown } } };
         assert.deepEqual(JSON.parse(JSON.stringify(request.args.sketchInput.document)), sketchDocument());
+    } finally { await fixture.close(); }
+});
+
+test("graphical Prototype completion saves approved evidence without starting or requesting Stage2", async () => {
+    const fixture = await extensionHarness();
+    try {
+        await readyRequirements(fixture);
+        generateDrawings(fixture);
+        await fixture.api.completeLifecycleStage("sample", "requirements", "project:tandem");
+        await fixture.api.waitForAnswer("sample");
+        const ready = await approveDrawings(fixture);
+        const source = join(fixture.root, ".tandem", "efforts", "sample", "previews", "completed-fixture");
+        await mkdir(source, { recursive: true });
+        const html = "<!doctype html><button>Complete task</button>";
+        await writeFile(join(source, "index.html"), html);
+        ready.stage = ready.lifecycle.currentStage = "prototype";
+        ready.lifecycle.completedStages.push("sketch");
+        ready.previewStatus = "ready";
+        ready.prototypeFlow = { ...newPrototypeFlow(), displayedCheckpointId: "completed-fixture", checkpoints: [{
+            id: "completed-fixture", requestId: "completed-fixture", generation: ready.generation,
+            milestone: "interaction", status: "ready", revisionId: null, baseCheckpointId: null, sourceCheckpointId: null,
+            workspacePath: source, workspacePrepared: true, previewUrl: "http://127.0.0.1:12345/", summary: "Synthetic retained HTML fixture",
+            focus: "", requestedAt: ready.updatedAt, completedAt: ready.updatedAt, timeoutSeconds: 300,
+            sourceFingerprint: await fingerprintPrototypeWorkspace(source),
+            sketchRevisionId: ready.sketch.current!.id, sketchInputHash: ready.sketch.current!.documentHash,
+        }] };
+        ready.prototypeFlow.checkpoints.unshift({ ...ready.prototypeFlow.checkpoints[0],
+            id: "structure-fixture", requestId: "structure-fixture", milestone: "structure" });
+        ready.prototypeReview.designSpecArtifactId = "draft-feature-spec";
+        ready.artifacts.push({ id: "draft-feature-spec", title: "Feature evidence", stage: "prototype",
+            kind: "design-spec", path: "", language: "markdown", content: "Confirmed task interaction.", mermaid: "" });
+        await fixture.api.persistState(ready);
+        fixture.setBeforeDevelopmentStart(async () => { throw new Error("Stage1 cannot depend on private startup."); });
+        const completed = await fixture.api.completeLifecycleStage("sample", "prototype", "project:tandem");
+        assert.equal(completed.lifecycle.currentStage, "development");
+        assert.match(completed.status, /outputs saved.*close now.*open Development later/);
+        assert.ok(completed.development == null);
+        assert.equal(fixture.developmentRequests.length, 0);
+        assert.equal(fixture.requests.length, 1, "Only the explicitly mocked Stage1 sketch generation ran.");
+        await assert.rejects(access(join(fixture.root, ".tandem", "living-canvas")), { code: "ENOENT" });
+        const output = completed.lifecycle.outputs.find(value => value.stageId === "prototype")!;
+        const snapshot = JSON.parse(await readFile(join(fixture.root, output.path), "utf8"));
+        assert.equal(snapshot.result.prototypeFlow.checkpoints[0].sourceFingerprint, ready.prototypeFlow.checkpoints[0].sourceFingerprint);
+        assert.equal(snapshot.result.sketch.approved.revisionId, ready.sketch.approved!.revisionId);
+        assert.equal(await readFile(join(source, "index.html"), "utf8"), html);
+        await new SketchStore(fixture.root).verifyApproval("sample", ready.sketch.current!, ready.sketch.approved!);
     } finally { await fixture.close(); }
 });
 

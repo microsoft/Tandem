@@ -314,16 +314,17 @@ test("canvas reset preserves revisions and cannot repeat during rehydration or a
     } finally { await fixture.close(); }
 });
 
-test("non-GUI Requirements bypass Sketch and Prototype with snapshots and a feature-spec handoff", async () => {
+test("non-GUI Requirements finish with durable source snapshots without starting Stage2", async () => {
     const fixture = await extensionHarness();
     try {
         const state = readyRequirements(fixture.api.createState("sample", "Build a CLI"));
         state.prototypeApproach = { mode: "not-applicable", reason: "Command-line contract only." };
         await fixture.api.persistState(state);
+        fixture.setBeforeDevelopmentStart(async () => { throw new Error("Stage2 must not start as part of Stage1 completion."); });
         const completed = await fixture.api.completeLifecycleStage("sample", "requirements", "project:tandem");
         assert.equal(completed.lifecycle.currentStage, "development");
-        assert.equal(fixture.developmentRequests.length, 1);
-        assert.match(String(fixture.developmentRequests[0].message), /Do not implement/);
+        assert.equal(fixture.developmentRequests.length, 0);
+        assert.ok(completed.development == null);
         assert.deepEqual(Array.from(completed.lifecycle.skippedStages, (stage) => stage.stageId), ["sketch", "prototype"]);
         assert.equal(completed.lifecycle.outputs.length, 3);
         assert.ok(completed.artifacts.some((artifact) => artifact.id === "draft-feature-spec"));
