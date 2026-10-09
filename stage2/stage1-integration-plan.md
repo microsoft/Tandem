@@ -236,13 +236,23 @@ wording is superseded; restoring that stage is not remaining work.
 | Optional private reasoning effort | Settings/cold-reopen tests and native no-model selection verify advertised effort, actual readback and retained pending intent. | No implicit model or effort substitution is allowed. |
 | Native scoped Review workflow | Scoped collector, concurrent cancellation, explicit Stop retry and late-child tests pass; real no-model bootstrap and workflow lifecycle events are verified. | Live multiworker Review against an implemented project remains unqualified on this integration. |
 
-The final root suite passed 853 tests. The full Stage 2 run separately recorded
+The integration root suite passed 853 tests. The full Stage 2 run separately recorded
 211 shared tests passing and 1,022 canvas tests with 1,015 passes, five failures
 and two skips. Three failures passed isolated timing rechecks. The remaining
 retired-native-Close expectation and standalone Sketch debugger failure
-reproduced on the unchanged merged-main source; they were not hidden or repaired
-as part of this integration. Focused final feature suites passed after the
-subsequent ports. These results do not imply a full generated-application pass.
+reproduced on the unchanged merged-main source. Follow-up investigation resolved
+both test defects: settlement inspection, not storage Close, must reject a live
+native task; the debugger fixture omitted the shared Markdown/navigation modules
+and returned HTTP 404 before its script could initialize. Revised coverage
+retains strict settlement/ownership checks and every browser validation,
+source-preservation and static-only request assertion.
+
+The follow-up passed 89 native retirement/shell/writer tests, 13 runtime/transport
+Close and terminal-result tests, and all five debugger tests in real Edge with
+both missing dependencies returning HTTP 200. Both exact original failing
+selectors also passed three consecutive isolated runs. These are targeted
+follow-up results, not a claim that the full Stage 2 suite was rerun or that a
+generated application passed end-to-end.
 
 Publishing a release, updating installed user extensions and broader UX
 unification remain separate work. No export, GitHub publication or deployment

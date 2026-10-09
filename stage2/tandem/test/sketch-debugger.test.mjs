@@ -93,6 +93,9 @@ async function openDebugger(t) {
   for (const name of ['human-loop.js', 'human-loop.json']) {
     files.set(`/prompts/${name}`, await readFile(new URL(`../prompts/${name}`, publicRoot), 'utf8'));
   }
+  for (const name of ['markdown.js', 'link-navigation.js']) {
+    files.set(`/${name}`, await readFile(new URL(`../${name}`, publicRoot), 'utf8'));
+  }
   const requests = [];
   const server = createServer(async (request, response) => {
     const path = new URL(request.url, 'http://localhost').pathname;
@@ -114,7 +117,18 @@ async function openDebugger(t) {
   const browser = await openFixtureBrowser(t);
   await browser.call('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
   await browser.call('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/example.html` });
-  await browser.waitFor("document.querySelector('#validation-status')?.textContent.startsWith('Valid sketch-design/v3')");
+  try {
+    await browser.waitFor("document.querySelector('#validation-status')?.textContent.startsWith('Valid sketch-design/v3')");
+  } catch (error) {
+    t.diagnostic(JSON.stringify({ requests, state: await browser.evaluate(`({
+      readyState: document.readyState,
+      status: document.getElementById('validation-status')?.textContent,
+      error: document.getElementById('validation-error')?.textContent,
+      sourceLength: document.getElementById('json-input')?.value.length,
+      resources: performance.getEntriesByType('resource').map(entry => ({ url: entry.name, status: entry.responseStatus })),
+    })`) }));
+    throw error;
+  }
   return { browser, requests };
 }
 
@@ -137,6 +151,20 @@ test('real Edge standalone debugger pastes complete Designer output, switches ev
     assert.deepEqual(await browser.evaluate("JSON.parse(document.getElementById('generation-contract').textContent)"),
       designGenerationContract);
     assert.ok(requests.includes('/prompts/human-loop.json'), 'Debugger imports the actual shared JSON asset');
+    for (const module of ['/markdown.js', '/link-navigation.js']) {
+      assert.ok(requests.includes(module), `Debugger must load its shared document-renderer dependency ${module}`);
+    }
+    const sharedResources = await browser.evaluate(`performance.getEntriesByType('resource')
+      .map(entry => ({ path: new URL(entry.name).pathname, status: entry.responseStatus }))
+      .filter(entry => ['/markdown.js', '/link-navigation.js'].includes(entry.path))
+      .sort((a, b) => a.path.localeCompare(b.path))`);
+    assert.deepEqual(sharedResources, [
+      { path: '/link-navigation.js', status: 200 }, { path: '/markdown.js', status: 200 },
+    ]);
+    t.diagnostic(JSON.stringify({ browser: (await browser.call('Browser.getVersion')).product, sharedResources }));
+    assert.deepEqual(await browser.evaluate(`performance.getEntriesByType('resource')
+      .filter(entry => /\\.(?:js|json)$/.test(new URL(entry.name).pathname) && entry.responseStatus !== 200)
+      .map(entry => ({ url: entry.name, status: entry.responseStatus }))`), []);
     const design = designerCollection();
     const exactLabel = '<img src=x>';
     const exactDetails = '  Full details\n</pre><img src=x onerror="window.debuggerInjected=true"><script>window.debuggerInjected=true</script>\n  原文 & text  ';
@@ -268,6 +296,6 @@ test('real Edge standalone debugger pastes complete Designer output, switches ev
     })()`);
     assert.deepEqual(await browser.evaluate("JSON.parse(document.getElementById('json-input').value)"), createSampleInput());
     assert.equal(browser.exceptions.length, 0);
-    assert.ok(requests.every((path) => /^\/(?:example\.html|(?:sketch\/)?(?:debugger|contract|design-contract|renderer|geometry-v2|icons|templates)\.js|artifacts\/[\w/.-]+|prompts\/human-loop\.(?:js|json)|favicon\.ico)$/.test(path)),
+    assert.ok(requests.every((path) => /^\/(?:example\.html|(?:markdown|link-navigation)\.js|(?:sketch\/)?(?:debugger|contract|design-contract|renderer|geometry-v2|icons|templates)\.js|artifacts\/[\w/.-]+|prompts\/human-loop\.(?:js|json)|favicon\.ico)$/.test(path)),
       'Standalone debugger requests only its static resources, never an API or native workflow');
   });
