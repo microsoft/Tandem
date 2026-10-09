@@ -1062,6 +1062,32 @@ test("failed factory cancellation cannot prevent foreground interruption or clai
   }, { sessionId: "private" })).permissionDecision, "deny");
 });
 
+test("explicit Stop retries a failed Review cancellation while concurrent attempts share the native call", async t => {
+  const f = await fixture(t, { nativeFiles: true });
+  await beginReview(f);
+  await reviewScope(f, "retry-cancel");
+  const first = Promise.withResolvers();
+  let calls = 0;
+  const cancel = f.session.workflow.cancel;
+  t.mock.method(f.session.workflow, "cancel", async id => {
+    calls++;
+    if (calls === 1) return first.promise;
+    return cancel(id);
+  });
+  const one = f.transport.stop("explicit-stop");
+  const duplicate = f.transport.stop("explicit-stop");
+  const observed = Promise.allSettled([one, duplicate]);
+  assert.equal(calls, 1, "Concurrent Stop requests must share the in-flight cancellation.");
+  first.reject(new Error("Transient native cancellation failure"));
+  const results = await observed;
+  assert.ok(results.every(result => result.status === "rejected"));
+  assert.equal(calls, 1, "Failure must not trigger an automatic retry.");
+  const retried = await f.transport.stop("explicit-stop-retry");
+  assert.equal(calls, 2);
+  assert.equal(retried.interrupted, true);
+  assert.equal(f.session.factoryRuns.get("factory:retry-cancel").status, "cancelled");
+});
+
 test("parent publication does not await a factory and late factory children cannot borrow the next role", async t => {
   const f = await fixture(t, { nativeFiles: true });
   const { packet, outcome } = await beginReview(f);

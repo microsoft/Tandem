@@ -145,6 +145,9 @@ execution wrappers and static-preview tool are not registered.
 existing graceful Stop. Conversation and partial files remain; the stopped
 request is retired and no successor starts automatically. Native interruption
 outcomes and local recording problems are reported separately.
+Concurrent requests share an in-flight Review workflow cancellation. A failed
+native cancellation stays visible; a later explicit Stop may retry it, without
+an automatic retry loop or reporting the first failure as success.
 
 Close attempts native save/shutdown even during work or when local preparation,
 history inspection or persistence fails. Its receipt distinguishes confirmed

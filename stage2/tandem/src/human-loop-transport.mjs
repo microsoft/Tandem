@@ -663,7 +663,12 @@ export class HumanLoopTransport {
         "Native factory cancellation did not confirm an ended attempt.");
       batch.status = run.status;
     });
-    return batch.cancelling;
+    const cancelling = batch.cancelling;
+    try { await cancelling; }
+    catch (error) {
+      if (batch.cancelling === cancelling) batch.cancelling = null;
+      throw error;
+    }
   }
 
   async #reviewCoverage(active) {
