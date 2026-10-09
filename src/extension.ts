@@ -9,8 +9,8 @@ import { fileURLToPath } from "node:url";
 import {
     CanvasError,
     createCanvas,
-    defineFactory,
-    isFactoryRunTerminal,
+    defineWorkflow,
+    isWorkflowRunTerminal,
     joinSession,
 } from "@github/copilot-sdk/extension";
 import { renderTandemHtml } from "./renderer.js";
@@ -1477,7 +1477,7 @@ async function recordEffortFactoryReceipt(prototypeId, requestId, generation, ru
         const receipt = receipts.find((item) => item.requestId === requestId && (!item.runId || item.runId === run.runId));
         if (!receipt) return;
         await persistState({ ...current, factoryRuns: receipts.map((item) => item === receipt
-            ? { ...item, runId: run.runId, terminal: isFactoryRunTerminal(run.status) } : item) });
+            ? { ...item, runId: run.runId, terminal: isWorkflowRunTerminal(run.status) } : item) });
     }, false, true);
 }
 
@@ -1497,7 +1497,7 @@ async function runEffortFactory(prototypeId: string, requestId: string, request:
         await persistState({ ...current, factoryRuns: [...(current.factoryRuns || []),
             { requestId, generation, runId: null, terminal: false }] });
         // Dispatch while owning the claim, but release it before awaiting SDK callbacks.
-        launched = Promise.resolve().then(() => session.rpc.factory.run(request))
+        launched = Promise.resolve().then(() => session.rpc.workflow.run(request))
             .then((run) => ({ run }), (error: unknown) => ({ error }));
     });
     const outcome = await launched;
@@ -1542,22 +1542,22 @@ async function recoverRejectedFactoryLaunch(prototypeId: string): Promise<Tandem
 }
 
 async function waitForEffortRun(prototypeId, runId) {
-    const run = await session.factory.waitForRun(runId);
+    const run = await session.workflow.waitForRun(runId);
     return observeEffortRun(prototypeId, runId, run);
 }
 
 async function getEffortRun(prototypeId, runId) {
-    return observeEffortRun(prototypeId, runId, await session.factory.getRun(runId));
+    return observeEffortRun(prototypeId, runId, await session.workflow.getRun(runId));
 }
 
 async function observeEffortRun(prototypeId, runId, run) {
     await withAnswerClaim(prototypeId, async () => {
         const current = await loadState(prototypeId);
         if (run.runId !== runId) throw new Error("The SDK returned a different factory run.");
-        if (!isFactoryRunTerminal(run.status)) return;
+        if (!isWorkflowRunTerminal(run.status)) return;
         if (!current.factoryRuns?.some((item) => item.runId === runId && !item.terminal)) return;
         await persistState({ ...current, factoryRuns: current.factoryRuns.map((item) =>
-            item.runId === runId ? { ...item, terminal: isFactoryRunTerminal(run.status) } : item) });
+            item.runId === runId ? { ...item, terminal: isWorkflowRunTerminal(run.status) } : item) });
     }, false, true);
     return run;
 }
@@ -1583,7 +1583,7 @@ async function resumeEffortRun(prototypeId, runId) {
             await persistState({ ...current, factoryRuns: receipts.map((item) =>
                 item.runId === runId ? { ...item, terminal: false } : item) });
         }
-        resumed = session.factory.resume(runId);
+        resumed = session.workflow.resume(runId);
     });
     const run = await resumed;
     const current = await loadState(prototypeId);
@@ -2163,10 +2163,10 @@ async function runPreparationFactory(prototypeId, state, resumeFromRunId = null)
     });
     token.runId = run.runId;
     if (!(await bindPreparationRun(prototypeId, token))) {
-        if (!isFactoryRunTerminal(run.status) && !resumeFromRunId) await session.factory.cancel(run.runId);
+        if (!isWorkflowRunTerminal(run.status) && !resumeFromRunId) await session.workflow.cancel(run.runId);
         return;
     }
-    const terminal = isFactoryRunTerminal(run.status)
+    const terminal = isWorkflowRunTerminal(run.status)
         ? run
         : await waitForEffortRun(prototypeId, run.runId);
     await settlePreparationRun(prototypeId, terminal, token);
@@ -2293,7 +2293,7 @@ function recoverPreparationFactory(state, canSubmitAnswers) {
             await runPreparationFactory(state.prototypeId, state, runId);
             return;
         }
-        if (!isFactoryRunTerminal(run.status)) {
+        if (!isWorkflowRunTerminal(run.status)) {
             run = await waitForEffortRun(state.prototypeId, run.runId);
         }
         await settlePreparationRun(state.prototypeId, run, token);
@@ -2446,12 +2446,12 @@ async function resetEffortLocked(prototypeId, extensionId, input) {
         const runIds = [...new Set(pending.map((item) => item.runId).filter(Boolean))] as string[];
         // No effort lock is held while cancellation waits for worker callbacks.
         const results = await Promise.allSettled(runIds.map((runId) => resetDeadline((async () => {
-            let run = await session.factory.getRun(runId);
+            let run = await session.workflow.getRun(runId);
             if (!isObject(run) || run.runId !== runId) throw new Error("The SDK returned a different factory run.");
-            if (!isFactoryRunTerminal(run.status)) run = await session.factory.cancel(runId);
+            if (!isWorkflowRunTerminal(run.status)) run = await session.workflow.cancel(runId);
             if (!isObject(run) || run.runId !== runId) throw new Error("Cancellation did not confirm the requested run identity.");
-            if (!isFactoryRunTerminal(run.status)) run = await session.factory.waitForRun(runId);
-            if (!isObject(run) || run.runId !== runId || !isFactoryRunTerminal(run.status)) {
+            if (!isWorkflowRunTerminal(run.status)) run = await session.workflow.waitForRun(runId);
+            if (!isObject(run) || run.runId !== runId || !isWorkflowRunTerminal(run.status)) {
                 throw new Error(`Termination of ${runId} remains unconfirmed.`);
             }
         })())));
@@ -3132,7 +3132,7 @@ async function completeLifecycleStage(prototypeId, requestedStageId, extensionId
         const runId = receipt.runId || (snapshot.processing?.requestId === receipt.requestId
             ? snapshot.processing.runId : null);
         if (!runId) continue;
-        const run = await session.factory.getRun(runId);
+        const run = await session.workflow.getRun(runId);
         if (run.runId !== runId) throw new Error("The SDK returned a different factory run.");
         await recordEffortFactoryReceipt(prototypeId, receipt.requestId, receipt.generation, run);
     }
@@ -4533,7 +4533,7 @@ async function recordFactoryFailure(prototypeId, requestId, error) {
 
 async function settleAnswerRun(prototypeId, requestId, run) {
     let terminalRun = run;
-    if (!isFactoryRunTerminal(terminalRun.status)) {
+    if (!isWorkflowRunTerminal(terminalRun.status)) {
         terminalRun = await waitForEffortRun(prototypeId, terminalRun.runId);
     }
     if (terminalRun.status === "halted" &&
@@ -4696,8 +4696,8 @@ async function runAnswerFactory(
         state.generation,
     );
     if (!currentRequest) {
-        if (!isFactoryRunTerminal(run.status)) {
-            await session.factory.cancel(run.runId);
+        if (!isWorkflowRunTerminal(run.status)) {
+            await session.workflow.cancel(run.runId);
         }
         return;
     }
@@ -4742,7 +4742,7 @@ async function recoverDefaultBatch(state, monitor = false, expectedRevision = un
     const runId = state.processing.runId || receipt.runId;
     let run;
     try {
-        run = runId ? await session.factory.getRun(runId)
+        run = runId ? await session.workflow.getRun(runId)
             : await findAnswerFactoryRun(state.prototypeId, state.processing, { attempts: monitor ? 5 : 1, observe: false });
         if (!run?.runId || (runId && run.runId !== runId)) {
             throw new Error("The durable factory run could not be correlated.");
@@ -4758,7 +4758,7 @@ async function recoverDefaultBatch(state, monitor = false, expectedRevision = un
         }
         if (observedRun?.runId !== recoveredRunId) throw new Error("The SDK returned a different factory run.");
         const currentReceipt = assertDefaultBatchRecovery(current, state, recoveredRunId);
-        const terminal = isFactoryRunTerminal(observedRun.status);
+        const terminal = isWorkflowRunTerminal(observedRun.status);
         if (terminal || !current.processing.runId || !currentReceipt.runId) {
             await persistState({
                 ...current,
@@ -4780,8 +4780,8 @@ async function recoverDefaultBatch(state, monitor = false, expectedRevision = un
         return loadState(state.prototypeId);
     });
     let recovered = await settle(run, expectedRevision);
-    if (monitor && !isFactoryRunTerminal(run.status)) {
-        run = await session.factory.waitForRun(recoveredRunId);
+    if (monitor && !isWorkflowRunTerminal(run.status)) {
+        run = await session.workflow.waitForRun(recoveredRunId);
         recovered = await settle(run);
     }
     return recovered;
@@ -4805,21 +4805,21 @@ async function recoverFailedSketchRun(prototypeId: string, monitor = false): Pro
     const runId = processing.runId || receipt.runId;
     let run;
     try {
-        run = runId ? await session.factory.getRun(runId)
+        run = runId ? await session.workflow.getRun(runId)
             : await findAnswerFactoryRun(prototypeId, processing, { attempts: 1, observe: false });
         if (!run?.runId || (runId && run.runId !== runId)) {
             throw new Error("The durable factory run could not be correlated.");
         }
-        if (monitor && !isFactoryRunTerminal(run.status)) {
+        if (monitor && !isWorkflowRunTerminal(run.status)) {
             const recoveredRunId = run.runId;
-            run = await session.factory.waitForRun(recoveredRunId);
+            run = await session.workflow.waitForRun(recoveredRunId);
             if (run.runId !== recoveredRunId) throw new Error("The SDK returned a different factory run.");
         }
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         throw new AnswerRequestError(409, `The previous drawing job could not be verified with the SDK. Saved drawings and run ownership were preserved: ${message}`);
     }
-    if (!isFactoryRunTerminal(run.status)) return observed;
+    if (!isWorkflowRunTerminal(run.status)) return observed;
     return withAnswerClaim(prototypeId, async () => {
         const current = await loadState(prototypeId);
         const currentReceipt = failedSketchReceipt(current);
@@ -4930,7 +4930,7 @@ function recoverAnswerFactory(state, canSubmitAnswers) {
         }
 
         if (currentProcessing.factoryName !== ANSWER_FACTORY_NAME) {
-            if (!isFactoryRunTerminal(run.status)) {
+            if (!isWorkflowRunTerminal(run.status)) {
                 run = await waitForEffortRun(state.prototypeId, run.runId);
             }
             if (["halted", "cancelled"].includes(run.status)) {
@@ -4975,21 +4975,21 @@ async function findAnswerFactoryRun(prototypeId, processing, { attempts = 5, obs
 
     const marker = `Request ${processing.requestId};`;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
-        const runs = await session.factory.listRuns();
+        const runs = await session.workflow.listRuns();
         const candidates = runs.filter(
             (run) =>
-                run.factoryName === processing.factoryName &&
+                run.workflowName === processing.factoryName &&
                 run.createdAt >= requestedAt - 1_000 &&
                 run.createdAt <= requestedAt + 30_000,
         );
         for (const candidate of candidates) {
-            const progress = await session.factory.getRunProgress(
+            const progress = await session.workflow.getRunProgress(
                 candidate.runId,
                 { limit: 500 },
             );
             if (progress.records.some((record) => record.text.includes(marker))) {
                 const run = observe ? await getEffortRun(prototypeId, candidate.runId)
-                    : await session.factory.getRun(candidate.runId);
+                    : await session.workflow.getRun(candidate.runId);
                 if (run.runId !== candidate.runId) throw new Error("The SDK returned a different factory run.");
                 return run;
             }
@@ -5121,14 +5121,14 @@ async function runSuggestionFactory(prototypeId, requestId, goal, usageItems) {
         return true;
     });
     if (!currentRequest) {
-        if (!isFactoryRunTerminal(run.status)) {
-            await session.factory.cancel(run.runId);
+        if (!isWorkflowRunTerminal(run.status)) {
+            await session.workflow.cancel(run.runId);
         }
         return;
     }
 
     let terminalRun = run;
-    if (!isFactoryRunTerminal(terminalRun.status)) {
+    if (!isWorkflowRunTerminal(terminalRun.status)) {
         terminalRun = await waitForEffortRun(prototypeId, terminalRun.runId);
     }
     if (terminalRun.status === "halted") {
@@ -5224,7 +5224,7 @@ function recoverSuggestionFactory(state, canSubmitAnswers) {
         if (processing.runId) {
             try {
                 let run = await getEffortRun(state.prototypeId, processing.runId);
-                if (!isFactoryRunTerminal(run.status)) {
+                if (!isWorkflowRunTerminal(run.status)) {
                     run = await waitForEffortRun(state.prototypeId, run.runId);
                 }
                 if (run.status === "halted") {
@@ -6124,7 +6124,7 @@ async function preparationRuntimeState(entry) {
     const runId = state.preparation.processing?.runId;
     if (!runId) return { ...payload, preparationRuntime: null };
     try {
-        const detail = await session.factory.getRunDetail(runId);
+        const detail = await session.workflow.getRunDetail(runId);
         return {
             ...payload,
             preparationRuntime: {
@@ -6193,8 +6193,8 @@ async function submitPreparationRetry(entry, res) {
         }
         const previousRunId = current.preparation.processing?.runId;
         if (previousRunId) {
-            const previous = await session.factory.getRun(previousRunId);
-            if (!isFactoryRunTerminal(previous.status)) {
+            const previous = await session.workflow.getRun(previousRunId);
+            if (!isWorkflowRunTerminal(previous.status)) {
                 throw new AnswerRequestError(409, "The previous preparation run is still active. Stop it before retrying.");
             }
         }
@@ -7014,7 +7014,7 @@ const prototypeCheckpointOutputSchema = {
     required: ["summary", "focus", "previewUrl", "question", "artifactChanges", "evidence"],
 };
 
-const preparationFactory = defineFactory({
+const preparationFactory = defineWorkflow({
     meta: {
         name: PREPARATION_FACTORY_NAME,
         description:
@@ -7211,7 +7211,7 @@ const preparationFactory = defineFactory({
     },
 });
 
-const usageSuggestionFactory = defineFactory({
+const usageSuggestionFactory = defineWorkflow({
     meta: {
         name: SUGGESTION_FACTORY_NAME,
         description:
@@ -7281,7 +7281,7 @@ const usageSuggestionFactory = defineFactory({
 });
 
 
-const answerFactory = defineFactory({
+const answerFactory = defineWorkflow({
     meta: {
         name: ANSWER_FACTORY_NAME,
         description:
@@ -7409,7 +7409,7 @@ const answerFactory = defineFactory({
                     decisionIds: current.decisionGraph.nodes.filter((node) => node.status === "answered"
                         && typeof node.answer === "string" && node.answer.trim()).map((node) => node.id),
                     subscribe: (handler) => ctx.session.on(handler),
-                    getRunDetail: () => ctx.session.factory.getRunDetail(ctx.runId),
+                    getRunDetail: () => ctx.session.workflow.getRunDetail(ctx.runId),
                     run: () => ctx.agent(answerFactoryPrompt(args), {
                         label: "Stream app drawings", agent: textWorkerAgent.name, reasoningEffort: "medium",
                     }),
@@ -7481,7 +7481,7 @@ session = await joinSession({
         },
         handler: readSketchImage,
     }],
-    factories: [
+    workflows: [
         preparationFactory,
         usageSuggestionFactory,
         answerFactory,

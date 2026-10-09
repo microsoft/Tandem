@@ -32,7 +32,7 @@ function harness(base: SketchDocument | null = sketchDocument(), getRunDetail = 
     });
     const emit = (event: SketchWorkerEvent) => handler?.(event);
     const start = (run = "drawing-run", agentId = "drawing-agent", parentId?: string) => emit({
-        type: "subagent.started", agentId, data: { factoryRunId: run, toolCallId: "drawing-tool", parentId },
+        type: "subagent.started", agentId, data: { workflowRunId: run, toolCallId: "drawing-tool", parentId },
     });
     const delta = (text: string, agentId = "drawing-agent", messageId = "drawing-message") => emit({
         type: "assistant.message_delta", agentId, data: { messageId, deltaContent: text },
@@ -81,7 +81,7 @@ test("root, unrelated factories and nested agents cannot contribute drawing comm
 
 test("drawing streams support tool-call correlation on runtimes without an agent ID", async () => {
     const h = harness();
-    h.emit({ type: "subagent.started", data: { factoryRunId: "drawing-run", toolCallId: "drawing-tool" } });
+    h.emit({ type: "subagent.started", data: { workflowRunId: "drawing-run", toolCallId: "drawing-tool" } });
     h.emit({ type: "assistant.message_delta",
         data: { messageId: "drawing-message", parentToolCallId: "drawing-tool", deltaContent: operation() } });
     assert.equal(h.previews.length, 1);
@@ -298,7 +298,7 @@ test("a preview rejected by its owner cannot become a successful final result", 
         preview: () => { throw new Error("Request was replaced"); },
         failed: (error) => failures.push(error),
         run: async () => {
-            receive({ type: "subagent.started", agentId: "worker", data: { factoryRunId: "run", toolCallId: "call" } });
+            receive({ type: "subagent.started", agentId: "worker", data: { workflowRunId: "run", toolCallId: "call" } });
             receive({ type: "assistant.message_delta", agentId: "worker",
                 data: { messageId: "message", deltaContent: operation() } });
             return operation() + done;

@@ -72,21 +72,18 @@ export function desktopSessionConfig(
 }
 
 export async function openDesktopSession(
-    client: Pick<CopilotClient, "rpc" | "resumeSession">,
+    client: Pick<CopilotClient, "rpc" | "createSession" | "resumeSession">,
     ownership: { sessionId: string; workspace: string; resume: boolean },
     config: ResumeSessionConfig,
 ): Promise<CopilotSession> {
     if (!ownership.resume) {
-        // Unnamed SDK sessions are not durable until a user turn; desktop factories do not need one.
-        const opened = await client.rpc.sessions.open({
-            kind: "create",
-            options: { sessionId: ownership.sessionId, name: "Tandem Desktop",
-                workingDirectory: ownership.workspace, clientName: "Tandem Desktop" },
-        });
-        if (opened.status !== "created" || opened.sessionId !== ownership.sessionId) {
+        const session = await client.createSession({ ...config, sessionId: ownership.sessionId });
+        if (session.sessionId !== ownership.sessionId) {
             throw new Error("Copilot could not create the requested desktop session identity.");
         }
+        await session.rpc.name.set({ name: "Tandem Desktop" });
         await client.rpc.sessions.save({ sessionId: ownership.sessionId });
+        return session;
     }
     return client.resumeSession(ownership.sessionId, config);
 }

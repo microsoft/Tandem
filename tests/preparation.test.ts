@@ -74,7 +74,7 @@ test("automatic Preparation binds its run before agents and writes a versioned R
         });
         assert.equal(keys.length, 3);
         assert.ok(keys.every((key) => key.startsWith(pending.preparation.processing!.requestId!)));
-        fixture.api.setSession({ ...fixture.session, factory: {
+        fixture.api.setSession({ ...fixture.session, workflow: {
             waitForRun: async () => ({ runId: "prepare-run", status: "completed", result }),
         } });
         await fixture.api.waitForEffortRun("sample", "prepare-run");
@@ -122,7 +122,7 @@ test("empty and metadata-only projects use one goal-only worker and persist a re
             assert.deepEqual(await fixture.api.preparationFactory.run(context), result);
             assert.deepEqual(labels, ["prepare:goal-only"], "durable replay must not repeat agent work");
             assert.ok([...journal.keys()].every((key) => key.startsWith(pending.preparation.processing!.requestId!)));
-            fixture.api.setSession({ ...fixture.session, factory: {
+            fixture.api.setSession({ ...fixture.session, workflow: {
                 waitForRun: async () => ({ runId: context.runId, status: "completed", result }),
             } });
             await fixture.api.waitForEffortRun("sample", context.runId);

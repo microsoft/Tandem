@@ -39,7 +39,7 @@ async function setup(legacyEvents = false) {
     const signal = new AbortController().signal;
     const runtime = {
         ...h.session,
-        factory: {
+        workflow: {
             getRunDetail: async (runId: string) => {
                 assert.equal(runId, "stream-run");
                 return { runId, agents: [{ runId, agentId: "stream-agent", toolCallId: "bg-stream-tool" }] };
@@ -49,7 +49,7 @@ async function setup(legacyEvents = false) {
             listeners.add(callback);
             return () => { listeners.delete(callback); };
         },
-        rpc: { ...h.session.rpc, factory: {
+        rpc: { ...h.session.rpc, workflow: {
             run: async (request) => {
                 h.requests.push(request);
                 const result = await h.api.answerFactory.run({
@@ -90,7 +90,7 @@ async function setup(legacyEvents = false) {
             throw new Error(`Drawing worker did not start: ${h.logs.join("\n")}`);
         })]);
         emit({ type: "subagent.started", agentId: "bg-stream-tool",
-            data: { ...(legacyEvents ? {} : { factoryRunId: "stream-run" }), toolCallId: "bg-stream-tool" } });
+            data: { ...(legacyEvents ? {} : { workflowRunId: "stream-run" }), toolCallId: "bg-stream-tool" } });
         return pending;
     };
     return { h, before, url: opened.url, start, delta, operation, output, listeners };

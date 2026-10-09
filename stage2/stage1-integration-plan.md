@@ -23,12 +23,19 @@ The private stdio runtime preserves the PR's stores/WAL, roles, result authority
 native tools/consent, immediate dispatch, missing-result continuation, Stop modes,
 implementation confirmation and no-replay recovery.
 
-For the qualified Node/CLI combination, composition uses supported native
-`sessions.open` with the exact new private ID/name, saves it, and attaches the
-original configuration with `continuePendingWork: false` and
-`suppressResumeEvent: true`. This avoids an empty `createSession` identity being
-discarded before its first user turn. It adds no dummy turn and adopts no other
-session. Recovery still uses the original missing-session and ownership checks.
+Initial creation uses SDK `createSession` with the exact reserved private ID and
+full configuration, records native creation, explicitly names it and saves it.
+It adds no dummy turn and adopts no other session. A later naming/save failure
+cannot erase the creation acknowledgement. Recovery still resumes the same ID
+with `continuePendingWork: false` and `suppressResumeEvent: true`, preserving
+the original missing-session and ownership checks.
+
+The composed host uses the current stable CLI/SDK pair and explicitly supplies
+its SDK to the extension. Stage 1 registers its retained coordinators through
+`defineWorkflow`/`workflows` and uses `session.workflow` for native run,
+progress, cancellation and same-run recovery. Existing persisted `factoryRuns`
+and `factoryName` fields, coordinator names, request IDs and artifact receipts
+remain unchanged; there is no factory/workflow fallback or replay conversion.
 
 First native creation is durably fenced in installation v3 with `not-requested`,
 `requested` and `created` receipts, preserving the original reserved private ID.

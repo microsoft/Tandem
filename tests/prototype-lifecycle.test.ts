@@ -37,7 +37,7 @@ test("prototype results cannot rewrite requirements and must publish a verified 
         state.prototypeApproach = { mode: "build", reason: "A new interface is needed." };
         state.confirmed = ["User decision"];
         await fixture.api.persistState(state);
-        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, factory: {
+        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, workflow: {
             run: async (request: { args: { state: typeof state } }) => {
                 fixture.requests.push(request);
                 const checkpointId = request.args.state.processing.prototypeCheckpointId;
@@ -138,7 +138,7 @@ test("later timeout retains the first preview and retry only rebuilds the failed
         state.lifecycle.completedStages = ["prepare", "requirements"];
         state.prototypeApproach = { mode: "build", reason: "New UI" };
         await fixture.api.persistState(state);
-        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, factory: {
+        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, workflow: {
             run: async (request: { args: { state: typeof state }; options: { limits: { timeoutSeconds: number } } }) => {
                 fixture.requests.push(request);
                 const count = fixture.requests.length;
@@ -203,7 +203,7 @@ test("a checkpoint cannot publish another checkpoint's identity", async () => {
         state.lifecycle.completedStages = ["prepare", "requirements"];
         state.prototypeApproach = { mode: "build", reason: "New UI" };
         await fixture.api.persistState(state);
-        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, factory: {
+        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, workflow: {
             run: async (request: unknown) => {
                 fixture.requests.push(request);
                 return { status: "completed", runId: "wrong-preview", result: {
@@ -231,7 +231,7 @@ test("queued feedback is reconciled in order and the active item survives snapsh
         state.prototypeApproach = { mode: "build", reason: "New UI" };
         await fixture.api.persistState(state);
         let finishFirst: (value: unknown) => void = () => { throw new Error("First run has not started."); };
-        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, factory: {
+        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, workflow: {
             run: async (request: unknown) => {
                 fixture.requests.push(request);
                 if (fixture.requests.length === 1) return new Promise((resolve) => { finishFirst = resolve; });
@@ -319,7 +319,7 @@ test("a prepared revision is not marked applied until its preview is promoted", 
         const queued = await fixture.api.queuePrototypeRevision("sample", "project:tandem", {
             suggestion: "Add a visible selected state.", clientRequestId: "selected-state",
         });
-        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, factory: {
+        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, workflow: {
             run: async (request: { args: { state: typeof state } }) => {
                 fixture.requests.push(request);
                 const checkpoint = request.args.state.prototypeFlow!.checkpoints.at(-1)!;

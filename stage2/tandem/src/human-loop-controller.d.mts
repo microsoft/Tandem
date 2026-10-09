@@ -40,4 +40,5 @@ export function createHumanLoopController(options: {
 }): HumanLoopController;
 export function createDurablePrivateSession(
   client: import("@github/copilot-sdk").CopilotClient, configuration: SessionConfig,
+  onCreated?: (sessionId: string) => Promise<void>,
 ): Promise<CopilotSession>;

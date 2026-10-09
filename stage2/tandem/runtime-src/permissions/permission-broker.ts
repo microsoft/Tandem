@@ -45,7 +45,7 @@ function canApproveAll(
   request: PermissionRequest,
   invocation: PermissionInvocation,
 ): boolean {
-  if (invocation.managedSettingsEnabled) {
+  if (invocation.managedSettingsEnabled || request.kind === 'extension-env-access') {
     return false;
   }
   return !(
@@ -76,12 +76,13 @@ function sessionApproval(request: PermissionRequest): UserToolSessionApproval | 
       return { kind: 'custom-tool', toolName: request.toolName };
     case 'extension-management':
       return { kind: 'extension-management', operation: request.operation };
-    case 'factory':
-      return { kind: 'factory', approvalKey: request.approvalKey };
+    case 'workflow':
+      return { kind: 'workflow', approvalKey: request.approvalKey };
     case 'extension-permission-access':
       return { kind: 'extension-permission-access', extensionName: request.extensionName };
     case 'url':
     case 'hook':
+    case 'extension-env-access':
       return undefined;
   }
 }
@@ -170,11 +171,11 @@ function requestCopy(request: PermissionRequest): {
         scopes: ['extension management', request.extensionName ?? request.operation],
         elevated: false,
       };
-    case 'factory':
+    case 'workflow':
       return {
-        title: `Allow factory ${request.name} to run?`,
+        title: `Allow workflow ${request.name} to run?`,
         description: request.description,
-        scopes: ['factory', request.operation, request.approvalKey],
+        scopes: ['workflow', request.operation, request.approvalKey],
         elevated: false,
       };
     case 'extension-permission-access':
@@ -182,6 +183,13 @@ function requestCopy(request: PermissionRequest): {
         title: `Allow ${request.extensionName} to access these capabilities?`,
         description: 'An extension is requesting permission-gated capabilities.',
         scopes: ['extension access', request.extensionName, ...request.capabilities],
+        elevated: false,
+      };
+    case 'extension-env-access':
+      return {
+        title: `Allow ${request.extensionName} to access environment variables?`,
+        description: 'Only the listed variable names are requested; values are not displayed.',
+        scopes: ['extension environment access', request.extensionName, ...request.environmentVariables],
         elevated: false,
       };
   }

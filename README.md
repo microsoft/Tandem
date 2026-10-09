@@ -72,12 +72,12 @@ native Copilot extension process, the composition explicitly uses that exact
 executing native Copilot binary for the private stdio connection, rather than
 asking the embedded executable to run a JavaScript npm loader.
 
-The Node host supplies its installed SDK to extension processes explicitly.
-The pinned CLI's bundled SDK drops native `isTerminal` declarations even though
-the runtime accepts them: a saved Router result then leaves its native turn
-running, and immediate Designer delivery can become steering input. The host's
-SDK preserves these declarations without changing native permissions or accepting
-retired steering input.
+The reproducible Node package uses the current stable CLI 1.0.94 and SDK 1.0.18.
+The host explicitly supplies that SDK to extension processes, preserving native
+`isTerminal` declarations rather than relying on a different bundled serializer.
+Retained Stage 1 coordinators use the public Dynamic Workflows API. Existing
+`factoryRuns` and `factoryName` receipt fields remain unchanged on disk; their
+names are historical, not an alternate legacy execution path.
 
 Creating a tarball does not publish it. Root `package.json` is the release-version
 authority. Before an authorized release, bump with

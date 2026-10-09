@@ -8,24 +8,21 @@ import { HumanLoopRuntime } from "./human-loop-runtime.mjs";
 import { HumanLoopEvents, createHumanLoopProvider, projectHumanProgress } from "./human-loop-provider.mjs";
 import { createNativePermissionLifecycle } from "./native-permission-lifecycle.mjs";
 
-export async function createDurablePrivateSession(client, configuration) {
+export async function createDurablePrivateSession(client, configuration, onCreated) {
   if (typeof client.start !== "function") throw new Error("Installed SDK cannot start the private native client.");
   await client.start();
-  if (typeof client.rpc?.sessions?.open !== "function"
-    || typeof client.rpc?.sessions?.save !== "function" || typeof client.resumeSession !== "function") {
+  if (typeof client.createSession !== "function" || typeof client.rpc?.sessions?.save !== "function") {
     throw new Error("Installed SDK lacks named, durable private-session creation APIs.");
   }
-  const opened = await client.rpc.sessions.open({ kind: "create", options: {
-    sessionId: configuration.sessionId, name: "Tandem Development",
-    workingDirectory: configuration.workingDirectory, clientName: "Tandem Development",
-  } });
-  if (opened.status !== "created" || opened.sessionId !== configuration.sessionId) {
+  const session = await client.createSession({ ...configuration, clientName: "Tandem Development" });
+  if (session.sessionId !== configuration.sessionId) {
     throw new Error("Native creation did not confirm the exact new private identity; no session was adopted.");
   }
+  await onCreated?.(session.sessionId);
+  if (typeof session.rpc?.name?.set !== "function") throw new Error("Installed SDK cannot name the private session durably.");
+  await session.rpc.name.set({ name: "Tandem Development" });
   await client.rpc.sessions.save({ sessionId: configuration.sessionId });
-  return client.resumeSession(configuration.sessionId, {
-    ...configuration, continuePendingWork: false, suppressResumeEvent: true,
-  });
+  return session;
 }
 
 /** Composition only: native scheduling, admission, consent and recovery remain runtime-owned. */
@@ -88,7 +85,7 @@ export function createHumanLoopController(options) {
       afterReady: () => { auditPaused = false; },
       createRuntime: async runtimeOptions => new HumanLoopRuntime({
         ...runtimeOptions, contextProvider: options.contextProvider, withRequestAdmission: options.withRequestAdmission,
-        createPrivateSession: configuration => createDurablePrivateSession(runtimeOptions.client, configuration),
+        createPrivateSession: configuration => createDurablePrivateSession(runtimeOptions.client, configuration, runtimeOptions.afterNativeCreate),
         onHandoff: async handoff => {
           events.append({ type: "human.handoff", source: "system", summary: handoff.result.outcome.summary,
             data: { requestId: handoff.requestId, resultId: handoff.result.resultId, kind: handoff.result.outcome.kind } });

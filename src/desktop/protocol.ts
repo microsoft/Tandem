@@ -108,7 +108,7 @@ export class DesktopProtocol {
         if (this.closed) throw new Error("The desktop window is closed.");
         const managed = invocation.managedSettingsEnabled || request.managedApprovalRequired;
         const bypass = "requestSandboxBypass" in request && request.requestSandboxBypass;
-        let canAutoApprove = !managed && !bypass;
+        let canAutoApprove = !managed && !bypass && request.kind !== "extension-env-access";
         for (;;) {
             if (this.closed) return { kind: "reject" };
             if (this.mode === "allow-all" && canAutoApprove) {

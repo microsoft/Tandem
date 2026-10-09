@@ -80,7 +80,7 @@ test("Reset cancels every current-effort factory, including superseded suggestio
         await fixture.api.persistState(state);
         const cancelled: string[] = [];
         const waited: string[] = [];
-        fixture.api.setSession({ ...fixture.session, factory: {
+        fixture.api.setSession({ ...fixture.session, workflow: {
             getRun: async (runId: string) => ({ runId, status: "running" }),
             cancel: async (runId: string) => {
                 cancelled.push(runId);
@@ -112,7 +112,7 @@ test("Reset retains data and ownership when termination is unconfirmed, blocks w
         const path = join(fixture.root, ".tandem", "efforts", "sample", "stages", "prepare-r1.json");
         await write(path, "saved snapshot");
         let terminal = false;
-        fixture.api.setSession({ ...fixture.session, factory: {
+        fixture.api.setSession({ ...fixture.session, workflow: {
             getRun: async (runId: string) => ({ runId, status: "running" }),
             cancel: async (runId: string) => ({ runId, status: terminal ? "cancelled" : "running" }),
             waitForRun: async (runId: string) => ({ runId, status: "running" }),
@@ -137,7 +137,7 @@ test("Reset rejects missing or foreign SDK run identity without deleting data", 
             const state = fixture.api.createState("sample", "Keep");
             state.factoryRuns = [{ requestId: "request", runId, generation: state.generation }];
             await fixture.api.persistState(state);
-            fixture.api.setSession({ ...fixture.session, factory: {
+            fixture.api.setSession({ ...fixture.session, workflow: {
                 getRun: async () => ({ runId: "different-run", status: "cancelled" }),
             } });
             await assert.rejects(fixture.api.resetEffort("sample", provider, resetInput(state)), /run ID|different factory/);
@@ -156,7 +156,7 @@ test("Reset retries a migrated finalized Preparation without looking up its arch
             error: 'Factory run "archived-run" was not found' };
         await fixture.api.persistState(state);
         let lookups = 0;
-        fixture.api.setSession({ ...fixture.session, factory: {
+        fixture.api.setSession({ ...fixture.session, workflow: {
             getRun: async () => { lookups++; throw new Error('Factory run "archived-run" was not found'); },
         } });
         const reset = await fixture.api.resetEffort("sample", provider, resetInput(state));
@@ -190,7 +190,7 @@ test("Unsettled and modern Preparation records still require SDK termination des
             change(state);
             await fixture.api.persistState(state);
             let lookups = 0;
-            fixture.api.setSession({ ...fixture.session, factory: {
+            fixture.api.setSession({ ...fixture.session, workflow: {
                 getRun: async () => { lookups++; throw new Error('Factory run "archived-run" was not found'); },
             } });
             await assert.rejects(fixture.api.resetEffort("sample", provider, resetInput(state)), /was not found/);
@@ -279,11 +279,11 @@ test("An in-flight launch remains owned across reset failure and a late SDK rece
         let release!: (run: unknown) => void;
         let dispatched = false;
         fixture.api.setSession({ ...fixture.session,
-            rpc: { ...fixture.session.rpc, factory: { run: async () => {
+            rpc: { ...fixture.session.rpc, workflow: { run: async () => {
                 dispatched = true;
                 return new Promise((resolve) => { release = resolve; });
             } } },
-            factory: {
+            workflow: {
                 getRun: async (runId: string) => ({ runId, status: "running" }),
                 cancel: async (runId: string) => ({ runId, status: "cancelled" }),
             },
@@ -314,7 +314,7 @@ test("Cancellation errors remain visible while Reset still requests termination 
         }));
         await fixture.api.persistState(state);
         const cancelled: string[] = [];
-        fixture.api.setSession({ ...fixture.session, factory: {
+        fixture.api.setSession({ ...fixture.session, workflow: {
             getRun: async (runId: string) => ({ runId, status: "running" }),
             cancel: async (runId: string) => {
                 cancelled.push(runId);
@@ -413,7 +413,7 @@ test("Old Preparation and answer callbacks cannot resurrect a successfully reset
         const token = { requestId: started.preparation.processing!.requestId!,
             generation: started.generation, runId: "prepare-run" };
         await fixture.api.bindPreparationRun("sample", token);
-        fixture.api.setSession({ ...fixture.session, factory: {
+        fixture.api.setSession({ ...fixture.session, workflow: {
             getRun: async (runId: string) => ({ runId, status: "running" }),
             cancel: async (runId: string) => ({ runId, status: "cancelled" }),
         } });

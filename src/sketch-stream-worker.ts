@@ -87,12 +87,12 @@ export async function runSketchStreamWorker(options: SketchWorkerOptions): Promi
         const data = event.data;
         try {
             if (event.type === "subagent.started") {
-                if (data.parentId || (data.factoryRunId !== undefined && data.factoryRunId !== options.runId)) return;
+                if (data.parentId || (data.workflowRunId !== undefined && data.workflowRunId !== options.runId)) return;
                 if (typeof data.toolCallId !== "string" || !data.toolCallId) {
                     throw new Error("The drawing worker started without a stream identity.");
                 }
-                // Older runtimes omit factoryRunId; never infer ownership from arrival order or an agent name.
-                if (data.factoryRunId === undefined) verifyWorker(data.toolCallId, event.agentId);
+                // Older runtimes omit workflowRunId; never infer ownership from arrival order or an agent name.
+                if (data.workflowRunId === undefined) verifyWorker(data.toolCallId, event.agentId);
                 else bindWorker(data.toolCallId, event.agentId);
                 return;
             }

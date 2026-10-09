@@ -111,6 +111,12 @@ async function installationFixture(f: Awaited<ReturnType<typeof fixture>>) {
     class NoModelClient {
         constructor() { clients++; }
         async start() {}
+        async createSession(config) {
+            creations++;
+            if (creationFailure) throw new Error("Native create result was not acknowledged.");
+            nativeSessionId = config.sessionId;
+            return this.resumeSession(config.sessionId, { ...config, continuePendingWork: false, suppressResumeEvent: true });
+        }
         async getSessionMetadata(sessionId: string) {
             if (observations.has("metadata")) return observations.get("metadata")!();
             return sessionId === nativeSessionId ? { sessionId, isRemote: false } : undefined;
@@ -137,6 +143,7 @@ async function installationFixture(f: Awaited<ReturnType<typeof fixture>>) {
                 sessionId, abort: async () => {}, getEvents: async () => [...nativeHistory],
                 disconnect: async () => {},
                 rpc: {
+                    name: { set: async () => {} },
                     mode: { get: async () => "interactive" },
                     metadata: { isProcessing: async () => ({ processing: false }), activity: async () => ({ hasActiveWork: false }) },
                     queue: { pendingItems: async () => ({ items: [], steeringMessages: [] }) },
@@ -168,7 +175,7 @@ async function installationFixture(f: Awaited<ReturnType<typeof fixture>>) {
         },
         loadSdk: async () => ({ RuntimeConnection: { forStdio: () => ({ kind: "stdio" }) }, CopilotClient: NoModelClient }),
         createRuntime: async options => new HumanLoopRuntime({ ...options,
-            createPrivateSession: config => createDurablePrivateSession(options.client, config),
+            createPrivateSession: config => createDurablePrivateSession(options.client, config, options.afterNativeCreate),
             contextProvider: () => f.store.context(),
             onHandoff: async () => assert.fail("Opening storage must not publish a model outcome."),
         }),

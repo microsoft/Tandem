@@ -23,7 +23,7 @@ async function readyRequirements(fixture: Awaited<ReturnType<typeof extensionHar
 }
 
 function generateDrawings(fixture: Awaited<ReturnType<typeof extensionHarness>>) {
-    fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, factory: {
+    fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, workflow: {
         run: async (request) => {
             fixture.requests.push(request);
             return { status: "completed", runId: `drawing-${fixture.requests.length}`, result: sketchDocument() };
@@ -166,9 +166,9 @@ test("a failed terminal-receipt save releases drawing work only after SDK verifi
         const before = await approveDrawings(fixture);
         const statePath = join(fixture.root, ".tandem", "efforts", "sample", "state.json");
         const run = { status: "completed", runId: "failed-save-run", result: sketchDocument() };
-        fixture.api.setSession({ ...fixture.session, factory: {
+        fixture.api.setSession({ ...fixture.session, workflow: {
             getRun: async (id: string) => { assert.equal(id, run.runId); verified++; return run; },
-        }, rpc: { ...fixture.session.rpc, factory: {
+        }, rpc: { ...fixture.session.rpc, workflow: {
             run: async (request) => {
                 fixture.requests.push(request);
                 const current = await fixture.api.loadState("sample");
@@ -201,7 +201,7 @@ test("a failed terminal-receipt save releases drawing work only after SDK verifi
         assert.ok(failed.jobOwner);
         assert.equal(JSON.stringify(failed.sketch), JSON.stringify(before.sketch));
         fixture.setRename(rename);
-        fixture.api.setSession({ ...fixture.session, factory: {
+        fixture.api.setSession({ ...fixture.session, workflow: {
             getRun: async (id: string) => { assert.equal(id, run.runId); verified++; return run; },
         } });
         const retried = await fixture.api.sketchAction("sample", "project:tandem", {
@@ -225,7 +225,7 @@ test("rehydration releases failed drawing receipts for SDK-confirmed terminal ru
                 const fresh = await extensionHarness({}, fixture.root);
                 let reads = 0;
                 try {
-                    fresh.api.setSession({ ...fresh.session, factory: {
+                    fresh.api.setSession({ ...fresh.session, workflow: {
                         getRun: async (runId: string) => {
                             assert.equal(runId, state.processing.runId);
                             reads++;
@@ -261,7 +261,7 @@ test("running, unknown, conflicting, and foreign drawing jobs cannot be released
                 if (kind === "foreign") state.jobOwner = { sessionId: "foreign-session", workspaceRoot: fixture.root };
                 await fixture.api.persistState(state);
                 let reads = 0;
-                fixture.api.setSession({ ...fixture.session, factory: {
+                fixture.api.setSession({ ...fixture.session, workflow: {
                     getRun: async (runId: string) => {
                         reads++;
                         if (kind === "unavailable") throw new Error("SDK connection closed");
@@ -291,8 +291,8 @@ test("failed drawing recovery correlates missing run IDs using SDK request logs,
                 state.factoryRuns!.at(-1)!.runId = null;
                 await fixture.api.persistState(state);
                 let verified = false;
-                fixture.api.setSession({ ...fixture.session, factory: {
-                    listRuns: async () => [{ runId: "correlated-run", factoryName: state.processing.factoryName,
+                fixture.api.setSession({ ...fixture.session, workflow: {
+                    listRuns: async () => [{ runId: "correlated-run", workflowName: state.processing.factoryName,
                         createdAt: Date.parse(state.processing.requestedAt) }],
                     getRunProgress: async () => ({ records: [{
                         text: `Request ${matching ? state.processing.requestId : "unrelated-request"}; prototype sample;`,
@@ -333,7 +333,7 @@ test("drawing recovery waits for termination and rechecks the request before rel
                 let started!: () => void;
                 const waiting = new Promise<void>((resolve) => { started = resolve; });
                 const terminal = new Promise<{ runId: string; status: string }>((resolve) => { finish = resolve; });
-                fixture.api.setSession({ ...fixture.session, factory: {
+                fixture.api.setSession({ ...fixture.session, workflow: {
                     getRun: async (runId: string) => ({ runId, status: "running" }),
                     waitForRun: async (runId: string) => { assert.equal(runId, state.processing.runId); started(); return terminal; },
                 } });
@@ -451,7 +451,7 @@ test("prototype readiness requires actual approved image delivery, not worker cl
         await approveDrawings(fixture);
         let deliverImage = false;
         let imageCalls = 0;
-        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, factory: {
+        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, workflow: {
             run: async (request) => {
                 fixture.requests.push(request);
                 const checkpoint = request.args.state.prototypeFlow.checkpoints.at(-1);
@@ -528,7 +528,7 @@ test("the real Sketch stage snapshot accepts and exports frozen image bytes", as
         await fixture.api.completeLifecycleStage("sample", "requirements", "project:tandem");
         await fixture.api.waitForAnswer("sample");
         const approved = await approveDrawings(fixture);
-        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, factory: {
+        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, workflow: {
             run: async () => ({ status: "failed", runId: "prototype-paused", error: "No AI in this fixture." }),
         } } });
         await fixture.api.completeLifecycleStage("sample", "sketch", "project:tandem");
@@ -559,7 +559,7 @@ test("failed drawing jobs preserve drafts and never retry implicitly after reloa
         await fixture.api.completeLifecycleStage("sample", "requirements", "project:tandem");
         await fixture.api.waitForAnswer("sample");
         const draft = await fixture.api.loadState("sample");
-        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, factory: {
+        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, workflow: {
             run: async (request) => {
                 fixture.requests.push(request);
                 return { status: "failed", runId: "failed-revision", error: "Drawing worker exceeded its budget." };

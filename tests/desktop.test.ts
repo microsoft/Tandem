@@ -97,7 +97,7 @@ test("desktop sessions disable untracked question tools without changing tool pe
         assert.match(rejected!.permissionDecisionReason!, /tracked decision\/question/);
         assert.match(rejected!.permissionDecisionReason!, /Never invent a user answer/);
         assert.equal(await config.hooks.onPreToolUse({ ...hookInput, toolName: "read_file" }, { sessionId: "desktop" }), undefined);
-        assert.equal(await config.hooks.onPreToolUse({ ...hookInput, toolName: "run_factory" }, { sessionId: "desktop" }), undefined);
+        assert.equal(await config.hooks.onPreToolUse({ ...hookInput, toolName: "run_dynamic_workflow" }, { sessionId: "desktop" }), undefined);
         assert.deepEqual(f.events, [], "untracked question tools cannot emit native questions");
         const permission = config.onPermissionRequest!(desktopPermissionRequests.read, permissionInvocation);
         assert.equal(f.events[0].type, "permission");
@@ -115,6 +115,20 @@ function shellPermission(fullCommandText = "Get-ChildItem"): Extract<PermissionR
     };
 }
 
+test("extension environment access never inherits desktop allow-all", async () => {
+    const f = protocolFixture();
+    try {
+        f.reply({ type: "set-permission-mode", mode: "allow-all" });
+        const pending = f.protocol.permission({
+            kind: "extension-env-access", extensionName: "owned-extension", environmentVariables: ["EXAMPLE_SECRET_NAME"],
+        }, { sessionId: "desktop" });
+        const prompt = f.events.find(event => event.type === "permission")!;
+        assert.equal(prompt.canAllowAllForSession, false);
+        f.reply({ type: "permission-response", id: prompt.id, approved: false });
+        assert.equal((await pending).kind, "reject");
+    } finally { f.protocol.close(); }
+});
+
 const desktopPermissionRequests = {
     shell: shellPermission(),
     read: { kind: "read", path: "example.txt", intention: "Read a file" },
@@ -128,8 +142,8 @@ const desktopPermissionRequests = {
     "extension-permission-access": {
         kind: "extension-permission-access", extensionName: "session:tandem", capabilities: ["register hooks"],
     },
-    factory: {
-        kind: "factory", name: "test", description: "Test", operation: "run", approvalKey: "test",
+    workflow: {
+        kind: "workflow", name: "test", description: "Test", operation: "run", approvalKey: "test",
         canPersistApproval: false, phases: [], maxConcurrentSubagents: 1, maxTotalSubagents: 1,
         timeoutSeconds: 10, maxAiCredits: 1,
     },

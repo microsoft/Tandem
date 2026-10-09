@@ -27,7 +27,7 @@ test("DAG generation does not turn usage intake into a decision, and a rejected 
         await h.api.persistState(initial);
         let fail = true;
         let attempts = 0;
-        h.api.setSession({ ...h.session, rpc: { ...h.session.rpc, factory: {
+        h.api.setSession({ ...h.session, rpc: { ...h.session.rpc, workflow: {
             run: async (request: any) => {
                 h.requests.push(request);
                 attempts++;

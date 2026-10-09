@@ -135,7 +135,7 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
         log: async (message: string) => { logs.push(message); },
         rpc: {
             extensions: { list: async () => ({ extensions: [{ id: "project:tandem", status: "running" }] }) },
-            factory: { run: async (request: FactoryLaunchRequest) => {
+            workflow: { run: async (request: FactoryLaunchRequest) => {
                 assertFactoryRequestEnvelope(request);
                 requests.push(request);
                 return new Promise<never>(() => {});
@@ -208,8 +208,8 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
                     } };
                 }
                 if (name === "@github/copilot-sdk/extension") return {
-                    CanvasError, defineFactory: (value: unknown) => value,
-                    isFactoryRunTerminal: (status: string) => ["completed", "failed", "cancelled", "halted", "error"].includes(status),
+                    CanvasError, defineWorkflow: (value: unknown) => value,
+                    isWorkflowRunTerminal: (status: string) => ["completed", "failed", "cancelled", "halted", "error"].includes(status),
                 };
                 if (name === "./renderer.js") return { renderTandemHtml: () => rendererHtml };
                 return require(name);

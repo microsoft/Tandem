@@ -17,39 +17,54 @@ test("durable composition starts the actual client before RPC access and preserv
     get rpc() {
       assert.ok(started, "RPC access before start is unsupported by the installed SDK.");
       return { sessions: {
-        async open(input) { calls.push("create"); assert.equal(input.kind, "create"); assert.equal(input.options.sessionId, "owned-private");
-          return { status: "created", sessionId: "owned-private" }; },
         async save(input) { calls.push("save"); assert.deepEqual(input, { sessionId: "owned-private" }); },
       } };
     },
-    async resumeSession(id, input) {
-      calls.push("attach"); assert.equal(id, "owned-private");
+    async createSession(input) {
+      calls.push("create"); assert.equal(input.sessionId, "owned-private");
       assert.equal(input.tools, tools); assert.equal(input.hooks, hooks);
       assert.equal(input.onPermissionRequest, permission); assert.equal(input.onEvent, onEvent);
       assert.equal(input.requestExtensions, false);
       assert.equal(input.toolSearch, configuration.toolSearch);
-      assert.equal(input.continuePendingWork, false); assert.equal(input.suppressResumeEvent, true);
-      return { sessionId: id };
+      return { sessionId: input.sessionId, rpc: { name: { async set(value) {
+        calls.push("name"); assert.deepEqual(value, { name: "Tandem Development" });
+      } } } };
     },
   };
-  assert.equal((await createDurablePrivateSession(client, configuration)).sessionId, "owned-private");
-  assert.deepEqual(calls, ["start", "create", "save", "attach"]);
+  assert.equal((await createDurablePrivateSession(client, configuration, async id => {
+    assert.equal(id, "owned-private"); calls.push("record-created");
+  })).sessionId, "owned-private");
+  assert.deepEqual(calls, ["start", "create", "record-created", "name", "save"]);
 });
 
 test("failed or conflicting native creation never attaches a substitute identity or sends a turn", async () => {
-  for (const response of [{ status: "resumed", sessionId: "expected" }, { status: "created", sessionId: "foreign" }]) {
-    let attached = false, saved = false;
+  for (const response of [{}, { sessionId: "foreign" }]) {
+    let created = false, saved = false;
     const client = { start: async () => {}, rpc: { sessions: {
-      open: async () => response, save: async () => { saved = true; },
-    } }, resumeSession: async () => { attached = true; }, send() { assert.fail("No dummy model turn is allowed."); } };
+      save: async () => { saved = true; },
+    } }, createSession: async () => { created = true; return response; }, send() { assert.fail("No dummy model turn is allowed."); } };
     await assert.rejects(createDurablePrivateSession(client, { sessionId: "expected", requestExtensions: false }), /no session was adopted/);
-    assert.equal(attached, false); assert.equal(saved, false);
+    assert.equal(created, true); assert.equal(saved, false);
   }
-  let attached = false;
   await assert.rejects(createDurablePrivateSession({ start: async () => {}, rpc: { sessions: {
-    open: async () => ({ status: "created", sessionId: "expected" }), save: async () => { throw new Error("Durability unavailable"); },
-  } }, resumeSession: async () => { attached = true; } }, { sessionId: "expected", requestExtensions: false }), /Durability unavailable/);
-  assert.equal(attached, false);
+    save: async () => { throw new Error("Durability unavailable"); },
+  } }, createSession: async () => ({ sessionId: "expected", rpc: { name: { set: async () => {} } } }) },
+  { sessionId: "expected", requestExtensions: false }), /Durability unavailable/);
+});
+
+for (const failure of ["name", "save"]) test(`native creation is recorded before a later ${failure} failure`, async () => {
+  const calls = [];
+  const client = { start: async () => {}, createSession: async () => {
+    calls.push("create");
+    return { sessionId: "reserved", rpc: { name: { set: async () => {
+      calls.push("name");
+      if (failure === "name") throw new Error("name failed");
+    } } } };
+  }, rpc: { sessions: { save: async () => { calls.push("save"); throw new Error("save failed"); } } } };
+  await assert.rejects(createDurablePrivateSession(client, { sessionId: "reserved" },
+    async id => { assert.equal(id, "reserved"); calls.push("record-created"); }), new RegExp(`${failure} failed`));
+  assert.deepEqual(calls.slice(0, 3), ["create", "record-created", "name"]);
+  assert.equal(calls.filter(call => call === "create").length, 1);
 });
 
 test("unopened saved ownership and uncertainty are not quiet upstream reset boundaries", async t => {

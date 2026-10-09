@@ -36,8 +36,8 @@
     "typescript": "7.0.2"
   },
   "dependencies": {
-    "@github/copilot": "1.0.80",
-    "@github/copilot-sdk": "1.0.11",
+    "@github/copilot": "1.0.94",
+    "@github/copilot-sdk": "1.0.18",
     "koffi": "3.1.6",
     "@azure/identity": "4.13.2",
     "microsoft-cognitiveservices-speech-sdk": "1.51.0",

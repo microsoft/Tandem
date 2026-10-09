@@ -18,6 +18,10 @@ async function prototypeFixture() {
 }
 
 test("factory RPC limits use the SDK options envelope, and malformed launches fail before recording ownership", async () => {
+    assert.equal(rejectedFactoryLaunch(new Error(`Request session.workflow.run failed with message: ${schemaRejection}`)),
+        `Request session.workflow.run failed with message: ${schemaRejection}`);
+    assert.equal(rejectedFactoryLaunch(new Error(`Request session.factory.run failed with message: ${schemaRejection}`)),
+        `Request session.factory.run failed with message: ${schemaRejection}`, "Historical launch rejection remains readable.");
     assert.doesNotThrow(() => assertFactoryRequestEnvelope({
         name: "worker", args: {}, options: { limits: { timeoutSeconds: 300 } },
     }));
@@ -37,7 +41,7 @@ test("factory RPC limits use the SDK options envelope, and malformed launches fa
 test("a definite pre-launch rejection releases its receipt and retries the prepared checkpoint", async () => {
     const fixture = await prototypeFixture();
     try {
-        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, factory: {
+        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, workflow: {
             run: async (request: unknown) => {
                 fixture.requests.push(request);
                 throw new Error(schemaRejection);
@@ -72,7 +76,7 @@ test("a definite pre-launch rejection releases its receipt and retries the prepa
 test("rehydration repairs a persisted 1.1.8 rejected launch without restarting workers or clearing history", async () => {
     const fixture = await prototypeFixture();
     try {
-        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, factory: {
+        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, workflow: {
             run: async (request: unknown) => {
                 fixture.requests.push(request);
                 throw new Error(schemaRejection);
@@ -113,7 +117,7 @@ test("unknown transport failures cannot release an unconfirmed launch or dispatc
     assert.equal(rejectedFactoryLaunch(new Error("Factory limit timeoutSeconds=300 was reached")), null);
     const fixture = await prototypeFixture();
     try {
-        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, factory: {
+        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, workflow: {
             run: async (request: unknown) => {
                 fixture.requests.push(request);
                 throw new Error("Connection closed before receipt");
