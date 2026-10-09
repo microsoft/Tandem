@@ -91,6 +91,12 @@ event ID. They are not role input, idle or result evidence and do not settle wor
 queue inspection still uses the native RPC. Session ownership and required
 input/turn/tool identities remain enforced.
 
+Private session creation and same-ID resume disable native tool search so the
+controlled role tools, including terminal results, are preloaded. This avoids
+deferred-discovery steering messages in the Host-owned role conversation; it
+does not whitelist injected system text or relax input/permission checks.
+Foreground-session tool discovery is unchanged.
+
 The September 28 isolated native/full-E2E qualification exercised 23 role
 dispatches exactly once with the same attached app through aggregate
 implementation, Review and later work, plus same-ID Close/reopen/reclose.

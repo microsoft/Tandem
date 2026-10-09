@@ -395,6 +395,7 @@ test("private create and same-ID resume retain repository discovery but opt out 
   const owner = structuredClone(f.installation.configuration.owner);
   const assertPrivate = session => {
     assert.equal(session.config.requestExtensions, false);
+    assert.deepEqual(session.config.toolSearch, { enabled: false });
     assert.equal(session.config.enableConfigDiscovery, true);
     assert.equal(session.config.workingDirectory, f.workspace);
     assert.equal(typeof session.config.hooks.onPreToolUse, "function");

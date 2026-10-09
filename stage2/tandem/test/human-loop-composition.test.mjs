@@ -11,7 +11,7 @@ test("durable composition starts the actual client before RPC access and preserv
   const tools = [{ name: "terminal", isTerminal: true }], hooks = { onPreToolUse() {} };
   const permission = () => ({ kind: "reject" }), onEvent = () => {};
   const configuration = { sessionId: "owned-private", workingDirectory: "C:\\fixture",
-    requestExtensions: false, tools, hooks, onPermissionRequest: permission, onEvent };
+    requestExtensions: false, toolSearch: { enabled: false }, tools, hooks, onPermissionRequest: permission, onEvent };
   const client = {
     async start() { started = true; calls.push("start"); },
     get rpc() {
@@ -27,6 +27,7 @@ test("durable composition starts the actual client before RPC access and preserv
       assert.equal(input.tools, tools); assert.equal(input.hooks, hooks);
       assert.equal(input.onPermissionRequest, permission); assert.equal(input.onEvent, onEvent);
       assert.equal(input.requestExtensions, false);
+      assert.equal(input.toolSearch, configuration.toolSearch);
       assert.equal(input.continuePendingWork, false); assert.equal(input.suppressResumeEvent, true);
       return { sessionId: id };
     },

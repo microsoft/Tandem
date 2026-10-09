@@ -265,6 +265,29 @@ const capturedOrders = [
   ["user", "start", "ack"], ["start", "user", "ack"], ["ack", "user", "start"],
   ["ack", "start", "user"], ["user", "ack", "start"], ["start", "ack", "user"],
 ];
+test("private controlled roles preload tools instead of relying on deferred discovery", async t => {
+  const f = await fixture(t);
+  assert.deepEqual(f.session.config.toolSearch, { enabled: false });
+  assert.ok(f.session.config.tools.some(tool => tool.name === "submit_human_route"));
+  assert.ok(f.session.config.tools.some(tool => tool.name === "submit_designer_outcome"));
+  assert.equal(f.session.config.requestExtensions, false);
+});
+
+test("native system steering is not accepted as another Host input or completion", async t => {
+  const f = await fixture(t);
+  capturedDispatch(f.session);
+  await f.request();
+  await f.begin("router");
+  f.session.emit("user.message", { content: "", transformedContent: "Native deferred-tool catalog context.",
+    source: "system", delivery: "steering", interactionId: f.session.interactionId });
+  await assert.rejects(f.transport.drain(), /Private input envelope is invalid/);
+  await waitFor(async () => (await f.store.load()).uncertainty, "system injection remains unowned");
+  const state = await f.store.load();
+  assert.equal(state.activeTask.inputs.length, 1);
+  assert.equal(state.activeTask.result, null);
+  assert.equal(f.session.sends.length, 1);
+});
+
 for (const id of [undefined, null]) test(`identityless queue notifications do not become role evidence: id=${id}`, async t => {
   const f = await fixture(t, { nativeFiles: true });
   const queueChanged = () => f.session.config.onEvent({

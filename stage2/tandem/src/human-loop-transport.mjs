@@ -336,7 +336,7 @@ export class HumanLoopTransport {
       const configuration = {
         sessionId: this.#owner.privateSessionId, workingDirectory: this.#owner.workspacePath,
         ...(!proof && preferences.model ? { model: preferences.model } : {}),
-        enableConfigDiscovery: true, requestExtensions: false, tools,
+        enableConfigDiscovery: true, requestExtensions: false, tools, toolSearch: { enabled: false },
         customAgents: [{ name: reviewAgentName, description: "Read-only evidence for one scoped Tandem Review.",
           tools: reviewScopeTools, prompt: humanLoopPrompts.reviewScope.join("\n") }],
         onEvent: (event) => this.#observe(event),
