@@ -62,6 +62,40 @@ test("sparse native activity remains unknown rather than becoming failure or fab
     assert.equal(snapshot.agents[0].lastNativeActivityAt, null);
 });
 
+test("terminal activity uses the native completion timestamp, not late activity or polling time", () => {
+    const activity = new NativeWorkflowActivity();
+    const completedAt = "2026-10-09T00:01:30Z";
+    for (const status of ["completed", "error", "failed", "cancelled"]) {
+        const snapshot = activity.snapshot(binding, { ...detail, status, completedAt: Date.parse(completedAt),
+            progress: { records: [{ recordedAt: Date.parse("2026-10-09T01:00:00Z") }] } });
+        assert.equal(Date.parse(snapshot.completedAt!), Date.parse(completedAt));
+        assert.equal(activity.snapshot({ ...binding, completedAt }, { ...detail, status }).completedAt, completedAt);
+        assert.equal(activity.snapshot(binding, { ...detail, status }).completedAt, null);
+    }
+    assert.equal(activity.snapshot(binding, { ...detail, completedAt: Date.parse(completedAt) }).completedAt, null);
+});
+
+test("terminal request elapsed stays fixed while freshness ages; missing completion never uses wall time", async t => {
+    const h = await reactHarness(t);
+    const value = state("prototype");
+    value.processing = { ...value.processing, status: "success", action: "build-prototype",
+        requestId: "request", runId: "run", requestedAt: binding.requestedAt, completedAt: "2026-10-09T00:01:30Z" };
+    const current = workflowBinding(value)!;
+    const snapshot = new NativeWorkflowActivity().snapshot(current, {
+        ...detail, status: "completed", completedAt: Date.parse(value.processing.completedAt!),
+    });
+    h.render({ ...value, workflowRuntime: snapshot }); await h.flush();
+    assert.match(h.get("native-workflow-activity").textContent!, /Request elapsed: 1m 30s/);
+    h.window.Date.now = () => Date.parse("2026-10-10T00:00:00Z");
+    await new Promise(resolve => setTimeout(resolve, 1100)); await h.flush();
+    assert.match(h.get("native-workflow-activity").textContent!, /Request elapsed: 1m 30s/);
+    value.processing.completedAt = null;
+    h.render({ ...value, workflowRuntime: { ...snapshot, completedAt: null } }); await h.flush();
+    assert.match(h.get("native-workflow-activity").textContent!, /Request elapsed unavailable/);
+    assert.doesNotMatch(h.get("native-workflow-activity").textContent!, /Request elapsed: \d/);
+    assert.equal(h.requests.length, 0);
+});
+
 test("permission completion without agentId uses only the previously attributed native request", () => {
     const activity = new NativeWorkflowActivity();
     activity.observe(event("subagent.started", { workflowRunId: "run", toolCallId: "launch" }));

@@ -163,6 +163,9 @@ keep their existing consent behavior.
 Stage 1's activity view uses native workflow/worker/tool/permission observations
 and their original timestamps. It shows operation, elapsed request time, pending
 consent and the age of the last native activity; polling is not productive work.
+Terminal request elapsed time uses the recorded completion timestamp and stops
+increasing. Activity/update age still advances; an unavailable terminal timestamp
+is shown as unavailable, not replaced by server uptime or the current clock.
 Unavailable or silent activity is reported honestly and never triggers automatic
 failure, retry or cancellation. Short public model updates are requested at
 meaningful milestones. Reasoning and raw prompts are not projected, and progress

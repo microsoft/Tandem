@@ -5,6 +5,7 @@ export interface WorkflowBinding {
     requestId: string;
     runId: string;
     requestedAt: string;
+    completedAt?: string | null;
     kind: "preparation" | "answer" | "suggestions";
 }
 
@@ -20,7 +21,7 @@ export function workflowBinding(state: TandemState): WorkflowBinding | null {
         ?? choices.find(item => item.kind === "suggestions" && item.request?.runId);
     if (!chosen?.request?.runId || !chosen.request.requestId) return null;
     return { generation: state.generation, requestId: chosen.request.requestId, runId: chosen.request.runId,
-        requestedAt: chosen.request.requestedAt, kind: chosen.kind };
+        requestedAt: chosen.request.requestedAt, completedAt: timestamp(chosen.request.completedAt), kind: chosen.kind };
 }
 
 interface NativeAgent {
@@ -56,6 +57,7 @@ export interface WorkflowActivitySnapshot extends WorkflowBinding {
 interface NativeRunDetail {
     runId: string;
     status: string;
+    completedAt?: number | null;
     agents: readonly { agentId?: string; toolCallId: string; label: string; status: string; activeMs?: number }[];
     progress: { records: readonly { recordedAt: number }[] };
 }
@@ -139,6 +141,9 @@ export class NativeWorkflowActivity {
                 lastNativeActivityAt: observed?.activityAt ?? null, pendingPermissions,
                 activeMs: typeof row.activeMs === "number" && Number.isFinite(row.activeMs) ? row.activeMs : null };
         });
-        return { ...binding, status: detail.status, lastNativeActivityAt, agents };
+        const nativeEnd = typeof detail.completedAt === "number" && Number.isFinite(new Date(detail.completedAt).getTime())
+            ? new Date(detail.completedAt).toISOString() : null;
+        return { ...binding, completedAt: terminal.has(detail.status) ? nativeEnd ?? binding.completedAt ?? null : null,
+            status: detail.status, lastNativeActivityAt, agents };
     }
 }
