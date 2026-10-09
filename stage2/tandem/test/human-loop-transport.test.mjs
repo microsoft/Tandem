@@ -265,6 +265,53 @@ const capturedOrders = [
   ["user", "start", "ack"], ["start", "user", "ack"], ["ack", "user", "start"],
   ["ack", "start", "user"], ["user", "ack", "start"], ["start", "ack", "user"],
 ];
+for (const id of [undefined, null]) test(`identityless queue notifications do not become role evidence: id=${id}`, async t => {
+  const f = await fixture(t, { nativeFiles: true });
+  const queueChanged = () => f.session.config.onEvent({
+    type: "pending_messages.modified", data: {}, ...(id === undefined ? {} : { id }),
+  });
+  queueChanged();
+  await f.transport.drain();
+  const deliver = capturedDispatch(f.session, ["user", "ack", "start"], queueChanged);
+  await f.request();
+  const packet = await f.begin("router");
+  queueChanged();
+  deliver();
+  await f.transport.drain();
+  const state = await f.store.load();
+  assert.equal(state.activeTask.messageId, "sdk-ack-1");
+  assert.equal(state.activeTask.interactionId, "native-interaction-1");
+  assert.equal(state.activeTask.inputs[0].native.user.id,
+    f.session.history.find(event => event.type === "user.message").id);
+  assert.equal(state.activeTask.result, null);
+  assert.equal(f.session.sends.length, 1);
+  await f.finish(packet, "submit_human_route", { kind: "route", intent: "answer", cycleId: null,
+    summary: "Queue status hints did not settle the role.", resolvedQuestions: [] });
+  queueChanged();
+  await f.transport.drain();
+  assert.equal((await f.store.load()).uncertainty, null);
+  assert.deepEqual((await replayDurableState(f.root)).state, await f.store.load());
+});
+
+test("identityless notifications cannot bypass foreign-session or role-event identity checks", async t => {
+  for (const event of [
+    { type: "pending_messages.modified", data: {}, sessionId: "foreign" },
+    { type: "pending_messages.modified", data: {}, id: "" },
+    { type: "user.message", data: {}, ephemeral: true },
+    { type: "assistant.turn_start", data: { turnId: "0", interactionId: "native-interaction-1" }, ephemeral: true },
+    { type: "tool.execution_start", data: { toolCallId: "call", toolName: "view" }, ephemeral: true },
+    { type: "tool.execution_complete", data: { toolCallId: "result", success: true }, ephemeral: true },
+  ]) {
+    await t.test(event.type, async t => {
+      const f = await fixture(t);
+      f.session.config.onEvent(event);
+      await assert.rejects(f.transport.drain(), /another private session|expected non-empty text/);
+      await waitFor(async () => (await f.store.load()).uncertainty, "invalid native identity is retained");
+      assert.equal(f.session.sends.length, 0);
+    });
+  }
+});
+
 for (const order of capturedOrders) test(`captured native input binds exact envelope independently of ACK order: ${order.join(",")}`, async t => {
   const f = await fixture(t, { nativeFiles: true });
   const deliver = capturedDispatch(f.session, order);

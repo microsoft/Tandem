@@ -889,6 +889,9 @@ export class HumanLoopTransport {
       if (this.#released) return;
       requireCondition(!event.sessionId || event.sessionId === this.#owner.privateSessionId,
         "Native event belongs to another private session.");
+      // Some runtimes emit this queue invalidation hint without an event identity.
+      // It is not input or settlement evidence; queue RPCs remain authoritative.
+      if (event.type === "pending_messages.modified" && event.id == null) return;
       if (this.#readingRecovery) return;
       if (this.#retiredHistory.has(event.id)) return;
       if (this.#closing) return;

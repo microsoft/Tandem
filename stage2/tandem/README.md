@@ -86,6 +86,11 @@ interaction or a matching SDK assistant tool-request ID, never chronological
 `parentId` or the most recent role. This additive evidence preserves old ledger
 reads and does not make acknowledgement or event bookkeeping a result gate.
 
+Native `pending_messages.modified` queue hints may arrive without a persisted
+event ID. They are not role input, idle or result evidence and do not settle work;
+queue inspection still uses the native RPC. Session ownership and required
+input/turn/tool identities remain enforced.
+
 The September 28 isolated native/full-E2E qualification exercised 23 role
 dispatches exactly once with the same attached app through aggregate
 implementation, Review and later work, plus same-ID Close/reopen/reclose.
