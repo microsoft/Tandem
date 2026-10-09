@@ -227,12 +227,19 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
         return json(response, 200, await settings());
       }
       if (request.method === "POST" && path === "/api/settings/model") {
-        const data = object(await body(request), ["action", "model"]);
+        const input = await body(request);
+        const data = object(input, ["action", "model", ...(Object.hasOwn(input ?? {}, "reasoningEffort") ? ["reasoningEffort"] : [])]);
         requireCondition(["select", "accept-actual"].includes(data.action), "Unknown model setting action.");
         requireCondition(data.action === "accept-actual" ? data.model === null
           : typeof data.model === "string" && data.model.trim() === data.model && data.model.length > 0 && data.model.length <= 200, "Invalid model selection.");
         requireCondition((await getInstallation().read()).status === "ready", "Private runtime must be Ready for model settings.");
-        await requireRuntime().changeModel({ model: data.model, acceptActual: data.action === "accept-actual" });
+        requireCondition(data.reasoningEffort === undefined || data.reasoningEffort === null
+          || typeof data.reasoningEffort === "string" && data.reasoningEffort.trim() === data.reasoningEffort
+            && data.reasoningEffort.length > 0 && data.reasoningEffort.length <= 40, "Invalid reasoning effort selection.");
+        requireCondition(data.action !== "accept-actual" || data.reasoningEffort == null,
+          "Accept actual reads native reasoning effort; it cannot override it.");
+        await requireRuntime().changeModel({ model: data.model, reasoningEffort: data.reasoningEffort ?? null,
+          acceptActual: data.action === "accept-actual" });
         return json(response, 200, await settings());
       }
       if (request.method === "GET" && path === "/api/host-state") {

@@ -49,6 +49,20 @@ const stopControl = createWorkflowStopControl({
 const renderStopControl = () => stopControl.render(snapshot?.workflow, { connected: controlsConnected, pending: Boolean(stopRequest) });
 const make = (tag, text) => { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; return node; };
 let settingsBusy = false, settingsLoaded = false, settingsLoading = null, settingsVersion = 0;
+let settingsModel = null, effortModel = null;
+function renderReasoningEffort() {
+  const id = $('setting-model').value, model = settingsModel;
+  const selected = effortModel === id ? $('setting-effort').value
+    : model?.pending === id ? model.pendingReasoningEffort : model?.desired === id ? model.desiredReasoningEffort : '';
+  const levels = model?.models.find(item => item.id === id)?.supportedReasoningEfforts ?? [];
+  const unset = make('option', 'No explicit override'); unset.value = '';
+  $('setting-effort').replaceChildren(unset, ...levels.map(level => {
+    const option = make('option', level); option.value = level; return option;
+  }));
+  $('setting-effort').value = levels.includes(selected) ? selected : '';
+  $('setting-effort').disabled = settingsBusy || !model?.canChange || !model.canSetReasoningEffort || !levels.length;
+  effortModel = id;
+}
 function settingsError(error) {
   $('settings-error').textContent = error?.message ?? '';
   $('settings-error').hidden = !error;
@@ -68,14 +82,19 @@ function applySettings(value) {
     $('setting-model').prepend(option);
   }
   $('setting-model').value = model.models.some(({ id }) => id === desired) ? desired : model.pending ?? model.actual ?? model.desired ?? '';
+  settingsModel = model;
+  renderReasoningEffort();
   $('setting-model').disabled = settingsBusy || !model.canChange;
   $('apply-model').disabled = settingsBusy || !model.canChange || !$('setting-model').value;
   $('accept-actual-model').hidden = !model.pending && !model.error;
   $('accept-actual-model').disabled = settingsBusy || !model.canChange || !model.actual;
   $('model-setting-status').textContent = [
     `Actual private model: ${model.actual ?? 'not yet verified'}.`,
+    `Actual reasoning effort: ${model.actualReasoningEffort ?? 'not explicitly reported'}.`,
     model.desired ? `Saved selection: ${model.desired}.` : '',
+    model.desiredReasoningEffort ? `Saved reasoning effort: ${model.desiredReasoningEffort}.` : '',
     model.pending ? `Pending selection: ${model.pending}.` : '',
+    model.pendingReasoningEffort ? `Pending reasoning effort: ${model.pendingReasoningEffort}.` : '',
     model.error, model.reason,
     model.capabilities ? `Diagram images: ${model.capabilities.supported ? 'supported' : model.capabilities.reason ?? 'not supported'}.` : '',
     'This setting never changes the main chat model.',
@@ -95,8 +114,12 @@ function refreshSettings() {
 async function saveSettings(path, data) {
   if (settingsBusy) return;
   settingsBusy = true; settingsVersion++; settingsError(null);
-  for (const id of ['save-appearance', 'apply-model', 'accept-actual-model', 'setting-model']) $(id).disabled = true;
-  try { applySettings(await post(path, data)); }
+  for (const id of ['save-appearance', 'apply-model', 'accept-actual-model', 'setting-model', 'setting-effort']) $(id).disabled = true;
+  try {
+    const value = await post(path, data);
+    if (path === '/api/settings/model') effortModel = null;
+    applySettings(value);
+  }
   catch (error) { settingsError(error); }
   finally {
     settingsBusy = false; $('save-appearance').disabled = false;
@@ -112,8 +135,12 @@ $('canvas-settings').addEventListener('keydown', (event) => {
   }
 });
 $('save-appearance').onclick = () => saveSettings('/api/settings', { theme: $('setting-theme').value, fontSize: $('setting-font').value });
-$('apply-model').onclick = () => saveSettings('/api/settings/model', { action: 'select', model: $('setting-model').value });
-$('setting-model').onchange = () => { $('apply-model').disabled = settingsBusy || $('setting-model').disabled || !$('setting-model').value; };
+$('apply-model').onclick = () => saveSettings('/api/settings/model', { action: 'select', model: $('setting-model').value,
+  reasoningEffort: $('setting-effort').value || null });
+$('setting-model').onchange = () => {
+  renderReasoningEffort();
+  $('apply-model').disabled = settingsBusy || $('setting-model').disabled || !$('setting-model').value;
+};
 $('accept-actual-model').onclick = () => saveSettings('/api/settings/model', { action: 'accept-actual', model: null });
 const questionArtifact = make('section');
 const cycleArtifact = make('section');

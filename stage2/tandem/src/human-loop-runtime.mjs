@@ -234,9 +234,17 @@ export class HumanLoopRuntime {
       const preferences = await this.#preferences.read();
       requireCondition(!preferences.pendingModel, "A model change is unconfirmed. Retry the selection or explicitly accept the actual model in Settings.");
       if (preferences.model) {
-        if (verifyAvailability) requireCondition((await this.#transport.listModels()).some(({ id }) => id === preferences.model), "Saved model is unavailable in the authenticated model list.");
-        requireCondition(await this.#transport.currentModel() === preferences.model,
+        if (verifyAvailability) {
+          const selected = (await this.#transport.listModels()).find(({ id }) => id === preferences.model);
+          requireCondition(selected, "Saved model is unavailable in the authenticated model list.");
+          requireCondition(preferences.reasoningEffort === null || selected.supportedReasoningEfforts.includes(preferences.reasoningEffort),
+            "Saved reasoning effort is unavailable for the selected model.");
+        }
+        const actual = await this.#transport.currentModelSelection();
+        requireCondition(actual.model === preferences.model,
           "The actual private-session model differs from the saved preference. Reconcile it in Settings; the session was not replaced.");
+        requireCondition(preferences.reasoningEffort === null || actual.reasoningEffort === preferences.reasoningEffort,
+          "The actual private-session reasoning effort differs from the saved preference. Reconcile it in Settings; the session was not replaced.");
       }
       this.#modelError = null;
     } catch (error) { this.#modelError = error.message; }
@@ -271,9 +279,14 @@ export class HumanLoopRuntime {
   async modelSettings() {
     const preferences = await this.#preferences.read();
     if (!this.#opened || this.#closed || this.#closing) return { models: [], actual: null, desired: preferences.model,
-      pending: preferences.pendingModel, error: this.#modelError, reason: "Private runtime is not open and Ready.", canChange: false, capabilities: null };
-    let models = [], actual = null, reason = null, capability = null, canChange = false;
-    try { actual = await this.#transport.currentModel(); }
+      pending: preferences.pendingModel, actualReasoningEffort: null, desiredReasoningEffort: preferences.reasoningEffort,
+      pendingReasoningEffort: preferences.pendingReasoningEffort, canSetReasoningEffort: false,
+      error: this.#modelError, reason: "Private runtime is not open and Ready.", canChange: false, capabilities: null };
+    let models = [], actual = null, actualReasoningEffort = null, reason = null, capability = null, canChange = false;
+    try {
+      const selection = await this.#transport.currentModelSelection();
+      actual = selection.model; actualReasoningEffort = selection.reasoningEffort;
+    }
     catch (error) { reason = error.message; }
     try {
       models = await this.#transport.listModels();
@@ -286,37 +299,49 @@ export class HumanLoopRuntime {
     } catch (error) { reason = [reason, error.message].filter(Boolean).join(" "); }
     if (!actual && canChange) reason += " Select a listed model in Settings; authoritative readback is required before image delivery.";
     const error = this.#modelError ?? (preferences.pendingModel ? "Unconfirmed model intent requires explicit reconciliation."
-      : preferences.model && actual && preferences.model !== actual ? "Actual and saved model differ. Reconcile before sending." : null);
+      : preferences.model && actual && (preferences.model !== actual
+        || preferences.reasoningEffort !== null && preferences.reasoningEffort !== actualReasoningEffort)
+        ? "Actual and saved model or reasoning effort differ. Reconcile before sending." : null);
     return { models, actual, desired: preferences.model, pending: preferences.pendingModel, error, reason,
+      actualReasoningEffort, desiredReasoningEffort: preferences.reasoningEffort, pendingReasoningEffort: preferences.pendingReasoningEffort,
+      canSetReasoningEffort: this.#transport.canSetReasoningEffort,
       canChange, capabilities: capability };
   }
-  async changeModel({ model, acceptActual = false }) {
+  async changeModel({ model, reasoningEffort = null, acceptActual = false }) {
     requireCondition(!this.#compactionBusy && !this.#transport.compaction.active, "Wait for context compaction before changing models.");
     requireCondition(!this.#modelChanging && !this.#closing && !this.#stopWork, "Another model change, close or Stop is in progress.");
     requireCondition(!this.#pump && !this.#state?.activeRequestId && !this.#state?.activeTask && !this.#state?.stop,
       "Model changes require Ready now; they are not queued behind active work.");
     this.#modelChanging = true;
     const work = this.#admission.then(async () => {
-      let attempted = false, intent = false, previousPending = null;
+      let attempted = false, intent = false, previousPending = null, previousPendingEffort = null;
       try {
         await this.#modelQuiet();
         const models = await this.#transport.listModels();
         requireCondition(this.#transport.canSwitchModel, "Installed SDK cannot switch and verify the private model.");
-        const target = acceptActual ? await this.#transport.currentModel() : model;
-        requireCondition(models.some(({ id }) => id === target), "Selected model is not in the authenticated SDK model list.");
-        previousPending = (await this.#preferences.read()).pendingModel;
-        await this.#preferences.update({ pendingModel: target }); intent = true;
+        const selection = acceptActual ? await this.#transport.currentModelSelection() : { model, reasoningEffort };
+        const target = selection.model, effort = selection.reasoningEffort;
+        const selected = models.find(({ id }) => id === target);
+        requireCondition(selected, "Selected model is not in the authenticated SDK model list.");
+        requireCondition(effort === null || selected.supportedReasoningEfforts.includes(effort),
+          "Selected reasoning effort is not advertised for this model.");
+        requireCondition(acceptActual || effort === null || this.#transport.canSetReasoningEffort,
+          "Installed SDK cannot set reasoning effort.");
+        const previous = await this.#preferences.read();
+        previousPending = previous.pendingModel; previousPendingEffort = previous.pendingReasoningEffort;
+        await this.#preferences.update({ pendingModel: target, pendingReasoningEffort: effort }); intent = true;
         await this.#modelQuiet();
-        if (!acceptActual) { attempted = true; await this.#transport.setModel(target); }
-        const actual = await this.#transport.currentModel();
-        requireCondition(actual === target, "SDK model readback did not match the selection; reconcile the actual model explicitly.");
+        if (!acceptActual) { attempted = true; await this.#transport.setModel(target, effort); }
+        const actual = await this.#transport.currentModelSelection();
+        requireCondition(actual.model === target && (effort === null || actual.reasoningEffort === effort),
+          "SDK model or reasoning effort readback did not match the selection; reconcile the actual model explicitly.");
         await this.#modelQuiet();
-        await this.#preferences.update({ model: actual, pendingModel: null });
+        await this.#preferences.update({ model: actual.model, reasoningEffort: effort, pendingModel: null, pendingReasoningEffort: null });
         this.#modelError = null;
       } catch (error) {
         this.#modelError = error.message;
         if (intent && !attempted && !acceptActual) {
-          try { await this.#preferences.update({ pendingModel: previousPending }); }
+          try { await this.#preferences.update({ pendingModel: previousPending, pendingReasoningEffort: previousPendingEffort }); }
           catch (failure) { this.#modelError += ` Pending intent could not be cleared: ${failure.message}`; }
         }
         throw new Error(this.#modelError);

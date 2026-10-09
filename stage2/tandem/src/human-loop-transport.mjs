@@ -218,16 +218,28 @@ export class HumanLoopTransport {
     requireCondition(Array.isArray(models) && models.length > 0 && models.length <= 1000
       && models.every((model) => typeof model.id === "string" && model.id.trim() && model.id.length <= 200),
     "The SDK model list is unavailable or invalid.");
-    return models.map(({ id, name }) => ({ id, name: typeof name === "string" ? name.slice(0, 200) : id }));
+    return models.map(({ id, name, supportedReasoningEfforts = [] }) => {
+      requireCondition(Array.isArray(supportedReasoningEfforts) && supportedReasoningEfforts.length <= 40
+        && supportedReasoningEfforts.every(effort => typeof effort === "string" && effort.trim() === effort
+          && effort.length > 0 && effort.length <= 40)
+        && new Set(supportedReasoningEfforts).size === supportedReasoningEfforts.length,
+      "SDK supported reasoning efforts are invalid.");
+      return { id, name: typeof name === "string" ? name.slice(0, 200) : id, supportedReasoningEfforts };
+    });
   }
-  async currentModel() {
+  async currentModelSelection() {
     requireCondition(typeof this.#session?.rpc?.model?.getCurrent === "function", "SDK cannot verify the actual private-session model.");
     const current = await this.#session.rpc.model.getCurrent();
     requireCondition(typeof current?.modelId === "string" && current.modelId.trim() && current.modelId.length <= 200,
       "SDK did not positively identify the actual private-session model.");
-    return current.modelId;
+    requireCondition(current.reasoningEffort == null || typeof current.reasoningEffort === "string"
+      && current.reasoningEffort.trim() === current.reasoningEffort && current.reasoningEffort.length > 0
+      && current.reasoningEffort.length <= 40, "SDK reasoning effort readback is invalid.");
+    return { model: current.modelId, reasoningEffort: current.reasoningEffort ?? null };
   }
+  async currentModel() { return (await this.currentModelSelection()).model; }
   get canSwitchModel() { return typeof this.#session?.setModel === "function" && typeof this.#session?.rpc?.model?.getCurrent === "function"; }
+  get canSetReasoningEffort() { return typeof this.#session?.rpc?.model?.setReasoningEffort === "function"; }
   get canResetApprovals() { return typeof this.#session?.rpc?.permissions?.resetSessionApprovals === "function"; }
   async resetRememberedApprovals() {
     requireCondition(!this.#active && !this.#sending && !this.#closing,
@@ -239,10 +251,12 @@ export class HumanLoopTransport {
     requireCondition(result?.success === true, "SDK approval reset was not confirmed. No complete reset is claimed.");
     this.#sessionApprovals.clear();
   }
-  async setModel(id) {
+  async setModel(id, reasoningEffort = null) {
     requireCondition(this.canSwitchModel && !this.#closing && !this.#active && !this.#sending,
       "SDK model switching is unavailable, busy or closing.");
+    requireCondition(reasoningEffort === null || this.canSetReasoningEffort, "SDK reasoning effort selection is unavailable.");
     await this.#session.setModel(id);
+    if (reasoningEffort !== null) await this.#session.rpc.model.setReasoningEffort({ reasoningEffort });
   }
   async attachmentCapabilities(mimeType = "image/png") { return annotationCapabilities(this.#session, this.#client, mimeType); }
   async requestAttachments(requests, design) {
@@ -331,11 +345,15 @@ export class HumanLoopTransport {
       const preferences = await new HumanLoopPreferences(this.#owner.workspacePath).read();
       if ((!proof || allowMissingInitialSession) && (preferences.model || preferences.pendingModel)) {
         requireCondition(!preferences.pendingModel, "Unsettled model selection requires the original session; no substitute was created.");
-        requireCondition((await this.listModels()).some(({ id }) => id === preferences.model), "Saved Canvas model is unavailable; no fallback was selected.");
+        const selected = (await this.listModels()).find(({ id }) => id === preferences.model);
+        requireCondition(selected, "Saved Canvas model is unavailable; no fallback was selected.");
+        requireCondition(preferences.reasoningEffort === null || selected.supportedReasoningEfforts.includes(preferences.reasoningEffort),
+          "Saved reasoning effort is unavailable; no fallback was selected.");
       }
       const configuration = {
         sessionId: this.#owner.privateSessionId, workingDirectory: this.#owner.workspacePath,
         ...(!proof && preferences.model ? { model: preferences.model } : {}),
+        ...(!proof && preferences.reasoningEffort !== null ? { reasoningEffort: preferences.reasoningEffort } : {}),
         enableConfigDiscovery: true, requestExtensions: false, tools, toolSearch: { enabled: false },
         customAgents: [{ name: reviewAgentName, description: "Read-only evidence for one scoped Tandem Review.",
           tools: reviewScopeTools, prompt: humanLoopPrompts.reviewScope.join("\n") }],
@@ -383,6 +401,7 @@ export class HumanLoopTransport {
           await verifyNativeSessionAbsent(this.#client, this.#owner.privateSessionId);
           this.#session = await this.#createOwnedSession({
             ...configuration, ...(preferences.model ? { model: preferences.model } : {}),
+            ...(preferences.reasoningEffort !== null ? { reasoningEffort: preferences.reasoningEffort } : {}),
           });
         } else {
           requireCondition(!allowMissingInitialSession,
