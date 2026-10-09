@@ -42,6 +42,7 @@ import "./development-handoff.test.js";
 import "./payload.test.js";
 import "./renderer-development.test.js";
 import "./desktop.test.js";
+import "./terminal-sdk.test.js";
 import "./browser-host.test.js";
 import "./browser-process.test.js";
 import "./standalone-header.test.js";

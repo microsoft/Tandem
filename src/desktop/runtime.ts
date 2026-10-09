@@ -1,4 +1,5 @@
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { CopilotClient, type CopilotSession, type ResumeSessionConfig } from "@github/copilot-sdk";
 import { isPreferredTandemProvider } from "../provider-identity.js";
@@ -55,6 +56,7 @@ export function desktopSessionConfig(
         enableConfigDiscovery: true,
         requestCanvasRenderer: true,
         requestExtensions: true,
+        extensionSdkPath: dirname(fileURLToPath(import.meta.resolve("@github/copilot-sdk"))),
         continuePendingWork: false,
         suppressResumeEvent: true,
         onPermissionRequest: protocol.permission.bind(protocol),

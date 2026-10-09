@@ -72,6 +72,13 @@ native Copilot extension process, the composition explicitly uses that exact
 executing native Copilot binary for the private stdio connection, rather than
 asking the embedded executable to run a JavaScript npm loader.
 
+The Node host supplies its installed SDK to extension processes explicitly.
+The pinned CLI's bundled SDK drops native `isTerminal` declarations even though
+the runtime accepts them: a saved Router result then leaves its native turn
+running, and immediate Designer delivery can become steering input. The host's
+SDK preserves these declarations without changing native permissions or accepting
+retired steering input.
+
 Creating a tarball does not publish it. Root `package.json` is the release-version
 authority. Before an authorized release, bump with
 `npm version patch --no-git-tag-version` (or the intended increment), run

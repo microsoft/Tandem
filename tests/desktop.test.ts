@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
 import type { PermissionRequest } from "@github/copilot-sdk";
@@ -81,6 +82,9 @@ test("desktop sessions disable untracked question tools without changing tool pe
         const config = desktopSessionConfig("workspace", "runtime", f.protocol);
         assert.equal(config.streaming, true, "drawing workers inherit streaming from the desktop session");
         assert.equal(config.includeSubAgentStreamingEvents, true);
+        assert.equal(config.extensionSdkPath, dirname(fileURLToPath(import.meta.resolve("@github/copilot-sdk"))),
+            "Composed extensions must receive the host SDK that preserves terminal declarations.");
+        assert.ok((await readFile(join(config.extensionSdkPath, "extension.js"), "utf8")).length > 0);
         assert.equal(config.onUserInputRequest, undefined, "the native question bridge must not be registered");
         assert.deepEqual(config.excludedTools, ["ask_user"]);
         assert.ok(config.hooks?.onPreToolUse);
