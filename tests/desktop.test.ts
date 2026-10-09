@@ -8,7 +8,7 @@ import { test } from "node:test";
 import type { PermissionRequest } from "@github/copilot-sdk";
 import { DesktopProtocol, validateDesktopUrl } from "../src/desktop/protocol.js";
 import { desktopRuntimeEnvironment } from "../src/desktop/environment.js";
-import { desktopSessionConfig } from "../src/desktop/runtime.js";
+import { desktopSessionConfig, parseDesktopModelSelection } from "../src/desktop/runtime.js";
 import { claimDesktopWorkspace } from "../src/desktop/workspace.js";
 import { isPreferredTandemProvider, preferredTandemProvider } from "../src/provider-identity.js";
 import { canvasRequestAllowed } from "../src/canvas-transport.js";
@@ -75,6 +75,27 @@ function protocolFixture() {
     return { input, events, protocol, shutdowns: () => shutdowns,
         reply(value: Record<string, unknown>) { input.write(`${JSON.stringify(value)}\n`); } };
 }
+
+test("native host forwards only explicit model/effort choices and leaves ordinary resume settings unset", () => {
+    const f = protocolFixture();
+    try {
+        assert.equal(parseDesktopModelSelection(), undefined);
+        const ordinary = desktopSessionConfig("workspace", "runtime", f.protocol);
+        assert.equal(Object.hasOwn(ordinary, "model"), false);
+        assert.equal(Object.hasOwn(ordinary, "reasoningEffort"), false);
+        const selected = parseDesktopModelSelection("gpt-6-astra", "low");
+        assert.deepEqual(selected, { model: "gpt-6-astra", reasoningEffort: "low" });
+        const config = desktopSessionConfig("workspace", "runtime", f.protocol, selected);
+        assert.equal(config.model, "gpt-6-astra");
+        assert.equal(config.reasoningEffort, "low");
+        assert.equal(config.continuePendingWork, false);
+        assert.equal(config.suppressResumeEvent, true);
+        assert.deepEqual(parseDesktopModelSelection("gpt-6-astra"), { model: "gpt-6-astra" });
+        for (const [model, effort] of [[undefined, "low"], ["", "low"], [" gpt-6-astra", "low"], ["gpt-6-astra", "invented"]]) {
+            assert.throws(() => parseDesktopModelSelection(model, effort), /model|effort/);
+        }
+    } finally { f.protocol.close(); }
+});
 
 test("desktop sessions disable untracked question tools without changing tool permissions", async () => {
     const f = protocolFixture();

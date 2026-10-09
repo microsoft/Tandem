@@ -9,7 +9,7 @@ import type { DesktopEvent } from "../desktop/protocol.js";
 import { parseBackendEvent, type BackendCommand } from "./contracts.js";
 import { errorMessage } from "./local-state.js";
 import { createProcessTree } from "./process-tree.js";
-import { PRIVATE_CLOSE_DEADLINE_MS, MAIN_CLOSE_DEADLINE_MS } from "../desktop/runtime.js";
+import { PRIVATE_CLOSE_DEADLINE_MS, MAIN_CLOSE_DEADLINE_MS, type DesktopModelSelection } from "../desktop/runtime.js";
 
 export interface Backend {
     send(command: BackendCommand): Promise<void>;
@@ -19,6 +19,7 @@ export interface Backend {
 export interface BackendOptions {
     workspace: string;
     runtimeDirectory: string;
+    modelSelection?: DesktopModelSelection;
     event(event: DesktopEvent): void;
     diagnostic(message: string): void;
     exited(code: number | null, error?: string): void;
@@ -59,7 +60,10 @@ export const startBackend: BackendFactory = async (options) => {
     environment.COPILOT_CLI_PATH = cli;
     environment.COPILOT_SDK_DEFAULT_CONNECTION = "stdio";
     const tree = await createProcessTree();
-    const child = spawn(process.execPath, [host, "--workspace", options.workspace], {
+    const child = spawn(process.execPath, [host, "--workspace", options.workspace,
+        ...(options.modelSelection ? ["--model", options.modelSelection.model] : []),
+        ...(options.modelSelection?.reasoningEffort ? ["--reasoning-effort", options.modelSelection.reasoningEffort] : []),
+    ], {
         cwd: options.workspace, env: environment, stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true, detached: process.platform !== "win32",
     });

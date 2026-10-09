@@ -119,6 +119,13 @@ effort. If unset, they keep their existing per-worker low/medium defaults.
 Failure to read that selection is an error, not permission to substitute a default.
 The read-only Development status endpoint includes `mainSessionModel`, the
 owning SDK's current model/effort snapshot; reading it starts no work.
+Programmatic browser hosts can explicitly pass
+`startBackend({ ..., modelSelection: { model, reasoningEffort } })`; the packaged
+native host accepts the corresponding `--model` and `--reasoning-effort` options.
+They are validated against the native model catalog and forwarded to SDK
+creation/resume, with actual readback checked before opening the canvas.
+Omitting them preserves native defaults and saved main-session selection.
+This does not configure or overwrite the separate private Development session.
 
 The existing `generate-design-spec` action is retained: it creates
 `draft-feature-spec` in Prototype, not a downstream technical Design stage.
