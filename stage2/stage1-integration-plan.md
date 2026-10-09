@@ -1,8 +1,9 @@
 # Stage 1 / Stage 2 Node integration
 
-This document describes the implemented composition of PR #14 into the Node
-application. The maintained Stage 2 engine and original renderer remain here;
-root `src` owns upstream discovery and the integration boundary.
+This document describes the merged Node application's Stage 1 / Stage 2
+composition and its integration follow-up. The maintained Stage 2 engine and
+original renderer remain here; root `src` owns upstream discovery and the
+integration boundary.
 
 ## Agreed stage boundary
 
@@ -259,7 +260,7 @@ a connection to Stage 2. This avoids that unnecessary exposure, but does not
 repair journal loss for an explicitly opened, unused Stage 2 session or relax
 main-session ownership/recovery.
 
-## Integration check, 2026-10-09
+## Earlier Design-only integration check, 2026-10-09
 
 The agreed boundary is the clarified one above: optional Stage 1 supplies Q&A
 and prototype evidence, not formal Design. The older proposal's Stage 1 Design
@@ -310,6 +311,86 @@ or that Designer actually read the files without a submitted model request.
 Separate used-state regression rejects a different main owner while preserving
 the exact WAL, retained handoff and history. Historical full-suite totals above
 remain unchanged.
+
+## Live full-framework tracker qualification, 2026-10-09
+
+The later authorized evaluation used one tracker project, GPT-6 Astra with Low
+reasoning effort, at most three concurrent native Review workers, at most two
+post-handoff application correction cycles and no overall execution timeout.
+No application correction cycle was needed. The application was written and
+corrected by the product's native workers; the qualification harness did not
+edit its source or force role/state transitions.
+
+This was a deliberately staged candidate journey, not one uninterrupted run on
+one build. Real Preparation, fourteen confirmed Q&A decisions and four approved
+screens ran on the earlier notification-fixed candidate. The initial failed
+Prototype, its source and its 300-second timeout remain retained. After normal
+owner closure, `c269e4d` qualified the cap-free explicit Prototype Retry and
+single effort control. The later private Design/implementation/Review and
+used-session lifecycle journey ran on frozen source
+`5eeb02346dcb8fbfa761789d43a880afd58b7e2c`, with composed payload digest
+`c332327f409ff912facc50a5ac68898028a95943777a7227871edbda97a46a1a`.
+Release version remained 1.1.15; CLI/SDK remained 1.0.94/1.0.18. Earlier frozen
+candidates, including the original `8316fe4` evidence, were not overwritten.
+
+| Journey | Observed result | Boundary |
+| --- | --- | --- |
+| Live Stage 1 | Preparation, accepted Q&A, approved drawings, Structure, Interaction and draft feature specification completed. Physical Apply update published Interaction. | The prior Preparation/Prototype failures remain failures, not erased retries. |
+| No arbitrary execution cap | The new native run's declared and approved limits both omitted timeout; Structure completed beyond the former 300 seconds. Historical Prototype accounting reached 1555/900 without gating new work. | Explicit limits and bounded startup/RPC/Close observations remain separate. |
+| Independent Stage 1 completion | `prototype-r109.json` and prior stage snapshots were saved; Development remained uninitialized. The main host and preview processes actually exited before later Stage 2 entry. | No automatic private creation, handoff importer or replacement identity was used. |
+| One effort choice, independent implementations | A physical project-control Low selection applied to the actual owning main session and retained unopened private intent. Explicit private model selection later applied the same Low through Stage 2's own implementation. Both real readbacks and every observed worker configuration/inference reported Astra/Low. | Model choices remain independent; an absent model leaves intent pending, never a substituted default. |
+| Formal Design from saved files | A new private conversation read explicit snapshots, drawings and all named mock-source files, then published canonical Design. | Stage 1 mock behavior was not promoted to implementation or test evidence. |
+| Implementation and whole-plan Review | Separate request and physical Design-bound confirmation preceded Planner. Five implementation tasks, aggregate validation and three substantive native read-only Review scopes completed. Parent consolidation reported no supported material conformance/over-engineering findings. | Review explicitly distinguished source coverage from runtime acceptance. No broad permission grants were used. |
+| Independent final-app acceptance | Physical mouse/keyboard/file-selection cases covered CRUD, dates, combined filters/counts, named deletion, actual downloads, invalid/cancelled/confirmed imports, recovery bytes, network failures, two-browser stale writes/imports, reload and 390px layout. A separate full application test invocation passed 48, with zero failures/skips, including real Edge. | These are generated-app results, not a rerun of the historical Tandem suites above. |
+| Real Stop with pending native consent | A separate no-code verification request reached three live Review workers. Physical Stop now cancelled their native workflow and all three workers; pending native permissions ended denied with parent-authorization-ended feedback. Cards disappeared and no late Review was published. | A new post-Stop question completed under a distinct request; stopped work was not resumed. |
+| Used same-ID cold reopen | Actual private Close and main-process exit preceded recovery of both original IDs. All four prior requests, all sixteen then-visible messages and complete Design were retained exactly; no new native user/turn/worker/usage event occurred before new input. Both actual effort readbacks remained Low. | No application server restarted automatically, and this does not qualify unused-session journal persistence. |
+| Explicit post-cold application restart | A new confirmed operational request verified the old writer absent, removed only its hash-fenced stale lock, restarted the unchanged app in an attached native shell and checked the exact retained dataset hash. Independent physical browser readback confirmed three projects, two tasks and the calendar date after real process restart. | Stale-lock recovery was explicit operational repair, not automatic clean restart or an application-code correction. |
+| Final cleanup | Normal private and main closure completed. All 24 final captured PID/creation identities exited, all final host/private/app endpoints became unreachable, and all four independent acceptance-browser instances closed. Cleanup preserved the post-acceptance app source/data and saved Stage 1 input hashes. | A retained stale application lock is evidence of native process termination; it was not silently deleted to make cleanup appear cleaner. |
+
+Focused source checks during this follow-up were reported separately: 128
+execution-policy checks; 49 consent-lifetime host/browser checks plus replay of
+21 actual native envelopes; 58 root activity/parser checks and three Stage 2
+prompt checks; 40 root and 28 private effort/settings checks; seven targeted
+native-catalog correction checks; and eight terminal-duration checks. Type
+checks and complete frozen browser builds passed. Actual fresh and cold root
+provider bootstrap also received capability consent without a model turn or
+callback-before-event deadlock. These counts are not an aggregate full-suite run.
+
+The live run found that session-scoped `model.list` exposes
+`capabilities.supports.reasoning_effort`, unlike the normalized client catalog
+used independently by Stage 2. It also exposed a completed-request timer that
+kept ticking; the terminal-duration fix uses authoritative completion time while
+freshness continues to age. Failed prework/candidate observations were retained.
+
+Remaining limitations are explicit:
+
+- An ordinary main resume without launcher model configuration returned no
+  actual model. The readback gate stopped model work and showed pending Low
+  intent; a separately authorized explicit Astra model selection then allowed
+  the production saved-effort implementation to apply Low. This is not proof of
+  automatic main-model restoration, and no global settings/default was changed.
+- Windows native Close terminated the attached app process but left its own
+  exclusive lock. The app's documented, positively fenced manual stale-lock
+  recovery was exercised before restarting; tracker data was never reset.
+- The earlier Requirements defaults-button no-op required an owned view reload.
+  Its cause remains unresolved; the later real confirmation does not erase that
+  observation. Harness consent delays/denials and pre-click UI reconciliation
+  also remain separately recorded, not relabeled as product passes.
+- The unused zero-input private-journal limitation above remains open.
+  Exhaustive screen-reader/keyboard auditing, measured contrast and full native
+  browser zoom are not claimed. Root-font scaling alone is insufficient proof
+  of full-page 200% zoom.
+
+Receipts are retained under `full-framework-e2e\evidence\`:
+`stage1-saved-output-hashes.json`, `native-unbounded-run-limits.json`,
+`shared-effort-both-real-sessions-applied-before-goal.json`,
+`whole-plan-native-review-complete.json`, `review-stop-native-outcomes.json`,
+`used-same-id-cold-reopen-no-replay.json`, `post-cold-new-work-complete.json` and
+`final-owned-cleanup.json`. Independent physical receipts are
+`physical-initial\receipt.json`, `physical-faults\receipt.json` and
+`physical-cold-readback\receipt.json`; the independent application suite output is
+`independent-final-app-tests.txt`. Application JSON export was exercised, not
+Tandem accepted-record export or Git publication.
 
 Publishing a release, updating installed user extensions and broader UX
 unification remain separate work. No export, GitHub publication or deployment

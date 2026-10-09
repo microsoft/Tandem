@@ -136,6 +136,9 @@ They are validated against the native model catalog and forwarded to SDK
 creation/resume, with actual readback checked before opening the canvas.
 Omitting them preserves native defaults and saved main-session selection.
 This does not configure or overwrite the separate private Development session.
+If native main-session resume reports no model, an explicit saved project effort
+remains pending until a supported model is selected through that launcher path;
+Tandem does not invent a model or silently replace native defaults.
 
 Use **Project effort** in the bottom action bar for one explicit reasoning-effort
 choice across both stages. Models remain independently selected. Root
