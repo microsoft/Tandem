@@ -65,7 +65,7 @@ test("header suppresses reload success text and places version after Reset", asy
     assert.equal(h.get("reload-status").dataset.status, "error");
 });
 
-test("React panels have unique IDs and Radix navigation skips locked tabs", async (t) => {
+test("React panels have unique IDs and Radix navigation includes direct Development", async (t) => {
     const h = await setup(t, state("prototype"));
     const ids = Array.from(h.document.querySelectorAll("[id]")).map((node) => node.id);
     assert.equal(new Set(ids).size, ids.length, "No duplicate component or tabpanel IDs");
@@ -76,12 +76,15 @@ test("React panels have unique IDs and Radix navigation skips locked tabs", asyn
     }
     h.get("live-preview-tab").focus();
     await h.fire(h.get("live-preview-tab"), "keydown", { key: "ArrowRight" });
-    assert.equal(h.document.activeElement?.id, "content-tab", "Locked Development is skipped");
+    assert.equal(h.document.activeElement?.id, "development-tab", "Development never requires upstream completion.");
+    assert.equal(h.get("development-panel").hidden, false);
+    await h.fire(h.get("development-tab"), "keydown", { key: "ArrowRight" });
+    assert.equal(h.document.activeElement?.id, "content-tab");
     assert.equal(h.get("content-panel").hidden, false);
     await h.fire(h.get("content-tab"), "keydown", { key: "Home" });
     assert.equal(h.document.activeElement?.id, "preparation-tab");
     assert.equal(h.get("preparation-panel").hidden, false);
-    assert.equal(h.requests.length, 0);
+    assert.deepEqual(h.requests.map(request => request.path), ["/api/development/open"], "Navigation submits no workflow request.");
 });
 
 test("Radix confirmation has a safe initial focus and restores its invoker on Escape", async (t) => {
