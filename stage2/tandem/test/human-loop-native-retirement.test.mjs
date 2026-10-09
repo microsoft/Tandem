@@ -38,7 +38,7 @@ async function fixture(t) {
   const document = new HostStateFile(root, join(runtimeDirectory, "native-shells", "sessions.json"));
   t.after(async () => { instances.forEach(value => value.releaseWriter()); await closeHostStateWal(root);
     await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }); });
-  return { root, create, document, first: create() };
+  return { root, create, document, legacy: options.legacy, first: create() };
 }
 
 for (const variant of ["async", "sync-rollover", "sync-incomplete"]) {
@@ -144,9 +144,55 @@ test("retired identities remain unadopted while ordinary native reads and stops 
   tasks.push({ type: "shell", id: "fresh-background", command: args.command, status: "running",
     startedAt: new Date().toISOString(), attachmentMode: "attached", executionMode: "background" });
   await current.settled(background, complete(), true);
-  await assert.rejects(current.close(), /before Close/);
+  await assert.rejects(current.assertSettled(), /before Close/);
+  await assert.rejects(current.cleanCloseDigest(), /before Close/);
   await current.stop(background.entryId);
+  const stopped = decodeRecord(await f.document.read()).entries.find(entry => entry.id === background.entryId);
+  assert.equal(stopped.status, "stopped");
+  assert.ok(stopped.endedAt);
   await current.close();
+});
+
+for (const legacyFailure of [false, true]) test(`Close releases native command storage without inventing settlement (legacy failure: ${legacyFailure})`, async t => {
+  const f = await fixture(t);
+  const old = await f.first.admit("powershell", args, packet, "old-call");
+  await f.first.settled(old, complete(), true);
+  f.first.releaseWriter();
+  const current = f.create();
+  await current.prepareWriter(recovery, evidence());
+  const tasks = [];
+  let reads = 0, stops = 0, closes = 0;
+  current.setTaskReader(async () => { reads++; return { tasks: structuredClone(tasks) }; });
+  const fresh = await current.admit("powershell", { ...args, shellId: "current" }, packet, "current-call");
+  const task = { type: "shell", id: "current", command: args.command, status: "running",
+    startedAt: new Date().toISOString(), attachmentMode: "attached", executionMode: "background" };
+  tasks.push(task);
+  current.setStopHandler(async () => { stops++; assert.fail("Closed storage cannot authorize a native Stop."); }, () => true);
+  await current.currentTarget(fresh);
+  await current.settled(fresh, complete(), true);
+  assert.equal((await current.read()).nativeSessions.find(entry => entry.id === fresh.entryId).canStop, true);
+  await assert.rejects(current.assertSettled(), /before Close/);
+  await assert.rejects(current.cleanCloseDigest(), /before Close/);
+  const before = await f.document.read();
+  const historical = decodeRecord(before).entries.find(entry => entry.id === old.entryId);
+  const live = decodeRecord(before).entries.find(entry => entry.id === fresh.entryId);
+  assert.ok(historical.controlRetirement);
+  assert.equal(live.status, "running");
+  assert.equal(live.endedAt, null);
+  f.legacy.close = async options => {
+    closes++;
+    assert.deepEqual(options, {});
+    if (legacyFailure) throw new Error("Legacy storage close failed");
+  };
+  reads = 0;
+  if (legacyFailure) await assert.rejects(current.close(), /Legacy storage close failed/);
+  else await current.close();
+  assert.equal(closes, 1);
+  assert.equal(reads, 0, "Storage Close must not query a native registry that the runtime may already have shut down.");
+  assert.equal(await f.document.read(), before, "Neither retired provenance nor an unconfirmed process outcome can be rewritten by Close.");
+  await assert.rejects(current.stop(fresh.entryId), /explicit supported recovery|writer/);
+  assert.equal(stops, 0, "The writer is released even when legacy cleanup fails.");
+  assert.equal(await f.document.read(), before);
 });
 
 test("retirement cannot bypass a competing writer or unsupported recovery proof", async t => {

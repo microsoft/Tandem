@@ -159,6 +159,9 @@ After native shutdown, command cleanup drains local journal writes and closes
 local storage before releasing its writer. It does not query the closed native
 task registry or require historical shell records to appear settled. Real local
 cleanup errors remain visible warnings.
+`assertSettled` and `cleanCloseDigest` still reject live attached tasks when
+settlement evidence is requested. Those inspections do not gate storage
+`close()`, and closing storage does not invent a process exit or completion.
 
 Cold reopening validates retained Conversation, attachments, Design and native
 history, and resumes the same private identity with `continuePendingWork: false`
