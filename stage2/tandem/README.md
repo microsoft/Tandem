@@ -97,6 +97,12 @@ deferred-discovery steering messages in the Host-owned role conversation; it
 does not whitelist injected system text or relax input/permission checks.
 Foreground-session tool discovery is unchanged.
 
+The private pre-tool hook accepts SDK arguments as either decoded values or a
+single JSON-serialized value; native `apply_patch` retains its raw patch grammar.
+Decoding occurs before the existing role/schema
+and exact-invocation checks; malformed JSON is denied. Permission callbacks and
+tool handlers still validate their actual arguments and require their own grants.
+
 The September 28 isolated native/full-E2E qualification exercised 23 role
 dispatches exactly once with the same attached app through aggregate
 implementation, Review and later work, plus same-ID Close/reopen/reclose.

@@ -46,6 +46,7 @@ class Session {
   turnId = "0";
   completeTool = true;
   stopPending = false;
+  serializedHookArgs = false;
   sessionId = "private"; history = []; calls = 0; processing = false; sends = []; onSend = null; onImmediate = null; aborts = 0;
   rpc = {
     name: { set: async () => {} },
@@ -104,7 +105,7 @@ class Session {
     const tool = this.config.tools.find((tool) => tool.name === name);
     const invocation = { sessionId: this.sessionId, toolName: name, toolCallId: `call-${++this.calls}`, arguments: args };
     const allowed = await this.config.hooks.onPreToolUse({
-      sessionId: this.sessionId, toolName: name, toolArgs: args,
+      sessionId: this.sessionId, toolName: name, toolArgs: this.serializedHookArgs ? JSON.stringify(args) : args,
     }, { sessionId: this.sessionId });
     assert.notEqual(allowed.permissionDecision, "deny", allowed.permissionDecisionReason);
     if (tool.skipPermission === false) {
@@ -265,6 +266,74 @@ const capturedOrders = [
   ["user", "start", "ack"], ["start", "user", "ack"], ["ack", "user", "start"],
   ["ack", "start", "user"], ["user", "ack", "start"], ["start", "ack", "user"],
 ];
+test("serialized SDK hook arguments admit the exact Router result without changing its handler payload", async t => {
+  const f = await fixture(t);
+  capturedDispatch(f.session);
+  await f.request(); const packet = await f.begin("router");
+  f.session.serializedHookArgs = true;
+  const result = await f.finish(packet, "submit_human_route", { kind: "route", intent: "design", cycleId: null,
+    summary: "Continue the retained Design.", resolvedQuestions: [] });
+  assert.equal(result.inputDigest, packet.binding.inputDigest);
+  assert.equal(result.outcome.intent, "design");
+  assert.equal((await f.store.load()).uncertainty, null);
+  assert.deepEqual((await replayDurableState(f.root)).state, await f.store.load());
+});
+
+test("serialized SDK hook arguments preserve exact native invocation matching", async t => {
+  const f = await fixture(t, { nativeFiles: true });
+  await f.request(); const packet = await f.begin("router");
+  const args = { path: "app.js" };
+  f.session.emit("tool.execution_start", { toolCallId: "serialized-read", toolName: "view", arguments: args,
+    turnId: f.session.turnId, interactionId: f.session.interactionId });
+  assert.deepEqual(await f.session.config.hooks.onPreToolUse({
+    sessionId: "private", toolName: "view", toolArgs: JSON.stringify(args),
+  }, { sessionId: "private" }), {});
+  f.session.emit("tool.execution_complete", { toolCallId: "serialized-read", success: true,
+    turnId: f.session.turnId, interactionId: f.session.interactionId });
+  await f.finish(packet, "submit_human_route", { kind: "route", intent: "answer", cycleId: null,
+    summary: "Read complete.", resolvedQuestions: [] });
+});
+
+test("serialized SDK hook admission matches object permission and handler arguments without granting consent", async t => {
+  const f = await fixture(t, { permission: true });
+  await f.request();
+  const route = await f.begin("router");
+  await f.finish(route, "submit_human_route", { kind: "route", intent: "answer", cycleId: null,
+    summary: "Read only.", resolvedQuestions: [] });
+  const packet = await f.begin("agent");
+  f.session.serializedHookArgs = true;
+  const result = f.session.call("run_owned_check", {});
+  await waitFor(() => f.broker.list().length === 1, "real permission after serialized hook");
+  await f.broker.decide(f.broker.list()[0].id, "once");
+  assert.equal(await result, "Checked");
+  const tool = f.session.config.tools.find(tool => tool.name === "run_owned_check");
+  await assert.rejects(tool.handler({}, { sessionId: "private", toolName: tool.name, toolCallId: "unapproved-second" }),
+    /genuine permission grant/);
+  await f.finish(packet, "submit_readonly_answer", { kind: "answer", summary: "One consented call.",
+    report: "The once-only grant authorized exactly the admitted arguments.", evidenceRefs: [] });
+});
+
+test("serialized SDK hook arguments do not grant malformed, primitive, foreign or mismatched result authority", async t => {
+  const f = await fixture(t);
+  await f.request(); const packet = await f.begin("router");
+  const valid = { schemaVersion: "human-role-result/v1", resultId: "valid", inputDigest: packet.binding.inputDigest,
+    outcome: { kind: "route", intent: "design", cycleId: null, summary: "Design only.", resolvedQuestions: [] } };
+  for (const [toolArgs, sessionId] of [
+    ["{bad-json", "private"], ["null", "private"], ["[]", "private"], ['"text"', "private"], ["42", "private"],
+    [JSON.stringify(valid), "foreign"],
+    [JSON.stringify({ ...valid, inputDigest: "f".repeat(64) }), "private"],
+  ]) {
+    const denied = await f.session.config.hooks.onPreToolUse({
+      sessionId, toolName: "submit_human_route", toolArgs,
+    }, { sessionId: "private" });
+    assert.equal(denied.permissionDecision, "deny");
+    assert.ok(denied.permissionDecisionReason);
+    assert.equal((await f.store.load()).activeTask.result, null);
+  }
+  f.session.serializedHookArgs = true;
+  await f.finish(packet, "submit_human_route", valid.outcome);
+});
+
 test("private controlled roles preload tools instead of relying on deferred discovery", async t => {
   const f = await fixture(t);
   assert.deepEqual(f.session.config.toolSearch, { enabled: false });

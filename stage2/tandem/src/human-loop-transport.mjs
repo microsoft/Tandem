@@ -343,6 +343,10 @@ export class HumanLoopTransport {
         hooks: { onPreToolUse: async (input, invocation) => {
           try {
             this.#requireSessionId(invocation.sessionId);
+            // Native apply_patch uses raw patch grammar, not serialized JSON arguments.
+            if (typeof input.toolArgs === "string" && input.toolName !== "apply_patch") {
+              input = { ...input, toolArgs: JSON.parse(input.toolArgs) };
+            }
             if (input.sessionId !== this.#owner.privateSessionId) {
               text(input.sessionId);
               return await this.#admitDescendant(input);
