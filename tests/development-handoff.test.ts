@@ -838,6 +838,18 @@ for (const stage of ["prepare", "requirements"] as const) test(`direct Developme
         assert.equal(status.status, 200);
         assert.deepEqual((await status.json()).mainSessionModel, { modelId: "fixture-model" });
         assert.equal(h.developmentOpens.length, 0, "Reading the owning model does not initialize Development.");
+        let starts = 0;
+        h.setBeforeDevelopmentStart(async () => { starts++; });
+        const views = [];
+        for (let attempt = 0; attempt < 2; attempt++) {
+            const presented = await fetch(new URL("api/development/view", entry.url), { method: "POST" });
+            assert.equal(presented.status, 200, await presented.clone().text());
+            views.push(await presented.json());
+        }
+        assert.deepEqual(views[0], views[1], "The presentation binding survives repeated view reads.");
+        assert.match(views[0].channel, /^[a-zA-Z0-9-]+$/);
+        assert.equal(starts, 0, "A conversation view must not initialize or resume the native runtime.");
+        h.developmentOpens.length = 0;
         for (let attempt = 0; attempt < 2; attempt++) {
             const opened = await fetch(new URL("api/development/open", entry.url), {
                 method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
@@ -848,6 +860,7 @@ for (const stage of ["prepare", "requirements"] as const) test(`direct Developme
         assert.equal(JSON.stringify(await h.api.loadState("direct")), JSON.stringify(before));
         assert.deepEqual(h.developmentOpens, ["development-browser", "development-browser"]);
         assert.equal(h.developmentRequests.length, 0);
+        assert.equal(starts, 2);
         assert.equal(h.requests.length, 0);
         await assert.rejects(h.api.continueDevelopment("direct", "project:tandem"), /Complete Prototype/);
         assert.equal(h.developmentRequests.length, 0, "Opening directly does not weaken the strict Prototype handoff.");

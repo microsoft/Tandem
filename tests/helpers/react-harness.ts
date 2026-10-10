@@ -57,6 +57,7 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
   const window = dom.window;
   const document = window.document;
   const requests: Request[] = [];
+  const presentationRequests: string[] = [];
   const errors: string[] = [];
   const pngExports: { width: number; height: number; source: string }[] = [];
   const headerMessages: Record<string, any>[] = [];
@@ -78,6 +79,10 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
     PointerEvent: window.MouseEvent,
     fetch: async (input: string | URL | Request, options: RequestInit = {}) => {
       const path = String(input);
+      if (path === "/api/development/view") {
+        presentationRequests.push(path);
+        return response({ url: "http://127.0.0.1:8765/", channel: "fixture-project" });
+      }
       requests.push({ path, body: options.body ? JSON.parse(String(options.body)) : null, options });
       return fetcher(path, options);
     },
@@ -125,7 +130,7 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
   };
   const dispose = () => { mounted.dispose(); window.close(); };
   t?.after(dispose);
-  return {
+  return { presentationRequests,
     window, document, requests, errors, pngExports, store: mounted.store, get, click, input, fire, flush, dispose,
     render(value: UiState, sequence?: number) {
       let changed = false;

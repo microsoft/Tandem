@@ -11,6 +11,7 @@ import { renderBackgroundProcesses } from './background-processes.js';
 import { createWorkflowStopControl } from './workflow-stop-control.js';
 import { installPanelSplitter } from './panel-splitter.js';
 import { createImplementationConfirmations } from './implementation-confirmation.js';
+import { installProjectPresentation } from './project-presentation.js';
 
 const $ = (id) => document.getElementById(id);
 const disposeSplitter = installPanelSplitter({ layout: document.querySelector('.human-layout'),
@@ -50,6 +51,11 @@ const renderStopControl = () => stopControl.render(snapshot?.workflow, { connect
 const make = (tag, text) => { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; return node; };
 let settingsBusy = false, settingsLoaded = false, settingsLoading = null, settingsVersion = 0;
 let settingsModel = null, effortModel = null;
+const projectPresentation = installProjectPresentation({ document, window,
+  changed: () => { if (snapshot) render(); },
+  settings: () => { $('canvas-settings').open = true; $('setting-theme').focus(); void refreshSettings(); },
+  currentWork: () => $('focus-current-message').click(),
+});
 function renderReasoningEffort() {
   const id = $('setting-model').value, model = settingsModel;
   const selected = model?.effortManaged ? model.projectReasoningEffort ?? model.actualReasoningEffort ?? '' : effortModel === id ? $('setting-effort').value
@@ -132,7 +138,8 @@ $('canvas-settings').addEventListener('toggle', () => { if ($('canvas-settings')
 $('canvas-settings').addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
     event.preventDefault(); $('canvas-settings').open = false;
-    $('canvas-settings').querySelector('summary').focus();
+    if (projectPresentation) projectPresentation.settingsClosed();
+    else $('canvas-settings').querySelector('summary').focus();
   }
 });
 $('save-appearance').onclick = () => saveSettings('/api/settings', { theme: $('setting-theme').value, fontSize: $('setting-font').value });
@@ -166,6 +173,7 @@ annotation = createAnnotationController({
     image: $('annotation-image'), preview: $('annotation-preview'), caption: $('annotation-caption') },
 });
 function inspectReference(binding, reference) {
+  projectPresentation?.showDesign();
   try { designView.inspectReference(binding, reference); }
   catch (error) { notice(error.message); }
 }
@@ -194,9 +202,12 @@ installBrowserLinkNavigation(document, {
   onError: (error) => { linkNotice = `Link was not opened: ${error.message}`; notice(linkNotice); },
 });
 function renderComposer() {
-  $('send').disabled = sending || clipboard.busy() || !snapshot?.workflow?.canSend;
+  projectPresentation?.nativePending(sending || Boolean(pending));
+  $('send').disabled = sending || clipboard.busy() || (projectPresentation?.discovery()
+    ? !projectPresentation.canSend() : !snapshot?.workflow?.canSend);
   $('message').disabled = sending || pendingSubmitted;
   const presetsBlocked = sending || Boolean(pending);
+  $('quick-requests').hidden = projectPresentation?.discovery() === true;
   const summary = $('quick-requests').querySelector('summary');
   summary.setAttribute('aria-disabled', String(presetsBlocked));
   summary.tabIndex = presetsBlocked ? -1 : 0;
@@ -276,7 +287,7 @@ function render() {
       conversation.focusRequest(requestId);
     },
   });
-  const entries = snapshot.messages;
+  const entries = [...(projectPresentation?.entries() ?? []), ...snapshot.messages];
   const transitions = projectHumanHistory(snapshot.events, entries, snapshot.streamId, snapshot.historyRequests, snapshot.recoveries);
   conversation.render(entries, transitions);
   renderImplementationConfirmations();
@@ -298,7 +309,7 @@ function render() {
     if (row) {
       row.dataset.role = entry.role ?? entry.kind;
       const label = row.querySelector('.conversation-role');
-      if (label) label.textContent = entry.kind === 'user'
+      if (label) label.textContent = entry.id.startsWith('discovery:') ? entry.role : entry.kind === 'user'
         ? entry.queueState === 'retired' ? 'Not resumed after Recovery' : entry.queueState ?? '' : entry.role ?? '';
     }
   }
@@ -343,6 +354,7 @@ function render() {
   if (nextQuestionKey && nextQuestionKey !== revealedQuestionKey) revealCurrentQuestion();
   else if (followMessages && !nextQuestionKey && !$('messages').contains(document.activeElement)) $('messages').scrollTop = $('messages').scrollHeight;
   revealedQuestionKey = nextQuestionKey;
+  projectPresentation?.publish(snapshot);
 }
 function renderBackground() {
   renderBackgroundProcesses($('background-processes'), snapshot?.processes?.nativeSessions ?? [], {
@@ -472,6 +484,18 @@ $('quick-requests').addEventListener('focusout', event => {
 });
 $('composer').addEventListener('submit', async (event) => {
   event.preventDefault(); if (sending || clipboard.busy() || (!$('message').value.trim() && !clipboard.current() && !annotation.preview())) return;
+  if (projectPresentation?.discovery()) {
+    if (pending || clipboard.current() || annotation.preview()) { notice('Resolve the Development request or remove its attachment before sending to discovery.'); return; }
+    const text = $('message').value;
+    sending = true; renderComposer();
+    try {
+      await projectPresentation.submit(text);
+      if ($('message').value === text) $('message').value = '';
+      notice('Discovery action received.');
+    } catch (error) { notice(error.message); }
+    finally { sending = false; renderComposer(); }
+    return;
+  }
   sending = true; annotation.setSending(true); notice(''); renderComposer();
   try {
     if (pending && pending.message !== $('message').value) throw new Error('The previous request is unconfirmed. Refresh before replacing its text.');
@@ -593,7 +617,7 @@ function requestWorkflowStop(mode) {
   render();
   return stopRequest;
 }
-$('initialize').onclick = () => post('/api/runtime/start', snapshot.installation?.canRetry ? { retry: true } : {})
+$('initialize').onclick = () => projectPresentation ? projectPresentation.activate(snapshot.installation?.canRetry) : post('/api/runtime/start', snapshot.installation?.canRetry ? { retry: true } : {})
   .then(async () => { notice(''); await refresh(); }).catch((error) => notice(error.message));
 $('inspect-initial-creation').onclick = async () => {
   if (initialCreationInspecting) return;

@@ -6301,13 +6301,22 @@ async function handleRequest(entry, req, res) {
             sendJson(res, 200, { ...await development.status(), mainSessionModel: await session.rpc.model.getCurrent() });
             return;
         }
+        if (req.method === "POST" && requestUrl.pathname === "/api/development/view") {
+            entry.projectViewChannel ??= randomUUID();
+            const provider = await development.openView(`project-workspace:${entry.projectViewChannel}`, {
+                surface: "browser", projectHost: { origin: new URL(entry.url).origin, channel: entry.projectViewChannel },
+            });
+            sendJson(res, 200, { url: provider.url, channel: entry.projectViewChannel });
+            return;
+        }
         if (req.method === "POST" && requestUrl.pathname === "/api/development/open") {
             const state = await loadState(entry.prototypeId);
             assertLegacyCutover(state);
             if (hasActiveWork(state)) throw new CanvasError("upstream_active", "Finish upstream work before starting Development in this workspace.");
             await assertDevelopmentAvailable();
             const provider = await development.openView("development-browser", { surface: "browser" });
-            void development.start().catch(development.reportError);
+            const input = await readRequestBody(req);
+            void development.start(input.retry === true ? { retry: true } : {}).catch(development.reportError);
             sendJson(res, 200, { url: provider.url });
             return;
         }

@@ -182,8 +182,10 @@ async function body(request) {
 }
 
 export async function createHumanLoopProvider({ repositoryRoot, publicDirectory, getInstallation, events, permissions, start, openBrowser,
-  openProjectFolder: revealProject = openProjectFolder, surface = "canvas" }) {
+  openProjectFolder: revealProject = openProjectFolder, surface = "canvas", projectHost = null }) {
   requireCondition(["canvas", "browser"].includes(surface), "Unsupported Tandem delivery surface.");
+  if (projectHost) requireCondition(/^http:\/\/127\.0\.0\.1:\d+$/.test(projectHost.origin)
+    && /^[a-zA-Z0-9-]{1,100}$/.test(projectHost.channel), "Invalid project presentation binding.");
   const root = resolve(repositoryRoot), publicRoot = resolve(publicDirectory), streams = new Set();
   let url;
   const runtime = () => getInstallation()?.runtime ?? null;
@@ -426,6 +428,12 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
         const html = content.toString("utf8");
         requireCondition(html.includes('data-tandem-surface="canvas"'), "Renderer lacks an explicit Tandem surface binding.");
         content = Buffer.from(html.replace('data-tandem-surface="canvas"', 'data-tandem-surface="browser"'));
+      }
+      if (file === resolve(publicRoot, "human-loop.html") && projectHost) {
+        const panel = new URL(request.url, url).searchParams.get("panel") ?? "workspace";
+        requireCondition(panel === "workspace", "Unknown project presentation panel.");
+        content = Buffer.from(content.toString("utf8").replace('class="human-app"',
+          `class="human-app" data-project-panel="${panel}" data-project-origin="${projectHost.origin}" data-project-channel="${projectHost.channel}"`));
       }
       response.writeHead(200, { "content-type": types[extname(file)] ?? "application/octet-stream", "cache-control": "no-store",
         "x-content-type-options": "nosniff" });

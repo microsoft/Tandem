@@ -6,6 +6,33 @@ import { fileURLToPath } from "node:url";
 import { test, type TestContext } from "node:test";
 import { reactHarness, state, response } from "./helpers/react-harness.js";
 import { browserAvailable, openFixtureBrowser } from "../stage2/tandem/test/helpers/browser-fixture.mjs";
+import { projectDiscovery } from "../src/renderer/project-conversation.js";
+
+test("project chat routes exact discovery context once and rejects foreign or stale presentation messages", async t => {
+    const h = await reactHarness(t), value = state("requirements");
+    value.requirements.substage = "usage";
+    h.setFetch(async (path, options) => {
+        assert.equal(path, "/api/answer");
+        assert.deepEqual(JSON.parse(String(options.body)), { questionId: "usage-intake", action: "add-usage", answer: "A scoped usage" });
+        return response(value);
+    });
+    h.render(value); await h.flush();
+    const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
+    const key = projectDiscovery(value, false).key;
+    const send = async (data: object, origin = "http://127.0.0.1:8765", source: Window | null = frame.contentWindow) => {
+        h.window.dispatchEvent(new h.window.MessageEvent("message", { data: { protocol: "tandem-project/v1", channel: "fixture-project", ...data }, origin, source }));
+        await h.flush();
+    };
+    const submission = { type: "discovery-send", id: "exact-request", key, text: "A scoped usage" };
+    await send(submission, "http://127.0.0.1:9999");
+    await send(submission, "http://127.0.0.1:8765", null);
+    await send({ ...submission, channel: "foreign" });
+    await send({ ...submission, id: "stale-request", key: "older-generation" });
+    assert.equal(h.requests.length, 0);
+    await send(submission); await send(submission);
+    assert.equal(h.requests.length, 1, "Duplicate UI delivery cannot duplicate a Stage1 action.");
+    assert.equal(h.get("project-conversation-frame"), frame);
+});
 
 test("fresh projects open Development directly without creating Stage1 state or a handoff", async t => {
     const h = await reactHarness(t);
@@ -18,16 +45,16 @@ test("fresh projects open Development directly without creating Stage1 state or 
     h.render(value); await h.flush();
     assert.equal(h.requests.length, 0);
     await h.click("open-development");
-    const frame = h.get<HTMLIFrameElement>("development-frame");
-    assert.equal(frame.src, "http://127.0.0.1:8765/");
+    const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
+    assert.equal(frame.src, "http://127.0.0.1:8765/?panel=workspace");
     assert.equal(h.document.querySelector("#continue-design"), null);
     assert.ok(h.get("capture-development"), "Direct projects retain the explicit capture/delivery controls.");
     await h.fire(h.get("preparation-tab"), "mousedown", { button: 0 });
-    assert.equal(h.get("studio-workspace").hidden, true);
+    assert.equal(h.get("studio-workspace").hidden, false);
     assert.ok(h.get("open-development"));
     await h.click("open-development");
-    assert.equal(h.get("development-frame"), frame);
-    assert.equal(h.requests.length, 1);
+    assert.equal(h.get("project-conversation-frame"), frame);
+    assert.equal(h.requests.length, 2, "Each explicit activation uses the public open action.");
     assert.equal(h.store.getSnapshot().state.lifecycle.currentStage, "prepare");
     assert.deepEqual(h.store.getSnapshot().state.lifecycle.completedStages, []);
     assert.deepEqual(h.errors, []);
@@ -48,8 +75,10 @@ test("idle unfinished Stage1 can browse Development but active work and read-onl
     assert.equal(h.requests.length, 0);
     assert.match(h.document.body.textContent!, /writable provider/);
     h.render({ ...value, revision: 3 }); await h.flush();
+    assert.equal(h.requests.length, 0, "Becoming idle while browsing must not start Development.");
+    assert.ok(h.get("project-conversation-frame"));
+    await h.click("activate-development");
     assert.equal(h.requests.length, 1);
-    assert.ok(h.get("development-frame"));
     assert.equal(h.document.querySelector("#continue-design"), null);
     assert.equal(h.store.getSnapshot().state.lifecycle.currentStage, "requirements");
     assert.deepEqual(h.errors, []);
@@ -77,11 +106,11 @@ for (const stage of ["requirements", "prototype"] as const) test(`${stage} compl
     reopened.render(completed); await reopened.flush();
     assert.equal(reopened.get("content-panel").hidden, false);
     assert.equal(reopened.requests.length, 0);
-    assert.equal(reopened.document.querySelector("#development-frame"), null);
+    assert.ok(reopened.get("project-conversation-frame"), "Presentation is available without native startup.");
     await reopened.fire(reopened.get("development-tab"), "mousedown", { button: 0 });
-    assert.equal(reopened.requests.length, 1, "An explicit later Open initializes the runtime but does not submit the handoff.");
+    assert.equal(reopened.requests.length, 0, "Browsing Design must not initialize the runtime.");
     assert.ok(reopened.get("continue-design"));
-    assert.equal(reopened.get<HTMLIFrameElement>("development-frame").src, "http://127.0.0.1:8765/");
+    assert.equal(reopened.get<HTMLIFrameElement>("project-conversation-frame").src, "http://127.0.0.1:8765/?panel=workspace");
 });
 
 test("Development mounts one isolated full workspace and navigation keeps its original frame", async t => {
@@ -92,15 +121,15 @@ test("Development mounts one isolated full workspace and navigation keeps its or
     });
     h.render(state("development"));
     await h.flush();
-    const frame = h.get<HTMLIFrameElement>("development-frame");
-    assert.equal(frame.src, "http://127.0.0.1:8765/");
+    const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
+    assert.equal(frame.src, "http://127.0.0.1:8765/?panel=workspace");
     assert.equal(h.get("studio-workspace").dataset.development, "true");
-    assert.equal(h.get<HTMLButtonElement>("reset-effort").disabled, true);
     assert.equal(h.document.querySelector('[data-stage-id="design"]'), null);
     await h.fire(h.get("preparation-tab"), "mousedown", { button: 0 });
     await h.fire(h.get("development-tab"), "mousedown", { button: 0 });
-    assert.ok(h.get("development-frame") === frame, "Unsent private state is retained with its iframe.");
-    assert.equal(h.requests.length, 1);
+    assert.ok(h.get("project-conversation-frame") === frame, "Unsent private state is retained with its iframe.");
+    assert.equal(h.requests.length, 0);
+    assert.equal(h.presentationRequests.length, 1);
     assert.deepEqual(h.errors, []);
 });
 
@@ -192,9 +221,9 @@ test("real React Development keeps handoff controls in view across long-status h
                     const chunks: Buffer[] = [];
                     for await (const chunk of request) chunks.push(Buffer.from(chunk));
                     requests.push({ path, body: JSON.parse(Buffer.concat(chunks).toString("utf8")) });
-                    assert.ok(["/api/development/open", "/api/development/continue"].includes(path), `Unexpected mutation: ${path}`);
+                    assert.ok(["/api/development/view", "/api/development/open", "/api/development/continue"].includes(path), `Unexpected mutation: ${path}`);
                     response.writeHead(200, { "Content-Type": "application/json" });
-                    response.end(JSON.stringify(path === "/api/development/open" ? { url: frameUrl } : snapshot));
+                    response.end(JSON.stringify(path === "/api/development/view" ? { url: frameUrl, channel: "layout-fixture" } : path === "/api/development/open" ? { url: frameUrl } : snapshot));
                 })().catch(error => {
                     failures.push(error.message);
                     if (!response.headersSent) response.writeHead(500);
@@ -209,9 +238,9 @@ test("real React Development keeps handoff controls in view across long-status h
         t.diagnostic(`Actual browser: ${version.product}`);
         await browser.call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
         await browser.call("Page.navigate", { url: appUrl });
-        await browser.waitFor('Boolean(window.developmentFixture && document.querySelector("#development-frame")?.src)');
-        await browser.evaluate('window.originalDevelopmentFrame = document.querySelector("#development-frame"); true');
-        await browser.waitFor(`Boolean(document.querySelector("#development-frame")?.src === ${JSON.stringify(frameUrl)})`);
+        await browser.waitFor('Boolean(window.developmentFixture && document.querySelector("#project-conversation-frame")?.src)');
+        await browser.evaluate('window.originalDevelopmentFrame = document.querySelector("#project-conversation-frame"); true');
+        await browser.waitFor(`Boolean(document.querySelector("#project-conversation-frame")?.src === ${JSON.stringify(frameUrl + "?panel=workspace")})`);
         const settle = () => browser.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))");
         const move = async (selector: string, nearLeft = false) => {
             const point = await browser.evaluate(`(() => {
@@ -243,26 +272,27 @@ test("real React Development keeps handoff controls in view across long-status h
                 };
                 const guide = document.querySelector("#next-action-guide");
                 return { viewport: innerWidth, app: bounds(".app"), workspace: bounds("#studio-workspace"),
-                    iframe: bounds("#development-frame"), footer: bounds("#next-action-bar"),
+                    iframe: bounds("#project-conversation-frame"), footer: bounds("#next-action-bar"),
                     button: bounds("#continue-design"), acceptance: bounds(".development-process > summary"),
                     guide: guide.textContent, guideTitle: guide.title, guideClipped: guide.scrollWidth > guide.clientWidth,
                     active: document.activeElement.id || document.activeElement.tagName,
-                    frameRetained: window.originalDevelopmentFrame === document.querySelector("#development-frame") };
+                    frameRetained: window.originalDevelopmentFrame === document.querySelector("#project-conversation-frame") };
             })()`);
             t.diagnostic(JSON.stringify({ step, ...geometry }));
             return geometry;
         };
         const assertBounded = (geometry: Awaited<ReturnType<typeof measure>>) => {
-            for (const part of ["app", "workspace", "iframe", "footer"] as const) {
+            for (const part of ["app", "workspace", "footer"] as const) {
                 assert.ok(Math.abs(geometry[part].width - geometry.viewport) <= 1, `${part} expanded: ${JSON.stringify(geometry)}`);
             }
+            assert.ok(geometry.iframe.width > 0 && geometry.iframe.right <= geometry.viewport);
             for (const part of ["button", "acceptance"] as const) {
                 assert.ok(geometry[part].left >= 0 && geometry[part].right <= geometry.viewport && geometry[part].hit,
                     `${part} is not visible and hit-testable: ${JSON.stringify(geometry)}`);
             }
             assert.equal(geometry.frameRetained, true);
         };
-        await move("#development-frame", true);
+        await move("#project-conversation-frame", true);
         snapshot = { ...snapshot, revision: snapshot.revision + 1, status: longStatus };
         await browser.evaluate(`window.developmentFixture.accept(${JSON.stringify(snapshot)})`);
         await settle();
@@ -270,17 +300,17 @@ test("real React Development keeps handoff controls in view across long-status h
         await move(".development-toolbar > span", true);
         await browser.waitFor(`document.querySelector("#next-action-guide")?.textContent === ${JSON.stringify(longStatus)}`);
         const longHelp = await measure("1280-pointer-over-toolbar");
-        await move("#development-frame", true);
+        await move("#project-conversation-frame", true);
         const restoredHelp = await measure("1280-pointer-back-over-iframe");
         for (const sample of [shortHelp, longHelp, restoredHelp]) assertBounded(sample);
-        assert.equal(shortHelp.guide, "Tandem Development");
+        assert.equal(shortHelp.guide, "Persistent project conversation");
         assert.equal(longHelp.guide, longStatus);
         assert.equal(longHelp.guideTitle, longStatus, "Ellipsis must not remove the full diagnostic.");
         assert.equal(longHelp.guideClipped, true);
-        assert.equal(restoredHelp.guide, "Tandem Development");
+        assert.equal(restoredHelp.guide, "Persistent project conversation");
 
         const tree = await browser.call("Page.getFrameTree");
-        const privateFrame = tree.frameTree.childFrames.find(frame => frame.frame.url === frameUrl);
+        const privateFrame = tree.frameTree.childFrames.find(frame => frame.frame.url === frameUrl + "?panel=workspace");
         assert.ok(privateFrame);
         const world = await browser.call("Page.createIsolatedWorld", { frameId: privateFrame.frame.id, worldName: "development-draft-fixture" });
         const inFrame = async (expression: string) => {
@@ -298,12 +328,14 @@ test("real React Development keeps handoff controls in view across long-status h
                     document.querySelector(".development-process > summary").textContent = "Acceptance and delivery history";`);
             }
             await settle();
-            await move("#development-frame", true);
+            await move("#project-conversation-frame", true);
             assertBounded(await measure(`${width}-iframe-hover`));
             await move("#continue-design");
             assertBounded(await measure(`${width}-button-hover`));
             await move(".development-toolbar > span", true);
             await browser.evaluate('document.querySelector("#development-panel").focus()');
+            await tab();
+            assert.equal((await measure(`${width}-keyboard-activate`)).active, "activate-development");
             await tab();
             const focused = await measure(`${width}-keyboard-button`);
             assert.equal(focused.active, "continue-design");
@@ -332,14 +364,14 @@ test("real React Development keeps handoff controls in view across long-status h
             path: "/api/development/continue",
             body: { generation: value.generation, expectedRevision: snapshot.revision, snapshotPath },
         }], "A deliberate hit-tested click submits exactly once to the recording fixture endpoint.");
-        assert.equal(requests.filter(request => request.path === "/api/development/open").length, 1);
+        assert.equal(requests.filter(request => request.path === "/api/development/open").length, 0);
         const events = await browser.evaluate("window.developmentFixture.events");
         for (const type of ["pointerover", "pointerout", "focusin", "keydown"]) {
             assert.ok(events.some(event => event.type === type && event.trusted), `No trusted ${type} event was exercised.`);
         }
         await browser.call("Emulation.setDeviceMetricsOverride", { width: 640, height: 900, deviceScaleFactor: 1, mobile: false });
         await browser.call("Page.navigate", { url: new URL("host", appUrl).href });
-        await browser.waitFor('Boolean(document.querySelector(".host-main > iframe")?.contentDocument?.querySelector("#development-frame"))');
+        await browser.waitFor('Boolean(document.querySelector(".host-main > iframe")?.contentDocument?.querySelector("#project-conversation-frame"))');
         const hostTree = await browser.call("Page.getFrameTree");
         const appFrame = hostTree.frameTree.childFrames.find(frame => frame.frame.url === appUrl);
         assert.ok(appFrame);
@@ -358,7 +390,7 @@ test("real React Development keeps handoff controls in view across long-status h
         const nested = await insideApp(`(() => {
             const button = document.querySelector("#continue-design").getBoundingClientRect();
             return { viewport: innerWidth, workspaceWidth: document.querySelector("#studio-workspace").getBoundingClientRect().width,
-                frameWidth: document.querySelector("#development-frame").getBoundingClientRect().width,
+                frameWidth: document.querySelector("#project-conversation-frame").getBoundingClientRect().width,
                 footerWidth: document.querySelector("#next-action-bar").getBoundingClientRect().width,
                 buttonRight: button.right, x: button.left + button.width / 2, y: button.top + button.height / 2 };
         })()`);
@@ -368,7 +400,7 @@ test("real React Development keeps handoff controls in view across long-status h
         assert.equal(hostLayout.scrollLeft, 260, "The original host remains horizontally scrollable.");
         assert.equal(nested.viewport, 900);
         assert.equal(nested.workspaceWidth, 900);
-        assert.equal(nested.frameWidth, 900);
+        assert.ok(nested.frameWidth > 0 && nested.frameWidth < 900);
         assert.equal(nested.footerWidth, 900);
         assert.ok(nested.buttonRight + hostLayout.appLeft <= hostLayout.viewport);
         await browser.call("Input.dispatchMouseEvent", { type: "mouseMoved", x: nested.x + hostLayout.appLeft, y: nested.y });

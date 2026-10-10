@@ -1,6 +1,6 @@
 import { Component, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ErrorInfo, type ReactNode } from "react";
 import { AlertDialog, Tabs, Tooltip } from "radix-ui";
-import { ArrowRight, Check, ChevronDown, CircleDot, ClipboardList, Code, FileText, FolderOpen, GitBranch, Layers, ListChecks, LockKeyhole, Minus, Monitor, PanelLeft, PanelLeftClose, PanelLeftOpen, PencilRuler, Play, RefreshCw, RotateCcw, Sparkles, Target, X } from "lucide-react";
+import { ArrowRight, Check, ChevronDown, ClipboardList, Code, FileText, FolderOpen, GitBranch, Layers, ListChecks, Monitor, PanelLeft, PanelLeftClose, PanelLeftOpen, PencilRuler, Play, RefreshCw, RotateCcw, Sparkles, Target, X } from "lucide-react";
 import { lifecycleStages } from "../workflow.js";
 import type { LifecycleStageId } from "../types.js";
 import { StudioStore } from "./state-store.js";
@@ -14,6 +14,7 @@ import { ProcessPanel } from "./process-panel.js";
 import { DevelopmentPanel } from "./development-panel.js";
 import { WorkflowActivity } from "./workflow-activity.js";
 import { ProjectEffortControl } from "./project-effort.js";
+import { ProjectConversation, ProjectConversationProvider, useProjectView } from "./project-conversation.js";
 import { SpeechProvider, SpeechSignInControl, SpeechTextarea, useSpeechSignInControl } from "./speech-textarea.js";
 import { Brand } from "./brand.js";
 import { useStandaloneHeader } from "./standalone-header.js";
@@ -142,9 +143,9 @@ function EffortApp({ state, store, version, connectionError, confirm }: {
     confirm, browseStage, selectArtifact, setBusy,
   };
   return <UiContext.Provider value={value}><SpeechProvider signInPlacement="header">
-    <Workspace version={version} connectionError={connectionError} store={store} activeTab={activeTab} onTabChange={setActiveTab}
+    <ProjectConversationProvider designVisible={activeTab === "development"} showDesign={() => setActiveTab("development")}><Workspace version={version} connectionError={connectionError} store={store} activeTab={activeTab} onTabChange={setActiveTab}
       selectedArtifact={selectedArtifact} contextOpen={contextOpen} setContextOpen={setContextOpen}
-      sketchBlocked={sketchBlocked} onSketchBlocked={setSketchBlocked} effortBusy={busy.has("effort")} />
+      sketchBlocked={sketchBlocked} onSketchBlocked={setSketchBlocked} effortBusy={busy.has("effort")} /></ProjectConversationProvider>
   </SpeechProvider></UiContext.Provider>;
 }
 
@@ -154,7 +155,7 @@ function GoalEntry({ openDevelopment }: { openDevelopment: () => void }) {
   const [goal, setGoal] = useDraft("start-goal", "");
   const input = useRef<HTMLTextAreaElement>(null);
   const writable = state.provider?.canSubmitAnswers !== false;
-  return <main id="start-panel" className="start-panel" aria-labelledby="start-title">
+  return <section id="start-panel" className="start-panel" aria-labelledby="start-title">
     <div className="start-content"><h2 id="start-title">What do you want to build?</h2>
       <form id="start-form" className="start-form" aria-busy={action.busy} onSubmit={(event) => {
         event.preventDefault();
@@ -180,7 +181,7 @@ function GoalEntry({ openDevelopment }: { openDevelopment: () => void }) {
       </button>
       <p className="muted">Preparation and prototyping are optional. Start a new project or continue an existing repository in Development; opening sends no project request.</p>
     </div>
-  </main>;
+  </section>;
 }
 
 function Header({ version, connectionError, store, effortBusy, developmentView }: { version: string; connectionError: string; store: StudioStore; effortBusy: boolean; developmentView: boolean }) {
@@ -201,7 +202,7 @@ function Header({ version, connectionError, store, effortBusy, developmentView }
   const reloadTitle = state.provider?.canReload ? "Restart this session's provider from the latest installed user extension. This does not download updates." : reloadStatus;
   const reloadLabel = reload.busy ? "Checking..." : reloadRequested || reloadReceipt?.status === "reloading" ? "Reloading..." : "Reload";
   const resetDisabled = developmentView || state.provider?.canSubmitAnswers === false || effortBusy;
-  const resetTitle = developmentView ? "Use Development controls for its private session. Return upstream to reset discovery."
+  const resetTitle = developmentView ? "Close the private runtime in Project settings before resetting discovery."
     : "Archive upstream discovery and return to goal entry; Development and admitted handoffs are retained";
   const effortMessage = reset.error || state.effortReset?.error
     || (state.effortReset ? "Reset is pending. Use Reset to confirm worker termination and finish clearing this effort." : message);
@@ -272,6 +273,7 @@ interface WorkspaceProps {
 }
 function Workspace(props: WorkspaceProps) {
   const { state, pending, browseStage, post, confirm } = useUi();
+  const projectView = useProjectView();
   const { activeTab, onTabChange, selectedArtifact, contextOpen, setContextOpen, sketchBlocked } = props;
   const stageAction = useAction("stage");
   const workspace = useRef<HTMLElement>(null);
@@ -282,8 +284,6 @@ function Workspace(props: WorkspaceProps) {
   const [nextAction, setNextAction] = useState<{ id: string; label: string; revealId: string | null } | null>(null);
   const atStart = isGoalEntry(state);
   const developmentView = activeTab === "development";
-  const [developmentOpened, setDevelopmentOpened] = useState(developmentView);
-  useEffect(() => { if (developmentView) setDevelopmentOpened(true); }, [developmentView]);
   const contextHelp = useStatusHelp(`${activeTab}:${contextOpen}:${contextCollapsed}:${atStart}`);
   const previousAtStart = useRef(atStart);
   useLayoutEffect(() => {
@@ -303,7 +303,6 @@ function Workspace(props: WorkspaceProps) {
     : current === "prepare" ? "Preparation runs automatically" : "Finish " + (lifecycleStages.find((stage) => stage.id === current)?.label || current).toLowerCase();
   const completionHelp = contextCollapsed && !allComplete && !stageAction.busy && !["prepare", "development"].includes(current)
     ? "Next stage: " + completionLabel : completionLabel;
-  const completedCount = lifecycleStages.filter((stage) => state.lifecycle.completedStages.includes(stage.id)).length;
   const selectedLabel = lifecycleStages.find((stage) => stage.id === viewed)?.label || viewed;
   const statusBarError = props.connectionError || stageAction.error;
   const statusBarText = statusBarError || contextHelp || (nextAction ? "Next action: " + nextAction.label
@@ -363,12 +362,9 @@ function Workspace(props: WorkspaceProps) {
     onTabChange(tab as TabId);
     setContextOpen(false);
   }
-  return <div className="app">
-    <Header version={props.version} connectionError={props.connectionError} store={props.store} effortBusy={props.effortBusy} developmentView={developmentView} />
-    {atStart && !developmentView && <GoalEntry openDevelopment={() => navigate("development")} />}
-    {(!atStart || developmentView || developmentOpened) && <Tabs.Root value={activeTab} onValueChange={navigate} asChild>
-      <main id="studio-workspace" ref={workspace} className="workspace" data-development={developmentView} data-context-open={contextOpen} data-context-collapsed={contextCollapsed}
-        hidden={atStart && !developmentView}
+  return <div className="app project-workspace-app">
+    <Tabs.Root value={activeTab} onValueChange={navigate} asChild>
+      <main id="studio-workspace" ref={workspace} className="workspace project-workspace" data-development={developmentView} data-context-open={contextOpen} data-context-collapsed={contextCollapsed}
         inert={props.effortBusy || Boolean(state.effortReset)}
         aria-busy={props.effortBusy || Boolean(state.effortReset)} style={{ "--requirements-width": width + "px" } as CSSProperties}>
         <button id="context-toggle" className="context-toggle" type="button" aria-expanded={contextOpen} aria-controls="requirements-pane" onClick={() => setContextOpen(!contextOpen)}>
@@ -377,8 +373,32 @@ function Workspace(props: WorkspaceProps) {
         <aside id="requirements-pane" className="requirements" aria-label="Project context" onKeyDown={(event) => {
           if (event.key === "Escape" && contextOpen) { setContextOpen(false); document.getElementById("context-toggle")?.focus(); event.preventDefault(); }
         }}>
+          <Header version={props.version} connectionError={props.connectionError} store={props.store} effortBusy={props.effortBusy} developmentView={projectView.active} />
+          <nav className="project-navigation" aria-label="Project navigation">
+            <button id="project-settings" type="button" className="plan-button" onClick={() => projectView.command("settings")}>Project settings</button>
+            <ProjectEffortControl />
+            <Tabs.List id="project-contents" className="preview-tabs project-tabs" aria-label="Project contents">
+              {stageTabs.map(tab => {
+                const skipped = skippedStage(state, tab.stage);
+                const output = [...(state.lifecycle.history || []), ...state.lifecycle.outputs].reverse().find(item => item.stageId === tab.stage);
+                const label = tab.stage === "development" ? "Design" : tab.stage === "sketch" ? "Drawings" : tab.label;
+                return <Tabs.Trigger key={tab.value} value={tab.value} id={tab.id + "-tab"}
+                className="preview-tab" data-stage-id={tab.stage} disabled={tab.stage !== "prepare" && !canBrowseStage(state, tab.stage)}
+                title={skipped?.reason || output?.path || label}
+                aria-label={`${label}${skipped ? `, not applicable. ${skipped.reason}` : ""}`}
+                aria-controls={tab.id + "-panel"}><tab.icon size={15} aria-hidden="true" />
+                {label}
+                {tab.stage === "development" && projectView.designRevision && <span className="artifact-count">{projectView.designChanged ? "New output" : "Available"}</span>}
+                {tab.stage === "prototype" && state.prototypeFlow?.pendingCheckpointId && <span className="artifact-count">Update ready</span>}
+              </Tabs.Trigger>; })}
+              <Tabs.Trigger value="content" id="content-tab" className="preview-tab" aria-controls="content-panel"><FileText size={15} />Saved artifacts <span id="artifact-count">{state.artifacts.length || ""}</span></Tabs.Trigger>
+            </Tabs.List>
+            <button id="project-current-work" type="button" className="plan-button" onClick={() => projectView.command("current-work")}>
+              Current work{projectView.attention ? ` (${projectView.attention} needs attention)` : ""}
+            </button>
+          </nav>
           <div className="context-pane-heading">
-            <p className="eyebrow"><Target size={14} aria-hidden="true" />Project brief</p>
+            <p className="eyebrow"><Target size={14} aria-hidden="true" />Project overview</p>
             <button id="toggle-context-pane" className="context-collapse" type="button" aria-controls="requirements-pane"
               aria-expanded={!contextCollapsed} aria-label={contextCollapsed ? "Expand project context" : "Collapse project context"}
               title={contextCollapsed ? "Expand project context" : "Collapse to stage activity bar"}
@@ -386,31 +406,10 @@ function Workspace(props: WorkspaceProps) {
               {contextCollapsed ? <PanelLeftOpen size={16} aria-hidden="true" /> : <PanelLeftClose size={16} aria-hidden="true" />}
             </button>
           </div>
-          <section className="section project-brief" data-status-help={state.status}><p id="goal" className="goal" title={state.goal}>{state.goal}</p>
-            <p id="status" className={hasActiveJobs(state) || state.processing?.status === "error" ? "status" : "visually-hidden"} title={state.status}>{state.status}</p></section>
+          <details className="section project-brief"><summary>Brief and project details</summary><p id="goal" className="goal" title={state.goal}>{state.goal || "Discovery is optional. Describe the project here or activate Development."}</p></details>
+          <p id="status" className="status" role="status">{state.status}</p>
           <WorkflowActivity />
-          <section className="section workflow-section" aria-describedby="stage-browsing stage-message"><div className="section-heading"><p className="eyebrow"><Layers size={14} aria-hidden="true" />Workflow</p>
-            <span className="section-count" aria-label={`${completedCount} of ${lifecycleStages.length} stages complete`}>{completedCount}/{lifecycleStages.length}</span></div>
-            <ol id="stage-list" className="stage-list">
-            {lifecycleStages.map((stage, index) => {
-              const skipped = skippedStage(state, stage.id);
-              const done = state.lifecycle.completedStages.includes(stage.id);
-              const status = skipped ? "not applicable" : done ? "complete" : current === stage.id ? "active" : stage.id === "development" ? "available" : "locked";
-              const StageIcon = stageTabs.find((tab) => tab.stage === stage.id)!.icon;
-              const StatusIcon = skipped ? Minus : done ? Check : current === stage.id ? CircleDot : LockKeyhole;
-              const output = [...(state.lifecycle.history || []), ...(state.lifecycle.outputs || [])].reverse().find((item) => item.stageId === stage.id);
-              const stageHelp = `${stage.label} · ${status}${skipped ? ". " + skipped.reason : output?.path ? " · " + output.path : ""}`;
-              return <li key={stage.id}><button className="stage-step" type="button" data-stage-id={stage.id} data-status={status} data-ui-key={"stage:" + stage.id}
-                aria-current={current === stage.id && !allComplete ? "step" : undefined} aria-pressed={viewed === stage.id}
-                disabled={!canBrowseStage(state, stage.id)} data-status-help={stageHelp}
-                title={contextCollapsed ? stageHelp : skipped?.reason || output?.path || `${index + 1}. ${stage.label} · ${status}`}
-                aria-label={`${stage.label}, ${status}${skipped ? ". " + skipped.reason : ""}`}
-                onClick={() => browseStage(stage.id)}>
-                <span className="stage-step-index" aria-hidden="true"><StageIcon size={15} /></span>
-                <span className="stage-step-label">{stage.label}</span><span className="stage-step-status"><StatusIcon size={13} aria-hidden="true" /><span className="visually-hidden">{status}</span></span>
-              </button></li>;
-            })}
-          </ol>
+          <section className="section workflow-section" aria-describedby="stage-browsing stage-message"><div className="section-heading"><p className="eyebrow"><Layers size={14} aria-hidden="true" />Discovery actions</p></div>
             <button id="complete-stage" className="complete-stage" type="button" hidden={current === "development" || viewed !== current || Boolean(skippedStage(state, current))} aria-describedby="stage-message"
               aria-label={completionHelp} title={completionHelp} data-status-help={completionHelp}
               disabled={!complete} onClick={() => { if (complete) void stageAction.run(() => post("/api/stage/complete", { stageId: current })); }}>
@@ -451,27 +450,19 @@ function Workspace(props: WorkspaceProps) {
           onPointerCancel={() => setDragging(null)} onLostPointerCapture={() => setDragging(null)}
           onKeyDown={(event) => { if (["ArrowLeft", "ArrowRight"].includes(event.key)) { resize(width + (event.key === "ArrowLeft" ? -1 : 1) * (event.shiftKey ? 48 : 24)); event.preventDefault(); } }} />
         <section id="preview-pane" className="preview" aria-label="Stage workspace">
-          <div className="previewbar"><Tabs.List className="preview-tabs" aria-label="Stage workspace">
-            {stageTabs.map((tab) => <Tabs.Trigger key={tab.value} value={tab.value} id={tab.id + "-tab"} data-tab={tab.value}
-              className="preview-tab" disabled={!canBrowseStage(state, tab.stage)}
-              title={skippedStage(state, tab.stage)?.reason || tab.label} aria-label={tab.label}
-              aria-controls={tab.id + "-panel"} onFocus={(event) => event.currentTarget.scrollIntoView?.({ block: "nearest", inline: "nearest" })}>
-              <tab.icon size={15} aria-hidden="true" /><span className="tab-label">{tab.label}</span></Tabs.Trigger>)}
-            <Tabs.Trigger value="content" id="content-tab" className="preview-tab" data-tab="content" aria-controls="content-panel"><FileText size={15} aria-hidden="true" />Artifacts <span id="artifact-count" className="artifact-count">{state.artifacts.length || ""}</span></Tabs.Trigger>
-          </Tabs.List></div>
           {stageTabs.map((tab) => <Tabs.Content key={tab.value} value={tab.value} forceMount hidden={activeTab !== tab.value}
             id={tab.id + "-panel"} className={tab.className} aria-labelledby={tab.id + "-tab"} tabIndex={0}>
-            {tab.stage === "prepare" ? <PreparationPanel /> : tab.stage === "requirements" ? <RequirementsPanel />
+            {tab.stage === "prepare" ? atStart ? <GoalEntry openDevelopment={() => { navigate("development"); void projectView.activate(); }} /> : <PreparationPanel /> : tab.stage === "requirements" ? <RequirementsPanel />
               : tab.stage === "sketch" ? <SketchCompletionContext.Provider value={props.onSketchBlocked}><SketchPanel /></SketchCompletionContext.Provider>
               : tab.stage === "prototype" ? <PrototypePanel /> : <DevelopmentPanel active={developmentView} />}
           </Tabs.Content>)}
           <Tabs.Content value="content" forceMount hidden={activeTab !== "content"} id="content-panel" className="content-panel" aria-labelledby="content-tab" tabIndex={0}><ArtifactsPanel selectedArtifactId={selectedArtifact} /></Tabs.Content>
         </section>
+        <ProjectConversation />
       </main>
-    </Tabs.Root>}
+    </Tabs.Root>
     <div id="next-action-bar" className="next-action-bar" data-status={statusBarError ? "error" : "idle"}>
       <span id="next-action-guide" role="status" title={statusBarText}>{statusBarText}</span>
-      <ProjectEffortControl />
       <button id="show-next-action" type="button" hidden={!nextAction}
         aria-label="Go to action" title={nextAction ? "Go to action: " + nextAction.label : "Go to action"} onClick={() => {
         if (!nextAction) return;

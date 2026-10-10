@@ -3463,3 +3463,57 @@ textarea {
   .preview-tab[aria-selected="true"], .stage-step[aria-pressed="true"], .choice[data-state="checked"],
   .artifact-button[aria-current="true"], .sketch-panel button[aria-pressed="true"] { outline: 2px solid Highlight; outline-offset: -2px; }
 }
+
+.project-workspace-app { grid-template-rows: minmax(0, 1fr) auto; }
+#studio-workspace.project-workspace { grid-template-columns: var(--requirements-width, 220px) 1px minmax(280px, 1fr) 6px var(--conversation-width, min(42vw, 520px)); }
+.project-workspace > .requirements { display: block !important; min-width: 0; overflow: auto; }
+.project-workspace > .splitter { display: block; }
+.project-workspace > .context-toggle { display: none; }
+.project-workspace .topbar { height: auto; padding: 10px; flex-wrap: wrap; }
+.project-workspace .topbar-actions { flex-wrap: wrap; gap: 4px; }
+.project-workspace .topbar .lifecycle { display: none; }
+.project-navigation { display: flex; flex-direction: column; gap: 8px; padding: 10px; }
+.project-tabs { flex-direction: column; align-items: stretch; white-space: normal; }
+.project-tabs .preview-tab { justify-content: flex-start; min-height: 36px; }
+.project-workspace .context-pane-heading { padding: 6px 10px; }
+.project-workspace #toggle-context-pane { display: none; }
+.project-workspace .requirements > #status { padding: 0 10px; overflow-wrap: anywhere; }
+.project-workspace .project-brief > summary { cursor: pointer; }
+.project-workspace .project-effort-control > div { position: fixed; z-index: 60; left: 12px; top: 80px; bottom: auto; width: min(430px, calc(100vw - 24px)); }
+#project-conversation { display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; background: var(--studio-surface); }
+#project-conversation > iframe { flex: 1; width: 100%; min-height: 0; border: 0; }
+#project-conversation > p { padding: 4px 10px; margin: 0; overflow-wrap: anywhere; }
+.project-conversation-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px; border-bottom: 1px solid var(--studio-border); }
+.project-conversation-heading > span { flex: 1; font-size: 11px; color: var(--studio-muted); }
+.project-conversation-heading button { border: 1px solid var(--studio-border); background: var(--studio-panel); color: inherit; }
+#project-conversation-divider { background: var(--studio-border); cursor: col-resize; touch-action: none; }
+#project-conversation-divider:focus-visible { outline: 2px solid var(--studio-focus); outline-offset: -2px; }
+.project-workspace[data-development="true"] { grid-template-rows: auto minmax(0, 1fr); }
+.project-workspace[data-development="true"] > .requirements { grid-row: 1 / 3; }
+.project-workspace[data-development="true"] > .splitter { grid-column: 2; grid-row: 1 / 3; }
+.project-workspace[data-development="true"] > .preview { grid-column: 3 / 6; grid-row: 1; }
+.project-workspace[data-development="true"] #project-conversation { grid-column: 3 / 6; grid-row: 2; }
+.project-workspace[data-development="true"] #project-conversation-divider { display: none; }
+.project-workspace[data-development="true"] .development-panel { min-height: 0; height: auto; flex: 0 0 auto; }
+.project-workspace .preview > [role="tabpanel"] { min-width: 0; }
+.project-workspace .start-panel { min-height: 0; overflow: auto; }
+@media (max-width: 999px) {
+  #studio-workspace.project-workspace { grid-template-columns: 180px minmax(0, 1fr); grid-template-rows: minmax(260px, 1fr) minmax(300px, 1fr); }
+  .project-workspace > .requirements { grid-row: 1 / 3; width: auto; position: static; }
+  .project-workspace > .preview { grid-column: 2; grid-row: 1; }
+  #project-conversation { grid-column: 2; grid-row: 2; }
+  #project-conversation-divider, .project-workspace > .splitter { display: none; }
+  .project-workspace[data-development="true"] > .preview,
+  .project-workspace[data-development="true"] #project-conversation { grid-column: 2; }
+  #studio-workspace.project-workspace[data-development="true"] { grid-template-rows: auto minmax(0, 1fr); }
+}
+@media (max-width: 600px) {
+  #studio-workspace.project-workspace { display: flex; flex-direction: column; overflow: auto; }
+  .project-workspace > .requirements { flex: 0 0 auto; max-height: 180px; overflow: auto; }
+  .project-workspace > .preview { flex: 0 0 420px; }
+  .project-workspace[data-development="true"] > .preview { flex: 0 0 auto; }
+  #project-conversation { flex: 0 0 560px; }
+  .project-tabs { flex-direction: row; flex-wrap: wrap; }
+  .project-workspace .topbar { padding: 4px 10px; }
+  .project-workspace .project-navigation { padding: 6px 10px; }
+}

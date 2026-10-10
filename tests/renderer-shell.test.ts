@@ -7,9 +7,9 @@ test("compact workflow exposes progress and labeled stage icons without changing
     value.lifecycle.completedStages = value.lifecycle.completedStages.filter((id: string) => id !== "sketch");
     value.lifecycle.skippedStages = [{ stageId: "sketch", reason: "Existing drawings were supplied." }];
     const h = await setup(t, value);
-    assert.equal(h.get("stage-list").querySelectorAll("button").length, 5);
+    assert.equal(h.get("project-contents").querySelectorAll("[data-stage-id]").length, 5);
     assert.equal(h.document.querySelectorAll('[data-stage-id="design"], [data-stage-id="plan"], [data-stage-id="implement"], [data-stage-id="test"]').length, 0);
-    for (const button of h.document.querySelectorAll<HTMLButtonElement>(".stage-step")) {
+    for (const button of h.document.querySelectorAll<HTMLButtonElement>("[data-stage-id]")) {
         assert.ok(button.getAttribute("aria-label"), "Icon navigation retains the stage name and status");
         assert.ok(button.querySelector("svg")?.closest('[aria-hidden="true"]'), "Stage icons are decorative");
     }
@@ -84,7 +84,7 @@ test("React panels have unique IDs and Radix navigation includes direct Developm
     await h.fire(h.get("content-tab"), "keydown", { key: "Home" });
     assert.equal(h.document.activeElement?.id, "preparation-tab");
     assert.equal(h.get("preparation-panel").hidden, false);
-    assert.deepEqual(h.requests.map(request => request.path), ["/api/development/open"], "Navigation submits no workflow request.");
+    assert.deepEqual(h.requests, [], "Navigation does not activate Development or submit work.");
 });
 
 test("Radix confirmation has a safe initial focus and restores its invoker on Escape", async (t) => {
@@ -111,7 +111,7 @@ test("standalone read-only guidance returns to its owning session", async (t) =>
 test("goal entry waits for an explicit valid start and retains drafts, focus and caret", async (t) => {
     const value = blankEffort(), h = await setup(t, value);
     assert.equal(hidden(h, "start-panel"), false);
-    assert.equal(hidden(h, "studio-workspace"), true);
+    assert.equal(hidden(h, "studio-workspace"), false);
     assert.equal(hidden(h, "lifecycle-status"), true);
     assert.equal(hidden(h, "next-action-bar"), false, "Status help stays available at goal entry.");
     assert.equal(hidden(h, "show-next-action"), true);
@@ -420,12 +420,12 @@ test("next-step guidance reveals completion from historical views in compact con
 test("legacy optional history fields and archived Preparation remain browsable", async (t) => {
     const value = state(); delete value.lifecycle.skippedStages; delete value.lifecycle.history;
     const h = await setup(t, value);
-    assert.equal(h.get("stage-list").querySelectorAll("button").length, 5);
+    assert.equal(h.get("project-contents").querySelectorAll("[data-stage-id]").length, 5);
     h.render({ ...value, revision: 2, lifecycle: { ...value.lifecycle, completedStages: [],
         history: [{ stageId: "prepare", path: "history\\preparation.md", completedAt: value.updatedAt }] } });
-    const button = h.get("stage-list").querySelector<HTMLButtonElement>('[data-stage-id="prepare"]')!;
+    const button = h.get("project-contents").querySelector<HTMLButtonElement>('[data-stage-id="prepare"]')!;
     assert.equal(button.disabled, false); assert.equal(button.title, "history\\preparation.md");
-    await h.click(button);
+    await h.fire(button, "mousedown", { button: 0 });
     assert.equal(hidden(h, "preparation-panel"), false);
     assert.equal(h.requests.length, 0);
 });

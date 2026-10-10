@@ -18,7 +18,7 @@ export interface HumanLoopController {
   observe: NonNullable<SessionConfig["onEvent"]>;
   attach(session: CopilotSession): Promise<void>;
   start(options?: { retry?: boolean }): Promise<HumanLoopRuntimeHandle>;
-  openView(id: string, options?: { surface?: "browser" }): Promise<{ url: string; close(): Promise<void> }>;
+  openView(id: string, options?: { surface?: "browser"; projectHost?: { origin: string; channel: string } }): Promise<{ url: string; close(): Promise<void> }>;
   closeView(id: string): Promise<void>;
   assertQuiet(): Promise<void>;
   validateReasoningEffort(effort: string): Promise<void>;

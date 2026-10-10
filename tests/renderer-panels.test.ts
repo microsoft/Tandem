@@ -120,7 +120,7 @@ test("Preparation runtime stays ordered and advances automatically to Requiremen
     const value = state("prepare"); value.preparation.status = "running";
     value.preparation.workItems = [{ id: "context", title: "Inspect context", status: "running", detail: "Read guidance" }];
     const h = await setup(t, value); h.render(value, 10);
-    assert.equal(h.get("stage-list").querySelectorAll("button").length, 5);
+    assert.equal(h.get("project-contents").querySelectorAll("[data-stage-id]").length, 5);
     assert.equal(text(h, "current-stage-index"), "1");
     assert.equal(disabled(h, "design-tree-tab"), true);
     assert.equal(disabled(h, "complete-stage"), true);

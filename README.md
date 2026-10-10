@@ -42,9 +42,10 @@ The main Node session owns Preparation through Prototype. Its native permission
 broker starts in **Ask each time**. Main-session Allow all does **not** approve
 Development operations. Development owns a separate real Interactive session,
 with the PR's private permission broker, once-only consent and native enforcement.
-Its model, compaction, permissions, Stop and Close controls are inside Development.
+Its model, compaction, permissions, Stop and Close controls remain independently
+owned, inside the persistent project conversation and Project settings.
 Main permission, Reset, speech and extension-reload controls are scoped or disabled
-while viewing Development.
+while the private runtime is active, not merely while browsing Design.
 
 One composed public `tandem` provider owns both surfaces. The Node host retains
 user > project > session preference when those providers are present. It checks
@@ -52,8 +53,10 @@ the selected provider's protocol, version and complete payload digest. An older
 preferred installation produces an explicit conflict; the host does not silently
 bypass it or overwrite a user installation.
 
-Main-session chat is not a Development request. Opening, refreshing or recovering
-Development initializes its owned runtime but sends no project request. Existing
+Main-session chat is not a Development request. Browsing project artifacts and
+loading the conversation presentation do not start or resume the private runtime.
+Explicit **Activate Development**, **Reopen runtime** or **Retry runtime** initializes
+its owned runtime but sends no project request. Existing
 state belonging to another main session or workspace fails visibly without
 rebinding an identity.
 
@@ -89,9 +92,9 @@ does not require a release bump or installation update.
 
 ## Workflow
 
-Choose **Open Development directly** on the initial screen, or the Development
-tab from idle upstream discovery. No goal, completed Prototype or handoff is
-required. Opening creates or recovers the owned private runtime but sends no
+Choose **Open Development directly** on the initial screen, or **Activate
+Development** in the project conversation or Design view. No goal, completed Prototype or handoff is
+required. Explicit activation creates or recovers the owned private runtime but sends no
 project request. Use its conversation to describe a new project or reference
 existing documents and source. Active upstream work and foreign/read-only
 ownership still block opening; implementation still needs explicit confirmation.
@@ -231,10 +234,30 @@ empty findings and worker statements are not evidence that tests passed.
 
 ### Development UI
 
-Development serves the unchanged Stage 2 document and assets on their own
-loopback origin, in a full-size iframe. The upstream permanent context pane is
-hidden rather than creating a third column. The iframe remains mounted when
-browsing upstream history so unsent text survives navigation.
+The main framework is one project workspace: project navigation and Settings
+on the left, selected artifacts in the workspace, and one persistent project
+conversation alongside. Requirements, drawings, Prototype and Design are views,
+not a requirement to start both engines. Current work and pending questions,
+confirmations and permissions remain in the conversation while browsing.
+New Design output and a Prototype update awaiting Apply are marked in navigation.
+
+The complete Stage 2 renderer still owns its document, controls and isolated
+loopback origin. One iframe stays mounted across navigation; selecting Design
+expands its existing Design pane alongside its existing conversation. This also
+keeps annotations and unsent attachments with their original composer, rather
+than creating a second editor. Standalone Stage 2 retains its full shell.
+
+The composer shows **Send to** before submission. Discovery actions use the
+existing public goal, usage, saved-drawing revision or Prototype-feedback APIs;
+formal Design and implementation messages use the original private request API.
+Navigation never retargets a draft. Saved discovery evidence is a source-labelled,
+render-only projection, not reconstructed native chat; it is never copied into a
+private request or written into its store. Cold private history still requires
+explicit runtime verification; browsing alone does not reopen it.
+Question answers and implementation decisions retain their original bound forms.
+If a discovery result is delayed, **Check submission** reads the same in-memory
+receipt without repeating the action. After a lost presentation session, inspect
+saved state before submitting again.
 
 The original artifact views, questions, conversation/history, keyboard resizing,
 annotation snapshots, pasted images, quick requests, implementation confirmation,

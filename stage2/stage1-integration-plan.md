@@ -473,3 +473,51 @@ remain unchanged. Nothing was pushed, deployed or installed.
 Publishing a release, updating installed user extensions and broader UX
 unification remain separate work. No export, GitHub publication or deployment
 is implied by these qualification runs.
+
+### October 10: artifact-centered project workspace
+
+The subsequently approved UX direction is implemented in the source, separately
+from the locking correction: one project navigation, selected artifacts/current
+work and one persistent visible project conversation. Design expands the same
+embedded renderer rather than opening another window or mounting another
+conversation/editor. Project settings are opened from the root navigation;
+standalone Stage 2 retains its own complete shell.
+
+`POST /api/development/view` opens only the presentation provider. It does not
+initialize/resume a private runtime or submit anything. Activation, retry and
+reopen remain explicit. An origin/source/channel-bound presentation bridge
+projects saved discovery evidence and dispatches explicit discovery actions
+through their existing public APIs. Native messages, questions, confirmations,
+permissions, Stop, Close, Design annotations and attachments keep their original
+Stage 2 renderer and interfaces. No messages are replayed or copied to a private
+session, and no cross-stage private-store writes or shared effort implementation
+were added. Drafts and send target survive artifact navigation; activation does
+not silently retarget a nonempty draft.
+
+Current qualification is deterministic/no-model, not another tracker-generation
+or live native E2E. `tests/project-workspace-browser.test.mjs` loads the production
+React framework and actual Stage 2 provider/renderer together in Edge, using an
+explicitly synthetic runtime. Hit-tested interactions cover discovery submission,
+native message routing, questions, exact permission denial, implementation
+confirmation cancellation, Stop, Settings with managed effort, Close/reopen
+without replay and 1360/980/390-width navigation. The original handoff layout
+regression also covers keyboard focus, resizing and the existing browser host's
+900-pixel minimum application viewport. Standalone settings regressions are
+unchanged and pass independently. Temporary providers and browser profiles close
+after each test.
+
+Cold private history still requires explicit verification/reopen; a passive view
+does not reconstruct an unopened private journal. Discovery evidence in the
+combined display is a source-labelled saved-state projection, not a claim to
+recover previously unrecorded conversation. The earlier defaults-button and
+main-model-resume qualifications remain. No installed runtime was hot-edited;
+no release, push, deployment or global installation was performed.
+
+The evidence directory is
+`C:\Users\liqli\.copilot\session-state\296ea712-d081-4cdd-ae37-114a0ab0af6e\files\unified-project-ui`.
+It contains `check.txt`, `build.txt`, `focused-tests.txt` (11 passing),
+`navigation-regressions.txt` (58 passing), `standalone-final.txt` (3 passing),
+and `project-workspace-{1360,980,390}.png`. Mobile checks assert the actual CSS
+viewport width and hit-test the retained composer, rather than counting a scaled
+desktop page as narrow-layout evidence. The matching build is retained under
+`frozen-candidate`; it is a local qualification artifact, not an installed release.
