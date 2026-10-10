@@ -3478,6 +3478,8 @@ textarea {
 .project-navigation { display: flex; flex-direction: column; gap: 8px; padding: 10px; }
 .project-tabs { flex-direction: column; align-items: stretch; white-space: normal; }
 .project-tabs .preview-tab { justify-content: flex-start; min-height: 36px; }
+.artifact-library-nav { margin-bottom: 8px; }
+.artifact-library-nav .preview-tab { width: 100%; justify-content: flex-start; }
 .project-workspace .context-pane-heading { padding: 6px 10px; }
 .project-workspace #toggle-context-pane { display: none; }
 .project-workspace .requirements > #status { padding: 0 10px; overflow-wrap: anywhere; }

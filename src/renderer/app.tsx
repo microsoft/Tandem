@@ -392,7 +392,6 @@ function Workspace(props: WorkspaceProps) {
                 {tab.stage === "development" && projectView.designRevision && <span className="artifact-count">{projectView.designChanged ? "New output" : "Available"}</span>}
                 {tab.stage === "prototype" && state.prototypeFlow?.pendingCheckpointId && <span className="artifact-count">Update ready</span>}
               </Tabs.Trigger>; })}
-              <Tabs.Trigger value="content" id="content-tab" className="preview-tab" aria-controls="content-panel"><FileText size={15} />Saved artifacts <span id="artifact-count">{state.artifacts.length || ""}</span></Tabs.Trigger>
             </Tabs.List>
             <button id="project-current-work" type="button" className="plan-button" onClick={() => projectView.command("current-work")}>
               Current work{projectView.attention ? ` (${projectView.attention} needs attention)` : ""}
@@ -438,7 +437,15 @@ function Workspace(props: WorkspaceProps) {
               }}><RotateCcw size={16} aria-hidden="true" />Reopen {selectedLabel}</button>
             <p id="stage-message" className={stageAction.error ? "stage-message" : "visually-hidden"} title={stageAction.error || undefined} role="status" data-status={stageAction.error ? "error" : "idle"}>{stageAction.error || (state.lifecycle.outputs?.at(-1) ? "Saved " + state.lifecycle.outputs.at(-1)!.path : current === "prepare" ? "Preparation advances automatically when analysis completes." : "Complete the active stage to unlock the next.")}</p>
           </section>
-          <section className="section"><div className="section-heading"><p className="eyebrow"><FolderOpen size={14} aria-hidden="true" />Artifacts</p><span className="section-count">{state.artifacts.length}</span></div><ArtifactList selectedArtifactId={selectedArtifact} /></section>
+          <section id="project-artifact-library" className="section" aria-label="Artifacts">
+            <div className="section-heading"><p className="eyebrow"><FolderOpen size={14} aria-hidden="true" />Artifacts</p></div>
+            <Tabs.List className="artifact-library-nav" aria-label="Saved artifact library">
+              <Tabs.Trigger value="content" id="content-tab" className="preview-tab" aria-controls="content-panel">
+                <FileText size={15} aria-hidden="true" />Saved artifacts <span id="artifact-count">{state.artifacts.length}</span>
+              </Tabs.Trigger>
+            </Tabs.List>
+            <ArtifactList selectedArtifactId={selectedArtifact} />
+          </section>
           {!developmentView && <ProcessPanel />}
           <details className="section ledger-details"><summary className="eyebrow ledger-summary">Requirement ledger</summary>
             <div className="ledger">{(["confirmed", "assumed", "deferred"] as const).map((kind) => <div key={kind}><h3>{kind[0].toUpperCase() + kind.slice(1)}</h3><ul id={kind}>{(state[kind] || []).map((text, index) => <li key={index}>{text}</li>)}</ul></div>)}</div>

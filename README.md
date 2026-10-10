@@ -248,6 +248,8 @@ on the left, selected artifacts in the workspace, and one persistent project
 conversation alongside. Requirements, drawings and Prototype are artifact views.
 The **Development** navigation entry contains formal Design, planning,
 implementation and Review; it is not an additional Stage1 Design phase.
+**Saved artifacts** is the cross-project library entry in the separate
+**Artifacts** section, alongside the saved outputs, rather than another workflow entry.
 Browsing does not require starting both engines. Current work and pending questions,
 confirmations and permissions remain in the conversation while browsing.
 New Design output and a Prototype update awaiting Apply are marked in navigation.

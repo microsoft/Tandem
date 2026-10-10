@@ -587,3 +587,9 @@ private request was approved and executing. The root now displays the active
 Development status from its public presentation projection, without rewriting
 the original discovery/handoff record. This source fix is qualified separately
 and only becomes live with the next safe candidate refresh.
+
+User-directed navigation hierarchy follow-up moves **Saved artifacts** out of
+the workflow navigation and into the existing **Artifacts** section. Its selected
+state, count, existing view and output list remain shared; there is no second
+library or runtime/history change. Focused keyboard and real-browser navigation
+coverage retains the same conversation iframe and unsent draft.

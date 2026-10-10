@@ -91,9 +91,16 @@ test("React panels have unique IDs and Radix navigation includes direct Developm
     assert.equal(h.document.activeElement?.id, "development-tab", "Development never requires upstream completion.");
     assert.equal(h.get("development-panel").hidden, false);
     await h.fire(h.get("development-tab"), "keydown", { key: "ArrowRight" });
+    assert.equal(h.document.activeElement?.id, "preparation-tab", "The workflow list does not include the cross-project library.");
+    assert.equal(h.get("project-contents").querySelector("#content-tab"), null);
+    assert.ok(h.get("project-artifact-library").contains(h.get("content-tab")));
+    h.get("content-tab").focus();
+    await h.fire(h.get("content-tab"), "keydown", { key: "Enter" });
     assert.equal(h.document.activeElement?.id, "content-tab");
     assert.equal(h.get("content-panel").hidden, false);
-    await h.fire(h.get("content-tab"), "keydown", { key: "Home" });
+    assert.equal(h.get("content-tab").getAttribute("aria-selected"), "true");
+    h.get("development-tab").focus();
+    await h.fire(h.get("development-tab"), "keydown", { key: "Home" });
     assert.equal(h.document.activeElement?.id, "preparation-tab");
     assert.equal(h.get("preparation-panel").hidden, false);
     assert.deepEqual(h.requests, [], "Navigation does not activate Development or submit work.");

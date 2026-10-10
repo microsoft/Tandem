@@ -131,6 +131,11 @@ test("Development mounts one isolated full workspace and navigation keeps its or
     assert.equal(frame.src, "http://127.0.0.1:8765/?panel=workspace");
     assert.equal(h.get("studio-workspace").dataset.development, "true");
     assert.equal(h.document.querySelector('[data-stage-id="design"]'), null);
+    assert.ok(h.get("project-artifact-library").contains(h.get("content-tab")));
+    assert.equal(h.get("project-contents").querySelector("#content-tab"), null);
+    await h.fire(h.get("content-tab"), "mousedown", { button: 0 });
+    assert.equal(h.get("content-tab").getAttribute("aria-selected"), "true");
+    assert.equal(h.get("project-conversation-frame"), frame);
     await h.fire(h.get("preparation-tab"), "mousedown", { button: 0 });
     await h.fire(h.get("development-tab"), "mousedown", { button: 0 });
     assert.ok(h.get("project-conversation-frame") === frame, "Unsent private state is retained with its iframe.");
@@ -359,6 +364,10 @@ test("real React Development keeps handoff controls in view across long-status h
         await click(".development-process > summary");
         await browser.call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
         await settle();
+        await browser.evaluate('document.querySelector("#content-tab").scrollIntoView({block:"nearest"})');
+        await click("#content-tab");
+        assert.equal(await inFrame('document.querySelector("#draft").value'), "Unsent private draft survives hover and navigation.");
+        await browser.evaluate('document.querySelector("#preparation-tab").scrollIntoView({block:"nearest"})');
         await click("#preparation-tab");
         await click("#development-tab");
         await browser.waitFor('document.querySelector("#development-panel")?.hidden === false');
