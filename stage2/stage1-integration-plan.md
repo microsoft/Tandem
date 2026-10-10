@@ -392,6 +392,84 @@ Receipts are retained under `full-framework-e2e\evidence\`:
 `independent-final-app-tests.txt`. Application JSON export was exercised, not
 Tandem accepted-record export or Git publication.
 
+## Stale tracker lock correction, 2026-10-10
+
+The user requested an actual fix for the generated tracker's restart failure.
+This follow-up supersedes the routine manual-lock-removal limitation above for
+the corrected tracker; it does not rewrite the original qualification receipts.
+It used the first of the two authorized application correction cycles, through
+the same private native session, a narrowly revised locking Design and the real
+implementation confirmation. No generated application source was edited by the
+harness. No Tandem runtime code change, SDK upgrade or shutdown redesign was
+needed.
+
+The root cause was the application's ownership protocol: `openStore` exclusively
+created a durable lock, but only cooperative JavaScript shutdown unlinked it.
+Windows native child-process termination can bypass that cleanup. Tandem's
+supported SDK shutdown did terminate its owned processes; the application then
+treated every retained lock as permanent exclusion, including a proven dead
+owner.
+
+The corrected application's `src\locking.js` now puts ordinary acquisition and
+release behind one exclusive short-lived `tracker.lock.guard`. Startup inspects
+a valid legacy `{pid,token}` record and accepts only the operating system's
+positive `ESRCH` result as absence. A live or reused PID, malformed record,
+unreadable file or failed/invalid query remains blocked. It rechecks lock and
+guard identity/content under exclusion before removing the stale lock and
+acquiring a new lock normally. All corrected startup paths participate,
+including initially absent locks, so concurrent recoverers cannot delete another
+participating starter's replacement. Release also checks its exact ownership.
+No age-based takeover, process killing or data repair is used.
+
+This is guarded cleanup on explicit startup, not unconditional deletion.
+Interrupted/partially written guards and guard-cleanup failure remain explicit,
+fail-closed exceptional states. The protocol assumes participating application
+versions; concurrent old versions and arbitrary external filesystem mutation
+are not supported. These limitations do not require manual cleanup after the
+ordinary native Close path that was reproduced and fixed.
+
+Validation used the preserved tracker data and separate isolated test stores:
+
+| Check | Actual result |
+| --- | --- |
+| Focused independent regression | 36 locking/storage tests passed, zero failures/skips. Includes live/reused-owner rejection, malformed/error reads, changed lock/guard, concurrent fresh starters/recoverers, interrupted guards, and actual Windows force-termination followed by four competing startup processes with only one winner. |
+| Native workflow verification | The correction's recorded full regression run reported 64 passes, zero failures/skips. Direct whole-plan read-only Review found no supported material findings; this is distinct from the independent focused test run. |
+| Actual Windows Close | Physical Tandem Close and main-host exit terminated the corrected attached app and left its PID 29716 lock intact with no guard. The data hash remained unchanged. |
+| Ordinary restart, no manual cleanup | Independent `node server.mjs --port 0` recovered that exact untouched lock and served the retained data. A subsequent ordinary restart also recovered the next terminated owner's lock. No harness unlink/rename/repair was issued. |
+| Live-writer protection | Real competing startups before and after the Close/restart boundary exited unsuccessfully, leaving the live writer's lock and tracker data unchanged; the original server stayed responsive. |
+| Data and cleanup | Real browser readback retained all three projects, two tasks, calendar dates, reload and 390px behavior. Tracker SHA-256 remained `fd411fb479ca8d8715e8f53d043ea446711f2b155d341b7b544c92565759f0e9`; saved Stage 1 inputs and unrelated app source were unchanged. All final native, ordinary-launcher and browser owners exited. A final dead-owner lock remains recoverable by ordinary startup; it was not deleted to manufacture a clean result. |
+
+The optional native-model-driven restart request encountered automatic context
+compaction before command dispatch. It was explicitly retired with supported
+Stop/Close so the remaining independent process-level check needed no model
+turn or alternate SDK owner. This was not an execution timeout or lock failure.
+The first independent startup succeeded but its later harness helper could not
+resolve `tsx` from the artifact directory; that failed harness receipt was
+preserved. Reusing the existing dependency installation from the correct harness
+working directory completed live-writer and browser checks without app changes.
+
+Correction source is retained in `full-framework-e2e\locking-correction-source\`
+with exact hashes in `manifest.json`: the locking helper, store integration,
+focused locking tests, the existing test-name correction and README. Native
+implementation request: `caa5feae-4216-450b-ae9c-9bc79393200a`; revised Design:
+`99aed0f5-6b1a-45da-9d8c-c2e2ce24a611`. The frozen Tandem runtime remained
+`5eeb023`; this is a generated-application correction, not a new Tandem runtime
+release. Evidence under `full-framework-e2e`:
+
+- `locking-fix-independent-tests.txt`
+- `evidence\stale-lock-correction-review-complete.json`
+- `evidence\locking-before-native-close.json`
+- `evidence\locking-actual-native-close.json`
+- `evidence\locking-actual-close-ordinary-restart-proof.json` (successful startup, later harness dependency-resolution failure)
+- `evidence\locking-ordinary-restart-final-proof.json`
+- `evidence\locking-after-native-close.json`
+- `physical-locking-native-close\receipt.json`
+- `evidence\locking-final-cleanup.json`
+
+The unrelated defaults-button observation, absent main-model resume behavior,
+unused-private-journal limitation and earlier accessibility/zoom qualifications
+remain unchanged. Nothing was pushed, deployed or installed.
+
 Publishing a release, updating installed user extensions and broader UX
 unification remain separate work. No export, GitHub publication or deployment
 is implied by these qualification runs.
