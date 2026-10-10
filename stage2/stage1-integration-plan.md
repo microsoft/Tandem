@@ -544,3 +544,11 @@ has focus. `tests/requirements-pointer.test.ts` verifies trusted pointer-down
 and pointer-up hit the same stationary button and open the real confirmation.
 This fixes mouse activation, not the separate failed-launch receipt that blocked
 the first native defaults submission.
+
+Rapid usage clicks now save every accepted usage immediately but coalesce
+suggestion refreshes behind one native suggestion run. After that run settles,
+only the latest saved usage list is dispatched. Superseded live runs retain exact
+cancellation/terminal receipts; unknown cancellation blocks another suggestion
+launch. This addresses the observed four-active-workflow pressure without raising
+native limits or introducing a general scheduler. It does not erase or reinterpret
+the earlier orphan launch receipt.

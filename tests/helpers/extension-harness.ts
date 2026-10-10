@@ -107,7 +107,7 @@ async function compile(): Promise<string> {
         logLevel: "silent",
         define: { __TANDEM_VERSION__: JSON.stringify("test") },
     });
-    return result.outputFiles[0].text + "\nmodule.exports.assertDevelopmentAvailable = assertDevelopmentAvailable; module.exports.resumeEffortRun = resumeEffortRun;";
+    return result.outputFiles[0].text + "\nmodule.exports.assertDevelopmentAvailable = assertDevelopmentAvailable; module.exports.resumeEffortRun = resumeEffortRun; module.exports.waitForSuggestion = id => activeSuggestionRuns.get(id);";
 }
 
 export async function extensionHarness(speechEnvironment: Record<string, string> = {}, sharedRoot?: string, rendererHtml = "", workspaceRoot?: string) {

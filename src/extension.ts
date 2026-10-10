@@ -5039,15 +5039,23 @@ function trackSuggestionRun(prototypeId, requestId, work) {
         .catch(async (error) => {
             await recordSuggestionFailure(prototypeId, requestId, error);
         })
-        .finally(() => {
+        .finally(async () => {
             if (activeSuggestionRuns.get(prototypeId) === tracked) {
                 activeSuggestionRuns.delete(prototypeId);
+                const current = await loadState(prototypeId);
+                const pending = current.suggestionProcessing;
+                if (!current.effortReset && current.lifecycle.currentStage === "requirements" &&
+                    current.requirements.substage === "usage" && pending?.status === "running" &&
+                    pending.requestId !== requestId && current.processing?.status !== "running") {
+                    startSuggestionFactory(prototypeId, pending.requestId, current.goal, pending.usageItems);
+                }
             }
         });
     activeSuggestionRuns.set(prototypeId, tracked);
 }
 
 function startSuggestionFactory(prototypeId, requestId, goal, usageItems) {
+    if (activeSuggestionRuns.has(prototypeId)) return;
     trackSuggestionRun(
         prototypeId,
         requestId,
@@ -5126,6 +5134,10 @@ async function ensureUsageSuggestionsStarted(state, canSubmitAnswers) {
 
 async function runSuggestionFactory(prototypeId, requestId, goal, usageItems) {
     if (!(await isPreferredAnswerProvider(PROVIDER_EXTENSION_ID))) return;
+    const state = await loadState(prototypeId);
+    if (state.factoryRuns?.some(receipt => !receipt.terminal)) {
+        throw new Error("Previous native work is not confirmed terminal. Usage is saved; suggestions were not started.");
+    }
     const run = await runEffortFactory(prototypeId, requestId, {
         name: SUGGESTION_FACTORY_NAME,
         args: {
@@ -5157,7 +5169,8 @@ async function runSuggestionFactory(prototypeId, requestId, goal, usageItems) {
     });
     if (!currentRequest) {
         if (!isWorkflowRunTerminal(run.status)) {
-            await session.workflow.cancel(run.runId);
+            const cancelled = await observeEffortRun(prototypeId, run.runId, await session.workflow.cancel(run.runId));
+            if (!isWorkflowRunTerminal(cancelled.status)) await waitForEffortRun(prototypeId, run.runId);
         }
         return;
     }
