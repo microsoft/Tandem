@@ -655,3 +655,23 @@ control geometry in light/dark themes, in addition to the ordinary interactions.
 It fails against the retained defective package and passes against the rebuilt
 artifact. This is packaged-CSS/browser evidence with a synthetic runtime; actual
 same-project native qualification remains separately recorded.
+
+The fresh `33f854a` frozen candidate was then exercised on the retained checklist
+through its root workspace. Actual primary buttons were opaque
+`rgb(53,91,196)` with white text and 30px height; the header was opaque in both
+light and dark themes. Physical Settings Close and narrow-screen Escape returned
+focus to Project settings. The sole shared selector reported actual
+`gpt-6-astra` / `low` independently for both stages. An unsent test draft and its
+Development target survived artifact navigation and a 520px-to-544px conversation
+resize. Populated whole-root screenshots cover desktop light/dark and 980px/390px
+layouts. Test appearance and draft were restored through the UI afterward.
+
+Normal same-ID private verification retained the exact canonical Design revision
+`f1400870-a00c-4669-af3d-6cc74ea02142` and digest
+`62d06bafa03c1ca25ed82cc7ab314f4b9f0fb64c1f2ae57e34aa6b168200b555`.
+The interrupted implementation request remained visible as retired, with no
+active request/task and no automatic replay. Evidence is indexed in the session's
+`unified-checklist-e2e/coverage.json`, including `corrected-native-retained-history`,
+`corrected-populated-design-*`, `corrected-populated-conversation-390` and
+`packaged-root-chrome-corrected`. This qualifies the bounded presentation slice,
+not the unfinished generated application or native Review.
