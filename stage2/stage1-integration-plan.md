@@ -637,3 +637,21 @@ This UI pass neither retries that request nor completes the outstanding browser,
 aggregate or native Review work. Contextual forms, the native history rail and
 some repeated status/header structure remain intentionally outside this bounded
 visual pass; this is not a complete design-system rewrite.
+
+The first frozen `66af4ec` package failed actual root inspection: its stylesheet
+still contained a relative source-tree `@import`. The production injection used
+esbuild's single-file transform, whereas the browser fixture bundled imports.
+Missing tokens made the root's primary buttons and header transparent, with
+19.5px controls. That package is explicitly **not UI-qualified**. The owner
+closed it normally without continuing native implementation.
+
+The production stylesheet now bundles imports and watches their actual inputs.
+The whole-workspace browser test can read the stylesheet module directly from
+the generated extension, without executing extension startup. Run after
+`npm run build:browser` with `TANDEM_PACKAGED_EXTENSION` pointing to
+`dist/browser/extension.mjs`. This mode rejects unresolved imports and checks
+opaque root primary/header backgrounds, at least 4.5:1 text contrast and proper
+control geometry in light/dark themes, in addition to the ordinary interactions.
+It fails against the retained defective package and passes against the rebuilt
+artifact. This is packaged-CSS/browser evidence with a synthetic runtime; actual
+same-project native qualification remains separately recorded.

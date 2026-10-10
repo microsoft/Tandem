@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
 import { build } from "esbuild";
+import { runInNewContext } from "node:vm";
 import { state as discoveryState } from "./helpers/react-harness.ts";
 import { createHumanLoopProvider, HumanLoopEvents } from "../stage2/tandem/src/human-loop-provider.mjs";
 import { createHumanLoopLedger, replayHumanLoopLedger } from "../stage2/tandem/runtime-src/domain/human-loop/ledger.ts";
@@ -150,7 +151,20 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       },
     };
     let provider;
-    const css = (await build({ entryPoints: [resolve("src", "renderer", "styles.css")],
+    let css;
+    if (process.env.TANDEM_PACKAGED_EXTENSION) {
+      const packaged = await readFile(process.env.TANDEM_PACKAGED_EXTENSION, "utf8");
+      const start = packaged.indexOf("// tandem-styles:styles.css\n");
+      assert.ok(start >= 0, "Locate the production stylesheet module, without executing extension startup.");
+      const end = packaged.indexOf("\n// ", start + 3);
+      assert.ok(end > start);
+      const stylesheetModule = packaged.slice(start, end);
+      assert.match(stylesheetModule, /^\/\/ tandem-styles:styles.css\nvar styles_default = /);
+      css = runInNewContext(`${stylesheetModule}\nstyles_default`, {}, { timeout: 1000 });
+      assert.equal(typeof css, "string");
+      assert.doesNotMatch(css, /@import\b/, "The packaged inline stylesheet must contain its imports, not request source-tree URLs.");
+      t.diagnostic(`Production stylesheet from ${process.env.TANDEM_PACKAGED_EXTENSION}; fixture runtime, no native work.`);
+    } else css = (await build({ entryPoints: [resolve("src", "renderer", "styles.css")],
       bundle: true, write: false, logLevel: "silent" })).outputFiles[0].text;
     const template = (await readFile(new URL("../src/renderer/index.html", import.meta.url), "utf8"))
       .replace("__TANDEM_STYLES__", () => css).replace("__TANDEM_VERSION__", "unified-fixture")
@@ -240,6 +254,25 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       };
       await waitInside('document.querySelector("#project-message-target")?.options[0].textContent==="Add requirement usage"');
       await waitInside('document.querySelector("#current-state").textContent==="Development not activated"');
+      const checkRootChrome = async () => {
+        const styles = await browser.evaluate(`["#project-settings","#project-current-work",".topbar"].map(selector=>{
+          const element=document.querySelector(selector), style=getComputedStyle(element);
+          return {selector,background:style.backgroundColor,color:style.color,height:element.getBoundingClientRect().height};
+        })`);
+        const luminance = color => {
+          const channels = color.match(/[\d.]+/g).slice(0, 3).map(value => {
+            const channel = Number(value) / 255; return channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4;
+          });
+          return channels[0] * .2126 + channels[1] * .7152 + channels[2] * .0722;
+        };
+        for (const item of styles) {
+          assert.match(item.background, /^rgb\(/, `${item.selector} needs an opaque background, not ${item.background}`);
+          const values = [luminance(item.background), luminance(item.color)].sort((a, b) => b - a);
+          assert.ok((values[0] + .05) / (values[1] + .05) >= 4.5, `${item.selector} needs readable contrast.`);
+          assert.ok(item.height >= 30, `${item.selector} uses the actual shared control geometry.`);
+        }
+      };
+      await checkRootChrome();
       assert.equal(await inside('document.querySelector("#current-state").textContent'), "Development not activated");
       await click("#project-message-target", true);
       await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
@@ -305,6 +338,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         assert.equal(await inside('document.querySelector("#setting-theme").value'), theme);
         await click("#save-appearance", true);
         await browser.waitFor(`document.documentElement.dataset.projectTheme==="${theme}"`);
+        await checkRootChrome();
         assert.equal(await inside('getComputedStyle(document.querySelector("#design-panel")).backgroundColor'),
           await browser.evaluate('getComputedStyle(document.documentElement).backgroundColor'), `${theme}: shared surface palette`);
         assert.equal(await inside('getComputedStyle(document.body).fontSize'),

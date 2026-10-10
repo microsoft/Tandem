@@ -1,7 +1,6 @@
 import {
     build,
     context,
-    transform,
     type BuildOptions,
     type Plugin,
 } from "esbuild";
@@ -155,15 +154,12 @@ const rendererAssetsPlugin: Plugin = {
         buildApi.onLoad(
             { filter: /.*/, namespace: "tandem-styles" },
             async () => {
-                const source = await readFile(stylesEntry, "utf8");
-                const compiled = await transform(source, {
-                    loader: "css",
-                    minify: true,
-                });
+                const compiled = await build({ entryPoints: [stylesEntry], bundle: true,
+                    write: false, minify: true, metafile: true });
                 return {
-                    contents: `export default ${JSON.stringify(compiled.code)};`,
+                    contents: `export default ${JSON.stringify(compiled.outputFiles[0].text)};`,
                     loader: "js",
-                    watchFiles: [stylesEntry],
+                    watchFiles: Object.keys(compiled.metafile.inputs).map((path) => resolve(path)),
                 };
             },
         );
