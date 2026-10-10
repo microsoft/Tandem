@@ -54,6 +54,7 @@ let settingsModel = null, effortModel = null;
 const projectPresentation = installProjectPresentation({ document, window,
   changed: () => { if (snapshot) render(); },
   settings: () => { $('canvas-settings').open = true; $('setting-theme').focus(); void refreshSettings(); },
+  effortChanged: () => { void refreshSettings(true); },
   currentWork: () => $('focus-current-message').click(),
 });
 function renderReasoningEffort() {
@@ -73,12 +74,14 @@ function settingsError(error) {
   $('settings-error').textContent = error?.message ?? '';
   $('settings-error').hidden = !error;
 }
-function applySettings(value) {
+function applySettings(value, preserveAppearanceDraft = false) {
   const preferences = value.preferences, model = value.model;
   document.body.dataset.theme = preferences.theme;
   document.body.dataset.fontSize = preferences.fontSize;
-  $('setting-theme').value = preferences.theme;
-  $('setting-font').value = preferences.fontSize;
+  if (!preserveAppearanceDraft) {
+    $('setting-theme').value = preferences.theme;
+    $('setting-font').value = preferences.fontSize;
+  }
   const desired = $('setting-model').value;
   $('setting-model').replaceChildren(...model.models.map(({ id, name }) => {
     const option = make('option', name); option.value = id; return option;
@@ -108,13 +111,13 @@ function applySettings(value) {
   ].filter(Boolean).join(' ');
   settingsLoaded = true;
 }
-function refreshSettings() {
+function refreshSettings(preserveAppearanceDraft = false) {
   if (settingsLoading) return settingsLoading;
   const version = settingsVersion;
   settingsLoading = (async () => {
     const response = await fetch('/api/settings'), value = await response.json();
     if (!response.ok) throw new Error(value.error ?? 'Settings could not be read.');
-    if (version === settingsVersion && !settingsBusy) applySettings(value);
+    if (version === settingsVersion && !settingsBusy) applySettings(value, preserveAppearanceDraft);
   })().catch((error) => { if (version === settingsVersion && !settingsBusy) settingsError(error); }).finally(() => { settingsLoading = null; });
   return settingsLoading;
 }
@@ -207,7 +210,7 @@ installBrowserLinkNavigation(document, {
 });
 function renderComposer() {
   projectPresentation?.nativePending(sending || Boolean(pending));
-  $('send').disabled = sending || clipboard.busy() || (projectPresentation?.discovery()
+  $('send').disabled = sending || clipboard.busy() || projectPresentation?.busy() || (projectPresentation?.discovery()
     ? !projectPresentation.canSend() : !snapshot?.workflow?.canSend);
   $('message').disabled = sending || pendingSubmitted;
   const presetsBlocked = sending || Boolean(pending);

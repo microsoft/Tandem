@@ -593,3 +593,11 @@ the workflow navigation and into the existing **Artifacts** section. Its selecte
 state, count, existing view and output list remain shared; there is no second
 library or runtime/history change. Focused keyboard and real-browser navigation
 coverage retains the same conversation iframe and unsent draft.
+
+The user-directed effort consolidation places the sole editable project-wide
+effort selector inside Project settings and removes its navigation disclosure.
+The embedded renderer exchanges only plain settings values/actions with the
+root's existing public project-effort endpoint. Per-stage validation, application,
+readback and persistence remain independently owned. Partial failure and pending
+private intent stay visible; opening Settings or saving intent cannot activate
+Development. Standalone Stage2 keeps its original independent effort control.

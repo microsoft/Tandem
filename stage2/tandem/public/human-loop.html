@@ -19,11 +19,22 @@
       <button id="save-appearance" type="button">Save appearance</button>
     </div>
   </section>
+  <section id="project-effort-settings" class="settings-section" aria-labelledby="project-effort-title" hidden>
+    <h3 id="project-effort-title">Project effort</h3>
+    <div class="settings-fields">
+      <label>Reasoning effort for both stages<select id="project-effort" disabled><option value="">Loading project settings...</option></select></label>
+      <button id="apply-project-effort" type="button" disabled>Apply to both stages</button>
+      <button id="refresh-project-effort" type="button">Refresh status</button>
+    </div>
+    <div id="project-effort-status" role="status"></div>
+    <p>Stages keep independent sessions and settings. Saving future private effort does not activate Development.</p>
+    <p id="project-effort-error" role="alert" hidden></p>
+  </section>
   <section class="settings-section" aria-labelledby="model-settings-title">
     <h3 id="model-settings-title">Model</h3>
     <div class="settings-fields">
       <label>Private Canvas model<select id="setting-model" aria-describedby="model-setting-status" disabled><option>Available when Ready</option></select></label>
-      <label>Reasoning effort<select id="setting-effort" aria-describedby="model-setting-status" disabled><option value="">No explicit override</option></select></label>
+      <label id="private-effort-setting">Reasoning effort<select id="setting-effort" aria-describedby="model-setting-status" disabled><option value="">No explicit override</option></select></label>
       <button id="apply-model" type="button" disabled>Apply model</button>
       <button id="accept-actual-model" type="button" hidden>Accept actual model</button>
     </div>

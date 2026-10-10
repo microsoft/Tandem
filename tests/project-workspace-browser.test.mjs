@@ -71,6 +71,42 @@ test("presentation binding preserves drafts, exact pending receipts and standalo
   assert.equal(sent.length, count);
 });
 
+test("embedded Settings exposes one shared effort choice with busy, unsupported and partial-error readback", t => {
+  const dom = new JSDOM(`<body data-project-panel="workspace" data-project-origin="http://127.0.0.1:4000" data-project-channel="effort">
+    <form id="composer"><textarea id="message"></textarea></form><label id="private-effort-setting"></label>
+    <section id="project-effort-settings" hidden><select id="project-effort"></select><button id="apply-project-effort"></button>
+    <button id="refresh-project-effort"></button><div id="project-effort-status"></div><p id="project-effort-error"></p></section>`);
+  t.after(() => dom.window.close());
+  const sent = [], parent = { postMessage: message => sent.push(message) };
+  Object.defineProperty(dom.window, "parent", { value: parent });
+  installProjectPresentation({ document: dom.window.document, window: dom.window, changed() {}, settings() {}, currentWork() {} });
+  const get = id => dom.window.document.getElementById(id);
+  const receive = data => dom.window.dispatchEvent(new dom.window.MessageEvent("message", { source: parent, origin: "http://127.0.0.1:4000",
+    data: { protocol: "tandem-project/v1", channel: "effort", ...data } }));
+  const context = { type: "context", entries: [], discovery: { key: "none", label: "Discovery", help: "Use controls", enabled: false }, canChangeEffort: true };
+  receive(context); receive({ type: "command", command: "settings" });
+  assert.equal(sent.at(-1).type, "project-effort-read");
+  assert.equal(get("apply-project-effort").disabled, true);
+  const stage = { desired: "low", actual: "low", model: "one", supported: ["low", "high"], status: "applied", error: null };
+  receive({ type: "project-effort-result", id: sent.at(-1).id,
+    settings: { desired: "low", stage1: stage, stage2: { ...stage, actual: null, model: null, status: "pending" } } });
+  assert.equal(get("private-effort-setting").hidden, true);
+  assert.equal(get("project-effort").value, "low");
+  get("apply-project-effort").click();
+  assert.equal(sent.at(-1).type, "project-effort-apply");
+  assert.equal(sent.at(-1).effort, "low");
+  assert.equal(get("project-effort").disabled, true);
+  receive({ type: "project-effort-result", id: sent.at(-1).id, error: "Private model does not support low.",
+    settings: { desired: "low", stage1: stage, stage2: { ...stage, actual: null, supported: ["high"], status: "error", error: "Unsupported effort" } } });
+  assert.match(get("project-effort-status").textContent, /Stage 1: applied.*Stage 2: error.*Unsupported effort/);
+  assert.match(get("project-effort-error").textContent, /does not support low/);
+  assert.deepEqual([...get("project-effort").options].map(option => option.value), ["", "high"]);
+  receive({ ...context, canChangeEffort: false });
+  assert.equal(get("project-effort").disabled, true);
+  assert.equal(get("apply-project-effort").disabled, true);
+  assert.equal(sent.some(message => message.type === "activate"), false);
+});
+
 test("whole project workspace uses one actual embedded renderer for navigation, drafting, activation and recovery",
   { skip: !browserAvailable, timeout: 90_000 }, async t => {
     const root = await mkdtemp(join(tmpdir(), "tandem-project-ui-"));
@@ -200,15 +236,25 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
           { type, x: local.x + offset.x, y: local.y + offset.y, button: "left", clickCount: 1 });
       };
       await waitInside('document.querySelector("#project-message-target")?.options[0].textContent==="Add requirement usage"');
+      await waitInside('document.querySelector("#current-state").textContent==="Development not activated"');
       assert.equal(await inside('document.querySelector("#current-state").textContent'), "Development not activated");
       await click("#project-message-target", true);
       await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
-      await click("#project-effort-settings > summary");
-      await browser.waitFor('document.querySelector("#project-effort-settings").textContent.includes("Stage 1: applied")');
-      await click("#project-effort-settings > summary");
-      assert.equal(await browser.evaluate('document.querySelector("#project-effort-settings").open'), false);
+      assert.equal(await browser.evaluate('document.querySelector("#project-effort-settings")===null'), true);
+      await click("#project-settings");
+      await waitInside('document.querySelector("#project-effort-status").textContent.includes("Stage 1: applied")');
+      assert.equal(await inside('document.querySelectorAll("#project-effort").length'), 1);
+      assert.equal(await inside('document.querySelector("#private-effort-setting").hidden'), true);
+      assert.equal(active, false, "Opening shared Settings must not activate Development.");
+      await click("#apply-project-effort", true);
+      await waitInside('document.querySelector("#project-effort-settings").getAttribute("aria-busy")==="false"');
+      assert.equal(active, false, "Saving future private effort must not activate Development.");
+      await click("#close-settings", true);
+      await waitInside('!document.querySelector("#canvas-settings").open');
+      await browser.waitFor('document.activeElement.id==="project-settings"');
       assert.equal(active, false);
       await click("#message", true); await browser.call("Input.insertText", { text: "As a user, I keep my draft while viewing Design." });
+      assert.equal(await inside('document.querySelector("#message").value'), "As a user, I keep my draft while viewing Design.");
       await click("#development-tab");
       await waitInside('document.body.dataset.projectDesign==="true"');
       assert.equal(await inside('document.querySelector("#message").value'), "As a user, I keep my draft while viewing Design.");

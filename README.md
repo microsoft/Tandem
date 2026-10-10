@@ -143,7 +143,7 @@ If native main-session resume reports no model, an explicit saved project effort
 remains pending until a supported model is selected through that launcher path;
 Tandem does not invent a model or silently replace native defaults.
 
-Use **Project effort** in the bottom action bar for one explicit reasoning-effort
+Use **Project effort** inside **Project settings** for one explicit reasoning-effort
 choice across both stages. Models remain independently selected. Root
 `MainSessionEffort` owns Stage 1 validation, SDK application/readback and
 `.tandem\desktop\reasoning-effort.json`; Development's controller/runtime and

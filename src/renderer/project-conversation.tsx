@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { canOpenDevelopment, hasActiveJobs, useUi, type UiState } from "./ui-context.js";
+import { ProjectEffortError, requestProjectEffort } from "./project-effort.js";
 
 type Entry = { id: string; kind: "user" | "status"; role: string; text: string; timestamp: string };
 export function projectDiscovery(state: UiState, busy: boolean) {
@@ -61,12 +62,13 @@ export const useProjectView = () => {
     return value;
 };
 export function ProjectConversationProvider({ children, designVisible, showDesign }: { children: ReactNode; designVisible: boolean; showDesign(): void }) {
-    const { state, post, pending } = useUi();
+    const { state, post, pending, setBusy } = useUi();
     const [view, setView] = useState({ url: null as string | null, channel: "", error: "", active: false,
         status: "Not activated", detail: "", designRevision: null as string | null, designChanged: false, attention: 0 });
     const frame = useRef<HTMLIFrameElement>(null);
-    const latest = useRef({ state, post, pending, view, designVisible, showDesign }); latest.current = { state, post, pending, view, designVisible, showDesign };
+    const latest = useRef({ state, post, pending, view, designVisible, showDesign, setBusy }); latest.current = { state, post, pending, view, designVisible, showDesign, setBusy };
     const opening = useRef(false), submissions = useRef(new Map<string, { key: string; text: string; work: Promise<void> }>());
+    const effortApplying = useRef(false);
     function send(value: object) {
         const { url, channel } = latest.current.view;
         if (url) frame.current?.contentWindow?.postMessage({ protocol: "tandem-project/v1", channel, ...value }, new URL(url).origin);
@@ -74,7 +76,8 @@ export function ProjectConversationProvider({ children, designVisible, showDesig
     function sync() {
         const { state, pending, view, designVisible } = latest.current;
         send({ type: "context", entries: discoveryEntries(state), discovery: projectDiscovery(state, pending),
-            canActivate: canOpenDevelopment(state), developmentActive: view.active, designVisible });
+            canActivate: canOpenDevelopment(state), developmentActive: view.active, designVisible,
+            canChangeEffort: state.provider?.canSubmitAnswers !== false && !pending });
     }
     async function activate(retry = false) {
         if (opening.current) return;
@@ -116,6 +119,22 @@ export function ProjectConversationProvider({ children, designVisible, showDesig
             if (message.type === "ready") { sync(); return; }
             if (message.type === "show-design") { latest.current.showDesign(); return; }
             if (message.type === "settings-closed") { document.getElementById("project-settings")?.focus(); return; }
+            if (["project-effort-read", "project-effort-apply"].includes(message.type)) {
+                if (typeof message.id !== "string" || message.id.length > 100) return;
+                const applying = message.type === "project-effort-apply";
+                if (applying && (typeof message.effort !== "string" || message.effort.length > 40
+                    || effortApplying.current || latest.current.pending || state.provider?.canSubmitAnswers === false)) {
+                    send({ type: "project-effort-result", id: message.id, error: "Project effort cannot change while work or ownership is pending." }); return;
+                }
+                if (applying) { effortApplying.current = true; latest.current.setBusy("project-effort", true); }
+                void requestProjectEffort(applying ? message.effort : undefined)
+                    .then(settings => send({ type: "project-effort-result", id: message.id, settings }))
+                    .catch(error => send({ type: "project-effort-result", id: message.id,
+                        error: error instanceof Error ? error.message : "Project effort request failed.",
+                        settings: error instanceof ProjectEffortError ? error.settings : undefined }))
+                    .finally(() => { if (applying) { effortApplying.current = false; latest.current.setBusy("project-effort", false); } });
+                return;
+            }
             if (message.type === "activate") { void activate(message.retry === true); return; }
             if (message.type === "status" && typeof message.status === "string") {
                 setView(v => ({ ...v, status: message.status.slice(0, 80), detail: typeof message.reason === "string" ? message.reason.slice(0, 2000) : "",

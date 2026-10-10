@@ -496,15 +496,6 @@ summary:focus-visible {
   height: 100%;
 }
 
-.project-effort-control { position: relative; flex: none; font-size: 12px; }
-.project-effort-control summary { cursor: pointer; padding: 2px 8px; }
-.project-effort-control > div {
-  position: absolute; bottom: calc(100% + 8px); right: 0; z-index: 50;
-  width: min(360px, calc(100vw - 24px)); max-height: 70vh; overflow: auto;
-  padding: 12px; background: var(--studio-surface); color: var(--studio-text);
-  border: 1px solid var(--studio-border); border-radius: 6px;
-}
-.project-effort-control label, .project-effort-control select { display: block; width: 100%; margin-bottom: 8px; }
 
 .app:has(> .topbar[data-hosted="true"]) { grid-template-rows: minmax(0, 1fr) auto; }
 
@@ -3484,7 +3475,6 @@ textarea {
 .project-workspace #toggle-context-pane { display: none; }
 .project-workspace .requirements > #status { padding: 0 10px; overflow-wrap: anywhere; }
 .project-workspace .project-brief > summary { cursor: pointer; }
-.project-workspace .project-effort-control > div { position: static; width: 100%; box-sizing: border-box; }
 #project-conversation { display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; background: var(--studio-surface); }
 #project-conversation > iframe { flex: 1; width: 100%; min-height: 0; border: 0; }
 #project-conversation > p { padding: 4px 10px; margin: 0; overflow-wrap: anywhere; }

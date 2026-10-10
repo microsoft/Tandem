@@ -43,7 +43,7 @@ test("one project endpoint applies both independent interfaces without starting 
     }
 });
 
-test("project effort UI offers one choice and exposes delayed or partial application", async t => {
+test("Settings effort bridge uses the existing public endpoint and preserves partial application", async t => {
     const h = await reactHarness(t);
     const value = state("prepare"); value.goal = "";
     const stage = { desired: null, actual: null, model: "one", supported: ["low", "high"], status: "unset", error: null };
@@ -58,13 +58,23 @@ test("project effort UI offers one choice and exposes delayed or partial applica
     });
     h.render(value); await h.flush();
     assert.equal(h.requests.length, 0);
-    h.get<HTMLDetailsElement>("project-effort-settings").open = true;
-    await h.fire(h.get("project-effort-settings"), "toggle");
-    await h.input("project-effort", "low");
-    await h.click("apply-project-effort");
-    assert.equal(h.document.querySelectorAll("#project-effort").length, 1);
-    assert.match(h.get("project-effort-settings").textContent!, /Stage 1: applied/);
-    assert.match(h.get("project-effort-settings").textContent!, /Stage 2: error/);
-    assert.match(h.get("project-effort-settings").textContent!, /Private setting failed/);
+    assert.equal(h.document.querySelector("#project-effort-settings"), null, "There is no second navigation disclosure.");
+    const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
+    const replies: Array<{ type: string; id: string; error?: string; settings?: typeof settings }> = [];
+    frame.contentWindow!.postMessage = message => { replies.push(JSON.parse(JSON.stringify(message))); };
+    const send = async (data: object, origin = "http://127.0.0.1:8765") => {
+        h.window.dispatchEvent(new h.window.MessageEvent("message", { source: frame.contentWindow, origin,
+            data: { protocol: "tandem-project/v1", channel: "fixture-project", ...data } }));
+        await h.flush();
+    };
+    await send({ type: "project-effort-apply", id: "foreign", effort: "low" }, "http://127.0.0.1:9999");
+    assert.equal(h.requests.length, 0);
+    await send({ type: "project-effort-read", id: "read" });
+    assert.equal(replies.find(reply => reply.id === "read")?.settings?.stage1.status, "unset");
+    await send({ type: "project-effort-apply", id: "apply", effort: "low" });
+    const result = replies.find(reply => reply.id === "apply")!;
+    assert.equal(result.settings?.stage1.status, "applied");
+    assert.equal(result.settings?.stage2.status, "error");
+    assert.match(result.error!, /Private setting failed/);
     assert.equal(h.requests.some(request => /development\/open|effort\/start/.test(request.path)), false);
 });

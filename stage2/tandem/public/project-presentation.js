@@ -1,9 +1,40 @@
 // Presentation messages never become native conversation input or runtime authority.
-export function installProjectPresentation({ document, window, changed, settings, currentWork }) {
+export function installProjectPresentation({ document, window, changed, settings, currentWork, effortChanged }) {
   const { projectPanel: panel, projectOrigin: origin, projectChannel: channel } = document.body.dataset;
   if (!panel) return null;
   let context = null, selected = "discovery", pending = null, nativePending = false;
   const send = value => window.parent.postMessage({ protocol: "tandem-project/v1", channel, ...value }, origin);
+  const effortPanel = document.querySelector("#project-effort-settings");
+  const effort = document.querySelector("#project-effort"), effortApply = document.querySelector("#apply-project-effort");
+  const effortRefresh = document.querySelector("#refresh-project-effort"), effortStatus = document.querySelector("#project-effort-status");
+  const effortError = document.querySelector("#project-effort-error");
+  let effortPending = null;
+  if (effortPanel) {
+    effortPanel.hidden = false;
+    document.querySelector("#private-effort-setting").hidden = true;
+  }
+  const validStage = value => value && ["desired", "actual", "model", "error"].every(key => value[key] === null || typeof value[key] === "string")
+    && typeof value.status === "string" && Array.isArray(value.supported) && value.supported.every(level => typeof level === "string");
+  function renderEffort() {
+    if (!effortPanel) return;
+    const blocked = Boolean(effortPending) || context?.canChangeEffort !== true;
+    effort.disabled = blocked;
+    effortApply.disabled = blocked || !effort.value;
+    effortRefresh.disabled = Boolean(effortPending);
+    effortPanel.setAttribute("aria-busy", String(Boolean(effortPending)));
+  }
+  function requestEffort(apply = false) {
+    if (!effortPanel || effortPending || apply && (context?.canChangeEffort !== true || !effort.value)) return;
+    effortPending = crypto.randomUUID();
+    effortError.hidden = true;
+    renderEffort(); changed();
+    send({ type: apply ? "project-effort-apply" : "project-effort-read", id: effortPending, ...(apply ? { effort: effort.value } : {}) });
+  }
+  if (effortPanel) {
+    effort.onchange = renderEffort;
+    effortApply.onclick = () => requestEffort(true);
+    effortRefresh.onclick = () => requestEffort();
+  }
   const controls = document.createElement("div");
   controls.id = "project-message-context";
   const label = document.createElement("label");
@@ -51,13 +82,42 @@ export function installProjectPresentation({ document, window, changed, settings
       && typeof message.discovery.enabled === "boolean") {
       context = message;
       document.body.dataset.projectDesign = String(message.designVisible === true);
+      renderEffort();
       update(); changed();
     } else if (message.type === "command") {
-      if (message.command === "settings") settings();
+      if (message.command === "settings") { settings(); requestEffort(); }
       if (message.command === "current-work") currentWork();
       if (message.command === "development-target" && !pending && !nativePending && !document.querySelector("#message").value.trim()) {
         selected = "development"; update(); changed();
       }
+    } else if (message.type === "project-effort-result" && effortPending === message.id) {
+      effortPending = null;
+      const value = message.settings;
+      let error = typeof message.error === "string" ? message.error : "";
+      if (value !== undefined) {
+        if (!value || !validStage(value.stage1) || !validStage(value.stage2)
+          || value.desired !== null && typeof value.desired !== "string") error = "Project effort readback is invalid.";
+        else {
+          const available = value.stage1.supported.length ? value.stage1.supported : value.stage2.supported;
+          const levels = value.stage2.model && value.stage2.supported.length
+            ? available.filter(level => value.stage2.supported.includes(level)) : available;
+          effort.replaceChildren();
+          for (const level of ["", ...levels]) {
+            const option = document.createElement("option"); option.value = level;
+            option.textContent = level || "No shared choice; native defaults unchanged"; option.disabled = !level; effort.append(option);
+          }
+          effort.value = value.desired ?? "";
+          effortStatus.replaceChildren(...[value.stage1, value.stage2].map((stage, index) => {
+            const row = document.createElement("p");
+            row.textContent = `Stage ${index + 1}: ${stage.status}. Actual: ${stage.actual || "not yet available"}.`
+              + (stage.model ? ` Model: ${stage.model}.` : "") + (stage.error ? ` ${stage.error}` : "");
+            return row;
+          }));
+        }
+      } else if (!error) error = "Project effort readback is unavailable.";
+      effortError.textContent = error; effortError.hidden = !error;
+      renderEffort(); changed();
+      effortChanged?.();
     } else if (message.type === "discovery-result" && pending?.id === message.id) {
       const work = pending; pending = null; update();
       if (message.ok === true) work.resolve();
@@ -73,6 +133,7 @@ export function installProjectPresentation({ document, window, changed, settings
     activate: retry => send({ type: "activate", retry: retry === true }),
     showDesign: () => send({ type: "show-design" }),
     settingsClosed: () => send({ type: "settings-closed" }),
+    busy: () => Boolean(effortPending),
     nativePending(value) { nativePending = value; update(); },
     discovery: () => selected === "discovery",
     canSend: () => !pending && (selected !== "discovery" || context?.discovery?.enabled === true),

@@ -13,7 +13,6 @@ import { ArtifactList, ArtifactsPanel } from "./artifacts-panel.js";
 import { ProcessPanel } from "./process-panel.js";
 import { DevelopmentPanel } from "./development-panel.js";
 import { WorkflowActivity } from "./workflow-activity.js";
-import { ProjectEffortControl } from "./project-effort.js";
 import { ProjectConversation, ProjectConversationProvider, useProjectView } from "./project-conversation.js";
 import { DiscoveryRecovery } from "./discovery-recovery.js";
 import { SpeechProvider, SpeechSignInControl, SpeechTextarea, useSpeechSignInControl } from "./speech-textarea.js";
@@ -377,7 +376,6 @@ function Workspace(props: WorkspaceProps) {
           <Header version={props.version} connectionError={props.connectionError} store={props.store} effortBusy={props.effortBusy} developmentView={projectView.active} />
           <nav className="project-navigation" aria-label="Project navigation">
             <button id="project-settings" type="button" className="plan-button" onClick={() => projectView.command("settings")}>Project settings</button>
-            <ProjectEffortControl />
             <Tabs.List id="project-contents" className="preview-tabs project-tabs" aria-label="Project contents">
               {stageTabs.map(tab => {
                 const skipped = skippedStage(state, tab.stage);
