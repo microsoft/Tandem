@@ -123,6 +123,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       createRoot(document.getElementById("root")).render(React.createElement(App,{store,version:"unified-fixture",connect:false}));
       `, loader: "tsx", resolveDir: resolve("src", "renderer") },
       bundle: true, write: false, format: "esm", platform: "browser", target: "es2022", logLevel: "silent",
+      loader: { ".png": "dataurl" },
       define: { "process.env.NODE_ENV": '"production"' } });
     const server = createServer(async (request, response) => {
       const path = new URL(request.url, "http://127.0.0.1").pathname;
@@ -165,6 +166,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 1000, deviceScaleFactor: 1, mobile: false });
       await browser.call("Page.navigate", { url });
       await browser.waitFor('Boolean(document.querySelector("#project-conversation-frame"))');
+      await browser.waitFor('document.querySelector(".brand-artwork").naturalWidth > 0');
       let frame;
       for (let attempt = 0; attempt < 100 && !frame; attempt++) {
         const tree = await browser.call("Page.getFrameTree");

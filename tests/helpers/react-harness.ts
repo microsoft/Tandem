@@ -27,6 +27,7 @@ async function compile() {
       loader: "tsx", resolveDir: fileURLToPath(new URL("../../src/renderer/", import.meta.url)),
     },
     bundle: true, write: false, platform: "browser", format: "iife", globalName: "TandemTest",
+    loader: { ".png": "dataurl" },
     target: "es2022", logLevel: "silent", define: { "process.env.NODE_ENV": '"development"' },
     plugins: [{
       name: "renderer-test-services",

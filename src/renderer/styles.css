@@ -587,6 +587,8 @@ summary:focus-visible {
   min-width: 0;
 }
 
+.brand-artwork { display: block; width: 160px; max-width: 100%; height: auto; flex-shrink: 1; }
+
 .mark {
   display: grid;
   place-items: center;

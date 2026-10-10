@@ -196,6 +196,7 @@ test("real React Development keeps handoff controls in view across long-status h
                     loader: "tsx", resolveDir: fileURLToPath(new URL("../src/renderer/", import.meta.url)),
                 },
                 bundle: true, write: false, platform: "browser", format: "esm", target: "es2022",
+                loader: { ".png": "dataurl" },
                 logLevel: "silent", define: { "process.env.NODE_ENV": '"production"' },
             }),
         ]);

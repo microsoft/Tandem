@@ -1,6 +1,18 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { readFile } from "node:fs/promises";
 import { setup, state, blankEffort, decision, response, text, field, disabled, hidden, current, submit, browse } from "./renderer-fixtures.test.js";
+
+test("root branding embeds the existing Tandem bicycle artwork with accessible naming", async t => {
+    const h = await setup(t);
+    const image = h.document.querySelector<HTMLImageElement>(".brand-artwork")!;
+    assert.ok(image);
+    assert.equal(h.document.querySelector(".brand h1")?.textContent, "Tandem");
+    assert.equal(h.document.querySelector(".brand .mark"), null);
+    const encoded = image.src.split(",")[1];
+    assert.deepEqual(Buffer.from(encoded, "base64"),
+        await readFile(new URL("../stage2/tandem/public/branding/tandem-blue-dark.png", import.meta.url)));
+});
 
 test("compact workflow exposes progress and labeled stage icons without changing navigation", async (t) => {
     const value = state("prototype");

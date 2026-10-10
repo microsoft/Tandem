@@ -8,6 +8,11 @@ declare module "*.html" {
     export default content;
 }
 
+declare module "*.png" {
+    const url: string;
+    export default url;
+}
+
 declare module "tandem:client" {
     const content: string;
     export default content;

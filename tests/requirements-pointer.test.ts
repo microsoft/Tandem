@@ -34,6 +34,7 @@ test("defaults mouse activation stays on its button when focus leaves the answer
             },true);
         `, loader: "tsx", resolveDir: fileURLToPath(new URL("../src/renderer/", import.meta.url)) },
         bundle: true, write: false, platform: "browser", format: "esm", target: "es2022",
+        loader: { ".png": "dataurl" },
         define: { "process.env.NODE_ENV": '"production"' }, logLevel: "silent" });
         const template = (await readFile(new URL("../src/renderer/index.html", import.meta.url), "utf8"))
             .replace("__TANDEM_STYLES__", () => css).replace("__TANDEM_VERSION__", "pointer-test")

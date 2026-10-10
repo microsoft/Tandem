@@ -234,6 +234,10 @@ empty findings and worker statements are not evidence that tests passed.
 
 ### Development UI
 
+The framework header uses Tandem's existing bicycle wordmark, shared with the
+standalone artwork. The build embeds it locally; displaying the logo needs no
+external asset request.
+
 The main framework is one project workspace: project navigation and Settings
 on the left, selected artifacts in the workspace, and one persistent project
 conversation alongside. Requirements, drawings and Prototype are artifact views.

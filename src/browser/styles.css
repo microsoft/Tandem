@@ -74,7 +74,7 @@ html, body, #root { height: 100%; margin: 0; padding: 0; overflow: hidden; }
   .host-header .host-icon-button, .host-permissions { width: 44px; height: 44px; }
   .host-dialog .host-dialog-close { width: 44px; }
 }
-@media (max-width: 380px) { .host-brand .brand-copy { display: none; } }
+@media (max-width: 380px) { .host-brand .brand-artwork { width: 120px; } }
 @media (prefers-reduced-motion: reduce) { .host-shell *, .host-dialog * { animation: none !important; transition: none !important; } }
 @media (forced-colors: active) {
   .host-header { border-bottom: 1px solid CanvasText; }

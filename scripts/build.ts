@@ -108,6 +108,7 @@ const rendererAssetsPlugin: Plugin = {
                     write: false,
                     metafile: true,
                     platform: "browser",
+                    loader: { ".png": "dataurl" },
                     target: "es2020",
                     format: "iife",
                     minify: true,

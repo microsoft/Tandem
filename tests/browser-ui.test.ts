@@ -44,6 +44,7 @@ function compile(): Promise<string> {
             }
         `, loader: "tsx", resolveDir: fileURLToPath(new URL("../src/browser/", import.meta.url)) },
         bundle: true, write: false, platform: "browser", format: "iife", globalName: "HostTest",
+        loader: { ".png": "dataurl" },
         target: "es2022", logLevel: "silent", define: { "process.env.NODE_ENV": '"development"' },
     }).then((result) => result.outputFiles[0].text);
 }
@@ -131,7 +132,7 @@ test("browser shell preserves the application origin, microphone delegation and 
     assert.ok(!frame.src.includes("token"));
     const header = h.document.querySelector(".host-header")!;
     assert.equal(header.querySelector("h1")!.textContent, "Tandem");
-    assert.ok(header.querySelector(".mark .lucide-layers"), "reuse the application's logo");
+    assert.match(header.querySelector<HTMLImageElement>(".brand-artwork")!.src, /^data:image\/png;base64,/, "reuse the application's bicycle artwork");
     assert.ok(!header.textContent!.includes("Standalone"), "the duplicate host branding is removed");
     assert.ok(header.querySelector('nav[aria-label="Workspace controls"]'));
     assert.equal(h.document.querySelector(".host-toolbar"), null, "workspace controls must not occupy a second row");
