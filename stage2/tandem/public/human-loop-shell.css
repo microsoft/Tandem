@@ -605,5 +605,5 @@
 .human-app[data-project-panel] .command-bar { flex-wrap: wrap; }
 #project-message-context { flex: 0 0 100%; grid-column: 1 / -1; min-width: 0; }
 #project-message-context label { display: flex; gap: 8px; align-items: center; }
-#project-message-context select { min-width: 0; max-width: 100%; }
+#project-message-context select { display: block; min-width: 0; max-width: 100%; }
 #project-message-context p { margin: 4px 0; font-size: 12px; color: var(--muted); }

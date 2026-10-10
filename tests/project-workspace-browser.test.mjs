@@ -114,6 +114,9 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         else if (path === "/app.js") { response.writeHead(200, { "Content-Type": "text/javascript" }); response.end(bundle.outputFiles[0].text); }
         else if (path === "/api/state") json(value);
         else if (path === "/api/development/view") json({ url: provider.url, channel: "whole-project-fixture" });
+        else if (path === "/api/settings/project-effort") json({ desired: "low", changing: false,
+          stage1: { actual: "low", desired: "low", model: "fixture", status: "applied", supported: ["low"], error: null },
+          stage2: { actual: null, desired: "low", model: null, status: "pending", supported: [], error: null } });
         else if (request.method === "POST") {
           const chunks = []; for await (const chunk of request) chunks.push(chunk);
           const body = JSON.parse(Buffer.concat(chunks).toString() || "{}"); mutations.push({ path, body });
@@ -176,6 +179,13 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
           { type, x: local.x + offset.x, y: local.y + offset.y, button: "left", clickCount: 1 });
       };
       await waitInside('document.querySelector("#project-message-target")?.options[0].textContent==="Add requirement usage"');
+      assert.equal(await inside('document.querySelector("#current-state").textContent'), "Development not activated");
+      await click("#project-message-target", true);
+      await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+      await click("#project-effort-settings > summary");
+      await browser.waitFor('document.querySelector("#project-effort-settings").textContent.includes("Stage 1: applied")');
+      await click("#project-effort-settings > summary");
+      assert.equal(await browser.evaluate('document.querySelector("#project-effort-settings").open'), false);
       assert.equal(active, false);
       await click("#message", true); await browser.call("Input.insertText", { text: "As a user, I keep my draft while viewing Design." });
       await click("#development-tab");
@@ -257,6 +267,8 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         await click("#message", true);
         if (width === 980) await browser.call("Input.insertText", { text: "Keep this draft through narrow navigation." });
         assert.equal(await inside('document.querySelector("#message").value'), "Keep this draft through narrow navigation.");
+        await click("#project-message-target", true);
+        await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
         if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `project-workspace-${width}.png`), await browser.screenshot());
       }
       await click("#project-settings");

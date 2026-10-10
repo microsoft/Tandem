@@ -521,3 +521,16 @@ and `project-workspace-{1360,980,390}.png`. Mobile checks assert the actual CSS
 viewport width and hit-test the retained composer, rather than counting a scaled
 desktop page as narrow-layout evidence. The matching build is retained under
 `frozen-candidate`; it is a local qualification artifact, not an installed release.
+
+The subsequent fresh native checklist run found two presentation defects before
+Requirements editing: the narrow command-bar stylesheet hid the Send-to selector,
+and the relocated effort popover covered its own summary. Native Preparation
+completed and its files were saved before normal host shutdown. The narrow fix
+keeps the target selector visible, places shared effort contents in navigation
+flow so its summary remains reachable, and labels a passive new private runtime
+as not activated. Browser regression coverage now physically hits the selector
+and opens/closes effort settings rather than only inspecting their DOM values.
+Failure receipts are under the session's `files\unified-checklist-e2e\evidence`
+(`effort-popover-hit-failure.json/.png`, command `b6500c20-4b07-4609-9a6c-004f1b1d57cd`);
+`routing-effort-fix-tests.txt` is supplementary no-model coverage. The fresh
+native journey is still in progress; this is not a full-function E2E pass.

@@ -293,7 +293,8 @@ function render() {
   renderImplementationConfirmations();
   conversation.current({ kind: view?.status ?? 'host', label: compaction?.active ? `Compacting · ${humanLoopStatusLabel(view.status)}`
     : compaction?.requested ? 'Compaction requested'
-      : view ? humanLoopStatusLabel(view.status) : installed ? humanLoopStatusLabel(installed.status) : 'Connecting',
+      : view ? humanLoopStatusLabel(view.status) : projectPresentation && installed?.status === 'new'
+        ? 'Development not activated' : installed ? humanLoopStatusLabel(installed.status) : 'Connecting',
     detail: view?.reason ?? installed?.reason ?? '' });
   if (view?.currentCycle) {
     conversation.placeArtifact('human-cycle-progress', cycleArtifact, { requestId: view.currentCycle.originRequestId,
