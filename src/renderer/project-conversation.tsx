@@ -37,6 +37,11 @@ export function discoveryEntries(state: UiState): Entry[] {
         push(`revision:${revision.id}`, "user", revision.suggestion);
     }
     for (const output of state.lifecycle.outputs) push(`saved:${output.path}`, "status", `Saved ${output.stageId}: ${output.path}`, output.completedAt);
+    for (const receipt of state.factoryRuns ?? []) if (receipt.recovery) {
+        push(`recovery:${receipt.recovery.decisionId}`, "status",
+            `Request ${receipt.requestId} explicitly abandoned with uncertain outcome. Saved work retained; nothing replayed.`,
+            receipt.recovery.recordedAt);
+    }
     return entries.slice(-1000);
 }
 

@@ -11,6 +11,10 @@ export interface PreparationToken {
     runId: string | null;
 }
 
+export function isPendingFactoryRun(receipt: { terminal?: boolean; recovery?: { outcome: string } }): boolean {
+    return !receipt.terminal && receipt.recovery?.outcome !== "abandoned-uncertain";
+}
+
 export async function workflowReasoningEffort(
     session: { rpc: { model: Pick<Awaited<ReturnType<typeof joinSession>>["rpc"]["model"], "getCurrent"> } },
     defaultEffort: "low" | "medium",

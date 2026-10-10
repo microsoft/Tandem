@@ -118,6 +118,7 @@ export interface TandemState {
     factoryRuns?: Array<{
         requestId: string; generation: string; runId: string | null; terminal?: boolean;
         launchRejection?: { message: string; recordedAt: string };
+        recovery?: import("./effort-recovery.js").FactoryAbandonment;
     }>;
     jobOwner: JobOwner | null;
     openResetRequestId: string | null;

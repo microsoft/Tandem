@@ -46,6 +46,7 @@ import "./payload.test.js";
 import "./renderer-development.test.js";
 import "./project-workspace-browser.test.mjs";
 import "./requirements-pointer.test.js";
+import "./effort-recovery.test.js";
 import "./desktop.test.js";
 import "./terminal-sdk.test.js";
 import "./browser-host.test.js";

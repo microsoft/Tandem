@@ -15,6 +15,7 @@ import { DevelopmentPanel } from "./development-panel.js";
 import { WorkflowActivity } from "./workflow-activity.js";
 import { ProjectEffortControl } from "./project-effort.js";
 import { ProjectConversation, ProjectConversationProvider, useProjectView } from "./project-conversation.js";
+import { DiscoveryRecovery } from "./discovery-recovery.js";
 import { SpeechProvider, SpeechSignInControl, SpeechTextarea, useSpeechSignInControl } from "./speech-textarea.js";
 import { Brand } from "./brand.js";
 import { useStandaloneHeader } from "./standalone-header.js";
@@ -408,6 +409,7 @@ function Workspace(props: WorkspaceProps) {
           </div>
           <details className="section project-brief"><summary>Brief and project details</summary><p id="goal" className="goal" title={state.goal}>{state.goal || "Discovery is optional. Describe the project here or activate Development."}</p></details>
           <p id="status" className="status" role="status">{state.status}</p>
+          <DiscoveryRecovery />
           <WorkflowActivity />
           <section className="section workflow-section" aria-describedby="stage-browsing stage-message"><div className="section-heading"><p className="eyebrow"><Layers size={14} aria-hidden="true" />Discovery actions</p></div>
             <button id="complete-stage" className="complete-stage" type="button" hidden={current === "development" || viewed !== current || Boolean(skippedStage(state, current))} aria-describedby="stage-message"

@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState, type Dispatch, 
 import type { HistoricalStageId, LifecycleStageId, TandemState } from "../types.js";
 import type { SketchPreview } from "../sketch-stream.js";
 import type { WorkflowActivitySnapshot } from "../workflow-activity.js";
+import { isPendingFactoryRun } from "../agent-runner.js";
 
 export interface RuntimeAgent {
   id?: string;
@@ -137,7 +138,7 @@ export function canBrowseStage(state: UiState, stage: LifecycleStageId): boolean
 
 export function canOpenDevelopment(state: UiState): boolean {
   return state.provider?.canSubmitAnswers !== false && !state.effortReset
-    && !state.developmentBlocker && !hasActiveJobs(state) && !state.factoryRuns?.some(run => !run.terminal);
+    && !state.developmentBlocker && !hasActiveJobs(state) && !state.factoryRuns?.some(isPendingFactoryRun);
 }
 
 export function useAction(key: string) {

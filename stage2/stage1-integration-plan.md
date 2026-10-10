@@ -552,3 +552,15 @@ cancellation/terminal receipts; unknown cancellation blocks another suggestion
 launch. This addresses the observed four-active-workflow pressure without raising
 native limits or introducing a general scheduler. It does not erase or reinterpret
 the earlier orphan launch receipt.
+
+The user explicitly approved a guarded product recovery action for this orphan,
+not manual state repair or a fabricated rejection. The action binds the decision
+to its original request, generation, revision and current main-session/workspace
+owner; preserves the null ID and terminal=false fields; and records a separate
+`abandoned-uncertain` outcome with two current native observations. Complete
+workflow inventories, idle/non-abortable activity, empty input queues, no local
+factory promises and an event guard through persistence are required. Missing,
+active or changing evidence blocks. Stage2 is only checked through its existing
+public quiet boundary, never mutated. Duplicate decisions are idempotent and old
+request IDs cannot be replayed. The real checklist recovery remains to be
+qualified on a newly frozen candidate after the completed native Close.

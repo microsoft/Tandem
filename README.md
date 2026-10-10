@@ -267,6 +267,18 @@ same as closing its native runtime.
 
 ## State, migration and recovery
 
+An unconfirmed Stage1 launch with no native run ID can block later work even
+after its visible operation ended. **Recover interrupted discovery** offers an
+explicit, request/owner/revision-bound abandonment decision. It preserves the
+original null run ID and unknown terminal outcome, adds an
+`abandoned-uncertain` recovery record, and retains Requirements and saved files.
+It is not a claim that the launch failed, succeeded or never executed.
+Recovery requires two consistent, complete native workflow inventories,
+idle/non-abortable native activity, no queued or in-flight input, no local pending
+factory work and no native events during the guarded write. Active, resumable,
+unavailable or changing native evidence keeps recovery blocked. No workers are
+cancelled and nothing is replayed; continuing requires a new explicit action.
+
 Operational data is ignored `.tandem` data, not Git publication:
 
 - Shared upstream efforts and snapshots: `.tandem\efforts\<effortId>`.

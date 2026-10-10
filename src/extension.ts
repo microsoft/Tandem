@@ -24,9 +24,10 @@ import {
 import type { HistoricalStageId, LifecycleStageId, LifecycleState, TandemState } from "./types.js";
 import { ProjectStore, ProjectStoreError, normalizeProjectId, readJsonFile, writeJsonAtomically } from "./project-store.js";
 import {
-    assertFactoryRequestEnvelope, jsonResult, rejectedFactoryLaunch, workflowReasoningEffort,
+    assertFactoryRequestEnvelope, isPendingFactoryRun, jsonResult, rejectedFactoryLaunch, workflowReasoningEffort,
     type FactoryLaunchRequest, type PreparationToken,
 } from "./agent-runner.js";
+import { inspectIdleNativeSession, validFactoryAbandonment } from "./effort-recovery.js";
 import {
     executionDigest, fingerprintWorkspace,
 } from "./execution.js";
@@ -312,7 +313,7 @@ async function continueDevelopmentLocked(prototypeId, extensionId, input: Record
 }
 
 function hasActiveWork(state) {
-    return Boolean(state.effortReset || state.factoryRuns?.some((run) => !run.terminal)) || hasWorkflowActiveWork(state);
+    return Boolean(state.effortReset || state.factoryRuns?.some(isPendingFactoryRun)) || hasWorkflowActiveWork(state);
 }
 
 function isObject(value: unknown): value is Record<string, any> {
@@ -1265,6 +1266,7 @@ function normalizeStoredState(value, prototypeId): TandemState {
         value.factoryRuns.some((run) => !isObject(run) || typeof run.requestId !== "string" ||
             run.generation !== value.generation || (run.runId !== null && typeof run.runId !== "string") ||
             (run.terminal !== undefined && typeof run.terminal !== "boolean") ||
+            (run.recovery !== undefined && (run.runId !== null || run.terminal === true || !validFactoryAbandonment(run.recovery))) ||
             (run.launchRejection !== undefined && (!isObject(run.launchRejection) ||
                 typeof run.launchRejection.message !== "string" || typeof run.launchRejection.recordedAt !== "string"))))) ||
         (value.effortReset != null && (!isObject(value.effortReset) ||
@@ -1460,7 +1462,7 @@ async function loadState(prototypeId) {
     return state;
 }
 
-async function persistState(state) {
+async function persistState(state, beforeCommit?: () => void) {
     Object.assign(state, deriveRequirementsState(state));
     state.process = normalizeProcessState(state.process);
     if (!hasActiveWork(state) && state.lifecycle.currentStage !== "prepare" &&
@@ -1473,7 +1475,7 @@ async function persistState(state) {
     state.jobOwner = hasActiveWork(state)
         ? state.jobOwner || { sessionId: session.sessionId, workspaceRoot: WORKSPACE_ROOT }
         : null;
-    await projectStore.save(state);
+    await projectStore.save(state, beforeCommit);
     stateCache.set(state.prototypeId, state);
 }
 
@@ -1534,6 +1536,9 @@ async function runEffortFactory(prototypeId: string, requestId: string, request:
         const identities = [current.preparation?.processing, current.processing, current.suggestionProcessing,
             current.designReview?.processing, current.testDesignReview?.processing, current.planning?.processing,
             current.implementation, current.testing];
+        if (current.factoryRuns?.some(receipt => receipt.requestId === requestId && receipt.recovery)) {
+            throw new AnswerRequestError(409, "An abandoned request cannot be replayed. Submit a new explicit action.");
+        }
         if (!identities.some((item) => item?.requestId === requestId)) {
             throw new AnswerRequestError(409, "This factory request no longer owns the effort.");
         }
@@ -1563,7 +1568,7 @@ async function recordRejectedFactoryLaunch(prototypeId: string, requestId: strin
         const current = await loadState(prototypeId);
         const receipts = current.factoryRuns || [];
         if (current.generation !== generation || receipts.some((item) => item.requestId === requestId && item.runId)) return current;
-        const rejected = receipts.filter((item) => item.requestId === requestId && item.generation === generation && !item.terminal);
+        const rejected = receipts.filter((item) => item.requestId === requestId && item.generation === generation && isPendingFactoryRun(item));
         if (!rejected.length) return current;
         const now = new Date().toISOString();
         const next = { ...current, factoryRuns: receipts.map((item) => rejected.includes(item)
@@ -1591,6 +1596,57 @@ async function recoverRejectedFactoryLaunch(prototypeId: string): Promise<Tandem
 async function waitForEffortRun(prototypeId, runId) {
     const run = await session.workflow.waitForRun(runId);
     return observeEffortRun(prototypeId, runId, run);
+}
+
+async function abandonUncertainFactory(prototypeId: string, extensionId: string, input: unknown) {
+    if (!isObject(input) || Object.keys(input).sort().join() !== "confirm,decisionId,expectedRevision,generation,owner,requestId"
+        || input.confirm !== true || !Number.isSafeInteger(input.expectedRevision)
+        || !["decisionId", "generation", "requestId"].every(key => typeof input[key] === "string" && input[key].length > 0 && input[key].length <= 100)
+        || !isObject(input.owner) || typeof input.owner.sessionId !== "string" || typeof input.owner.workspaceRoot !== "string") {
+        throw new AnswerRequestError(400, "Recovery requires an explicit decision bound to the saved request, revision and owner.");
+    }
+    return developmentTransition.run(() => withAnswerClaim(prototypeId, async () => {
+        if (!(await isPreferredAnswerProvider(extensionId))) throw new AnswerRequestError(409, "Use the writable owning provider for recovery.");
+        const current = await loadState(prototypeId);
+        if (input.generation !== current.generation || !sameOwner(input.owner, { sessionId: session.sessionId, workspaceRoot: WORKSPACE_ROOT })) {
+            throw new AnswerRequestError(409, "Recovery owner or generation does not match.");
+        }
+        const receipts = current.factoryRuns || [];
+        const matching = receipts.filter(receipt => receipt.requestId === input.requestId && receipt.generation === input.generation);
+        if (matching.length !== 1) throw new AnswerRequestError(409, "Recovery request identity is missing or ambiguous.");
+        const receipt = matching[0];
+        if (receipt.recovery?.decisionId === input.decisionId && sameOwner(receipt.recovery.owner, input.owner)) return current;
+        if (current.revision !== input.expectedRevision || receipt.runId !== null || !isPendingFactoryRun(receipt)
+            || !current.jobOwner || !sameOwner(current.jobOwner, input.owner)) {
+            throw new AnswerRequestError(409, "The saved request or ownership changed. Review recovery again.");
+        }
+        if (hasWorkflowActiveWork(current) || activePreparationRuns.has(prototypeId)
+            || activeAnswerRuns.has(prototypeId) || activeSuggestionRuns.has(prototypeId)) {
+            throw new AnswerRequestError(409, "Discovery still has active or unconfirmed local work. Close it normally before recovery.");
+        }
+        await development.assertQuiet();
+        let nativeChanged = false;
+        const unsubscribe = session.on(() => { nativeChanged = true; });
+        try {
+            const first = await inspectIdleNativeSession(session);
+            const second = await inspectIdleNativeSession(session);
+            if (nativeChanged || JSON.stringify(first.runs) !== JSON.stringify(second.runs)
+                || !(await isPreferredAnswerProvider(extensionId))) {
+                throw new AnswerRequestError(409, "Native activity or provider ownership changed while inspecting. No recovery was applied.");
+            }
+            const recordedAt = new Date().toISOString();
+            const next: TandemState = { ...current, factoryRuns: receipts.map(item => item === receipt ? {
+                ...item, recovery: { outcome: "abandoned-uncertain", decisionId: input.decisionId, recordedAt,
+                    owner: { sessionId: session.sessionId, workspaceRoot: WORKSPACE_ROOT }, observations: [first, second] },
+            } : item), status: `Request ${receipt.requestId} was explicitly abandoned with an uncertain outcome. Saved work is retained; nothing was replayed.`,
+            updatedAt: recordedAt };
+            await persistState(next, () => {
+                if (nativeChanged) throw new AnswerRequestError(409, "Native activity changed before recovery could be saved.");
+            });
+            publishState(prototypeId);
+            return next;
+        } finally { unsubscribe(); }
+    }, true));
 }
 
 async function getEffortRun(prototypeId, runId) {
@@ -2424,7 +2480,7 @@ async function startEffortLocked(prototypeId, extensionId, input) {
 
 function effortRunsToStop(state) {
     const receipts = state.factoryRuns || [];
-    const pending = [...receipts.filter((run) => !run.terminal)];
+    const pending = [...receipts.filter(isPendingFactoryRun)];
     const add = (processing, active = true) => {
         if (!active || !processing) return;
         if (receipts.some((run) => run.requestId === processing.requestId)) return;
@@ -3178,7 +3234,7 @@ async function completeLifecycleStage(prototypeId, requestedStageId, extensionId
     // ownership from a success badge or from the absence of an in-memory promise.
     const snapshot = await loadState(prototypeId);
     for (const receipt of snapshot.factoryRuns || []) {
-        if (receipt.terminal) continue;
+        if (!isPendingFactoryRun(receipt)) continue;
         if (snapshot.processing?.status === "error" && canRecoverDefaultBatch(snapshot) &&
             receipt === defaultBatchReceipt(snapshot)) {
             await recoverDefaultBatch(snapshot);
@@ -4745,7 +4801,7 @@ function defaultBatchReceipt(state) {
 }
 
 function canRecoverDefaultBatch(state) {
-    return state.processing?.action === "apply-defaults" && Boolean(defaultBatchReceipt(state)) &&
+    return state.processing?.action === "apply-defaults" && Boolean(defaultBatchReceipt(state)) && !defaultBatchReceipt(state).recovery &&
         (state.processing.status === "running" ||
             (state.processing.status === "error" && !defaultBatchReceipt(state).terminal));
 }
@@ -4825,7 +4881,7 @@ async function recoverDefaultBatch(state, monitor = false, expectedRevision = un
 function failedSketchReceipt(state: TandemState) {
     if (state.effortReset || state.lifecycle.currentStage !== "sketch" ||
         state.processing?.status !== "error" || !isSketchAction(state.processing.action)) return undefined;
-    return state.factoryRuns?.find((receipt) => !receipt.terminal &&
+    return state.factoryRuns?.find((receipt) => isPendingFactoryRun(receipt) &&
         receipt.generation === state.generation && receipt.requestId === state.processing.requestId);
 }
 
@@ -5135,7 +5191,7 @@ async function ensureUsageSuggestionsStarted(state, canSubmitAnswers) {
 async function runSuggestionFactory(prototypeId, requestId, goal, usageItems) {
     if (!(await isPreferredAnswerProvider(PROVIDER_EXTENSION_ID))) return;
     const state = await loadState(prototypeId);
-    if (state.factoryRuns?.some(receipt => !receipt.terminal)) {
+    if (state.factoryRuns?.some(isPendingFactoryRun)) {
         throw new Error("Previous native work is not confirmed terminal. Usage is saved; suggestions were not started.");
     }
     const run = await runEffortFactory(prototypeId, requestId, {
@@ -6418,6 +6474,11 @@ async function handleRequest(entry, req, res) {
         return;
     }
 
+    if (req.method === "POST" && requestUrl.pathname === "/api/effort/recover") {
+        const state = await abandonUncertainFactory(entry.prototypeId, entry.extensionId, await readRequestBody(req));
+        sendJson(res, 200, publicState(entry, state));
+        return;
+    }
     if (req.method === "POST" && ["/api/effort/reset", "/api/effort/start"].includes(requestUrl.pathname)) {
         const input = await readRequestBody(req);
         const action = requestUrl.pathname.endsWith("/reset") ? resetEffort : startEffort;
