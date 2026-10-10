@@ -1,5 +1,5 @@
 // Presentation messages never become native conversation input or runtime authority.
-export function installProjectPresentation({ document, window, changed, settings, currentWork, effortChanged }) {
+export function installProjectPresentation({ document, window, changed, settings, currentWork, effortChanged, layoutChanged }) {
   const { projectPanel: panel, projectOrigin: origin, projectChannel: channel } = document.body.dataset;
   if (!panel) return null;
   let context = null, selected = "discovery", pending = null, nativePending = false;
@@ -84,6 +84,10 @@ export function installProjectPresentation({ document, window, changed, settings
       document.body.dataset.projectDesign = String(message.designVisible === true);
       renderEffort();
       update(); changed();
+    } else if (message.type === "layout" && typeof message.stacked === "boolean"
+      && Number.isFinite(message.conversationWidth) && message.conversationWidth >= 0 && message.conversationWidth <= 20000) {
+      document.body.dataset.projectStacked = String(message.stacked);
+      layoutChanged?.({ stacked: message.stacked, conversationWidth: message.conversationWidth });
     } else if (message.type === "command") {
       if (message.command === "settings") { settings(); requestEffort(); }
       if (message.command === "current-work") currentWork();
@@ -133,6 +137,8 @@ export function installProjectPresentation({ document, window, changed, settings
     activate: retry => send({ type: "activate", retry: retry === true }),
     showDesign: () => send({ type: "show-design" }),
     settingsClosed: () => send({ type: "settings-closed" }),
+    appearance: preferences => send({ type: "appearance", theme: preferences.theme, fontSize: preferences.fontSize }),
+    resized: width => send({ type: "conversation-resize", width }),
     busy: () => Boolean(effortPending),
     nativePending(value) { nativePending = value; update(); },
     discovery: () => selected === "discovery",

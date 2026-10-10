@@ -1,3 +1,5 @@
+@import "../../stage2/tandem/public/project-theme.css";
+
 :root {
   color-scheme: light dark;
   font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
@@ -5,48 +7,21 @@
   line-height: 1.5;
   background: var(--studio-surface);
   color: var(--studio-text);
-  --studio-surface: var(--background-color-default, light-dark(#ffffff, #151b26));
-  --studio-text: var(--text-color-default, light-dark(#273449, #e1e7f0));
-  --studio-muted: var(--text-color-muted, light-dark(#5c697c, #9caabd));
-  --studio-accent: var(--true-color-blue, light-dark(#365cc7, #98b5ff));
-  --studio-accent-strong: color-mix(in srgb, var(--studio-accent) 88%, var(--studio-text));
-  --studio-accent-soft: color-mix(in srgb, var(--studio-surface) 92%, var(--studio-accent));
-  --studio-panel: color-mix(in srgb, var(--studio-surface) 95%, var(--studio-muted));
-  --studio-section: var(--background-color-muted, color-mix(in srgb, var(--studio-surface) 93%, var(--studio-muted)));
-  --studio-border: color-mix(in srgb, var(--border-color-default, light-dark(#d8dee8, #343e50)) 94%, var(--studio-accent));
-  --studio-mark: #3559ba;
-  --studio-header: light-dark(#253750, #0d1524);
-  --studio-sidebar: light-dark(#e9eef6, #111c2c);
-  --studio-card: var(--studio-surface);
-  --studio-action-bg: #355bc4;
-  --studio-success: var(--true-color-green, light-dark(#16704a, #66d4a5));
-  --studio-warning: var(--true-color-yellow, light-dark(#8a6100, #eac16b));
-  --studio-danger: var(--true-color-red, light-dark(#bc3041, #ff929b));
-  --studio-success-soft: color-mix(in srgb, var(--studio-surface) 92%, var(--studio-success));
-  --studio-warning-soft: color-mix(in srgb, var(--studio-surface) 92%, var(--studio-warning));
-  --studio-danger-soft: color-mix(in srgb, var(--studio-surface) 92%, var(--studio-danger));
-  --studio-focus: var(--color-focus-outline, var(--studio-accent));
-  --studio-shadow: 0 1px 2px rgb(15 23 42 / 4%);
-  --next-action-color: var(--studio-accent);
-  --studio-radius: 8px;
-  --studio-space: 8px;
-  --studio-gap: 8px;
-  --studio-card-padding: 10px;
-  --studio-heading-padding: 10px 12px;
-  --studio-control-height: 30px;
-  --studio-control-line-height: 20px;
-  --studio-control-padding-block: calc((var(--studio-control-height) - var(--studio-control-line-height) - 2px) / 2);
-  --studio-control-padding: var(--studio-control-padding-block) 10px;
-  --studio-control-gap: 6px;
-  --studio-small-control-height: var(--studio-control-height);
-  --studio-header-height: 44px;
-  --studio-tab-height: 36px;
-  --studio-composer-height: var(--studio-control-height);
-  --studio-composer-expanded-height: 72px;
 }
 
 :root[data-color-mode="light"], :root:has(body[data-color-mode="light"]) { color-scheme: light; }
 :root[data-color-mode="dark"], :root:has(body[data-color-mode="dark"]) { color-scheme: dark; }
+:root[data-project-theme="light"] { color-scheme: light; }
+:root[data-project-theme="dark"] { color-scheme: dark; }
+:root:is([data-project-theme="light"], [data-project-theme="dark"]) {
+  --background-color-default: initial;
+  --background-color-muted: initial;
+  --text-color-default: initial;
+  --text-color-muted: initial;
+  --border-color-default: initial;
+}
+:root[data-project-font-size="larger"] { font-size: 15px; }
+:root[data-project-font-size="largest"] { font-size: 17px; }
 
 .plan-actions { flex-wrap: wrap; }
 .plan-actions > span { min-width: 0; overflow-wrap: anywhere; }
@@ -3459,7 +3434,7 @@ textarea {
 }
 
 .project-workspace-app { grid-template-rows: minmax(0, 1fr) auto; }
-#studio-workspace.project-workspace { grid-template-columns: var(--requirements-width, 220px) 1px minmax(280px, 1fr) 6px var(--conversation-width, min(42vw, 520px)); }
+#studio-workspace.project-workspace { grid-template-columns: var(--requirements-width, 220px) 1px minmax(280px, 1fr) 6px minmax(300px, min(var(--conversation-width, min(42vw, 520px)), calc(100% - var(--requirements-width, 220px) - 287px))); }
 .project-workspace > .requirements { display: block !important; min-width: 0; overflow: auto; }
 .project-workspace > .splitter { display: block; }
 .project-workspace > .context-toggle { display: none; }
@@ -3507,7 +3482,7 @@ textarea {
   .project-workspace > .requirements { flex: 0 0 auto; max-height: 180px; overflow: auto; }
   .project-workspace > .preview { flex: 0 0 420px; }
   .project-workspace[data-development="true"] > .preview { flex: 0 0 auto; }
-  #project-conversation { flex: 0 0 560px; }
+  #project-conversation { flex: 1 0 560px; }
   .project-tabs { flex-direction: row; flex-wrap: wrap; }
   .project-workspace .topbar { padding: 4px 10px; }
   .project-workspace .project-navigation { padding: 6px 10px; }

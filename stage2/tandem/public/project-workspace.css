@@ -1,0 +1,111 @@
+@import "./project-theme.css";
+
+/* Embedded shell only: source artifacts and standalone presentation retain their styling. */
+.human-app[data-project-panel] {
+  --background: var(--studio-panel);
+  --surface: var(--studio-surface);
+  --surface-muted: var(--studio-panel);
+  --surface-raised: var(--studio-section);
+  --text: var(--studio-text);
+  --muted: var(--studio-muted);
+  --faint: var(--studio-muted);
+  --border: var(--studio-border);
+  --blue: var(--studio-accent);
+  --blue-soft: var(--studio-accent-soft);
+  --green: var(--studio-success);
+  --green-soft: var(--studio-success-soft);
+  --orange: var(--studio-warning);
+  --orange-soft: var(--studio-warning-soft);
+  --danger: var(--studio-danger);
+  --danger-soft: var(--studio-danger-soft);
+  --accent-fill: var(--studio-action-bg);
+  --accent-fill-hover: color-mix(in srgb, var(--studio-action-bg) 90%, #000);
+  --shell-accent: var(--studio-accent);
+  --shell-accent-soft: var(--studio-accent-soft);
+  --shell-control-border: var(--studio-border);
+  --shell-primary-border: var(--studio-action-bg);
+  --shell-control-hover: var(--studio-panel);
+  --shell-destructive: var(--studio-danger);
+  --shell-focus: var(--studio-focus);
+  --shell-control-height: var(--studio-control-height);
+  --shell-control-weight: 400;
+  --shell-font-size: 13px;
+  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  line-height: 1.5;
+}
+.human-app[data-project-panel]:is([data-theme="light"], [data-theme="dark"]) {
+  --background-color-muted: initial;
+  --text-color-muted: initial;
+  --border-color-default: initial;
+}
+.human-app[data-project-panel][data-font-size="larger"] { --shell-font-size: 15px; }
+.human-app[data-project-panel][data-font-size="largest"] { --shell-font-size: 17px; }
+.human-app[data-project-panel] .panel-heading {
+  flex: none;
+  min-height: var(--studio-header-height);
+  box-sizing: border-box;
+  padding: var(--studio-heading-padding);
+  gap: var(--studio-gap);
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.human-app[data-project-panel] .panel-heading h2 { margin: 0; font-size: calc(var(--shell-font-size) + 1px); line-height: 1.5; }
+.human-app[data-project-panel] .panel-heading .eyebrow { margin: 0; color: var(--muted); font-size: 11px; }
+.human-app[data-project-panel] .canvas-panel .design-navigation { padding: 8px 12px 0; }
+.human-app[data-project-panel] .artifact-navigation-row { gap: var(--studio-control-gap); min-height: 36px; }
+.human-app[data-project-panel] .artifact-navigation-row[aria-label="Artifact categories"] { padding: 0; background: transparent; }
+.human-app[data-project-panel] .artifact-navigation-row :is([data-artifact-group], [data-artifact-tab]) {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: var(--studio-control-padding);
+}
+.human-app[data-project-panel] .artifact-navigation-row [aria-pressed="true"] {
+  border-color: var(--studio-border);
+  background: var(--studio-accent-soft);
+  color: var(--studio-accent);
+}
+.human-app[data-project-panel] .perspective-toolbar { gap: var(--studio-control-gap); padding-block: 6px; flex-wrap: wrap; }
+.human-app[data-project-panel] :is(.perspective-toolbar button, .artifact-navigation-row button,
+  .canvas-settings button, .settings-fields select, .access-card button, .human-runtime-actions button,
+  .implementation-confirmation-actions button, #show-questions, #project-message-context button, #project-message-target) {
+  box-sizing: border-box;
+  min-height: var(--studio-control-height);
+  padding: var(--studio-control-padding);
+  font: inherit;
+  line-height: var(--studio-control-line-height);
+  border-radius: 6px;
+}
+.human-app[data-project-panel] :is(#show-questions, #project-message-context button, #project-message-target) {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+.human-app[data-project-panel] :is(#apply-project-effort, #activate-project-development) {
+  background: var(--accent-fill);
+  border-color: var(--shell-primary-border);
+  color: var(--on-accent);
+}
+.human-app[data-project-panel] #apply-project-effort:hover:not(:disabled) { background: var(--accent-fill-hover); }
+.human-app[data-project-panel] .settings-fields { gap: var(--studio-gap); }
+.human-app[data-project-panel] .canvas-settings[open] { padding: 12px; border-radius: var(--studio-radius); }
+.human-app[data-project-panel] .settings-section { margin-top: 12px; padding-top: 12px; }
+.human-app[data-project-panel] .empty-badge { padding: 2px 6px; border: 1px solid var(--border); border-radius: 6px; font-size: 11px; color: var(--muted); background: var(--surface-muted); }
+.human-app[data-project-panel] :is(#messages, .canvas-scroll, .access-request-context) { overscroll-behavior: contain; }
+.human-app[data-project-panel] .canvas-scroll { background: var(--surface); }
+.human-app[data-project-panel] #messages { padding: 12px; }
+.human-app[data-project-panel] .command-bar { padding: 10px 12px; border-top: 1px solid var(--border); background: var(--surface); }
+.human-app[data-project-panel] #project-message-context { gap: var(--studio-control-gap); }
+.human-app[data-project-panel] #project-message-context p { margin: 4px 0; }
+.human-app[data-project-panel][data-project-stacked="true"][data-project-design="true"] .human-layout {
+  display: flex; flex-direction: column; overflow: auto;
+}
+.human-app[data-project-panel][data-project-stacked="true"][data-project-design="true"] .human-design {
+  flex: 0 0 360px; min-height: 360px;
+}
+.human-app[data-project-panel][data-project-stacked="true"] .human-conversation {
+  flex: 1 0 560px; min-height: 560px;
+}
+@media (pointer: coarse) {
+  .human-app[data-project-panel] { --studio-control-height: 44px; --studio-tab-height: 44px; }
+}

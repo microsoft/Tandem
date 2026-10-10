@@ -14,9 +14,9 @@ import { createImplementationConfirmations } from './implementation-confirmation
 import { installProjectPresentation } from './project-presentation.js';
 
 const $ = (id) => document.getElementById(id);
-const disposeSplitter = installPanelSplitter({ layout: document.querySelector('.human-layout'),
-  design: $('design-panel'), separator: $('workspace-divider') });
-window.addEventListener('pagehide', event => { if (!event.persisted) disposeSplitter(); });
+const splitter = installPanelSplitter({ layout: document.querySelector('.human-layout'),
+  design: $('design-panel'), separator: $('workspace-divider'), resized: width => projectPresentation?.resized(width) });
+window.addEventListener('pagehide', event => { if (!event.persisted) splitter.dispose(); });
 const darkPreference = matchMedia('(prefers-color-scheme: dark)');
 function updateBranding() {
   const preference = document.body.dataset.theme;
@@ -55,6 +55,7 @@ const projectPresentation = installProjectPresentation({ document, window,
   changed: () => { if (snapshot) render(); },
   settings: () => { $('canvas-settings').open = true; $('setting-theme').focus(); void refreshSettings(); },
   effortChanged: () => { void refreshSettings(true); },
+  layoutChanged: layout => splitter.setProjectLayout(layout),
   currentWork: () => $('focus-current-message').click(),
 });
 function renderReasoningEffort() {
@@ -78,6 +79,7 @@ function applySettings(value, preserveAppearanceDraft = false) {
   const preferences = value.preferences, model = value.model;
   document.body.dataset.theme = preferences.theme;
   document.body.dataset.fontSize = preferences.fontSize;
+  projectPresentation?.appearance(preferences);
   if (!preserveAppearanceDraft) {
     $('setting-theme').value = preferences.theme;
     $('setting-font').value = preferences.fontSize;

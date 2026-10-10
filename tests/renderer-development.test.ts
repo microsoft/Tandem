@@ -177,7 +177,8 @@ test("real React Development keeps handoff controls in view across long-status h
             response.end('<!doctype html><html><body><label>Unsent Development draft<textarea id="draft"></textarea></label></body></html>');
         });
         const [styles, hostStyles, bundle] = await Promise.all([
-            readFile(new URL("../src/renderer/styles.css", import.meta.url), "utf8"),
+            build({ entryPoints: [fileURLToPath(new URL("../src/renderer/styles.css", import.meta.url))],
+                bundle: true, write: false, logLevel: "silent" }),
             build({ entryPoints: [fileURLToPath(new URL("../src/browser/styles.css", import.meta.url))],
                 bundle: true, write: false, logLevel: "silent" }),
             build({
@@ -223,7 +224,7 @@ test("real React Development keeps handoff controls in view across long-status h
                 response.end('<!doctype html><html><head><link rel="stylesheet" href="/styles.css"></head>'
                     + '<body><div id="root"></div><script type="module" src="/app.js"></script></body></html>');
             } else if (path === "/styles.css") {
-                response.writeHead(200, { "Content-Type": "text/css" }); response.end(styles);
+                response.writeHead(200, { "Content-Type": "text/css" }); response.end(styles.outputFiles[0].text);
             } else if (path === "/app.js") {
                 response.writeHead(200, { "Content-Type": "text/javascript" }); response.end(bundle.outputFiles[0].text);
             } else if (path === "/api/state" && request.method === "GET") {

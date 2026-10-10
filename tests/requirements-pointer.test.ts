@@ -19,7 +19,8 @@ test("defaults mouse activation stays on its button when focus leaves the answer
                 recommended: "Trim whitespace, reject empty names and allow duplicates.", allowFreeText: true,
                 answerPlaceholder: "Override the shared text-validation policy." },
         }];
-        const css = await readFile(new URL("../src/renderer/styles.css", import.meta.url), "utf8");
+        const css = (await build({ entryPoints: [fileURLToPath(new URL("../src/renderer/styles.css", import.meta.url))],
+            bundle: true, write: false, logLevel: "silent" })).outputFiles[0].text;
         const bundle = await build({ stdin: { contents: `
             import React from "react"; import {createRoot} from "react-dom/client";
             import {App} from "./app.js"; import {StudioStore} from "./state-store.js";

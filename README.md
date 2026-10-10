@@ -260,6 +260,12 @@ expands its existing Design pane alongside its existing conversation. This also
 keeps annotations and unsent attachments with their original composer, rather
 than creating a second editor. Standalone Stage 2 retains its full shell.
 
+Embedded Development uses the framework's shared color and control tokens.
+Saved appearance settings apply to the whole project surface. Resizing the
+artifact/conversation split carries across artifact navigation; constrained
+windows stack the contents without replacing the conversation or its draft.
+Source diagrams and documents retain their own authored styling.
+
 The composer shows **Send to** before submission. Discovery actions use the
 existing public goal, usage, saved-drawing revision or Prototype-feedback APIs;
 formal Design and implementation messages use the original private request API.

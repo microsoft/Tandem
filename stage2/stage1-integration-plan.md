@@ -601,3 +601,39 @@ root's existing public project-effort endpoint. Per-stage validation, applicatio
 readback and persistence remain independently owned. Partial failure and pending
 private intent stay visible; opening Settings or saving intent cannot activate
 Development. Standalone Stage2 keeps its original independent effort control.
+
+### October 10: bounded embedded shell consistency
+
+The framework palette and density tokens now have one stylesheet source,
+`tandem/public/project-theme.css`, imported by both the root bundle and the
+embedded presentation. Embedded-only adapters align artifact headings,
+navigation selection, toolbars, Settings and controls; authored artifact
+contents and standalone styling remain separate. Saved appearance values are
+projected to the root through the existing bound presentation channel, not a
+second preferences writer.
+
+Both artifact/conversation splitters use the root's actual conversation width.
+User resizing carries between discovery and Development, including rapid
+navigation immediately after input. Below the root's desktop breakpoint the
+embedded contents stack and remain scrollable. Navigation resizing reserves
+both content panes' minimum widths. These are presentation messages only:
+activation, requests, questions, consent and implementation confirmation retain
+their existing interfaces and identities.
+
+Fourteen focused tests cover the complete browser surface, shared effort,
+cross-view keyboard resizing, populated Design, light/dark palettes, Settings
+Close/Escape, draft/target retention, narrow scrolling, and the defaults pointer
+regression. Five additional focused checks cover shared token contracts and
+standalone Settings/splitter behavior. These browser journeys use synthetic
+runtime fixtures, not native completion evidence. Type checking and the complete
+browser build pass; fresh frozen-package/native-project qualification is tracked
+separately.
+
+The retained checklist implementation is still interrupted after backend work:
+the private session reported a native query error, HTTP 400 internal server
+error. Normal Close completed, and all 22 captured owned process identities
+were absent afterward. The failed request and partial files remain intact.
+This UI pass neither retries that request nor completes the outstanding browser,
+aggregate or native Review work. Contextual forms, the native history rail and
+some repeated status/header structure remain intentionally outside this bounded
+visual pass; this is not a complete design-system rewrite.

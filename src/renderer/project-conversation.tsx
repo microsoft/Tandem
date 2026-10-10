@@ -78,6 +78,21 @@ export function ProjectConversationProvider({ children, designVisible, showDesig
         send({ type: "context", entries: discoveryEntries(state), discovery: projectDiscovery(state, pending),
             canActivate: canOpenDevelopment(state), developmentActive: view.active, designVisible,
             canChangeEffort: state.provider?.canSubmitAnswers !== false && !pending });
+        syncLayout();
+    }
+    function syncLayout() {
+        const workspace = document.getElementById("studio-workspace");
+        if (!workspace) return;
+        const columns = getComputedStyle(workspace).gridTemplateColumns.split(/\s+/);
+        const conversationWidth = columns.length === 5 ? parseFloat(columns[4]!) : 0;
+        const divider = document.getElementById("project-conversation-divider");
+        if (divider && conversationWidth > 0) {
+            divider.setAttribute("aria-valuenow", String(Math.round(conversationWidth)));
+            divider.setAttribute("aria-valuemax", String(Math.round(workspace.clientWidth - parseFloat(columns[0]!) - 287)));
+            divider.setAttribute("aria-valuetext", `Conversation ${Math.round(conversationWidth)} pixels`);
+        }
+        send({ type: "layout", stacked: window.innerWidth < 1000,
+            conversationWidth });
     }
     async function activate(retry = false) {
         if (opening.current) return;
@@ -109,6 +124,14 @@ export function ProjectConversationProvider({ children, designVisible, showDesig
         return () => { disposed = true; };
     }, [state.provider?.canSubmitAnswers]);
     useEffect(() => { sync(); }, [state, pending, view.url, view.active, designVisible]);
+    useEffect(() => {
+        const observer = new ResizeObserver(syncLayout);
+        const workspace = document.getElementById("studio-workspace");
+        if (workspace) observer.observe(workspace);
+        if (frame.current) observer.observe(frame.current);
+        window.addEventListener("resize", syncLayout);
+        return () => { observer.disconnect(); window.removeEventListener("resize", syncLayout); };
+    }, [view.url]);
     useEffect(() => { if (designVisible) setView(v => v.designChanged ? { ...v, designChanged: false } : v); }, [designVisible]);
     useEffect(() => {
         const receive = (event: MessageEvent) => {
@@ -119,6 +142,18 @@ export function ProjectConversationProvider({ children, designVisible, showDesig
             if (message.type === "ready") { sync(); return; }
             if (message.type === "show-design") { latest.current.showDesign(); return; }
             if (message.type === "settings-closed") { document.getElementById("project-settings")?.focus(); return; }
+            if (message.type === "conversation-resize" && window.innerWidth >= 1000
+                && Number.isFinite(message.width) && message.width >= 300 && message.width <= window.innerWidth) {
+                document.getElementById("studio-workspace")?.style.setProperty("--conversation-width", `${message.width}px`);
+                syncLayout();
+                return;
+            }
+            if (message.type === "appearance" && ["system", "light", "dark"].includes(message.theme)
+                && ["normal", "larger", "largest"].includes(message.fontSize)) {
+                document.documentElement.dataset.projectTheme = message.theme;
+                document.documentElement.dataset.projectFontSize = message.fontSize;
+                return;
+            }
             if (["project-effort-read", "project-effort-apply"].includes(message.type)) {
                 if (typeof message.id !== "string" || message.id.length > 100) return;
                 const applying = message.type === "project-effort-apply";
@@ -185,13 +220,14 @@ export function ProjectConversation() {
         const panel = document.getElementById("project-conversation");
         const workspace = document.getElementById("studio-workspace");
         if (!panel || !workspace || window.innerWidth < 1000) return;
-        const width = Math.max(300, Math.min(workspace.clientWidth - 500, panel.getBoundingClientRect().width + delta));
+        const navigationWidth = document.getElementById("requirements-pane")?.getBoundingClientRect().width ?? 220;
+        const width = Math.max(300, Math.min(workspace.clientWidth - navigationWidth - 287, panel.getBoundingClientRect().width + delta));
         workspace.style.setProperty("--conversation-width", `${width}px`);
     };
     return <><div id="project-conversation-divider" role="separator" tabIndex={0} aria-label="Resize artifact and conversation"
-        aria-orientation="vertical" aria-controls="preview-pane project-conversation"
+        aria-orientation="vertical" aria-controls="preview-pane project-conversation" aria-valuemin={300}
         onKeyDown={event => { if (["ArrowLeft", "ArrowRight"].includes(event.key)) { resize(event.key === "ArrowLeft" ? 24 : -24); event.preventDefault(); } }}
-        onPointerDown={event => { if (event.button === 0) { drag.current = event.clientX; event.currentTarget.setPointerCapture(event.pointerId); event.preventDefault(); } }}
+        onPointerDown={event => { if (event.button === 0) { event.currentTarget.focus({ preventScroll: true }); drag.current = event.clientX; event.currentTarget.setPointerCapture(event.pointerId); event.preventDefault(); } }}
         onPointerMove={event => { if (drag.current !== null) { resize(drag.current - event.clientX); drag.current = event.clientX; } }}
         onPointerUp={event => { drag.current = null; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); }}
         onLostPointerCapture={() => { drag.current = null; }} />

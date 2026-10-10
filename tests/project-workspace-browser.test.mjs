@@ -14,6 +14,7 @@ import { browserAvailable, openFixtureBrowser } from "../stage2/tandem/test/help
 import { JSDOM } from "jsdom";
 import { installProjectPresentation } from "../stage2/tandem/public/project-presentation.js";
 import { createConversationRenderer } from "../stage2/tandem/public/renderers/conversation.js";
+import { sharedDesignExampleV3 } from "../stage2/tandem/test/helpers/shared-design-fixture.mjs";
 
 test("saved evidence updates without rewriting immutable native conversation", t => {
   const dom = new JSDOM('<div><div id="history"></div></div><div id="messages"></div><div id="current"></div><div id="detail"></div><button id="newer"></button>', { pretendToBeVisual: true });
@@ -114,7 +115,8 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
     let accessRequests = [];
     const owner = { schemaVersion: "human-loop-owner/v1", id: "owner", mainSessionId: "main", privateSessionId: "private",
       workspacePath: root, policy: DEFAULT_POLICY };
-    let nativeState = replayHumanLoopLedger(createHumanLoopLedger(owner, { revisionId: null, digest: null })).state;
+    const designBinding = { revisionId: "fixture-design", digest: "a".repeat(64) };
+    let nativeState = replayHumanLoopLedger(createHumanLoopLedger(owner, designBinding)).state;
     let active = false, stopped = false, installationStatus = "new";
     const value = discoveryState("requirements");
     value.requirements.substage = "usage";
@@ -122,7 +124,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       sessionId: "private", state: async () => nativeState,
       readiness: async () => ({ status: stopped ? "closed" : nativeState.activeRequestId ? "working" : "ready",
         workspacePath: root, reason: stopped ? "Closed; saved history retained. Reopen explicitly." : null }),
-      conversation: async () => [], currentDesign: async () => ({ binding: { revisionId: null, digest: null }, content: null }),
+      conversation: async () => [], currentDesign: async () => ({ binding: designBinding, content: sharedDesignExampleV3() }),
       commands: { read: async () => ({ apps: [], commands: [] }) },
       modelSettings: async () => ({ models: [{ id: "fixture", name: "Fixture", supportedReasoningEfforts: ["low"] }],
         actual: "fixture", actualReasoningEffort: "low", desired: "fixture", canChange: true,
@@ -148,7 +150,8 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       },
     };
     let provider;
-    const css = await readFile(new URL("../src/renderer/styles.css", import.meta.url), "utf8");
+    const css = (await build({ entryPoints: [resolve("src", "renderer", "styles.css")],
+      bundle: true, write: false, logLevel: "silent" })).outputFiles[0].text;
     const template = (await readFile(new URL("../src/renderer/index.html", import.meta.url), "utf8"))
       .replace("__TANDEM_STYLES__", () => css).replace("__TANDEM_VERSION__", "unified-fixture")
       .replace("<script>__TANDEM_CLIENT__</script>", '<script type="module" src="/app.js"></script>');
@@ -255,11 +258,27 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       assert.equal(active, false);
       await click("#message", true); await browser.call("Input.insertText", { text: "As a user, I keep my draft while viewing Design." });
       assert.equal(await inside('document.querySelector("#message").value'), "As a user, I keep my draft while viewing Design.");
+      const conversationWidth = () => browser.evaluate('document.querySelector("#project-conversation").getBoundingClientRect().width');
+      const initialWidth = await conversationWidth();
       await click("#development-tab");
       await waitInside('document.body.dataset.projectDesign==="true"');
+      await waitInside(`Math.abs(document.querySelector("#conversation-panel").getBoundingClientRect().width-${initialWidth})<2`);
+      await click("#workspace-divider", true);
+      await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "ArrowLeft", windowsVirtualKeyCode: 37 });
+      await waitInside(`Math.abs(document.querySelector("#conversation-panel").getBoundingClientRect().width-${initialWidth + 10})<2`);
       assert.equal(await inside('document.querySelector("#message").value'), "As a user, I keep my draft while viewing Design.");
       assert.equal(await inside('document.querySelector("#project-message-target").value'), "discovery");
       assert.equal(active, false, "Browsing Design is not activation.");
+      await click("#design-tree-tab");
+      await waitInside('document.body.dataset.projectDesign==="false"');
+      const returnedWidth = await conversationWidth();
+      assert.ok(Math.abs(returnedWidth - initialWidth - 10) < 2,
+        `Development resizing follows the conversation into discovery: initial ${initialWidth}, returned ${returnedWidth}, ${await browser.evaluate('document.querySelector("#studio-workspace").getAttribute("style")')}.`);
+      await click("#project-conversation-divider");
+      await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "ArrowRight", windowsVirtualKeyCode: 39 });
+      await browser.waitFor(`Math.abs(document.querySelector("#project-conversation").getBoundingClientRect().width-${initialWidth - 14})<2`);
+      await click("#development-tab");
+      await waitInside(`document.body.dataset.projectDesign==="true" && Math.abs(document.querySelector("#conversation-panel").getBoundingClientRect().width-${initialWidth - 14})<2`);
       await click("#design-tree-tab");
       await waitInside('document.body.dataset.projectDesign==="false"');
       await click("#send", true);
@@ -276,6 +295,23 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       assert.equal(await inside('document.querySelector("#setting-effort").disabled'), true);
       assert.equal(await inside('getComputedStyle(document.querySelector(".brand")).display'), "none");
       assert.equal(await inside('getComputedStyle(document.querySelector("#browser-session-guidance")).display'), "none");
+      for (const [theme, index] of [["light", 1], ["dark", 2]]) {
+        await click("#setting-theme", true);
+        for (const key of ["Home", ...Array(index).fill("ArrowDown"), "Enter"]) {
+          const windowsVirtualKeyCode = { Home: 36, ArrowDown: 40, Enter: 13 }[key];
+          await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key, windowsVirtualKeyCode });
+          await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key, windowsVirtualKeyCode });
+        }
+        assert.equal(await inside('document.querySelector("#setting-theme").value'), theme);
+        await click("#save-appearance", true);
+        await browser.waitFor(`document.documentElement.dataset.projectTheme==="${theme}"`);
+        assert.equal(await inside('getComputedStyle(document.querySelector("#design-panel")).backgroundColor'),
+          await browser.evaluate('getComputedStyle(document.documentElement).backgroundColor'), `${theme}: shared surface palette`);
+        assert.equal(await inside('getComputedStyle(document.body).fontSize'),
+          await browser.evaluate('getComputedStyle(document.documentElement).fontSize'), "Shared shell typography");
+        assert.equal(await inside('document.querySelector("#close-settings").getBoundingClientRect().height'),
+          await browser.evaluate('document.querySelector("#project-settings").getBoundingClientRect().height'), "Shared control height");
+      }
       const beforeDismissal = mutations.length;
       await inside('document.querySelector("#setting-theme").value="dark"');
       await click("#close-settings", true);
@@ -302,7 +338,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       nativeState.questions.push({ id: "scope-question", question: "Which scope should we retain?", context: "Saved project scope",
         whyItMatters: "Avoid unintended changes", importance: "blocking", options: [], allowFreeform: true,
         state: "open", blockingActive: true, source: { role: "designer", resultId: "question-result",
-          requestId, requestIds: [requestId], cycleId: null, design: { revisionId: null, digest: null }, planDigest: null } });
+          requestId, requestIds: [requestId], cycleId: null, design: designBinding, planDigest: null } });
       events.touch();
       await waitInside('!document.querySelector("#show-questions").disabled');
       if (await inside('document.querySelector("#question-panel").hidden')) await click("#show-questions", true);
@@ -321,7 +357,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       nativeState.requests.at(-1).route = { resultId: "route-confirmation", outcome: { summary: "Implement the approved scope." } };
       nativeState.implementationConfirmations = [{ id: "confirmation-one", requestId: nativeRequests[1].id,
         requestIds: [nativeRequests[1].id], routeResultId: "route-confirmation", status: "pending",
-        design: { revisionId: null, digest: null } }];
+        design: designBinding }];
       accessRequests = [{ id: "permission-one", title: "Read project files", scopes: ["Purpose: Inspect the current source"], canApproveAll: false }];
       events.touch();
       await waitInside('Boolean(document.querySelector("[data-access-decision=denied]"))');
@@ -338,6 +374,13 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         assert.equal(await browser.evaluate("innerWidth"), width, "Exercise the real CSS viewport, not mobile page scaling.");
         await click("#development-tab");
         await waitInside('document.body.dataset.projectDesign==="true"');
+        await waitInside(`document.body.dataset.projectStacked==="${width < 1000}"`);
+        if (width < 1000) {
+          assert.equal(await inside('document.querySelector("#workspace-divider").hidden'), true);
+          const sizes = await inside('({conversation:document.querySelector("#conversation-panel").getBoundingClientRect().width, layout:document.querySelector(".human-layout").clientWidth})');
+          assert.ok(Math.abs(sizes.conversation - sizes.layout) < 2 && Math.abs(sizes.conversation - await conversationWidth()) <= 20,
+            `Constrained conversation fills available width, allowing the vertical scrollbar: ${JSON.stringify(sizes)}, root ${await conversationWidth()}.`);
+        }
         assert.equal(await browser.evaluate('document.querySelectorAll("#project-conversation-frame").length'), 1);
         assert.equal(await inside('document.documentElement.scrollWidth<=innerWidth+1'), true, `No embedded overflow at ${width}.`);
         await click("#message", true);

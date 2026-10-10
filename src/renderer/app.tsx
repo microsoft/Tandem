@@ -308,13 +308,16 @@ function Workspace(props: WorkspaceProps) {
   const statusBarText = statusBarError || contextHelp || (nextAction ? "Next action: " + nextAction.label
     : state.status || (atStart ? "Ready to start a project." : "Ready."));
   const narrow = () => window.matchMedia("(max-width: 760px)").matches;
+  // Keep both artifact and conversation minimum widths, including the two dividers.
+  const maximumContextWidth = () => Math.max(minimumContextWidth,
+    (workspace.current?.getBoundingClientRect().width || minimumContextWidth + 587) - 587);
   const resize = (value: number) => {
     if (narrow() || contextCollapsed) return;
-    const max = Math.max(minimumContextWidth, (workspace.current?.getBoundingClientRect().width || minimumContextWidth + 361) - 1 - 360);
+    const max = maximumContextWidth();
     setMaximum(max); setWidth(Math.round(Math.min(max, Math.max(minimumContextWidth, value))));
   };
   useEffect(() => {
-    const update = () => { const max = Math.max(minimumContextWidth, (workspace.current?.getBoundingClientRect().width || minimumContextWidth + 361) - 361); setMaximum(max); setWidth((width) => Math.min(max, width)); };
+    const update = () => { const max = maximumContextWidth(); setMaximum(max); setWidth((width) => Math.min(max, width)); };
     update(); window.addEventListener("resize", update); return () => window.removeEventListener("resize", update);
   }, [atStart]);
   useEffect(() => {
@@ -452,7 +455,7 @@ function Workspace(props: WorkspaceProps) {
         <div id="studio-splitter" className={"splitter" + (dragging !== null ? " is-dragging" : "")} role="separator" tabIndex={0}
           aria-label="Resize requirements and output panels" aria-orientation="vertical" aria-controls="requirements-pane preview-pane"
           aria-valuemin={minimumContextWidth} aria-valuemax={maximum} aria-valuenow={width} title="Drag or use Left and Right arrow keys to resize"
-          onPointerDown={(event) => { if (event.button !== 0 || narrow()) return; setDragging(event.pointerId); event.currentTarget.setPointerCapture(event.pointerId); resize(event.clientX - (workspace.current?.getBoundingClientRect().left || 0)); event.preventDefault(); }}
+          onPointerDown={(event) => { if (event.button !== 0 || narrow()) return; event.currentTarget.focus({ preventScroll: true }); setDragging(event.pointerId); event.currentTarget.setPointerCapture(event.pointerId); resize(event.clientX - (workspace.current?.getBoundingClientRect().left || 0)); event.preventDefault(); }}
           onPointerMove={(event) => { if (dragging === event.pointerId) resize(event.clientX - (workspace.current?.getBoundingClientRect().left || 0)); }}
           onPointerUp={(event) => { if (dragging === event.pointerId) { setDragging(null); if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); } }}
           onPointerCancel={() => setDragging(null)} onLostPointerCapture={() => setDragging(null)}
