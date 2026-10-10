@@ -230,6 +230,15 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       assert.equal(await inside('document.querySelector("#setting-effort").disabled'), true);
       assert.equal(await inside('getComputedStyle(document.querySelector(".brand")).display'), "none");
       assert.equal(await inside('getComputedStyle(document.querySelector("#browser-session-guidance")).display'), "none");
+      const beforeDismissal = mutations.length;
+      await inside('document.querySelector("#setting-theme").value="dark"');
+      await click("#close-settings", true);
+      await waitInside('!document.querySelector("#canvas-settings").open');
+      await browser.waitFor('document.activeElement.id==="project-settings"');
+      assert.equal(await inside('document.querySelector("#setting-theme").value'), "dark", "Dismissal does not discard the field value.");
+      assert.equal(mutations.length, beforeDismissal, "Settings dismissal cannot mutate settings or runtime.");
+      await click("#project-settings");
+      await waitInside('document.querySelector("#canvas-settings").open');
       await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
       await waitInside('!document.querySelector("#canvas-settings").open');
       await browser.waitFor('document.activeElement.id==="project-settings"');

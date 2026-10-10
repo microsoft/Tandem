@@ -54,6 +54,7 @@
 .human-app #compaction-status { flex: none; max-height: 8em; overflow: auto; margin: 0 12px 8px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-raised); color: var(--text); }
 .human-app .canvas-settings[open] { position: fixed; z-index: 30; top: 8px; right: 12px; width: min(680px, calc(100% - 24px)); max-height: 70dvh; overflow: auto; padding: 16px; border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); }
 .human-app .canvas-settings summary { cursor: pointer; width: fit-content; font-weight: 600; }
+.human-app #close-settings { position: absolute; top: 12px; right: 16px; }
 .human-app .settings-fields { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-top: 12px; }
 .human-app .settings-fields label { display: grid; gap: 4px; min-width: 0; }
 .human-app .settings-fields :is(select, button) { max-width: 100%; padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; }

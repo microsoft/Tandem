@@ -385,6 +385,46 @@ test("appearance survives provider restart and new port; API rejects malformed a
   } finally { await provider.close(); events.close(); }
 });
 
+test("standalone Settings has labelled mouse Close and Escape with focus return and no mutations", { skip: !browserAvailable }, async t => {
+  const f = await fixture(t), events = new HumanLoopEvents(), cleanups = [];
+  let closes = 0, modelChanges = 0;
+  f.switch(async () => { modelChanges++; });
+  const before = await f.preferences.read();
+  const provider = await createHumanLoopProvider({ repositoryRoot: f.root, publicDirectory: resolve(import.meta.dirname, "..", "public"), events,
+    getInstallation: () => ({ runtime: f.runtime, read: async () => ({ status: "ready" }), close: async () => { closes++; } }),
+    permissions: { list: () => [] } });
+  try {
+    const browser = await openFixtureBrowser({ after: cleanup => cleanups.push(cleanup) });
+    await browser.call("Page.navigate", { url: provider.url });
+    await browser.waitFor('document.querySelector("#model-setting-status").textContent.includes("Actual private model: one")');
+    const click = async selector => {
+      const point = await browser.evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});e.scrollIntoView({block:"nearest"});
+        const r=e.getBoundingClientRect(),hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);
+        return {x:r.x+r.width/2,y:r.y+r.height/2,visible:r.width>0&&r.height>0&&(hit===e||e.contains(hit))};})()`);
+      assert.ok(point.visible, selector);
+      for (const type of ["mousePressed", "mouseReleased"]) await browser.call("Input.dispatchMouseEvent",
+        { type, x: point.x, y: point.y, button: "left", clickCount: 1 });
+    };
+    await click("#canvas-settings > summary");
+    await browser.waitFor('document.querySelector("#canvas-settings").open');
+    await browser.evaluate('document.querySelector("#setting-theme").value="dark"');
+    await click("#close-settings");
+    await browser.waitFor('!document.querySelector("#canvas-settings").open');
+    assert.equal(await browser.evaluate('document.activeElement===document.querySelector("#canvas-settings > summary")'), true);
+    assert.equal(await browser.evaluate('document.querySelector("#setting-theme").value'), "dark");
+    await click("#canvas-settings > summary");
+    await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+    await browser.waitFor('!document.querySelector("#canvas-settings").open');
+    assert.equal(await browser.evaluate('document.activeElement===document.querySelector("#canvas-settings > summary")'), true);
+    assert.deepEqual(await f.preferences.read(), before);
+    assert.equal(closes, 0); assert.equal(modelChanges, 0); assert.equal(f.session.sends.length, 0);
+    assert.deepEqual(browser.exceptions, []);
+  } finally {
+    for (const cleanup of cleanups) await cleanup();
+    await provider.close(); events.close();
+  }
+});
+
 test("model HTTP actions validate inputs and target only the verified private runtime", async (t) => {
   const f = await fixture(t), events = new HumanLoopEvents();
   const provider = await createHumanLoopProvider({ repositoryRoot: f.root, publicDirectory: resolve(import.meta.dirname, "..", "public"), events,

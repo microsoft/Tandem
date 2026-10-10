@@ -135,11 +135,15 @@ async function saveSettings(path, data) {
   }
 }
 $('canvas-settings').addEventListener('toggle', () => { if ($('canvas-settings').open) void refreshSettings(); });
-$('canvas-settings').addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') {
-    event.preventDefault(); $('canvas-settings').open = false;
-    if (projectPresentation) projectPresentation.settingsClosed();
-    else $('canvas-settings').querySelector('summary').focus();
+function closeSettings() {
+  $('canvas-settings').open = false;
+  if (projectPresentation) projectPresentation.settingsClosed();
+  else $('canvas-settings').querySelector('summary').focus();
+}
+$('close-settings').onclick = closeSettings;
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !event.defaultPrevented && $('canvas-settings').open && !document.querySelector('dialog[open]')) {
+    event.preventDefault(); closeSettings();
   }
 });
 $('save-appearance').onclick = () => saveSettings('/api/settings', { theme: $('setting-theme').value, fontSize: $('setting-font').value });

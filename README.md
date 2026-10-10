@@ -238,6 +238,11 @@ The framework header uses Tandem's existing bicycle wordmark, shared with the
 standalone artwork. The build embeds it locally; displaying the logo needs no
 external asset request.
 
+Settings has a labelled **Close** button at its top-right. Close or Escape only
+dismisses the panel and returns focus to Project settings (or the standalone
+Settings trigger); it does not save, apply, discard, stop work or close the runtime.
+**Close runtime** remains a separate action under Diagnostics.
+
 The main framework is one project workspace: project navigation and Settings
 on the left, selected artifacts in the workspace, and one persistent project
 conversation alongside. Requirements, drawings and Prototype are artifact views.
