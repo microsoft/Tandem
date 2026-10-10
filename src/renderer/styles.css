@@ -467,7 +467,8 @@ form textarea[data-speech-input] {
   background: var(--studio-surface);
 }
 
-form:focus-within textarea[data-speech-input] {
+form:focus-within textarea[data-speech-input],
+#question-host:focus-within textarea[data-speech-input] {
   min-height: var(--studio-composer-expanded-height);
 }
 

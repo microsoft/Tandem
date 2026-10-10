@@ -534,3 +534,13 @@ Failure receipts are under the session's `files\unified-checklist-e2e\evidence`
 (`effort-popover-hit-failure.json/.png`, command `b6500c20-4b07-4609-9a6c-004f1b1d57cd`);
 `routing-effort-fix-tests.txt` is supplementary no-model coverage. The fresh
 native journey is still in progress; this is not a full-function E2E pass.
+
+The defaults pointer no-op was subsequently reproduced from the captured real
+Requirements snapshot. Moving focus from a radio inside the answer form to the
+sibling defaults button collapsed the speech textarea by 42 pixels between
+mouse-down and mouse-up. The latter hit the inspector instead of the button.
+The question card now retains expanded composer height while any of its controls
+has focus. `tests/requirements-pointer.test.ts` verifies trusted pointer-down
+and pointer-up hit the same stationary button and open the real confirmation.
+This fixes mouse activation, not the separate failed-launch receipt that blocked
+the first native defaults submission.
