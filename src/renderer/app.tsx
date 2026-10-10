@@ -382,7 +382,7 @@ function Workspace(props: WorkspaceProps) {
               {stageTabs.map(tab => {
                 const skipped = skippedStage(state, tab.stage);
                 const output = [...(state.lifecycle.history || []), ...state.lifecycle.outputs].reverse().find(item => item.stageId === tab.stage);
-                const label = tab.stage === "development" ? "Design" : tab.stage === "sketch" ? "Drawings" : tab.label;
+                const label = tab.stage === "sketch" ? "Drawings" : tab.label;
                 return <Tabs.Trigger key={tab.value} value={tab.value} id={tab.id + "-tab"}
                 className="preview-tab" data-stage-id={tab.stage} disabled={tab.stage !== "prepare" && !canBrowseStage(state, tab.stage)}
                 title={skipped?.reason || output?.path || label}

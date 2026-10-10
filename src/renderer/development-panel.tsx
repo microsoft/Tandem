@@ -13,7 +13,7 @@ export function DevelopmentPanel({ active }: { active: boolean }) {
             : "Finish upstream work or its pending reset before opening Development.")}</div>;
     return <div className="development-workspace">
         <div className="development-toolbar">
-            <span>Design artifacts. Your project conversation and current work stay beside this view.</span>
+            <span>Development: Design, planning, implementation and Review. Your project conversation stays alongside.</span>
             {!project.active && <button id="activate-development" type="button" className="plan-button" disabled={!eligible}
                 onClick={() => void project.activate()}>Activate Development</button>}
             {snapshot && <button id="continue-design" type="button" className="plan-button"

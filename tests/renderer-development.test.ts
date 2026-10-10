@@ -17,6 +17,7 @@ test("project chat routes exact discovery context once and rejects foreign or st
         return response(value);
     });
     h.render(value); await h.flush();
+    assert.equal(h.get("development-tab").getAttribute("aria-label"), "Development");
     const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
     const key = projectDiscovery(value, false).key;
     const send = async (data: object, origin = "http://127.0.0.1:8765", source: Window | null = frame.contentWindow) => {
@@ -121,6 +122,7 @@ test("Development mounts one isolated full workspace and navigation keeps its or
     });
     h.render(state("development"));
     await h.flush();
+    assert.equal(h.get("development-tab").textContent, "Development");
     const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
     assert.equal(frame.src, "http://127.0.0.1:8765/?panel=workspace");
     assert.equal(h.get("studio-workspace").dataset.development, "true");

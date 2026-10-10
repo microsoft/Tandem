@@ -564,3 +564,9 @@ active or changing evidence blocks. Stage2 is only checked through its existing
 public quiet boundary, never mutated. Duplicate decisions are idempotent and old
 request IDs cannot be replayed. The real checklist recovery remains to be
 qualified on a newly frozen candidate after the completed native Close.
+
+User-directed naming follow-up: the top-level navigation entry is
+**Development**, encompassing formal Design, planning, implementation and Review.
+The formal artifact and internal views remain **Design**. This changes visible
+labels and accessible names only; stage/runtime/storage identities and passive
+browsing semantics are unchanged.

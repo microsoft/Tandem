@@ -93,7 +93,7 @@ does not require a release bump or installation update.
 ## Workflow
 
 Choose **Open Development directly** on the initial screen, or **Activate
-Development** in the project conversation or Design view. No goal, completed Prototype or handoff is
+Development** in the project conversation or Development view. No goal, completed Prototype or handoff is
 required. Explicit activation creates or recovers the owned private runtime but sends no
 project request. Use its conversation to describe a new project or reference
 existing documents and source. Active upstream work and foreign/read-only
@@ -236,13 +236,15 @@ empty findings and worker statements are not evidence that tests passed.
 
 The main framework is one project workspace: project navigation and Settings
 on the left, selected artifacts in the workspace, and one persistent project
-conversation alongside. Requirements, drawings, Prototype and Design are views,
-not a requirement to start both engines. Current work and pending questions,
+conversation alongside. Requirements, drawings and Prototype are artifact views.
+The **Development** navigation entry contains formal Design, planning,
+implementation and Review; it is not an additional Stage1 Design phase.
+Browsing does not require starting both engines. Current work and pending questions,
 confirmations and permissions remain in the conversation while browsing.
 New Design output and a Prototype update awaiting Apply are marked in navigation.
 
 The complete Stage 2 renderer still owns its document, controls and isolated
-loopback origin. One iframe stays mounted across navigation; selecting Design
+loopback origin. One iframe stays mounted across navigation; selecting Development
 expands its existing Design pane alongside its existing conversation. This also
 keeps annotations and unsent attachments with their original composer, rather
 than creating a second editor. Standalone Stage 2 retains its full shell.
