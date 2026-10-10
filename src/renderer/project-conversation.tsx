@@ -29,6 +29,9 @@ export function discoveryEntries(state: UiState): Entry[] {
     state.requirements.usageItems.forEach((text, index) => push(`usage:${index}`, "user", text));
     state.decisionGraph.nodes.filter(node => node.answer).forEach(node =>
         push(`answer:${node.id}`, "status", `${node.title}\n${node.answer}`));
+    for (const request of state.sketch.requests ?? []) {
+        push(`drawing-request:${request.requestId}`, request.kind === "revise" ? "user" : "status", request.instruction, request.requestedAt);
+    }
     for (const checkpoint of state.prototypeFlow?.checkpoints ?? []) {
         push(`checkpoint:${checkpoint.id}`, "status", `${checkpoint.milestone}: ${checkpoint.status}. ${checkpoint.summary || ""}`,
             checkpoint.completedAt || checkpoint.requestedAt);

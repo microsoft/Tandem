@@ -256,6 +256,10 @@ Navigation never retargets a draft. Saved discovery evidence is a source-labelle
 render-only projection, not reconstructed native chat; it is never copied into a
 private request or written into its store. Cold private history still requires
 explicit runtime verification; browsing alone does not reopen it.
+Saved-evidence rows refresh when their source changes; native conversation records
+remain immutable. New drawing requests retain their exact accepted instruction,
+request ID, time and base revision in Stage1's own state, including failed requests.
+Older drawing instruction text that was never persisted is not reconstructed.
 Question answers and implementation decisions retain their original bound forms.
 If a discovery result is delayed, **Check submission** reads the same in-memory
 receipt without repeating the action. After a lost presentation session, inspect

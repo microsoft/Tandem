@@ -570,3 +570,13 @@ User-directed naming follow-up: the top-level navigation entry is
 The formal artifact and internal views remain **Design**. This changes visible
 labels and accessible names only; stage/runtime/storage identities and passive
 browsing semantics are unchanged.
+
+At the native Stage1-close boundary, evidence inspection found mutable projection
+rows still displaying their initial `running` text and a completed drawing
+instruction absent from the shared timeline. Saved-evidence rows now refresh
+independently of immutable native messages. Stage1 now records accepted drawing
+instructions with their original request/time/base-revision identity before
+dispatch and preserves them through success/failure. No earlier missing text is
+backfilled from E2E receipts or native-session history. The existing checklist's
+missing historical drawing instruction remains an explicit coverage limitation;
+new-request persistence is supplemented by focused lifecycle tests.

@@ -76,7 +76,7 @@ export function installProjectPresentation({ document, window, changed, settings
     nativePending(value) { nativePending = value; update(); },
     discovery: () => selected === "discovery",
     canSend: () => !pending && (selected !== "discovery" || context?.discovery?.enabled === true),
-    entries: () => context?.entries ?? [],
+    entries: () => (context?.entries ?? []).map(entry => ({ ...entry, savedEvidenceProjection: true })),
     submit(text) {
       if (!context?.discovery?.enabled || pending) return Promise.reject(new Error("This discovery action is not available."));
       return new Promise((resolve, reject) => {

@@ -42,6 +42,39 @@ async function approveDrawings(fixture: Awaited<ReturnType<typeof extensionHarne
     });
 }
 
+test("drawing requests retain original text and identity through successful and failed revisions", async () => {
+    const fixture = await extensionHarness();
+    try {
+        await readyRequirements(fixture);
+        generateDrawings(fixture);
+        await fixture.api.completeLifecycleStage("sample", "requirements", "project:tandem");
+        await fixture.api.waitForAnswer("sample");
+        const first = await fixture.api.loadState("sample");
+        const instruction = "Move the save status below the title.";
+        const pending = await fixture.api.sketchAction("sample", "project:tandem", {
+            action: "revise", expectedRevision: first.sketch.current.id, instruction,
+        });
+        const request = pending.sketch.requests.at(-1);
+        assert.equal(request.instruction, instruction);
+        assert.equal(request.requestId, pending.processing.requestId);
+        assert.equal(request.baseRevisionId, first.sketch.current.id);
+        await fixture.api.waitForAnswer("sample");
+        const saved = await fixture.api.loadState("sample");
+        assert.deepEqual(saved.sketch.requests.at(-1), request);
+        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, workflow: {
+            run: async () => ({ runId: "failed-drawing", status: "failed", error: "Synthetic failure" }),
+        } } });
+        await fixture.api.sketchAction("sample", "project:tandem", {
+            action: "revise", expectedRevision: saved.sketch.current.id, instruction: "Retain this failed request too.",
+        });
+        await fixture.api.waitForAnswer("sample");
+        const failed = await fixture.api.loadState("sample");
+        assert.equal(failed.processing.status, "error");
+        assert.equal(failed.sketch.requests.at(-1).instruction, "Retain this failed request too.");
+        assert.deepEqual(failed.sketch.requests[1], request);
+    } finally { await fixture.close(); }
+});
+
 test("Requirements generates drawings once and cannot start Prototype before explicit approval", async () => {
     const fixture = await extensionHarness();
     try {
@@ -248,7 +281,12 @@ test("a failed terminal-receipt save releases drawing work only after SDK verifi
         assert.match(failed.processing.message, /EPERM|Cannot replace/);
         assert.equal(failed.factoryRuns!.at(-1)!.terminal, false);
         assert.ok(failed.jobOwner);
-        assert.equal(JSON.stringify(failed.sketch), JSON.stringify(before.sketch));
+        const drawing = (sketch: typeof before.sketch) => {
+            const { requests, ...result } = sketch;
+            return JSON.stringify(result);
+        };
+        assert.equal(drawing(failed.sketch), drawing(before.sketch));
+        assert.equal(failed.sketch.requests.at(-1).instruction, "Improve the coffee cup.");
         fixture.setRename(rename);
         fixture.api.setSession({ ...fixture.session, workflow: {
             getRun: async (id: string) => { assert.equal(id, run.runId); verified++; return run; },
@@ -260,7 +298,8 @@ test("a failed terminal-receipt save releases drawing work only after SDK verifi
         assert.equal(verified, 1);
         assert.notEqual(retried.processing.requestId, failed.processing.requestId);
         assert.equal(retried.factoryRuns!.find((receipt) => receipt.requestId === failed.processing.requestId)!.terminal, true);
-        assert.equal(JSON.stringify(retried.sketch), JSON.stringify(before.sketch), "Recovery must not apply an uncommitted result.");
+        assert.equal(drawing(retried.sketch), drawing(before.sketch), "Recovery must not apply an uncommitted result.");
+        assert.equal(retried.sketch.requests.at(-1).instruction, "Improve the cup handle.");
         assert.equal(retried.generation, before.generation);
     } finally { await fixture.close(); }
 });

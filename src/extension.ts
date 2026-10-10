@@ -2905,7 +2905,7 @@ async function saveSketchRevision(state: TandemState, value: unknown, source: Sk
     });
     return {
         ...state,
-        sketch: { version: 1, status: "draft", current: revision, approved: null, history: [...state.sketch.history, revision] },
+        sketch: { ...state.sketch, version: 1, status: "draft", current: revision, approved: null, history: [...state.sketch.history, revision] },
         artifacts: invalidateArtifacts(state.artifacts, "sketch"),
         status: "Drawings saved. Review the screens and approve this revision before prototyping.",
         phase: "iterating", updatedAt: revision.createdAt,
@@ -3018,6 +3018,10 @@ async function sketchAction(prototypeId: string, extensionId: string, value: unk
         const requestedAt = new Date().toISOString();
         const saved = {
             ...state, phase: "building" as const, status: PROCESSING_MESSAGES[action],
+            sketch: { ...state.sketch, requests: [...(state.sketch.requests || []), {
+                requestId, kind: input.action === "revise" ? "revise" as const : "generate" as const,
+                instruction: instruction.trim(), requestedAt, baseRevisionId: state.sketch.current?.id || null,
+            }] },
             processing: {
                 status: "running", action, requestId, question, answer: instruction.trim(), factoryName: ANSWER_FACTORY_NAME,
                 runId: null, requestedAt, completedAt: null, originalDecisionGraph: null,

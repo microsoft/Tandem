@@ -13,6 +13,25 @@ import { getHostStateWal } from "../stage2/tandem/runtime-src/domain/host-state-
 import { browserAvailable, openFixtureBrowser } from "../stage2/tandem/test/helpers/browser-fixture.mjs";
 import { JSDOM } from "jsdom";
 import { installProjectPresentation } from "../stage2/tandem/public/project-presentation.js";
+import { createConversationRenderer } from "../stage2/tandem/public/renderers/conversation.js";
+
+test("saved evidence updates without rewriting immutable native conversation", t => {
+  const dom = new JSDOM('<div><div id="history"></div></div><div id="messages"></div><div id="current"></div><div id="detail"></div><button id="newer"></button>', { pretendToBeVisual: true });
+  t.after(() => dom.window.close());
+  dom.window.ResizeObserver = class { observe() {} disconnect() {} };
+  const get = id => dom.window.document.getElementById(id);
+  const renderer = createConversationRenderer({ messages: get("messages"), history: get("history"),
+    current: get("current"), currentDetail: get("detail"), newer: get("newer") });
+  const evidence = { id: "discovery:g:checkpoint", kind: "status", text: "Interaction: running.",
+    timestamp: "2026-10-10T00:00:00.000Z", savedEvidenceProjection: true };
+  const native = { id: "native-message", kind: "assistant", text: "Original native answer.", timestamp: evidence.timestamp };
+  renderer.render([evidence, native], []);
+  renderer.render([{ ...evidence, text: "Interaction: ready.", timestamp: "2026-10-10T00:01:00.000Z" },
+    { ...native, text: "Must not replace the original." }], []);
+  assert.match(get("messages").textContent, /Interaction: ready/);
+  assert.doesNotMatch(get("messages").textContent, /Interaction: running|Must not replace/);
+  assert.match(get("messages").textContent, /Original native answer/);
+});
 
 test("presentation binding preserves drafts, exact pending receipts and standalone behavior", async t => {
   const dom = new JSDOM('<body data-project-panel="workspace" data-project-origin="http://127.0.0.1:4000" data-project-channel="binding"><form id="composer"><textarea id="message"></textarea></form>');
