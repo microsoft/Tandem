@@ -389,7 +389,7 @@ function Workspace(props: WorkspaceProps) {
                 title={skipped?.reason || output?.path || label}
                 aria-label={`${label}${skipped ? `, not applicable. ${skipped.reason}` : ""}`}
                 aria-controls={tab.id + "-panel"}><tab.icon size={15} aria-hidden="true" />
-                {label}
+                <span className="project-tab-label">{label}</span>
                 {tab.stage === "development" && projectView.designRevision && <span className="artifact-count">{projectView.designChanged ? "New output" : "Available"}</span>}
                 {tab.stage === "prototype" && state.prototypeFlow?.pendingCheckpointId && <span className="artifact-count">Update ready</span>}
               </Tabs.Trigger>; })}

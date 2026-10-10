@@ -675,3 +675,12 @@ active request/task and no automatic replay. Evidence is indexed in the session'
 `corrected-populated-design-*`, `corrected-populated-conversation-390` and
 `packaged-root-chrome-corrected`. This qualifies the bounded presentation slice,
 not the unfinished generated application or native Review.
+
+A subsequent real-root review at the 180px sidebar exposed horizontal clipping
+of `Development` beside its `Available` badge. The narrow follow-up gives
+project navigation labels and status badges separate wrapping grid rows and
+removes the sidebar list's horizontal-scroll behavior. It preserves status text,
+selection and keyboard focus; no Discovery actions or artifact hierarchy changes
+are included. The whole-root regression checks Available, New output and Update
+ready text at desktop, the actual 180px sidebar and mobile widths. The live
+native candidate is not hot-edited; visibility waits for the next safe refresh.

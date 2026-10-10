@@ -265,6 +265,8 @@ Saved appearance settings apply to the whole project surface. Resizing the
 artifact/conversation split carries across artifact navigation; constrained
 windows stack the contents without replacing the conversation or its draft.
 Source diagrams and documents retain their own authored styling.
+Navigation labels remain fully visible in constrained sidebars; output-status
+badges occupy a second line rather than requiring horizontal scrolling.
 
 The composer shows **Send to** before submission. Discovery actions use the
 existing public goal, usage, saved-drawing revision or Prototype-feedback APIs;

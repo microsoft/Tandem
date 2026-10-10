@@ -3442,8 +3442,10 @@ textarea {
 .project-workspace .topbar-actions { flex-wrap: wrap; gap: 4px; }
 .project-workspace .topbar .lifecycle { display: none; }
 .project-navigation { display: flex; flex-direction: column; gap: 8px; padding: 10px; }
-.project-tabs { flex-direction: column; align-items: stretch; white-space: normal; }
-.project-tabs .preview-tab { justify-content: flex-start; min-height: 36px; }
+.project-tabs { flex-direction: column; align-items: stretch; white-space: normal; overflow: visible; }
+.project-tabs .preview-tab { display: grid; grid-template-columns: 15px minmax(0, 1fr); justify-content: start; min-width: 0; max-width: 100%; min-height: 36px; height: auto; padding-block: 6px; white-space: normal; text-align: start; }
+.project-tabs .project-tab-label { min-width: 0; overflow-wrap: anywhere; }
+.project-tabs .artifact-count { grid-column: 2; justify-self: start; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .artifact-library-nav { margin-bottom: 8px; }
 .artifact-library-nav .preview-tab { width: 100%; justify-content: flex-start; }
 .project-workspace .context-pane-heading { padding: 6px 10px; }

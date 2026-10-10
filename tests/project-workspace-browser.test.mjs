@@ -409,6 +409,26 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         await click("#development-tab");
         await waitInside('document.body.dataset.projectDesign==="true"');
         await waitInside(`document.body.dataset.projectStacked==="${width < 1000}"`);
+        assert.equal(await browser.evaluate('document.activeElement.id'), "development-tab");
+        for (const badge of ["Available", "New output", "Update ready"]) {
+          const fit = await browser.evaluate(`(() => {
+            const row=document.querySelector("#development-tab"), list=document.querySelector("#project-contents");
+            const badge=row.querySelector(".artifact-count"), label=row.querySelector(".project-tab-label");
+            badge.textContent=${JSON.stringify(badge)};
+            const r=row.getBoundingClientRect(), b=badge.getBoundingClientRect(), l=label.getBoundingClientRect();
+            return {sidebar:document.querySelector("#requirements-pane").getBoundingClientRect().width,
+              rowFits:row.scrollWidth<=row.clientWidth+1,listFits:list.scrollWidth<=list.clientWidth+1,
+              labelFits:l.left>=r.left&&l.right<=r.right,label:label.textContent,
+              badgeFits:b.left>=r.left&&b.right<=r.right,badge:badge.textContent,
+              selected:row.getAttribute("aria-selected")};
+          })()`);
+          assert.equal(fit.label, "Development");
+          assert.equal(fit.badge, badge);
+          assert.equal(fit.selected, "true");
+          assert.ok(fit.rowFits && fit.listFits && fit.labelFits && fit.badgeFits,
+            `Navigation keeps full labels and ${badge} without horizontal scrolling at ${width}: ${JSON.stringify(fit)}`);
+          if (width === 980) assert.equal(fit.sidebar, 180);
+        }
         if (width < 1000) {
           assert.equal(await inside('document.querySelector("#workspace-divider").hidden'), true);
           const sizes = await inside('({conversation:document.querySelector("#conversation-panel").getBoundingClientRect().width, layout:document.querySelector(".human-layout").clientWidth})');
