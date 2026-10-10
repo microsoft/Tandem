@@ -684,3 +684,81 @@ selection and keyboard focus; no Discovery actions or artifact hierarchy changes
 are included. The whole-root regression checks Available, New output and Update
 ready text at desktop, the actual 180px sidebar and mobile widths. The live
 native candidate is not hot-edited; visibility waits for the next safe refresh.
+
+### October 10: completed recovered checklist qualification
+
+The sidebar fix was safely loaded as frozen `84966e8`. The real 180px sidebar
+reported a 136px contents area and 136px scroll width with the complete
+Development label and Available badge visible. Its wider/mobile and alternate
+badge states have separate packaged-browser regression coverage. No unapproved
+Discovery-actions removal or Development-artifact restructuring was included.
+
+The first native scoped Review did not qualify. Its exact timeline distinguishes
+two failures: `browser-design` encountered a native query HTTP400 after about
+91 seconds; `persistence-api` waited 1,743.85 seconds on three read permissions
+that **our E2E runner failed to service**. The external collector call timed out
+after 1,800 seconds; subsequent parent retirement cancelled the remaining worker
+and denied its pending reads. Read-only native workflow records confirm the
+failed/cancelled outcomes. This was not 30 minutes of model inference, a successful
+Review, or proof that timeout itself stopped child work. Normal Close and exact
+process-identity checks settled all owned work. No timeout was raised.
+
+A direct review-only message then routed to Agent without a cycle and correctly
+could not use the Reviewer-only collector. That limitation is retained. The
+existing, separately confirmed **read-only verification work cycle** was used
+instead; no routing/ownership gate was weakened. The full-app scoped Review
+workflow `f289c5a9-0d8a-41d9-9ea0-ddffc46455e2` completed both scopes on attempt 1
+with actual GPT-6 Astra/Low worker readbacks. A narrow request/worker/file-hash
+bound responder issued only current allow-once file-read decisions through the
+root UI; unmatched searches stopped it for manual inspection. Its initial
+dependency-directory error is retained, as are all decisions and stop records.
+It stopped when the exact Review ended. No broad grants or scope retries were
+used.
+
+That substantive Review found one generated-app conformance issue: Escape
+cancelled editing only from the name field, not Save/Cancel/recovery controls.
+Physical Tab-to-Save/Escape reproduced it. The implementation choice was sent
+through the real Review question and physically confirmed as request
+`c13a8d74-f7db-4655-a509-c99f8637929b`. The native correction reused cancellation
+and discard behavior, retained the in-flight-save guard, and added focused
+event/browser regressions. The subsequent native correction Review reported no
+substantiated remaining conformance or over-engineering finding. This used
+**one of two** authorized post-handoff correction cycles; no generated source
+was manually patched.
+
+Independent execution passed **15 focused app tests**. Physical browser
+acceptance covered add/edit, blank validation, 201-code-point rejection and
+200-code-point acceptance, duplicates, both completion directions, counted
+filters, exact named deletion Cancel/confirm and focus, 390px layout, corrected
+Escape from Save and Retry, reload, a real server outage, actual Windows
+read-only-file save failure, unchanged failed-write bytes and repaired Retry.
+Plain process restart from a different working directory retained JSON data.
+Simulated pending/lost-response tests remain labelled as such.
+
+A distinct read-only native request was stopped while its exact file consent was
+pending. Immediate Stop retired that consent and request; a separate subsequent
+request completed without resuming it. Final cold same-ID verification preserved
+all **31 native message IDs/texts**, the original canonical Design and main/private
+Astra/Low readbacks, with no active request or replay. The saved Prototype hash
+remained `e7c1940cbf6ebf2c5d8a8ebcd9def53a9438edc72bd36f1934604a6174bbc13b`.
+Final app data retained three items and SHA-256
+`9c786fa26b3518ac363d4fa4f7ffeb727ed45b4aff2a7ce56d1c7f3631f16e33`.
+
+All owned test runtimes were closed and their captured PID/creation identities
+and loopback listeners checked absent. The final browser-close helper did not
+confirm exit within its own wait; the original warning is retained alongside
+the subsequent exact absence check, not rewritten as clean shutdown.
+
+The session's `unified-checklist-e2e/coverage.json` is the observed coverage
+matrix, with original failures separate from corrected outcomes.
+`evidence/final-qualification-summary.json`, `native-review-full-timeline.json`,
+`native-scoped-review-completed.json`, `escape-correction-reviewed.json`,
+`independent-final-app-tests.txt`, `final-cold-reopen-native.json` and
+`final-owned-cleanup.json` index the decisive receipts. Populated root and app
+screenshots include `navigation-wrap-live-180`, `native-review-two-scopes-root`,
+`physical-checklist-desktop`, `physical-checklist-narrow`,
+`physical-readonly-save-failure` and `final-cold-reopen-root`.
+External services/auth/deployment, destructive reset of the retained journey,
+screen-reader/full-accessibility qualification, actual full-disk/power-loss and
+multi-server behavior were not exercised. This is a completed **recovered**
+local journey, not an uninterrupted happy path or blanket all-functions pass.
