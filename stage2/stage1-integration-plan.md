@@ -580,3 +580,10 @@ dispatch and preserves them through success/failure. No earlier missing text is
 backfilled from E2E receipts or native-session history. The existing checklist's
 missing historical drawing instruction remains an explicit coverage limitation;
 new-request persistence is supplemented by focused lifecycle tests.
+
+The native implementation run also exposed a stale root status: the saved
+handoff message still said implementation was not authorized while the current
+private request was approved and executing. The root now displays the active
+Development status from its public presentation projection, without rewriting
+the original discovery/handoff record. This source fix is qualified separately
+and only becomes live with the next safe candidate refresh.

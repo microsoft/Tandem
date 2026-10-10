@@ -33,6 +33,10 @@ test("project chat routes exact discovery context once and rejects foreign or st
     await send(submission); await send(submission);
     assert.equal(h.requests.length, 1, "Duplicate UI delivery cannot duplicate a Stage1 action.");
     assert.equal(h.get("project-conversation-frame"), frame);
+    const discoveryStatus = h.store.getSnapshot().state.status;
+    await send({ type: "status", status: "working", active: true, questions: 0, permissions: 0, confirmations: 0 });
+    assert.equal(h.get("status").textContent, "Development: working");
+    assert.equal(h.store.getSnapshot().state.status, discoveryStatus, "Live status does not rewrite saved discovery evidence.");
 });
 
 test("fresh projects open Development directly without creating Stage1 state or a handoff", async t => {

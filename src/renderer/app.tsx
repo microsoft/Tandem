@@ -408,7 +408,8 @@ function Workspace(props: WorkspaceProps) {
             </button>
           </div>
           <details className="section project-brief"><summary>Brief and project details</summary><p id="goal" className="goal" title={state.goal}>{state.goal || "Discovery is optional. Describe the project here or activate Development."}</p></details>
-          <p id="status" className="status" role="status">{state.status}</p>
+          <p id="status" className="status" role="status">{projectView.active
+            ? `Development: ${projectView.detail || projectView.status}` : state.status}</p>
           <DiscoveryRecovery />
           <WorkflowActivity />
           <section className="section workflow-section" aria-describedby="stage-browsing stage-message"><div className="section-heading"><p className="eyebrow"><Layers size={14} aria-hidden="true" />Discovery actions</p></div>
