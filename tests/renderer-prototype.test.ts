@@ -63,7 +63,7 @@ test("progressive Prototype reports honest milestones and keeps its iframe while
     h.render(readyPrototype(4, true));
     assert.equal(frame(h), displayed);
     assert.equal(frame(h).src, value.previewUrl);
-    assert.match(text(h, "prototype-progress-message"), /Update ready/);
+    assert.match(text(h, "prototype-progress-message"), /New prototype version ready/);
     assert.equal(hidden(h, "apply-prototype-update"), false);
     assert.equal(disabled(h, "apply-prototype-update"), false);
     assert.equal(hidden(h, "request-prototype-visual"), true);

@@ -178,7 +178,7 @@ export function PrototypePanel() {
       } catch (error) { restore.current = null; throw error; }
     });
   }
-  const message = candidate ? "Update ready. " + (candidate.summary || "The next checkpoint has been validated.") + " Your displayed preview will not change until you choose Apply update."
+  const message = candidate ? "New prototype version ready. " + (candidate.summary || "The next checkpoint has been validated.") + " The inline preview and Open current preview still show your current version until you choose Apply update."
     : question ? "A revision needs clarification. Keep exploring and queue feedback below."
     : building ? readyUrl ? "Your working preview stays available while the next checkpoint builds." : "Building the first runnable checkpoint. No preview is available yet; you can already queue feedback."
     : failed ? "The latest update failed. " + failed.summary + (readyUrl ? " Your working preview is unchanged." : "")
@@ -193,7 +193,7 @@ export function PrototypePanel() {
     : !readyUrl ? "You can queue feedback before the first preview is ready."
     : hasActiveJobs(state) ? "Keep using the displayed preview. New feedback is queued while the next update builds."
     : question ? "Answer the clarification to continue that revision. You can queue other feedback meanwhile."
-    : candidate ? "An update is ready. Apply it when you are ready; new feedback remains queued."
+    : candidate ? "A new prototype version is ready. Apply it when you are ready; new feedback remains queued."
     : "Try the prototype, then describe any revision you want.");
   const recentApplied = new Set(revisions.filter((item) => item.status === "applied").slice(-5).map((item) => item.id));
 
@@ -201,7 +201,7 @@ export function PrototypePanel() {
     <div className="preview-surface">
       <div id="preview-tools" className="preview-tools">
         <span id="preview-status">{savedOnly ? showLivePreview ? "Saved prototype · live preview verified" : "Saved prototype · live preview not verified"
-          : unavailable ? "not applicable" : candidate ? "update ready" : building ? readyUrl ? "preview ready · building update" : "building" : state.previewStatus}</span>
+          : unavailable ? "not applicable" : candidate ? "new prototype version ready" : building ? readyUrl ? "preview ready · building update" : "building" : state.previewStatus}</span>
         {readyUrl && savedOnly && <button id="check-live-preview" className="plan-button secondary" type="button" disabled={previewCheck.busy} onClick={async () => {
           setPreviewCheck({ url: readyUrl, available: false, busy: true, reason: "" });
           try {
@@ -215,7 +215,7 @@ export function PrototypePanel() {
               reason: error instanceof Error ? error.message : "Live preview check failed." });
           }
         }}>{previewCheck.busy ? "Checking preview..." : "Check live preview"}</button>}
-        {readyUrl && showLivePreview && <a id="open-preview" href={readyUrl} target="_blank" rel="noreferrer"><ExternalLink size={14} />Open preview</a>}
+        {readyUrl && showLivePreview && <a id="open-preview" href={readyUrl} target="_blank" rel="noreferrer"><ExternalLink size={14} />Open current preview</a>}
       </div>
       {savedOnly && !showLivePreview && <p className="revision-status" role="status">
         Saved prototype files are retained. A previous server URL is not proof that the preview is running.
@@ -228,7 +228,7 @@ export function PrototypePanel() {
           {milestones.map((milestone) => {
             const latest = checkpoints.filter((checkpoint) => checkpoint.milestone === milestone.id).at(-1);
             const skipped = milestone.id === "visual" && !flow?.visualRequested && latest?.status === "failed";
-            const label = skipped ? "Skipped (optional)" : latest?.id === candidate?.id && candidate ? "Update ready - apply when ready"
+            const label = skipped ? "Skipped (optional)" : latest?.id === candidate?.id && candidate ? "New version ready - apply when ready"
               : latest?.status === "running" ? "Building" : latest?.status === "clarifying" ? "Needs clarification" : latest?.status === "failed" ? "Failed - retry available"
               : milestoneReady(state, milestone.id) ? "Ready" : milestone.id === "visual" && !flow?.visualRequested ? "Optional" : "Waiting";
             return <li key={milestone.id} data-milestone={milestone.id} data-status={skipped ? "skipped" : latest?.status || "waiting"} aria-current={active?.milestone === milestone.id ? "step" : undefined}>

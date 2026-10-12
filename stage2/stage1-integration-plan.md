@@ -66,6 +66,28 @@ capabilities, including a retryable `prepared` state, rather than relying only
 on status names. Browser regressions cover these cases with a synthetic runtime;
 they do not establish native failure recovery or remove the caveats below.
 
+The follow-up native package (`440de43`) also passed a fresh empty-folder
+Development choice: automatic Ready, no competing Preparation starter, no chooser
+on refresh, zero native conversation messages and zero Stage1 factory runs.
+The used checklist reopened with the same main/private owners and all 31 message
+IDs/texts and the canonical Design unchanged. Its original Drawings/Prototype
+views, implementation-result focus and disjoint effort controls were physically
+checked at 1440, 920 and 390px. Both bounded hosts were normally closed; captured
+PID/creation-time identities were verified absent.
+
+A subsequent manual report identified an older unconditional `display: none`
+rule on the inline Prototype iframe. The corrected rule respects React's existing
+`hidden` guard; grid sizing reserves the frame's minimum height instead of letting
+it cover Feedback. The full production renderer and stylesheet extracted from
+the built package are now exercised in the browser regression, with synthetic
+checkpoint APIs: absent/loading frames stay hidden, the current preview has
+visible geometry and accepts a physical click, a pending version preserves that
+frame and its state, and only explicit Apply sends the original checkpoint-bound
+API request and switches its source. The separate link says **Open current
+preview** and the pending status says **New prototype version ready**. This is
+renderer/checkpoint-fixture qualification, not a new native prototype-generation
+run; the user's frozen prototype was neither applied nor restarted.
+
 Native model-restoration and unused-initialization-journal caveats remain separate
 known limitations. This work does not claim they are fixed, replace a private
 identity, or bypass their validation/recovery paths. Frozen manual session

@@ -7,6 +7,7 @@ import { resolve, join } from "node:path";
 import { build } from "esbuild";
 import { runInNewContext } from "node:vm";
 import { state as discoveryState } from "./helpers/react-harness.ts";
+import { progressivePrototype, readyPrototype } from "./renderer-fixtures.test.ts";
 import { createHumanLoopProvider, HumanLoopEvents } from "../stage2/tandem/src/human-loop-provider.mjs";
 import { createHumanLoopLedger, replayHumanLoopLedger } from "../stage2/tandem/runtime-src/domain/human-loop/ledger.ts";
 import { DEFAULT_POLICY } from "../stage2/tandem/runtime-src/domain/workflow/policy.ts";
@@ -163,7 +164,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       },
     };
     let provider;
-    let css;
+    let css, client;
     if (process.env.TANDEM_PACKAGED_EXTENSION) {
       const packaged = await readFile(process.env.TANDEM_PACKAGED_EXTENSION, "utf8");
       const start = packaged.indexOf("// tandem-styles:styles.css\n");
@@ -173,31 +174,45 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       const stylesheetModule = packaged.slice(start, end);
       assert.match(stylesheetModule, /^\/\/ tandem-styles:styles.css\nvar styles_default = /);
       css = runInNewContext(`${stylesheetModule}\nstyles_default`, {}, { timeout: 1000 });
+      const clientStart = packaged.indexOf("// tandem-client:main.tsx\n");
+      assert.ok(clientStart >= 0, "Locate the actual production renderer without running extension startup.");
+      const clientEnd = packaged.indexOf("\n// ", clientStart + 3);
+      assert.ok(clientEnd > clientStart);
+      const clientModule = packaged.slice(clientStart, clientEnd);
+      assert.match(clientModule, /^\/\/ tandem-client:main.tsx\nvar main_default = /);
+      client = runInNewContext(`${clientModule}\nmain_default`, {}, { timeout: 1000 });
+      assert.equal(typeof client, "string");
       assert.equal(typeof css, "string");
       assert.doesNotMatch(css, /@import\b/, "The packaged inline stylesheet must contain its imports, not request source-tree URLs.");
-      t.diagnostic(`Production stylesheet from ${process.env.TANDEM_PACKAGED_EXTENSION}; fixture runtime, no native work.`);
+      t.diagnostic(`Production renderer and stylesheet from ${process.env.TANDEM_PACKAGED_EXTENSION}; fixture APIs/checkpoints, no native work.`);
     } else css = (await build({ entryPoints: [resolve("src", "renderer", "styles.css")],
       bundle: true, write: false, logLevel: "silent" })).outputFiles[0].text;
     const template = (await readFile(new URL("../src/renderer/index.html", import.meta.url), "utf8"))
       .replace("__TANDEM_STYLES__", () => css).replace("__TANDEM_VERSION__", "unified-fixture")
       .replace("<script>__TANDEM_CLIENT__</script>", '<script type="module" src="/app.js"></script>');
-    const bundle = await build({ stdin: { contents: `
-      import React from "react"; import {createRoot} from "react-dom/client";
-      import {App} from "./app.js"; import {StudioStore} from "./state-store.js";
-      const store = new StudioStore(); store.accept(await (await fetch("/api/state")).json());
-      createRoot(document.getElementById("root")).render(React.createElement(App,{store,version:"unified-fixture",connect:false}));
-      `, loader: "tsx", resolveDir: resolve("src", "renderer") },
+    if (!client) client = (await build({ entryPoints: [resolve("src", "renderer", "main.tsx")],
       bundle: true, write: false, format: "esm", platform: "browser", target: "es2022", logLevel: "silent",
       loader: { ".png": "dataurl" },
-      define: { "process.env.NODE_ENV": '"production"' } });
+      define: { "process.env.NODE_ENV": '"production"' } })).outputFiles[0].text;
+    const rootEvents = new Set();
     const server = createServer(async (request, response) => {
       const path = new URL(request.url, "http://127.0.0.1").pathname;
       const json = data => { response.writeHead(200, { "Content-Type": "application/json" }); response.end(JSON.stringify(data)); };
       try {
         if (path === "/") { response.writeHead(200, { "Content-Type": "text/html" }); response.end(template); }
         else if (path === "/styles.css") { response.writeHead(200, { "Content-Type": "text/css" }); response.end(css); }
-        else if (path === "/app.js") { response.writeHead(200, { "Content-Type": "text/javascript" }); response.end(bundle.outputFiles[0].text); }
-        else if (path === "/api/state") json(value);
+        else if (path === "/app.js") { response.writeHead(200, { "Content-Type": "text/javascript" }); response.end(client); }
+        else if (path === "/preview-current" || path === "/preview-candidate") {
+          response.writeHead(200, { "Content-Type": "text/html" });
+          response.end(`<!doctype html><html><body><button id="preview-button" onclick="this.textContent='Preview interaction accepted'">${path === "/preview-current" ? "Current" : "Candidate"} prototype</button></body></html>`);
+        }
+        else if (["/api/state", "/api/preparation/status", "/api/workflow/status"].includes(path)) json(value);
+        else if (path === "/events") {
+          response.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
+          rootEvents.add(response);
+          response.write(`data: ${JSON.stringify(value)}\n\n`);
+          request.on("close", () => rootEvents.delete(response));
+        }
         else if (path === "/api/sketch") json({ sketch: value.sketch, document: null });
         else if (path === "/api/project-entry") {
           if (request.method === "POST") {
@@ -222,6 +237,13 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
             events.touch(); json({ url: provider.url });
           }
           else if (path === "/api/answer") { value.requirements.usageItems.push(body.answer); value.revision++; json(value); }
+          else if (path === "/api/prototype/action") {
+            assert.deepEqual(body, { action: "apply-update", checkpointId: "interaction", expectedRevision: value.revision });
+            value.prototypeFlow.displayedCheckpointId = body.checkpointId;
+            value.prototypeFlow.pendingCheckpointId = null;
+            value.previewUrl = value.prototypeFlow.checkpoints.find(item => item.id === body.checkpointId).previewUrl;
+            value.revision++; json(value);
+          }
           else { response.writeHead(404); response.end(); }
         } else { response.writeHead(404); response.end(); }
       } catch (error) { response.writeHead(500); response.end(JSON.stringify({ error: error.message })); }
@@ -289,6 +311,60 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         assert.ok(geometry.bodyWidth >= geometry.panelWidth - 30, `${phase} retains its original full-width view: ${JSON.stringify(geometry)}`);
         assert.equal(active, false);
       }
+      assert.equal(await browser.evaluate('document.querySelector("#preview-frame").hidden && document.querySelector("#preview-frame").getBoundingClientRect().height === 0'), true,
+        "Absent previews have no visible frame.");
+      const pushPrototype = async prototype => {
+        Object.assign(value, { phase: "building", previewStatus: prototype.previewStatus, previewUrl: prototype.previewUrl,
+          prototypeFlow: prototype.prototypeFlow, processing: null });
+        value.revision++;
+        for (const response of rootEvents) response.write(`data: ${JSON.stringify(value)}\n\n`);
+        await browser.waitFor(`document.querySelector("#preview-frame").dataset.checkpointId === ${JSON.stringify(prototype.prototypeFlow.displayedCheckpointId || "")}
+          && document.querySelector("#preview-status").textContent === ${JSON.stringify(prototype.prototypeFlow.pendingCheckpointId ? "new prototype version ready"
+            : prototype.prototypeFlow.activeCheckpointId ? prototype.previewUrl ? "preview ready · building update" : "building" : prototype.previewStatus)}`);
+      };
+      const loading = progressivePrototype();
+      loading.previewUrl = null; loading.previewStatus = "starting";
+      loading.prototypeFlow.displayedCheckpointId = null;
+      loading.prototypeFlow.activeCheckpointId = "structure";
+      loading.prototypeFlow.checkpoints = [{ ...loading.prototypeFlow.checkpoints[0], status: "running", previewUrl: null }];
+      await pushPrototype(loading);
+      assert.equal(await browser.evaluate('document.querySelector("#preview-frame").hidden && document.querySelector("#preview-frame").getBoundingClientRect().height === 0'), true,
+        "A loading first checkpoint cannot expose an empty inline browser.");
+      const currentPrototype = progressivePrototype();
+      for (const checkpoint of currentPrototype.prototypeFlow.checkpoints) checkpoint.requestedAt = new Date().toISOString();
+      currentPrototype.previewUrl = currentPrototype.prototypeFlow.checkpoints[0].previewUrl = new URL("preview-current", url).href;
+      await pushPrototype(currentPrototype);
+      await browser.waitFor('document.querySelector("#preview-frame").contentDocument?.querySelector("#preview-button")');
+      for (const width of [1360, 390]) {
+        await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 1000, deviceScaleFactor: 1, mobile: false });
+        await browser.evaluate('document.querySelector("#preview-frame").scrollIntoView({block:"center"})');
+        const rect = await browser.evaluate('(() => {const e=document.querySelector("#preview-frame"),r=e.getBoundingClientRect();return {hidden:e.hidden,display:getComputedStyle(e).display,width:r.width,height:r.height};})()');
+        assert.ok(!rect.hidden && rect.display !== "none" && rect.width > 100 && rect.height >= 180, JSON.stringify(rect));
+        assert.equal(await browser.evaluate('document.querySelector("#preview-frame").getBoundingClientRect().bottom <= document.querySelector("#prototype-review").getBoundingClientRect().top'), true,
+          "The restored inline frame must not cover the original feedback form.");
+        if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `inline-current-prototype-${width}.png`), await browser.screenshot());
+      }
+      const point = await browser.evaluate('(() => {const f=document.querySelector("#preview-frame"),r=f.getBoundingClientRect(),b=f.contentDocument.querySelector("#preview-button").getBoundingClientRect();return {x:r.x+f.clientLeft+b.x+b.width/2,y:r.y+f.clientTop+b.y+b.height/2};})()');
+      for (const type of ["mousePressed", "mouseReleased"]) await browser.call("Input.dispatchMouseEvent", { type, ...point, button: "left", clickCount: 1 });
+      await browser.waitFor('document.querySelector("#preview-frame").contentDocument.querySelector("#preview-button").textContent==="Preview interaction accepted"');
+      const pendingPrototype = readyPrototype(1, true);
+      pendingPrototype.previewUrl = pendingPrototype.prototypeFlow.checkpoints[0].previewUrl = currentPrototype.previewUrl;
+      pendingPrototype.prototypeFlow.checkpoints[1].previewUrl = new URL("preview-candidate", url).href;
+      await pushPrototype(pendingPrototype);
+      assert.equal(await browser.evaluate('document.querySelector("#preview-frame").src'), currentPrototype.previewUrl);
+      assert.equal(await browser.evaluate('document.querySelector("#open-preview").href'), currentPrototype.previewUrl);
+      assert.equal(await browser.evaluate('document.querySelector("#preview-frame").contentDocument.querySelector("#preview-button").textContent'), "Preview interaction accepted",
+        "A pending version preserves the working iframe and its interaction state.");
+      assert.match(await browser.evaluate('document.querySelector("#prototype-progress-message").textContent'), /New prototype version ready.*current version until you choose Apply update/);
+      assert.equal(await browser.evaluate('document.querySelector("#preview-frame").getBoundingClientRect().bottom <= document.querySelector("#prototype-review").getBoundingClientRect().top'), true);
+      if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "inline-pending-prototype-390.png"), await browser.screenshot());
+      assert.equal(mutations.some(item => item.path === "/api/prototype/action"), false);
+      await clickRoot("#apply-prototype-update");
+      await browser.waitFor('document.querySelector("#preview-frame").contentDocument?.querySelector("#preview-button")?.textContent==="Candidate prototype"');
+      assert.equal(await browser.evaluate('document.querySelector("#preview-frame").src'), pendingPrototype.prototypeFlow.checkpoints[1].previewUrl);
+      assert.equal(mutations.filter(item => item.path === "/api/prototype/action").length, 1);
+      assert.equal(active, false, "Prototype viewing and explicit promotion remain Stage1-owned.");
+      await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 1000, deviceScaleFactor: 1, mobile: false });
       await clickRoot("#development-tab");
       assert.equal(active, false, "Artifact navigation is not initialization.");
       await clickRoot("#enter-development");

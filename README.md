@@ -293,6 +293,10 @@ private request or written into its store. Cold private history still requires
 owned runtime verification during project entry; browsing alone does not reopen it.
 Completed Prototype views distinguish saved files from a live server: **Check live
 preview** verifies the retained URL/identity without starting a server or model work.
+During Prototype work, the runnable current version appears inline above Feedback.
+**Open current preview** opens that same version in a separate window.
+**New prototype version ready** means a checkpoint is waiting for **Apply update**;
+neither the inline preview nor the separate link switches before that explicit action.
 Saved-evidence rows refresh when their source changes; native conversation records
 remain immutable. New drawing requests retain their exact accepted instruction,
 request ID, time and base revision in Stage1's own state, including failed requests.
