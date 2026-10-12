@@ -123,7 +123,11 @@ test("React preparation shows runtime/results, and only explicitly retries edita
   assert.deepEqual(h.requests, [{ endpoint: "/api/preparation/retry", body: {} }]);
   await h.update({ ...h.state, preparationRuntime: { error: "Telemetry unavailable", agents: [{ label: "prepare:context", activity: "Reading docs" }] } });
   assert.match(h.element("#preparation-stage-message").textContent!, /Preparation unavailable/);
+  assert.doesNotMatch(h.element("#preparation-work-items").textContent!, /Reading docs/,
+    "Failed preparation must not present stale agent telemetry as live activity.");
+  await h.update({ ...h.state, preparation: { ...preparation, status: "running" } });
   assert.match(h.element("#preparation-work-items").textContent!, /Reading docs/);
+  await h.update({ ...h.state, preparation });
   await h.pending(true);
   assert.equal(h.element<HTMLButtonElement>("#retry-preparation").disabled, true);
   await h.click("#retry-preparation");

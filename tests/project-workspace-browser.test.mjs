@@ -568,6 +568,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
           { type, x: local.x + offset.x, y: local.y + offset.y, button: "left", clickCount: 1 });
       };
       await waitInside('document.body.dataset.projectWorking==="development"');
+      await waitInside('document.querySelector("#backbone-state").textContent==="Design unverified"');
       assert.equal(await inside('document.querySelector("#backbone-state").textContent'), "Design unverified");
       assert.match(await inside('document.querySelector("#assessment-card").textContent'), /not yet verified/);
       assert.doesNotMatch(await inside('document.querySelector("#assessment-card").textContent'), /No Design has been published/);

@@ -16,7 +16,11 @@ test("regular canvas retains its own logo, title and controls without standalone
     await h.flush();
     assert.equal(h.document.querySelector<HTMLDivElement>(".topbar")!.hidden, false);
     assert.equal(h.document.querySelector(".brand h1")!.textContent, "Tandem");
-    assert.ok(h.document.querySelector(".mark .lucide-layers"));
+    const artwork = h.document.querySelector<HTMLImageElement>(".brand .brand-artwork")!;
+    assert.ok(artwork);
+    assert.match(artwork.src, /^data:image\/png;base64,/);
+    assert.equal(artwork.alt, "");
+    assert.equal(artwork.getAttribute("aria-hidden"), "true", "The heading names Tandem without duplicating decorative artwork.");
     await h.sendHeaderMessage({ type: "tandem:header:connect", channel: host.channel });
     assert.equal(h.document.querySelector<HTMLDivElement>(".topbar")!.hidden, false);
     assert.equal(h.headerMessages.length, 0);

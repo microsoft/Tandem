@@ -211,7 +211,7 @@ test("an imported source record keeps full preparation even without project file
 test("empty-workspace inspection preserves guidance, hidden files, subdirectories, and linked metadata", async (t) => {
     for (const name of ["AGENTS.md", "README.md", "package.json", ".gitignore", ".env", ".git", ".tandem", "src"]) {
         await t.test(name, async () => {
-            const fixture = await extensionHarness();
+            const fixture = await extensionHarness({}, undefined, "", undefined, true);
             try {
                 if (name === "src") await mkdir(join(fixture.root, name));
                 else await writeFile(join(fixture.root, name), "Existing project context");
@@ -220,7 +220,7 @@ test("empty-workspace inspection preserves guidance, hidden files, subdirectorie
         });
     }
     await t.test("metadata junction", async () => {
-        const fixture = await extensionHarness();
+        const fixture = await extensionHarness({}, undefined, "", undefined, true);
         try {
             const target = join(fixture.root, ".tandem");
             await mkdir(target);

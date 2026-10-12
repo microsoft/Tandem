@@ -268,10 +268,18 @@ test("cancelled startup closes a late recognizer without starting it", async (t)
 test("read-only and hidden stages cannot record and release the active microphone", async (t) => {
   const h = await fixture(t), input = h.get<HTMLTextAreaElement>("usage-input");
   const capture = await h.start(input);
-  await h.click(h.document.querySelector('[data-stage-id="prepare"]')!);
+  const preparation = h.document.querySelector('[data-stage-id="prepare"]')!;
+  await h.fire(preparation, "mousedown", { button: 0 });
+  assert.equal(preparation.getAttribute("aria-selected"), "true");
   assert.equal(capture.closed, true);
+  assert.equal(capture.signal.aborted, true);
   assert.equal(h.control(input).disabled, true);
+  await h.click(h.control(input));
+  assert.equal(h.sessions.length, 1, "A hidden field cannot acquire another microphone.");
+  await h.fire(h.document.querySelector('[data-stage-id="requirements"]')!, "mousedown", { button: 0 });
+  assert.equal(h.control(input).disabled, false);
   h.render({ ...state(), revision: 2, provider: { canSubmitAnswers: false } }); await h.flush();
+  assert.equal(h.control(input).disabled, true);
   await h.click(h.control(input));
   assert.equal(h.sessions.length, 1);
 });

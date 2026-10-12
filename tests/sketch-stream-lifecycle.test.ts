@@ -198,7 +198,9 @@ test("regeneration streams a fresh drawing rather than carrying forward old shap
 test("a malformed drawing tail discards previews while preserving the previously approved revision", { timeout: 15_000 }, async () => {
     const f = await setup();
     try {
-        await f.start();
+        const assets = await Promise.all(f.before.sketch.approved!.assets.map(async asset =>
+            ({ path: asset.path, bytes: await readFile(join(f.h.root, asset.path)) })));
+        const pending = await f.start();
         f.delta(f.operation(90));
         const partial = await (await fetch(new URL("api/state", f.url))).json();
         assert.ok(partial.sketchPreview, JSON.stringify({ processing: partial.processing, logs: f.h.logs }));
@@ -211,7 +213,15 @@ test("a malformed drawing tail discards previews while preserving the previously
         const failed = await f.h.api.loadState("sample");
         assert.equal(failed.processing.status, "error");
         assert.equal(failed.processing.answer, "Move the primary action right.");
-        assert.equal(JSON.stringify(failed.sketch), JSON.stringify(f.before.sketch));
+        const { requests, ...preserved } = failed.sketch;
+        assert.equal(JSON.stringify(preserved), JSON.stringify(f.before.sketch));
+        assert.equal(JSON.stringify(requests), JSON.stringify(pending.sketch.requests),
+            "The failed revision retains its exact submitted request audit.");
+        assert.equal(requests!.length, 1);
+        assert.equal(requests![0].instruction, "Move the primary action right.");
+        assert.equal(requests![0].baseRevisionId, f.before.sketch.current!.id);
+        for (const asset of assets) assert.deepEqual(await readFile(join(f.h.root, asset.path)), asset.bytes,
+            `Approved asset ${asset.path} must remain unchanged.`);
         assert.equal(f.listeners.size, 0);
     } finally {
         f.output.resolve("");
