@@ -77,6 +77,39 @@ test("presentation binding preserves drafts, exact pending receipts and standalo
   assert.equal(sent.length, count);
 });
 
+test("attachment-only drafts and pending native submissions cannot be silently moved to a discovery phase", t => {
+  const dom = new JSDOM('<body data-project-panel="workspace" data-project-origin="http://127.0.0.1:4000" data-project-channel="attachments"><form id="composer"><textarea id="message"></textarea></form>');
+  t.after(() => dom.window.close());
+  const sent = [], parent = { postMessage: data => sent.push(data) };
+  let attachments = 0;
+  Object.defineProperty(dom.window, "parent", { value: parent });
+  const api = installProjectPresentation({ document: dom.window.document, window: dom.window, changed() {}, hasAttachments: () => attachments > 0 });
+  const receive = data => dom.window.dispatchEvent(new dom.window.MessageEvent("message", { source: parent, origin: "http://127.0.0.1:4000",
+    data: { protocol: "tandem-project/v1", channel: "attachments", ...data } }));
+  const context = { type: "context", entries: [], designVisible: true, developmentEntered: true, developmentEnabled: true,
+    discovery: { key: "prototype", label: "Prototype", action: "prototype", help: "Use the original Prototype feedback form.", enabled: true } };
+  receive(context);
+  attachments = 1; api.nativePending(false);
+  receive({ ...context, designVisible: false, developmentEntered: false, viewedStage: "prototype", viewLabel: "Prototype" });
+  assert.equal(api.discovery(), false);
+  assert.equal(api.canSend(), false);
+  assert.equal(dom.window.document.querySelector("#use-draft-here").hidden, true);
+  assert.equal(attachments, 1, "Changing context cannot remove the attachment.");
+  dom.window.document.querySelector("#message").value = "Retain this exact native draft.";
+  attachments = 0; api.nativePending(true);
+  const move = dom.window.document.querySelector("#use-draft-here");
+  assert.equal(move.disabled, true);
+  move.click();
+  assert.equal(api.discovery(), false);
+  api.nativePending(false);
+  assert.equal(api.discovery(), false, "A resolved submission does not implicitly move the remaining draft.");
+  move.click();
+  assert.equal(api.discovery(), true, "Only the explicit one-time draft action changes its context.");
+  assert.equal(dom.window.document.querySelector("#message").value, "Retain this exact native draft.");
+  assert.equal(dom.window.document.querySelector("#project-message-target"), null);
+  assert.equal(sent.some(item => ["activate", "discovery-send"].includes(item.type)), false);
+});
+
 test("embedded Settings exposes one shared effort choice with busy, unsupported and partial-error readback", t => {
   const dom = new JSDOM(`<body data-project-panel="workspace" data-project-origin="http://127.0.0.1:4000" data-project-channel="effort">
     <form id="composer"><textarea id="message"></textarea></form><label id="private-effort-setting"></label>
