@@ -244,6 +244,11 @@ export function PrototypePanel({ active: visible, connected }: { active: boolean
 
   return <>
     <div className="preview-surface">
+      {savedOnly && state.lifecycle.outputs.some(output => output.stageId === "prototype") && !finalizing && <section className="prototype-progress" aria-label="Saved Prototype next step">
+        <p>Prototype saved. Continue in Development when you're ready.</p>
+        <button className="plan-button secondary" type="button" onClick={() => ui.browseStage("development")}>Go to Development</button>
+        <details><summary>Returning later</summary><p>You can also close and return later. The saved Prototype remains available through Continue Design from Prototype in Development; no manual file import is needed.</p></details>
+      </section>}
       <div id="preview-tools" className="preview-tools">
         <span id="preview-status">{savedOnly ? showLivePreview ? "Saved prototype · live preview verified" : "Saved prototype · live preview not verified"
           : unavailable ? "not applicable" : candidate ? candidateLabel : building ? readyUrl ? "preview ready · building update" : "building" : state.previewStatus}</span>

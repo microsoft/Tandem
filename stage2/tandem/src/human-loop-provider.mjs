@@ -142,6 +142,7 @@ export function projectHumanConversation(state, originals) {
       designRefs: question.designRefs ?? [] });
     historicalQuestions.set(question.source.resultId, group);
   }
+
   const handoffs = new Map(state.handoffs.map((handoff) => [handoff.id, handoff.result.resultId]));
   const requests = state.requests.map((request) => ({
     id: `request:${request.id}`, kind: "user", requestId: request.id, text: request.message,
@@ -159,7 +160,8 @@ export function projectHumanConversation(state, originals) {
           ...(answer.selectedOption.resolutionTarget ? { resolutionTarget: answer.selectedOption.resolutionTarget } : {}) } : {}) };
     }) } : {}),
   }));
-  const messages = originals.filter(({ role }) => role !== "host-user").map((entry) => ({
+  const messages = originals.filter(entry => !["host-user", "host-assistant", "Discovery evidence"].includes(entry.role)
+    && !entry.id.startsWith("main:") && !entry.id.startsWith("discovery:") && entry.savedEvidenceProjection !== true).map((entry) => ({
     id: entry.id, kind: entry.kind, role: entry.role, requestId: entry.requestId, text: entry.content, timestamp: entry.timestamp,
     ...(historicalQuestions.has(handoffs.get(entry.id)) ? { questionHistory: historicalQuestions.get(handoffs.get(entry.id)) } : {}),
   }));
@@ -173,6 +175,15 @@ export function projectHumanConversation(state, originals) {
       text: "Retained questions from interrupted work. Recovery did not resume this work.", questionHistory });
   }
   return [...requests, ...messages].sort((a, b) => a.timestamp.localeCompare(b.timestamp) || a.id.localeCompare(b.id));
+}
+
+export function projectPrivateEvents(items, privateSessionId) {
+  return items.filter(event => {
+    const identity = event.data?.sessionId ?? event.data?.activity?.sessionId ?? event.data?.nativeInvocation?.sessionId;
+    if (identity && identity !== privateSessionId) return false;
+    if (event.type.startsWith("permission.")) return Boolean(privateSessionId) && identity === privateSessionId;
+    return event.type.startsWith("human.") && !["human.permission-sync-failed", "human.audit-failed"].includes(event.type);
+  });
 }
 
 const json = (response, status, value) => {
@@ -208,15 +219,18 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
     const installation = getInstallation();
     const running = runtime();
     const installed = installation ? await installation.read() : { status: "attaching", reason: "Attaching the current main session." };
+    const privateId = running?.sessionId ?? installation?.configuration?.owner.privateSessionId;
+    const privateEvents = projectPrivateEvents(events.list(), privateId);
     if (!running || !["ready", "closed"].includes(installed.status)) return { schemaVersion: "human-loop-snapshot-view/v1", streamId: events.streamId,
       installation: installed,
-      workflow: null, design: null, messages: [], events: events.list(), accessRequests: permissions.list(), processes: { apps: [], commands: [] } };
+      conversationStatus: "unverified", workflow: null, design: null, messages: [], events: privateEvents,
+      accessRequests: privateId ? permissions.list(privateId) : [], processes: { apps: [], commands: [] } };
     const [state, readiness, originals, design, processes] = await Promise.all([
       running.state(), running.readiness(), running.conversation(), running.currentDesign(), running.commands.read(),
     ]);
     return { schemaVersion: "human-loop-snapshot-view/v1", streamId: events.streamId,
       installation: installed, workflow: projectHumanLoopView(state, readiness),
-      design, cycles: state.cycles.map(projectHumanCycle), messages: projectHumanConversation(state, originals), events: events.list(),
+      conversationStatus: "verified", design, cycles: state.cycles.map(projectHumanCycle), messages: projectHumanConversation(state, originals), events: privateEvents,
       historyRequests: state.requests.slice(-500).map(({ id, receivedAt }) => ({ id, receivedAt })),
       recoveries: (state.recoveries ?? []).map(({ id, recoveredAt }) => ({ id, recoveredAt })),
       accessRequests: permissions.list(running.sessionId), rememberedApprovals: permissions.remembered?.(running.sessionId) ?? { all: false, tools: [] }, processes };

@@ -171,7 +171,7 @@ export function installProjectPresentation({ document, window, changed, settings
       : current()?.stage === "development" ? "Ask about the Design, or describe the work you want."
         : ({ goal: "Describe your project goal.", usage: "Describe a requirement usage.", sketch: "Describe a drawing revision.", prototype: "Describe prototype feedback." }[context?.discovery?.action] ?? "Use this phase's controls to continue."),
     canSend: () => !pending && !conflicted() && (current()?.stage === "development" || context?.discovery?.enabled === true),
-    entries: () => (context?.entries ?? []).map(entry => ({ ...entry, savedEvidenceProjection: true })),
+    entries: () => [],
     submit(text) {
       if (!context?.discovery?.enabled || pending || conflicted()) return Promise.reject(new Error("This phase action is not available for the retained draft."));
       return new Promise((resolve, reject) => {

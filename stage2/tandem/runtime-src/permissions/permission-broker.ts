@@ -227,7 +227,7 @@ export class PermissionBroker {
           type: 'permission.granted',
           source: 'system',
           summary: `Allowed automatically: ${requestCopy(request).title}`,
-          data: { decision: 'all', grantRequestId, permissionKind: request.kind,
+          data: { sessionId: invocation.sessionId, decision: 'all', grantRequestId, permissionKind: request.kind,
             ...(options.provenance && request.toolCallId ? { activity: {
               sessionId: invocation.sessionId, toolCallId: request.toolCallId, ...options.provenance,
             } } : {}),
@@ -266,7 +266,7 @@ export class PermissionBroker {
         type: 'permission.requested',
         source: 'copilot',
         summary: view.title,
-        data: view,
+        data: { ...view, sessionId: invocation.sessionId },
       });
     });
   }
@@ -295,7 +295,7 @@ export class PermissionBroker {
       type: 'permission.cancelled',
       source: 'system',
       summary: `${nativeCompleted ? 'Resolved in host' : 'Withdrawn'}: ${pending.view.title}`,
-      data: { requestId: id, ...(nativeCompleted ? { reason: 'native-completion' } : {}) },
+      data: { sessionId: pending.invocation.sessionId, requestId: id, ...(nativeCompleted ? { reason: 'native-completion' } : {}) },
     });
   }
 
@@ -346,7 +346,7 @@ export class PermissionBroker {
           type: 'permission.granted',
           source: 'user',
           summary: `Allowed for this session: ${queued.view.title}`,
-          data: { requestId: pendingId, decision, grantRequestId: id, action: requestCopy(queued.request) },
+          data: { sessionId, requestId: pendingId, decision, grantRequestId: id, action: requestCopy(queued.request) },
         });
         queued.resolve(result);
       }
@@ -382,7 +382,7 @@ export class PermissionBroker {
       summary: decision === 'denied'
         ? `Denied: ${pending.view.title}`
         : `${decision === 'session' ? 'Allowed for session' : 'Allowed once'}: ${pending.view.title}`,
-      data: { requestId: id, decision, action: requestCopy(pending.request) },
+      data: { sessionId: pending.invocation.sessionId, requestId: id, decision, action: requestCopy(pending.request) },
     });
     pending.resolve(result);
   }
@@ -395,7 +395,7 @@ export class PermissionBroker {
         type: 'permission.denied',
         source: 'system',
         summary: `Cancelled: ${pending.view.title}`,
-        data: { requestId: id, decision: 'denied' },
+        data: { sessionId: pending.invocation.sessionId, requestId: id, decision: 'denied' },
       });
     }
 

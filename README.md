@@ -249,8 +249,8 @@ Settings trigger); it does not save, apply, discard, stop work or close the runt
 **Close runtime** remains a separate action under Diagnostics.
 
 The main framework is one project workspace: project navigation and Settings
-on the left, selected artifacts in the workspace, and one persistent project
-conversation alongside. Requirements, drawings and Prototype are artifact views.
+on the left and the selected phase's own workspace and history.
+Requirements, drawings and Prototype retain their specialized inputs and controls.
 The **Development** navigation entry contains formal Design, planning,
 implementation and Review; it is not an additional Stage1 Design phase.
 **Saved artifacts** is the cross-project library entry in the separate
@@ -260,16 +260,22 @@ implementation results and Review records. Each opens its original native
 viewer/work view or history entry, with its original binding; revisions are not
 copied into the discovery store or counted again. Unverified cold outputs are
 labelled as unverified, not empty or deleted.
-Browsing does not require starting both engines. Current work and pending questions,
-confirmations and permissions remain in the conversation while browsing.
+Browsing does not require starting both engines. Development work and pending
+questions, confirmations and permissions remain bound to the private session;
+return to Development to interact with them.
 New Design output and a Prototype update awaiting Apply are marked in navigation.
 
 The original discovery phase forms remain independently owned. Finish/Reopen
 controls live in their owning phase view, not a sidebar Discovery actions category.
+The original brief is readable in Preparation, not duplicated in a global Project
+overview. Sidebar progress shows one action/state and latest public update;
+worker details and freshness diagnostics expand under Details. Permission
+requests, errors and unknown outcomes remain prominent. Successful Prototype
+completion directs to Development; closing and returning later is optional.
 Before Development, root-owned saved-evidence history needs no Stage2 renderer or
 private session. Project settings keeps the shared effort control usable there.
 After Development begins, its complete renderer owns its document, controls and isolated
-loopback origin. One iframe stays mounted across artifact navigation; selecting Development
+loopback origin. One iframe stays mounted hidden across earlier-phase navigation; selecting Development
 expands its existing Design pane alongside its existing conversation. This also
 keeps annotations and unsent attachments with their original composer, rather
 than creating a second editor. Standalone Stage 2 retains its full shell.
@@ -281,6 +287,15 @@ windows stack the contents without replacing the conversation or its draft.
 Source diagrams and documents retain their own authored styling.
 Navigation labels remain fully visible in constrained sidebars; output-status
 badges occupy a second line rather than requiring horizontal scrolling.
+
+Development conversation is visible **only on Development**. Earlier phases use
+their original inputs and root-owned Discovery history; the private renderer stays
+mounted but hidden so its draft and attachments survive navigation. Private
+conversation contains only Stage2's own messages and attributable events, not
+foreground/main chat or copied Discovery evidence. Previously stored parent
+copies are excluded from display without deleting the original journal.
+Unverified private history is labelled unavailable, never replaced by parent
+history. Genuine privately admitted handoff messages still reference saved inputs.
 
 There is no **Send to** selector. Established discovery inputs use their original
 public actions; Development uses its original conversation/request interface.

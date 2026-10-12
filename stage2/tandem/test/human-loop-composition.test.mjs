@@ -96,3 +96,15 @@ test("duplicate Development opens share one view without initializing or submitt
   assert.equal(state.installation.status, "attaching");
   assert.equal(state.workflow, null);
 });
+
+test("attaching Development never reads or subscribes to foreground conversation for private copying", async t => {
+  const root = await mkdtemp(join(tmpdir(), "tandem-private-provenance-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const controller = createHumanLoopController({ workspacePath: root, sdkModulePath: "fixture-only" });
+  t.after(() => controller.close());
+  await controller.attach({ sessionId: "main",
+    getEvents: async () => assert.fail("Main conversation must not be read for private history."),
+    on: () => assert.fail("Foreground conversation must not be subscribed for copying."),
+  });
+  assert.equal((await controller.status()).installation.status, "new");
+});

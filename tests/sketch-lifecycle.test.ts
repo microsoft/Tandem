@@ -142,7 +142,7 @@ test("graphical Prototype completion saves approved evidence without starting or
         fixture.setBeforeDevelopmentStart(async () => { throw new Error("Stage1 cannot depend on private startup."); });
         const completed = await fixture.api.completeLifecycleStage("sample", "prototype", "project:tandem");
         assert.equal(completed.lifecycle.currentStage, "development");
-        assert.match(completed.status, /outputs saved.*close now.*open Development later/);
+        assert.equal(completed.status, "Prototype saved. Continue in Development when you're ready.");
         assert.ok(completed.development == null);
         assert.equal(fixture.developmentRequests.length, 0);
         assert.equal(fixture.requests.length, 1, "Only the explicitly mocked Stage1 sketch generation ran.");

@@ -21,7 +21,7 @@ export function projectDiscovery(state: UiState, busy: boolean, viewedStage: Lif
             : action === "prototype" ? "Queue feedback against the displayed prototype. Applying an update remains explicit."
                 : action === "usage" ? "Add a first-person usage to Requirements. Answer existing questions in the Requirements view."
                     : action === "goal" ? "Start optional discovery with this goal. This runs Preparation, not implementation."
-                        : "Browse the saved evidence or answer/confirm using its artifact controls. Activate Development explicitly to discuss Design or implementation." };
+                        : "Browse the saved evidence or answer/confirm using this phase's controls." };
 }
 export function discoveryEntries(state: UiState): Entry[] {
     const entries: Entry[] = [];
@@ -53,6 +53,7 @@ export function discoveryEntries(state: UiState): Entry[] {
 
 export interface ProjectOutput { id: string; group: "Design" | "Plan" | "Implementation" | "Review"; title: string; detail: string; binding: string }
 interface ProjectView {
+    visible: boolean;
     url: string | null; channel: string; error: string; active: boolean; starting: boolean; developmentEntered: boolean;
     status: string; detail: string; designRevision: string | null; designChanged: boolean; attention: number;
     activate(retry?: boolean): Promise<void>; command(command: string): void;
@@ -128,7 +129,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
         const { state, pending, view, designVisible } = latest.current;
         const workingStage = view.developmentEntered ? "development" : state.lifecycle.currentStage;
         const viewLabel = { prepare: "Preparation", requirements: "Requirements", sketch: "Drawings", prototype: "Prototype", development: "Development" }[workingStage];
-        send({ type: "context", entries: discoveryEntries(state), discovery: projectDiscovery(state, pending, workingStage), viewedStage: workingStage, viewLabel,
+        send({ type: "context", entries: [], discovery: projectDiscovery(state, pending, workingStage), viewedStage: workingStage, viewLabel,
             developmentEntered: view.developmentEntered,
             canActivate: canOpenDevelopment(state), developmentActive: view.active, designVisible,
             developmentEnabled: canOpenDevelopment(state), starting: view.starting,
@@ -310,14 +311,17 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
         window.addEventListener("message", receive);
         return () => window.removeEventListener("message", receive);
     }, []);
-    return <Context.Provider value={{ ...view, entry, chooseEntry: path => loadEntry(true, path), reloadEntry: () => loadEntry(),
+    return <Context.Provider value={{ ...view, visible: designVisible, entry, chooseEntry: path => loadEntry(true, path), reloadEntry: () => loadEntry(),
         frame, sync, activate,
         prepareDevelopmentView: () => { setViewRequested(true); setView(v => ({ ...v, developmentEntered: true })); },
         resumeDiscovery: () => setView(v => ({ ...v, developmentEntered: false })),
         command: command => {
-            if (!latest.current.view.developmentEntered) {
+            if (!latest.current.designVisible || !latest.current.view.developmentEntered) {
                 if (command === "settings") setDiscoverySettings(true);
-                else if (command === "current-work") latest.current.browseStage(latest.current.state.lifecycle.currentStage);
+                else if (command === "current-work") {
+                    if (latest.current.view.developmentEntered) latest.current.showDesign();
+                    else latest.current.browseStage(latest.current.state.lifecycle.currentStage);
+                }
             } else if (!latest.current.view.url) { pendingCommand.current = command; setViewRequested(true); }
             else send({ type: "command", command });
         },
@@ -325,7 +329,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
             if (latest.current.view.outputStatus !== "verified") return;
             latest.current.showDesign();
             send({ type: "output-open", id: item.id, binding: item.binding });
-        } }}>{children}{discoverySettings && !view.developmentEntered && <DiscoveryProjectSettings close={() => setDiscoverySettings(false)} />}</Context.Provider>;
+        } }}>{children}{discoverySettings && <DiscoveryProjectSettings close={() => setDiscoverySettings(false)} />}</Context.Provider>;
 }
 export function ProjectConversation() {
     const view = useProjectView();
@@ -347,17 +351,18 @@ export function ProjectConversation() {
         onPointerUp={event => { drag.current = null; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); }}
         onLostPointerCapture={() => { drag.current = null; }} />
       <aside id="project-conversation" aria-label="Project conversation">
-        <div className="project-conversation-heading"><strong>Project conversation</strong>
-            <span role="status">{view.developmentEntered ? view.status : state.status}{view.attention ? ` · ${view.attention} needs attention` : ""}</span>
+        <div className="project-conversation-heading"><strong>{view.visible ? "Development conversation" : "Discovery history"}</strong>
+            <span role="status">{view.visible ? view.status : ""}{view.visible && view.attention ? ` · ${view.attention} needs attention` : ""}</span>
             <button type="button" onClick={() => view.command("current-work")}>Current work</button></div>
-        {(view.error || view.detail) && <p role="alert">{view.error || view.detail}</p>}
-        {view.url ? <iframe ref={view.frame} id="project-conversation-frame" title="Persistent project conversation"
-            src={`${view.url}?panel=workspace`} onLoad={view.sync} allow="clipboard-read; clipboard-write" />
-            : <div id="discovery-history" className="discovery-history" aria-label="Discovery history">
+        {view.visible && (view.error || view.detail) && <p role="alert">{view.error || view.detail}</p>}
+        {view.url && <iframe ref={view.frame} id="project-conversation-frame" title="Private Development conversation"
+            hidden={!view.visible} src={`${view.url}?panel=workspace`} onLoad={view.sync} allow="clipboard-read; clipboard-write" />}
+        {!view.visible && <div id="discovery-history" className="discovery-history" aria-label="Discovery history">
                 {discoveryEntries(state).map(item => <article key={item.id} data-entry-id={item.id}>
                     <strong>Discovery evidence</strong><p>{item.text}</p>
                 </article>)}
-                {!state.goal && <p>Project history will appear here. Use Preparation's goal form to begin.</p>}
+                {!state.goal && <p>{view.entry.startingPath === "development" ? "Preparation was not used for this project."
+                    : "Project history will appear here. Use Preparation's goal form to begin."}</p>}
               </div>}
     </aside></>;
 }

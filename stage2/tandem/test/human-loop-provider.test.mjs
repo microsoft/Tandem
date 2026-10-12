@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { createHumanLoopProvider, HumanLoopEvents, projectHumanLoopView, projectHumanProgress } from "../src/human-loop-provider.mjs";
+import { createHumanLoopProvider, HumanLoopEvents, projectHumanConversation, projectHumanLoopView, projectHumanProgress, projectPrivateEvents } from "../src/human-loop-provider.mjs";
 import { projectHumanHistory } from "../public/renderers/human-loop-history.js";
 import { createHumanLoop } from "../runtime-src/domain/human-loop/model.ts";
 import { DEFAULT_POLICY, policyHash } from "../runtime-src/domain/workflow/policy.ts";
@@ -38,6 +38,35 @@ test("routine activity projection retains exact individual events across durable
   const after = projectHumanHistory(restored.list(), [], restored.streamId);
   assert.deepEqual(after.flatMap(item => item.members ?? [item]).map(item => [item.source.streamId, item.source.sequence, item.timestamp]),
     originals.map(event => [restored.streamId, event.sequence, event.timestamp]));
+});
+
+test("private history excludes legacy main copies and root projections without mutating stored records", () => {
+  const owner = { schemaVersion: "human-loop-owner/v1", id: "owner", mainSessionId: "main", privateSessionId: "private",
+    workspacePath: process.cwd(), policy: DEFAULT_POLICY };
+  const state = createHumanLoop(owner, { revisionId: null, digest: null });
+  state.requests.push({ id: "real-handoff", message: "Continue Design using the saved Prototype references.", receivedAt: "2026-10-12T00:00:00Z",
+    answers: null, status: "completed", stopId: null });
+  const entry = { kind: "assistant", role: "assistant", requestId: null, content: "Original text", timestamp: "2026-10-12T00:00:01Z" };
+  const originals = [
+    { ...entry, id: "main:old", role: "host-assistant" },
+    { ...entry, id: "other-prefix", role: "host-assistant" },
+    { ...entry, id: "main:other-role" },
+    { ...entry, id: "discovery:g:goal", role: "Discovery evidence" },
+    { ...entry, id: "project-copy", savedEvidenceProjection: true },
+    { ...entry, id: "native:private-reply", requestId: "real-handoff" },
+  ];
+  const before = structuredClone(originals);
+  assert.deepEqual(projectHumanConversation(state, originals).map(item => item.id), ["request:real-handoff", "native:private-reply"]);
+  assert.deepEqual(originals, before);
+  const events = [
+    { type: "permission.requested", data: { sessionId: "main" } },
+    { type: "permission.requested", data: { sessionId: "private" } },
+    { type: "permission.granted", data: {} },
+    { type: "human.role", data: { activity: { sessionId: "main" } } },
+    { type: "human.role", data: { activity: { sessionId: "private" } } },
+    { type: "main.message", data: {} },
+  ];
+  assert.deepEqual(projectPrivateEvents(events, "private"), [events[1], events[4]]);
 });
 
 async function fixture(t, { onSend, content = sharedDesignExample(), openProjectFolder, surface, finishEmptyRepair } = {}) {
@@ -97,6 +126,23 @@ async function fixture(t, { onSend, content = sharedDesignExample(), openProject
   return { root, provider, received, state, design, post, events, permissions, openBrowser, runtime, installation, starts: () => starts,
     setInstallationStatus: (value) => { installationStatus = value; events.touch(); } };
 }
+
+test("unverified or empty private history never substitutes the parent's conversation or permission stream", async t => {
+  const f = await fixture(t);
+  f.state.requests = []; f.state.questions = []; f.state.handoffs = [];
+  f.runtime.conversation = async () => [{ id: "main:retained", kind: "assistant", role: "host-assistant",
+    requestId: null, content: "Parent answer", timestamp: "2026-10-12T00:00:00Z" }];
+  f.events.append({ type: "permission.requested", source: "copilot", summary: "Parent-only request", data: { sessionId: "main" } });
+  let snapshot = await (await fetch(new URL("api/snapshot", f.provider.url))).json();
+  assert.equal(snapshot.conversationStatus, "verified");
+  assert.deepEqual(snapshot.messages, []);
+  assert.equal(snapshot.events.some(event => event.summary === "Parent-only request"), false);
+  f.setInstallationStatus("unknown");
+  snapshot = await (await fetch(new URL("api/snapshot", f.provider.url))).json();
+  assert.equal(snapshot.conversationStatus, "unverified");
+  assert.deepEqual(snapshot.messages, []);
+  assert.deepEqual(snapshot.accessRequests, []);
+});
 
 test("implementation confirmation has its own endpoint, never a tool-permission or text-request side effect", async t => {
   const f = await fixture(t), decisions = [];

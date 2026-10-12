@@ -37,37 +37,13 @@ export function createHumanLoopController(options) {
     permissions,
     reportError: error => events.append({ type: "human.permission-sync-failed", source: "system", summary: error.message }),
   });
-  const providers = new Map(), providerStarts = new Map(), originals = new Map(), seenOriginals = new Set();
-  let session, installation, starting, flushing, closing, auditPaused = false, ending = false;
+  const providers = new Map(), providerStarts = new Map();
+  let session, installation, starting, closing, ending = false;
   const reportError = error => events.append({ type: "human.setup-waiting", source: "system", summary: error.message });
   const toolHook = async input => installation?.guardMainTool(input);
   const permissionHandler = (request, invocation) => options.mainPermissionHandler
     ? options.mainPermissionHandler(request, invocation) : nativePermissions.request(request, invocation);
 
-  function observeOriginal(event) {
-    if (event.agentId || !["user.message", "assistant.message"].includes(event.type)
-      || typeof event.data?.content !== "string" || !event.data.content || seenOriginals.has(event.id)) return;
-    originals.set(event.id, event);
-    if (installation?.runtime) void flushOriginals().catch(error =>
-      events.append({ type: "human.audit-failed", source: "system", summary: error.message }));
-  }
-  async function flushOriginals() {
-    if (flushing) return flushing;
-    const runtime = installation?.runtime;
-    if (!runtime || auditPaused) return;
-    flushing = (async () => {
-      if ((await installation.read()).status !== "ready") return;
-      for (const [id, event] of originals) {
-        if (auditPaused) break;
-        await runtime.store.recordMessage({ id: `main:${id}`, requestId: null,
-          role: event.type === "user.message" ? "host-user" : "host-assistant",
-          kind: event.type === "user.message" ? "user" : "assistant", content: event.data.content, timestamp: event.timestamp });
-        originals.delete(id); seenOriginals.add(id);
-      }
-      events.touch();
-    })().finally(() => { flushing = null; });
-    return flushing;
-  }
   async function attach(joinedSession) {
     if (session) throw new Error("The Development controller is already bound to its real main session.");
     session = joinedSession;
@@ -80,14 +56,12 @@ export function createHumanLoopController(options) {
       runtimeRoot: options.runtimeRoot ?? join(process.env.COPILOT_HOME ?? join(homedir(), ".copilot"), "living-canvas", "human-loop-runtime"),
       ...(options.cliPath ? { cliPath: options.cliPath } : {}),
       ...(options.nodePath ? { nodePath: options.nodePath } : {}),
+      inspectRepairAdmissions: options.inspectRepairAdmissions,
+      withEmptyRepairExclusion: options.withEmptyRepairExclusion,
       permissionHandler: (request, invocation, lifetime) => permissions.request(request, invocation, lifetime?.signal,
         lifetime?.onceOnly ? { onceOnly: true, nativeSessionGrantEligible: lifetime.nativeSessionGrantEligible,
           provenance: lifetime.provenance } : {}),
-      inspectRepairAdmissions: options.inspectRepairAdmissions,
-      withEmptyRepairExclusion: options.withEmptyRepairExclusion,
       resetPermissions: sessionId => permissions.resetSession(sessionId),
-      beforeClose: async () => { auditPaused = true; await flushing; },
-      afterReady: () => { auditPaused = false; },
       createRuntime: async runtimeOptions => new HumanLoopRuntime({
         ...runtimeOptions, contextProvider: options.contextProvider, withRequestAdmission: options.withRequestAdmission,
         projectEffortControl: options.projectEffortControl === true,
@@ -103,8 +77,6 @@ export function createHumanLoopController(options) {
         },
       }),
     });
-    session.on(observeOriginal);
-    for (const event of await session.getEvents()) observeOriginal(event);
   }
   async function start(openOptions = {}) {
     if (ending) throw new Error("The owning session is closing.");
@@ -115,8 +87,6 @@ export function createHumanLoopController(options) {
       const runtime = await installation.open(openOptions);
       if (options.projectEffortControl) await runtime.applyProjectEffort();
       events.enablePersistence(repositoryRoot);
-      for (const event of await session.getEvents()) observeOriginal(event);
-      await flushOriginals();
       runtime.wake();
       const readiness = await runtime.readiness();
       events.append({ type: readiness.status === "ready" ? "human.ready" : "human.setup-waiting", source: "system",

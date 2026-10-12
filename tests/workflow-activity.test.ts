@@ -85,10 +85,10 @@ test("terminal request elapsed stays fixed while freshness ages; missing complet
         ...detail, status: "completed", completedAt: Date.parse(value.processing.completedAt!),
     });
     h.render({ ...value, workflowRuntime: snapshot }); await h.flush();
-    assert.match(h.get("native-workflow-activity").textContent!, /Request elapsed: 1m 30s/);
+    assert.match(h.get("workflow-activity-title").textContent!, /1m 30s/);
     h.window.Date.now = () => Date.parse("2026-10-10T00:00:00Z");
     await new Promise(resolve => setTimeout(resolve, 1100)); await h.flush();
-    assert.match(h.get("native-workflow-activity").textContent!, /Request elapsed: 1m 30s/);
+    assert.match(h.get("workflow-activity-title").textContent!, /1m 30s/);
     value.processing.completedAt = null;
     h.render({ ...value, workflowRuntime: { ...snapshot, completedAt: null } }); await h.flush();
     assert.match(h.get("native-workflow-activity").textContent!, /Request elapsed unavailable/);
@@ -129,6 +129,35 @@ test("activity UI rejects old request projections and distinguishes waiting, una
         error: "Native details unavailable; work has not been declared failed." } }); await h.flush();
     assert.match(h.get("native-workflow-activity").textContent!, /not been declared failed/);
     assert.equal(h.requests.length, 0, "Progress does not launch, retry or cancel work.");
+});
+
+test("activity summary keeps one update and prominent blockers while raw operations stay in Details", async t => {
+    const h = await reactHarness(t), value = state("prototype");
+    value.processing = { ...value.processing, status: "running", action: "generate-design-spec",
+        requestId: "request", runId: "run", requestedAt: new Date(Date.now() - 65000).toISOString() };
+    const current = workflowBinding(value)!;
+    const agent = { id: "agent", label: "Process Tandem answer", status: "running", operation: "view",
+        update: "Inspecting the saved interaction.", updateAt: new Date().toISOString(),
+        lastNativeActivityAt: new Date(Date.now() - 65000).toISOString(), pendingPermissions: 0, activeMs: 4000 };
+    const snapshot = { ...current, status: "running", lastNativeActivityAt: agent.lastNativeActivityAt, agents: [agent] };
+    h.render({ ...value, workflowRuntime: snapshot }); await h.flush();
+    const details = h.get<HTMLDetailsElement>("workflow-activity-details");
+    assert.equal(details.open, false);
+    assert.match(h.get("workflow-activity-title").textContent!, /Finishing prototype/);
+    assert.equal(h.get("workflow-latest-update").textContent, agent.update);
+    const summary = h.get("native-workflow-activity").cloneNode(true) as HTMLElement;
+    summary.querySelector("details")!.remove();
+    assert.doesNotMatch(summary.textContent!, /Process Tandem answer|Last native activity|Silence does/);
+    assert.match(summary.textContent!, /No new activity for/);
+    await h.click(details.querySelector("summary")!);
+    assert.equal(details.open, true);
+    h.render({ ...value, workflowRuntime: { ...snapshot, agents: [{ ...agent, pendingPermissions: 1, status: "waiting-permission" }] } }); await h.flush();
+    assert.match(h.get("workflow-activity-state").textContent!, /Waiting for permission/);
+    assert.match(h.get("native-workflow-activity").querySelector('[role="alert"]')!.textContent!, /pending native permission/);
+    h.render({ ...value, workflowRuntime: { ...snapshot, status: "execution-unknown", error: "Outcome is unknown. Inspect current work." } }); await h.flush();
+    assert.match(h.get("native-workflow-activity").querySelector('[role="alert"]')!.textContent!, /Outcome is unknown/);
+    assert.equal(details.open, true);
+    assert.equal(h.requests.length, 0);
 });
 
 test("workflow activity endpoint reads the exact native run and surfaces unavailable metadata without work", async () => {

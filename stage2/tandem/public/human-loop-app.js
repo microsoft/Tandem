@@ -362,7 +362,8 @@ function render() {
       conversation.focusRequest(requestId);
     },
   });
-  const entries = [...(projectPresentation?.entries() ?? []), ...snapshot.messages];
+  $('private-history-status').hidden = snapshot.conversationStatus !== 'unverified';
+  const entries = snapshot.messages;
   const transitions = projectHumanHistory(snapshot.events, entries, snapshot.streamId, snapshot.historyRequests, snapshot.recoveries);
   conversation.render(entries, transitions);
   renderImplementationConfirmations();

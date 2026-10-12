@@ -28,19 +28,40 @@ export function WorkflowActivity() {
     const end = ended ? completedAt ? Date.parse(completedAt) : NaN : now;
     const start = Date.parse(binding.requestedAt);
     const elapsed = end >= start ? Math.floor((end - start) / 1000) : NaN;
+    const title = binding.kind === "preparation" ? "Preparing project" : binding.kind === "suggestions" ? "Refreshing suggestions"
+        : state.processing?.action === "generate-design-spec" ? "Finishing prototype"
+        : state.lifecycle.currentStage === "prototype" ? "Building prototype"
+        : state.lifecycle.currentStage === "sketch" ? "Updating drawings" : "Updating requirements";
+    const permissions = current?.agents.reduce((count, agent) => count + agent.pendingPermissions, 0) ?? 0;
+    const savedStatus = binding.kind === "preparation" ? state.preparation.status
+        : binding.kind === "suggestions" ? state.suggestionProcessing?.status : state.processing?.status;
+    const savedFailure = ["error", "failed", "cancelled"].includes(savedStatus ?? "");
+    const status = permissions ? "Waiting for permission" : current ? labels[current.status] || current.status
+        : savedFailure ? labels[savedStatus!] : "Native activity not yet available";
+    const savedError = savedFailure ? binding.kind === "preparation" ? state.preparation.error : state.processing?.message : "";
+    const update = current?.agents.filter(agent => agent.update).sort((left, right) =>
+        Date.parse(right.updateAt ?? "") - Date.parse(left.updateAt ?? ""))[0]?.update;
+    const inactiveSeconds = current?.lastNativeActivityAt ? Math.floor((now - Date.parse(current.lastNativeActivityAt)) / 1000) : NaN;
+    const failure = current?.agents.find(agent => ["failed", "error", "cancelled", "execution-unknown"].includes(agent.status));
     return <section id="native-workflow-activity" className="section" aria-label="Native workflow activity">
-        <strong>{current ? labels[current.status] || current.status : "Native activity not yet available"}</strong>
-        <p className="muted">{Number.isFinite(elapsed) ? `Request elapsed: ${Math.floor(elapsed / 60)}m ${elapsed % 60}s. `
-            : ended ? "Request elapsed unavailable: terminal timestamp not available. " : ""}
-            {age(current?.lastNativeActivityAt ?? null, now)}</p>
+        <strong id="workflow-activity-title">{title}{Number.isFinite(elapsed) ? ` · ${Math.floor(elapsed / 60)}m ${elapsed % 60}s` : ""}</strong>
+        <p id="workflow-activity-state" role="status">{status}</p>
+        {permissions > 0 && <p role="alert">Review {permissions} pending native permission request(s) in the host.</p>}
         {current?.error && <p role="alert">{current.error}</p>}
-        {current?.agents.map(agent => <div key={agent.id}>
-            <strong>{agent.label}: {labels[agent.status] || agent.status}</strong>
-            {agent.operation && <span> · {agent.operation}</span>}
-            {agent.pendingPermissions > 0 && <p>Review {agent.pendingPermissions} pending native permission request(s) in the host.</p>}
-            {agent.update && <p>Model update: {agent.update} <span className="muted">{age(agent.updateAt, now).replace("native activity", "update")}</span></p>}
-            <p className="muted">{age(agent.lastNativeActivityAt, now)}</p>
-        </div>)}
-        <p className="muted">Silence does not mean failure. Updates are not completion or verification evidence.</p>
+        {!current?.error && savedError && <p role="alert">{savedError}</p>}
+        {failure && <p role="alert">{failure.label}: {labels[failure.status] || failure.status}</p>}
+        {update && <p id="workflow-latest-update">{update}</p>}
+        {!ended && !permissions && inactiveSeconds >= 60 && <p className="muted">No new activity for {Math.floor(inactiveSeconds / 60)}m {inactiveSeconds % 60}s.</p>}
+        <details id="workflow-activity-details"><summary>Details</summary>
+            {ended && !Number.isFinite(elapsed) && <p>Request elapsed unavailable: terminal timestamp not available.</p>}
+            <p className="muted">{age(current?.lastNativeActivityAt ?? null, now)}</p>
+            {current?.agents.map(agent => <div key={agent.id}>
+                <strong>{agent.label}: {labels[agent.status] || agent.status}</strong>
+                {agent.operation && <span> · {agent.operation}</span>}
+                <p className="muted">{age(agent.lastNativeActivityAt, now)}</p>
+            </div>)}
+            <p className="muted">Request: {binding.requestId} · Run: {binding.runId}</p>
+            <p className="muted">Silence does not mean failure. Updates are not completion or verification evidence.</p>
+        </details>
     </section>;
 }

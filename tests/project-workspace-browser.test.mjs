@@ -169,6 +169,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
     const heldPreviewChecks = [];
     const runtime = {
       sessionId: "private", state: async () => nativeState,
+      transport: { attachmentCapabilities: async () => ({ supported: true, limits: { maxBytes: 4 * 1024 * 1024, maxImages: 1 } }) },
       readiness: async () => ({ status: stopped ? "closed" : nativeState.activeRequestId ? "working" : "ready",
         workspacePath: root, reason: stopped ? "Closed; saved history retained. Reopen explicitly." : null }),
       conversation: async () => [{ id: "handoff:fixture-review", kind: "assistant", role: "reviewer", requestId: "fixture-origin",
@@ -521,14 +522,16 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       for (const width of [920, 390]) {
         await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 1000, deviceScaleFactor: 1, mobile: false });
         await waitInside('document.body.dataset.projectStacked==="true"');
-        const layout = await inside(`(() => {const panel=document.querySelector("#conversation-panel").getBoundingClientRect();
-          const composer=document.querySelector("#composer").getBoundingClientRect();
-          return {left:panel.left,right:panel.right,width:innerWidth,bottom:composer.bottom,height:innerHeight};})()`);
-        assert.ok(layout.left < 2 && layout.right >= layout.width - 2, `Passive chat fills its width at ${width}: ${JSON.stringify(layout)}`);
-        assert.ok(layout.bottom <= layout.height + 1, `Composer remains in view at ${width}: ${JSON.stringify(layout)}`);
+        assert.equal(await browser.evaluate('document.querySelector("#project-conversation-frame").hidden && document.querySelector("#project-conversation-frame").getBoundingClientRect().height === 0'), true,
+          `Private chat is not visible in an earlier phase at ${width}px.`);
+        assert.equal(await browser.evaluate('document.querySelector("#discovery-history").checkVisibility()'), true);
       }
       await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 1000, deviceScaleFactor: 1, mobile: false });
       await waitInside('document.body.dataset.projectStacked==="false"');
+      await click("#development-tab");
+      await waitInside('document.body.dataset.projectDesign==="true"');
+      assert.equal(await inside('document.querySelector("#messages").textContent.includes("Discovery evidence")'), false);
+      assert.equal(await browser.evaluate('document.querySelector("#discovery-history") === null'), true);
       const checkRootChrome = async () => {
         const styles = await browser.evaluate(`["#project-settings","#project-current-work",".topbar"].map(selector=>{
           const element=document.querySelector(selector), style=getComputedStyle(element);
@@ -576,8 +579,36 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await browser.waitFor('document.activeElement.id==="project-settings"');
       await click("#message", true); await browser.call("Input.insertText", { text: "As a user, I keep my draft while viewing Design." });
       assert.equal(await inside('document.querySelector("#message").value'), "As a user, I keep my draft while viewing Design.");
+      await inside(`(() => {
+        const transfer = new DataTransfer();
+        transfer.items.add(new File([Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII="), c => c.charCodeAt(0))], "clipboard.png", {type:"image/png"}));
+        document.querySelector("#message").dispatchEvent(new ClipboardEvent("paste", {clipboardData:transfer,bubbles:true,cancelable:true}));
+        document.querySelector("#message").setSelectionRange(3, 8);
+      })()`);
+      await waitInside('document.querySelector("#clipboard-caption").textContent.includes("Ready to send")');
+      const attachment = await inside('document.querySelector("#clipboard-image").src');
+      const beforeBrowse = mutations.length;
+      for (const tab of ["#preparation-tab", "#design-tree-tab", "#sketch-tab", "#live-preview-tab"]) {
+        await click(tab);
+        await browser.waitFor('document.querySelector("#project-conversation-frame").hidden');
+        assert.equal(await browser.evaluate('document.querySelector("#discovery-history").checkVisibility()'), true);
+        assert.equal(await inside('document.querySelector("#message").value'), "As a user, I keep my draft while viewing Design.");
+        assert.equal(await inside('document.querySelector("#message").selectionStart'), 3);
+        assert.equal(await inside('document.querySelector("#clipboard-image").src'), attachment);
+        assert.equal(await inside('document.querySelector("#clipboard-preview").hidden'), false);
+        if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `isolated-${tab.slice(1)}.png`), await browser.screenshot());
+        await click("#development-tab");
+        await browser.waitFor('!document.querySelector("#project-conversation-frame").hidden');
+        assert.equal(await inside('document.querySelector("#messages").textContent.includes("Discovery evidence")'), false);
+      }
+      assert.equal(mutations.length, beforeBrowse);
+      assert.equal(nativeRequests.length, 0);
+      await click("#message", true);
+      assert.equal(await inside('document.activeElement.id'), "message");
+      await click("#clipboard-remove", true);
+      if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "isolated-development-private-chat.png"), await browser.screenshot());
       const conversationWidth = () => browser.evaluate('document.querySelector("#project-conversation").getBoundingClientRect().width');
-      const initialWidth = await conversationWidth();
+      const initialWidth = await inside('document.querySelector("#conversation-panel").getBoundingClientRect().width');
       await click("#development-tab");
       await waitInside('document.body.dataset.projectDesign==="true"');
       await waitInside(`Math.abs(document.querySelector("#conversation-panel").getBoundingClientRect().width-${initialWidth})<2`);
@@ -588,6 +619,8 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       assert.equal(await inside('document.querySelector("#project-message-context strong").textContent'), "Development");
       await click("#design-tree-tab");
       await waitInside('document.body.dataset.projectDesign==="false"');
+      assert.equal(await browser.evaluate('document.querySelector("#project-conversation-frame").hidden'), true);
+      assert.equal(await inside('document.querySelector("#message").value'), "As a user, I keep my draft while viewing Design.");
       const returnedWidth = await conversationWidth();
       assert.ok(Math.abs(returnedWidth - initialWidth - 10) < 2,
         `Development resizing follows the conversation into discovery: initial ${initialWidth}, returned ${returnedWidth}, ${await browser.evaluate('document.querySelector("#studio-workspace").getAttribute("style")')}.`);
@@ -596,8 +629,6 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await browser.waitFor(`Math.abs(document.querySelector("#project-conversation").getBoundingClientRect().width-${initialWidth - 14})<2`);
       await click("#development-tab");
       await waitInside(`document.body.dataset.projectDesign==="true" && Math.abs(document.querySelector("#conversation-panel").getBoundingClientRect().width-${initialWidth - 14})<2`);
-      await click("#design-tree-tab");
-      await waitInside('document.body.dataset.projectDesign==="false"');
       await click("#message", true);
       await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "a", windowsVirtualKeyCode: 65, modifiers: 2 });
       await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "a", windowsVirtualKeyCode: 65, modifiers: 2 });

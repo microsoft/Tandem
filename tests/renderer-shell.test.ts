@@ -3,6 +3,20 @@ import { test } from "node:test";
 import { readFile } from "node:fs/promises";
 import { setup, state, blankEffort, decision, response, text, field, disabled, hidden, current, submit, browse } from "./renderer-fixtures.test.js";
 
+test("original brief belongs to Preparation, not duplicated global sidebar prose", async t => {
+    const value = state("requirements");
+    value.goal = "Keep my exact original project brief.\nIncluding its second line.";
+    const h = await setup(t, value);
+    assert.equal(h.document.querySelector("#requirements-pane .project-brief"), null);
+    assert.equal(h.document.querySelector("#requirements-pane #goal"), null);
+    assert.equal(h.document.querySelector("#requirements-pane #status"), null);
+    assert.doesNotMatch(h.get("requirements-pane").textContent!, /Project overview|Brief and project details/);
+    await browse(h, "prepare");
+    assert.equal(h.get("goal").textContent, value.goal);
+    assert.equal(h.document.querySelector("#start-goal"), null);
+    assert.equal(h.requests.length, 0);
+});
+
 test("root branding embeds the existing Tandem bicycle artwork with accessible naming", async t => {
     const h = await setup(t);
     const image = h.document.querySelector<HTMLImageElement>(".brand-artwork")!;

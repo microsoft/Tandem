@@ -26,10 +26,22 @@ saved Preparation-to-Development progress is retained; the independent stage
 operations and their quiet/ownership fences remain authoritative.
 
 There is no Send-to selector. Artifact browsing is distinct from active work:
-Development's renderer and draft stay mounted when browsing earlier artifacts,
+Development's renderer and draft stay mounted but hidden when browsing earlier artifacts,
 which are read-only unless explicitly reopened through the original guarded
 operation. Before Development, the right-hand history is passive and the
 established Stage1 inputs remain the only actionable workflow inputs.
+The later explicit independence clarification supersedes historical unified-chat
+presentation: private conversation is visible only on Development and contains
+only private messages and attributable work events. Root Discovery history stays
+in the earlier phases. Foreground messages are no longer copied into the private
+store; legacy copies are filtered from presentation, not erased. Shared artifact
+references and genuine private handoff messages remain supported.
+The duplicate global Project overview/brief and standalone status paragraph are
+removed; the original brief remains in Preparation without reopening it. The
+remaining activity summary shows one action/state/elapsed value and latest safe
+update, with details expandable and blockers prominent. Saved Prototype guidance
+points to Development navigation and its existing explicit handoff; optional
+closing is secondary help, not a prerequisite or manual-import instruction.
 Unavailable Development disables composer, quick-request and attachment actions
 without clearing existing input. Recovery/Retry and Settings Close are distinct
 from runtime Close.

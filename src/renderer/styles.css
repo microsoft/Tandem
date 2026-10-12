@@ -3468,6 +3468,7 @@ textarea {
 .project-workspace[data-development="true"] #project-conversation-divider { display: none; }
 .project-workspace[data-development="true"] .development-panel { min-height: 0; height: auto; flex: 0 0 auto; }
 .project-workspace .preview > [role="tabpanel"] { min-width: 0; }
+.project-folder { min-width: 0; overflow-wrap: anywhere; font-size: var(--text-body-small, 12px); }
 .project-workspace .start-panel { min-height: 0; overflow: auto; }
 .phase-actions { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: var(--studio-control-gap); padding: var(--studio-heading-padding); border-bottom: 1px solid var(--studio-border); }
 .phase-actions:not(:has(> button:not([hidden]))):not(:has([data-status="error"])) { display: none; }

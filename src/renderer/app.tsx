@@ -1,6 +1,6 @@
 import { Component, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ErrorInfo, type ReactNode } from "react";
 import { AlertDialog, Tabs, Tooltip } from "radix-ui";
-import { ArrowRight, Check, ChevronDown, ClipboardList, Code, FileText, FolderOpen, GitBranch, Layers, ListChecks, Monitor, PanelLeft, PanelLeftClose, PanelLeftOpen, PencilRuler, Play, RefreshCw, RotateCcw, Sparkles, Target, X } from "lucide-react";
+import { ArrowRight, Check, ChevronDown, ClipboardList, Code, FileText, FolderOpen, GitBranch, Layers, ListChecks, Monitor, PanelLeft, PanelLeftClose, PanelLeftOpen, PencilRuler, Play, RefreshCw, RotateCcw, Sparkles, X } from "lucide-react";
 import { lifecycleStages } from "../workflow.js";
 import type { LifecycleStageId } from "../types.js";
 import { StudioStore } from "./state-store.js";
@@ -306,7 +306,10 @@ function Workspace(props: WorkspaceProps) {
     ? "Next stage: " + completionLabel : completionLabel;
   const selectedLabel = lifecycleStages.find((stage) => stage.id === viewed)?.label || viewed;
   const statusBarError = props.connectionError || stageAction.error;
+  const savedPrototype = state.lifecycle.currentStage === "development" && state.lifecycle.outputs.some(output => output.stageId === "prototype")
+    && state.status === "Prototype outputs saved. Stage 1 is complete. You can close now and open Development later with these files as input.";
   const statusBarText = statusBarError || contextHelp || (nextAction ? "Next action: " + nextAction.label
+    : savedPrototype ? "Prototype saved. Continue in Development when you're ready."
     : state.status || (atStart ? "Ready to start a project." : "Ready."));
   const narrow = () => window.matchMedia("(max-width: 760px)").matches;
   // Keep both artifact and conversation minimum widths, including the two dividers.
@@ -447,7 +450,7 @@ function Workspace(props: WorkspaceProps) {
             </button>
           </nav>
           <div className="context-pane-heading">
-            <p className="eyebrow"><Target size={14} aria-hidden="true" />Project overview</p>
+            <span className="project-folder" title={projectView.entry.projectPath}>{projectView.entry.projectPath.split(/[\\/]/).filter(Boolean).at(-1)}</span>
             <button id="toggle-context-pane" className="context-collapse" type="button" aria-controls="requirements-pane"
               aria-expanded={!contextCollapsed} aria-label={contextCollapsed ? "Expand project context" : "Collapse project context"}
               title={contextCollapsed ? "Expand project context" : "Collapse to stage activity bar"}
@@ -455,9 +458,8 @@ function Workspace(props: WorkspaceProps) {
               {contextCollapsed ? <PanelLeftOpen size={16} aria-hidden="true" /> : <PanelLeftClose size={16} aria-hidden="true" />}
             </button>
           </div>
-          <details className="section project-brief"><summary>Brief and project details</summary><p id="goal" className="goal" title={state.goal}>{state.goal || "Discovery is optional. Describe the project here or activate Development."}</p></details>
-          <p id="status" className="status" role="status">{projectView.active
-            ? `Development: ${projectView.detail || projectView.status}` : state.status}</p>
+          {!projectView.visible && (projectView.error || ["unknown", "execution-unknown", "failed"].includes(projectView.status)) &&
+            <p role="alert">Development needs attention. Open Current work to inspect the private session.</p>}
           <DiscoveryRecovery />
           <WorkflowActivity />
           <section id="project-artifact-library" className="section" aria-label="Artifacts">
