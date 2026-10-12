@@ -612,6 +612,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         await waitInside(`document.body.dataset.projectStacked==="${width < 800}"`);
         assert.equal(await browser.evaluate('document.querySelector("#project-conversation-frame").hidden && document.querySelector("#project-conversation-frame").getBoundingClientRect().height === 0'), true,
           `Private chat is not visible in an earlier phase at ${width}px.`);
+        await browser.waitFor('document.querySelector("#discovery-history").hidden');
         assert.equal(await browser.evaluate('document.querySelector("#discovery-history").checkVisibility()'), false,
           "Unchosen secondary history collapses at a constrained width rather than taking artifact space.");
       }
