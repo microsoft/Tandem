@@ -417,6 +417,31 @@ After **Ready**, explicitly select **Reconcile Design handoff** to admit the
 original prepared handoff. Never delete saved state or locks to bypass a
 rejected recovery check.
 
+### Repair a verified-empty Development setup
+
+The native runtime can omit an empty session's event journal even after creation,
+naming and explicit save. If that previously Ready setup cannot reopen, use
+**Repair Development setup** in Development, then review **Repair the same
+session**. This is a separate, one-use repair—not ordinary Retry or the older
+unused-startup flow.
+
+Repair requires the original created/Ready/close/failure history, unchanged owner
+and runtime, no request/execution/Design/approval/native conversation, and
+authoritative absence of native metadata, storage and a live owner. Only the
+verified empty-close and missing-journal diagnostics are permitted. Retained
+handoffs must be unsubmitted: sending, admitted, uncertain or foreign admission
+blocks repair. API failures never count as absence.
+
+The confirmation expires after five minutes and is revalidated under the
+admission fence. Its evidence and consumption are recorded before the installed
+SDK creates the **same reserved ID** again. Old WAL frames and source/handoff
+files remain intact. This reinitializes empty setup; it does not restore
+nonexistent native history, create a replacement UUID, or send a dummy turn.
+Native model/effort readback must succeed before reporting completion. The
+prepared handoff stays unsent until a separate explicit **Continue Design from
+Prototype** / **Reconcile Design handoff** action. A failed or uncertain repair
+cannot reuse its consumed confirmation.
+
 ## Acceptance, export and process adapters
 
 Use **Capture Development outcome for review**, inspect the original Development

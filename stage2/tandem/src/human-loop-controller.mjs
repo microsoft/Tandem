@@ -83,6 +83,8 @@ export function createHumanLoopController(options) {
       permissionHandler: (request, invocation, lifetime) => permissions.request(request, invocation, lifetime?.signal,
         lifetime?.onceOnly ? { onceOnly: true, nativeSessionGrantEligible: lifetime.nativeSessionGrantEligible,
           provenance: lifetime.provenance } : {}),
+      inspectRepairAdmissions: options.inspectRepairAdmissions,
+      withEmptyRepairExclusion: options.withEmptyRepairExclusion,
       resetPermissions: sessionId => permissions.resetSession(sessionId),
       beforeClose: async () => { auditPaused = true; await flushing; },
       afterReady: () => { auditPaused = false; },
@@ -130,7 +132,19 @@ export function createHumanLoopController(options) {
     if (providerStarts.has(id)) return providerStarts.get(id);
     const opening = (async () => {
       const original = await createHumanLoopProvider({ repositoryRoot, publicDirectory, getInstallation: () => installation,
-        events, permissions, start, ...providerOptions });
+        events, permissions, start, finishEmptyRepair: async () => {
+          const runtime = installation.runtime;
+          if (!runtime) throw new Error("The repaired runtime is not available for readback.");
+          if (options.projectEffortControl) await runtime.applyProjectEffort();
+          const [readiness, model] = await Promise.all([runtime.readiness(), runtime.modelSettings()]);
+          if (readiness.status !== "ready" || readiness.modelBlocked || typeof model.actual !== "string" || !model.actual) {
+            throw new Error(readiness.reason || model.reason || "Repair completed, but native model/readiness still needs attention.");
+          }
+          events.enablePersistence(repositoryRoot);
+          events.append({ type: "human.setup-repaired", source: "system",
+            summary: "Empty Development setup reinitialized with the same reserved ID. The retained handoff remains unsent." });
+          return { model: model.actual, reasoningEffort: model.actualReasoningEffort ?? null };
+        }, ...providerOptions });
       let closeWork;
       const provider = { ...original, close: () => closeWork ??= (async () => {
         if (providers.get(id) === provider) providers.delete(id);

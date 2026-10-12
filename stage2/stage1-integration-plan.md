@@ -111,6 +111,25 @@ known limitations. This work does not claim they are fixed, replace a private
 identity, or bypass their validation/recovery paths. Frozen manual session
 `57dcd2b1` remains on its original candidate until the user explicitly switches.
 
+## Explicit empty-created setup repair
+
+The later native blocker was independently reproduced without model turns:
+creating/naming an empty native session and awaiting `sessions.save` can still
+leave no persisted journal. Same-ID `resumeSession` then fails, while explicit
+`createSession` using the authoritatively absent reserved ID succeeds. An empty
+snapshot alone is not proof; the private ledger, complete installation WAL,
+native inventories and root handoff admission are checked separately.
+
+**Repair Development setup** is a new guarded case, not a relaxation of legacy
+initial-creation recovery. It permits the inspected empty close/question-gate
+release and missing-session diagnostics, but refuses used/unknown additional
+state, Design, requests, prior repair/recovery, active native ownership and any
+nonprepared handoff admission. A digest-bound, expiring one-use confirmation
+records reinitialization before creation. The old creation/Ready/Close/failure
+frames remain; owner IDs and prepared handoffs do not change. Model/effort are
+read back without waking queued work. Continue/Reconcile remains a separate user
+action after repair, and no model turn is fabricated to force persistence.
+
 ## Agreed stage boundary
 
 Stage 1 is optional. New and existing Git projects may open Development directly,

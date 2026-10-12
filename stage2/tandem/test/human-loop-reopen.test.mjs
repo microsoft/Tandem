@@ -25,7 +25,7 @@ const question = { id: "scope", context: "Product scope is not decided.", questi
     { id: "large", label: "Large", implication: "Discuss a larger scope." }], allowFreeform: true };
 
 async function fixture(t, { ask = false, autoConfirm = true, stopDelivery = null, model = null, legacyNamespaces = false,
-  reasoningEffort = null, deferred = false, failCreate = false, failStartup = false } = {}) {
+  reasoningEffort = null, deferred = false, failCreate = false, failStartup = false, empty = false } = {}) {
   const root = await mkdtemp(join(process.cwd(), ".human-reopen-")), workspace = join(root, "project");
   await mkdir(workspace); await git(workspace, "init", "--quiet");
   await writeFile(join(workspace, "original.txt"), "existing work\n");
@@ -36,6 +36,7 @@ async function fixture(t, { ask = false, autoConfirm = true, stopDelivery = null
   const installed = { sdk: { modulePath: file, digest: hash("installed fixture") },
     cli: { path: file, digest: hash("installed fixture") }, node: { path: file, digest: hash("installed fixture") }, buildId: "fixture" };
   let runtime, native, saved = null, mode = "interactive", nativeMissing = false, failReset = false, currentDesign = design;
+  if (empty) currentDesign = { binding: { revisionId: null, digest: null }, content: null };
   const counts = { creates: 0, resumes: 0, clients: 0, stops: 0, saves: 0, resets: 0, brokerResets: 0, sends: 0, compactions: 0, disconnects: 0 };
   let failDisconnect = false, failClientStop = false;
   let compactWork = async () => ({ success: true });
@@ -141,6 +142,7 @@ async function fixture(t, { ask = false, autoConfirm = true, stopDelivery = null
       counts.creates++;
       if (failCreate === true) throw new Error("Native creation failed before creating the session.");
       native = new Session(config); sessions.push(native);
+      if (empty) nativeMissing = false;
       if (failCreate === "after-create") throw new Error("Native creation acknowledgement was lost after creation.");
       return native;
     }
@@ -160,7 +162,10 @@ async function fixture(t, { ask = false, autoConfirm = true, stopDelivery = null
       if (!config.suppressResumeEvent) native.emit("session.resume", { eventCount: native.events.length });
       return native;
     }
-    rpc = { sessions: { readPersistedEvents: async () => {
+    rpc = { sessions: {
+      ...(empty ? { checkInUse: async () => ({ inUse: [] }),
+        getSizes: async () => ({ sizes: nativeMissing || !saved ? {} : { [saved.sessionId]: 100 } }) } : {}),
+      readPersistedEvents: async () => {
       if (nativeMissing || !saved) throw new Error("Retained native history is unavailable.");
       return { events: coldHistory(structuredClone(saved.events)), cursor: "complete", cursorStatus: "ok", hasMore: false };
     }, save: async () => {
@@ -232,6 +237,110 @@ async function fixture(t, { ask = false, autoConfirm = true, stopDelivery = null
     },
   };
 }
+
+async function emptyCreatedFixture(t) {
+  const f = await fixture(t, { empty: true, model: "one", reasoningEffort: "low" });
+  await f.installation.close();
+  f.missing();
+  await assert.rejects(f.reopen(true), /private session is unavailable/);
+  return f;
+}
+
+test("verified empty-created repair is same-ID, one-use and preserves all original audit without a request", async t => {
+  const f = await emptyCreatedFixture(t);
+  const file = f.record(), wal = getHostStateWal(f.workspace);
+  const before = await wal.history(file.namespace, file.key);
+  const owner = structuredClone(f.installation.configuration.owner);
+  const inspect = await f.installation.requestEmptySetupRepair();
+  assert.equal(inspect.privateSessionId, owner.privateSessionId);
+  assert.match(inspect.message, /not restore nonexistent history/);
+  assert.deepEqual(await f.installation.decideEmptySetupRepair({ confirmationId: inspect.confirmationId, approve: false }), { repaired: false });
+  assert.deepEqual(await wal.history(file.namespace, file.key), before, "Inspection and cancellation append no installation mutation.");
+  const next = await f.installation.requestEmptySetupRepair();
+  const decisions = await Promise.allSettled([
+    f.installation.decideEmptySetupRepair({ confirmationId: next.confirmationId, approve: true }),
+    f.installation.decideEmptySetupRepair({ confirmationId: next.confirmationId, approve: true }),
+  ]);
+  assert.equal(decisions.filter(value => value.status === "fulfilled").length, 1);
+  const runtime = f.installation.runtime, record = JSON.parse(await file.read());
+  assert.deepEqual(f.installation.configuration.owner, owner);
+  assert.equal(record.nativeCreation.authorization.repair.kind, "verified-empty-created");
+  assert.equal(record.nativeCreation.authorization.id, next.confirmationId);
+  assert.equal(f.counts.creates, 2); assert.equal(f.counts.resumes, 0); assert.equal(f.counts.sends, 0);
+  assert.equal((await runtime.state()).requests.length, 0);
+  assert.equal((await runtime.state()).design.revisionId, null);
+  assert.match((await runtime.conversation()).at(-1).content, /reinitialized.*No native history was restored/);
+  assert.deepEqual((await wal.history(file.namespace, file.key)).slice(0, before.length), before);
+  assert.deepEqual(await f.installation.decideEmptySetupRepair({ confirmationId: next.confirmationId, approve: true }), { repaired: true, duplicate: true });
+  assert.equal(f.counts.creates, 2);
+});
+
+test("empty repair rejects changed handoff proof and authoritative absence API failures", async t => {
+  const f = await emptyCreatedFixture(t);
+  let admission = "prepared";
+  f.options.inspectRepairAdmissions = async () => ({ admission });
+  const proposal = await f.installation.requestEmptySetupRepair();
+  admission = "changed-proof";
+  await assert.rejects(f.installation.decideEmptySetupRepair({ confirmationId: proposal.confirmationId, approve: true }), /evidence changed/);
+  assert.equal(f.counts.creates, 1);
+  const sdk = await f.options.loadSdk();
+  f.options.loadSdk = async () => ({ ...sdk, CopilotClient: class extends sdk.CopilotClient {
+    constructor(...args) { super(...args); this.rpc.sessions.getSizes = async () => { throw new Error("Native inventory unavailable"); }; }
+  } });
+  await assert.rejects(f.installation.requestEmptySetupRepair(), /Native inventory unavailable/);
+  assert.equal(f.counts.creates, 1);
+});
+
+test("empty repair refuses native conversation or unknown retained Design instead of deleting it", async t => {
+  const f = await emptyCreatedFixture(t);
+  const store = f.installation.runtime.store;
+  await store.recordMessage({ id: "native:foreign", role: "assistant", kind: "assistant", requestId: null,
+    content: "Retained native content", timestamp: new Date().toISOString() });
+  await assert.rejects(f.installation.requestEmptySetupRepair(), /conversation/);
+  assert.equal((await store.messages()).some(message => message.id === "native:foreign"), true);
+  assert.equal(f.counts.creates, 1);
+});
+
+test("created-session repair never replaces a used request", async t => {
+  const f = await fixture(t, { empty: true });
+  await f.send("used");
+  await f.installation.close(); f.missing();
+  await assert.rejects(f.reopen(true), /private session is unavailable/);
+  await assert.rejects(f.installation.requestEmptySetupRepair(), /used setup/);
+  assert.equal(f.counts.creates, 1);
+});
+
+for (const change of ["design", "owner", "live-native", "extra-state"]) test(`empty repair blocks ${change} evidence`, async t => {
+  const f = await emptyCreatedFixture(t);
+  if (change === "design") {
+    const file = new HostStateFile(f.workspace, join(f.workspace, ".tandem", "living-canvas", "design", "document.json"));
+    await file.mutate("fixture-design", () => ({ content: JSON.stringify(design), result: null }));
+  } else if (change === "owner") f.options.mainSession.sessionId = "different-main";
+  else if (change === "live-native") {
+    const sdk = await f.options.loadSdk();
+    f.options.loadSdk = async () => ({ ...sdk, CopilotClient: class extends sdk.CopilotClient {
+      constructor(...args) { super(...args); this.rpc.sessions.checkInUse = async () => ({ inUse: [f.installation.configuration.owner.privateSessionId] }); }
+    } });
+  } else {
+    const file = new HostStateFile(f.workspace, join(f.workspace, ".tandem", "living-canvas", "unknown-state.json"));
+    await file.mutate("fixture-extra", () => ({ content: "{}", result: null }));
+  }
+  await assert.rejects(f.installation.requestEmptySetupRepair(), /Design|unknown state|main session|owner|active|unverified/i);
+  assert.equal(f.counts.creates, 1); assert.equal(f.counts.sends, 0);
+});
+
+test("failure after repair creation consumes its decision and preserves uncertainty", async t => {
+  const f = await emptyCreatedFixture(t);
+  const proposal = await f.installation.requestEmptySetupRepair();
+  f.setCreateFailure("after-create");
+  await assert.rejects(f.installation.decideEmptySetupRepair({ confirmationId: proposal.confirmationId, approve: true }), /acknowledgement was lost/);
+  const record = JSON.parse(await f.record().read());
+  assert.equal(record.nativeCreation.status, "requested");
+  assert.equal(record.nativeCreation.authorization.id, proposal.confirmationId);
+  assert.equal((await f.installation.read()).status, "unknown");
+  await assert.rejects(f.installation.decideEmptySetupRepair({ confirmationId: proposal.confirmationId, approve: true }), /stale or consumed/);
+  assert.equal(f.counts.creates, 2); assert.equal(f.counts.sends, 0);
+});
 
 for (const changed of [false, true]) test(`reopen retains a pending human confirmation without dispatch and replaces stale Design approval: changed=${changed}`, async t => {
   const f = await fixture(t, { ask: true, autoConfirm: false });

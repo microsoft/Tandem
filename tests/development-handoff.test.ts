@@ -88,6 +88,26 @@ async function retainedFiles(root: string): Promise<Record<string, Buffer>> {
     return result;
 }
 
+test("empty-setup repair inspection preserves prepared handoffs and refuses every admission or owner change", async t => {
+    const f = await fixture("build");
+    t.after(f.cleanup);
+    const receipt = await f.store.prepare(f.state);
+    const before = await retainedFiles(f.store.root);
+    const proof = await f.store.inspectUnadmitted();
+    assert.match(JSON.stringify(proof), /prepared/);
+    assert.deepEqual(await retainedFiles(f.store.root), before);
+    const path = join(f.store.root, `${receipt.id}.admission.json`);
+    const original = JSON.parse(await readFile(path, "utf8"));
+    for (const status of ["sending", "admitted", "uncertain"]) {
+        await writeJsonAtomically(path, { ...original, status, privateSessionId: "private" });
+        const bytes = await readFile(path);
+        await assert.rejects(f.store.inspectUnadmitted(), /used or uncertain/);
+        assert.deepEqual(await readFile(path), bytes);
+    }
+    await writeJsonAtomically(path, original);
+    await assert.rejects(new DevelopmentHandoffs(f.workspace, f.shared, "other-main").inspectUnadmitted(), /ownership|another|target/i);
+});
+
 async function installationFixture(f: Awaited<ReturnType<typeof fixture>>) {
     const installed = join(f.root, "installed");
     await mkdir(installed);

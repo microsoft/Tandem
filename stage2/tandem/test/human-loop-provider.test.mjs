@@ -40,7 +40,7 @@ test("routine activity projection retains exact individual events across durable
     originals.map(event => [restored.streamId, event.sequence, event.timestamp]));
 });
 
-async function fixture(t, { onSend, content = sharedDesignExample(), openProjectFolder, surface } = {}) {
+async function fixture(t, { onSend, content = sharedDesignExample(), openProjectFolder, surface, finishEmptyRepair } = {}) {
   const root = await mkdtemp(join(tmpdir(), "human-loop-provider-"));
   const events = new HumanLoopEvents(), permissions = new PermissionBroker(events);
   const owner = { schemaVersion: "human-loop-owner/v1", id: "owner", mainSessionId: "main", privateSessionId: "private",
@@ -84,7 +84,7 @@ async function fixture(t, { onSend, content = sharedDesignExample(), openProject
     close: async () => { status = "closed"; installationStatus = "closed"; } };
   const provider = await createHumanLoopProvider({ repositoryRoot: root,
     publicDirectory: fileURLToPath(new URL("../public", import.meta.url)), events, permissions, getInstallation: () => installation,
-    start: async () => { starts++; installationStatus = "ready"; status = "waiting-answer"; }, openProjectFolder, surface });
+    start: async () => { starts++; installationStatus = "ready"; status = "waiting-answer"; }, openProjectFolder, surface, finishEmptyRepair });
   const browserCleanups = [];
   const openBrowser = () => openFixtureBrowser({ after: (cleanup) => browserCleanups.push(cleanup) });
   t.after(async () => {
@@ -122,6 +122,7 @@ test("unused-setup recovery requires its own exact confirmation and never submit
     confirmationId: "exact-startup", privateSessionId: "reserved-private", mainSessionId: "main", workspacePath: f.root,
     message: "One-time unused setup only. No implementation or request is sent.", reason: "Original pre-native Git failure.",
   });
+
   f.installation.decideInitialCreationRecovery = async input => {
     decisions.push(input); return { recovered: input.approve };
   };
@@ -140,6 +141,41 @@ test("unused-setup recovery requires its own exact confirmation and never submit
   assert.deepEqual(f.received, []);
 });
 
+test("Repair Development setup has a separate cancel/confirm UI and performs readback without start or send",
+    { skip: !browserAvailable, timeout: 60_000 }, async t => {
+      let readbacks = 0, ready = false;
+      const f = await fixture(t, { finishEmptyRepair: async () => { readbacks++; return { model: "one", reasoningEffort: "low" }; } });
+      const decisions = [];
+      f.installation.read = async () => ({ status: ready ? "ready" : "unknown", canInspectEmptyRepair: !ready, reason: "Empty native journal is unavailable." });
+      f.installation.requestEmptySetupRepair = async () => ({
+        confirmationId: `repair-${decisions.length}`, privateSessionId: "same-private", mainSessionId: "main",
+        workspacePath: f.root, binding: { installationDigest: "a".repeat(64) },
+        message: "Repair the same reserved ID. No project request is sent; the prepared handoff stays unsent.",
+      });
+      f.installation.decideEmptySetupRepair = async input => { decisions.push(input); ready = input.approve; return { repaired: input.approve }; };
+      const browser = await f.openBrowser();
+      await browser.call("Emulation.setDeviceMetricsOverride", { width: 390, height: 700, deviceScaleFactor: 1, mobile: false });
+      await browser.call("Page.navigate", { url: f.provider.url });
+      const click = async selector => {
+        await browser.evaluate(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:"center"})`);
+        const point = await browser.evaluate(`(() => {const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
+        for (const type of ["mousePressed", "mouseReleased"]) await browser.call("Input.dispatchMouseEvent", { type, ...point, button: "left", clickCount: 1 });
+      };
+      await browser.waitFor('document.querySelector("#repair-empty-setup")?.hidden === false');
+      await click("#repair-empty-setup");
+      await browser.waitFor('document.querySelector("#empty-setup-approval").open');
+      assert.match(await browser.evaluate('document.querySelector("#empty-setup-identity").textContent'), /same-private/);
+      assert.equal(await browser.evaluate('document.querySelector("#empty-setup-approval").getBoundingClientRect().right <= innerWidth'), true);
+      await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+      await browser.waitFor('!document.querySelector("#empty-setup-approval").open');
+      await click("#repair-empty-setup");
+      await browser.waitFor('document.querySelector("#empty-setup-approval").open');
+      await click("#approve-empty-setup");
+      await browser.waitFor('document.querySelector("#repair-empty-setup").hidden');
+      assert.deepEqual(decisions, [{ confirmationId: "repair-0", approve: false }, { confirmationId: "repair-1", approve: true }]);
+      assert.equal(readbacks, 1); assert.equal(f.starts(), 0); assert.deepEqual(f.received, []);
+      assert.equal((await f.post("/api/runtime/empty-setup/decision", { confirmationId: "foreign", approve: true, privateSessionId: "replacement" })).status, 409);
+    });
 test("real browser unused-setup recovery keeps inspection, cancellation and one-time approval distinct",
   { skip: !browserAvailable, timeout: 60_000 }, async t => {
     const f = await fixture(t), decisions = [];

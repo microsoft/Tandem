@@ -80,6 +80,35 @@ export class HumanLoopStore {
     return { initialized: content !== undefined, digest: policyHash({ content: content ?? null, messages }) };
   }
 
+  async inspectEmptyCreatedSetup(closeIds) {
+    const content = await this.#file.read();
+    requireCondition(content !== undefined, "Repair requires the original complete private ledger.");
+    const { ledger, state } = this.#derive(content);
+    requireCondition(ledger.initialDesign.revisionId === null && ledger.initialDesign.digest === null
+      && state.design.revisionId === null && state.design.digest === null
+      && !state.requests.length && !state.executions.length && !state.cycles.length && !state.questions.length
+      && !state.handoffs.length && !state.stops.length && !state.implementationConfirmations?.length
+      && !state.recoveries?.length && !state.activeRequestId && !state.activeTask && !state.stop,
+    "Repair refuses used setup, Design, requests, execution, approval or prior recovery.");
+    requireCondition(ledger.events.every(event => event.authority === "host" && (
+      event.command.type === "release-question-gates" && closeIds.has(event.command.id.replace(/^close-questions:/, ""))
+        && event.command.id.startsWith("close-questions:") && Object.keys(event.command.data).length === 0
+      || event.command.type === "execution-unknown" && event.command.id === "execution-unknown:session"
+        && event.command.data.evidenceRef === `private-session:${state.owner.privateSessionId}`)),
+    "Repair found history other than the inspected empty close/startup diagnostics.");
+    const messages = await this.messages();
+    requireCondition(messages.every(message => {
+      if (message.requestId !== null || message.role !== "host" || message.kind !== "status") return false;
+      if (message.id === "diagnostic:execution-unknown:session") return Boolean(state.uncertainty);
+      if (!message.id.startsWith("recovery-diagnostic:")) return false;
+      let detail;
+      try { detail = JSON.parse(message.content); } catch { return false; }
+      return detail.kind === "recovery-diagnostic" && detail.source === "retained-history"
+        && detail.sessionId === state.owner.privateSessionId;
+    }), "Repair refuses native, parent or project conversation; no history was removed.");
+    return { digest: policyHash({ content, messages }) };
+  }
+
   async dispatch(authority, id, type, data) {
     return this.#dispatch(authority, id, type, data);
   }

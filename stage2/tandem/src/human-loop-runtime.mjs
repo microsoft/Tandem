@@ -185,7 +185,15 @@ export class HumanLoopRuntime {
       "Initial setup recovery cannot replace an existing canonical Design.");
     if (!initial.initialized) await this.#store.initialize(design.binding);
   }
-  async recover(recoveryId, cleanNativeProof = null, allowMissingInitialSession = false) {
+  async validateEmptyCreatedSetup(closeIds) {
+    requireCondition(!this.#opened && !this.#closed && !this.#closing, "An active runtime cannot be reinitialized.");
+    await this.#verify();
+    await this.#store.inspectEmptyCreatedSetup(closeIds);
+    const design = await this.#readDesign();
+    requireCondition(design.binding.revisionId === null && design.binding.digest === null && design.content === null,
+      "Empty-setup repair cannot replace a canonical Design.");
+  }
+  async recover(recoveryId, cleanNativeProof = null, allowMissingInitialSession = false, repairId = null) {
     const state = await this.validateRecovery();
     let diagnostic = 0;
     const diagnose = async (source, reason) => {
@@ -213,7 +221,12 @@ export class HumanLoopRuntime {
       recoveryId, recoveredAt: new Date().toISOString(), evidenceRef: evidence.digest, nativeUsers: evidence.users, design: design.binding,
     });
     this.#opened = true;
-    this.#notify({ kind: "recovery", summary: currentImplementationConfirmation(this.#state)?.status === "pending"
+    if (repairId) await this.#store.recordMessage({ id: `empty-setup-reinitialized:${repairId}`,
+      requestId: null, role: "host", kind: "status", timestamp: new Date().toISOString(),
+      content: "Empty Development setup reinitialized with the same reserved session ID. No native history was restored and no project request was submitted. Continue Design separately when ready." });
+    this.#notify({ kind: "recovery", summary: repairId
+      ? "Development setup repaired with the same reserved ID. The retained handoff has not been submitted."
+      : currentImplementationConfirmation(this.#state)?.status === "pending"
       ? "Pending implementation confirmation retained. No planning or code changes will start without your decision; other interrupted work is retired."
       : "Ready for new instructions. Conversation and Design retained; previous work is retired, not resumed or certified." });
   }

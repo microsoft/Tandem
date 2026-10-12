@@ -1,3 +1,6 @@
+#empty-setup-approval { width: min(580px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto; box-sizing: border-box; background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+#empty-setup-identity { white-space: pre-wrap; overflow-wrap: anywhere; }
+#empty-setup-approval button { margin-block-start: 12px; }
 .human-app {
   --background: var(--background-color-default, light-dark(#e2e8f0, #0f172a));
   --surface: var(--background-color-default, light-dark(#f8fafc, #1e293b));

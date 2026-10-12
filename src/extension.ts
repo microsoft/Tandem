@@ -197,6 +197,12 @@ const development = createHumanLoopController({
         await assertDevelopmentAvailable();
     },
     contextProvider: () => handoffs.context(),
+    inspectRepairAdmissions: () => handoffs.inspectUnadmitted(),
+    withEmptyRepairExclusion: operation => developmentTransition.run(async () => {
+        if (projectEffortChanging) throw new Error("Wait for the project effort choice before repairing Development.");
+        await assertDevelopmentAvailable();
+        return operation();
+    }),
     ...(nodePermissionOwner ? { mainPermissionHandler: nodeMainConsent(nodePermissionOwner, () => session?.sessionId) } : {}),
     withRequestAdmission: operation => developmentTransition.run(async () => {
         if (projectEffortChanging) throw new Error("Wait for the project effort choice to finish applying.");

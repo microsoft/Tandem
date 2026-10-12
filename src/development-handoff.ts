@@ -188,6 +188,33 @@ export class DevelopmentHandoffs {
     private saveAdmission(admission: HandoffAdmission): Promise<void> {
         return writeJsonAtomically(this.admissionPath(admission.handoffId), admission);
     }
+    async inspectUnadmitted(): Promise<unknown> {
+        try { await lstat(this.root); } catch (error) {
+            if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+                return { mainSessionId: this.mainSessionId, workspaceRoot: this.workspaceRoot, handoffs: [] };
+            }
+            throw error;
+        }
+        await ensureMaterializedDirectories(this.root);
+        const names = (await readdir(this.root)).sort();
+        if (names.length > 200 || names.some(name => !/^handoff-[a-f0-9]{64}(?:\.admission\.json)?$/.test(name))) {
+            return fail("Unrecognized retained handoff data prevents empty-setup repair.");
+        }
+        const handoffs = [];
+        for (const id of names.filter(name => !name.endsWith(".json"))) {
+            const receipt = await this.read(id);
+            const admission = await readJsonFile(this.admissionPath(id));
+            if (admission !== undefined && (!object(admission) || admission.version !== 1 || admission.handoffId !== id
+                || admission.requestId !== receipt.request.id || admission.privateSessionId !== null || admission.status !== "prepared")) {
+                return fail("Handoff admission is used or uncertain; empty-setup repair cannot resend or rebind it.");
+            }
+            handoffs.push({ id, digest: receipt.digest, admission: admission ?? null });
+        }
+        if (names.some(name => name.endsWith(".admission.json") && !names.includes(name.slice(0, -".admission.json".length)))) {
+            return fail("An orphan handoff admission prevents empty-setup repair.");
+        }
+        return { mainSessionId: this.mainSessionId, workspaceRoot: this.workspaceRoot, handoffs };
+    }
     async admit(id: string, runtime: HumanLoopRuntimeHandle): Promise<HandoffAdmission> {
         return this.locked(async () => {
             const receipt = await this.read(id);

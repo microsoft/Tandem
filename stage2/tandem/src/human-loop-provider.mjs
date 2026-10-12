@@ -189,7 +189,7 @@ async function body(request) {
   return JSON.parse((await bytes(request, 65536)).toString("utf8"));
 }
 
-export async function createHumanLoopProvider({ repositoryRoot, publicDirectory, getInstallation, events, permissions, start, openBrowser,
+export async function createHumanLoopProvider({ repositoryRoot, publicDirectory, getInstallation, events, permissions, start, finishEmptyRepair, openBrowser,
   openProjectFolder: revealProject = openProjectFolder, surface = "canvas", projectHost = null }) {
   requireCondition(["canvas", "browser"].includes(surface), "Unsupported Tandem delivery surface.");
   if (projectHost) requireCondition(/^http:\/\/127\.0\.0\.1:\d+$/.test(projectHost.origin)
@@ -285,6 +285,23 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
         const result = await installation.decideInitialCreationRecovery(input);
         if (result.recovered) await start();
         return json(response, 200, result);
+      }
+      if (request.method === "POST" && path === "/api/runtime/empty-setup/inspect") {
+        object(await body(request), []);
+        const installation = getInstallation();
+        requireCondition(typeof installation?.requestEmptySetupRepair === "function", "Empty Development setup repair is unavailable.");
+        return json(response, 200, await installation.requestEmptySetupRepair());
+      }
+      if (request.method === "POST" && path === "/api/runtime/empty-setup/decision") {
+        const input = object(await body(request), ["confirmationId", "approve"]);
+        requireCondition(typeof input.confirmationId === "string" && typeof input.approve === "boolean", "An explicit repair decision is required.");
+        const installation = getInstallation();
+        requireCondition(typeof installation?.decideEmptySetupRepair === "function" && typeof finishEmptyRepair === "function",
+          "Empty setup repair or native readback is unavailable.");
+        const result = await installation.decideEmptySetupRepair(input);
+        const readback = result.repaired ? await finishEmptyRepair() : null;
+        events.touch();
+        return json(response, 200, { ...result, readback });
       }
       if (request.method === "POST" && path === "/api/navigation/open") {
         const data = object(await body(request), ["url", "focus"]);

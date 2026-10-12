@@ -12,7 +12,7 @@ import { discoverInstalledRuntime } from "./workflow-setup-discovery.mjs";
 import { parseHumanCleanClose } from "./human-loop-close.mjs";
 import { policyHash } from "../runtime-src/domain/workflow/policy.ts";
 import { HumanLoopPreferences } from "./human-loop-preferences.mjs";
-import { inspectUnusedStartup, newNativeCreation, parseNativeCreation } from "./human-loop-startup.mjs";
+import { inspectEmptyCreatedSetup, inspectUnusedStartup, newNativeCreation, parseNativeCreation } from "./human-loop-startup.mjs";
 import { verifyHumanLoopWorkspaceRoot } from "./human-loop-workspace.mjs";
 import { verifyNativeSessionAbsent } from "./human-loop-recovery.mjs";
 import { privateWorkflowEnvironment } from "./native-evidence-workflow.mjs";
@@ -62,6 +62,8 @@ export class HumanLoopInstallation {
   #setupRecovery = false;
   #recoveryConfirmation = null;
   #creationAuthorization = null;
+  #emptyRepairConfirmation = null;
+  #repairCloseIds = new Set();
 
   constructor(options) {
     this.#root = resolve(options.workspacePath); this.#main = options.mainSession;
@@ -201,6 +203,7 @@ export class HumanLoopInstallation {
   }
   async #open(retry, authorization = null) {
     try {
+      const emptyRepair = authorization?.repair?.kind === "verified-empty-created";
       let configuration = await this.prepare();
       if (!retry && (this.#phase === "unknown" || this.#recoverSaved && this.#nativeCreation?.status === "not-requested")) {
         throw this.#retryRequired();
@@ -231,8 +234,11 @@ export class HumanLoopInstallation {
         await this.#save("prepared", this.#reason, { schemaVersion: "human-loop-installation/v3",
           nativeCreation: newNativeCreation(configuration.owner.privateSessionId), initialFailure: this.#initialFailure });
       }
-      const allowInitialCreation = reopening && retry && (this.#nativeCreation?.status === "not-requested" || authorization !== null);
-      requireCondition(!authorization || this.#recordVersion === "human-loop-installation/v2" && this.#nativeCreation === null,
+      const allowInitialCreation = reopening && retry && !emptyRepair && (this.#nativeCreation?.status === "not-requested" || authorization !== null);
+      requireCondition(!authorization || (emptyRepair
+        ? this.#recordVersion === "human-loop-installation/v3" && this.#nativeCreation?.status === "created"
+          && policyHash(this.#nativeCreation) === authorization.repair.previousCreationDigest
+        : this.#recordVersion === "human-loop-installation/v2" && this.#nativeCreation === null),
         "Legacy initial-creation authorization cannot replace an issued or confirmed native creation.");
       if (allowInitialCreation) await inspectUnusedStartup(configuration);
       const installed = await (this.#options.discoverRuntime ?? discoverInstalledRuntime)({
@@ -286,15 +292,20 @@ export class HumanLoopInstallation {
             requireCondition(typeof candidate.validateInitialCreation === "function", "Runtime cannot validate unused setup safely.");
             await candidate.validateInitialCreation();
           }
+          if (emptyRepair) {
+            requireCondition(typeof candidate.validateEmptyCreatedSetup === "function", "Runtime cannot validate empty-created setup.");
+            await candidate.validateEmptyCreatedSetup(this.#repairCloseIds);
+          }
           await candidate.validateRecovery();
         } finally { this.#checkingClosed = false; }
         const recoveryId = randomUUID();
-        const cleanNativeProof = this.#closeProof?.native ?? null;
+        const cleanNativeProof = emptyRepair ? null : this.#closeProof?.native ?? null;
         await this.#save("recovering", null, { reopenId: recoveryId,
           ...(!this.#closeProof ? { closeId: null, closeProof: null } : {}) });
         this.#runtime = candidate;
         this.#creationAuthorization = authorization;
-        await candidate.recover(recoveryId, cleanNativeProof, allowInitialCreation);
+        await candidate.recover(recoveryId, cleanNativeProof, allowInitialCreation || emptyRepair,
+          emptyRepair ? authorization.id : null);
         await this.#options.resetPermissions?.(configuration.owner.privateSessionId);
       } else {
         this.#runtime = candidate;
@@ -349,6 +360,17 @@ export class HumanLoopInstallation {
     await this.verifyOwnership();
     requireCondition(this.#nativeCreation?.status === "not-requested" || this.#creationAuthorization,
       "The native creation outcome is already issued, confirmed or unverified; it cannot be retried as a new session.");
+    if (this.#creationAuthorization?.repair) {
+      const authorization = this.#creationAuthorization;
+      const history = await getHostStateWal(this.#root).history(this.#file.namespace, this.#file.key);
+      requireCondition(history.length > 1 && JSON.parse(history.at(-1).content).phase === "recovering"
+        && policyHash(history.slice(0, -1)) === authorization.installationDigest,
+      "Installation changed after the empty-setup repair decision.");
+      const empty = await inspectEmptyCreatedSetup(this.#configuration, this.#repairCloseIds);
+      requireCondition(empty.ledger.digest === authorization.ledgerDigest && empty.inventoryDigest === authorization.inventoryDigest
+        && policyHash(await this.#repairAdmissions()) === authorization.repair.admissionDigest,
+      "Empty setup or handoff admission changed immediately before native creation.");
+    }
     const requestedAt = new Date().toISOString();
     const nativeCreation = parseNativeCreation({ ...newNativeCreation(this.#configuration.owner.privateSessionId),
       status: "requested", requestId: randomUUID(), requestedAt,
@@ -491,6 +513,134 @@ export class HumanLoopInstallation {
     } finally { this.#setupRecovery = false; }
   }
 
+  async #repairAdmissions() {
+    if (this.#options.inspectRepairAdmissions) return this.#options.inspectRepairAdmissions();
+    try { await lstat(join(this.#root, ".tandem", "living-canvas", "handoffs")); }
+    catch (error) {
+      if (error.code === "ENOENT") return { handoffs: "absent" };
+      throw error;
+    }
+    throw new Error("Retained project handoffs require the owning project host's admission inspection before repair.");
+  }
+
+  async #inspectEmptyRepair() {
+    await this.#verifyMain(); await this.#loadClosed();
+    requireCondition(this.#recordVersion === "human-loop-installation/v3" && this.#phase === "unknown"
+      && this.#nativeCreation?.status === "created" && !this.#nativeCreation.authorization,
+    "Repair is only for a previously created, never-used setup; issued, repaired or active identities cannot be replaced.");
+    const configuration = this.#configuration, ownerDigest = policyHash(configuration.owner);
+    const history = await getHostStateWal(this.#root).history(this.#file.namespace, this.#file.key);
+    requireCondition(history.length > 0, "Complete installation history is required for repair.");
+    const closeIds = new Set();
+    let previousPhase = null, requestId = null, reachedReady = false;
+    const transitions = {
+      prepared: ["prepared"], creating: ["prepared", "creating"],
+      ready: ["creating", "ready"], closing: ["ready", "unknown", "closing"],
+      closed: ["closing", "closed"], recovering: ["closed", "unknown", "recovering"],
+      unknown: ["creating", "ready", "closing", "recovering", "unknown"],
+    };
+    for (const [index, entry] of history.entries()) {
+      requireCondition(entry.content !== null, "Deleted installation history prevents repair.");
+      const record = JSON.parse(entry.content);
+      requireCondition(record.schemaVersion === "human-loop-installation/v3"
+        && policyHash(parseHumanLoopConfiguration(record.configuration).owner) === ownerDigest
+        && record.configuration.runtimeDirectory === configuration.runtimeDirectory
+        && (index === 0 ? record.phase === "prepared" && entry.cause === "human-loop-prepare"
+          : transitions[record.phase]?.includes(previousPhase) && entry.cause === `human-loop-installation:${record.phase}`),
+      "Installation transitions, owner or original preparation cannot be verified for empty repair.");
+      const creation = parseNativeCreation(record.nativeCreation, configuration.owner.privateSessionId);
+      requireCondition(!creation.authorization, "A prior initialization authorization prevents a second empty repair.");
+      if (creation.status === "not-requested") requireCondition(requestId === null, "Issued native creation was erased.");
+      else {
+        requestId ??= creation.requestId;
+        requireCondition(creation.requestId === requestId, "More than one native creation attempt is retained.");
+        if (creation.status === "created") requireCondition(policyHash(creation) === policyHash(this.#nativeCreation),
+          "The original native creation receipt changed.");
+      }
+      if (record.phase === "ready") {
+        requireCondition(creation.status === "created", "Ready lacks confirmed native creation.");
+        reachedReady = true;
+      }
+      if (record.phase === "closing") {
+        requireCondition(typeof record.closeId === "string" && /^[a-f0-9-]{36}$/.test(record.closeId), "Empty close intent lacks its recorded identity.");
+        closeIds.add(record.closeId);
+      }
+      if (record.closeProof) {
+        const close = parseHumanCleanClose(record.closeProof);
+        requireCondition(close.ownerDigest === ownerDigest && close.native.sessionId === configuration.owner.privateSessionId
+          && (!close.native.events || close.native.events.length === 0), "Close evidence contains another owner or retained native history.");
+        closeIds.add(close.id);
+      }
+      previousPhase = record.phase;
+    }
+    requireCondition(reachedReady, "Use the separate initial-creation recovery for setup that never reached Ready.");
+    const empty = await inspectEmptyCreatedSetup(configuration, closeIds);
+    const admission = await this.#repairAdmissions();
+    await verifyHumanLoopWorkspaceRoot(this.#root); await this.#verifyFiles(configuration, true);
+    const sdk = await (this.#options.loadSdk ?? (path => import(pathToFileURL(path).href)))(configuration.sdk.modulePath);
+    const client = new sdk.CopilotClient({
+      connection: sdk.RuntimeConnection.forStdio({ path: configuration.cli.path }), workingDirectory: this.#root,
+      env: { ...process.env, [privateWorkflowEnvironment]: configuration.owner.privateSessionId },
+    });
+    let absence;
+    try { absence = await verifyNativeSessionAbsent(client, configuration.owner.privateSessionId); }
+    finally {
+      const errors = await client.stop();
+      requireCondition(Array.isArray(errors) && errors.length === 0, "Repair's native absence inspector did not close cleanly.");
+    }
+    await this.#verifyMain();
+    requireCondition(await this.#file.read() === history.at(-1).content
+      && policyHash(await inspectEmptyCreatedSetup(configuration, closeIds)) === policyHash(empty)
+      && policyHash(await this.#repairAdmissions()) === policyHash(admission),
+    "Repair evidence changed during inspection.");
+    this.#repairCloseIds = closeIds;
+    return { ownerDigest, configurationDigest: policyHash(configuration), installationDigest: policyHash(history),
+      ledgerDigest: empty.ledger.digest, inventoryDigest: empty.inventoryDigest, nativeAbsenceDigest: policyHash(absence),
+      repair: { kind: "verified-empty-created", admissionDigest: policyHash(admission),
+        previousCreationDigest: policyHash(this.#nativeCreation) } };
+  }
+
+  async requestEmptySetupRepair() {
+    requireCondition(!this.#opening && !this.#closeWork && !this.#setupRecovery, "Runtime startup, close or inspection is already active.");
+    this.#setupRecovery = true; this.#emptyRepairConfirmation = null;
+    try {
+      return await (this.#options.withEmptyRepairExclusion ?? (action => action()))(async () => {
+        const original = await this.#inspectEmptyRepair();
+        if (this.#runtime) { await this.#runtime.releaseFailedStartup(); this.#runtime = null; }
+        const binding = await this.#inspectEmptyRepair(), id = randomUUID();
+        requireCondition(policyHash(binding) === policyHash(original), "Setup changed while releasing its failed inspector.");
+        this.#emptyRepairConfirmation = { id, binding, expiresAt: Date.now() + 300_000 };
+        return { confirmationId: id, privateSessionId: this.#configuration.owner.privateSessionId,
+          mainSessionId: this.#configuration.owner.mainSessionId, workspacePath: this.#root,
+          message: "The journal for this verified-empty native session is unavailable. Repair will reinitialize the same reserved Development session ID, not restore nonexistent history. "
+            + "Your project, previous setup audit and prepared handoff are preserved. No model request is sent. Continue Design separately after repair.",
+          reason: this.#failureSummary(), binding };
+      });
+    } finally { this.#setupRecovery = false; }
+  }
+
+  async decideEmptySetupRepair({ confirmationId, approve }) {
+    requireCondition(typeof confirmationId === "string" && typeof approve === "boolean", "An explicit empty-setup repair decision is required.");
+    requireCondition(!this.#opening && !this.#closeWork && !this.#setupRecovery, "Runtime startup, close or inspection is already active.");
+    await this.#verifyMain();
+    if (approve && this.#phase === "ready" && this.#nativeCreation?.authorization?.id === confirmationId
+      && this.#nativeCreation.authorization.repair?.kind === "verified-empty-created") return { repaired: true, duplicate: true };
+    const confirmation = this.#emptyRepairConfirmation;
+    requireCondition(confirmation?.id === confirmationId, "Repair confirmation is stale or consumed. Inspect again.");
+    this.#emptyRepairConfirmation = null;
+    if (!approve) return { repaired: false };
+    requireCondition(confirmation.expiresAt >= Date.now(), "Repair confirmation expired. Inspect again.");
+    this.#setupRecovery = true;
+    try {
+      return await (this.#options.withEmptyRepairExclusion ?? (action => action()))(async () => {
+        const binding = await this.#inspectEmptyRepair();
+        requireCondition(policyHash(binding) === policyHash(confirmation.binding), "Repair evidence changed since confirmation. Inspect again.");
+        await this.#open(true, { id: confirmationId, confirmedAt: new Date().toISOString(), ...binding });
+        return { repaired: true, duplicate: false };
+      });
+    } finally { this.#setupRecovery = false; }
+  }
+
   async verifyOwnership() {
     requireCondition(this.#configuration && (["creating", "ready", "closing", "reopening", "recovering"].includes(this.#phase)
       || this.#checkingClosed), "This runtime has no live one-copy authority.");
@@ -516,6 +666,8 @@ export class HumanLoopInstallation {
       reason: ["ready", "closed"].includes(this.#phase) ? this.#reason : this.#failureSummary() || null,
       canStart: ["new", "prepared"].includes(this.#phase) && !this.#failedStartup,
       canRetry: this.#failedStartup || this.#recoverSaved && this.#nativeCreation?.status === "not-requested",
+      canInspectEmptyRepair: this.#recordVersion === "human-loop-installation/v3" && this.#phase === "unknown"
+        && this.#nativeCreation?.status === "created" && !this.#nativeCreation.authorization,
       canInspectInitialRecovery: this.#recordVersion === "human-loop-installation/v2" && this.#phase === "unknown" && this.#closeProof === null,
       canReopen: this.#phase === "closed" && Boolean(this.#configuration) };
   }

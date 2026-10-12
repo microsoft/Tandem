@@ -46,6 +46,8 @@ export function createHumanLoopController(options: {
   runtimeRoot?: string;
   mainPermissionHandler?: NonNullable<SessionConfig["onPermissionRequest"]>;
   withRequestAdmission?<T>(operation: () => Promise<T>): Promise<T>;
+  withEmptyRepairExclusion?<T>(operation: () => Promise<T>): Promise<T>;
+  inspectRepairAdmissions?(): Promise<unknown>;
   beforeStart?(): Promise<void>;
   projectEffortControl?: boolean;
   contextProvider?(input: { role: HumanRole; request: RequestRecord; cycle: WorkCycle | null; state: HumanLoopState }): Promise<unknown>;

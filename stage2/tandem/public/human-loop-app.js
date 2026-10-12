@@ -40,6 +40,7 @@ let stopRequest = null, stopAttempt = null;
 let controlsConnected = false;
 let initialCreationConfirmation = null;
 let initialCreationInspecting = false;
+let emptySetupConfirmation = null, emptySetupBusy = false;
 let installationNotice = null;
 const answerPending = new Map();
 let revealedQuestionKey = null;
@@ -310,6 +311,8 @@ function render() {
     : installed?.status === 'saved-state' ? 'Verify saved runtime' : 'Initialize runtime';
   $('inspect-initial-creation').hidden = !installed?.canInspectInitialRecovery;
   $('inspect-initial-creation').disabled = initialCreationInspecting;
+  $('repair-empty-setup').hidden = !installed?.canInspectEmptyRepair;
+  $('repair-empty-setup').disabled = emptySetupBusy;
   $('shutdown').disabled = !view || !['ready', 'unknown'].includes(installed?.status);
   renderComposer();
   $('connection-status').textContent = 'Live updates';
@@ -716,6 +719,37 @@ $('inspect-initial-creation').onclick = async () => {
     $('initial-creation-approval').showModal();
   } catch (error) { failure = error; }
   finally { initialCreationInspecting = false; render(); if (failure) notice(failure.message); }
+};
+$('repair-empty-setup').onclick = async () => {
+  if (emptySetupBusy) return;
+  emptySetupBusy = true; render();
+  try {
+    const result = await post('/api/runtime/empty-setup/inspect', {});
+    emptySetupConfirmation = result.confirmationId;
+    $('empty-setup-detail').textContent = result.message;
+    $('empty-setup-identity').textContent = `Project: ${result.workspacePath}\nMain session: ${result.mainSessionId}\nSame private session: ${result.privateSessionId}\n\n${JSON.stringify(result.binding, null, 2)}`;
+    $('empty-setup-approval').showModal();
+  } catch (error) { notice(error.message); }
+  finally { emptySetupBusy = false; render(); }
+};
+$('cancel-empty-setup').onclick = () => $('empty-setup-approval').close();
+$('empty-setup-approval').addEventListener('close', () => {
+  const confirmationId = emptySetupConfirmation; emptySetupConfirmation = null;
+  $('repair-empty-setup').focus({ preventScroll: true });
+  if (confirmationId) void post('/api/runtime/empty-setup/decision', { confirmationId, approve: false })
+    .catch(error => notice(error.message));
+});
+$('approve-empty-setup').onclick = async () => {
+  if (emptySetupBusy || !emptySetupConfirmation) return;
+  const confirmationId = emptySetupConfirmation;
+  emptySetupConfirmation = null; $('empty-setup-approval').close();
+  emptySetupBusy = true; render();
+  try {
+    await post('/api/runtime/empty-setup/decision', { confirmationId, approve: true });
+    await refresh();
+    notice('Development setup repaired with the same reserved ID. The retained handoff has not been submitted.');
+  } catch (error) { notice(error.message); }
+  finally { emptySetupBusy = false; render(); }
 };
 $('cancel-initial-creation').onclick = () => $('initial-creation-approval').close();
 $('initial-creation-approval').addEventListener('close', () => {
