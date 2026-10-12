@@ -113,12 +113,14 @@ function PendingPreviewAvailability({ active, connected }: { active: boolean; co
     return () => { current = false; controller.abort(); };
   }, [active, connected, binding, refresh]);
   if (!candidate) return null;
-  return <div id="pending-preview-availability">
+  const verified = result.binding === binding && result.available && !result.busy;
+  return <details id="pending-preview-availability" className="preview-verification-details" open={!verified}>
+    <summary>{verified ? "Pending preview verified" : result.busy ? "Checking pending preview..." : "Pending preview unavailable"}</summary>
     <p role="status">{result.binding !== binding || result.busy ? "Checking pending saved preview..."
       : result.available ? "Pending saved version: live preview verified (not displayed)." : `Pending saved version is unavailable. ${result.reason} Restarting it will not change the displayed version.`}</p>
-    <button type="button" disabled={result.busy || !connected} onClick={() => setRefresh(value => value + 1)}>Check pending preview</button>
+    <button className="plan-button secondary" type="button" disabled={result.busy || !connected} onClick={() => setRefresh(value => value + 1)}>Check pending preview</button>
     <PreviewRestart target="pending" unavailable={result.binding === binding && !result.available && !result.busy} changed={() => setRefresh(value => value + 1)} />
-  </div>;
+  </details>;
 }
 
 export function milestoneReady(state: UiState, milestone: string): boolean {
@@ -350,6 +352,7 @@ export function PrototypePanel({ active: visible, connected }: { active: boolean
     : candidate ? candidateLabel + ". Switching the displayed version is separate from optional feedback."
     : "Try the prototype, then describe any revision you want.");
   const recentApplied = new Set(revisions.filter((item) => item.status === "applied").slice(-5).map((item) => item.id));
+  const importantProgress = Boolean(failed || failedRevision || question);
 
   return <>
     <div className="preview-surface">
@@ -363,12 +366,12 @@ export function PrototypePanel({ active: visible, connected }: { active: boolean
           : readyUrl && !showLivePreview ? previewCheck.binding !== previewBinding || previewCheck.busy ? "Checking saved preview..." : "Saved prototype · preview unavailable"
           : savedOnly ? "Saved prototype · live preview verified" : candidate ? candidateLabel
           : building ? readyUrl ? "Current preview live · next milestone building" : "Building first preview..." : readyUrl ? "Current preview live" : "No runnable preview yet"}</span>
-        {readyUrl && <button id="check-live-preview" className="plan-button secondary" type="button"
+        {readyUrl && (!showLivePreview || !flow) && <button id="check-live-preview" className="plan-button secondary" type="button"
           disabled={previewCheck.busy || !connected || !visible} onClick={() => void checkPreview()}>
           {previewCheck.busy && connected ? "Checking preview..." : "Check again"}</button>}
         {readyUrl && showLivePreview && <a id="open-preview" href={readyUrl} target="_blank" rel="noreferrer"><ExternalLink size={14} />Open current preview</a>}
       </div>
-      {readyUrl && <p id="preview-availability" className="revision-status" role="status">
+      {readyUrl && <p id="preview-availability" className="revision-status" role="status" hidden={showLivePreview && !previewCheck.busy}>
         {!connected ? "Connection interrupted. Current preview availability will be checked when the workspace reconnects."
           : previewCheck.binding !== previewBinding || previewCheck.busy ? "Checking current preview..."
           : showLivePreview ? "Current preview verified."
@@ -400,11 +403,15 @@ export function PrototypePanel({ active: visible, connected }: { active: boolean
           <button id="skip-prototype-visual" className="plan-button secondary" hidden={!skipVisible} disabled={blocked} onClick={() => void submitAction("skip-visual")}><SkipForward size={16} aria-hidden="true" />Skip visual direction</button>
           <button id="retry-prototype-checkpoint" className="plan-button" hidden={!retryVisible} disabled={blocked} onClick={() => void submitAction("retry")}><RefreshCw size={16} />{failed ? "Retry " + milestones.find((item) => item.id === failed.milestone)?.label : failedRevision ? "Retry failed revision" : "Continue prototype work"}</button>
         </div>
-        <details id="prototype-progress-details" className="prototype-progress-details"><summary>Build details</summary>
+        <details id="prototype-progress-details" className="prototype-progress-details"><summary>Details</summary>
+          {!importantProgress && <p id="prototype-progress-message" className="muted" role="status" data-essential={Boolean(candidate)}>{message}</p>}
+          {readyUrl && showLivePreview && flow && <button id="check-live-preview" className="plan-button secondary" type="button"
+            disabled={previewCheck.busy || !connected || !visible} onClick={() => void checkPreview()}>
+            {previewCheck.busy ? "Checking preview..." : "Check current preview"}</button>}
           <p id="prototype-budget" className="muted">{flow && `Recorded checkpoint time: ${Math.ceil(flow.budget.usedSeconds / 60)} minutes. New work has no automatic execution-time cap.${flow.budget.limitSeconds === null ? "" : ` Legacy ${Math.ceil(flow.budget.limitSeconds / 60)}-minute budget retained for history, not enforced.`}`}</p>
         </details>
-        <p id="prototype-progress-message" className={candidate || failed || failedRevision || question ? "muted" : "visually-hidden"}
-          role="status" data-essential={Boolean(candidate || failed || failedRevision || question)}>{message}</p>
+        {importantProgress && <p id="prototype-progress-message" className="muted"
+          role="status" data-essential="true">{message}</p>}
       </section>
       <p id="prototype-action-status" className="revision-status" role="status" data-status={action.error ? "error" : "idle"}>{action.error}</p>
       <div id="prototype-building" className="prototype-building" role="status" hidden={!building}>

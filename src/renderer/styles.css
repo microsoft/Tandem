@@ -3471,7 +3471,9 @@ textarea {
 .project-workspace[data-development="true"] .development-panel { min-height: 0; height: auto; flex: 0 0 auto; }
 .project-workspace .preview > [role="tabpanel"] { min-width: 0; }
 .project-folder { min-width: 0; overflow-wrap: anywhere; font-size: var(--text-body-small, 12px); }
-.preview-restart:empty { display: none; }
+.preview-restart:not(:has(> :not(dialog))) { display: contents; }
+.preview-verification-details { color: var(--studio-muted); font-size: var(--text-body-small, 12px); }
+.preview-verification-details summary { cursor: pointer; }
 .preview-restart-dialog { width: min(660px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto; box-sizing: border-box; background: var(--studio-surface); color: var(--studio-text); border: 1px solid var(--studio-border); }
 .preview-restart-dialog pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .preview-restart-dialog label { display: grid; gap: 6px; margin-block: 12px; }

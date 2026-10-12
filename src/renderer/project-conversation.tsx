@@ -336,7 +336,14 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
 export function ProjectConversation() {
     const view = useProjectView();
     const { state } = useUi();
-    const [historyCollapsed, setHistoryCollapsed] = useState(() => window.innerWidth < 1000);
+    const [historyChoice, setHistoryChoice] = useState<boolean | null>(null);
+    const [narrowHistory, setNarrowHistory] = useState(() => window.innerWidth < 1000);
+    const historyCollapsed = historyChoice ?? narrowHistory;
+    useEffect(() => {
+        const resize = () => setNarrowHistory(window.innerWidth < 1000);
+        window.addEventListener("resize", resize);
+        return () => window.removeEventListener("resize", resize);
+    }, []);
     useEffect(() => {
         const workspace = document.getElementById("studio-workspace");
         if (workspace) workspace.dataset.historyCollapsed = String(historyCollapsed && !view.visible);
@@ -363,7 +370,7 @@ export function ProjectConversation() {
             <button type="button" onClick={() => view.command("current-work")}>Current work</button></div>}
         {!view.visible && <button id="toggle-discovery-history" className="plan-button secondary" type="button" aria-controls="discovery-history"
             aria-label={historyCollapsed ? "Show discovery history" : "Hide discovery history"} title={historyCollapsed ? "Show discovery history" : "Hide discovery history"}
-            aria-expanded={!historyCollapsed} onClick={() => setHistoryCollapsed(value => !value)}>
+            aria-expanded={!historyCollapsed} onClick={() => setHistoryChoice(!historyCollapsed)}>
             {historyCollapsed ? <PanelRightOpen size={16} aria-hidden="true" /> : <><PanelRightClose size={16} aria-hidden="true" />Hide history</>}</button>}
         {view.visible && view.error && <p role="alert">{view.error}</p>}
         {view.url && <iframe ref={view.frame} id="project-conversation-frame" title="Private Development conversation"

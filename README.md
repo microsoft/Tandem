@@ -327,6 +327,10 @@ linked to a recorded feedback revision. Feedback is optional; readiness is not a
 claim that the user submitted feedback or that the saved preview server is live.
 The phase-owned Feedback section stays at the bottom of the Prototype pane, with
 the inline preview using the remaining space above and pane scrolling when needed.
+Successful preview checks and verbose version summaries stay collapsed in Details;
+unavailable versions and their targeted Restart actions remain prominent. The
+normal current-plus-pending view preserves a useful preview and initially reachable
+Feedback at 920x620, including an expanded feedback draft.
 Neither preview link nor iframe switches to a pending version without the explicit
 checkpoint-promotion action; its existing validation and Finish gates are unchanged.
 

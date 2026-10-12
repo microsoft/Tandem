@@ -428,6 +428,33 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       previewAvailable = true;
       await clickRoot("#check-live-preview");
       await browser.waitFor('document.querySelector("#preview-availability").textContent.includes("Current preview verified")');
+      await browser.call("Emulation.setDeviceMetricsOverride", { width: 920, height: 620, deviceScaleFactor: 1, mobile: false });
+      await browser.evaluate('window.beforePendingReload = true');
+      await browser.call("Page.reload");
+      await browser.waitFor('window.beforePendingReload === undefined && document.querySelector("#preview-availability")?.textContent.includes("Current preview verified") && document.querySelector("#studio-workspace")?.dataset.historyCollapsed==="true"');
+      const pendingGeometry = async () => browser.evaluate(`(() => {
+        const pane=document.querySelector("#live-preview-panel").getBoundingClientRect(), frame=document.querySelector("#preview-frame").getBoundingClientRect(),
+          feedback=document.querySelector("#prototype-review").getBoundingClientRect(), input=document.querySelector("#revision-input").getBoundingClientRect(),
+          send=document.querySelector("#submit-revision").getBoundingClientRect();
+        return {paneBottom:pane.bottom,previewHeight:frame.height,previewBottom:frame.bottom,feedbackTop:feedback.top,feedbackBottom:feedback.bottom,
+          inputBottom:input.bottom,sendBottom:send.bottom};
+      })()`);
+      for (const expanded of [false, true]) {
+        if (expanded) {
+          await clickRoot("#revision-input");
+          await browser.call("Input.insertText", { text: "First feedback line.\nSecond feedback line.\nThird feedback line." });
+        }
+        const geometry = await pendingGeometry();
+        assert.ok(geometry.previewHeight >= 180 && geometry.previewBottom <= geometry.feedbackTop, JSON.stringify(geometry));
+        assert.ok(geometry.feedbackBottom <= geometry.paneBottom + 1 && geometry.inputBottom <= geometry.paneBottom
+          && geometry.sendBottom <= geometry.paneBottom, `920x620 pending preview and Feedback must initially fit: ${JSON.stringify(geometry)}`);
+        if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `pending-920x620-${expanded ? "expanded-feedback" : "initial"}.png`), await browser.screenshot());
+      }
+      await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "a", windowsVirtualKeyCode: 65, modifiers: 2 });
+      await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "a", windowsVirtualKeyCode: 65, modifiers: 2 });
+      await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Backspace", windowsVirtualKeyCode: 8 });
+      await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Backspace", windowsVirtualKeyCode: 8 });
+      await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 1000, deviceScaleFactor: 1, mobile: false });
       await pushPrototype(currentPrototype);
       await browser.waitFor('document.querySelector("#preview-frame").contentDocument?.querySelector("#preview-button")');
       for (const [width, height] of [[1360, 1000], [390, 1000], [1360, 580], [390, 600]]) {
@@ -470,6 +497,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       assert.equal(await browser.evaluate('document.querySelector("#preview-frame").contentDocument.querySelector("#preview-button").textContent'), "Preview interaction accepted");
       await browser.call("Emulation.setDeviceMetricsOverride", { width: 390, height: 1000, deviceScaleFactor: 1, mobile: false });
       holdPreviewChecks = true;
+      await clickRoot("#prototype-progress-details > summary");
       await clickRoot("#check-live-preview");
       await browser.waitFor('document.querySelector("#preview-availability").textContent.includes("Checking current preview")');
       const pendingPrototype = readyPrototype(1, true);
@@ -584,7 +612,8 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         await waitInside(`document.body.dataset.projectStacked==="${width < 800}"`);
         assert.equal(await browser.evaluate('document.querySelector("#project-conversation-frame").hidden && document.querySelector("#project-conversation-frame").getBoundingClientRect().height === 0'), true,
           `Private chat is not visible in an earlier phase at ${width}px.`);
-        assert.equal(await browser.evaluate('document.querySelector("#discovery-history").checkVisibility()'), true);
+        assert.equal(await browser.evaluate('document.querySelector("#discovery-history").checkVisibility()'), false,
+          "Unchosen secondary history collapses at a constrained width rather than taking artifact space.");
       }
       await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 1000, deviceScaleFactor: 1, mobile: false });
       await waitInside('document.body.dataset.projectStacked==="false"');

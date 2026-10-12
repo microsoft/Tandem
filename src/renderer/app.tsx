@@ -342,7 +342,7 @@ function Workspace(props: WorkspaceProps) {
           : [["complete-stage", "Finish requirements collection"]],
       sketch: [["sketch-retry-revision", "Retry the failed drawing revision", "sketch-history-toggle"], ["complete-stage", "Finish Sketch and continue to Prototype"],
         ["sketch-approve", "Approve drawings and continue"], ["sketch-generate", "Generate screen drawings"]],
-      prototype: [["apply-prototype-update", "Apply the prepared prototype update"], ["extend-prototype-budget", "Review an additional prototype work window"],
+      prototype: [["apply-prototype-update", "Show the prepared prototype version"], ["extend-prototype-budget", "Review an additional prototype work window"],
         ["retry-prototype-checkpoint", "Retry incomplete prototype work"], ["start-prototype", "Start the prototype build"],
         ["submit-clarification", "Answer the prototype clarification"], ["complete-stage", "Finish prototype iteration"]],
       development: state.development ? [] : [["continue-design", "Continue Design from the completed Prototype"]],
@@ -445,7 +445,7 @@ function Workspace(props: WorkspaceProps) {
                 aria-controls={tab.id + "-panel"}><tab.icon size={15} aria-hidden="true" />
                 <span className="project-tab-label">{label}</span>
                 {tab.stage === "development" && projectView.designRevision && <span className="artifact-count">{projectView.designChanged ? "New output" : "Available"}</span>}
-                {tab.stage === "prototype" && state.prototypeFlow?.pendingCheckpointId && <span className="artifact-count">Update ready</span>}
+                {tab.stage === "prototype" && state.prototypeFlow?.pendingCheckpointId && <span className="artifact-count">Ready to inspect</span>}
               </Tabs.Trigger>; })}
             </Tabs.List>
             <button id="project-current-work" type="button" className="plan-button"
