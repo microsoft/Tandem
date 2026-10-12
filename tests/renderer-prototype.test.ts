@@ -121,6 +121,43 @@ test("pending Prototype copy distinguishes automatic milestones from recorded fe
     assert.equal(h.requests.length, 0);
 });
 
+test("unavailable current preview reviews an explicit legacy recipe and native denial remains dismissible without promotion", async t => {
+    const value = readyPrototype(1, true), h = await setup(t, value);
+    h.window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
+    h.window.HTMLDialogElement.prototype.close = function () { this.open = false; };
+    h.setPreviewFetch(async () => response({ generation: value.generation, checkpointId: "structure", pendingCheckpointId: "interaction",
+        url: value.previewUrl, available: false, reason: "Saved preview server is stopped." }));
+    await h.click("check-live-preview");
+    const before = JSON.stringify(value.prototypeFlow);
+    let inspected = 0;
+    h.setFetch(async (path, options) => {
+        const input = JSON.parse(String(options.body));
+        if (path.endsWith("/inspect")) {
+            assert.equal(input.target, "current"); assert.equal(input.checkpointId, "structure");
+            inspected++;
+            return response({ needsRecipe: inspected === 1, target: "current", checkpointId: "structure", cwd: "fixture",
+                url: value.previewUrl, executable: "node.exe", args: ["server.mjs"], entrypoints: ["server.mjs"],
+                message: "Review this saved launch; no generation or promotion.", ...(inspected === 1 ? {} : { confirmationId: "reviewed-once" }) });
+        }
+        assert.equal(path, "/api/prototype/preview-restart/decision");
+        assert.equal(input.confirmationId, "reviewed-once");
+        return input.approve ? response({ error: "Native permission was denied. The saved preview was not started." }, 409)
+            : response({ dismissed: true, previouslySubmitted: true });
+    });
+    await h.click("restart-current-preview");
+    assert.equal(h.document.querySelector("#confirm-current-restart"), null);
+    await h.input("restart-current-entrypoint", "server.mjs");
+    await h.fire(h.document.querySelector(".preview-restart-dialog[open] form")!, "submit");
+    assert.ok(h.get("confirm-current-restart"));
+    await h.click("confirm-current-restart");
+    assert.match(h.document.querySelector(".preview-restart-dialog[open]")!.textContent!, /Native permission was denied/);
+    const cancel = [...h.document.querySelectorAll<HTMLButtonElement>(".preview-restart-dialog[open] button")].find(button => button.textContent === "Cancel")!;
+    await h.click(cancel);
+    assert.equal(h.document.querySelector(".preview-restart-dialog[open]"), null);
+    assert.equal(JSON.stringify(current(h).prototypeFlow), before);
+    assert.equal(h.requests.some(item => ["/api/prototype/action", "/api/prototype/start", "/api/development/open"].includes(item.path)), false);
+});
+
 test("compact prototype controls never hide pending candidates, failures or clarification", async (t) => {
     const h = await setup(t, readyPrototype(1, true));
     assert.equal(hidden(h, "apply-prototype-update"), false);

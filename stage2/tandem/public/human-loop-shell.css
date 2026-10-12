@@ -121,7 +121,7 @@
 .human-app .conversation-state-column { display: flex; flex-direction: column; overflow: hidden; flex-shrink: 0; }
 .human-app #state-history { flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 0 3px; list-style: none; scrollbar-width: thin; }
 .human-app .state-history-return { flex: none; align-self: flex-end; max-width: calc(100% - 8px); font-size: 10px; padding: 5px; margin: 0 4px 6px; color: var(--text); background: var(--surface); border: 1px solid var(--border); }
-.human-app #newer { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); padding: 5px 12px; border: 1px solid var(--border); border-radius: 20px; color: var(--text); background: var(--surface-raised); z-index: 5; }
+.human-app #newer { position: static; flex: none; align-self: center; margin: 6px; padding: 5px 12px; border: 1px solid var(--border); border-radius: 20px; color: var(--text); background: var(--surface-raised); }
 .human-app #notice { flex: none; max-height: 100px; overflow: auto; margin: 6px 17px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--surface-raised); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
 .human-app .state-history-step[data-selected="true"] > button { text-decoration: underline; text-underline-offset: 3px; }
 .human-app #advanced-workflow-controls:not([open]) { display: none; }

@@ -86,8 +86,9 @@
     <div id="canvas-scroll" class="canvas-scroll">
       <div id="assessment-card" class="empty-state design-assessment"><strong>No Design has been published</strong><p>Discuss your idea in the conversation. The current Design will appear here when it is ready.</p></div>
       <div id="backbone-proposal" class="backbone-proposal" hidden>
-        <p id="design-summary" class="proposal-summary"></p>
-        <details class="design-metadata"><summary>Goal and outcomes</summary><p id="design-goal"></p><ul id="design-outcomes"></ul></details>
+        <details id="design-overview" class="design-metadata" open><summary>About this Design</summary>
+          <p id="design-summary" class="proposal-summary"></p><p id="design-goal"></p><ul id="design-outcomes"></ul>
+        </details>
         <nav class="design-navigation" aria-label="Design artifacts"><div id="backbone-tabs" class="backbone-tabs"></div></nav>
         <div id="design-artifacts"></div>
         <details class="design-metadata"><summary>Full Design JSON</summary><pre id="design-raw" class="raw-block"></pre></details>

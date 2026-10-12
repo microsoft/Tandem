@@ -35,7 +35,8 @@ test("Development presentation cannot arm a competing discovery input and reject
     assert.equal(h.get("project-conversation-frame"), frame);
     const discoveryStatus = h.store.getSnapshot().state.status;
     await send({ type: "status", status: "working", active: true, questions: 0, permissions: 0, confirmations: 0 });
-    assert.equal(h.get("status").textContent, "Development: working");
+    assert.equal(h.document.querySelector("#status"), null, "Global sidebar status prose is not duplicated.");
+    assert.match(h.get("project-conversation").textContent!, /working/);
     assert.equal(h.store.getSnapshot().state.status, discoveryStatus, "Live status does not rewrite saved discovery evidence.");
 });
 
@@ -112,7 +113,8 @@ for (const stage of ["requirements", "prototype"] as const) test(`${stage} compl
         return response({ url: "http://127.0.0.1:8765/" });
     });
     reopened.render(completed); await reopened.flush();
-    assert.equal(reopened.get("content-panel").hidden, false);
+    assert.equal(reopened.get(stage === "prototype" ? "live-preview-panel" : "design-tree-panel").hidden, false,
+        "Reopening lands on the latest relevant saved phase rather than an unrelated first artifact.");
     assert.equal(reopened.requests.length, 0);
     assert.equal(reopened.document.querySelector("#project-conversation-frame"), null, "Stage1 history does not require the Stage2 renderer.");
     await reopened.fire(reopened.get("development-tab"), "mousedown", { button: 0 });
@@ -325,11 +327,11 @@ test("real React Development keeps handoff controls in view across long-status h
         await move("#project-conversation-frame", true);
         const restoredHelp = await measure("1280-pointer-back-over-iframe");
         for (const sample of [shortHelp, longHelp, restoredHelp]) assertBounded(sample);
-        assert.equal(shortHelp.guide, "Persistent project conversation");
+        assert.equal(shortHelp.guide, "Private Development conversation");
         assert.equal(longHelp.guide, longStatus);
         assert.equal(longHelp.guideTitle, longStatus, "Ellipsis must not remove the full diagnostic.");
         assert.equal(longHelp.guideClipped, true);
-        assert.equal(restoredHelp.guide, "Persistent project conversation");
+        assert.equal(restoredHelp.guide, "Private Development conversation");
 
         const tree = await browser.call("Page.getFrameTree");
         const privateFrame = tree.frameTree.childFrames.find(frame => frame.frame.url === frameUrl + "?panel=workspace");

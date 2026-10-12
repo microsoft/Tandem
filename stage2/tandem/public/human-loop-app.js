@@ -55,6 +55,8 @@ let settingsBusy = false, settingsLoaded = false, settingsLoading = null, settin
 let settingsModel = null, effortModel = null;
 let selectedOutput = null;
 let pendingOutputFocus = null;
+let lastVerifiedDesign = null;
+if (document.body.dataset.projectPanel) $('design-overview').open = false;
 const projectPresentation = installProjectPresentation({ document, window,
   changed: () => { if (snapshot) render(); },
   settings: () => { $('canvas-settings').open = true; $('setting-theme').focus(); void refreshSettings(); },
@@ -398,20 +400,28 @@ function render() {
     if (app.canStop) { const stop = make('button', 'Stop preview'); stop.onclick = () => post('/api/apps/stop', { id: app.id }).then(refresh).catch((error) => notice(error.message)); row.append(stop); }
     return row;
   }));
-  const hasDesign = Boolean(snapshot.design?.content);
+  const designVerified = snapshot.conversationStatus !== 'unverified' && ['ready', 'closed'].includes(installed?.status);
+  if (designVerified) lastVerifiedDesign = snapshot.design;
+  const displayedDesign = designVerified ? snapshot.design : lastVerifiedDesign;
+  const hasDesign = Boolean(displayedDesign?.content);
+  document.body.dataset.designContent = hasDesign ? 'available' : 'empty';
   $('backbone-proposal').hidden = !hasDesign;
   $('assessment-card').hidden = hasDesign;
-  $('backbone-state').textContent = hasDesign ? 'Current Design' : 'No Design yet';
+  $('backbone-state').textContent = !designVerified ? 'Design unverified' : hasDesign ? 'Current Design' : 'No Design yet';
+  $('assessment-card').querySelector('strong').textContent = designVerified ? 'No Design has been published' : 'Design is not yet verified';
+  $('assessment-card').querySelector('p').textContent = designVerified
+    ? 'Discuss your idea in the conversation. The current Design will appear here when it is ready.'
+    : 'Restore the owned Development connection to verify its saved Design. Unavailable history does not mean an empty project.';
   if (hasDesign) {
-    const raw = JSON.stringify(snapshot.design.content, null, 2);
+    const raw = JSON.stringify(displayedDesign.content, null, 2);
     if ($('design-raw').textContent !== raw) $('design-raw').textContent = raw;
   }
-  designView.render(snapshot.design);
-  if (!hasDesign) { designDigest = null; $('project-name').textContent = 'Your project'; $('design-summary').textContent = ''; }
-  const key = hasDesign ? `${snapshot.design.binding.revisionId}:${snapshot.design.binding.digest}` : null;
+  designView.render(displayedDesign);
+  if (designVerified && !hasDesign) { designDigest = null; $('project-name').textContent = 'Your project'; $('design-summary').textContent = ''; }
+  const key = hasDesign ? `${displayedDesign.binding.revisionId}:${displayedDesign.binding.digest}` : null;
   if (hasDesign && key !== designDigest) {
     designDigest = key;
-    const value = snapshot.design.content, binding = { ...snapshot.design.binding };
+    const value = displayedDesign.content, binding = { ...displayedDesign.binding };
     $('design-summary').textContent = value.summary;
     $('project-name').textContent = value.goal ?? 'Your project';
     $('project-name').title = value.goal ?? '';

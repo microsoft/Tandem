@@ -334,6 +334,12 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
 export function ProjectConversation() {
     const view = useProjectView();
     const { state } = useUi();
+    const [historyCollapsed, setHistoryCollapsed] = useState(false);
+    useEffect(() => {
+        const workspace = document.getElementById("studio-workspace");
+        if (workspace) workspace.dataset.historyCollapsed = String(historyCollapsed && !view.visible);
+        view.sync();
+    }, [historyCollapsed, view.visible]);
     const drag = useRef<number | null>(null);
     const resize = (delta: number) => {
         const panel = document.getElementById("project-conversation");
@@ -354,12 +360,15 @@ export function ProjectConversation() {
         <div className="project-conversation-heading"><strong>{view.visible ? "Development conversation" : "Discovery history"}</strong>
             <span role="status">{view.visible ? view.status : ""}{view.visible && view.attention ? ` · ${view.attention} needs attention` : ""}</span>
             <button type="button" onClick={() => view.command("current-work")}>Current work</button></div>
+        {!view.visible && <button id="toggle-discovery-history" type="button" aria-controls="discovery-history"
+            aria-expanded={!historyCollapsed} onClick={() => setHistoryCollapsed(value => !value)}>
+            {historyCollapsed ? "Show history" : "Hide history"}</button>}
         {view.visible && (view.error || view.detail) && <p role="alert">{view.error || view.detail}</p>}
         {view.url && <iframe ref={view.frame} id="project-conversation-frame" title="Private Development conversation"
             hidden={!view.visible} src={`${view.url}?panel=workspace`} onLoad={view.sync} allow="clipboard-read; clipboard-write" />}
-        {!view.visible && <div id="discovery-history" className="discovery-history" aria-label="Discovery history">
+        {!view.visible && <div id="discovery-history" className="discovery-history" aria-label="Discovery history" hidden={historyCollapsed}>
                 {discoveryEntries(state).map(item => <article key={item.id} data-entry-id={item.id}>
-                    <strong>Discovery evidence</strong><p>{item.text}</p>
+                    <details><summary>{item.id.endsWith(":goal") ? "Original project brief" : item.text.split("\n")[0]!.slice(0, 100) + (item.text.length > 100 ? "..." : "")}</summary><p>{item.text}</p></details>
                 </article>)}
                 {!state.goal && <p>{view.entry.startingPath === "development" ? "Preparation was not used for this project."
                     : "Project history will appear here. Use Preparation's goal form to begin."}</p>}

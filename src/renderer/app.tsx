@@ -104,7 +104,7 @@ function EffortApp({ state, store, version, connectionError, confirm }: {
   const [activeTab, setActiveTab] = useState<TabId>(() =>
     state.lifecycle.currentStage === "development" && !state.development
       && state.lifecycle.outputs.some(output => output.stageId === "prototype")
-      ? "content" : tabFor(state.lifecycle.currentStage));
+      ? canBrowseStage(state, "prototype") ? "preview" : "design-tree" : tabFor(state.lifecycle.currentStage));
   const [selectedArtifact, setSelectedArtifact] = useState<string | null>(null);
   const [contextOpen, setContextOpen] = useState(false);
   const previousStage = useRef(state.lifecycle.currentStage);
@@ -298,7 +298,9 @@ function Workspace(props: WorkspaceProps) {
   const readOnly = projectView.developmentEntered || viewed !== current || state.lifecycle.completedStages.includes(viewed);
   const complete = !pending && canCompleteStage(state) && (current !== "sketch" || !sketchBlocked);
   const allComplete = lifecycleStages.every((stage) => state.lifecycle.completedStages.includes(stage.id) || skippedStage(state, stage.id));
-  const completionLabel = allComplete ? "All stages complete" : stageAction.busy ? "Saving stage output..."
+  const finalizingPrototype = current === "prototype" && state.processing?.action === "generate-design-spec"
+    && ["starting", "running"].includes(state.processing.status);
+  const completionLabel = finalizingPrototype ? "Finishing prototype..." : allComplete ? "All stages complete" : stageAction.busy ? "Saving stage output..."
     : current === "prototype" ? "Finish Prototype and save outputs"
     : current === "requirements" && state.prototypeApproach.mode === "not-applicable" ? "Finish Requirements and save outputs"
     : current === "prepare" ? "Preparation runs automatically" : "Finish " + (lifecycleStages.find((stage) => stage.id === current)?.label || current).toLowerCase();
@@ -370,7 +372,7 @@ function Workspace(props: WorkspaceProps) {
     setContextOpen(false);
   }
   const phaseActions = <section className="phase-actions" aria-label={`${selectedLabel} actions`} aria-describedby="stage-browsing stage-message">
-    <button id="complete-stage" className="complete-stage" type="button" hidden={projectView.developmentEntered || current === "development" || viewed !== current || Boolean(skippedStage(state, current))} aria-describedby="stage-message"
+    <button id="complete-stage" className="complete-stage" type="button" hidden={projectView.developmentEntered || current === "prepare" || current === "development" || viewed !== current || Boolean(skippedStage(state, current))} aria-describedby="stage-message"
       aria-label={completionHelp} title={completionHelp} data-status-help={completionHelp}
       disabled={!complete} onClick={() => { if (complete) void stageAction.run(() => post("/api/stage/complete", { stageId: current })); }}>
       <Check size={16} aria-hidden="true" /><span className="complete-stage-label">{completionLabel}</span>

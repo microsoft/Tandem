@@ -41,8 +41,11 @@ async function stageComposition() {
     const skillDirectory = join(targetRoot, "skills", "tandem");
     await mkdir(skillDirectory, { recursive: true });
     await copyFile(join(repositoryRoot, "skills", "tandem", "SKILL.md"), join(skillDirectory, "SKILL.md"));
+    await build({ entryPoints: [join(repositoryRoot, "src", "preview-launcher.ts")],
+        outfile: join(targetRoot, "preview-launcher.mjs"), bundle: true, platform: "node", format: "esm", target: "node24",
+        banner: { js: 'import { createRequire } from "node:module"; const require = createRequire(import.meta.url);' } });
     await createPayload(targetRoot, packageMetadata.version, [
-        "extension.mjs", "skills/tandem/SKILL.md", "stage2/manifest.json",
+        "extension.mjs", "preview-launcher.mjs", "skills/tandem/SKILL.md", "stage2/manifest.json",
         ...manifest.files.map((file: { path: string }) => `stage2/${file.path}`),
     ]);
 }

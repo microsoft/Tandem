@@ -103,11 +103,13 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
         presentationRequests.push(path);
         return response({ url: "http://127.0.0.1:8765/", channel: "fixture-project" });
       }
-      if (path === "/api/prototype/preview-status") {
+      if (path.startsWith("/api/prototype/preview-status")) {
         previewRequests.push(options);
-        if (previewFetcher) return previewFetcher();
+        const target = path.includes("target=pending") ? "pending" : "current";
+        if (previewFetcher && target === "current") return previewFetcher();
         const current = mounted.store.getSnapshot().state;
-        const checkpoint = current.prototypeFlow?.checkpoints.find((item: { id: string }) => item.id === current.prototypeFlow.displayedCheckpointId);
+        const checkpoint = current.prototypeFlow?.checkpoints.find((item: { id: string }) =>
+          item.id === (target === "current" ? current.prototypeFlow.displayedCheckpointId : current.prototypeFlow.pendingCheckpointId));
         return response({ generation: current.generation, checkpointId: checkpoint?.id ?? null,
           pendingCheckpointId: current.prototypeFlow?.pendingCheckpointId ?? null,
           url: checkpoint?.previewUrl || current.previewUrl, available: true, reason: "" });

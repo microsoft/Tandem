@@ -3,11 +3,11 @@ import test from "node:test";
 import { createServer } from "node:http";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { resolve, join } from "node:path";
+import { resolve, join, dirname } from "node:path";
 import { build } from "esbuild";
 import { runInNewContext } from "node:vm";
 import { state as discoveryState } from "./helpers/react-harness.ts";
-import { progressivePrototype, readyPrototype } from "./renderer-fixtures.test.ts";
+import { progressivePrototype, readyPrototype, sketchFixture } from "./renderer-fixtures.test.ts";
 import { createHumanLoopProvider, HumanLoopEvents } from "../stage2/tandem/src/human-loop-provider.mjs";
 import { createHumanLoopLedger, replayHumanLoopLedger } from "../stage2/tandem/runtime-src/domain/human-loop/ledger.ts";
 import { DEFAULT_POLICY } from "../stage2/tandem/runtime-src/domain/workflow/policy.ts";
@@ -164,6 +164,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
     let active = false, stopped = false, installationStatus = "new";
     let startingPath = null;
     const value = discoveryState("requirements");
+    const drawings = sketchFixture();
     value.requirements.substage = "usage";
     let previewAvailable = true, holdPreviewChecks = false, previewChecks = 0;
     const heldPreviewChecks = [];
@@ -249,14 +250,15 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
           response.write(`data: ${JSON.stringify(value)}\n\n`);
           request.on("close", () => rootEvents.delete(response));
         }
-        else if (path === "/api/sketch") json({ sketch: value.sketch, document: null });
+        else if (path === "/api/sketch") json({ sketch: value.sketch, document: value.sketch.current ? drawings.document : null });
         else if (path === "/api/prototype/preview-status") {
-          previewChecks++;
-          const checkpoint = value.prototypeFlow?.checkpoints.find(item => item.id === value.prototypeFlow.displayedCheckpointId);
+          const pendingTarget = new URL(request.url, url).searchParams.get("target") === "pending";
+          if (!pendingTarget) previewChecks++;
+          const checkpoint = value.prototypeFlow?.checkpoints.find(item => item.id === (pendingTarget ? value.prototypeFlow.pendingCheckpointId : value.prototypeFlow.displayedCheckpointId));
           const binding = { generation: value.generation, checkpointId: checkpoint?.id ?? null,
             pendingCheckpointId: value.prototypeFlow?.pendingCheckpointId ?? null, url: checkpoint?.previewUrl || value.previewUrl };
           const reply = available => json({ ...binding, available, reason: available ? "" : "The saved preview is not reachable." });
-          if (holdPreviewChecks) heldPreviewChecks.push(reply);
+          if (holdPreviewChecks && !pendingTarget) heldPreviewChecks.push(reply);
           else reply(previewAvailable);
         }
         else if (path === "/api/project-entry") {
@@ -295,7 +297,8 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
     });
     await new Promise(done => server.listen(0, "127.0.0.1", done));
     const url = `http://127.0.0.1:${server.address().port}/`;
-    provider = await createHumanLoopProvider({ repositoryRoot: root, publicDirectory: resolve("stage2", "tandem", "public"),
+    provider = await createHumanLoopProvider({ repositoryRoot: root, publicDirectory: process.env.TANDEM_PACKAGED_EXTENSION
+      ? join(dirname(process.env.TANDEM_PACKAGED_EXTENSION), "stage2", "public") : resolve("stage2", "tandem", "public"),
       surface: "browser", projectHost: { origin: new URL(url).origin, channel: "whole-project-fixture" }, events,
       getInstallation: () => ({ runtime: active ? runtime : null,
         close: async () => { stopped = true; installationStatus = "closed"; events.touch(); return {}; },
@@ -342,6 +345,12 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       for (const phase of ["sketch", "prototype"]) {
         value.lifecycle.currentStage = phase;
         value.lifecycle.completedStages = phase === "sketch" ? ["prepare", "requirements"] : ["prepare", "requirements", "sketch"];
+        if (phase === "sketch") {
+          value.sketch = structuredClone(drawings.value.sketch);
+          value.sketch.status = "approved";
+          value.sketch.approved = { revisionId: value.sketch.current.id, documentHash: value.sketch.current.documentHash,
+            requirementsDigest: value.sketch.current.requirementsDigest, approvedAt: value.updatedAt, assets: [] };
+        }
         value.revision++;
         await browser.call("Page.reload");
         await browser.waitFor('document.querySelector("#studio-workspace") && !document.querySelector("#studio-workspace").inert');
@@ -356,6 +365,19 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
           `${phase} actions occupy a compact top row: ${JSON.stringify(geometry)}`);
         assert.ok(geometry.bodyWidth >= geometry.panelWidth - 30, `${phase} retains its original full-width view: ${JSON.stringify(geometry)}`);
         assert.equal(active, false);
+        if (phase === "sketch") {
+          await browser.waitFor('!document.querySelector("#complete-stage").disabled');
+          for (const theme of ["light", "dark"]) {
+            await browser.call("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: theme }] });
+            const primary = await browser.evaluate('(() => {const b=document.querySelector("#complete-stage"),s=getComputedStyle(b),r=b.getBoundingClientRect();return {background:s.backgroundColor,color:s.color,hit:b.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))};})()');
+            const luminance = color => color.match(/[\d.]+/g).slice(0, 3).map(Number).map(c => c / 255)
+              .map(c => c <= .04045 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4).reduce((sum, c, index) => sum + c * [.2126, .7152, .0722][index], 0);
+            const [bright, dark] = [luminance(primary.background), luminance(primary.color)].sort((a, b) => b - a);
+            assert.ok((bright + .05) / (dark + .05) >= 4.5, `${theme} primary phase contrast: ${JSON.stringify(primary)}`);
+            assert.equal(primary.hit, true);
+          }
+          await browser.call("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: "light" }] });
+        }
       }
       assert.equal(await browser.evaluate('document.querySelector("#preview-frame").hidden && document.querySelector("#preview-frame").getBoundingClientRect().height === 0'), true,
         "Absent previews have no visible frame.");
@@ -365,8 +387,8 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         value.revision++;
         for (const response of rootEvents) response.write(`data: ${JSON.stringify(value)}\n\n`);
         await browser.waitFor(`document.querySelector("#preview-frame").dataset.checkpointId === ${JSON.stringify(prototype.prototypeFlow.displayedCheckpointId || "")}
-          && document.querySelector("#preview-status").textContent === ${JSON.stringify(prototype.prototypeFlow.pendingCheckpointId ? "Interaction prototype ready to inspect"
-            : prototype.prototypeFlow.activeCheckpointId ? prototype.previewUrl ? "preview ready · building update" : "building" : prototype.previewStatus)}`);
+          && document.querySelector("#apply-prototype-update").hidden === ${!prototype.prototypeFlow.pendingCheckpointId}
+          && document.querySelector("#prototype-building").hidden === ${!prototype.prototypeFlow.activeCheckpointId}`);
       };
       const loading = progressivePrototype();
       loading.previewUrl = null; loading.previewStatus = "starting";
@@ -496,14 +518,25 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         const evaluate = embedded ? inside : browser.evaluate;
         const local = await evaluate(`(() => {const e=document.querySelector(${JSON.stringify(selector)}); e.scrollIntoView({block:"nearest"});
           const r=e.getBoundingClientRect(); const hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);
-          return {x:r.x+r.width/2,y:r.y+r.height/2,ok:r.width>0&&r.height>0&&(hit===e||e.contains(hit))&&!e.disabled};})()`);
-        assert.ok(local.ok, `${selector} must be visible and hit-testable.`);
+          return {x:r.x+r.width/2,y:r.y+r.height/2,rect:{left:r.left,right:r.right,top:r.top,bottom:r.bottom},hit:hit?.outerHTML.slice(0,300),
+            viewport:{width:innerWidth,height:innerHeight},disabled:e.disabled,ok:r.width>0&&r.height>0&&(hit===e||e.contains(hit))&&!e.disabled};})()`);
+        if (!local.ok && process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "unreachable-control.png"), await browser.screenshot());
+        assert.ok(local.ok, `${selector} must be visible and hit-testable: ${JSON.stringify(local)}`);
         const offset = embedded ? await browser.evaluate(`(() => {const e=document.querySelector("#project-conversation-frame");
           e.scrollIntoView({block:"nearest"}); const r=e.getBoundingClientRect(); return {x:r.x,y:r.y};})()`) : { x: 0, y: 0 };
         for (const type of ["mousePressed", "mouseReleased"]) await browser.call("Input.dispatchMouseEvent",
           { type, x: local.x + offset.x, y: local.y + offset.y, button: "left", clickCount: 1 });
       };
       await waitInside('document.body.dataset.projectWorking==="development"');
+      assert.equal(await inside('document.querySelector("#backbone-state").textContent'), "Design unverified");
+      assert.match(await inside('document.querySelector("#assessment-card").textContent'), /not yet verified/);
+      assert.doesNotMatch(await inside('document.querySelector("#assessment-card").textContent'), /No Design has been published/);
+      await browser.call("Emulation.setDeviceMetricsOverride", { width: 390, height: 620, deviceScaleFactor: 1, mobile: false });
+      await waitInside('document.body.dataset.projectStacked==="true"');
+      assert.ok(await inside('document.querySelector("#design-panel").getBoundingClientRect().height <= 180'),
+        "Unverified/empty Design cannot consume the narrow viewport before recovery controls.");
+      await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 1000, deviceScaleFactor: 1, mobile: false });
+      await waitInside('document.body.dataset.projectStacked==="false"');
       assert.equal(await inside('document.querySelector("#message").disabled && document.querySelector("#send").disabled'), true,
         "The chosen Development context is not actionable before runtime readiness.");
       assert.equal(await inside('document.querySelector("#initialize").hidden'), true, "No redundant setup action while entry initializes.");
@@ -513,6 +546,13 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       assert.equal(nativeRequests.length, 0);
       await click("#initialize", true);
       await waitInside('!document.querySelector("#send").disabled');
+      await browser.call("Emulation.setDeviceMetricsOverride", { width: 1233, height: 620, deviceScaleFactor: 1, mobile: false });
+      await waitInside('document.querySelector(".shared-sketch") !== null');
+      const designGeometry = await inside(`(() => {const figure=document.querySelector(".shared-sketch").getBoundingClientRect(),
+        pane=document.querySelector("#design-panel").getBoundingClientRect();return {top:figure.top,visibleHeight:Math.min(figure.bottom,pane.bottom)-Math.max(figure.top,pane.top),paneHeight:pane.height};})()`);
+      assert.ok(designGeometry.visibleHeight >= 160, `Design must be useful without scrolling its overview away: ${JSON.stringify(designGeometry)}`);
+      assert.equal(await inside('document.querySelector("#design-overview").open'), false);
+      await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 1000, deviceScaleFactor: 1, mobile: false });
       assert.deepEqual(mutations.filter(item => item.path === "/api/development/open").map(item => item.body), [{ retry: false }, { retry: true }],
         "The installation's public retry capability releases the failed starting state without a new routing control.");
       assert.equal(await inside('document.querySelector("#project-message-target")===null'), true);
@@ -599,6 +639,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `isolated-${tab.slice(1)}.png`), await browser.screenshot());
         await click("#development-tab");
         await browser.waitFor('!document.querySelector("#project-conversation-frame").hidden');
+        await waitInside('document.body.dataset.projectDesign==="true" && document.querySelector("#conversation-panel").getBoundingClientRect().width < innerWidth - 100');
         assert.equal(await inside('document.querySelector("#messages").textContent.includes("Discovery evidence")'), false);
       }
       assert.equal(mutations.length, beforeBrowse);

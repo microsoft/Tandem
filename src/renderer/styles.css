@@ -3434,7 +3434,7 @@ textarea {
 }
 
 .project-workspace-app { grid-template-rows: minmax(0, 1fr) auto; }
-#studio-workspace.project-workspace { grid-template-columns: var(--requirements-width, 220px) 1px minmax(280px, 1fr) 6px minmax(300px, min(var(--conversation-width, min(42vw, 520px)), calc(100% - var(--requirements-width, 220px) - 287px))); }
+#studio-workspace.project-workspace { grid-template-columns: var(--requirements-width, 220px) 1px minmax(280px, 1fr) 6px minmax(260px, min(var(--conversation-width, min(27vw, 320px)), calc(100% - var(--requirements-width, 220px) - 287px))); }
 .project-workspace > .requirements { display: block !important; min-width: 0; overflow: auto; }
 .project-workspace > .splitter { display: block; }
 .project-workspace > .context-toggle { display: none; }
@@ -3469,11 +3469,20 @@ textarea {
 .project-workspace[data-development="true"] .development-panel { min-height: 0; height: auto; flex: 0 0 auto; }
 .project-workspace .preview > [role="tabpanel"] { min-width: 0; }
 .project-folder { min-width: 0; overflow-wrap: anywhere; font-size: var(--text-body-small, 12px); }
+.preview-restart:empty { display: none; }
+.preview-restart-dialog { width: min(660px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto; box-sizing: border-box; background: var(--studio-surface); color: var(--studio-text); border: 1px solid var(--studio-border); }
+.preview-restart-dialog pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.preview-restart-dialog label { display: grid; gap: 6px; margin-block: 12px; }
+.preview-restart-dialog input, .preview-restart-dialog textarea { width: 100%; min-width: 0; box-sizing: border-box; }
+.preview-restart-dialog button { margin: 8px 8px 0 0; }
 .project-workspace .start-panel { min-height: 0; overflow: auto; }
 .phase-actions { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: var(--studio-control-gap); padding: var(--studio-heading-padding); border-bottom: 1px solid var(--studio-border); }
 .phase-actions:not(:has(> button:not([hidden]))):not(:has([data-status="error"])) { display: none; }
 .phase-actions .complete-stage { width: auto; margin: 0; gap: 6px; min-height: var(--studio-control-height); height: auto; padding: var(--studio-control-padding); }
 .phase-actions .complete-stage-label { display: inline; }
+.phase-actions #complete-stage:not(:disabled) { background: var(--studio-action-bg); color: var(--color-white, #fff); border-color: var(--studio-action-bg); }
+.phase-actions #reopen-stage:not(:disabled) { background: var(--studio-surface); color: var(--studio-text); border-color: var(--studio-border); }
+.phase-actions .complete-stage:disabled { opacity: 1; }
 .phase-actions .stage-message { margin: 0; }
 .project-workspace #sketch-panel { flex-direction: column; }
 .project-workspace > .preview:has(> #live-preview-panel:not([hidden])) { grid-template-rows: minmax(0, 1fr); }
@@ -3491,12 +3500,15 @@ textarea {
 .discovery-history { min-height: 0; overflow: auto; padding: 12px; }
 .discovery-history article { border-bottom: 1px solid var(--studio-border); padding: 10px 0; }
 .discovery-history p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.discovery-history summary { cursor: pointer; overflow-wrap: anywhere; }
+#studio-workspace[data-history-collapsed="true"]:not([data-development="true"]) { grid-template-columns: var(--requirements-width, 220px) 1px minmax(280px, 1fr) 0 150px; }
 .root-settings-heading, .root-effort-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .root-effort-field { display: grid; gap: 6px; min-width: 0; margin-block: 16px 8px; }
 .root-effort-field select { width: 100%; min-width: 0; box-sizing: border-box; }
 .root-effort-actions { justify-content: flex-start; margin-block: 8px; }
 @media (max-width: 999px) {
-  #studio-workspace.project-workspace { grid-template-columns: 180px minmax(0, 1fr); grid-template-rows: minmax(260px, 1fr) minmax(300px, 1fr); }
+  #studio-workspace.project-workspace { grid-template-columns: 180px minmax(0, 1fr); grid-template-rows: minmax(260px, 1fr) minmax(80px, 180px); }
+  #studio-workspace[data-history-collapsed="true"]:not([data-development="true"]) { grid-template-columns: 180px minmax(0, 1fr); grid-template-rows: minmax(260px, 1fr) auto; }
   .project-workspace > .requirements { grid-row: 1 / 3; width: auto; position: static; }
   .project-workspace > .preview { grid-column: 2; grid-row: 1; }
   #project-conversation { grid-column: 2; grid-row: 2; }

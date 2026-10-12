@@ -15,6 +15,7 @@ import {
 } from "@github/copilot-sdk/extension";
 import { renderTandemHtml } from "./renderer.js";
 import { chooseProjectEntry, readProjectEntry } from "./project-entry.js";
+import { PreviewLaunches, type PreviewTarget } from "./preview-launch.js";
 import { isPreferredTandemProvider } from "./provider-identity.js";
 import { resolveSharedProjectRoot } from "./workspace-root.js";
 import { buildDecisionGraphMermaid } from "./decision-diagram.js";
@@ -179,6 +180,26 @@ const projectStore = new ProjectStore<TandemState>({
 });
 
 let session;
+let previewLaunches: PreviewLaunches | null = null;
+function ownedPreviewLaunches() {
+    return previewLaunches ??= new PreviewLaunches({
+        root: WORKSPACE_ROOT, storageRoot: STATE_DIRECTORY, mainSessionId: () => session.sessionId,
+        executable: process.env.TANDEM_NODE_EXECUTABLE || process.execPath,
+        launcher: join(dirname(fileURLToPath(import.meta.url)), "preview-launcher.mjs"),
+        tools: { execute: input => session.rpc.tools.execute(input) }, verifyIdentity: verifyPreviewIdentity,
+        readState: loadState,
+        guard: async () => {
+            if (process.platform !== "win32") throw new Error("Saved preview restart currently requires the native Windows PowerShell launch adapter.");
+            if (typeof session.rpc.tools?.initializeAndValidate !== "function" || typeof session.rpc.tools?.execute !== "function") {
+                throw new Error("The installed native runtime lacks permission-aware direct tool execution. No alternate command path was used.");
+            }
+            await session.rpc.tools.initializeAndValidate();
+            const processing = await session.rpc.metadata.isProcessing();
+            const queue = await session.rpc.queue.pendingItems();
+            if (processing.processing || queue.items?.length || queue.steeringMessages?.length) throw new Error("Wait for the owning foreground session to finish its current work before restarting a preview.");
+        },
+    });
+}
 let handoffs: DevelopmentHandoffs;
 const developmentTransition = new DevelopmentTransition(WORKSPACE_ROOT);
 const nodePermissionOwner = process.env.TANDEM_NODE_MAIN_SESSION_ID;
@@ -6477,8 +6498,11 @@ async function handleRequest(entry, req, res) {
     }
     if (req.method === "GET" && requestUrl.pathname === "/api/prototype/preview-status") {
         const state = await loadState(entry.prototypeId);
-        const checkpoint = state.prototypeFlow?.checkpoints.find(item => item.id === state.prototypeFlow?.displayedCheckpointId);
-        const url = checkpoint?.previewUrl || state.previewUrl;
+        const target = requestUrl.searchParams.get("target") ?? "current";
+        if (!["current", "pending"].includes(target)) throw new Error("Choose the current or pending preview.");
+        const selectedId = target === "current" ? state.prototypeFlow?.displayedCheckpointId : state.prototypeFlow?.pendingCheckpointId;
+        const checkpoint = state.prototypeFlow?.checkpoints.find(item => item.id === selectedId);
+        const url = checkpoint?.previewUrl || (target === "current" ? state.previewUrl : null);
         const binding = { generation: state.generation, url: url || null, checkpointId: checkpoint?.id ?? null,
             pendingCheckpointId: state.prototypeFlow?.pendingCheckpointId ?? null };
         if (!url) { sendJson(res, 200, { ...binding, available: false, reason: "No saved preview URL is available." }); return; }
@@ -6490,6 +6514,31 @@ async function handleRequest(entry, req, res) {
                 reason: error instanceof Error ? error.message : "The saved preview could not be verified." });
         }
         return;
+    }
+    if (req.method === "POST" && ["/api/prototype/preview-restart/inspect", "/api/prototype/preview-restart/decision"].includes(requestUrl.pathname)) {
+        if (!(await isPreferredAnswerProvider(entry.extensionId))) throw new CanvasError("read_only_provider", "Restart previews through this project's owning writable provider.");
+        const input = await readRequestBody(req);
+        const result = await withAnswerClaim(entry.prototypeId, async () => {
+            const state = await loadState(entry.prototypeId);
+            if (hasActiveWork(state)) throw new Error("Wait for current phase work before restarting a saved preview.");
+            if (requestUrl.pathname.endsWith("/inspect")) {
+                if (!isObject(input) || !["current", "pending"].includes(input.target)
+                    || Object.keys(input).some(key => !["target", "generation", "checkpointId", "entrypoint", "args"].includes(key))
+                    || input.generation !== state.generation
+                    || input.checkpointId !== (input.target === "current" ? state.prototypeFlow?.displayedCheckpointId : state.prototypeFlow?.pendingCheckpointId)
+                    || input.entrypoint !== undefined && typeof input.entrypoint !== "string"
+                    || input.args !== undefined && (!Array.isArray(input.args) || input.args.some(arg => typeof arg !== "string"))) {
+                    throw new Error("Supply the explicit saved-version target and an optional reviewed Node entrypoint/argument list.");
+                }
+                return ownedPreviewLaunches().inspect(state, input.target as PreviewTarget, input.entrypoint, input.args);
+            }
+            if (!isObject(input) || Object.keys(input).sort().join(",") !== "approve,confirmationId"
+                || typeof input.confirmationId !== "string" || typeof input.approve !== "boolean") {
+                throw new Error("Supply the exact preview restart confirmation and decision.");
+            }
+            return ownedPreviewLaunches().decide(input.confirmationId, input.approve);
+        });
+        sendJson(res, 200, result); return;
     }
     if (req.method === "POST" && requestUrl.pathname === "/api/sketch") {
         const input = await readRequestBody(req, MAX_SKETCH_REQUEST_BYTES);
@@ -7784,7 +7833,12 @@ session = await joinSession({
                 {
                     name: "close_development",
                     description: "Explicitly close the owned private Development runtime before main-session shutdown. Closing a view is not shutdown.",
-                    handler: () => development.close(),
+                    handler: async () => {
+                        const [closed, previews] = await Promise.allSettled([development.close(), previewLaunches?.close()]);
+                        if (closed.status === "rejected") throw closed.reason;
+                        if (previews.status === "rejected") closed.value.warnings.push(`Preview shutdown needs attention: ${previews.reason}`);
+                        return closed.value;
+                    },
                 },
                 {
                     name: "continue_design",

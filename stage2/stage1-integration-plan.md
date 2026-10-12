@@ -109,6 +109,25 @@ version. A failed probe preserves checkpoint readiness/history and feedback and
 shows unavailable guidance with **Check again**, without launching processes,
 promoting a pending version or dispatching model work.
 
+The subsequently authorized **Restart preview** / **Restart pending preview**
+adds a distinct, explicit process action through the owning main session's native
+tool/permission pipeline. A source/owner-bound reviewed Node recipe is recorded
+outside checkpoint source. Legacy setups can review an existing entrypoint in
+the UI; no script is guessed. The Windows adapter uses an attached native shell
+handle, exact process receipts and listener ownership checks, and checks the
+original prototype/checkpoint markers before claiming readiness. Current and
+pending selection stay unchanged. This is independent of checkpoint Retry,
+promotion, model generation, handoff admission and the private Development store.
+
+The consolidated usability pass also gives the working artifact priority over
+secondary Discovery history: a narrower default and explicit collapse preserve
+user sizing, while individual evidence entries expand progressively. Primary
+phase controls use explicit contrasting tokens, Requirements badges use local
+requirements state, and an unverified private Design is not described as empty.
+Embedded Design overview/description disclosures keep the actual artifact visible
+on short panels. New-message navigation reserves space instead of overlaying
+confirmation controls, and history tooltips cannot cover Settings or dialogs.
+
 Prototype layout now gives its tabpanel the whole workspace row and reserves the
 original Feedback section at its bottom. A growing preview surface replaces the
 old implicit empty grid row; short panes scroll rather than overlap controls.

@@ -7,6 +7,7 @@ export function DevelopmentPanel({ active }: { active: boolean }) {
     const action = useAction("development");
     const project = useProjectView();
     const eligible = canOpenDevelopment(state);
+    const recoveryNeeded = !project.active && (Boolean(project.error) || ["unknown", "execution-unknown", "failed", "closed"].includes(project.status));
     const snapshot = state.lifecycle.outputs.find(output => output.stageId === "prototype");
     if (!eligible) return <div className="development-empty" role="status">{state.developmentBlocker
         || (state.provider?.canSubmitAnswers === false ? "Open the writable provider for Development."
@@ -18,7 +19,7 @@ export function DevelopmentPanel({ active }: { active: boolean }) {
             {!project.developmentEntered && <button id="enter-development" type="button" className="plan-button"
                 disabled={!eligible} onClick={() => void project.activate()}>Continue in Development</button>}
             {snapshot && <button id="continue-design" type="button" className="plan-button"
-                disabled={!eligible || state.lifecycle.currentStage !== "development" || action.busy}
+                disabled={!eligible || state.lifecycle.currentStage !== "development" || action.busy || project.starting || recoveryNeeded}
                 onClick={() => void action.run(async () => {
                     project.prepareDevelopmentView();
                     await post("/api/development/continue", { generation: state.generation,
@@ -27,6 +28,7 @@ export function DevelopmentPanel({ active }: { active: boolean }) {
                 })}>{state.development ? "Reconcile Design handoff" : "Continue Design from Prototype"}</button>}
             <details className="development-process"><summary>Acceptance and delivery</summary>{active && <ProcessPanel development />}</details>
         </div>
+        {snapshot && recoveryNeeded && <p role="status">Resolve the Development setup or recovery shown in its conversation before continuing the saved Prototype. The handoff is preserved.</p>}
         {(project.error || action.error || state.developmentBlocker) && <div role="alert" className="development-error">
             {project.error || action.error || state.developmentBlocker}
             {project.error && project.url && !project.active && !project.starting

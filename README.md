@@ -324,6 +324,26 @@ The phase-owned Feedback section stays at the bottom of the Prototype pane, with
 the inline preview using the remaining space above and pane scrolling when needed.
 Neither preview link nor iframe switches to a pending version without the explicit
 checkpoint-promotion action; its existing validation and Finish gates are unchanged.
+
+If a saved preview server has stopped, **Restart preview** targets only the
+displayed checkpoint; **Restart pending preview** targets only the waiting version.
+Neither action generates code, applies an update, changes feedback or opens
+Development. A previously reviewed live server is reused rather than duplicated.
+For legacy checkpoints without a launch record, the UI asks you to review an
+existing Node entrypoint (and any arguments), then confirm the exact executable,
+checkpoint directory and saved URL. It never guesses an npm script or substitutes
+a static server. The current restart adapter supports the Windows Node host;
+unsupported stacks/platforms fail explicitly.
+
+Launch records bind the original main owner and accepted source fingerprint.
+The native shell permission prompt remains authoritative. After approval, the
+packaged launcher rechecks source/executable identity and port availability,
+starts an attached session-owned process, and records its exact launch/PID.
+Ready requires both owned listener evidence and matching prototype/checkpoint
+markers. Changed source, foreign listeners, rejected consent and startup failure
+remain visible. Closing the owning host stops its own launches; no unrelated
+server is terminated. A failed or uncertain attempt can be inspected/reconciled,
+not silently replaced with another command.
 Saved-evidence rows refresh when their source changes; native conversation records
 remain immutable. New drawing requests retain their exact accepted instruction,
 request ID, time and base revision in Stage1's own state, including failed requests.
