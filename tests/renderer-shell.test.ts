@@ -389,7 +389,7 @@ test("owning phase toolbar completes the active stage without expanding context 
     assert.equal(h.get("toggle-context-pane").getAttribute("aria-expanded"), "false");
     assert.equal(button.disabled, true, "The new stage still requires its own completion evidence");
     await h.click("toggle-context-pane");
-    assert.equal(text(h, "complete-stage"), "Finish sketch");
+    assert.equal(text(h, "complete-stage"), "Finish Drawings and continue");
     assert.ok(button.querySelector('svg.lucide-check[aria-hidden="true"]'));
     assert.equal(field(h, "handoff-approver").value, "Design owner");
 });

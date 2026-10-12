@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { PanelRightClose, PanelRightOpen } from "lucide-react";
 import { canOpenDevelopment, hasActiveJobs, useUi, type UiState } from "./ui-context.js";
 import { DiscoveryProjectSettings, ProjectEffortError, requestProjectEffort } from "./project-effort.js";
 import type { LifecycleStageId } from "../types.js";
@@ -140,14 +141,15 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
         const workspace = document.getElementById("studio-workspace");
         if (!workspace) return;
         const columns = getComputedStyle(workspace).gridTemplateColumns.split(/\s+/);
-        const conversationWidth = columns.length === 5 ? parseFloat(columns[4]!) : 0;
+        const conversationWidth = columns.length === 5 ? parseFloat(columns[4]!)
+            : window.innerWidth >= 800 ? parseFloat(workspace.style.getPropertyValue("--conversation-width")) || 300 : 0;
         const divider = document.getElementById("project-conversation-divider");
         if (divider && conversationWidth > 0) {
             divider.setAttribute("aria-valuenow", String(Math.round(conversationWidth)));
             divider.setAttribute("aria-valuemax", String(Math.round(workspace.clientWidth - parseFloat(columns[0]!) - 287)));
             divider.setAttribute("aria-valuetext", `Conversation ${Math.round(conversationWidth)} pixels`);
         }
-        send({ type: "layout", stacked: window.innerWidth < 1000,
+        send({ type: "layout", stacked: window.innerWidth < 800,
             conversationWidth });
     }
     async function activate(retry = false) {
@@ -237,7 +239,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
             }
             if (message.type === "show-design") { latest.current.showDesign(); return; }
             if (message.type === "settings-closed") { document.getElementById("project-settings")?.focus(); return; }
-            if (message.type === "conversation-resize" && window.innerWidth >= 1000
+            if (message.type === "conversation-resize" && window.innerWidth >= 800
                 && Number.isFinite(message.width) && message.width >= 300 && message.width <= window.innerWidth) {
                 document.getElementById("studio-workspace")?.style.setProperty("--conversation-width", `${message.width}px`);
                 syncLayout();
@@ -334,7 +336,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
 export function ProjectConversation() {
     const view = useProjectView();
     const { state } = useUi();
-    const [historyCollapsed, setHistoryCollapsed] = useState(false);
+    const [historyCollapsed, setHistoryCollapsed] = useState(() => window.innerWidth < 1000);
     useEffect(() => {
         const workspace = document.getElementById("studio-workspace");
         if (workspace) workspace.dataset.historyCollapsed = String(historyCollapsed && !view.visible);
@@ -356,14 +358,14 @@ export function ProjectConversation() {
         onPointerMove={event => { if (drag.current !== null) { resize(drag.current - event.clientX); drag.current = event.clientX; } }}
         onPointerUp={event => { drag.current = null; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); }}
         onLostPointerCapture={() => { drag.current = null; }} />
-      <aside id="project-conversation" aria-label="Project conversation">
-        <div className="project-conversation-heading"><strong>{view.visible ? "Development conversation" : "Discovery history"}</strong>
-            <span role="status">{view.visible ? view.status : ""}{view.visible && view.attention ? ` · ${view.attention} needs attention` : ""}</span>
-            <button type="button" onClick={() => view.command("current-work")}>Current work</button></div>
-        {!view.visible && <button id="toggle-discovery-history" type="button" aria-controls="discovery-history"
+      <aside id="project-conversation" aria-label="Project conversation" data-history-collapsed={historyCollapsed && !view.visible}>
+        {!view.visible && !historyCollapsed && <div className="project-conversation-heading"><strong>Discovery history</strong>
+            <button type="button" onClick={() => view.command("current-work")}>Current work</button></div>}
+        {!view.visible && <button id="toggle-discovery-history" className="plan-button secondary" type="button" aria-controls="discovery-history"
+            aria-label={historyCollapsed ? "Show discovery history" : "Hide discovery history"} title={historyCollapsed ? "Show discovery history" : "Hide discovery history"}
             aria-expanded={!historyCollapsed} onClick={() => setHistoryCollapsed(value => !value)}>
-            {historyCollapsed ? "Show history" : "Hide history"}</button>}
-        {view.visible && (view.error || view.detail) && <p role="alert">{view.error || view.detail}</p>}
+            {historyCollapsed ? <PanelRightOpen size={16} aria-hidden="true" /> : <><PanelRightClose size={16} aria-hidden="true" />Hide history</>}</button>}
+        {view.visible && view.error && <p role="alert">{view.error}</p>}
         {view.url && <iframe ref={view.frame} id="project-conversation-frame" title="Private Development conversation"
             hidden={!view.visible} src={`${view.url}?panel=workspace`} onLoad={view.sync} allow="clipboard-read; clipboard-write" />}
         {!view.visible && <div id="discovery-history" className="discovery-history" aria-label="Discovery history" hidden={historyCollapsed}>

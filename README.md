@@ -267,6 +267,11 @@ New Design output and a Prototype update awaiting Apply are marked in navigation
 
 The original discovery phase forms remain independently owned. Finish/Reopen
 controls live in their owning phase view, not a sidebar Discovery actions category.
+Secondary history starts compact in constrained panels and can collapse to a
+small keyboard-accessible rail; reopening restores its prior sizing. Already
+approved, unchanged drawings show one Finish action rather than another primary
+approval. Development keeps Design and conversation side by side where they fit,
+and an empty/unverified Design does not reserve a large blank pane on narrow screens.
 The original brief is readable in Preparation, not duplicated in a global Project
 overview. Sidebar progress shows one action/state and latest public update;
 worker details and freshness diagnostics expand under Details. Permission

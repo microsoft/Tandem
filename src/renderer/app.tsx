@@ -303,10 +303,11 @@ function Workspace(props: WorkspaceProps) {
   const completionLabel = finalizingPrototype ? "Finishing prototype..." : allComplete ? "All stages complete" : stageAction.busy ? "Saving stage output..."
     : current === "prototype" ? "Finish Prototype and save outputs"
     : current === "requirements" && state.prototypeApproach.mode === "not-applicable" ? "Finish Requirements and save outputs"
+    : current === "sketch" ? "Finish Drawings and continue"
     : current === "prepare" ? "Preparation runs automatically" : "Finish " + (lifecycleStages.find((stage) => stage.id === current)?.label || current).toLowerCase();
   const completionHelp = contextCollapsed && !allComplete && !stageAction.busy && !["prepare", "development"].includes(current)
     ? "Next stage: " + completionLabel : completionLabel;
-  const selectedLabel = lifecycleStages.find((stage) => stage.id === viewed)?.label || viewed;
+  const selectedLabel = viewed === "sketch" ? "Drawings" : lifecycleStages.find((stage) => stage.id === viewed)?.label || viewed;
   const statusBarError = props.connectionError || stageAction.error;
   const savedPrototype = state.lifecycle.currentStage === "development" && state.lifecycle.outputs.some(output => output.stageId === "prototype")
     && state.status === "Prototype outputs saved. Stage 1 is complete. You can close now and open Development later with these files as input.";
@@ -447,7 +448,9 @@ function Workspace(props: WorkspaceProps) {
                 {tab.stage === "prototype" && state.prototypeFlow?.pendingCheckpointId && <span className="artifact-count">Update ready</span>}
               </Tabs.Trigger>; })}
             </Tabs.List>
-            <button id="project-current-work" type="button" className="plan-button" onClick={() => projectView.command("current-work")}>
+            <button id="project-current-work" type="button" className="plan-button"
+              aria-label={projectView.developmentEntered ? `Current work: Development ${projectView.status}` : "Current work"}
+              onClick={() => projectView.command("current-work")}>
               Current work{projectView.attention ? ` (${projectView.attention} needs attention)` : ""}
             </button>
           </nav>

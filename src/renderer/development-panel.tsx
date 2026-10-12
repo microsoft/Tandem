@@ -34,7 +34,8 @@ export function DevelopmentPanel({ active }: { active: boolean }) {
             {project.error && project.url && !project.active && !project.starting
                 && <button id="retry-development" className="plan-button" onClick={() => void project.activate(true)}>Retry Development</button>}
         </div>}
-        {state.development && <p className="development-provenance">Retained handoff: {state.development.handoffId}.
-            Reconciliation never replays retired work. Use a new explicit message in Development to continue after recovery.</p>}
+        {state.development && <details className="development-provenance"><summary>Saved Prototype handoff</summary>
+            <p>Retained handoff: {state.development.handoffId}. Reconciliation never replays retired work.
+            Use a new explicit message in Development to continue after recovery.</p></details>}
     </div>;
 }

@@ -64,7 +64,8 @@ const projectPresentation = installProjectPresentation({ document, window,
   layoutChanged: layout => splitter.setProjectLayout(layout),
   hasAttachments: () => $('annotation-preview')?.hidden === false || $('clipboard-preview')?.hidden === false,
   openOutput,
-  outputSelection: () => selectedOutput ?? (designView.current() ? { id: `design:${designView.current().artifactId}`, binding: JSON.stringify(snapshot.design.binding) } : null),
+  outputSelection: () => selectedOutput ?? (designView.current() ? { id: `design:${designView.current().artifactId}`,
+    binding: JSON.stringify(snapshot.design?.binding ?? lastVerifiedDesign?.binding) } : null),
   currentWork: () => $('focus-current-message').click(),
 });
 function renderReasoningEffort() {
@@ -411,7 +412,7 @@ function render() {
   $('assessment-card').querySelector('strong').textContent = designVerified ? 'No Design has been published' : 'Design is not yet verified';
   $('assessment-card').querySelector('p').textContent = designVerified
     ? 'Discuss your idea in the conversation. The current Design will appear here when it is ready.'
-    : 'Restore the owned Development connection to verify its saved Design. Unavailable history does not mean an empty project.';
+    : 'Restore the Development connection to verify saved Design. Unavailable does not mean empty.';
   if (hasDesign) {
     const raw = JSON.stringify(displayedDesign.content, null, 2);
     if ($('design-raw').textContent !== raw) $('design-raw').textContent = raw;

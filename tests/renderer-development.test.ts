@@ -36,7 +36,7 @@ test("Development presentation cannot arm a competing discovery input and reject
     const discoveryStatus = h.store.getSnapshot().state.status;
     await send({ type: "status", status: "working", active: true, questions: 0, permissions: 0, confirmations: 0 });
     assert.equal(h.document.querySelector("#status"), null, "Global sidebar status prose is not duplicated.");
-    assert.match(h.get("project-conversation").textContent!, /working/);
+    assert.match(h.get("project-current-work").getAttribute("aria-label")!, /working/);
     assert.equal(h.store.getSnapshot().state.status, discoveryStatus, "Live status does not rewrite saved discovery evidence.");
 });
 

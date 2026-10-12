@@ -367,6 +367,18 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         assert.equal(active, false);
         if (phase === "sketch") {
           await browser.waitFor('!document.querySelector("#complete-stage").disabled');
+          assert.equal(await browser.evaluate('document.querySelector("#sketch-approve").hidden'), true,
+            "A clean approved drawing revision offers Finish, not another primary approval.");
+          const beforeHistory = await browser.evaluate('({artifact:document.querySelector("#preview-pane").clientWidth,history:document.querySelector("#project-conversation").clientWidth})');
+          assert.ok(beforeHistory.artifact > beforeHistory.history);
+          await clickRoot("#toggle-discovery-history");
+          await browser.waitFor('document.querySelector("#studio-workspace").dataset.historyCollapsed==="true"');
+          assert.ok(await browser.evaluate('document.querySelector("#project-conversation").clientWidth <= 44'));
+          assert.ok(await browser.evaluate(`document.querySelector("#preview-pane").clientWidth >= ${beforeHistory.artifact + 200}`));
+          assert.equal(await browser.evaluate('document.activeElement.id'), "toggle-discovery-history");
+          await clickRoot("#toggle-discovery-history");
+          await browser.waitFor('document.querySelector("#studio-workspace").dataset.historyCollapsed==="false"');
+          assert.equal(await browser.evaluate('document.querySelector("#project-conversation").clientWidth'), beforeHistory.history);
           for (const theme of ["light", "dark"]) {
             await browser.call("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: theme }] });
             const primary = await browser.evaluate('(() => {const b=document.querySelector("#complete-stage"),s=getComputedStyle(b),r=b.getBoundingClientRect();return {background:s.backgroundColor,color:s.color,hit:b.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))};})()');
@@ -552,6 +564,14 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         pane=document.querySelector("#design-panel").getBoundingClientRect();return {top:figure.top,visibleHeight:Math.min(figure.bottom,pane.bottom)-Math.max(figure.top,pane.top),paneHeight:pane.height};})()`);
       assert.ok(designGeometry.visibleHeight >= 160, `Design must be useful without scrolling its overview away: ${JSON.stringify(designGeometry)}`);
       assert.equal(await inside('document.querySelector("#design-overview").open'), false);
+      await inside('window.verifiedDesignNode = document.querySelector("#design-artifacts").firstElementChild; true');
+      installationStatus = "unknown"; events.touch();
+      await waitInside('document.querySelector("#backbone-state").textContent === "Design unverified"');
+      assert.equal(await inside('window.verifiedDesignNode === document.querySelector("#design-artifacts").firstElementChild'), true,
+        "A temporarily unverified runtime retains the previously displayed Design without claiming it is empty.");
+      assert.equal(await inside('document.querySelector("#message").disabled'), true);
+      installationStatus = "ready"; events.touch();
+      await waitInside('!document.querySelector("#send").disabled');
       await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 1000, deviceScaleFactor: 1, mobile: false });
       assert.deepEqual(mutations.filter(item => item.path === "/api/development/open").map(item => item.body), [{ retry: false }, { retry: true }],
         "The installation's public retry capability releases the failed starting state without a new routing control.");
@@ -561,7 +581,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       assert.equal(await browser.evaluate('document.querySelector("#usage-input").disabled'), true, "Earlier inputs are read-only while Development owns current work.");
       for (const width of [920, 390]) {
         await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 1000, deviceScaleFactor: 1, mobile: false });
-        await waitInside('document.body.dataset.projectStacked==="true"');
+        await waitInside(`document.body.dataset.projectStacked==="${width < 800}"`);
         assert.equal(await browser.evaluate('document.querySelector("#project-conversation-frame").hidden && document.querySelector("#project-conversation-frame").getBoundingClientRect().height === 0'), true,
           `Private chat is not visible in an earlier phase at ${width}px.`);
         assert.equal(await browser.evaluate('document.querySelector("#discovery-history").checkVisibility()'), true);
@@ -775,7 +795,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         assert.equal(await browser.evaluate("innerWidth"), width, "Exercise the real CSS viewport, not mobile page scaling.");
         await click("#development-tab");
         await waitInside('document.body.dataset.projectDesign==="true"');
-        await waitInside(`document.body.dataset.projectStacked==="${width < 1000}"`);
+        await waitInside(`document.body.dataset.projectStacked==="${width < 800}"`);
         assert.equal(await browser.evaluate('document.activeElement.id'), "development-tab");
         for (const badge of ["Available", "New output", "Update ready"]) {
           const fit = await browser.evaluate(`(() => {
@@ -796,7 +816,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
             `Navigation keeps full labels and ${badge} without horizontal scrolling at ${width}: ${JSON.stringify(fit)}`);
           if (width === 980) assert.equal(fit.sidebar, 180);
         }
-        if (width < 1000) {
+        if (width < 800) {
           assert.equal(await inside('document.querySelector("#workspace-divider").hidden'), true);
           const sizes = await inside('({conversation:document.querySelector("#conversation-panel").getBoundingClientRect().width, layout:document.querySelector(".human-layout").clientWidth})');
           assert.ok(Math.abs(sizes.conversation - sizes.layout) < 2 && Math.abs(sizes.conversation - await conversationWidth()) <= 20,

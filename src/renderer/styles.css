@@ -37,7 +37,9 @@
 .development-toolbar { display: flex; flex-wrap: wrap; gap: var(--studio-control-gap); align-items: center; padding: 4px 8px; border-bottom: 1px solid var(--studio-border); }
 .development-toolbar > span { flex: 1; min-width: 200px; color: var(--studio-muted); font-size: 11px; }
 .development-error { color: var(--studio-danger); padding: 8px; overflow-wrap: anywhere; }
-.development-provenance { margin: 0; padding: 2px 8px; max-height: 3em; overflow: auto; color: var(--studio-muted); font-size: 10px; }
+.development-provenance { margin: 0; padding: 2px 8px; color: var(--studio-muted); font-size: 11px; }
+.development-provenance[open] { max-height: 130px; overflow: auto; }
+.development-provenance summary { cursor: pointer; }
 .development-empty { padding: 16px; }
 .development-process { position: relative; }
 .development-process > summary { cursor: pointer; }
@@ -3485,7 +3487,7 @@ textarea {
 .phase-actions .complete-stage:disabled { opacity: 1; }
 .phase-actions .stage-message { margin: 0; }
 .project-workspace #sketch-panel { flex-direction: column; }
-.project-workspace > .preview:has(> #live-preview-panel:not([hidden])) { grid-template-rows: minmax(0, 1fr); }
+.project-workspace > .preview { grid-template-rows: minmax(0, 1fr); }
 .project-workspace #live-preview-panel { display: flex; flex-direction: column; }
 .project-workspace #live-preview-panel > .preview-surface { flex: 1 0 auto; }
 .project-workspace #live-preview-panel > .phase-actions,
@@ -3501,7 +3503,9 @@ textarea {
 .discovery-history article { border-bottom: 1px solid var(--studio-border); padding: 10px 0; }
 .discovery-history p { white-space: pre-wrap; overflow-wrap: anywhere; }
 .discovery-history summary { cursor: pointer; overflow-wrap: anywhere; }
-#studio-workspace[data-history-collapsed="true"]:not([data-development="true"]) { grid-template-columns: var(--requirements-width, 220px) 1px minmax(280px, 1fr) 0 150px; }
+#studio-workspace[data-history-collapsed="true"]:not([data-development="true"]) { grid-template-columns: var(--requirements-width, 220px) 1px minmax(280px, 1fr) 0 44px; }
+#toggle-discovery-history { align-self: flex-end; width: auto; margin: 6px; }
+#project-conversation[data-history-collapsed="true"] { min-width: 0; }
 .root-settings-heading, .root-effort-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .root-effort-field { display: grid; gap: 6px; min-width: 0; margin-block: 16px 8px; }
 .root-effort-field select { width: 100%; min-width: 0; box-sizing: border-box; }

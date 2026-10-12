@@ -125,8 +125,10 @@
   flex: 1 0 560px; min-height: 560px;
 }
 .human-app[data-project-panel][data-project-stacked="true"][data-design-content="empty"] .human-design {
-  flex: 0 0 auto; min-height: 0; max-height: 180px;
+  flex: 0 0 auto; min-height: 0; max-height: 140px;
 }
+.human-app[data-project-panel][data-project-stacked="true"][data-design-content="empty"] .human-design > .panel-heading { display: none; }
+.human-app[data-project-panel][data-project-stacked="true"][data-design-content="empty"] .design-assessment { min-height: 0; }
 .human-app[data-project-panel][data-project-stacked="true"][data-design-content="empty"] .human-conversation {
   flex: 1 0 300px; min-height: 300px;
 }
