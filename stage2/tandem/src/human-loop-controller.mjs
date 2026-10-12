@@ -137,13 +137,13 @@ export function createHumanLoopController(options) {
           if (!runtime) throw new Error("The repaired runtime is not available for readback.");
           if (options.projectEffortControl) await runtime.applyProjectEffort();
           const [readiness, model] = await Promise.all([runtime.readiness(), runtime.modelSettings()]);
-          if (readiness.status !== "ready" || readiness.modelBlocked || typeof model.actual !== "string" || !model.actual) {
-            throw new Error(readiness.reason || model.reason || "Repair completed, but native model/readiness still needs attention.");
-          }
+          const verified = readiness.status === "ready" && !readiness.modelBlocked && typeof model.actual === "string" && Boolean(model.actual);
           events.enablePersistence(repositoryRoot);
           events.append({ type: "human.setup-repaired", source: "system",
-            summary: "Empty Development setup reinitialized with the same reserved ID. The retained handoff remains unsent." });
-          return { model: model.actual, reasoningEffort: model.actualReasoningEffort ?? null };
+            summary: verified ? "Empty Development setup reinitialized with the same reserved ID. The retained handoff remains unsent."
+              : "Same-ID setup reinitialized. Verify the private model in Settings before continuing; the handoff remains unsent." });
+          return { verified, model: model.actual, reasoningEffort: model.actualReasoningEffort ?? null,
+            reason: verified ? null : model.error || model.reason || readiness.reason || "Select and apply a private model in Settings." };
         }, ...providerOptions });
       let closeWork;
       const provider = { ...original, close: () => closeWork ??= (async () => {

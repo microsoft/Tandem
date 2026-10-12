@@ -70,6 +70,7 @@ export class HumanLoopRuntime {
   #projectEffortControl;
   #modelChanging = false;
   #modelError = null;
+  #repairModelReadback = false;
   #compactionBusy = false;
   #compactionApproval = null;
   #contextProvider;
@@ -194,6 +195,7 @@ export class HumanLoopRuntime {
       "Empty-setup repair cannot replace a canonical Design.");
   }
   async recover(recoveryId, cleanNativeProof = null, allowMissingInitialSession = false, repairId = null) {
+    this.#repairModelReadback = Boolean(repairId);
     const state = await this.validateRecovery();
     let diagnostic = 0;
     const diagnose = async (source, reason) => {
@@ -248,6 +250,10 @@ export class HumanLoopRuntime {
     try {
       const preferences = await this.#preferences.read();
       requireCondition(!preferences.pendingModel, "A model change is unconfirmed. Retry the selection or explicitly accept the actual model in Settings.");
+      if (this.#repairModelReadback) {
+        const selection = await this.#transport.currentModelSelection();
+        requireCondition(selection.model, "Repair needs a verified private model. Select it in Settings before continuing.");
+      }
       if (this.#projectEffortControl && preferences.projectReasoningEffort !== null) {
         const actual = await this.#transport.currentModelSelection();
         if (verifyAvailability) {

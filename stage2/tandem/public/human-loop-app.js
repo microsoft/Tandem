@@ -745,9 +745,12 @@ $('approve-empty-setup').onclick = async () => {
   emptySetupConfirmation = null; $('empty-setup-approval').close();
   emptySetupBusy = true; render();
   try {
-    await post('/api/runtime/empty-setup/decision', { confirmationId, approve: true });
+    const result = await post('/api/runtime/empty-setup/decision', { confirmationId, approve: true });
     await refresh();
-    notice('Development setup repaired with the same reserved ID. The retained handoff has not been submitted.');
+    if (result.readback?.verified === false) {
+      $('canvas-settings').open = true; $('setting-model').focus(); void refreshSettings();
+      notice(`The same session was reinitialized, but model verification is still required. Select and apply a private model in Settings. The handoff remains unsent. ${result.readback.reason ?? ''}`);
+    } else notice('Development setup repaired with the same reserved ID. The retained handoff has not been submitted.');
   } catch (error) { notice(error.message); }
   finally { emptySetupBusy = false; render(); }
 };

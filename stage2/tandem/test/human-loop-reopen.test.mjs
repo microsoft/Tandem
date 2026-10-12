@@ -275,6 +275,22 @@ test("verified empty-created repair is same-ID, one-use and preserves all origin
   assert.equal(f.counts.creates, 2);
 });
 
+test("empty repair keeps text admission blocked until actual private model readback succeeds", async t => {
+  const f = await emptyCreatedFixture(t);
+  f.setActualModel(null);
+  const proposal = await f.installation.requestEmptySetupRepair();
+  await f.installation.decideEmptySetupRepair({ confirmationId: proposal.confirmationId, approve: true });
+  const runtime = f.installation.runtime;
+  assert.equal((await runtime.readiness()).modelBlocked, true);
+  await assert.rejects(runtime.send({ id: "must-not-send", message: "Do not admit while model is unverified.",
+    receivedAt: new Date().toISOString() }), /model|SDK/);
+  assert.equal((await runtime.state()).requests.length, 0);
+  await runtime.changeModel({ model: "one", reasoningEffort: "low" });
+  assert.equal((await runtime.readiness()).modelBlocked, false);
+  assert.equal((await runtime.modelSettings()).actualReasoningEffort, "low");
+  assert.equal(f.counts.sends, 0);
+});
+
 test("empty repair rejects changed handoff proof and authoritative absence API failures", async t => {
   const f = await emptyCreatedFixture(t);
   let admission = "prepared";
