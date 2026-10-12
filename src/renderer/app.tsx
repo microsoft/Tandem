@@ -461,13 +461,15 @@ function Workspace(props: WorkspaceProps) {
           <DiscoveryRecovery />
           <WorkflowActivity />
           <section id="project-artifact-library" className="section" aria-label="Artifacts">
-            <div className="section-heading"><p className="eyebrow"><FolderOpen size={14} aria-hidden="true" />Artifacts</p></div>
+            <div className="section-heading"><p className="eyebrow"><FolderOpen size={14} aria-hidden="true" />Artifacts</p>
+              {projectView.outputStatus === "verified" && <span aria-label="Verified project output count">{state.artifacts.length + projectView.outputs.length}</span>}
+            </div>
+            <div role="group" aria-label="Discovery outputs"><h3 className="artifact-stage-heading">Discovery</h3>
             <Tabs.List className="artifact-library-nav" aria-label="Saved artifact library">
               <Tabs.Trigger value="content" id="content-tab" className="preview-tab" aria-controls="content-panel">
                 <FileText size={15} aria-hidden="true" />Saved artifacts <span id="artifact-count">{state.artifacts.length}</span>
               </Tabs.Trigger>
             </Tabs.List>
-            <div role="group" aria-label="Discovery outputs"><h3 className="artifact-stage-heading">Discovery</h3>
               <ArtifactList selectedArtifactId={selectedArtifact} active={activeTab === "content"} />
             </div>
             <DevelopmentArtifactList active={developmentView} />

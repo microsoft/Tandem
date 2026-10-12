@@ -198,6 +198,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         else if (path === "/styles.css") { response.writeHead(200, { "Content-Type": "text/css" }); response.end(css); }
         else if (path === "/app.js") { response.writeHead(200, { "Content-Type": "text/javascript" }); response.end(bundle.outputFiles[0].text); }
         else if (path === "/api/state") json(value);
+        else if (path === "/api/sketch") json({ sketch: value.sketch, document: null });
         else if (path === "/api/project-entry") {
           if (request.method === "POST") {
             const chunks = []; for await (const chunk of request) chunks.push(chunk);
@@ -215,7 +216,11 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         else if (request.method === "POST") {
           const chunks = []; for await (const chunk of request) chunks.push(chunk);
           const body = JSON.parse(Buffer.concat(chunks).toString() || "{}"); mutations.push({ path, body });
-          if (path === "/api/development/open") { active = true; stopped = false; installationStatus = "ready"; events.touch(); json({ url: provider.url }); }
+          if (path === "/api/development/open") {
+            const first = mutations.filter(item => item.path === "/api/development/open").length === 1;
+            active = !first; stopped = false; installationStatus = first ? "starting" : "ready";
+            events.touch(); json({ url: provider.url });
+          }
           else if (path === "/api/answer") { value.requirements.usageItems.push(body.answer); value.revision++; json(value); }
           else { response.writeHead(404); response.end(); }
         } else { response.writeHead(404); response.end(); }
@@ -228,7 +233,8 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       getInstallation: () => ({ runtime: active ? runtime : null,
         close: async () => { stopped = true; installationStatus = "closed"; events.touch(); return {}; },
         read: async () => ({ status: installationStatus,
-        canStart: !active, canReopen: stopped, reason: stopped ? "Closed; saved history retained." : null }) }),
+        canStart: !active, canRetry: installationStatus === "prepared", canReopen: stopped,
+        reason: installationStatus === "prepared" ? "Owned startup failed; retry is available." : stopped ? "Closed; saved history retained." : null }) }),
       permissions: { list: () => accessRequests, async decide(id, decision, sessionId) {
         mutations.push({ path: "native-consent", id, decision, sessionId });
         accessRequests = accessRequests.filter(item => item.id !== id); events.touch();
@@ -266,6 +272,23 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       assert.equal(active, false, "Stage1 Settings never starts Development.");
       await clickRoot('[role="alertdialog"] button');
       await browser.waitFor('document.activeElement.id==="project-settings"');
+      for (const phase of ["sketch", "prototype"]) {
+        value.lifecycle.currentStage = phase;
+        value.lifecycle.completedStages = phase === "sketch" ? ["prepare", "requirements"] : ["prepare", "requirements", "sketch"];
+        value.revision++;
+        await browser.call("Page.reload");
+        await browser.waitFor('document.querySelector("#studio-workspace") && !document.querySelector("#studio-workspace").inert');
+        const geometry = await browser.evaluate(`(() => {
+          const panel=document.querySelector(${JSON.stringify(phase === "sketch" ? "#sketch-panel" : "#live-preview-panel")});
+          const toolbar=panel.querySelector(".phase-actions").getBoundingClientRect();
+          const body=panel.querySelector(${JSON.stringify(phase === "sketch" ? ".sketch-stage" : ".preview-surface")}).getBoundingClientRect();
+          return {toolbarHeight:toolbar.height,toolbarBottom:toolbar.bottom,bodyTop:body.top,bodyWidth:body.width,panelWidth:panel.clientWidth};
+        })()`);
+        assert.ok(geometry.toolbarHeight < 100 && geometry.bodyTop >= geometry.toolbarBottom - 1,
+          `${phase} actions occupy a compact top row: ${JSON.stringify(geometry)}`);
+        assert.ok(geometry.bodyWidth >= geometry.panelWidth - 30, `${phase} retains its original full-width view: ${JSON.stringify(geometry)}`);
+        assert.equal(active, false);
+      }
       await clickRoot("#development-tab");
       assert.equal(active, false, "Artifact navigation is not initialization.");
       await clickRoot("#enter-development");
@@ -303,7 +326,18 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         for (const type of ["mousePressed", "mouseReleased"]) await browser.call("Input.dispatchMouseEvent",
           { type, x: local.x + offset.x, y: local.y + offset.y, button: "left", clickCount: 1 });
       };
-      await waitInside('document.body.dataset.projectWorking==="development" && !document.querySelector("#send").disabled');
+      await waitInside('document.body.dataset.projectWorking==="development"');
+      assert.equal(await inside('document.querySelector("#message").disabled && document.querySelector("#send").disabled'), true,
+        "The chosen Development context is not actionable before runtime readiness.");
+      assert.equal(await inside('document.querySelector("#initialize").hidden'), true, "No redundant setup action while entry initializes.");
+      installationStatus = "prepared"; events.touch();
+      await waitInside('!document.querySelector("#initialize").hidden && !document.querySelector("#initialize").disabled');
+      assert.equal(await inside('document.querySelector("#message").disabled && document.querySelector("#send").disabled'), true);
+      assert.equal(nativeRequests.length, 0);
+      await click("#initialize", true);
+      await waitInside('!document.querySelector("#send").disabled');
+      assert.deepEqual(mutations.filter(item => item.path === "/api/development/open").map(item => item.body), [{ retry: false }, { retry: true }],
+        "The installation's public retry capability releases the failed starting state without a new routing control.");
       assert.equal(await inside('document.querySelector("#project-message-target")===null'), true);
       await click("#design-tree-tab");
       await waitInside('document.body.dataset.projectDesign==="false"');
@@ -394,13 +428,14 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Backspace", windowsVirtualKeyCode: 8 });
       await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Backspace", windowsVirtualKeyCode: 8 });
       assert.equal(nativeRequests.length, 0);
-      assert.equal(mutations.filter(x => x.path === "/api/development/open").length, 1);
+      assert.equal(mutations.filter(x => x.path === "/api/development/open").length, 2);
       await browser.waitFor('Boolean(document.querySelector("[data-development-output=\'plan:fixture-cycle\']"))');
       const beforeOutputNavigation = mutations.length;
       await click('[data-development-output="plan:fixture-cycle"]');
       await waitInside('!document.querySelector("#project-output-view").hidden && document.querySelector("#project-output-view").textContent.includes("Original saved plan")');
       await click('[data-development-output="implementation:fixture-cycle"]');
       await waitInside('document.querySelector("#project-output-view").textContent.includes("Original reported implementation")');
+      await waitInside('document.activeElement.hasAttribute("data-implementation-result")');
       await click('[data-development-output="review:handoff:fixture-review"]');
       await waitInside('document.querySelector("[data-entry-id=\'handoff:fixture-review\']").classList.contains("state-focused")');
       await click('[data-development-output="design:interaction"]');

@@ -202,7 +202,7 @@ export function PrototypePanel() {
       <div id="preview-tools" className="preview-tools">
         <span id="preview-status">{savedOnly ? showLivePreview ? "Saved prototype · live preview verified" : "Saved prototype · live preview not verified"
           : unavailable ? "not applicable" : candidate ? "update ready" : building ? readyUrl ? "preview ready · building update" : "building" : state.previewStatus}</span>
-        {readyUrl && savedOnly && <button id="check-live-preview" type="button" disabled={previewCheck.busy} onClick={async () => {
+        {readyUrl && savedOnly && <button id="check-live-preview" className="plan-button secondary" type="button" disabled={previewCheck.busy} onClick={async () => {
           setPreviewCheck({ url: readyUrl, available: false, busy: true, reason: "" });
           try {
             const response = await fetch("/api/prototype/preview-status");

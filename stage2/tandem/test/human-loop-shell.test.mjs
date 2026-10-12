@@ -1583,13 +1583,15 @@ test("Settings sections distinguish access status from its action across narrow 
     await browser.waitFor("document.querySelector('[data-session-access-off]')");
     await browser.call("Page.bringToFront");
     await click(browser, "#canvas-settings > summary");
-    assert.deepEqual(await browser.evaluate("[...document.querySelectorAll('.settings-section h3')].map(n=>n.textContent)"), headings);
+    assert.equal(await browser.evaluate("document.querySelector('#project-effort-settings').checkVisibility()"), false,
+      "Standalone Settings never exposes the composed shared-effort controls.");
+    assert.deepEqual(await browser.evaluate("[...document.querySelectorAll('.settings-section h3')].filter(n=>n.checkVisibility()).map(n=>n.textContent)"), headings);
     assert.equal(await browser.evaluate("document.querySelector('#setting-model').disabled && document.querySelector('#apply-model').disabled && document.querySelector('#request-compaction').disabled"), true);
     assert.match(await browser.evaluate("document.querySelector('#model-setting-status').textContent"), /Model changes require Ready/);
     const layout = await browser.evaluate(`(() => {
       const panel=document.querySelector('#canvas-settings'), bounds=panel.getBoundingClientRect();
       return {left:bounds.left,right:bounds.right,overflow:panel.scrollWidth-panel.clientWidth,
-        sections:[...panel.querySelectorAll('.settings-section')].map(n=>({border:getComputedStyle(n).borderTopWidth,
+        sections:[...panel.querySelectorAll('.settings-section')].filter(n=>n.checkVisibility()).map(n=>({border:getComputedStyle(n).borderTopWidth,
           spacing:getComputedStyle(n).marginTop,heading:n.querySelector('h3').textContent})),
         controls:[...panel.querySelectorAll('button,select')].filter(n=>n.checkVisibility()).map(n=>{
           const r=n.getBoundingClientRect();return {left:r.left,right:r.right};})};
@@ -1644,7 +1646,7 @@ test("Settings sections distinguish access status from its action across narrow 
   await browser.waitFor("!document.querySelector('#apply-model').disabled");
   assert.deepEqual(f.posts.slice(3), [
     { path: "/api/settings", data: { theme: "light", fontSize: "larger" } },
-    { path: "/api/settings/model", data: { action: "select", model: "fixture" } },
+    { path: "/api/settings/model", data: { action: "select", model: "fixture", reasoningEffort: null } },
   ]);
   assert.equal(await browser.evaluate("document.querySelector('#settings-error').hidden"), true);
   assert.equal(await browser.evaluate("document.querySelector('#request-compaction').disabled"), true);

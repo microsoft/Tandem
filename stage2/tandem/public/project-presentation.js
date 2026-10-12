@@ -189,6 +189,7 @@ export function installProjectPresentation({ document, window, changed, settings
         selected: catalog.items.find(item => item.id === selection?.id && item.binding === selection?.binding)?.id ?? null });
       send({ type: "status", status: snapshot.workflow?.status ?? snapshot.installation?.status ?? "unavailable",
         installationStatus: snapshot.installation?.status,
+        canRetry: snapshot.installation?.canRetry === true, canReopen: snapshot.installation?.canReopen === true,
         active: snapshot.installation?.status === "ready",
         role: snapshot.workflow?.activeRole ?? null, reason: snapshot.workflow?.reason ?? snapshot.installation?.reason ?? null,
         designRevision: snapshot.design?.binding?.revisionId ?? null,

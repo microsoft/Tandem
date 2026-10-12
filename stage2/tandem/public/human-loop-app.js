@@ -53,6 +53,7 @@ const make = (tag, text) => { const node = document.createElement(tag); if (text
 let settingsBusy = false, settingsLoaded = false, settingsLoading = null, settingsVersion = 0;
 let settingsModel = null, effortModel = null;
 let selectedOutput = null;
+let pendingOutputFocus = null;
 const projectPresentation = installProjectPresentation({ document, window,
   changed: () => { if (snapshot) render(); },
   settings: () => { $('canvas-settings').open = true; $('setting-theme').focus(); void refreshSettings(); },
@@ -197,6 +198,7 @@ function inspectReference(binding, reference) {
 }
 function showOriginalDesign() {
   selectedOutput = null;
+  pendingOutputFocus = null;
   $('project-output-view').hidden = true;
   $('canvas-scroll').hidden = false;
   $('design-pane-title').textContent = 'Canvas';
@@ -224,9 +226,16 @@ function openOutput(item, source) {
     mount.replaceChildren(heading, make('p', item.detail), content);
     mount.hidden = false; $('canvas-scroll').hidden = true;
     $('design-pane-title').textContent = item.group;
-    mount.focus({ preventScroll: true });
+    pendingOutputFocus = item.group === 'Implementation' ? content.querySelector('[data-implementation-result]') : mount;
+    focusProjectOutput();
   }
   selectedOutput = { id: item.id, binding: item.binding };
+}
+function focusProjectOutput() {
+  if (!pendingOutputFocus?.isConnected || document.body.dataset.projectDesign !== 'true') return;
+  pendingOutputFocus.scrollIntoView({ block: 'nearest' });
+  pendingOutputFocus.focus({ preventScroll: true });
+  pendingOutputFocus = null;
 }
 
 async function post(path, data, expectedStatus) {
@@ -419,6 +428,7 @@ function render() {
   else if (followMessages && !nextQuestionKey && !$('messages').contains(document.activeElement)) $('messages').scrollTop = $('messages').scrollHeight;
   revealedQuestionKey = nextQuestionKey;
   projectPresentation?.publish(snapshot);
+  focusProjectOutput();
   const outputView = $('project-output-view');
   if (!outputView.hidden && selectedOutput) {
     let warning = outputView.querySelector('[data-output-warning]');

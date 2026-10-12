@@ -49,6 +49,23 @@ wrapping actions. Compact conversation-only layouts reset inherited two-column
 grid areas and standalone mobile height rules. These presentation adapters do
 not alter standalone Stage2 or stage execution semantics.
 
+The first frozen manual-readiness preflight (`93fa290`) exercised the production
+package with a fresh Preparation folder and the completed checklist. Preparation
+kept its goal form without private initialization. The used folder's Development
+choice automatically reached Ready, retaining all 31 native messages and the
+canonical Design. Artifact navigation preserved the unsent draft; Settings
+controls had disjoint hit targets at desktop, constrained and 390px widths.
+No model request was submitted.
+
+That preflight also exposed a presentation regression: the new phase toolbar
+consumed Drawings' horizontal layout and Prototype's reserved preview row.
+The follow-up gives these toolbars a compact top row, retains the original
+full-width body, and focuses the actual implementation receipt when selected.
+Startup failure handling now consumes the installation's public retry/reopen
+capabilities, including a retryable `prepared` state, rather than relying only
+on status names. Browser regressions cover these cases with a synthetic runtime;
+they do not establish native failure recovery or remove the caveats below.
+
 Native model-restoration and unused-initialization-journal caveats remain separate
 known limitations. This work does not claim they are fixed, replace a private
 identity, or bypass their validation/recovery paths. Frozen manual session

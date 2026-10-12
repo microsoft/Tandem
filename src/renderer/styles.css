@@ -3474,6 +3474,9 @@ textarea {
 .phase-actions .complete-stage { width: auto; margin: 0; gap: 6px; min-height: var(--studio-control-height); height: auto; padding: var(--studio-control-padding); }
 .phase-actions .complete-stage-label { display: inline; }
 .phase-actions .stage-message { margin: 0; }
+.project-workspace #sketch-panel { flex-direction: column; }
+.project-workspace #live-preview-panel:has(> .phase-actions) { grid-template-rows: auto minmax(220px, 1fr) auto; }
+.project-workspace #live-preview-panel:has(> .phase-actions):has(#preview-frame[hidden]) { grid-template-rows: auto auto auto; align-content: start; }
 .project-entry { width: min(720px, calc(100vw - 32px)); }
 .project-entry-loading { position: fixed; z-index: 50; inset: 45% auto auto 50%; transform: translateX(-50%); padding: 16px; background: var(--studio-surface); color: var(--studio-text); border: 1px solid var(--studio-border); border-radius: var(--studio-radius); }
 .project-entry-path { display: block; margin-block: 8px; overflow-wrap: anywhere; font-family: var(--font-mono, monospace); }

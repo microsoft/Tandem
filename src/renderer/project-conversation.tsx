@@ -266,8 +266,9 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
             }
             if (message.type === "activate") { void activate(message.retry === true); return; }
             if (message.type === "status" && typeof message.status === "string") {
-                const settled = message.active === true || ["failed", "unknown", "closed"].includes(message.installationStatus);
-                if (["failed", "unknown", "closed"].includes(message.installationStatus)) startRequested.current = false;
+                const retryable = message.canRetry === true || message.canReopen === true || ["failed", "unknown", "closed"].includes(message.installationStatus);
+                const settled = message.active === true || retryable;
+                if (retryable) startRequested.current = false;
                 setView(v => ({ ...v, status: message.status.slice(0, 80), detail: typeof message.reason === "string" ? message.reason.slice(0, 2000) : "",
                     active: message.active === true,
                     starting: settled ? false : v.starting,

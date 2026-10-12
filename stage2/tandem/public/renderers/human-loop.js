@@ -319,6 +319,8 @@ function renderCycle(state, cycle) {
   details.append(progress);
   if (cycle.implementation) {
     const receipt = make('section');
+    receipt.dataset.implementationResult = cycle.implementation.resultId;
+    receipt.tabIndex = -1;
     receipt.append(make('h4', 'Implementation result'), make('p', cycle.implementation.summary),
       make('p', `Result: ${cycle.implementation.resultId}`));
     const references = make('ul');
