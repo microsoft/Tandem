@@ -285,6 +285,10 @@ function updateError(state) {
   state.errorNode.textContent = error ? String(error) : '';
 }
 
+export function renderCycleProgress(container, cycle, inspectReference) {
+  renderCycle({ document: container.ownerDocument, cycle: container, actions: { inspectReference } }, cycle);
+}
+
 function renderCycle(state, cycle) {
   const make = (tag, text, css) => element(state.document, tag, text, css);
   state.cycle.hidden = !cycle;
@@ -313,6 +317,14 @@ function renderCycle(state, cycle) {
   const progress = make('ul');
   for (const task of cycle.tasks) progress.append(make('li', `${task.title} · ${task.status}`));
   details.append(progress);
+  if (cycle.implementation) {
+    const receipt = make('section');
+    receipt.append(make('h4', 'Implementation result'), make('p', cycle.implementation.summary),
+      make('p', `Result: ${cycle.implementation.resultId}`));
+    const references = make('ul');
+    for (const reference of cycle.implementation.evidenceRefs) references.append(make('li', reference));
+    receipt.append(references); details.append(receipt);
+  }
   state.cycle.replaceChildren(make('h3', 'Internal task progress'),
     make('p', `${cycle.completed} / ${cycle.total} internal tasks completed`),
     make('p', 'Task progress is not per-item formal Review or whole-plan completion. Whole Review is reported separately.', 'human-loop-muted'),

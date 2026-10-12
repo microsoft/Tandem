@@ -5,6 +5,55 @@ composition and its integration follow-up. The maintained Stage 2 engine and
 original renderer remain here; root `src` owns upstream discovery and the
 integration boundary.
 
+## Current folder entry and manual-readiness composition
+
+The October 12 entry design supersedes the older activation/picker presentation
+described in historical audits below. A project folder gets one explicit starting
+choice: Preparation or Development, with visible recommendations and the actual
+path. `.tandem/project-entry.json` stores that choice, independent of browser,
+canvas and native session IDs. Atomic writes under a folder-local lock reject
+contradictory choices; invalid, unreadable, aliased or foreign-folder metadata is
+reported and preserved. There is no editable mode switch or inferred default.
+
+That choice drives setup. Preparation preserves its original valid-goal form,
+requirements inputs, drawings/editor controls and Prototype feedback/Apply flow.
+It needs no Stage2 renderer/provider to show its saved project history or shared
+effort setting. A Development choice prepares the existing correctly owned
+runtime and enables its original composer only when usable. It sends no project
+prompt and does not authorize implementation. Project-open setup is deduplicated
+per host, so an ordinary view reload or status poll cannot undo Close. Existing
+saved Preparation-to-Development progress is retained; the independent stage
+operations and their quiet/ownership fences remain authoritative.
+
+There is no Send-to selector. Artifact browsing is distinct from active work:
+Development's renderer and draft stay mounted when browsing earlier artifacts,
+which are read-only unless explicitly reopened through the original guarded
+operation. Before Development, the right-hand history is passive and the
+established Stage1 inputs remain the only actionable workflow inputs.
+Unavailable Development disables composer, quick-request and attachment actions
+without clearing existing input. Recovery/Retry and Settings Close are distinct
+from runtime Close.
+
+Discovery completion/reopen actions live in their owning phase view, not a sidebar
+Discovery actions category. The shared Artifacts list retains discovery outputs
+and adds references to verified Design artifacts, each cycle's current Plan,
+reported implementation results and original Review records. It opens existing
+native views/renderers/history with exact bindings, not copied store records.
+Cold or disconnected outputs are labelled unverified; previous observations are
+not presented as deleted. A selected stale binding is not silently rebound.
+Completed Prototype views label saved files separately from a live preview;
+checking its retained URL/identity starts neither server nor model work.
+
+The composed Settings effort field occupies a full-width row with separately
+wrapping actions. Compact conversation-only layouts reset inherited two-column
+grid areas and standalone mobile height rules. These presentation adapters do
+not alter standalone Stage2 or stage execution semantics.
+
+Native model-restoration and unused-initialization-journal caveats remain separate
+known limitations. This work does not claim they are fixed, replace a private
+identity, or bypass their validation/recovery paths. Frozen manual session
+`57dcd2b1` remains on its original candidate until the user explicitly switches.
+
 ## Agreed stage boundary
 
 Stage 1 is optional. New and existing Git projects may open Development directly,
@@ -13,7 +62,7 @@ used, collects Q&A, confirmed intent and prototype evidence; sketches support
 that prototype. It does not author a competing formal Design. Stage 2 Designer
 owns the canonical Design, and later changes stay in its conversation.
 
-The direct-open control and Development tab only open the runtime/view. Active
+The folder-entry choice prepares the selected path; artifact tabs only navigate. Active
 upstream work, legacy ownership uncertainty and read-only providers remain
 blocked. Opening never fabricates Stage 1 completion or sends a project request.
 Ordinary Stage 2 messages may reference documents and source directly. The

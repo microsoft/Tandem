@@ -14,6 +14,7 @@ import {
     joinSession,
 } from "@github/copilot-sdk/extension";
 import { renderTandemHtml } from "./renderer.js";
+import { chooseProjectEntry, readProjectEntry } from "./project-entry.js";
 import { isPreferredTandemProvider } from "./provider-identity.js";
 import { resolveSharedProjectRoot } from "./workspace-root.js";
 import { buildDecisionGraphMermaid } from "./decision-diagram.js";
@@ -1703,7 +1704,7 @@ async function refreshEntryAnswerCapability(entry) {
     entry.canSubmitAnswers = await isPreferredAnswerProvider(entry.extensionId) &&
         (!hasActiveWork(state) || !state.jobOwner ||
             sameOwner(state.jobOwner, { sessionId: session.sessionId, workspaceRoot: WORKSPACE_ROOT }));
-    if (state.effortReset) return;
+    if (state.effortReset || (await projectEntryView()).startingPath !== "preparation") return;
     if (entry.canSubmitAnswers) {
         state = await recoverRejectedFactoryLaunch(entry.prototypeId);
         if (!wasEnabled) {
@@ -1719,11 +1720,18 @@ async function refreshEntryAnswerCapability(entry) {
     }
 }
 
+async function projectEntryView() {
+    try { return { ...await readProjectEntry(WORKSPACE_ROOT), error: null }; }
+    catch (error) { return { projectPath: WORKSPACE_ROOT, startingPath: null,
+        error: error instanceof Error ? error.message : "Project metadata could not be read." }; }
+}
+
 function publicState(entry, state) {
     const source = String(entry.extensionId || "").split(":", 1)[0] || "unknown";
     const legacyContinuation = state.lifecycle.currentStage === "development" && state.lifecycle.migration && !state.development;
     return {
         ...state,
+        projectPath: WORKSPACE_ROOT,
         ...(legacyContinuation ? { phase: "iterating",
             status: legacyCutoverError(state) || "Legacy history is retained. Continue Design explicitly from the completed Prototype; opening this view sends no project request." } : {}),
         sketchPreview: currentSketchPreview(state),
@@ -6353,6 +6361,41 @@ async function handleRequest(entry, req, res) {
         return;
     }
     const requestUrl = new URL(req.url || "/", "http://127.0.0.1");
+    if (requestUrl.pathname === "/api/project-entry" && req.method === "GET") {
+        sendJson(res, 200, await projectEntryView()); return;
+    }
+    if (requestUrl.pathname === "/api/project-entry" && req.method === "POST") {
+        if (!entry.canSubmitAnswers || !await isPreferredAnswerProvider(entry.extensionId)) throw new CanvasError("read_only_provider", "Use the owning writable provider to choose the starting path.");
+        const input = await readRequestBody(req);
+        if (!isObject(input) || Object.keys(input).some(key => key !== "startingPath")) throw new Error("Supply only the starting path.");
+        sendJson(res, 200, await chooseProjectEntry(WORKSPACE_ROOT, input.startingPath)); return;
+    }
+    if (requestUrl.pathname === "/api/project-entry/open" && req.method === "POST") {
+        const metadata = await readProjectEntry(WORKSPACE_ROOT);
+        if (!metadata.startingPath) throw new CanvasError("project_entry_required", "Choose a starting path for this project folder first.");
+        if (!entry.canSubmitAnswers || !await isPreferredAnswerProvider(entry.extensionId)) throw new CanvasError("read_only_provider", "Use the owning writable provider to open this project.");
+        const state = await loadState(entry.prototypeId);
+        const prepareDevelopment = metadata.startingPath === "development" || state.lifecycle.currentStage === "development";
+        const firstOpen = !entry.projectEntryOpened;
+        if (firstOpen) {
+            entry.projectEntryOpening ??= (async () => {
+                if (prepareDevelopment) {
+                    assertLegacyCutover(state);
+                    if (hasActiveWork(state)) throw new CanvasError("upstream_active", "Finish upstream work before entering Development.");
+                    await assertDevelopmentAvailable();
+                }
+                entry.projectEntryOpened = true;
+                entry.developmentContext = prepareDevelopment;
+                if (prepareDevelopment) void development.start().catch(development.reportError);
+                else if (state.lifecycle.currentStage === "prepare") await ensurePreparationStarted(state, true);
+            })().finally(() => { entry.projectEntryOpening = null; });
+            await entry.projectEntryOpening;
+        }
+        sendJson(res, 200, { ...metadata, developmentContext: entry.developmentContext === true, developmentStarted: prepareDevelopment && firstOpen }); return;
+    }
+    if (req.method === "POST" && /^\/api\/(?:effort\/start|answer|sketch(?:\/|$)|prototype\/|revision|stage\/|development\/(?:open|continue))/.test(requestUrl.pathname)) {
+        if (!(await readProjectEntry(WORKSPACE_ROOT)).startingPath) throw new CanvasError("project_entry_required", "Choose a starting path for this project folder first.");
+    }
     if (requestUrl.pathname === "/api/settings/project-effort") {
         if (!(await isPreferredAnswerProvider(entry.extensionId))) throw new CanvasError("read_only_provider", "Use the writable provider for project settings.");
         if (req.method === "GET") { sendJson(res, 200, await projectEffortStatus()); return; }
@@ -6387,6 +6430,7 @@ async function handleRequest(entry, req, res) {
             assertLegacyCutover(state);
             if (hasActiveWork(state)) throw new CanvasError("upstream_active", "Finish upstream work before starting Development in this workspace.");
             await assertDevelopmentAvailable();
+            entry.developmentContext = true;
             const provider = await development.openView("development-browser", { surface: "browser" });
             const input = await readRequestBody(req);
             void development.start(input.retry === true ? { retry: true } : {}).catch(development.reportError);
@@ -6395,6 +6439,7 @@ async function handleRequest(entry, req, res) {
         }
         if (req.method === "POST" && requestUrl.pathname === "/api/development/continue") {
             const state = await continueDevelopment(entry.prototypeId, entry.extensionId, await readRequestBody(req));
+            entry.developmentContext = true;
             sendJson(res, 200, publicState(entry, state));
             return;
         }
@@ -6422,6 +6467,21 @@ async function handleRequest(entry, req, res) {
         const state = await loadState(entry.prototypeId);
         const document = state.sketch.current ? await sketchStore.read(entry.prototypeId, state.sketch.current) : null;
         sendJson(res, 200, { sketch: state.sketch, document });
+        return;
+    }
+    if (req.method === "GET" && requestUrl.pathname === "/api/prototype/preview-status") {
+        const state = await loadState(entry.prototypeId);
+        const checkpoint = state.prototypeFlow?.checkpoints.find(item => item.id === state.prototypeFlow?.displayedCheckpointId);
+        const url = checkpoint?.previewUrl || state.previewUrl;
+        const binding = { url: url || null, checkpointId: checkpoint?.id ?? null };
+        if (!url) { sendJson(res, 200, { ...binding, available: false, reason: "No saved preview URL is available." }); return; }
+        try {
+            await verifyPreviewIdentity(url, state.prototypeId, checkpoint?.id ?? null);
+            sendJson(res, 200, { ...binding, available: true, reason: "" });
+        } catch (error) {
+            sendJson(res, 200, { ...binding, available: false,
+                reason: error instanceof Error ? error.message : "The saved preview could not be verified." });
+        }
         return;
     }
     if (req.method === "POST" && requestUrl.pathname === "/api/sketch") {
@@ -7927,16 +7987,17 @@ session = await joinSession({
                 let state = await loadState(prototypeId);
                 canSubmitAnswers = canSubmitAnswers && (!hasActiveWork(state) || !state.jobOwner ||
                     sameOwner(state.jobOwner, { sessionId: session.sessionId, workspaceRoot: WORKSPACE_ROOT }));
-                if (canSubmitAnswers) state = await recoverRejectedFactoryLaunch(prototypeId);
+                const entryConfigured = (await projectEntryView()).startingPath === "preparation";
+                if (canSubmitAnswers && entryConfigured) state = await recoverRejectedFactoryLaunch(prototypeId);
                 state = await applyCanvasReset(
                     state, input, `${ctx.sessionId}:${ctx.instanceId}`,
                     isCanvasRehydration(ctx), canSubmitAnswers,
                 );
                 if (canSubmitAnswers) state = await markReloadComplete(state, ctx.extensionId);
-                state = await ensureSketchStarted(state, canSubmitAnswers);
-                recoverPreparationFactory(state, canSubmitAnswers);
-                recoverAnswerFactory(state, canSubmitAnswers);
-                recoverSuggestionFactory(state, canSubmitAnswers);
+                state = await ensureSketchStarted(state, canSubmitAnswers && entryConfigured);
+                recoverPreparationFactory(state, canSubmitAnswers && entryConfigured);
+                recoverAnswerFactory(state, canSubmitAnswers && entryConfigured);
+                recoverSuggestionFactory(state, canSubmitAnswers && entryConfigured);
                 if (
                     canSubmitAnswers &&
                     !isCanvasRehydration(ctx) &&
@@ -7966,7 +8027,7 @@ session = await joinSession({
                         ctx.instanceId,
                         prototypeId,
                         ctx.extensionId,
-                        canSubmitAnswers,
+                        canSubmitAnswers && entryConfigured,
                     );
                     servers.set(ctx.instanceId, entry);
                 } else {
@@ -7978,7 +8039,7 @@ session = await joinSession({
                     state.lifecycle.currentStage === "prepare"
                         ? await ensurePreparationStarted(
                               state,
-                              canSubmitAnswers,
+                              canSubmitAnswers && entryConfigured,
                           )
                         : await ensureUsageSuggestionsStarted(
                               state,

@@ -233,6 +233,7 @@ export function createConversationRenderer({ messages, history, current, current
     if (messages.scrollHeight - messages.scrollTop - messages.clientHeight < 60) newer.hidden = true;
   });
   return {
+    focusEntry,
     render(entries, transitions, progress = new Map()) {
       const pinned = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 60;
       const anchor = [...messages.children].find((node) =>

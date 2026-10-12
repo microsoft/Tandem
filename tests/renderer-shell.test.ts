@@ -339,7 +339,7 @@ test("next-step guidance navigates and focuses without executing its mutation", 
     assert.equal(h.requests.length, 0);
 });
 
-test("collapsed activity bar completes the active stage without expanding or losing drafts", async (t) => {
+test("owning phase toolbar completes the active stage without expanding context or losing drafts", async (t) => {
     const value = state();
     value.requirements.substage = "dag";
     value.decisionGraph.nodes = [decision("accepted", "answered")];
@@ -351,7 +351,10 @@ test("collapsed activity bar completes the active stage without expanding or los
     assert.equal(button.disabled, false);
     assert.equal(button.getAttribute("aria-label"), "Next stage: Finish requirements");
     assert.equal(button.title, button.getAttribute("aria-label"));
-    assert.ok(button.querySelector('svg.lucide-arrow-right[aria-hidden="true"]'));
+    assert.ok(button.querySelector('svg.lucide-check[aria-hidden="true"]'));
+    assert.equal(button.closest('[role="tabpanel"]')?.id, "design-tree-panel");
+    assert.equal(h.get("requirements-pane").contains(button), false);
+    assert.doesNotMatch(h.get("requirements-pane").textContent || "", /Discovery actions/);
     button.focus();
     assert.equal(h.document.activeElement, button);
 

@@ -2,6 +2,9 @@
 
 /* Embedded shell only: source artifacts and standalone presentation retain their styling. */
 .human-app[data-project-panel] {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
   --background: var(--studio-panel);
   --surface: var(--studio-surface);
   --surface-muted: var(--studio-panel);
@@ -88,6 +91,11 @@
 }
 .human-app[data-project-panel] #apply-project-effort:hover:not(:disabled) { background: var(--accent-fill-hover); }
 .human-app[data-project-panel] .settings-fields { gap: var(--studio-gap); }
+.human-app[data-project-panel] .project-effort-fields { display: block; min-width: 0; }
+.human-app[data-project-panel] .project-effort-fields > label { display: grid; min-width: 0; width: 100%; }
+.human-app[data-project-panel] #project-effort { box-sizing: border-box; min-width: 0; width: 100%; }
+.human-app[data-project-panel] .project-effort-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; min-width: 0; }
+.human-app[data-project-panel] .project-effort-actions button { max-width: 100%; white-space: normal; }
 .human-app[data-project-panel] .canvas-settings[open] { padding: 12px; border-radius: var(--studio-radius); }
 .human-app[data-project-panel] .settings-section { margin-top: 12px; padding-top: 12px; }
 .human-app[data-project-panel] .empty-badge { padding: 2px 6px; border: 1px solid var(--border); border-radius: 6px; font-size: 11px; color: var(--muted); background: var(--surface-muted); }
@@ -97,6 +105,9 @@
 .human-app[data-project-panel] .command-bar { padding: 10px 12px; border-top: 1px solid var(--border); background: var(--surface); }
 .human-app[data-project-panel] #project-message-context { gap: var(--studio-control-gap); }
 .human-app[data-project-panel] #project-message-context p { margin: 4px 0; }
+.human-app[data-project-panel] .project-output-view { padding: 12px; overflow: auto; }
+.human-app[data-project-panel] .project-output-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.human-app[data-project-panel] .project-output-actions button { font: inherit; padding: var(--studio-control-padding); min-height: var(--studio-control-height); background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; }
 .human-app[data-project-panel][data-project-stacked="true"][data-project-design="true"] .human-layout {
   display: flex; flex-direction: column; overflow: auto;
 }
@@ -109,3 +120,13 @@
 @media (pointer: coarse) {
   .human-app[data-project-panel] { --studio-control-height: 44px; --studio-tab-height: 44px; }
 }
+.human-app[data-project-panel]:not([data-project-design="true"]) .human-layout {
+  display: grid;
+  grid-template-areas: "activity";
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+.human-app[data-project-panel]:not([data-project-design="true"]) .human-conversation {
+  height: 100%; min-height: 0; flex: 1 1 0;
+}
+.human-app[data-project-working="discovery"] :is(#initialize, #notice, #project-connection-help, #composer, .conversation-current) { display: none; }

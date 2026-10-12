@@ -443,7 +443,9 @@ test("not-applicable prototypes never expose start, finish or reopen mutations",
     assert.equal(skipped.disabled, true); assert.match(skipped.getAttribute("aria-label")!, /not applicable/);
     await h.click(h.get("artifact-list").querySelector("button")!); assert.equal(hidden(h, "reopen-stage"), true);
     h.render({ ...value, revision: 2, lifecycle: { ...value.lifecycle, currentStage: "prototype" } });
-    assert.equal(disabled(h, "complete-stage"), true); await h.click("complete-stage");
+    const finish = h.document.querySelector<HTMLButtonElement>("#complete-stage");
+    assert.ok(!finish || finish.disabled);
+    if (finish) await h.click(finish);
     assert.equal(h.requests.filter(request => request.path !== "/api/development/open").length, 0);
 });
 

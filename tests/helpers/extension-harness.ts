@@ -8,6 +8,7 @@ import { runInNewContext } from "node:vm";
 import type { TandemState } from "../../src/types.js";
 import type { PreparationToken } from "../../src/agent-runner.js";
 import { assertFactoryRequestEnvelope, type FactoryLaunchRequest } from "../../src/agent-runner.js";
+import { chooseProjectEntry } from "../../src/project-entry.js";
 
 interface CanvasContext {
     instanceId: string;
@@ -110,11 +111,12 @@ async function compile(): Promise<string> {
     return result.outputFiles[0].text + "\nmodule.exports.assertDevelopmentAvailable = assertDevelopmentAvailable; module.exports.resumeEffortRun = resumeEffortRun; module.exports.waitForSuggestion = id => activeSuggestionRuns.get(id);";
 }
 
-export async function extensionHarness(speechEnvironment: Record<string, string> = {}, sharedRoot?: string, rendererHtml = "", workspaceRoot?: string) {
+export async function extensionHarness(speechEnvironment: Record<string, string> = {}, sharedRoot?: string, rendererHtml = "", workspaceRoot?: string, unselectedEntry = false) {
     const root = sharedRoot || resolve("node_modules", "tandem-test-fixtures", randomUUID());
     await mkdir(root, { recursive: true });
     const workspace = workspaceRoot ?? root;
     await mkdir(workspace, { recursive: true });
+    if (!unselectedEntry) await chooseProjectEntry(workspace, "preparation");
     const requests: unknown[] = [];
     const developmentRequests: Array<Record<string, unknown>> = [];
     const developmentOpens: string[] = [];

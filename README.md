@@ -53,12 +53,14 @@ the selected provider's protocol, version and complete payload digest. An older
 preferred installation produces an explicit conflict; the host does not silently
 bypass it or overwrite a user installation.
 
-Main-session chat is not a Development request. Browsing project artifacts and
-loading the conversation presentation do not start or resume the private runtime.
-Explicit **Activate Development**, **Reopen runtime** or **Retry runtime** initializes
-its owned runtime but sends no project request. Existing
-state belonging to another main session or workspace fails visibly without
-rebinding an identity.
+Main-session chat is not a Development request. On first opening a project folder,
+choose **Start with Preparation** or **Go to Development**. The choice is saved
+once in that folder's `.tandem/project-entry.json`; it is not a browser preference
+or a runtime/session identity. Development selection prepares its owned runtime
+without a project prompt or implementation authorization. Reopening uses the saved
+choice and progress; refreshing an already-open page does not repeat initialization.
+Browsing artifacts does not start work, and Close is not undone by a render/poll.
+Foreign ownership or invalid metadata fails visibly without rebinding or resetting.
 
 ### Local npx package
 
@@ -92,12 +94,15 @@ does not require a release bump or installation update.
 
 ## Workflow
 
-Choose **Open Development directly** on the initial screen, or **Activate
-Development** in the project conversation or Development view. No goal, completed Prototype or handoff is
-required. Explicit activation creates or recovers the owned private runtime but sends no
-project request. Use its conversation to describe a new project or reference
-existing documents and source. Active upstream work and foreign/read-only
-ownership still block opening; implementation still needs explicit confirmation.
+The first-open cards show the actual folder and visible guidance:
+**Preparation** is for an empty project or help clarifying requirements and UX;
+**Development** accepts existing files, an initial implementation, or just a rough
+idea. Neither choice is inferred from files. There is no editable mode switch.
+Preparation retains its original goal form and requires a valid goal before
+goal-dependent work. Development prepares automatically after selection and enables
+its conversation only when ready. Startup consent, model validation, recovery and
+implementation confirmation remain explicit. Preparation can progress normally
+into Development using saved outputs; choosing a starting path never erases history.
 
 Preparation inspects the workspace and necessary authoritative sources, then
 offers optional first-person usages. Generic goals in an empty workspace do not
@@ -250,12 +255,21 @@ The **Development** navigation entry contains formal Design, planning,
 implementation and Review; it is not an additional Stage1 Design phase.
 **Saved artifacts** is the cross-project library entry in the separate
 **Artifacts** section, alongside the saved outputs, rather than another workflow entry.
+The same list groups verified Development Design, cycle plans, reported
+implementation results and Review records. Each opens its original native
+viewer/work view or history entry, with its original binding; revisions are not
+copied into the discovery store or counted again. Unverified cold outputs are
+labelled as unverified, not empty or deleted.
 Browsing does not require starting both engines. Current work and pending questions,
 confirmations and permissions remain in the conversation while browsing.
 New Design output and a Prototype update awaiting Apply are marked in navigation.
 
-The complete Stage 2 renderer still owns its document, controls and isolated
-loopback origin. One iframe stays mounted across navigation; selecting Development
+The original discovery phase forms remain independently owned. Finish/Reopen
+controls live in their owning phase view, not a sidebar Discovery actions category.
+Before Development, root-owned saved-evidence history needs no Stage2 renderer or
+private session. Project settings keeps the shared effort control usable there.
+After Development begins, its complete renderer owns its document, controls and isolated
+loopback origin. One iframe stays mounted across artifact navigation; selecting Development
 expands its existing Design pane alongside its existing conversation. This also
 keeps annotations and unsent attachments with their original composer, rather
 than creating a second editor. Standalone Stage 2 retains its full shell.
@@ -268,13 +282,17 @@ Source diagrams and documents retain their own authored styling.
 Navigation labels remain fully visible in constrained sidebars; output-status
 badges occupy a second line rather than requiring horizontal scrolling.
 
-The composer shows **Send to** before submission. Discovery actions use the
-existing public goal, usage, saved-drawing revision or Prototype-feedback APIs;
-formal Design and implementation messages use the original private request API.
-Navigation never retargets a draft. Saved discovery evidence is a source-labelled,
+There is no **Send to** selector. Established discovery inputs use their original
+public actions; Development uses its original conversation/request interface.
+Earlier artifacts remain read-only during Development unless explicitly reopened
+through the existing guarded operation. Navigation never retargets a draft.
+Unavailable Development disables its composer, quick requests and attachment
+actions without clearing existing input. Saved discovery evidence is a source-labelled,
 render-only projection, not reconstructed native chat; it is never copied into a
 private request or written into its store. Cold private history still requires
-explicit runtime verification; browsing alone does not reopen it.
+owned runtime verification during project entry; browsing alone does not reopen it.
+Completed Prototype views distinguish saved files from a live server: **Check live
+preview** verifies the retained URL/identity without starting a server or model work.
 Saved-evidence rows refresh when their source changes; native conversation records
 remain immutable. New drawing requests retain their exact accepted instruction,
 request ID, time and base revision in Stage1's own state, including failed requests.

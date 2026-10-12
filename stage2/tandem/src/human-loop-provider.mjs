@@ -44,6 +44,21 @@ export class HumanLoopEvents {
   close() { this.#events.close?.(); }
 }
 
+export function projectHumanCycle(cycle) {
+  return {
+    id: cycle.id, originRequestId: cycle.originRequestId, design: cycle.design, phase: cycle.phase,
+    completed: cycle.tasks.filter(({ status }) => status === "completed").length, total: cycle.plan?.tasks.length ?? 0,
+    plan: cycle.plan ? { id: cycle.plan.id, version: cycle.plan.version, digest: cycle.plan.digest, design: cycle.plan.design,
+      goal: cycle.plan.goal, tasks: cycle.plan.tasks } : null,
+    implementation: cycle.implementationResult?.outcome.kind === "implementation-result" ? {
+      resultId: cycle.implementationResult.resultId, summary: cycle.implementationResult.outcome.summary,
+      evidenceRefs: cycle.implementationResult.outcome.evidenceRefs, snapshot: cycle.current,
+    } : null,
+    tasks: cycle.tasks.map(task => ({ id: task.id, status: task.status,
+      title: cycle.plan?.tasks.find(({ id }) => id === task.id)?.title ?? task.id })),
+  };
+}
+
 export function projectHumanLoopView(state, readiness) {
   const latest = state.handoffs.at(-1);
   const published = new Set(state.handoffs.filter(h => h.presented).map(h => h.result.resultId));
@@ -92,14 +107,7 @@ export function projectHumanLoopView(state, readiness) {
         canDecide: permitted && !state.stop && !state.uncertainty && !readiness.modelBlocked
           && currentImplementationConfirmation(state)?.id === confirmation.id && confirmation.status === "pending" };
     }),
-    currentCycle: cycle ? {
-      id: cycle.id, originRequestId: cycle.originRequestId, design: cycle.design, phase: cycle.phase, completed: cycle.tasks.filter(({ status }) => status === "completed").length,
-      total: cycle.plan?.tasks.length ?? 0,
-      plan: cycle.plan ? { id: cycle.plan.id, version: cycle.plan.version, design: cycle.plan.design,
-        goal: cycle.plan.goal, tasks: cycle.plan.tasks } : null,
-      tasks: cycle.tasks.map((task) => ({ id: task.id, status: task.status,
-        title: cycle.plan?.tasks.find(({ id }) => id === task.id)?.title ?? task.id })),
-    } : null,
+    currentCycle: cycle ? projectHumanCycle(cycle) : null,
     questionInteractions,
     questionCounts: { unanswered: questions.filter(q => q.state === "open").length,
       blockers: questions.filter(q => q.state === "open" && q.blockingActive).length,
@@ -208,7 +216,7 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
     ]);
     return { schemaVersion: "human-loop-snapshot-view/v1", streamId: events.streamId,
       installation: installed, workflow: projectHumanLoopView(state, readiness),
-      design, messages: projectHumanConversation(state, originals), events: events.list(),
+      design, cycles: state.cycles.map(projectHumanCycle), messages: projectHumanConversation(state, originals), events: events.list(),
       historyRequests: state.requests.slice(-500).map(({ id, receivedAt }) => ({ id, receivedAt })),
       recoveries: (state.recoveries ?? []).map(({ id, recoveredAt }) => ({ id, recoveredAt })),
       accessRequests: permissions.list(running.sessionId), rememberedApprovals: permissions.remembered?.(running.sessionId) ?? { all: false, tools: [] }, processes };

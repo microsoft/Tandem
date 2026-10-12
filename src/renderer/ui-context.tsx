@@ -23,6 +23,7 @@ export interface RuntimeSnapshot {
 }
 
 export interface UiState extends TandemState {
+  projectPath?: string;
   developmentBlocker?: string | null;
   provider?: {
     canSubmitAnswers?: boolean;

@@ -82,6 +82,7 @@ export function PrototypePanel() {
   const capture = useRef<{ finish: (value?: { state: unknown }) => void } | null>(null);
   const restore = useRef<{ generation: string; checkpointId: string; state: unknown } | null>(null);
   const [elapsed, setElapsed] = useState("");
+  const [previewCheck, setPreviewCheck] = useState({ url: "", available: false, busy: false, reason: "" });
   const flow = state.prototypeFlow;
   const checkpoints = flow?.checkpoints || [];
   const displayed = checkpoints.find((item) => item.id === flow?.displayedCheckpointId);
@@ -101,6 +102,8 @@ export function PrototypePanel() {
       || (["build-prototype", "submit-revision", "clarify-revision"].includes(state.processing?.action) && state.processing?.status === "running"));
   const url = flow ? displayed?.previewUrl || (displayed ? state.previewUrl : null) : state.previewUrl;
   const readyUrl = originOf(url) && !unavailable && !undecided ? url : null;
+  const savedOnly = state.lifecycle.completedStages.includes("prototype");
+  const showLivePreview = Boolean(readyUrl) && (!savedOnly || previewCheck.url === readyUrl && previewCheck.available);
   const milestonesReady = milestoneReady(state, "structure") && milestoneReady(state, "interaction")
     && (!flow?.visualRequested || milestoneReady(state, "visual"));
   const blocked = pending || !canEdit("prototype") || hasActiveJobs(state) || finalizing || Boolean(question);
@@ -197,9 +200,27 @@ export function PrototypePanel() {
   return <>
     <div className="preview-surface">
       <div id="preview-tools" className="preview-tools">
-        <span id="preview-status">{unavailable ? "not applicable" : candidate ? "update ready" : building ? readyUrl ? "preview ready · building update" : "building" : state.previewStatus}</span>
-        {readyUrl && <a id="open-preview" href={readyUrl} target="_blank" rel="noreferrer"><ExternalLink size={14} />Open preview</a>}
+        <span id="preview-status">{savedOnly ? showLivePreview ? "Saved prototype · live preview verified" : "Saved prototype · live preview not verified"
+          : unavailable ? "not applicable" : candidate ? "update ready" : building ? readyUrl ? "preview ready · building update" : "building" : state.previewStatus}</span>
+        {readyUrl && savedOnly && <button id="check-live-preview" type="button" disabled={previewCheck.busy} onClick={async () => {
+          setPreviewCheck({ url: readyUrl, available: false, busy: true, reason: "" });
+          try {
+            const response = await fetch("/api/prototype/preview-status");
+            const value = await response.json();
+            if (!response.ok || value.url !== readyUrl || value.checkpointId !== (flow?.displayedCheckpointId ?? null)
+              || typeof value.available !== "boolean") throw new Error(value.error || "The selected preview changed or could not be verified.");
+            setPreviewCheck({ url: readyUrl, available: value.available, busy: false, reason: value.reason });
+          } catch (error) {
+            setPreviewCheck({ url: readyUrl, available: false, busy: false,
+              reason: error instanceof Error ? error.message : "Live preview check failed." });
+          }
+        }}>{previewCheck.busy ? "Checking preview..." : "Check live preview"}</button>}
+        {readyUrl && showLivePreview && <a id="open-preview" href={readyUrl} target="_blank" rel="noreferrer"><ExternalLink size={14} />Open preview</a>}
       </div>
+      {savedOnly && !showLivePreview && <p className="revision-status" role="status">
+        Saved prototype files are retained. A previous server URL is not proof that the preview is running.
+        Checking does not start a server or model work. {previewCheck.reason}
+      </p>}
       <section id="prototype-progress" className="prototype-progress" aria-label="Prototype progress"
         aria-describedby="prototype-progress-message"
         hidden={Boolean(unavailable) || (!flow && ((Boolean(readyUrl) && !failedRevision) || state.lifecycle.currentStage !== "prototype"))}>
@@ -245,7 +266,7 @@ export function PrototypePanel() {
             onClick={() => void action.run(() => post("/api/prototype/start", {}))}><Play size={16} />{validation ? state.previewStatus === "error" ? "Retry existing prototype validation" : "Validate existing prototype" : state.previewStatus === "error" ? "Retry prototype build" : "Start prototype"}</button>
         </div>
       </div>
-      <iframe key={checkpointKey} id="preview-frame" ref={frame} title="Runnable prototype" src={readyUrl || undefined} hidden={!readyUrl}
+      <iframe key={checkpointKey} id="preview-frame" ref={frame} title="Runnable prototype" src={showLivePreview ? readyUrl || undefined : undefined} hidden={!showLivePreview}
         data-url={readyUrl || ""} data-checkpoint-id={flow?.displayedCheckpointId || ""} referrerPolicy="origin"
         sandbox="allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
         onLoad={() => {

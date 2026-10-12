@@ -50,7 +50,7 @@ export function response(body: unknown, status = 200): Response {
   return { ok: status < 400, status, json: async () => body } as Response;
 }
 
-export async function reactHarness(t?: TestContext, headerHost?: { origin: string; channel: string }) {
+export async function reactHarness(t?: TestContext, headerHost?: { origin: string; channel: string }, startingPath: "preparation" | "development" | null = "preparation") {
   const hash = headerHost ? "#" + new URLSearchParams({ "tandem-host": headerHost.origin, "header-channel": headerHost.channel }) : "";
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
     url: "http://127.0.0.1:4567/" + hash, runScripts: "outside-only", pretendToBeVisual: true,
@@ -59,6 +59,8 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
   const document = window.document;
   const requests: Request[] = [];
   const presentationRequests: string[] = [];
+  const entryRequests: string[] = [];
+  let entryOpened = false;
   const errors: string[] = [];
   const pngExports: { width: number; height: number; source: string }[] = [];
   const headerMessages: Record<string, any>[] = [];
@@ -80,6 +82,21 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
     PointerEvent: window.MouseEvent,
     fetch: async (input: string | URL | Request, options: RequestInit = {}) => {
       const path = String(input);
+      if (path === "/api/project-entry") {
+        entryRequests.push(path + ":" + (options.method || "GET"));
+        if (options.method === "POST") {
+          const choice = JSON.parse(String(options.body)).startingPath;
+          if (startingPath && choice !== startingPath) return response({ error: "Starting path already chosen." }, 409);
+          startingPath = choice;
+        }
+        return response({ projectPath: "C:\\fixture-project", startingPath });
+      }
+      if (path === "/api/project-entry/open") {
+        entryRequests.push(path);
+        const developmentStarted = !entryOpened && startingPath === "development";
+        entryOpened = true;
+        return response({ developmentStarted, developmentContext: startingPath === "development" });
+      }
       if (path === "/api/development/view") {
         presentationRequests.push(path);
         return response({ url: "http://127.0.0.1:8765/", channel: "fixture-project" });
@@ -131,7 +148,7 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
   };
   const dispose = () => { mounted.dispose(); window.close(); };
   t?.after(dispose);
-  return { presentationRequests,
+  return { presentationRequests, entryRequests,
     window, document, requests, errors, pngExports, store: mounted.store, get, click, input, fire, flush, dispose,
     render(value: UiState, sequence?: number) {
       let changed = false;

@@ -21,10 +21,12 @@
   </section>
   <section id="project-effort-settings" class="settings-section" aria-labelledby="project-effort-title" hidden>
     <h3 id="project-effort-title">Project effort</h3>
-    <div class="settings-fields">
+    <div class="settings-fields project-effort-fields">
       <label>Reasoning effort for both stages<select id="project-effort" disabled><option value="">Loading project settings...</option></select></label>
+      <div class="project-effort-actions">
       <button id="apply-project-effort" type="button" disabled>Apply to both stages</button>
       <button id="refresh-project-effort" type="button">Refresh status</button>
+      </div>
     </div>
     <div id="project-effort-status" role="status"></div>
     <p>Stages keep independent sessions and settings. Saving future private effort does not activate Development.</p>
@@ -91,6 +93,7 @@
         <details class="design-metadata"><summary>Full Design JSON</summary><pre id="design-raw" class="raw-block"></pre></details>
       </div>
     </div>
+    <section id="project-output-view" class="canvas-scroll project-output-view" aria-label="Development output" tabindex="-1" hidden></section>
     <div id="annotation-parking" hidden><div id="annotation-tools" class="diagram-annotation-tools" hidden><button id="annotation-reset" type="button">Reset sketch</button><button id="annotation-capture" type="button">Snapshot to composer</button><span id="annotation-status" role="status"></span></div></div>
   </section>
   <div id="workspace-divider" role="separator" tabindex="0" aria-orientation="vertical"

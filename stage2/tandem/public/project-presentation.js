@@ -1,8 +1,11 @@
+import { projectOutputs } from "./project-outputs.js";
+
 // Presentation messages never become native conversation input or runtime authority.
-export function installProjectPresentation({ document, window, changed, settings, currentWork, effortChanged, layoutChanged }) {
+export function installProjectPresentation({ document, window, changed, settings, currentWork, effortChanged, layoutChanged, openOutput, outputSelection, hasAttachments = () => false }) {
   const { projectPanel: panel, projectOrigin: origin, projectChannel: channel } = document.body.dataset;
   if (!panel) return null;
-  let context = null, selected = "discovery", pending = null, nativePending = false;
+  let context = null, draftContext = null, pending = null, nativePending = false;
+  let currentSnapshot = null;
   const send = value => window.parent.postMessage({ protocol: "tandem-project/v1", channel, ...value }, origin);
   const effortPanel = document.querySelector("#project-effort-settings");
   const effort = document.querySelector("#project-effort"), effortApply = document.querySelector("#apply-project-effort");
@@ -37,37 +40,46 @@ export function installProjectPresentation({ document, window, changed, settings
   }
   const controls = document.createElement("div");
   controls.id = "project-message-context";
-  const label = document.createElement("label");
-  label.textContent = "Send to ";
-  const target = document.createElement("select");
-  target.id = "project-message-target";
-  label.append(target);
+  const label = document.createElement("strong");
   const help = document.createElement("p");
-  const activate = document.createElement("button");
-  activate.type = "button"; activate.id = "activate-project-development";
-  activate.textContent = "Activate Development";
-  activate.onclick = () => send({ type: "activate" });
+  const returnToDraft = document.createElement("button");
+  returnToDraft.type = "button"; returnToDraft.id = "return-draft-context";
+  returnToDraft.onclick = () => send({ type: "view-stage", stage: draftContext?.stage });
+  const useHere = document.createElement("button");
+  useHere.type = "button"; useHere.id = "use-draft-here";
+  useHere.onclick = () => {
+    if (pending || nativePending || hasAttachments() && liveContext()?.stage !== "development") return;
+    draftContext = liveContext(); update(); changed();
+  };
   const check = document.createElement("button");
   check.type = "button"; check.textContent = "Check submission";
   check.onclick = () => { if (pending) send({ type: "discovery-status", id: pending.id }); };
-  controls.append(label, help, activate, check);
+  controls.append(label, help, returnToDraft, useHere, check);
   document.querySelector("#composer").prepend(controls);
+  const liveContext = () => context && ({ stage: context.viewedStage ?? (context.designVisible ? "development" : context.discovery.stage ?? "requirements"),
+    label: context.viewLabel ?? (context.designVisible ? "Development" : context.discovery.label), discovery: context.discovery });
+  const hasDraft = () => Boolean(document.querySelector("#message").value.trim()) || hasAttachments();
+  const captureDraft = () => { if (!draftContext && (hasDraft() || pending || nativePending)) draftContext = liveContext(); };
+  const current = () => draftContext ?? liveContext();
+  const conflicted = () => Boolean(draftContext && context && (draftContext.stage !== liveContext().stage
+    || draftContext.stage !== "development" && draftContext.discovery.key !== context.discovery.key));
   const update = () => {
-    target.replaceChildren();
-    for (const [value, text] of [["discovery", context?.discovery?.label ?? "Discovery"], ["development", "Development conversation"]]) {
-      const option = document.createElement("option"); option.value = value; option.textContent = text; target.append(option);
-    }
-    target.value = selected;
-    target.disabled = Boolean(pending) || nativePending;
-    help.textContent = selected === "development"
-      ? "Messages go to Development. Implementation still requires confirmation. Browsing artifacts does not change this target."
-      : context?.discovery?.help ?? "Waiting for the project workspace.";
-    activate.hidden = context?.developmentActive === true;
-    activate.disabled = context?.canActivate !== true || Boolean(pending);
+    if (!hasDraft() && !pending && !nativePending) draftContext = null;
+    captureDraft();
+    label.textContent = current()?.label ?? "Project conversation";
+    help.textContent = conflicted() ? `This draft belongs to ${draftContext.label}. Return there, or explicitly use it in ${liveContext().label}.`
+      : current()?.stage === "development" ? context?.starting ? "Starting Development..." : "Discuss Design or request work. Implementation requires separate confirmation."
+        : context?.discovery?.help ?? "Waiting for the project workspace.";
+    returnToDraft.hidden = !conflicted();
+    returnToDraft.textContent = `Return to ${draftContext?.label ?? "draft"}`;
+    useHere.hidden = !conflicted() || hasAttachments() && liveContext()?.stage !== "development";
+    useHere.textContent = `Use draft in ${liveContext()?.label ?? "this view"}`;
+    returnToDraft.disabled = Boolean(pending) || nativePending;
+    useHere.disabled = Boolean(pending) || nativePending;
     check.hidden = !pending;
     if (pending) help.textContent = "Awaiting the exact discovery action result. Check submission reads that same result; it never sends another action.";
   };
-  target.onchange = () => { selected = target.value; update(); changed(); };
+  document.querySelector("#message").addEventListener("input", () => { captureDraft(); update(); changed(); });
   window.addEventListener("message", event => {
     if (event.source !== window.parent || event.origin !== origin || event.data?.protocol !== "tandem-project/v1"
       || event.data.channel !== channel) return;
@@ -80,20 +92,27 @@ export function installProjectPresentation({ document, window, changed, settings
       && typeof message.discovery?.label === "string" && message.discovery.label.length <= 200
       && typeof message.discovery?.help === "string" && message.discovery.help.length <= 2000
       && typeof message.discovery.enabled === "boolean") {
+      captureDraft();
       context = message;
       document.body.dataset.projectDesign = String(message.designVisible === true);
+      document.body.dataset.projectWorking = message.developmentEntered === true ? "development" : "discovery";
       renderEffort();
       update(); changed();
     } else if (message.type === "layout" && typeof message.stacked === "boolean"
       && Number.isFinite(message.conversationWidth) && message.conversationWidth >= 0 && message.conversationWidth <= 20000) {
       document.body.dataset.projectStacked = String(message.stacked);
       layoutChanged?.({ stacked: message.stacked, conversationWidth: message.conversationWidth });
+    } else if (message.type === "output-open" && typeof message.id === "string" && typeof message.binding === "string") {
+      try {
+        const catalog = projectOutputs(currentSnapshot);
+        const item = catalog.items.find(item => item.id === message.id && item.binding === message.binding);
+        if (catalog.status !== "verified" || !item || !openOutput) throw new Error("This output is no longer verified at the selected binding. Refresh its original view.");
+        openOutput(item, currentSnapshot);
+        send({ type: "output-opened", id: item.id, binding: item.binding });
+      } catch (error) { send({ type: "output-opened", id: message.id, error: error.message }); }
     } else if (message.type === "command") {
       if (message.command === "settings") { settings(); requestEffort(); }
       if (message.command === "current-work") currentWork();
-      if (message.command === "development-target" && !pending && !nativePending && !document.querySelector("#message").value.trim()) {
-        selected = "development"; update(); changed();
-      }
     } else if (message.type === "project-effort-result" && effortPending === message.id) {
       effortPending = null;
       const value = message.settings;
@@ -137,23 +156,39 @@ export function installProjectPresentation({ document, window, changed, settings
     activate: retry => send({ type: "activate", retry: retry === true }),
     showDesign: () => send({ type: "show-design" }),
     settingsClosed: () => send({ type: "settings-closed" }),
+    unavailable(reason) {
+      currentSnapshot = null;
+      send({ type: "outputs", status: "unverified", reason: `Development connection unavailable. Last observed outputs are retained: ${reason}`, items: [] });
+    },
     appearance: preferences => send({ type: "appearance", theme: preferences.theme, fontSize: preferences.fontSize }),
     resized: width => send({ type: "conversation-resize", width }),
     busy: () => Boolean(effortPending),
     nativePending(value) { nativePending = value; update(); },
-    discovery: () => selected === "discovery",
-    canSend: () => !pending && (selected !== "discovery" || context?.discovery?.enabled === true),
+    discovery: () => current()?.stage !== "development",
+    developmentEnabled: () => context?.developmentEnabled === true && !context?.starting,
+    workingDevelopment: () => context?.developmentEntered === true,
+    placeholder: () => conflicted() ? `Draft for ${draftContext.label}`
+      : current()?.stage === "development" ? "Ask about the Design, or describe the work you want."
+        : ({ goal: "Describe your project goal.", usage: "Describe a requirement usage.", sketch: "Describe a drawing revision.", prototype: "Describe prototype feedback." }[context?.discovery?.action] ?? "Use this phase's controls to continue."),
+    canSend: () => !pending && !conflicted() && (current()?.stage === "development" || context?.discovery?.enabled === true),
     entries: () => (context?.entries ?? []).map(entry => ({ ...entry, savedEvidenceProjection: true })),
     submit(text) {
-      if (!context?.discovery?.enabled || pending) return Promise.reject(new Error("This discovery action is not available."));
+      if (!context?.discovery?.enabled || pending || conflicted()) return Promise.reject(new Error("This phase action is not available for the retained draft."));
       return new Promise((resolve, reject) => {
         const id = crypto.randomUUID();
         pending = { id, resolve, reject }; update();
-        send({ type: "discovery-send", id, text, key: context.discovery.key });
+        send({ type: "discovery-send", id, text, key: current().discovery.key });
       });
     },
     publish(snapshot) {
+      currentSnapshot = snapshot;
+      const catalog = projectOutputs(snapshot);
+      const selection = outputSelection?.();
+      send({ type: "outputs", status: catalog.status, reason: catalog.reason,
+        items: catalog.items.map(({ target, ...item }) => item),
+        selected: catalog.items.find(item => item.id === selection?.id && item.binding === selection?.binding)?.id ?? null });
       send({ type: "status", status: snapshot.workflow?.status ?? snapshot.installation?.status ?? "unavailable",
+        installationStatus: snapshot.installation?.status,
         active: snapshot.installation?.status === "ready",
         role: snapshot.workflow?.activeRole ?? null, reason: snapshot.workflow?.reason ?? snapshot.installation?.reason ?? null,
         designRevision: snapshot.design?.binding?.revisionId ?? null,

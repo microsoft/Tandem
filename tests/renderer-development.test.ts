@@ -8,8 +8,8 @@ import { reactHarness, state, response } from "./helpers/react-harness.js";
 import { browserAvailable, openFixtureBrowser } from "../stage2/tandem/test/helpers/browser-fixture.mjs";
 import { projectDiscovery } from "../src/renderer/project-conversation.js";
 
-test("project chat routes exact discovery context once and rejects foreign or stale presentation messages", async t => {
-    const h = await reactHarness(t), value = state("requirements");
+test("Development presentation cannot arm a competing discovery input and rejects foreign messages", async t => {
+    const h = await reactHarness(t, undefined, "development"), value = state("requirements");
     value.requirements.substage = "usage";
     h.setFetch(async (path, options) => {
         assert.equal(path, "/api/answer");
@@ -31,7 +31,7 @@ test("project chat routes exact discovery context once and rejects foreign or st
     await send({ ...submission, id: "stale-request", key: "older-generation" });
     assert.equal(h.requests.length, 0);
     await send(submission); await send(submission);
-    assert.equal(h.requests.length, 1, "Duplicate UI delivery cannot duplicate a Stage1 action.");
+    assert.equal(h.requests.length, 0, "Development cannot dispatch a competing Stage1 action.");
     assert.equal(h.get("project-conversation-frame"), frame);
     const discoveryStatus = h.store.getSnapshot().state.status;
     await send({ type: "status", status: "working", active: true, questions: 0, permissions: 0, confirmations: 0 });
@@ -40,7 +40,7 @@ test("project chat routes exact discovery context once and rejects foreign or st
 });
 
 test("fresh projects open Development directly without creating Stage1 state or a handoff", async t => {
-    const h = await reactHarness(t);
+    const h = await reactHarness(t, undefined, null);
     const value = state("prepare");
     value.goal = "";
     h.setFetch(async path => {
@@ -49,17 +49,19 @@ test("fresh projects open Development directly without creating Stage1 state or 
     });
     h.render(value); await h.flush();
     assert.equal(h.requests.length, 0);
-    await h.click("open-development");
+    await h.click("entry-development");
     const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
     assert.equal(frame.src, "http://127.0.0.1:8765/?panel=workspace");
     assert.equal(h.document.querySelector("#continue-design"), null);
     assert.ok(h.get("capture-development"), "Direct projects retain the explicit capture/delivery controls.");
     await h.fire(h.get("preparation-tab"), "mousedown", { button: 0 });
     assert.equal(h.get("studio-workspace").hidden, false);
-    assert.ok(h.get("open-development"));
-    await h.click("open-development");
+    assert.equal(h.document.querySelector("#open-development"), null);
+    assert.equal(h.document.querySelector("#start-goal"), null);
+    await h.fire(h.get("development-tab"), "mousedown", { button: 0 });
     assert.equal(h.get("project-conversation-frame"), frame);
-    assert.equal(h.requests.length, 2, "Each explicit activation uses the public open action.");
+    assert.equal(h.requests.length, 0);
+    assert.equal(h.entryRequests.filter(path => path === "/api/project-entry/open").length, 1);
     assert.equal(h.store.getSnapshot().state.lifecycle.currentStage, "prepare");
     assert.deepEqual(h.store.getSnapshot().state.lifecycle.completedStages, []);
     assert.deepEqual(h.errors, []);
@@ -75,14 +77,15 @@ test("idle unfinished Stage1 can browse Development but active work and read-onl
     h.render({ ...value, preparation: { ...value.preparation, status: "running" } }); await h.flush();
     await h.fire(h.get("development-tab"), "mousedown", { button: 0 });
     assert.equal(h.requests.length, 0);
-    assert.match(h.document.body.textContent!, /Finish upstream work/);
+    assert.equal(h.get<HTMLButtonElement>("development-tab").disabled, true);
     h.render({ ...value, revision: 2, provider: { ...value.provider, canSubmitAnswers: false } }); await h.flush();
     assert.equal(h.requests.length, 0);
-    assert.match(h.document.body.textContent!, /writable provider/);
+    assert.equal(h.get<HTMLButtonElement>("development-tab").disabled, true);
     h.render({ ...value, revision: 3 }); await h.flush();
     assert.equal(h.requests.length, 0, "Becoming idle while browsing must not start Development.");
-    assert.ok(h.get("project-conversation-frame"));
-    await h.click("activate-development");
+    assert.equal(h.document.querySelector("#project-conversation-frame"), null);
+    await h.fire(h.get("development-tab"), "mousedown", { button: 0 });
+    await h.click("enter-development");
     assert.equal(h.requests.length, 1);
     assert.equal(h.document.querySelector("#continue-design"), null);
     assert.equal(h.store.getSnapshot().state.lifecycle.currentStage, "requirements");
@@ -111,15 +114,15 @@ for (const stage of ["requirements", "prototype"] as const) test(`${stage} compl
     reopened.render(completed); await reopened.flush();
     assert.equal(reopened.get("content-panel").hidden, false);
     assert.equal(reopened.requests.length, 0);
-    assert.ok(reopened.get("project-conversation-frame"), "Presentation is available without native startup.");
+    assert.equal(reopened.document.querySelector("#project-conversation-frame"), null, "Stage1 history does not require the Stage2 renderer.");
     await reopened.fire(reopened.get("development-tab"), "mousedown", { button: 0 });
     assert.equal(reopened.requests.length, 0, "Browsing Design must not initialize the runtime.");
     assert.ok(reopened.get("continue-design"));
-    assert.equal(reopened.get<HTMLIFrameElement>("project-conversation-frame").src, "http://127.0.0.1:8765/?panel=workspace");
+    assert.equal(reopened.document.querySelector("#project-conversation-frame"), null);
 });
 
 test("Development mounts one isolated full workspace and navigation keeps its original frame", async t => {
-    const h = await reactHarness(t);
+    const h = await reactHarness(t, undefined, "development");
     h.setFetch(async path => {
         assert.equal(path, "/api/development/open", "Opening must not send a project request.");
         return response({ url: "http://127.0.0.1:8765/" });
@@ -229,6 +232,12 @@ test("real React Development keeps handoff controls in view across long-status h
                 response.writeHead(200, { "Content-Type": "text/javascript" }); response.end(bundle.outputFiles[0].text);
             } else if (path === "/api/state" && request.method === "GET") {
                 response.writeHead(200, { "Content-Type": "application/json" }); response.end(JSON.stringify(snapshot));
+            } else if (path === "/api/project-entry") {
+                response.writeHead(200, { "Content-Type": "application/json" });
+                response.end(JSON.stringify({ projectPath: "C:\\layout-fixture", startingPath: "development" }));
+            } else if (path === "/api/project-entry/open") {
+                response.writeHead(200, { "Content-Type": "application/json" });
+                response.end(JSON.stringify({ developmentContext: true, developmentStarted: false }));
             } else if (request.method === "POST") {
                 void (async () => {
                     const chunks: Buffer[] = [];
@@ -347,8 +356,6 @@ test("real React Development keeps handoff controls in view across long-status h
             assertBounded(await measure(`${width}-button-hover`));
             await move(".development-toolbar > span", true);
             await browser.evaluate('document.querySelector("#development-panel").focus()');
-            await tab();
-            assert.equal((await measure(`${width}-keyboard-activate`)).active, "activate-development");
             await tab();
             const focused = await measure(`${width}-keyboard-button`);
             assert.equal(focused.active, "continue-design");

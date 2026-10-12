@@ -44,7 +44,7 @@ test("one project endpoint applies both independent interfaces without starting 
 });
 
 test("Settings effort bridge uses the existing public endpoint and preserves partial application", async t => {
-    const h = await reactHarness(t);
+    const h = await reactHarness(t, undefined, "development");
     const value = state("prepare"); value.goal = "";
     const stage = { desired: null, actual: null, model: "one", supported: ["low", "high"], status: "unset", error: null };
     const settings = { desired: null, stage1: stage, stage2: { ...stage, model: null }, changing: false };

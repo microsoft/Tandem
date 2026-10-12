@@ -57,6 +57,9 @@ test("presentation binding preserves drafts, exact pending receipts and standalo
   receive({ ...context, designVisible: true });
   assert.equal(dom.window.document.querySelector("#message").value, "Preserve my discovery draft.");
   assert.equal(api.discovery(), true);
+  assert.equal(dom.window.document.querySelector("#project-message-target"), null);
+  assert.equal(api.canSend(), false, "A retained draft cannot silently change working context.");
+  receive(context);
   const work = api.submit("Exact usage");
   const envelope = sent.find(item => item.data.type === "discovery-send").data;
   assert.equal(api.canSend(), false);
@@ -118,14 +121,23 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       workspacePath: root, policy: DEFAULT_POLICY };
     const designBinding = { revisionId: "fixture-design", digest: "a".repeat(64) };
     let nativeState = replayHumanLoopLedger(createHumanLoopLedger(owner, designBinding)).state;
+    nativeState.requests.push({ id: "fixture-origin", message: "Previously saved work", receivedAt: "2026-10-10T08:00:00Z", status: "completed", stopId: null,
+      blockingAnswerRefs: [], questionGatesReleased: true });
+    nativeState.cycles.push({ id: "fixture-cycle", originRequestId: "fixture-origin", design: designBinding, phase: "completed",
+      plan: { id: "fixture-plan", version: 2, digest: "b".repeat(64), design: designBinding, goal: "Original saved plan", tasks: [] },
+      tasks: [], current: { id: "fixture-snapshot" },
+      implementationResult: { resultId: "fixture-implementation", outcome: { kind: "implementation-result", summary: "Original reported implementation", evidenceRefs: ["fixture-test-receipt"] } } });
     let active = false, stopped = false, installationStatus = "new";
+    let startingPath = null;
     const value = discoveryState("requirements");
     value.requirements.substage = "usage";
     const runtime = {
       sessionId: "private", state: async () => nativeState,
       readiness: async () => ({ status: stopped ? "closed" : nativeState.activeRequestId ? "working" : "ready",
         workspacePath: root, reason: stopped ? "Closed; saved history retained. Reopen explicitly." : null }),
-      conversation: async () => [], currentDesign: async () => ({ binding: designBinding, content: sharedDesignExampleV3() }),
+      conversation: async () => [{ id: "handoff:fixture-review", kind: "assistant", role: "reviewer", requestId: "fixture-origin",
+        content: "Original saved Review record.", timestamp: "2026-10-10T08:01:00Z" }],
+      currentDesign: async () => ({ binding: designBinding, content: sharedDesignExampleV3() }),
       commands: { read: async () => ({ apps: [], commands: [] }) },
       modelSettings: async () => ({ models: [{ id: "fixture", name: "Fixture", supportedReasoningEfforts: ["low"] }],
         actual: "fixture", actualReasoningEffort: "low", desired: "fixture", canChange: true,
@@ -186,6 +198,16 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         else if (path === "/styles.css") { response.writeHead(200, { "Content-Type": "text/css" }); response.end(css); }
         else if (path === "/app.js") { response.writeHead(200, { "Content-Type": "text/javascript" }); response.end(bundle.outputFiles[0].text); }
         else if (path === "/api/state") json(value);
+        else if (path === "/api/project-entry") {
+          if (request.method === "POST") {
+            const chunks = []; for await (const chunk of request) chunks.push(chunk);
+            const body = JSON.parse(Buffer.concat(chunks).toString());
+            assert.ok(!startingPath || startingPath === body.startingPath);
+            startingPath = body.startingPath;
+          }
+          json({ projectPath: root, startingPath });
+        }
+        else if (path === "/api/project-entry/open") json({ developmentContext: false, developmentStarted: false });
         else if (path === "/api/development/view") json({ url: provider.url, channel: "whole-project-fixture" });
         else if (path === "/api/settings/project-effort") json({ desired: "low", changing: false,
           stage1: { actual: "low", desired: "low", model: "fixture", status: "applied", supported: ["low"], error: null },
@@ -218,6 +240,35 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       t.diagnostic(`Actual integrated root ${url}; ${(await browser.call("Browser.getVersion")).product}; synthetic runtime, no model calls.`);
       await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 1000, deviceScaleFactor: 1, mobile: false });
       await browser.call("Page.navigate", { url });
+      const clickRoot = async selector => {
+        const point = await browser.evaluate(`(() => {const e=document.querySelector(${JSON.stringify(selector)});
+          e.scrollIntoView({block:"nearest"});const r=e.getBoundingClientRect();
+          const hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);
+          return {x:r.x+r.width/2,y:r.y+r.height/2,ok:!e.disabled&&r.width>0&&(hit===e||e.contains(hit))};})()`);
+        assert.ok(point.ok, `Root control reachable: ${selector}`);
+        for (const type of ["mousePressed", "mouseReleased"]) await browser.call("Input.dispatchMouseEvent", { type, x: point.x, y: point.y, button: "left", clickCount: 1 });
+      };
+      await browser.waitFor('Boolean(document.querySelector("#entry-preparation"))');
+      assert.equal(await browser.evaluate('document.querySelector("#project-conversation-frame")===null'), true);
+      await clickRoot("#entry-preparation");
+      await browser.waitFor('!document.querySelector("#entry-preparation")');
+      await clickRoot("#design-tree-tab");
+      await clickRoot("#usage-input"); await browser.call("Input.insertText", { text: "As a user, I retain the original Requirements input." });
+      await clickRoot("#add-usage");
+      await browser.waitFor('document.querySelector("#usage-input").value===""');
+      assert.equal(mutations.at(-1).path, "/api/answer");
+      assert.equal(active, false);
+      assert.equal(await browser.evaluate('document.querySelector("#project-conversation-frame")===null'), true);
+      await clickRoot("#project-settings");
+      await browser.waitFor('Boolean(document.querySelector("#project-effort option[value=low]"))');
+      await clickRoot(".root-effort-actions button");
+      await browser.waitFor('!document.querySelector(".root-effort-actions button").disabled');
+      assert.equal(active, false, "Stage1 Settings never starts Development.");
+      await clickRoot('[role="alertdialog"] button');
+      await browser.waitFor('document.activeElement.id==="project-settings"');
+      await clickRoot("#development-tab");
+      assert.equal(active, false, "Artifact navigation is not initialization.");
+      await clickRoot("#enter-development");
       await browser.waitFor('Boolean(document.querySelector("#project-conversation-frame"))');
       await browser.waitFor('document.querySelector(".brand-artwork").naturalWidth > 0');
       let frame;
@@ -252,8 +303,22 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         for (const type of ["mousePressed", "mouseReleased"]) await browser.call("Input.dispatchMouseEvent",
           { type, x: local.x + offset.x, y: local.y + offset.y, button: "left", clickCount: 1 });
       };
-      await waitInside('document.querySelector("#project-message-target")?.options[0].textContent==="Add requirement usage"');
-      await waitInside('document.querySelector("#current-state").textContent==="Development not activated"');
+      await waitInside('document.body.dataset.projectWorking==="development" && !document.querySelector("#send").disabled');
+      assert.equal(await inside('document.querySelector("#project-message-target")===null'), true);
+      await click("#design-tree-tab");
+      await waitInside('document.body.dataset.projectDesign==="false"');
+      assert.equal(await browser.evaluate('document.querySelector("#usage-input").disabled'), true, "Earlier inputs are read-only while Development owns current work.");
+      for (const width of [920, 390]) {
+        await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 1000, deviceScaleFactor: 1, mobile: false });
+        await waitInside('document.body.dataset.projectStacked==="true"');
+        const layout = await inside(`(() => {const panel=document.querySelector("#conversation-panel").getBoundingClientRect();
+          const composer=document.querySelector("#composer").getBoundingClientRect();
+          return {left:panel.left,right:panel.right,width:innerWidth,bottom:composer.bottom,height:innerHeight};})()`);
+        assert.ok(layout.left < 2 && layout.right >= layout.width - 2, `Passive chat fills its width at ${width}: ${JSON.stringify(layout)}`);
+        assert.ok(layout.bottom <= layout.height + 1, `Composer remains in view at ${width}: ${JSON.stringify(layout)}`);
+      }
+      await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 1000, deviceScaleFactor: 1, mobile: false });
+      await waitInside('document.body.dataset.projectStacked==="false"');
       const checkRootChrome = async () => {
         const styles = await browser.evaluate(`["#project-settings","#project-current-work",".topbar"].map(selector=>{
           const element=document.querySelector(selector), style=getComputedStyle(element);
@@ -272,23 +337,33 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
           assert.ok(item.height >= 30, `${item.selector} uses the actual shared control geometry.`);
         }
       };
+      const checkEffortLayout = async () => {
+        const geometry = await inside(`(() => {const panel=document.querySelector("#canvas-settings").getBoundingClientRect();
+          const ids=["project-effort","apply-project-effort","refresh-project-effort"];
+          return {panel:{left:panel.left,right:panel.right},items:ids.map(id=>{const e=document.getElementById(id),r=e.getBoundingClientRect();
+            const hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);
+            return {id,left:r.left,right:r.right,top:r.top,bottom:r.bottom,hit:hit===e||e.contains(hit)};})};})()`);
+        const [field, apply, refresh] = geometry.items;
+        assert.ok(apply.top >= field.bottom && refresh.top >= field.bottom, JSON.stringify(geometry));
+        for (const item of geometry.items) assert.ok(item.hit && item.left >= geometry.panel.left && item.right <= geometry.panel.right, JSON.stringify(geometry));
+        assert.ok(apply.right <= refresh.left || refresh.right <= apply.left || apply.bottom <= refresh.top || refresh.bottom <= apply.top, "Actions wrap rather than overlap.");
+      };
       await checkRootChrome();
-      assert.equal(await inside('document.querySelector("#current-state").textContent'), "Development not activated");
-      await click("#project-message-target", true);
-      await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+      assert.equal(await inside('document.querySelector("#current-state").textContent'), "Ready");
       assert.equal(await browser.evaluate('document.querySelector("#project-effort-settings")===null'), true);
       await click("#project-settings");
       await waitInside('document.querySelector("#project-effort-status").textContent.includes("Stage 1: applied")');
+      await inside('document.querySelector("#project-effort option[value=low]").textContent="No shared choice; native defaults unchanged"');
+      await checkEffortLayout();
       assert.equal(await inside('document.querySelectorAll("#project-effort").length'), 1);
       assert.equal(await inside('document.querySelector("#private-effort-setting").hidden'), true);
-      assert.equal(active, false, "Opening shared Settings must not activate Development.");
+      const startsBeforeSettings = mutations.filter(item => item.path === "/api/development/open").length;
       await click("#apply-project-effort", true);
       await waitInside('document.querySelector("#project-effort-settings").getAttribute("aria-busy")==="false"');
-      assert.equal(active, false, "Saving future private effort must not activate Development.");
+      assert.equal(mutations.filter(item => item.path === "/api/development/open").length, startsBeforeSettings);
       await click("#close-settings", true);
       await waitInside('!document.querySelector("#canvas-settings").open');
       await browser.waitFor('document.activeElement.id==="project-settings"');
-      assert.equal(active, false);
       await click("#message", true); await browser.call("Input.insertText", { text: "As a user, I keep my draft while viewing Design." });
       assert.equal(await inside('document.querySelector("#message").value'), "As a user, I keep my draft while viewing Design.");
       const conversationWidth = () => browser.evaluate('document.querySelector("#project-conversation").getBoundingClientRect().width');
@@ -300,8 +375,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "ArrowLeft", windowsVirtualKeyCode: 37 });
       await waitInside(`Math.abs(document.querySelector("#conversation-panel").getBoundingClientRect().width-${initialWidth + 10})<2`);
       assert.equal(await inside('document.querySelector("#message").value'), "As a user, I keep my draft while viewing Design.");
-      assert.equal(await inside('document.querySelector("#project-message-target").value'), "discovery");
-      assert.equal(active, false, "Browsing Design is not activation.");
+      assert.equal(await inside('document.querySelector("#project-message-context strong").textContent'), "Development");
       await click("#design-tree-tab");
       await waitInside('document.body.dataset.projectDesign==="false"');
       const returnedWidth = await conversationWidth();
@@ -314,14 +388,24 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await waitInside(`document.body.dataset.projectDesign==="true" && Math.abs(document.querySelector("#conversation-panel").getBoundingClientRect().width-${initialWidth - 14})<2`);
       await click("#design-tree-tab");
       await waitInside('document.body.dataset.projectDesign==="false"');
-      await click("#send", true);
-      await waitInside('document.querySelector("#message").value===""');
-      assert.equal(mutations.at(-1).path, "/api/answer");
+      await click("#message", true);
+      await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "a", windowsVirtualKeyCode: 65, modifiers: 2 });
+      await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "a", windowsVirtualKeyCode: 65, modifiers: 2 });
+      await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Backspace", windowsVirtualKeyCode: 8 });
+      await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Backspace", windowsVirtualKeyCode: 8 });
       assert.equal(nativeRequests.length, 0);
-      await waitInside('document.querySelector("#messages").textContent.includes("As a user, I keep my draft")');
-      await click("#activate-project-development", true);
-      await waitInside('document.querySelector("#project-message-target").value==="development" && !document.querySelector("#send").disabled');
       assert.equal(mutations.filter(x => x.path === "/api/development/open").length, 1);
+      await browser.waitFor('Boolean(document.querySelector("[data-development-output=\'plan:fixture-cycle\']"))');
+      const beforeOutputNavigation = mutations.length;
+      await click('[data-development-output="plan:fixture-cycle"]');
+      await waitInside('!document.querySelector("#project-output-view").hidden && document.querySelector("#project-output-view").textContent.includes("Original saved plan")');
+      await click('[data-development-output="implementation:fixture-cycle"]');
+      await waitInside('document.querySelector("#project-output-view").textContent.includes("Original reported implementation")');
+      await click('[data-development-output="review:handoff:fixture-review"]');
+      await waitInside('document.querySelector("[data-entry-id=\'handoff:fixture-review\']").classList.contains("state-focused")');
+      await click('[data-development-output="design:interaction"]');
+      await waitInside('document.querySelector("#project-output-view").hidden && document.querySelector("[data-artifact-tab=interaction]").getAttribute("aria-pressed")==="true"');
+      assert.equal(mutations.length, beforeOutputNavigation, "Artifact viewing dispatches no work or runtime activation.");
       await click("#project-settings");
       await waitInside('document.querySelector("#canvas-settings").open');
       assert.equal(await inside("document.activeElement.id"), "setting-theme");
@@ -440,16 +524,26 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         await click("#message", true);
         if (width === 980) await browser.call("Input.insertText", { text: "Keep this draft through narrow navigation." });
         assert.equal(await inside('document.querySelector("#message").value'), "Keep this draft through narrow navigation.");
-        await click("#project-message-target", true);
-        await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+        assert.equal(await inside('document.querySelector("#project-message-target")===null'), true);
+        await click("#project-settings");
+        await waitInside('document.querySelector("#canvas-settings").open');
+        await checkEffortLayout();
+        await click("#close-settings", true);
+        await waitInside('!document.querySelector("#canvas-settings").open');
         if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `project-workspace-${width}.png`), await browser.screenshot());
       }
       await click("#project-settings");
       await waitInside('document.querySelector("#canvas-settings").open');
       await click("#open-diagnostics", true);
       await click("#shutdown", true);
-      await waitInside('document.querySelector("#initialize").textContent==="Reopen runtime"');
+      await waitInside('document.querySelector("#initialize").textContent==="Reopen Development"');
       assert.equal(stopped, true);
+      assert.equal(await inside('document.querySelector("#message").disabled'), true);
+      assert.equal(await inside('document.querySelector("#send").disabled'), true);
+      assert.equal(await inside('document.querySelector("#message").value'), "Keep this draft through narrow navigation.");
+      const opensBeforeReopen = mutations.filter(item => item.path === "/api/development/open").length;
+      await new Promise(done => setTimeout(done, 300));
+      assert.equal(mutations.filter(item => item.path === "/api/development/open").length, opensBeforeReopen, "Close never auto-reopens during polling.");
       await click("#initialize", true);
       await waitInside('document.querySelector("#current-state").textContent.includes("Ready")');
       assert.equal(stopped, false); assert.equal(nativeRequests.length, 2, "Reopen does not replay conversation.");

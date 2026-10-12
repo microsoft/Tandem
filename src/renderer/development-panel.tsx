@@ -14,11 +14,13 @@ export function DevelopmentPanel({ active }: { active: boolean }) {
     return <div className="development-workspace">
         <div className="development-toolbar">
             <span>Development: Design, planning, implementation and Review. Your project conversation stays alongside.</span>
-            {!project.active && <button id="activate-development" type="button" className="plan-button" disabled={!eligible}
-                onClick={() => void project.activate()}>Activate Development</button>}
+            {project.starting && <span role="status">Starting Development...</span>}
+            {!project.developmentEntered && <button id="enter-development" type="button" className="plan-button"
+                disabled={!eligible} onClick={() => void project.activate()}>Continue in Development</button>}
             {snapshot && <button id="continue-design" type="button" className="plan-button"
                 disabled={!eligible || state.lifecycle.currentStage !== "development" || action.busy}
                 onClick={() => void action.run(async () => {
+                    project.prepareDevelopmentView();
                     await post("/api/development/continue", { generation: state.generation,
                         expectedRevision: state.revision, snapshotPath: snapshot.path }, 120000);
                     await refresh();
@@ -27,6 +29,8 @@ export function DevelopmentPanel({ active }: { active: boolean }) {
         </div>
         {(project.error || action.error || state.developmentBlocker) && <div role="alert" className="development-error">
             {project.error || action.error || state.developmentBlocker}
+            {project.error && project.url && !project.active && !project.starting
+                && <button id="retry-development" className="plan-button" onClick={() => void project.activate(true)}>Retry Development</button>}
         </div>}
         {state.development && <p className="development-provenance">Retained handoff: {state.development.handoffId}.
             Reconciliation never replays retired work. Use a new explicit message in Development to continue after recovery.</p>}

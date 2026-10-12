@@ -1,19 +1,21 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { canOpenDevelopment, hasActiveJobs, useUi, type UiState } from "./ui-context.js";
-import { ProjectEffortError, requestProjectEffort } from "./project-effort.js";
+import { DiscoveryProjectSettings, ProjectEffortError, requestProjectEffort } from "./project-effort.js";
+import type { LifecycleStageId } from "../types.js";
+import type { StartingPath } from "../project-entry.js";
 
 type Entry = { id: string; kind: "user" | "status"; role: string; text: string; timestamp: string };
-export function projectDiscovery(state: UiState, busy: boolean) {
+export function projectDiscovery(state: UiState, busy: boolean, viewedStage: LifecycleStageId = state.lifecycle.currentStage) {
     const stage = state.lifecycle.currentStage;
     const writable = state.provider?.canSubmitAnswers !== false && !state.effortReset && !busy;
     const active = hasActiveJobs(state);
-    const action = !state.goal.trim() ? "goal" : stage === "requirements" && state.requirements.substage === "usage" ? "usage"
+    const action = viewedStage !== stage ? "none" : !state.goal.trim() ? "goal" : stage === "requirements" && state.requirements.substage === "usage" ? "usage"
         : stage === "sketch" ? "sketch" : stage === "prototype" ? "prototype" : "none";
     const label = { goal: "Start discovery", usage: "Add requirement usage", sketch: "Revise saved drawings",
         prototype: "Prototype feedback", none: "Discovery (use artifact controls)" }[action];
-    const key = JSON.stringify([state.prototypeId, state.generation, action, state.sketch?.current?.id,
+    const key = JSON.stringify([state.prototypeId, state.generation, viewedStage, action, state.sketch?.current?.id,
         state.prototypeFlow?.displayedCheckpointId, state.lifecycle.completedStages]);
-    return { action, key, label, enabled: writable && action !== "none" && !state.lifecycle.completedStages.includes(stage)
+    return { stage: viewedStage, action, key, label, enabled: writable && action !== "none" && !state.lifecycle.completedStages.includes(stage)
         && (action === "prototype" ? state.processing?.action !== "generate-design-spec" : !active),
         help: action === "sketch" ? "Revise the saved drawing revision; unsaved canvas edits are not included."
             : action === "prototype" ? "Queue feedback against the displayed prototype. Applying an update remains explicit."
@@ -49,10 +51,17 @@ export function discoveryEntries(state: UiState): Entry[] {
     return entries.slice(-1000);
 }
 
+export interface ProjectOutput { id: string; group: "Design" | "Plan" | "Implementation" | "Review"; title: string; detail: string; binding: string }
 interface ProjectView {
-    url: string | null; channel: string; error: string; active: boolean;
+    url: string | null; channel: string; error: string; active: boolean; starting: boolean; developmentEntered: boolean;
     status: string; detail: string; designRevision: string | null; designChanged: boolean; attention: number;
     activate(retry?: boolean): Promise<void>; command(command: string): void;
+    outputs: ProjectOutput[]; outputStatus: string; outputReason: string; outputError: string; selectedOutput: string | null;
+    openOutput(item: ProjectOutput): void;
+    prepareDevelopmentView(): void;
+    resumeDiscovery(): void;
+    entry: { loading: boolean; busy: boolean; projectPath: string; startingPath: StartingPath | null; error: string; ready: boolean };
+    chooseEntry(path: StartingPath): Promise<void>; reloadEntry(): Promise<void>;
     frame: React.RefObject<HTMLIFrameElement | null>; sync(): void;
 }
 const Context = createContext<ProjectView | null>(null);
@@ -61,22 +70,68 @@ export const useProjectView = () => {
     if (!value) throw new Error("Project presentation is unavailable.");
     return value;
 };
-export function ProjectConversationProvider({ children, designVisible, showDesign }: { children: ReactNode; designVisible: boolean; showDesign(): void }) {
-    const { state, post, pending, setBusy } = useUi();
-    const [view, setView] = useState({ url: null as string | null, channel: "", error: "", active: false,
-        status: "Not activated", detail: "", designRevision: null as string | null, designChanged: false, attention: 0 });
+export function ProjectConversationProvider({ children, designVisible, viewedStage, showDesign, onEntry }: {
+    children: ReactNode; designVisible: boolean; viewedStage: LifecycleStageId; showDesign(): void;
+    onEntry(path: StartingPath, firstChoice: boolean): void;
+}) {
+    const { state, post, pending, setBusy, browseStage } = useUi();
+    const [view, setView] = useState({ url: null as string | null, channel: "", error: "", active: false, starting: false, developmentEntered: false,
+        status: "Not activated", detail: "", designRevision: null as string | null, designChanged: false, attention: 0,
+        outputs: [] as ProjectOutput[], outputStatus: "unverified", outputReason: "Development outputs have not been verified.",
+        outputError: "", selectedOutput: null as string | null });
     const frame = useRef<HTMLIFrameElement>(null);
-    const latest = useRef({ state, post, pending, view, designVisible, showDesign, setBusy }); latest.current = { state, post, pending, view, designVisible, showDesign, setBusy };
+    const [entry, setEntry] = useState({ loading: true, busy: false, projectPath: state.projectPath ?? "", startingPath: null as StartingPath | null, error: "", ready: false });
+    const choosing = useRef(false);
+    const [discoverySettings, setDiscoverySettings] = useState(false);
+    const [viewRequested, setViewRequested] = useState(false);
+    const pendingCommand = useRef<string | null>(null);
+    const entryCallback = useRef(onEntry); entryCallback.current = onEntry;
+    const latest = useRef({ state, post, pending, view, designVisible, viewedStage, showDesign, setBusy, browseStage }); latest.current = { state, post, pending, view, designVisible, viewedStage, showDesign, setBusy, browseStage };
     const opening = useRef(false), submissions = useRef(new Map<string, { key: string; text: string; work: Promise<void> }>());
+    const startRequested = useRef(false);
     const effortApplying = useRef(false);
+    async function loadEntry(firstChoice = false, choice?: StartingPath) {
+        if (choosing.current) return;
+        choosing.current = true;
+        setEntry(v => ({ ...v, busy: true, error: "" }));
+        try {
+            const response = await fetch("/api/project-entry", choice ? { method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ startingPath: choice }) } : undefined);
+            const value = await response.json();
+            if (!response.ok || value.error) throw new Error(value.error || "Project metadata could not be read.");
+            if (typeof value.projectPath !== "string" || ![null, "preparation", "development"].includes(value.startingPath)) throw new Error("Invalid project entry metadata.");
+            let starting = false, developmentEntered = false;
+            if (value.startingPath && latest.current.state.provider?.canSubmitAnswers !== false) {
+                const opened = await fetch("/api/project-entry/open", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+                const result = await opened.json();
+                if (!opened.ok) throw new Error(result.error || "Project entry could not be prepared.");
+                starting = result.developmentStarted === true;
+                developmentEntered = result.developmentContext === true;
+            }
+            setEntry({ loading: false, busy: false, projectPath: value.projectPath, startingPath: value.startingPath, error: "", ready: Boolean(value.startingPath) });
+            if (value.startingPath) entryCallback.current(value.startingPath, firstChoice);
+            if (developmentEntered) { setViewRequested(true); setView(v => ({ ...v, developmentEntered: true })); }
+            if (starting) {
+                startRequested.current = true;
+                setView(v => ({ ...v, starting: true }));
+            }
+        } catch (error) {
+            setEntry(v => ({ ...v, loading: false, busy: false, ready: false, error: error instanceof Error ? error.message : "Project entry failed." }));
+        } finally { choosing.current = false; }
+    }
+    useEffect(() => { void loadEntry(); }, []);
     function send(value: object) {
         const { url, channel } = latest.current.view;
         if (url) frame.current?.contentWindow?.postMessage({ protocol: "tandem-project/v1", channel, ...value }, new URL(url).origin);
     }
     function sync() {
         const { state, pending, view, designVisible } = latest.current;
-        send({ type: "context", entries: discoveryEntries(state), discovery: projectDiscovery(state, pending),
+        const workingStage = view.developmentEntered ? "development" : state.lifecycle.currentStage;
+        const viewLabel = { prepare: "Preparation", requirements: "Requirements", sketch: "Drawings", prototype: "Prototype", development: "Development" }[workingStage];
+        send({ type: "context", entries: discoveryEntries(state), discovery: projectDiscovery(state, pending, workingStage), viewedStage: workingStage, viewLabel,
+            developmentEntered: view.developmentEntered,
             canActivate: canOpenDevelopment(state), developmentActive: view.active, designVisible,
+            developmentEnabled: canOpenDevelopment(state), starting: view.starting,
             canChangeEffort: state.provider?.canSubmitAnswers !== false && !pending });
         syncLayout();
     }
@@ -95,21 +150,26 @@ export function ProjectConversationProvider({ children, designVisible, showDesig
             conversationWidth });
     }
     async function activate(retry = false) {
-        if (opening.current) return;
         if (!canOpenDevelopment(latest.current.state)) { setView(v => ({ ...v, error: "Finish current discovery work or resolve ownership before activating Development." })); return; }
+        setView(v => ({ ...v, developmentEntered: true }));
+        if (opening.current || startRequested.current || latest.current.view.active) return;
         opening.current = true;
+        setViewRequested(true);
+        startRequested.current = true;
+        setView(v => ({ ...v, starting: true, developmentEntered: true, error: "" }));
         try {
             const response = await fetch("/api/development/open", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ retry }) });
             const result = await response.json();
             if (!response.ok) throw new Error(result.error || "Development could not activate.");
-            setView(v => ({ ...v, active: true, error: "" }));
-            send({ type: "command", command: "development-target" });
-        } catch (error) { setView(v => ({ ...v, error: error instanceof Error ? error.message : "Development activation failed." })); }
+        } catch (error) {
+            startRequested.current = false;
+            setView(v => ({ ...v, starting: false, error: error instanceof Error ? error.message : "Development could not start." }));
+        }
         finally { opening.current = false; }
     }
     useEffect(() => {
         let disposed = false;
-        if (state.provider?.canSubmitAnswers === false) return;
+        if (!entry.ready || !viewRequested || state.provider?.canSubmitAnswers === false) return;
         void (async () => {
             try {
                 const response = await fetch("/api/development/view", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
@@ -122,8 +182,8 @@ export function ProjectConversationProvider({ children, designVisible, showDesig
             } catch (error) { if (!disposed) setView(v => ({ ...v, error: error instanceof Error ? error.message : "Conversation unavailable." })); }
         })();
         return () => { disposed = true; };
-    }, [state.provider?.canSubmitAnswers]);
-    useEffect(() => { sync(); }, [state, pending, view.url, view.active, designVisible]);
+    }, [entry.ready, viewRequested, state.provider?.canSubmitAnswers]);
+    useEffect(() => { sync(); }, [state, pending, view.url, view.active, view.starting, view.developmentEntered, designVisible, viewedStage]);
     useEffect(() => {
         const observer = new ResizeObserver(syncLayout);
         const workspace = document.getElementById("studio-workspace");
@@ -139,7 +199,41 @@ export function ProjectConversationProvider({ children, designVisible, showDesig
             if (!view.url || event.source !== frame.current?.contentWindow || event.origin !== new URL(view.url).origin
                 || event.data?.protocol !== "tandem-project/v1" || event.data.channel !== view.channel) return;
             const message = event.data;
-            if (message.type === "ready") { sync(); return; }
+            if (message.type === "outputs") {
+                if (!["verified", "unverified", "not-started"].includes(message.status) || typeof message.reason !== "string"
+                    || !Array.isArray(message.items) || message.items.length > 10000
+                    || !message.items.every((item: ProjectOutput) => item && ["Design", "Plan", "Implementation", "Review"].includes(item.group)
+                        && ["id", "title", "detail", "binding"].every(key => typeof item[key as keyof ProjectOutput] === "string"
+                            && item[key as keyof ProjectOutput].length <= 10000))
+                    || new Set(message.items.map((item: ProjectOutput) => item.id)).size !== message.items.length) {
+                    setView(v => ({ ...v, outputStatus: "unverified", outputError: "Development output index is invalid; nothing was opened." }));
+                    return;
+                }
+                setView(v => {
+                    const items = message.status === "verified" ? message.items : v.outputs;
+                    const selected = message.status === "verified" ? typeof message.selected === "string" ? message.selected : null : v.selectedOutput;
+                    if (v.outputStatus === message.status && v.outputReason === message.reason && v.selectedOutput === selected
+                        && JSON.stringify(v.outputs) === JSON.stringify(items)) return v;
+                    return { ...v, outputs: items, outputStatus: message.status, outputReason: message.reason, selectedOutput: selected };
+                });
+                return;
+            }
+            if (message.type === "output-opened") {
+                if (typeof message.error === "string") setView(v => ({ ...v, outputError: message.error }));
+                else if (latest.current.view.outputs.some(item => item.id === message.id && item.binding === message.binding)) {
+                    setView(v => ({ ...v, selectedOutput: message.id, outputError: "" }));
+                }
+                return;
+            }
+            if (message.type === "ready") {
+                sync();
+                if (pendingCommand.current) { send({ type: "command", command: pendingCommand.current }); pendingCommand.current = null; }
+                return;
+            }
+            if (message.type === "view-stage" && ["prepare", "requirements", "sketch", "prototype", "development"].includes(message.stage)) {
+                latest.current.browseStage(message.stage);
+                return;
+            }
             if (message.type === "show-design") { latest.current.showDesign(); return; }
             if (message.type === "settings-closed") { document.getElementById("project-settings")?.focus(); return; }
             if (message.type === "conversation-resize" && window.innerWidth >= 1000
@@ -172,8 +266,11 @@ export function ProjectConversationProvider({ children, designVisible, showDesig
             }
             if (message.type === "activate") { void activate(message.retry === true); return; }
             if (message.type === "status" && typeof message.status === "string") {
+                const settled = message.active === true || ["failed", "unknown", "closed"].includes(message.installationStatus);
+                if (["failed", "unknown", "closed"].includes(message.installationStatus)) startRequested.current = false;
                 setView(v => ({ ...v, status: message.status.slice(0, 80), detail: typeof message.reason === "string" ? message.reason.slice(0, 2000) : "",
                     active: message.active === true,
+                    starting: settled ? false : v.starting,
                     designRevision: typeof message.designRevision === "string" ? message.designRevision : null,
                     designChanged: !latest.current.designVisible && Boolean(message.designRevision)
                         && (v.designChanged || v.designRevision !== message.designRevision),
@@ -193,6 +290,7 @@ export function ProjectConversationProvider({ children, designVisible, showDesig
             }
             if (!submission) {
                 const work = (async () => {
+                    if (latest.current.view.developmentEntered) throw new Error("Use the owning phase's original input; Development cannot submit discovery work.");
                     const context = projectDiscovery(state, pending);
                     if (message.key !== context.key || !context.enabled) throw new Error("The discovery target changed or is unavailable. Review it before sending.");
                     if (typeof message.text !== "string" || !message.text.trim() || message.text.length > 4000) throw new Error("Enter between 1 and 4,000 characters.");
@@ -211,10 +309,26 @@ export function ProjectConversationProvider({ children, designVisible, showDesig
         window.addEventListener("message", receive);
         return () => window.removeEventListener("message", receive);
     }, []);
-    return <Context.Provider value={{ ...view, frame, sync, activate, command: command => send({ type: "command", command }) }}>{children}</Context.Provider>;
+    return <Context.Provider value={{ ...view, entry, chooseEntry: path => loadEntry(true, path), reloadEntry: () => loadEntry(),
+        frame, sync, activate,
+        prepareDevelopmentView: () => { setViewRequested(true); setView(v => ({ ...v, developmentEntered: true })); },
+        resumeDiscovery: () => setView(v => ({ ...v, developmentEntered: false })),
+        command: command => {
+            if (!latest.current.view.developmentEntered) {
+                if (command === "settings") setDiscoverySettings(true);
+                else if (command === "current-work") latest.current.browseStage(latest.current.state.lifecycle.currentStage);
+            } else if (!latest.current.view.url) { pendingCommand.current = command; setViewRequested(true); }
+            else send({ type: "command", command });
+        },
+        openOutput: item => {
+            if (latest.current.view.outputStatus !== "verified") return;
+            latest.current.showDesign();
+            send({ type: "output-open", id: item.id, binding: item.binding });
+        } }}>{children}{discoverySettings && !view.developmentEntered && <DiscoveryProjectSettings close={() => setDiscoverySettings(false)} />}</Context.Provider>;
 }
 export function ProjectConversation() {
     const view = useProjectView();
+    const { state } = useUi();
     const drag = useRef<number | null>(null);
     const resize = (delta: number) => {
         const panel = document.getElementById("project-conversation");
@@ -233,11 +347,16 @@ export function ProjectConversation() {
         onLostPointerCapture={() => { drag.current = null; }} />
       <aside id="project-conversation" aria-label="Project conversation">
         <div className="project-conversation-heading"><strong>Project conversation</strong>
-            <span role="status">{view.status}{view.attention ? ` · ${view.attention} needs attention` : ""}</span>
+            <span role="status">{view.developmentEntered ? view.status : state.status}{view.attention ? ` · ${view.attention} needs attention` : ""}</span>
             <button type="button" onClick={() => view.command("current-work")}>Current work</button></div>
         {(view.error || view.detail) && <p role="alert">{view.error || view.detail}</p>}
         {view.url ? <iframe ref={view.frame} id="project-conversation-frame" title="Persistent project conversation"
             src={`${view.url}?panel=workspace`} onLoad={view.sync} allow="clipboard-read; clipboard-write" />
-            : <p role="status">{view.error || "Loading project conversation without activating Development..."}</p>}
+            : <div id="discovery-history" className="discovery-history" aria-label="Discovery history">
+                {discoveryEntries(state).map(item => <article key={item.id} data-entry-id={item.id}>
+                    <strong>Discovery evidence</strong><p>{item.text}</p>
+                </article>)}
+                {!state.goal && <p>Project history will appear here. Use Preparation's goal form to begin.</p>}
+              </div>}
     </aside></>;
 }

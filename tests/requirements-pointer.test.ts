@@ -44,6 +44,10 @@ test("defaults mouse activation stays on its button when focus leaves the answer
         const server = createServer((request, response) => {
             if (request.url === "/") { response.setHeader("Content-Type", "text/html"); response.end(template); }
             else if (request.url === "/app.js") { response.setHeader("Content-Type", "text/javascript"); response.end(bundle.outputFiles[0].text); }
+            else if (request.url === "/api/project-entry" || request.url === "/api/project-entry/open") {
+                response.setHeader("Content-Type", "application/json");
+                response.end(JSON.stringify({ projectPath: "C:\\pointer-fixture", startingPath: "preparation", developmentContext: false, developmentStarted: false }));
+            }
             else {
                 if (request.url === "/api/answer") answers++;
                 response.setHeader("Content-Type", "application/json");
@@ -57,6 +61,7 @@ test("defaults mouse activation stays on its button when focus leaves the answer
         await browser.call("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1100, deviceScaleFactor: 1, mobile: false });
         await browser.call("Page.navigate", { url: `http://127.0.0.1:${address.port}/` });
         await browser.waitFor('Boolean(document.querySelector(".all-recommended"))');
+        await browser.waitFor('!document.querySelector("#studio-workspace").inert');
         async function click(selector: string) {
             await browser.evaluate(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:"center"})`);
             await browser.evaluate("new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))");

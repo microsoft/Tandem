@@ -45,6 +45,8 @@ import "./development-handoff.test.js";
 import "./payload.test.js";
 import "./renderer-development.test.js";
 import "./project-workspace-browser.test.mjs";
+import "./project-outputs.test.mjs";
+import "./project-entry.test.js";
 import "./requirements-pointer.test.js";
 import "./effort-recovery.test.js";
 import "./desktop.test.js";

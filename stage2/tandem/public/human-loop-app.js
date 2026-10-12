@@ -1,4 +1,4 @@
-import { renderHumanLoop, humanLoopStatusLabel } from './renderers/human-loop.js';
+import { renderHumanLoop, humanLoopStatusLabel, renderCycleProgress } from './renderers/human-loop.js';
 import { createConversationRenderer } from './renderers/conversation.js';
 import { projectHumanHistory } from './renderers/human-loop-history.js';
 import { createSharedDesignView } from './renderers/shared-design.js';
@@ -12,6 +12,7 @@ import { createWorkflowStopControl } from './workflow-stop-control.js';
 import { installPanelSplitter } from './panel-splitter.js';
 import { createImplementationConfirmations } from './implementation-confirmation.js';
 import { installProjectPresentation } from './project-presentation.js';
+import { projectOutputs } from './project-outputs.js';
 
 const $ = (id) => document.getElementById(id);
 const splitter = installPanelSplitter({ layout: document.querySelector('.human-layout'),
@@ -51,11 +52,15 @@ const renderStopControl = () => stopControl.render(snapshot?.workflow, { connect
 const make = (tag, text) => { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; return node; };
 let settingsBusy = false, settingsLoaded = false, settingsLoading = null, settingsVersion = 0;
 let settingsModel = null, effortModel = null;
+let selectedOutput = null;
 const projectPresentation = installProjectPresentation({ document, window,
   changed: () => { if (snapshot) render(); },
   settings: () => { $('canvas-settings').open = true; $('setting-theme').focus(); void refreshSettings(); },
   effortChanged: () => { void refreshSettings(true); },
   layoutChanged: layout => splitter.setProjectLayout(layout),
+  hasAttachments: () => $('annotation-preview')?.hidden === false || $('clipboard-preview')?.hidden === false,
+  openOutput,
+  outputSelection: () => selectedOutput ?? (designView.current() ? { id: `design:${designView.current().artifactId}`, binding: JSON.stringify(snapshot.design.binding) } : null),
   currentWork: () => $('focus-current-message').click(),
 });
 function renderReasoningEffort() {
@@ -172,7 +177,11 @@ const conversation = createConversationRenderer({ messages: $('messages'), histo
   onSelectState: () => { $('history-details')?.remove(); } });
 let annotation;
 const designView = createSharedDesignView({ tabs: $('backbone-tabs'), mount: $('design-artifacts'),
-  onChange: () => annotation?.refresh(), onAnnotate: (id) => annotation.toggleArtifact(id) });
+  onChange: () => {
+    annotation?.refresh();
+    if ($('project-output-view').hidden) selectedOutput = null;
+    if (snapshot) projectPresentation?.publish(snapshot);
+  }, onAnnotate: (id) => annotation.toggleArtifact(id) });
 annotation = createAnnotationController({
   panel: $('design-panel'), artifactMode: true,
   getView: () => designView.current(), selectArtifact: (id) => designView.selectArtifact(id),
@@ -183,8 +192,41 @@ annotation = createAnnotationController({
 });
 function inspectReference(binding, reference) {
   projectPresentation?.showDesign();
-  try { designView.inspectReference(binding, reference); }
+  try { designView.inspectReference(binding, reference); showOriginalDesign(); }
   catch (error) { notice(error.message); }
+}
+function showOriginalDesign() {
+  selectedOutput = null;
+  $('project-output-view').hidden = true;
+  $('canvas-scroll').hidden = false;
+  $('design-pane-title').textContent = 'Canvas';
+  if (snapshot) projectPresentation?.publish(snapshot);
+}
+function openOutput(item, source) {
+  if (item.target.kind === 'design') {
+    showOriginalDesign();
+    designView.selectArtifact(item.target.artifactId);
+  } else if (item.target.kind === 'message') {
+    showOriginalDesign();
+    conversation.focusEntry(item.target.entryId);
+  } else {
+    const cycle = source.cycles?.find(cycle => cycle.id === item.target.cycleId)
+      ?? (source.workflow.currentCycle?.id === item.target.cycleId ? source.workflow.currentCycle : null);
+    if (!cycle) throw new Error('The selected work cycle is no longer available.');
+    const mount = $('project-output-view');
+    const back = make('button', 'Back to Design'); back.type = 'button'; back.onclick = showOriginalDesign;
+    const history = make('button', 'Show original request'); history.type = 'button';
+    history.onclick = () => conversation.focusEntry(`request:${cycle.originRequestId}`);
+    const heading = make('div'); heading.className = 'project-output-actions'; heading.append(back, history);
+    const content = make('section'); content.className = 'human-loop';
+    renderCycleProgress(content, cycle, inspectReference);
+    content.querySelector('details').open = true;
+    mount.replaceChildren(heading, make('p', item.detail), content);
+    mount.hidden = false; $('canvas-scroll').hidden = true;
+    $('design-pane-title').textContent = item.group;
+    mount.focus({ preventScroll: true });
+  }
+  selectedOutput = { id: item.id, binding: item.binding };
 }
 
 async function post(path, data, expectedStatus) {
@@ -210,12 +252,21 @@ installBrowserLinkNavigation(document, {
   },
   onError: (error) => { linkNotice = `Link was not opened: ${error.message}`; notice(linkNotice); },
 });
+function developmentUnavailable() {
+  return Boolean(projectPresentation && (!projectPresentation.workingDevelopment()
+    || !projectPresentation.developmentEnabled() || projectPresentation.busy() || !controlsConnected
+    || snapshot?.installation?.status !== 'ready' || !snapshot?.workflow?.canSend));
+}
 function renderComposer() {
   projectPresentation?.nativePending(sending || Boolean(pending));
-  $('send').disabled = sending || clipboard.busy() || projectPresentation?.busy() || (projectPresentation?.discovery()
+  const unavailable = developmentUnavailable();
+  $('composer').hidden = Boolean(projectPresentation && !projectPresentation.workingDevelopment());
+  $('send').disabled = unavailable || sending || clipboard.busy() || projectPresentation?.busy() || (projectPresentation && !projectPresentation.canSend()) || (projectPresentation?.discovery()
     ? !projectPresentation.canSend() : !snapshot?.workflow?.canSend);
-  $('message').disabled = sending || pendingSubmitted;
-  const presetsBlocked = sending || Boolean(pending);
+  $('message').disabled = unavailable || sending || pendingSubmitted;
+  if (projectPresentation) $('message').placeholder = projectPresentation.placeholder();
+  annotation?.setSending(unavailable || sending || Boolean(pending));
+  const presetsBlocked = unavailable || sending || Boolean(pending);
   $('quick-requests').hidden = projectPresentation?.discovery() === true;
   const summary = $('quick-requests').querySelector('summary');
   summary.setAttribute('aria-disabled', String(presetsBlocked));
@@ -242,8 +293,11 @@ function render() {
     ? `Compacting model context. Workflow: ${humanLoopStatusLabel(view.status)}. Saved Conversation and Design remain retained.`
     : compaction?.requested ? 'Approved compaction requested. Waiting for the native runtime.'
       : compaction?.error ? `Context compaction failed: ${compaction.error}` : '';
-  $('initialize').hidden = !installed?.canStart && !installed?.canReopen && !installed?.canRetry;
-  $('initialize').textContent = installed?.canRetry ? 'Retry runtime' : installed?.canReopen ? 'Reopen runtime'
+  $('initialize').hidden = projectPresentation
+    ? !projectPresentation.workingDevelopment() || !installed?.canReopen && !installed?.canRetry
+    : !installed?.canStart && !installed?.canReopen && !installed?.canRetry;
+  $('initialize').textContent = projectPresentation ? installed?.canReopen ? 'Reopen Development' : 'Retry Development'
+    : installed?.canRetry ? 'Retry runtime' : installed?.canReopen ? 'Reopen runtime'
     : installed?.status === 'saved-state' ? 'Verify saved runtime' : 'Initialize runtime';
   $('inspect-initial-creation').hidden = !installed?.canInspectInitialRecovery;
   $('inspect-initial-creation').disabled = initialCreationInspecting;
@@ -365,6 +419,15 @@ function render() {
   else if (followMessages && !nextQuestionKey && !$('messages').contains(document.activeElement)) $('messages').scrollTop = $('messages').scrollHeight;
   revealedQuestionKey = nextQuestionKey;
   projectPresentation?.publish(snapshot);
+  const outputView = $('project-output-view');
+  if (!outputView.hidden && selectedOutput) {
+    let warning = outputView.querySelector('[data-output-warning]');
+    const current = projectOutputs(snapshot).items.some(item => item.id === selectedOutput.id && item.binding === selectedOutput.binding);
+    if (!current && !warning) {
+      warning = make('p', 'This displayed binding is no longer the current verified output. Select an available output from Artifacts to refresh it.');
+      warning.dataset.outputWarning = ''; warning.setAttribute('role', 'alert'); outputView.prepend(warning);
+    } else if (current) warning?.remove();
+  }
 }
 function renderBackground() {
   renderBackgroundProcesses($('background-processes'), snapshot?.processes?.nativeSessions ?? [], {
@@ -442,7 +505,8 @@ async function refresh() {
     if (!settingsLoaded) void refreshSettings();
     if (pending && snapshot.messages.some(({ requestId }) => requestId === pending.id)) completePending();
     render(); return true;
-  })().catch((error) => { controlsConnected = false; renderBackground(); renderStopControl(); renderImplementationConfirmations(); notice(error.message); return false; }).finally(() => { refreshing = null; });
+  })().catch((error) => { controlsConnected = false; projectPresentation?.unavailable(error.message);
+    renderComposer(); renderBackground(); renderStopControl(); renderImplementationConfirmations(); notice(error.message); return false; }).finally(() => { refreshing = null; });
   return refreshing;
 }
 function completePending() {
@@ -455,7 +519,7 @@ function completePending() {
 const clipboard = installComposerImage({
   input: $('message'), preview: $('clipboard-preview'), image: $('clipboard-image'),
   caption: $('clipboard-caption'), remove: $('clipboard-remove'),
-  blocked: () => sending || pendingSubmitted, hasAnnotation: () => Boolean(annotation.preview()),
+  blocked: () => developmentUnavailable() || sending || pendingSubmitted, hasAnnotation: () => Boolean(annotation.preview()),
   onChange: () => { if (snapshot) render(); }, onError: notice,
   upload: async blob => {
     const response = await fetch('/api/image-attachments', { method: 'POST', headers: { 'content-type': blob.type }, body: blob });
@@ -493,7 +557,8 @@ $('quick-requests').addEventListener('focusout', event => {
   if (event.relatedTarget && !$('quick-requests').contains(event.relatedTarget)) $('quick-requests').open = false;
 });
 $('composer').addEventListener('submit', async (event) => {
-  event.preventDefault(); if (sending || clipboard.busy() || (!$('message').value.trim() && !clipboard.current() && !annotation.preview())) return;
+  event.preventDefault(); if (developmentUnavailable() || projectPresentation && !projectPresentation.canSend()
+    || sending || clipboard.busy() || (!$('message').value.trim() && !clipboard.current() && !annotation.preview())) return;
   if (projectPresentation?.discovery()) {
     if (pending || clipboard.current() || annotation.preview()) { notice('Resolve the Development request or remove its attachment before sending to discovery.'); return; }
     const text = $('message').value;
