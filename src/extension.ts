@@ -6473,7 +6473,8 @@ async function handleRequest(entry, req, res) {
         const state = await loadState(entry.prototypeId);
         const checkpoint = state.prototypeFlow?.checkpoints.find(item => item.id === state.prototypeFlow?.displayedCheckpointId);
         const url = checkpoint?.previewUrl || state.previewUrl;
-        const binding = { url: url || null, checkpointId: checkpoint?.id ?? null };
+        const binding = { generation: state.generation, url: url || null, checkpointId: checkpoint?.id ?? null,
+            pendingCheckpointId: state.prototypeFlow?.pendingCheckpointId ?? null };
         if (!url) { sendJson(res, 200, { ...binding, available: false, reason: "No saved preview URL is available." }); return; }
         try {
             await verifyPreviewIdentity(url, state.prototypeId, checkpoint?.id ?? null);

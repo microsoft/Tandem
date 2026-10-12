@@ -165,6 +165,8 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
     let startingPath = null;
     const value = discoveryState("requirements");
     value.requirements.substage = "usage";
+    let previewAvailable = true, holdPreviewChecks = false, previewChecks = 0;
+    const heldPreviewChecks = [];
     const runtime = {
       sessionId: "private", state: async () => nativeState,
       readiness: async () => ({ status: stopped ? "closed" : nativeState.activeRequestId ? "working" : "ready",
@@ -247,6 +249,15 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
           request.on("close", () => rootEvents.delete(response));
         }
         else if (path === "/api/sketch") json({ sketch: value.sketch, document: null });
+        else if (path === "/api/prototype/preview-status") {
+          previewChecks++;
+          const checkpoint = value.prototypeFlow?.checkpoints.find(item => item.id === value.prototypeFlow.displayedCheckpointId);
+          const binding = { generation: value.generation, checkpointId: checkpoint?.id ?? null,
+            pendingCheckpointId: value.prototypeFlow?.pendingCheckpointId ?? null, url: checkpoint?.previewUrl || value.previewUrl };
+          const reply = available => json({ ...binding, available, reason: available ? "" : "The saved preview is not reachable." });
+          if (holdPreviewChecks) heldPreviewChecks.push(reply);
+          else reply(previewAvailable);
+        }
         else if (path === "/api/project-entry") {
           if (request.method === "POST") {
             const chunks = []; for await (const chunk of request) chunks.push(chunk);
@@ -333,6 +344,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         value.revision++;
         await browser.call("Page.reload");
         await browser.waitFor('document.querySelector("#studio-workspace") && !document.querySelector("#studio-workspace").inert');
+        await browser.waitFor(`document.querySelector(${JSON.stringify(phase === "sketch" ? "#sketch-tab" : "#live-preview-tab")})?.getAttribute("aria-selected")==="true"`);
         const geometry = await browser.evaluate(`(() => {
           const panel=document.querySelector(${JSON.stringify(phase === "sketch" ? "#sketch-panel" : "#live-preview-panel")});
           const toolbar=panel.querySelector(".phase-actions").getBoundingClientRect();
@@ -366,6 +378,21 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       const currentPrototype = progressivePrototype();
       for (const checkpoint of currentPrototype.prototypeFlow.checkpoints) checkpoint.requestedAt = new Date().toISOString();
       currentPrototype.previewUrl = currentPrototype.prototypeFlow.checkpoints[0].previewUrl = new URL("preview-current", url).href;
+      const restoredPrototype = readyPrototype(1, true);
+      restoredPrototype.previewUrl = restoredPrototype.prototypeFlow.checkpoints[0].previewUrl = currentPrototype.previewUrl;
+      restoredPrototype.prototypeFlow.checkpoints[1].previewUrl = new URL("preview-candidate", url).href;
+      previewAvailable = false;
+      const mutationsBeforeAvailability = mutations.length;
+      await pushPrototype(restoredPrototype);
+      await browser.waitFor('document.querySelector("#preview-availability").textContent.includes("Current preview unavailable")');
+      assert.equal(await browser.evaluate('document.querySelector("#preview-frame").hidden && !document.querySelector("#preview-frame").getAttribute("src")'), true);
+      assert.equal(await browser.evaluate('document.querySelector("#open-preview") === null'), true);
+      assert.equal(value.prototypeFlow.pendingCheckpointId, "interaction");
+      assert.equal(value.prototypeFlow.displayedCheckpointId, "structure");
+      if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "unavailable-current-with-pending.png"), await browser.screenshot());
+      previewAvailable = true;
+      await clickRoot("#check-live-preview");
+      await browser.waitFor('document.querySelector("#preview-availability").textContent.includes("Current preview verified")');
       await pushPrototype(currentPrototype);
       await browser.waitFor('document.querySelector("#preview-frame").contentDocument?.querySelector("#preview-button")');
       for (const width of [1360, 390]) {
@@ -380,10 +407,29 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       const point = await browser.evaluate('(() => {const f=document.querySelector("#preview-frame"),r=f.getBoundingClientRect(),b=f.contentDocument.querySelector("#preview-button").getBoundingClientRect();return {x:r.x+f.clientLeft+b.x+b.width/2,y:r.y+f.clientTop+b.y+b.height/2};})()');
       for (const type of ["mousePressed", "mouseReleased"]) await browser.call("Input.dispatchMouseEvent", { type, ...point, button: "left", clickCount: 1 });
       await browser.waitFor('document.querySelector("#preview-frame").contentDocument.querySelector("#preview-button").textContent==="Preview interaction accepted"');
+      const checksBeforeRevisit = previewChecks;
+      await clickRoot("#design-tree-tab");
+      await clickRoot("#live-preview-tab");
+      await browser.waitFor('document.querySelector("#preview-availability").textContent.includes("Current preview verified")');
+      assert.ok(previewChecks > checksBeforeRevisit);
+      assert.equal(await browser.evaluate('document.querySelector("#preview-frame").contentDocument.querySelector("#preview-button").textContent'), "Preview interaction accepted");
+      const checksBeforeReconnect = previewChecks;
+      for (const response of rootEvents) response.end();
+      await browser.waitFor('document.querySelector("#connection-status").textContent.includes("Reconnecting")');
+      await browser.waitFor('document.querySelector("#connection-status").textContent === "" && document.querySelector("#preview-availability").textContent.includes("Current preview verified")');
+      assert.ok(previewChecks > checksBeforeReconnect);
+      assert.equal(await browser.evaluate('document.querySelector("#preview-frame").contentDocument.querySelector("#preview-button").textContent'), "Preview interaction accepted");
+      holdPreviewChecks = true;
+      await clickRoot("#check-live-preview");
+      await browser.waitFor('document.querySelector("#preview-availability").textContent.includes("Checking current preview")');
       const pendingPrototype = readyPrototype(1, true);
       pendingPrototype.previewUrl = pendingPrototype.prototypeFlow.checkpoints[0].previewUrl = currentPrototype.previewUrl;
       pendingPrototype.prototypeFlow.checkpoints[1].previewUrl = new URL("preview-candidate", url).href;
       await pushPrototype(pendingPrototype);
+      for (let attempt = 0; heldPreviewChecks.length < 2 && attempt < 100; attempt++) await new Promise(resolve => setTimeout(resolve, 20));
+      assert.equal(heldPreviewChecks.length, 2);
+      heldPreviewChecks[1](true);
+      await browser.waitFor('document.querySelector("#preview-availability").textContent.includes("Current preview verified")');
       assert.equal(await browser.evaluate('document.querySelector("#preview-frame").src'), currentPrototype.previewUrl);
       assert.equal(await browser.evaluate('document.querySelector("#open-preview").href'), currentPrototype.previewUrl);
       assert.equal(await browser.evaluate('document.querySelector("#preview-frame").contentDocument.querySelector("#preview-button").textContent'), "Preview interaction accepted",
@@ -392,9 +438,15 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       assert.equal(await browser.evaluate('document.querySelector("#preview-frame").getBoundingClientRect().bottom <= document.querySelector("#prototype-review").getBoundingClientRect().top'), true);
       if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "inline-pending-prototype-390.png"), await browser.screenshot());
       assert.equal(mutations.some(item => item.path === "/api/prototype/action"), false);
+      assert.equal(mutations.length, mutationsBeforeAvailability, "Availability, revisit and reconnect call no mutation/start endpoint.");
+      holdPreviewChecks = false;
       await clickRoot("#apply-prototype-update");
       await browser.waitFor('document.querySelector("#preview-frame").contentDocument?.querySelector("#preview-button")?.textContent==="Candidate prototype"');
       assert.equal(await browser.evaluate('document.querySelector("#preview-frame").src'), pendingPrototype.prototypeFlow.checkpoints[1].previewUrl);
+      heldPreviewChecks[0](false);
+      await new Promise(resolve => setTimeout(resolve, 100));
+      assert.equal(await browser.evaluate('!document.querySelector("#preview-frame").hidden && document.querySelector("#preview-frame").src'), pendingPrototype.prototypeFlow.checkpoints[1].previewUrl,
+        "A late response for the previous current checkpoint cannot hide or replace the verified candidate after explicit promotion.");
       assert.equal(mutations.filter(item => item.path === "/api/prototype/action").length, 1);
       assert.equal(active, false, "Prototype viewing and explicit promotion remain Stage1-owned.");
       await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 1000, deviceScaleFactor: 1, mobile: false });

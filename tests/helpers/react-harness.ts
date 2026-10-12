@@ -60,6 +60,8 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
   const requests: Request[] = [];
   const presentationRequests: string[] = [];
   const entryRequests: string[] = [];
+  const previewRequests: RequestInit[] = [];
+  let previewFetcher: (() => Promise<Response>) | null = null;
   let entryOpened = false;
   const errors: string[] = [];
   const pngExports: { width: number; height: number; source: string }[] = [];
@@ -100,6 +102,15 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
       if (path === "/api/development/view") {
         presentationRequests.push(path);
         return response({ url: "http://127.0.0.1:8765/", channel: "fixture-project" });
+      }
+      if (path === "/api/prototype/preview-status") {
+        previewRequests.push(options);
+        if (previewFetcher) return previewFetcher();
+        const current = mounted.store.getSnapshot().state;
+        const checkpoint = current.prototypeFlow?.checkpoints.find((item: { id: string }) => item.id === current.prototypeFlow.displayedCheckpointId);
+        return response({ generation: current.generation, checkpointId: checkpoint?.id ?? null,
+          pendingCheckpointId: current.prototypeFlow?.pendingCheckpointId ?? null,
+          url: checkpoint?.previewUrl || current.previewUrl, available: true, reason: "" });
       }
       requests.push({ path, body: options.body ? JSON.parse(String(options.body)) : null, options });
       return fetcher(path, options);
@@ -148,7 +159,7 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
   };
   const dispose = () => { mounted.dispose(); window.close(); };
   t?.after(dispose);
-  return { presentationRequests, entryRequests,
+  return { presentationRequests, entryRequests, previewRequests,
     window, document, requests, errors, pngExports, store: mounted.store, get, click, input, fire, flush, dispose,
     render(value: UiState, sequence?: number) {
       let changed = false;
@@ -164,6 +175,7 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
       await click(button);
     },
     setFetch(handler: typeof fetcher) { fetcher = handler; },
+    setPreviewFetch(handler: () => Promise<Response>) { previewFetcher = handler; },
     headerMessages,
     async sendHeaderMessage(data: Record<string, unknown>, origin = headerHost?.origin || "http://127.0.0.1:9000", source: unknown = parent) {
       const event = new window.MessageEvent("message", { data: { channel: headerHost?.channel, ...data }, origin });

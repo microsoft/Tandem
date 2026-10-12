@@ -88,6 +88,15 @@ preview** and the pending status says **New prototype version ready**. This is
 renderer/checkpoint-fixture qualification, not a new native prototype-generation
 run; the user's frozen prototype was neither applied nor restarted.
 
+Saved preview availability is separate from those layout corrections. Active as
+well as completed Prototype now uses the existing read-only identity probe before
+attaching an unverified URL. Revisit/reconnection rechecks do not change a verified
+iframe's identity or local state. Responses bind generation, displayed checkpoint,
+URL and the observed pending checkpoint; stale replies cannot attach another
+version. A failed probe preserves checkpoint readiness/history and feedback and
+shows unavailable guidance with **Check again**, without launching processes,
+promoting a pending version or dispatching model work.
+
 Native model-restoration and unused-initialization-journal caveats remain separate
 known limitations. This work does not claim they are fixed, replace a private
 identity, or bypass their validation/recovery paths. Frozen manual session

@@ -291,8 +291,13 @@ actions without clearing existing input. Saved discovery evidence is a source-la
 render-only projection, not reconstructed native chat; it is never copied into a
 private request or written into its store. Cold private history still requires
 owned runtime verification during project entry; browsing alone does not reopen it.
-Completed Prototype views distinguish saved files from a live server: **Check live
-preview** verifies the retained URL/identity without starting a server or model work.
+Active and completed Prototype views distinguish saved checkpoint readiness from
+a running server. Viewing the phase, reconnecting, or **Check again** verifies the
+current generation/checkpoint/URL before attaching an unverified inline preview.
+Unavailable servers show an explanation instead of a browser connection error;
+saved versions, pending updates and feedback are unchanged. Verification never
+starts a server or model work, and successful rechecks keep the current frame's
+local state when its verified identity has not changed.
 During Prototype work, the runnable current version appears inline above Feedback.
 **Open current preview** opens that same version in a separate window.
 **New prototype version ready** means a checkpoint is waiting for **Apply update**;

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowUpRight, Check, ExternalLink, LoaderCircle, Play, RefreshCw, Send, SkipForward, Sparkles } from "lucide-react";
 import { RadioGroup } from "radix-ui";
 import type { DecisionQuestion } from "../workflow.js";
@@ -67,7 +67,7 @@ function Clarification({ question }: { question: DecisionQuestion }) {
   </div>;
 }
 
-export function PrototypePanel() {
+export function PrototypePanel({ active: visible, connected }: { active: boolean; connected: boolean }) {
   const ui = useUi();
   const { state, pending, post, canEdit, guidance } = ui;
   const latest = useRef(state);
@@ -82,7 +82,9 @@ export function PrototypePanel() {
   const capture = useRef<{ finish: (value?: { state: unknown }) => void } | null>(null);
   const restore = useRef<{ generation: string; checkpointId: string; state: unknown } | null>(null);
   const [elapsed, setElapsed] = useState("");
-  const [previewCheck, setPreviewCheck] = useState({ url: "", available: false, busy: false, reason: "" });
+  const [previewCheck, setPreviewCheck] = useState({ binding: "", available: false, busy: false, reason: "" });
+  const checkSequence = useRef(0);
+  const checkController = useRef<AbortController | null>(null);
   const flow = state.prototypeFlow;
   const checkpoints = flow?.checkpoints || [];
   const displayed = checkpoints.find((item) => item.id === flow?.displayedCheckpointId);
@@ -103,7 +105,42 @@ export function PrototypePanel() {
   const url = flow ? displayed?.previewUrl || (displayed ? state.previewUrl : null) : state.previewUrl;
   const readyUrl = originOf(url) && !unavailable && !undecided ? url : null;
   const savedOnly = state.lifecycle.completedStages.includes("prototype");
-  const showLivePreview = Boolean(readyUrl) && (!savedOnly || previewCheck.url === readyUrl && previewCheck.available);
+  const generation = state.generation;
+  const displayedId = flow?.displayedCheckpointId ?? null;
+  const pendingId = flow?.pendingCheckpointId ?? null;
+  const previewBinding = JSON.stringify([generation, displayedId, readyUrl]);
+  const checkBinding = JSON.stringify([previewBinding, pendingId]);
+  const latestCheckBinding = useRef(checkBinding);
+  latestCheckBinding.current = checkBinding;
+  const showLivePreview = Boolean(readyUrl) && previewCheck.binding === previewBinding && previewCheck.available;
+  const checkPreview = useCallback(async () => {
+    if (!readyUrl) return;
+    checkController.current?.abort();
+    const controller = new AbortController();
+    checkController.current = controller;
+    const sequence = ++checkSequence.current;
+    setPreviewCheck(previous => ({ binding: previewBinding,
+      available: previous.binding === previewBinding && previous.available, busy: true, reason: "" }));
+    const current = () => checkSequence.current === sequence && latestCheckBinding.current === checkBinding;
+    try {
+      const response = await fetch("/api/prototype/preview-status", {
+        cache: "no-store", redirect: "error", signal: AbortSignal.any([controller.signal, AbortSignal.timeout(7000)]),
+      });
+      const value = await response.json();
+      if (!response.ok || value.generation !== generation || value.url !== readyUrl || value.checkpointId !== displayedId
+        || value.pendingCheckpointId !== pendingId || typeof value.available !== "boolean" || typeof value.reason !== "string") {
+        throw new Error(value.error || "The current preview changed or could not be verified. Check again.");
+      }
+      if (current()) setPreviewCheck({ binding: previewBinding, available: value.available, busy: false, reason: value.reason });
+    } catch (error) {
+      if (current()) setPreviewCheck({ binding: previewBinding, available: false, busy: false,
+        reason: error instanceof Error ? error.message : "The current preview could not be checked." });
+    }
+  }, [readyUrl, generation, displayedId, pendingId, previewBinding, checkBinding]);
+  useEffect(() => {
+    if (visible && connected) void checkPreview();
+    return () => { checkSequence.current++; checkController.current?.abort(); };
+  }, [visible, connected, checkPreview]);
   const milestonesReady = milestoneReady(state, "structure") && milestoneReady(state, "interaction")
     && (!flow?.visualRequested || milestoneReady(state, "visual"));
   const blocked = pending || !canEdit("prototype") || hasActiveJobs(state) || finalizing || Boolean(question);
@@ -202,24 +239,17 @@ export function PrototypePanel() {
       <div id="preview-tools" className="preview-tools">
         <span id="preview-status">{savedOnly ? showLivePreview ? "Saved prototype · live preview verified" : "Saved prototype · live preview not verified"
           : unavailable ? "not applicable" : candidate ? "new prototype version ready" : building ? readyUrl ? "preview ready · building update" : "building" : state.previewStatus}</span>
-        {readyUrl && savedOnly && <button id="check-live-preview" className="plan-button secondary" type="button" disabled={previewCheck.busy} onClick={async () => {
-          setPreviewCheck({ url: readyUrl, available: false, busy: true, reason: "" });
-          try {
-            const response = await fetch("/api/prototype/preview-status");
-            const value = await response.json();
-            if (!response.ok || value.url !== readyUrl || value.checkpointId !== (flow?.displayedCheckpointId ?? null)
-              || typeof value.available !== "boolean") throw new Error(value.error || "The selected preview changed or could not be verified.");
-            setPreviewCheck({ url: readyUrl, available: value.available, busy: false, reason: value.reason });
-          } catch (error) {
-            setPreviewCheck({ url: readyUrl, available: false, busy: false,
-              reason: error instanceof Error ? error.message : "Live preview check failed." });
-          }
-        }}>{previewCheck.busy ? "Checking preview..." : "Check live preview"}</button>}
+        {readyUrl && <button id="check-live-preview" className="plan-button secondary" type="button"
+          disabled={previewCheck.busy || !connected || !visible} onClick={() => void checkPreview()}>
+          {previewCheck.busy && connected ? "Checking preview..." : "Check again"}</button>}
         {readyUrl && showLivePreview && <a id="open-preview" href={readyUrl} target="_blank" rel="noreferrer"><ExternalLink size={14} />Open current preview</a>}
       </div>
-      {savedOnly && !showLivePreview && <p className="revision-status" role="status">
-        Saved prototype files are retained. A previous server URL is not proof that the preview is running.
-        Checking does not start a server or model work. {previewCheck.reason}
+      {readyUrl && <p id="preview-availability" className="revision-status" role="status">
+        {!connected ? "Connection interrupted. Current preview availability will be checked when the workspace reconnects."
+          : previewCheck.binding !== previewBinding || previewCheck.busy ? "Checking current preview..."
+          : showLivePreview ? "Current preview verified."
+          : "Current preview unavailable. The preview server may have stopped. " + previewCheck.reason}
+        {!showLivePreview && " Saved version, pending update and feedback are preserved. Checking does not start a server or model work."}
       </p>}
       <section id="prototype-progress" className="prototype-progress" aria-label="Prototype progress"
         aria-describedby="prototype-progress-message"
@@ -266,10 +296,11 @@ export function PrototypePanel() {
             onClick={() => void action.run(() => post("/api/prototype/start", {}))}><Play size={16} />{validation ? state.previewStatus === "error" ? "Retry existing prototype validation" : "Validate existing prototype" : state.previewStatus === "error" ? "Retry prototype build" : "Start prototype"}</button>
         </div>
       </div>
-      <iframe key={checkpointKey} id="preview-frame" ref={frame} title="Runnable prototype" src={showLivePreview ? readyUrl || undefined : undefined} hidden={!showLivePreview}
+      <iframe key={checkpointKey + ":" + (showLivePreview ? "verified" : "unverified")} id="preview-frame" ref={frame} title="Runnable prototype" src={showLivePreview ? readyUrl || undefined : undefined} hidden={!showLivePreview}
         data-url={readyUrl || ""} data-checkpoint-id={flow?.displayedCheckpointId || ""} referrerPolicy="origin"
         sandbox="allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
-        onLoad={() => {
+        onLoad={(event) => {
+          if (!showLivePreview || event.currentTarget !== frame.current) return;
           const saved = restore.current;
           if (!saved || saved.generation !== latest.current.generation || saved.checkpointId !== latest.current.prototypeFlow?.displayedCheckpointId) return;
           const origin = originOf(readyUrl);

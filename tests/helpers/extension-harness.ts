@@ -128,6 +128,7 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
     let browserSignIns = 0;
     let browserTokenRequests = 0;
     let previewHtml = '<html><meta name="tandem-prototype-id" content="sample"></html>';
+    let previewFetch: typeof fetch = async () => new Response(previewHtml);
     let signIn: (signal: AbortSignal) => Promise<void> = async () => {};
     let rename = fs.rename;
     const require = createRequire(import.meta.url);
@@ -209,7 +210,7 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
                     };
                 },
             },
-            fetch: async () => new Response(previewHtml),
+            fetch: (input: Parameters<typeof fetch>[0], init?: RequestInit) => previewFetch(input, init),
             process: new Proxy(process, {
                 get(target, key) {
                     if (key === "cwd") return () => workspace;
@@ -254,6 +255,7 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
             setBeforeDevelopmentStart(handler: () => Promise<void>) { beforeDevelopmentStart = handler; },
             setRename(value: typeof fs.rename) { rename = value; },
             setPreviewHtml(value: string) { previewHtml = value; },
+            setPreviewFetch(value: typeof fetch) { previewFetch = value; },
             browserSignIns: () => browserSignIns,
             browserTokenRequests: () => browserTokenRequests,
             setSpeechSignIn(value: typeof signIn) { signIn = value; },
