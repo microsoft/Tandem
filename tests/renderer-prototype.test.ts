@@ -63,7 +63,7 @@ test("progressive Prototype reports honest milestones and keeps its iframe while
     h.render(readyPrototype(4, true));
     assert.equal(frame(h), displayed);
     assert.equal(frame(h).src, value.previewUrl);
-    assert.match(text(h, "prototype-progress-message"), /New prototype version ready/);
+    assert.match(text(h, "prototype-progress-message"), /Interaction prototype ready to inspect.*automatically generated milestone, not a response to feedback/);
     assert.equal(hidden(h, "apply-prototype-update"), false);
     assert.equal(disabled(h, "apply-prototype-update"), false);
     assert.equal(hidden(h, "request-prototype-visual"), true);
@@ -99,6 +99,26 @@ test("compact prototype layout retains expanded details, drafts and iframe acros
     assert.equal(h.get<HTMLDetailsElement>("revision-history-details").open, true);
     assert.equal(field(h, "revision-input").value, "Draft stays here.");
     assert.equal(frame(h), displayed);
+});
+
+test("pending Prototype copy distinguishes automatic milestones from recorded feedback revisions", async t => {
+    const value = readyPrototype(1, true);
+    const h = await setup(t, value);
+    assert.match(text(h, "prototype-progress-message"), /automatically generated milestone, not a response to feedback/);
+    assert.equal(text(h, "apply-prototype-update"), "Show Interaction prototype");
+    assert.match(text(h, "prototype-feedback-help"), /Feedback is optional/);
+    const requested = readyPrototype(2, true);
+    requested.prototypeFlow.checkpoints[1].revisionId = "feedback-one";
+    requested.prototypeReview.revisions = [{ id: "feedback-one", suggestion: "Use a larger button.", status: "ready" }];
+    h.render(requested); await h.flush();
+    assert.match(text(h, "prototype-progress-message"), /Requested prototype revision ready to inspect/);
+    assert.doesNotMatch(text(h, "prototype-progress-message"), /automatically generated/);
+    assert.equal(text(h, "apply-prototype-update"), "Show requested revision");
+    h.render({ ...requested, revision: 3, prototypeReview: { ...requested.prototypeReview, revisions: [] } });
+    await h.flush();
+    assert.match(text(h, "prototype-progress-message"), /Saved prototype version ready to inspect/);
+    assert.doesNotMatch(text(h, "prototype-progress-message"), /Requested|automatically generated/);
+    assert.equal(h.requests.length, 0);
 });
 
 test("compact prototype controls never hide pending candidates, failures or clarification", async (t) => {

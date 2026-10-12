@@ -300,8 +300,15 @@ starts a server or model work, and successful rechecks keep the current frame's
 local state when its verified identity has not changed.
 During Prototype work, the runnable current version appears inline above Feedback.
 **Open current preview** opens that same version in a separate window.
-**New prototype version ready** means a checkpoint is waiting for **Apply update**;
-neither the inline preview nor the separate link switches before that explicit action.
+An automatic milestone is labelled **Interaction prototype ready to inspect** (or
+its actual milestone); **Show Interaction prototype** explicitly switches the
+displayed checkpoint. Requested-revision wording appears only for a checkpoint
+linked to a recorded feedback revision. Feedback is optional; readiness is not a
+claim that the user submitted feedback or that the saved preview server is live.
+The phase-owned Feedback section stays at the bottom of the Prototype pane, with
+the inline preview using the remaining space above and pane scrolling when needed.
+Neither preview link nor iframe switches to a pending version without the explicit
+checkpoint-promotion action; its existing validation and Finish gates are unchanged.
 Saved-evidence rows refresh when their source changes; native conversation records
 remain immutable. New drawing requests retain their exact accepted instruction,
 request ID, time and base revision in Stage1's own state, including failed requests.

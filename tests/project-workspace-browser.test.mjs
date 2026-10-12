@@ -364,7 +364,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         value.revision++;
         for (const response of rootEvents) response.write(`data: ${JSON.stringify(value)}\n\n`);
         await browser.waitFor(`document.querySelector("#preview-frame").dataset.checkpointId === ${JSON.stringify(prototype.prototypeFlow.displayedCheckpointId || "")}
-          && document.querySelector("#preview-status").textContent === ${JSON.stringify(prototype.prototypeFlow.pendingCheckpointId ? "new prototype version ready"
+          && document.querySelector("#preview-status").textContent === ${JSON.stringify(prototype.prototypeFlow.pendingCheckpointId ? "Interaction prototype ready to inspect"
             : prototype.prototypeFlow.activeCheckpointId ? prototype.previewUrl ? "preview ready · building update" : "building" : prototype.previewStatus)}`);
       };
       const loading = progressivePrototype();
@@ -395,15 +395,29 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await browser.waitFor('document.querySelector("#preview-availability").textContent.includes("Current preview verified")');
       await pushPrototype(currentPrototype);
       await browser.waitFor('document.querySelector("#preview-frame").contentDocument?.querySelector("#preview-button")');
-      for (const width of [1360, 390]) {
-        await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 1000, deviceScaleFactor: 1, mobile: false });
+      for (const [width, height] of [[1360, 1000], [390, 1000], [1360, 580], [390, 600]]) {
+        await browser.call("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
         await browser.evaluate('document.querySelector("#preview-frame").scrollIntoView({block:"center"})');
         const rect = await browser.evaluate('(() => {const e=document.querySelector("#preview-frame"),r=e.getBoundingClientRect();return {hidden:e.hidden,display:getComputedStyle(e).display,width:r.width,height:r.height};})()');
         assert.ok(!rect.hidden && rect.display !== "none" && rect.width > 100 && rect.height >= 180, JSON.stringify(rect));
         assert.equal(await browser.evaluate('document.querySelector("#preview-frame").getBoundingClientRect().bottom <= document.querySelector("#prototype-review").getBoundingClientRect().top'), true,
           "The restored inline frame must not cover the original feedback form.");
-        if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `inline-current-prototype-${width}.png`), await browser.screenshot());
+        const footer = await browser.evaluate(`(() => {
+          const pane=document.querySelector("#live-preview-panel"), review=document.querySelector("#prototype-review");
+          const bottomPadding=parseFloat(getComputedStyle(pane).paddingBottom);
+          return {scrollHeight:pane.scrollHeight,height:pane.clientHeight,padding:bottomPadding,
+            bottomGap:pane.getBoundingClientRect().bottom-review.getBoundingClientRect().bottom};
+        })()`);
+        if (footer.scrollHeight <= footer.height + 1) assert.ok(Math.abs(footer.bottomGap - footer.padding) <= 2, JSON.stringify(footer));
+        if (width === 1360 && height === 1000) assert.ok(rect.height > 300, "The preview must grow, not leave blank space below Feedback.");
+        await clickRoot("#revision-input");
+        assert.equal(await browser.evaluate("document.activeElement.id"), "revision-input");
+        await browser.evaluate('document.querySelector("#submit-revision").scrollIntoView({block:"nearest"}); document.querySelector("#submit-revision").focus()');
+        assert.equal(await browser.evaluate("document.activeElement.id"), "submit-revision");
+        if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `inline-current-prototype-${width}-${height}.png`), await browser.screenshot());
       }
+      await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 1000, deviceScaleFactor: 1, mobile: false });
+      await browser.evaluate('document.querySelector("#preview-frame").scrollIntoView({block:"center"})');
       const point = await browser.evaluate('(() => {const f=document.querySelector("#preview-frame"),r=f.getBoundingClientRect(),b=f.contentDocument.querySelector("#preview-button").getBoundingClientRect();return {x:r.x+f.clientLeft+b.x+b.width/2,y:r.y+f.clientTop+b.y+b.height/2};})()');
       for (const type of ["mousePressed", "mouseReleased"]) await browser.call("Input.dispatchMouseEvent", { type, ...point, button: "left", clickCount: 1 });
       await browser.waitFor('document.querySelector("#preview-frame").contentDocument.querySelector("#preview-button").textContent==="Preview interaction accepted"');
@@ -419,6 +433,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await browser.waitFor('document.querySelector("#connection-status").textContent === "" && document.querySelector("#preview-availability").textContent.includes("Current preview verified")');
       assert.ok(previewChecks > checksBeforeReconnect);
       assert.equal(await browser.evaluate('document.querySelector("#preview-frame").contentDocument.querySelector("#preview-button").textContent'), "Preview interaction accepted");
+      await browser.call("Emulation.setDeviceMetricsOverride", { width: 390, height: 1000, deviceScaleFactor: 1, mobile: false });
       holdPreviewChecks = true;
       await clickRoot("#check-live-preview");
       await browser.waitFor('document.querySelector("#preview-availability").textContent.includes("Checking current preview")');
@@ -434,7 +449,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       assert.equal(await browser.evaluate('document.querySelector("#open-preview").href'), currentPrototype.previewUrl);
       assert.equal(await browser.evaluate('document.querySelector("#preview-frame").contentDocument.querySelector("#preview-button").textContent'), "Preview interaction accepted",
         "A pending version preserves the working iframe and its interaction state.");
-      assert.match(await browser.evaluate('document.querySelector("#prototype-progress-message").textContent'), /New prototype version ready.*current version until you choose Apply update/);
+      assert.match(await browser.evaluate('document.querySelector("#prototype-progress-message").textContent'), /Interaction prototype ready to inspect.*current version until you choose Show Interaction prototype/);
       assert.equal(await browser.evaluate('document.querySelector("#preview-frame").getBoundingClientRect().bottom <= document.querySelector("#prototype-review").getBoundingClientRect().top'), true);
       if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "inline-pending-prototype-390.png"), await browser.screenshot());
       assert.equal(mutations.some(item => item.path === "/api/prototype/action"), false);

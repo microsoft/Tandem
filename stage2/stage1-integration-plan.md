@@ -97,6 +97,15 @@ version. A failed probe preserves checkpoint readiness/history and feedback and
 shows unavailable guidance with **Check again**, without launching processes,
 promoting a pending version or dispatching model work.
 
+Prototype layout now gives its tabpanel the whole workspace row and reserves the
+original Feedback section at its bottom. A growing preview surface replaces the
+old implicit empty grid row; short panes scroll rather than overlap controls.
+Pending-output copy uses checkpoint/revision provenance: automatic milestones are
+ready to inspect, while recorded feedback revisions are labelled as requested.
+The explicit action names the displayed-version switch. Optional Feedback,
+milestone acceptance, pending promotion and live-server availability remain
+distinct; no workflow gate changed.
+
 Native model-restoration and unused-initialization-journal caveats remain separate
 known limitations. This work does not claim they are fixed, replace a private
 identity, or bypass their validation/recovery paths. Frozen manual session

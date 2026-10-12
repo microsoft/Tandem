@@ -93,6 +93,13 @@ export function PrototypePanel({ active: visible, connected }: { active: boolean
   const failed = checkpoints.filter((item, index) => item.status === "failed" && (item.milestone !== "visual" || flow?.visualRequested)
     && !checkpoints.slice(index + 1).some((next) => next.milestone === item.milestone && next.revisionId === item.revisionId)).at(-1);
   const revisions: Revision[] = state.prototypeReview?.revisions || [];
+  const candidateMilestone = milestones.find(item => item.id === candidate?.milestone)?.label || "Saved";
+  const automaticCandidate = candidate?.revisionId === null;
+  const requestedCandidate = Boolean(candidate?.revisionId && revisions.some(item => item.id === candidate.revisionId));
+  const candidateLabel = automaticCandidate ? `${candidateMilestone} prototype ready to inspect`
+    : requestedCandidate ? "Requested prototype revision ready to inspect" : "Saved prototype version ready to inspect";
+  const switchLabel = automaticCandidate ? `Show ${candidateMilestone} prototype`
+    : requestedCandidate ? "Show requested revision" : "Show saved version";
   const failedRevision = revisions.find((item) => item.status === "failed");
   const unresolved = revisions.filter((item) => unresolvedStatuses.includes(item.status));
   const question: DecisionQuestion | null = state.prototypeReview?.question || null;
@@ -215,7 +222,8 @@ export function PrototypePanel({ active: visible, connected }: { active: boolean
       } catch (error) { restore.current = null; throw error; }
     });
   }
-  const message = candidate ? "New prototype version ready. " + (candidate.summary || "The next checkpoint has been validated.") + " The inline preview and Open current preview still show your current version until you choose Apply update."
+  const message = candidate ? candidateLabel + ". " + (automaticCandidate ? "This is an automatically generated milestone, not a response to feedback. " : "")
+    + (candidate.summary || "The next checkpoint has been validated.") + ` The inline preview and Open current preview still show your current version until you choose ${switchLabel}.`
     : question ? "A revision needs clarification. Keep exploring and queue feedback below."
     : building ? readyUrl ? "Your working preview stays available while the next checkpoint builds." : "Building the first runnable checkpoint. No preview is available yet; you can already queue feedback."
     : failed ? "The latest update failed. " + failed.summary + (readyUrl ? " Your working preview is unchanged." : "")
@@ -230,7 +238,7 @@ export function PrototypePanel({ active: visible, connected }: { active: boolean
     : !readyUrl ? "You can queue feedback before the first preview is ready."
     : hasActiveJobs(state) ? "Keep using the displayed preview. New feedback is queued while the next update builds."
     : question ? "Answer the clarification to continue that revision. You can queue other feedback meanwhile."
-    : candidate ? "A new prototype version is ready. Apply it when you are ready; new feedback remains queued."
+    : candidate ? candidateLabel + ". Switching the displayed version is separate from optional feedback."
     : "Try the prototype, then describe any revision you want.");
   const recentApplied = new Set(revisions.filter((item) => item.status === "applied").slice(-5).map((item) => item.id));
 
@@ -238,7 +246,7 @@ export function PrototypePanel({ active: visible, connected }: { active: boolean
     <div className="preview-surface">
       <div id="preview-tools" className="preview-tools">
         <span id="preview-status">{savedOnly ? showLivePreview ? "Saved prototype · live preview verified" : "Saved prototype · live preview not verified"
-          : unavailable ? "not applicable" : candidate ? "new prototype version ready" : building ? readyUrl ? "preview ready · building update" : "building" : state.previewStatus}</span>
+          : unavailable ? "not applicable" : candidate ? candidateLabel : building ? readyUrl ? "preview ready · building update" : "building" : state.previewStatus}</span>
         {readyUrl && <button id="check-live-preview" className="plan-button secondary" type="button"
           disabled={previewCheck.busy || !connected || !visible} onClick={() => void checkPreview()}>
           {previewCheck.busy && connected ? "Checking preview..." : "Check again"}</button>}
@@ -258,7 +266,7 @@ export function PrototypePanel({ active: visible, connected }: { active: boolean
           {milestones.map((milestone) => {
             const latest = checkpoints.filter((checkpoint) => checkpoint.milestone === milestone.id).at(-1);
             const skipped = milestone.id === "visual" && !flow?.visualRequested && latest?.status === "failed";
-            const label = skipped ? "Skipped (optional)" : latest?.id === candidate?.id && candidate ? "New version ready - apply when ready"
+            const label = skipped ? "Skipped (optional)" : latest?.id === candidate?.id && candidate ? "Ready to inspect - not displayed"
               : latest?.status === "running" ? "Building" : latest?.status === "clarifying" ? "Needs clarification" : latest?.status === "failed" ? "Failed - retry available"
               : milestoneReady(state, milestone.id) ? "Ready" : milestone.id === "visual" && !flow?.visualRequested ? "Optional" : "Waiting";
             return <li key={milestone.id} data-milestone={milestone.id} data-status={skipped ? "skipped" : latest?.status || "waiting"} aria-current={active?.milestone === milestone.id ? "step" : undefined}>
@@ -267,7 +275,8 @@ export function PrototypePanel({ active: visible, connected }: { active: boolean
           })}
         </ol>
         <div className="prototype-actions">
-          <button id="apply-prototype-update" className="plan-button" hidden={!candidate} disabled={blocked} onClick={() => void submitAction("apply-update")}><ArrowUpRight size={16} />Apply update</button>
+          <button id="apply-prototype-update" className="plan-button" hidden={!candidate} disabled={blocked}
+            title="Switch the displayed preview to this saved version." onClick={() => void submitAction("apply-update")}><ArrowUpRight size={16} />{switchLabel}</button>
           <button id="request-prototype-visual" className="plan-button" hidden={!visualVisible} disabled={blocked || unresolved.length > 0} onClick={() => void submitAction("visual")}><Sparkles size={16} />Explore visual direction (optional)</button>
           <button id="skip-prototype-visual" className="plan-button secondary" hidden={!skipVisible} disabled={blocked} onClick={() => void submitAction("skip-visual")}><SkipForward size={16} aria-hidden="true" />Skip visual direction</button>
           <button id="retry-prototype-checkpoint" className="plan-button" hidden={!retryVisible} disabled={blocked} onClick={() => void submitAction("retry")}><RefreshCw size={16} />{failed ? "Retry " + milestones.find((item) => item.id === failed.milestone)?.label : failedRevision ? "Retry failed revision" : "Continue prototype work"}</button>
@@ -312,6 +321,7 @@ export function PrototypePanel({ active: visible, connected }: { active: boolean
     </div>
     <section id="prototype-review" className="prototype-review" hidden={!hasStageData(state, "prototype") || Boolean(unavailable)}>
       <div className="prototype-review-heading"><strong>Feedback</strong></div>
+      <p id="prototype-feedback-help" className="muted">Feedback is optional. Try the displayed prototype, then describe a change if you want one.</p>
       <form id="revision-form" className="revision-form inline-composer" aria-describedby="revision-status" onSubmit={(event) => {
         event.preventDefault();
         if (pending || !canEdit("prototype") || finalizing) return;
