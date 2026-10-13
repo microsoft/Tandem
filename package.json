@@ -18,7 +18,7 @@
     "pack:desktop": "npm run pack && npm run build:desktop && tsx scripts/desktop.ts publish",
     "test:desktop": "tsx scripts/desktop.ts check && tsx scripts/desktop-smoke.ts",
     "dev": "tsx scripts/build.ts --watch",
-    "check": "tsc --project stage2/tandem/tsconfig.types.json && tsc --noEmit && tsc --project tsconfig.core.json",
+    "check": "tsc --project development/tandem/tsconfig.types.json && tsc --noEmit && tsc --project tsconfig.core.json",
     "pack": "npm run check && npm run build && tsx scripts/pack.ts"
   },
   "devDependencies": {

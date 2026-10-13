@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { extensionHarness } from "./helpers/extension-harness.js";
-import { waitFor } from "../stage2/tandem/test/helpers/native-session-fixture.mjs";
+import { waitFor } from "../development/tandem/test/helpers/native-session-fixture.mjs";
 
 function decision(id: string, answer: string | null = null) {
     return {

@@ -25,7 +25,7 @@ test("responsive layout and graph keyboard focus have explicit accessible styles
 
 test("compact density is shared by all stage headers, panels, controls, and composers", async () => {
     const css = await readFile(new URL("../src/renderer/styles.css", import.meta.url), "utf8");
-    const theme = await readFile(new URL("../stage2/tandem/public/project-theme.css", import.meta.url), "utf8");
+    const theme = await readFile(new URL("../development/tandem/public/project-theme.css", import.meta.url), "utf8");
     const rules = (selector: string) => {
         const start = css.search(new RegExp("^" + selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + " \\{", "m"));
         assert.ok(start >= 0, `Missing ${selector}`);
@@ -73,7 +73,7 @@ test("desktop activity bar keeps completion visible as an icon-only action", asy
 });
 
 test("compact theme preserves host colors, standalone dark mode, and accessible input variants", async () => {
-    const css = (await Promise.all(["../src/renderer/styles.css", "../stage2/tandem/public/project-theme.css"]
+    const css = (await Promise.all(["../src/renderer/styles.css", "../development/tandem/public/project-theme.css"]
         .map(path => readFile(new URL(path, import.meta.url), "utf8")))).join("\n");
     assert.match(css, /--studio-surface:\s*var\(--background-color-default,\s*light-dark\(/);
     assert.match(css, /--studio-text:\s*var\(--text-color-default,\s*light-dark\(/);

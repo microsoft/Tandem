@@ -25,7 +25,7 @@ test("root branding embeds the existing Tandem bicycle artwork with accessible n
     assert.equal(h.document.querySelector(".brand .mark"), null);
     const encoded = image.src.split(",")[1];
     assert.deepEqual(Buffer.from(encoded, "base64"),
-        await readFile(new URL("../stage2/tandem/public/branding/tandem-blue-dark.png", import.meta.url)));
+        await readFile(new URL("../development/tandem/public/branding/tandem-blue-dark.png", import.meta.url)));
 });
 
 test("compact workflow exposes progress and labeled stage icons without changing navigation", async (t) => {

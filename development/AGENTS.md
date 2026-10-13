@@ -1,6 +1,6 @@
 # Tandem Stage 2 instructions
 
-These instructions apply within `stage2/`. All paths below are relative to this
+These instructions apply within `development/`. All paths below are relative to this
 directory, which retains the original source layout. The approved Node integration
 composes this engine with root `src/` through `human-loop-controller.mjs`.
 Root build/pack scripts may package this complete subtree, and root checking may

@@ -22,7 +22,7 @@ The illustration above expresses that vision; it is not a product screenshot.
   the proposed work, and inspect implementation and Review outcomes.
 
 Read [the Tandem story](docs/the-tandem-story.md) or explore the
-[opening presentation](stage2/docs/tandem-opening-slides-v2.html#1).
+[opening presentation](development/docs/tandem-opening-slides-v2.html#1).
 
 ## Get started
 
@@ -76,7 +76,7 @@ engineering references.
 
 ## Development and contributions
 
-Work from source in `src` and `stage2\tandem`; do not hand-edit the generated
+Work from source in `src` and `development\tandem`; do not hand-edit the generated
 extension under `.github\extensions\tandem`. From the repository root:
 
 ```powershell
@@ -85,7 +85,7 @@ npm test
 npm run build
 ```
 
-For Stage 2 changes, also follow its [contributor instructions](stage2/AGENTS.md).
+For Stage 2 changes, also follow its [contributor instructions](development/AGENTS.md).
 See the [engineering reference](docs/engineering-reference.md) for architecture
 boundaries, packaging, optional hosts and qualification limits.
 

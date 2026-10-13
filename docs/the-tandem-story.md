@@ -1,6 +1,6 @@
 # The Tandem story: make intent visible
 
-[Try Tandem](quick-start.md) | [All guides](README.md) | [Opening slides](../stage2/docs/tandem-opening-slides-v2.html#1)
+[Try Tandem](quick-start.md) | [All guides](README.md) | [Opening slides](../development/docs/tandem-opening-slides-v2.html#1)
 
 You ask an agent to add account deletion. Soon there is a button, code, and tests.
 Then you ask, "How do I recover an account I deleted by mistake?"
@@ -14,18 +14,18 @@ without moving toward different outcomes?**
 
 ## From a working result to a shared understanding
 
-The [opening presentation](../stage2/docs/tandem-opening-slides-v2.html#1) begins
+The [opening presentation](../development/docs/tandem-opening-slides-v2.html#1) begins
 with two familiar approaches. In "Describe before building," expectations come
 first, but users must imagine an experience from documents.
-In ["Build before agreement"](../stage2/docs/tandem-opening-slides-v2.html#2),
+In ["Build before agreement"](../development/docs/tandem-opening-slides-v2.html#2),
 the first app arrives quickly, but important assumptions may already be code
 before the user notices them.
 
 Neither approach is inherently wrong. The risk is the
-["intent gap"](../stage2/docs/tandem-opening-slides-v2.html#3): the user's and
+["intent gap"](../development/docs/tandem-opening-slides-v2.html#3): the user's and
 agent's assumptions overlap, but one difference matters enormously.
 Tests written for permanent deletion cannot establish that the user wanted it.
-As [slide 4](../stage2/docs/tandem-opening-slides-v2.html#4) puts it, more output
+As [slide 4](../development/docs/tandem-opening-slides-v2.html#4) puts it, more output
 is not understanding.
 
 Tandem's vision is the shared whiteboard: a person and Copilot discussing a
@@ -44,7 +44,7 @@ the journey a shape. A prototype lets you try it and notice that "within 30 days
 still leaves the exact deadline ambiguous.
 
 That is the loop in
-[slide 5, "Prototype to a spec"](../stage2/docs/tandem-opening-slides-v2.html#5):
+[slide 5, "Prototype to a spec"](../development/docs/tandem-opening-slides-v2.html#5):
 statements, targeted questions, an experience to inspect, and optional feedback.
 Its historical Model Y image illustrates the idea; it is not a live demo of this
 account-management example.
@@ -60,7 +60,7 @@ A rough idea can start there too; an agreed specification is not an entry ticket
 
 ## Keep the agreement beside the work
 
-[Slide 6, "Build against the agreement"](../stage2/docs/tandem-opening-slides-v2.html#6)
+[Slide 6, "Build against the agreement"](../development/docs/tandem-opening-slides-v2.html#6)
 shows three views of the account-deletion example: a journey, a recovery timeline,
 and unresolved purge decisions.
 
@@ -103,7 +103,7 @@ notes. The slides explain the vision; the [quick start](quick-start.md) and
 | --- | --- |
 | Slide 5's screenshot has a **Design** tab. | Discovery uses Preparation, Requirements, Drawings and Prototype. Formal Design belongs to Development. |
 | The slides mention direct entry with an agreed spec. | Development also accepts existing files or a rough idea and can establish the agreement there. |
-| The older [workflow diagram](../stage2/docs/workflow-redesign.html?view=ownership) has no human technical-plan approval or Apply-to-project step. | **Plan and implement** is still required before planning/code changes. You do not approve each internal task. Prototype's Show/Apply control is a different action. |
+| The older [workflow diagram](../development/docs/workflow-redesign.html?view=ownership) has no human technical-plan approval or Apply-to-project step. | **Plan and implement** is still required before planning/code changes. You do not approve each internal task. Prototype's Show/Apply control is a different action. |
 | The diagram includes observed main-chat history. | Development shows its own messages and attributable events, not copied parent/discovery chat. |
 
 None of these illustrations establishes release availability, test coverage,

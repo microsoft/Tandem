@@ -6,7 +6,7 @@ For the idea behind the product, read [the Tandem story](the-tandem-story.md).
 | I want to... | Read |
 | --- | --- |
 | Open my first project | [Quick start](quick-start.md) |
-| Understand the vision | [The Tandem story](the-tandem-story.md) and [opening slides](../stage2/docs/tandem-opening-slides-v2.html#1) |
+| Understand the vision | [The Tandem story](the-tandem-story.md) and [opening slides](../development/docs/tandem-opening-slides-v2.html#1) |
 | Learn the workspace | [User manual](user-manual.md) |
 | Revise drawings, refine Design or share output | [Task recipes](use-cases.md) |
 | Stop work, return later or recover a preview | [Troubleshooting](troubleshooting.md) |
@@ -24,9 +24,9 @@ Windows, PowerShell and actual Node 24+ are the currently qualified environment.
 ## For contributors
 
 See [development commands](../README.md#development-and-contributions),
-[Stage 2 instructions](../stage2/AGENTS.md), the
-[Stage 2 implementation guide](../stage2/tandem/README.md), and the
-[design reading guide](../stage2/docs/README.md).
+[Stage 2 instructions](../development/AGENTS.md), the
+[Stage 2 implementation guide](../development/tandem/README.md), and the
+[design reading guide](../development/docs/README.md).
 The Stage 2-only installation guide is not the integrated application's quick start.
 
 The slides are explanatory material, not a release or test report. Open their

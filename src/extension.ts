@@ -68,8 +68,8 @@ import {
 } from "./prototype-flow.js";
 import { createProcessAdapters } from "./process-adapters.js";
 import { assertDeliveryCurrent, prepareDeliveryDraft } from "./delivery.js";
-import { createHumanLoopController } from "../stage2/tandem/src/human-loop-controller.mjs";
-import { privateReviewRegistration } from "../stage2/tandem/src/native-evidence-workflow.mjs";
+import { createHumanLoopController } from "../development/tandem/src/human-loop-controller.mjs";
+import { privateReviewRegistration } from "../development/tandem/src/native-evidence-workflow.mjs";
 import { DevelopmentHandoffs } from "./development-handoff.js";
 import { DevelopmentTransition } from "./development-transition.js";
 import { nodeMainConsent } from "./main-consent.js";

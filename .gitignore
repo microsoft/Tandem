@@ -1,6 +1,6 @@
 .tandem/
 dist/
 node_modules/
-stage2/tandem/runtime-types/
+development/tandem/runtime-types/
 **/bin/
 **/obj/

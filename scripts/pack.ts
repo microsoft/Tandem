@@ -43,7 +43,7 @@ archive.file(join(repositoryRoot, "skills", "tandem", "SKILL.md"), {
 });
 archive.glob("src/**/*", { cwd: repositoryRoot, ignore: ["**/bin/**", "**/obj/**"] }, { prefix: "source" });
 archive.glob("scripts/**/*", { cwd: repositoryRoot }, { prefix: "source" });
-archive.glob("stage2/**/*", { cwd: repositoryRoot, ignore: ["**/node_modules/**", "**/.tandem/**"] }, { prefix: "source" });
+archive.glob("development/**/*", { cwd: repositoryRoot, ignore: ["**/node_modules/**", "**/.tandem/**"] }, { prefix: "source" });
 archive.glob("tests/**/*", { cwd: repositoryRoot }, { prefix: "source" });
 for (const fileName of [
     "package.json",

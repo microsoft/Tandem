@@ -5,7 +5,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { fileURLToPath } from "node:url";
 import { test, type TestContext } from "node:test";
 import { reactHarness, state, response } from "./helpers/react-harness.js";
-import { browserAvailable, openFixtureBrowser } from "../stage2/tandem/test/helpers/browser-fixture.mjs";
+import { browserAvailable, openFixtureBrowser } from "../development/tandem/test/helpers/browser-fixture.mjs";
 import { projectDiscovery } from "../src/renderer/project-conversation.js";
 
 test("Discovery and Development artifact groups keep separate disclosure keys through live index updates", async t => {
