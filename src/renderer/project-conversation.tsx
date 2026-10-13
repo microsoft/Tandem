@@ -57,6 +57,7 @@ interface ProjectView {
     visible: boolean;
     url: string | null; channel: string; error: string; active: boolean; starting: boolean; developmentEntered: boolean;
     status: string; detail: string; designRevision: string | null; designChanged: boolean; attention: number;
+    maintenanceError: string;
     activate(retry?: boolean): Promise<void>; command(command: string): void;
     outputs: ProjectOutput[]; outputStatus: string; outputReason: string; outputError: string; selectedOutput: string | null;
     openOutput(item: ProjectOutput): void;
@@ -321,7 +322,8 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
         window.addEventListener("message", receive);
         return () => window.removeEventListener("message", receive);
     }, []);
-    return <Context.Provider value={{ ...view, visible: designVisible, entry, chooseEntry: path => loadEntry(true, path), reloadEntry: () => loadEntry(),
+    return <Context.Provider value={{ ...view, maintenanceError: providerReload.view.error ? providerReload.view.message : "",
+        visible: designVisible, entry, chooseEntry: path => loadEntry(true, path), reloadEntry: () => loadEntry(),
         frame, sync, activate,
         prepareDevelopmentView: () => { setViewRequested(true); setView(v => ({ ...v, developmentEntered: true })); },
         resumeDiscovery: () => setView(v => ({ ...v, developmentEntered: false })),

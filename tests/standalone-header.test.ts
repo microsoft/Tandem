@@ -86,6 +86,9 @@ test("hosted reload cannot bypass the relocated Project settings control", async
     await h.click("reload-extension");
     assert.equal(h.requests.at(-1)!.path, "/api/reload");
     assert.equal(h.get("reload-status").textContent, "Provider reload failed.");
+    assert.ok(header(h.headerMessages).messages.some(message => message.id === "maintenance" && message.error));
+    await h.click(h.document.querySelector('[role="alertdialog"] button')!);
+    assert.match(h.get("next-action-guide").textContent!, /Provider reload failed/);
     assert.equal(h.document.querySelector(".topbar #reload-extension"), null);
 });
 

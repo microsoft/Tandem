@@ -186,6 +186,7 @@ function GoalEntry() {
 
 function Header({ version, connectionError, developmentView }: { version: string; connectionError: string; developmentView: boolean }) {
   const { state } = useUi();
+  const { maintenanceError } = useProjectView();
   const stageIndex = Math.max(0, lifecycleStages.findIndex((stage) => stage.id === state.lifecycle.currentStage));
   const hosted = useStandaloneHeader({
     scope: JSON.stringify([state.prototypeId, state.generation, state.provider?.extensionId]),
@@ -198,6 +199,7 @@ function Header({ version, connectionError, developmentView }: { version: string
       cancelSignIn: null,
     },
     messages: [
+      { id: "maintenance", text: maintenanceError, error: true },
       { id: "connection", text: connectionError, error: true },
     ].filter((message) => message.text).map((message) => ({ ...message, text: message.text.slice(0, 8192) })),
   }, { reload: () => { throw new Error("Use Project settings diagnostics to reload Tandem."); },
@@ -294,7 +296,7 @@ function Workspace(props: WorkspaceProps) {
   const completionHelp = contextCollapsed && !allComplete && !stageAction.busy && !["prepare", "development"].includes(current)
     ? "Next stage: " + completionLabel : completionLabel;
   const selectedLabel = viewed === "sketch" ? "Drawings" : lifecycleStages.find((stage) => stage.id === viewed)?.label || viewed;
-  const statusBarError = props.connectionError || stageAction.error;
+  const statusBarError = props.connectionError || stageAction.error || projectView.maintenanceError || state.effortReset?.error;
   const savedPrototype = state.lifecycle.currentStage === "development" && state.lifecycle.outputs.some(output => output.stageId === "prototype")
     && state.status === "Prototype outputs saved. Stage 1 is complete. You can close now and open Development later with these files as input.";
   const statusBarText = statusBarError || contextHelp || (nextAction ? "Next action: " + nextAction.label
