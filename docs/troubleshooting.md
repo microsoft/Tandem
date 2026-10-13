@@ -160,6 +160,8 @@ blocks reload. Reload can restart this Copilot session's extension connections,
 including other extensions, and unsent form text may be lost. Saved Tandem files
 and history are not archived or reset. Unsupported installations do not gain this
 action; use their supported stopped-host update path instead.
+Reload failures remain visible in the root status bar and hosted error banners
+even after Project settings closes; reopening Settings also shows the failure.
 
 **Restart Preparation...** lives in **Preparation > Advanced Preparation
 actions**, for a project that used discovery. It is absent on an empty goal form

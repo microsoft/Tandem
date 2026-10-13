@@ -17,7 +17,8 @@ folder**; choose how to begin, not which engine to manage.
 These pages describe the **integrated source candidate**, not a promise that
 the same features are on `main`, in an installed extension, or in a published
 download. The workflow baseline is source commit `1a2a785`; maintenance and voice
-instructions additionally reflect committed cleanup `fe16b72`. A build without
+instructions additionally reflect committed cleanup `fe16b72` and its
+error-visibility follow-up `5f27488`. A build without
 that cleanup has different maintenance/sign-in placement.
 [Root package.json](../package.json) is the version authority.
 The [quick start](quick-start.md#launch-the-source-candidate) builds from source;
