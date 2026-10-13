@@ -325,6 +325,19 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       t.diagnostic(`Actual integrated root ${url}; ${(await browser.call("Browser.getVersion")).product}; synthetic runtime, no model calls.`);
       await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 1000, deviceScaleFactor: 1, mobile: false });
       await browser.call("Page.navigate", { url });
+      const reloadRoot = async () => {
+        const previous = await browser.evaluate("performance.timeOrigin");
+        await browser.call("Page.reload");
+        for (let attempt = 0; attempt < 150; attempt++) {
+          try {
+            if (await browser.evaluate(`performance.timeOrigin !== ${previous} && document.readyState === "complete"`)) return;
+          } catch (error) {
+            if (!/Inspected target navigated|Cannot find context|Execution context was destroyed/.test(String(error))) throw error;
+          }
+          await new Promise(done => setTimeout(done, 30));
+        }
+        assert.fail("Root reload did not reach a new, loaded document.");
+      };
       const clickRoot = async selector => {
         const point = await browser.evaluate(`(() => {const e=document.querySelector(${JSON.stringify(selector)});
           e.scrollIntoView({block:"nearest"});const r=e.getBoundingClientRect();
@@ -361,7 +374,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
             requirementsDigest: value.sketch.current.requirementsDigest, approvedAt: value.updatedAt, assets: [] };
         }
         value.revision++;
-        await browser.call("Page.reload");
+        await reloadRoot();
         await browser.waitFor('document.querySelector("#studio-workspace") && !document.querySelector("#studio-workspace").inert');
         await browser.waitFor(`document.querySelector(${JSON.stringify(phase === "sketch" ? "#sketch-tab" : "#live-preview-tab")})?.getAttribute("aria-selected")==="true"`);
         const geometry = await browser.evaluate(`(() => {
@@ -439,7 +452,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await browser.waitFor('document.querySelector("#preview-availability").textContent.includes("Current preview verified")');
       await browser.call("Emulation.setDeviceMetricsOverride", { width: 920, height: 620, deviceScaleFactor: 1, mobile: false });
       await browser.evaluate('window.beforePendingReload = true');
-      await browser.call("Page.reload");
+      await reloadRoot();
       await browser.waitFor('window.beforePendingReload === undefined && document.querySelector("#preview-availability")?.textContent.includes("Current preview verified") && document.querySelector("#studio-workspace")?.dataset.historyCollapsed==="true"');
       const pendingGeometry = async () => browser.evaluate(`(() => {
         const pane=document.querySelector("#live-preview-panel").getBoundingClientRect(), frame=document.querySelector("#preview-frame").getBoundingClientRect(),
@@ -563,7 +576,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         }
         assert.fail(`Embedded condition did not settle: ${expression}\n${JSON.stringify(browser.exceptions)}\n${await inside('document.body.innerText')}\n${await (await fetch(new URL("api/snapshot", provider.url))).text()}`);
       };
-      const click = async (selector, embedded = false) => {
+      const click = async (selector, embedded = false, activate = true) => {
         const evaluate = embedded ? inside : browser.evaluate;
         const local = await evaluate(`(() => {const e=document.querySelector(${JSON.stringify(selector)}); e.scrollIntoView({block:"nearest"});
           const r=e.getBoundingClientRect(); const hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);
@@ -573,6 +586,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         assert.ok(local.ok, `${selector} must be visible and hit-testable: ${JSON.stringify(local)}`);
         const offset = embedded ? await browser.evaluate(`(() => {const e=document.querySelector("#project-conversation-frame");
           e.scrollIntoView({block:"nearest"}); const r=e.getBoundingClientRect(); return {x:r.x,y:r.y};})()`) : { x: 0, y: 0 };
+        if (!activate) return;
         for (const type of ["mousePressed", "mouseReleased"]) await browser.call("Input.dispatchMouseEvent",
           { type, x: local.x + offset.x, y: local.y + offset.y, button: "left", clickCount: 1 });
       };
@@ -925,6 +939,87 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await waitInside('!document.querySelector("[data-request-id=permission-one]")');
       assert.deepEqual(mutations.find(x => x.path === "native-consent"),
         { path: "native-consent", id: "permission-one", decision: "denied", sessionId: "private" });
+      const capturedPermissions = process.env.TANDEM_PERMISSION_FIXTURE
+        ? JSON.parse(await readFile(process.env.TANDEM_PERMISSION_FIXTURE, "utf8")).accessRequests : null;
+      if (process.env.TANDEM_PERMISSION_FIXTURE) assert.ok(Array.isArray(capturedPermissions) && capturedPermissions.length >= 2,
+        "An explicit captured-state qualification must contain real pending requests, never fall back to synthetic ones.");
+      accessRequests = capturedPermissions ?? ["layout-read", "layout-shell"].map((id, index) => ({
+        id, kind: index ? "shell" : "read",
+        title: index ? "Allow the agent to run this shell command?" : "Allow the agent to read this path?",
+        description: "Inspect the exact project scope before deciding.",
+        scopes: [index ? "node --test test\\counter.test.js && git --no-pager diff -- public\\app.js"
+          : `C:\\qualification\\${"retained-project-directory\\".repeat(12)}public\\app.js`],
+        canApproveAll: true, canApproveForSession: false,
+        nativeInvocation: { sessionId: "private", taskId: "selected-role", requestId: "selected-request", toolCallId: id,
+          toolName: index ? "powershell" : "view" },
+      }));
+      assert.ok(accessRequests.length >= 2);
+      const permissionIds = accessRequests.map(request => request.id);
+      const consentCount = mutations.filter(item => item.path === "native-consent").length;
+      events.touch();
+      await waitInside('Boolean(document.querySelector(".access-request-picker select"))');
+      await click("#development-tab");
+      await waitInside('document.body.dataset.projectDesign==="true"');
+      await click("#workspace-divider", true);
+      for (let step = 0; step < 60 && await inside('document.querySelector("#conversation-panel").getBoundingClientRect().width > 325'); step++) {
+        for (const type of ["keyDown", "keyUp"]) await browser.call("Input.dispatchKeyEvent",
+          { type, key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39 });
+      }
+      assert.ok(await inside('document.querySelector("#conversation-panel").getBoundingClientRect().width <= 325'),
+        "Exercise the actual narrow conversation column, not a widened permission workaround.");
+      for (const width of [1360, 980, 920, 390]) {
+        await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 620, deviceScaleFactor: 1, mobile: false });
+        await waitInside(`document.body.dataset.projectStacked==="${width < 800}"`);
+        await waitInside('document.querySelector("#conversation-panel").getBoundingClientRect().width > 200 && document.querySelector("#access-approval").clientWidth > 150');
+        const fit = await inside(`(() => {
+          const panel = document.querySelector("#access-approval"), bounds = panel.getBoundingClientRect();
+          const nodes = [...panel.querySelectorAll("#access-requests, .access-request-picker, .access-request-decisions, button, select, p, pre")]
+            .filter(node => node.getClientRects().length && !node.closest("[hidden]"));
+          return { width: bounds.width, overflow: panel.scrollWidth > panel.clientWidth + 1,
+            clipped: nodes.filter(node => { const rect = node.getBoundingClientRect();
+              return rect.left < bounds.left || rect.right > bounds.right || node.scrollWidth > node.clientWidth + 1;
+            }).map(node => ({ tag: node.tagName, text: node.textContent.slice(0, 60), width: node.getBoundingClientRect().width })) };
+        })()`);
+        if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `permission-multiple-${width}.png`), await browser.screenshot());
+        assert.ok(!fit.overflow && !fit.clipped.length, `Permission contents fit at ${width}: ${JSON.stringify(fit)}`);
+        await click("#access-requests > .access-card:not([hidden]) .access-request-details > summary", true);
+        await click("#access-requests > .access-card:not([hidden]) .access-request-details > summary", true);
+        for (const decision of ["once", "denied"]) {
+          await click(`#access-requests > .access-card:not([hidden]) [data-access-decision=${decision}]`, true, false);
+        }
+      }
+      assert.equal(mutations.filter(item => item.path === "native-consent").length, consentCount,
+        "Layout, navigation and disclosure never imply consent.");
+      await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 1000, deviceScaleFactor: 1, mobile: false });
+      await waitInside('document.body.dataset.projectStacked==="false"');
+      await click(".access-request-picker select", true);
+      for (const [key, code] of [["End", 35], ["Enter", 13]]) {
+        for (const type of ["keyDown", "keyUp"]) await browser.call("Input.dispatchKeyEvent",
+          { type, key, windowsVirtualKeyCode: code, ...(key === "Enter" && type === "keyDown" ? { text: "\r" } : {}) });
+      }
+      await waitInside(`document.querySelector("#access-requests > .access-card:not([hidden])").dataset.permissionId===${JSON.stringify(permissionIds.at(-1))}`);
+      for (let step = 0; step < 12 && !await inside('document.activeElement.dataset.accessDecision==="once"'); step++) {
+        for (const type of ["keyDown", "keyUp"]) await browser.call("Input.dispatchKeyEvent",
+          { type, key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 });
+      }
+      assert.equal(await inside('document.activeElement.dataset.accessDecision'), "once");
+      accessRequests = [...accessRequests, { id: "layout-later-arrival", kind: "read", title: "Later synthetic request",
+        scopes: ["Not part of the captured set or the selected decision."], canApproveAll: false }];
+      events.touch();
+      await waitInside(`document.querySelector(".access-request-picker select").options.length===${permissionIds.length + 1}`);
+      await waitInside('document.activeElement.dataset.accessDecision==="once"');
+      for (const type of ["keyDown", "keyUp"]) await browser.call("Input.dispatchKeyEvent",
+        { type, key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, ...(type === "keyDown" ? { text: "\r" } : {}) });
+      await waitInside(`!document.querySelector('[data-request-id="${permissionIds.at(-1)}"]')`);
+      assert.deepEqual(mutations.at(-1), { path: "native-consent", id: permissionIds.at(-1), decision: "once", sessionId: "private" });
+      await click("#access-requests > .access-card:not([hidden]) [data-access-decision=denied]", true);
+      await waitInside(`!document.querySelector('[data-request-id="${permissionIds[0]}"]')`);
+      assert.deepEqual(mutations.at(-1), { path: "native-consent", id: permissionIds[0], decision: "denied", sessionId: "private" });
+      assert.equal(mutations.filter(item => item.path === "native-consent").length, consentCount + 2,
+        "Only the two explicitly selected requests were decided; later arrivals remain pending.");
+      accessRequests = [];
+      events.touch();
+      await waitInside('document.querySelector("#access-approval").hidden');
       await waitInside('Boolean(document.querySelector("[data-implementation-decision=cancelled]:not(:disabled)"))');
       await click('[data-implementation-decision="cancelled"]', true);
       await waitInside('document.querySelector(".implementation-confirmation").textContent.includes("Implementation declined")');
@@ -992,7 +1087,9 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       assert.equal(stopped, false); assert.equal(nativeRequests.length, 2, "Reopen does not replay conversation.");
       assert.deepEqual(browser.exceptions, []);
       t.diagnostic(JSON.stringify({ rootMutations: mutations.map(x => x.path), nativeRequests: nativeRequests.length,
-        preservedIframe: frame.frame.id, widths: [1360, 980, 390], independentDiscoveryAndNativeTargets: true }));
+        preservedIframe: frame.frame.id, widths: [1360, 980, 390], permissionWidths: [1360, 980, 920, 390],
+        permissionCases: permissionIds.length, permissionFixture: process.env.TANDEM_PERMISSION_FIXTURE ?? "synthetic",
+        independentDiscoveryAndNativeTargets: true }));
     } finally {
       for (const cleanup of cleanups) await cleanup();
       await provider.close(); events.close();

@@ -181,6 +181,9 @@ engineering work. Read-only roles cannot patch files. Native editing requires
 the selected accepted internal Implementer task. Hooks enforce ownership, role,
 read-only and permission boundaries independently of result completion. Eligible
 session grants survive role/child boundaries; Allow once remains once-only.
+Permission cards show the selected request and its Allow once/Deny controls
+before broader set/session actions. Narrow panes wrap long scopes and controls
+and use bounded vertical scrolling; resizing the conversation is not required.
 Historical custom-tool records remain readable, but the old custom file/shell
 execution wrappers and static-preview tool are not registered.
 

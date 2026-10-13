@@ -138,23 +138,28 @@
   --permission-height: min(52vh, 380px);
   display: flex;
   flex-direction: column;
+  align-items: stretch;
+  min-width: 0;
+  overflow-wrap: anywhere;
   max-height: var(--permission-height);
   overflow: hidden;
 }
-.human-app #access-requests { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.human-app #access-requests { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .human-app #access-requests > .access-card {
-  display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0;
+  display: block;
   margin: 0; padding: 0; border: 0;
 }
 .human-app #access-requests > .access-card[hidden] { display: none; }
-.human-app .access-request-picker { display: flex; align-items: center; gap: 8px; flex: none; margin: 0 0 8px; font-size: 12px; }
-.human-app .access-request-picker select { min-width: 0; flex: 1; font: inherit; }
-.human-app .access-request-context { overflow: auto; min-height: 0; overscroll-behavior: contain; padding-right: 6px; }
+.human-app .access-request-picker { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; font-size: 12px; }
+.human-app .access-request-picker select { min-width: 0; max-width: 100%; flex: 1 1 140px; font: inherit; }
+.human-app .access-request-context { overflow: auto; max-height: min(24vh, 180px); overscroll-behavior: contain; padding-right: 6px; }
 .human-app .access-request-details { margin-block: 6px; }
 .human-app .access-request-details pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
 .human-app .access-request-decisions { flex: none; border-top: 1px solid var(--border); padding-top: 6px; background: var(--surface); }
+.human-app .access-request-decisions > h3 { margin: 6px 0; font-size: inherit; }
 .human-app .access-card .access-approval-scope { font-size: 12px; line-height: 1.4; color: var(--muted); }
 .human-app .access-decision-buttons { display: flex; flex-wrap: wrap; gap: 6px; padding-bottom: 4px; }
+.human-app #access-approval button { box-sizing: border-box; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .human-app .access-card .access-decision-buttons button { margin: 0; }
 .human-app .human-loop-submitted-answer { white-space: pre-wrap; }
 .human-app .human-loop-question-context { margin-top: 12px; }

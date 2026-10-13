@@ -170,6 +170,23 @@ test('failed native decisions re-enable only the current pending request and sur
   assert.ok(ui.buttons().every(button => !button.disabled));
 });
 
+test('exact request controls precede broader actions without changing captured-set authorization', async () => {
+  const ui = fixture(), first = nativeRequest(), second = { ...nativeRequest('view'), id: 'second' };
+  ui.actions.approvePendingOnce = async ids => { ui.calls.push({ ids }); };
+  ui.render([first, second]);
+  const toolbar = ui.container.children.at(-1);
+  assert.equal(toolbar.querySelector('h3').textContent, 'Other permission actions');
+  assert.ok(ui.container.children.indexOf(ui.container.querySelector('.access-card')) < ui.container.children.indexOf(toolbar));
+  const oldBatch = toolbar.querySelectorAll('button').find(button => button.dataset.accessBatch === 'once');
+  const third = { ...nativeRequest('view'), id: 'third' };
+  ui.render([first, second, third]);
+  await oldBatch.onclick();
+  assert.deepEqual(ui.calls, [], 'A disconnected set cannot authorize its stale capture.');
+  await ui.container.children.at(-1).querySelectorAll('button').find(button => button.dataset.accessBatch === 'once').onclick();
+  assert.deepEqual(ui.calls, [{ ids: [first.id, second.id, third.id] }]);
+  assert.deepEqual(ui.buttons().map(button => button.dataset.accessDecision), ['once', 'denied', 'once', 'denied', 'once', 'denied']);
+});
+
 test('remembered broker state exposes Off separately from safe-idle custom per-tool reset', async () => {
   const source = await readFile(new URL('../public/human-loop-app.js', import.meta.url), 'utf8');
   const permissions = source.slice(source.indexOf('function renderPermissions()'), source.indexOf('async function refresh()'));
