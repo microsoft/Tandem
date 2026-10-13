@@ -7,6 +7,17 @@ Design. Stage 2 Development owns canonical Design, confirmed implementation and
 Review, using its original Design/Conversation UI and native role workflow.
 The former Design, Plan, Implement and Test stage engine is retired.
 
+## User documentation
+
+Start with [the Tandem story](docs/the-tandem-story.md), a narrative grounded in
+the [opening presentation](stage2/docs/tandem-opening-slides-v2.html#1), or follow
+the [quick start](docs/quick-start.md) for either Preparation or direct Development.
+The [user manual](docs/user-manual.md), [use-case recipes](docs/use-cases.md), and
+[troubleshooting/lifecycle guide](docs/troubleshooting.md) cover everyday work.
+See the [documentation index](docs/README.md) for source-candidate/version scope.
+The implementation, packaging and architecture notes below are separate from
+those user guides; they do not establish published-release availability.
+
 ## Standalone Node/browser app
 
 Use actual **Node 24+**, Git, and a Copilot account with the required model access.
