@@ -267,6 +267,8 @@ test("packaged standalone role hints preserve editing, IME, images and truthful 
     assert.equal(input.message, "@designer Explain this image without changes.\n");
     assert.deepEqual(input.roleHint, { schemaVersion: "human-role-hint/v1", role: "designer" });
     assert.equal(input.attachments[0].schemaVersion, "image-attachment/v1");
+    const pickedUp = f.state.requests.find(request => request.id === input.id);
+    pickedUp.status = "active"; pickedUp.queueAdmitted = true;
     f.runtime.conversation = async () => [{ id: "actual-agent", requestId: input.id, kind: "assistant", role: "agent",
       timestamp: new Date().toISOString(), content: "Actual read-only Agent response; fixture, not a model." }];
     f.events.touch();
@@ -647,7 +649,8 @@ test("clipboard-event PNG preview, removal, image-only retry and retained Conver
   assert.deepEqual(retainedSnapshot.historyRequests.find(request => request.id === id),
     { id, receivedAt: f.received[0].receivedAt });
   await browser.evaluate(`document.querySelector('[data-transition-id="request:${id}"] button').click()`);
-  assert.equal(await browser.evaluate("document.querySelector('#messages .state-focused').dataset.entryId"), `request:${id}`);
+  assert.equal(await browser.evaluate("document.activeElement.closest('[data-queued-request-id]').dataset.queuedRequestId"), id);
+  assert.equal(await browser.evaluate(`document.querySelector('#messages [data-entry-id="request:${id}"]')`), null);
   if (process.env.TANDEM_CLIPBOARD_EVIDENCE_DIR) {
     const screenshot = await browser.call('Page.captureScreenshot', { format: 'png' });
     await writeFile(join(process.env.TANDEM_CLIPBOARD_EVIDENCE_DIR, 'clipboard-conversation.png'), Buffer.from(screenshot.data, 'base64'));
@@ -1154,7 +1157,8 @@ test("actual browser entrypoint renders dynamic shared artifacts, answers and or
   await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
   const submitSelector = await browser.evaluate("(() => { const b=[...document.querySelectorAll('.human-loop-questions button')].find(b=>/send.*answer|submit.*answer/i.test(b.textContent)); if(!b) throw new Error('No answer submission control'); b.id='answer-submit-test'; return '#answer-submit-test'; })()");
   await click(submitSelector);
-  await browser.waitFor("document.querySelectorAll('#messages [data-kind=user]').length >= 2");
+  await browser.waitFor("document.querySelectorAll('#queued-requests [data-kind=user]').length === 1");
+  assert.equal(await browser.evaluate("document.querySelectorAll('#messages [data-kind=user]').length"), 1);
   assert.equal(f.received[0].answers.schemaVersion, "human-question-answers/v1");
   assert.match(await browser.evaluate("document.querySelector('.question-answer-record').textContent"), /Choose the current direction/);
   await click("#message"); await browser.call("Input.insertText", { text: "This is ordinary discussion, not a question answer." });

@@ -203,6 +203,13 @@
 .human-app .human-loop { background: var(--surface-raised); }
 .human-app .command-bar { background: var(--surface-raised); }
 .human-app #role-hint-help { margin: 4px 0 0; color: var(--muted); font-size: calc(var(--shell-font-size) - 2px); }
+.human-app #queued-requests { flex: none; min-height: 0; max-height: min(24vh, 180px); overflow: auto; overscroll-behavior: contain; padding: 6px 12px; border-top: 1px solid var(--border); background: var(--surface-raised); }
+.human-app #queued-requests > details > summary { padding: 3px 0; font-weight: 600; }
+.human-app #queued-requests ol { margin: 4px 0; padding-left: 20px; }
+.human-app #queued-requests li > details > summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 4px 0; }
+.human-app #queued-requests .conversation-entry { margin: 0; padding: 6px 0; }
+.human-app #queued-requests .conversation-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.human-app #queued-requests .conversation-diagram-image { max-width: 100%; max-height: 100px; object-fit: contain; }
 .human-app :is(button, select, textarea, input, summary):focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
 .human-app #message:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
 .human-app :is(.artifact-navigation-row button[aria-selected="true"], .state-history-step.is-current button) { color: var(--blue); background: var(--blue-soft); }

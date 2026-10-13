@@ -133,6 +133,13 @@ export function projectHumanLoopView(state, readiness) {
   };
 }
 
+export function queuedRequestStatus(request) {
+  if (request.status === "waiting") return "queued";
+  if (request.queueAdmitted || request.route) return null;
+  return { discarded: "cancelled-before-start", stopped: "stopped-before-start",
+    retired: "retired-before-start", rejected: "rejected-before-start" }[request.status] ?? null;
+}
+
 export function projectHumanConversation(state, originals) {
   const historicalQuestions = new Map();
   for (const question of state.questions) {
@@ -149,9 +156,10 @@ export function projectHumanConversation(state, originals) {
   }
 
   const handoffs = new Map(state.handoffs.map((handoff) => [handoff.id, handoff.result.resultId]));
-  const requests = state.requests.map((request) => ({
+  const requests = state.requests.map((request, index) => ({
     id: `request:${request.id}`, kind: "user", requestId: request.id, text: request.message,
     timestamp: request.receivedAt, queueState: request.status, stopId: request.stopId,
+    ...(queuedRequestStatus(request) ? { queuedStatus: queuedRequestStatus(request), queuedOrder: index } : {}),
     ...(request.roleHint ? { roleHint: request.roleHint } : {}),
     ...(request.attachments ? { attachments: request.attachments } : {}),
     ...(request.answers ? { answerDetails: request.answers.answers.map((answer) => {

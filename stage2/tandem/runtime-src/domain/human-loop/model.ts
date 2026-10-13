@@ -16,6 +16,8 @@ export interface HumanLoopOwner {
   policy: PolicySnapshot;
 }
 export interface RequestRecord extends HumanRequest {
+  /** Queue pickup, not native execution; reconstructed by ledger replay. */
+  queueAdmitted?: true;
   status: 'waiting' | 'active' | 'handoff-pending' | 'completed' | 'discarded' | 'stopped' | 'rejected' | 'retired' | 'cancelled';
   stopId: string | null; route: RoleResult | null; rejectionReason: string | null;
   blockingAnswerRefs: QuestionResolution[];
@@ -531,7 +533,7 @@ export function transitionHumanLoop(current: HumanLoopState, authority: Authorit
       requireCondition(next && next.id === data.requestId,
         'Blocking question-UI answers have priority; the normal lane waits for prerequisites and their processing. Each queue preserves durable FIFO order.');
       const batch = nextHumanBatch(state, enforceContinuations);
-      for (const request of batch) request.status = 'active';
+      for (const request of batch) { request.status = 'active'; request.queueAdmitted = true; }
       state.activeRequestId = next.id; state.activeBatchRequestIds = batch.map(({ id }) => id); break;
     }
     case 'start-cycle': {

@@ -87,6 +87,26 @@ reparses history or replays work. Question-form answers have no composer hints.
 Hints grant no implementation confirmation, permissions or role authority;
 all existing Stop, ownership, read-only and result gates remain unchanged.
 
+Accepted requests that have not been picked up appear in **Queued**, immediately
+above the private Development composer, not as conversation turns. Expand a row
+to inspect its exact text, attachments, question answers or per-message hint.
+Multiple rows keep the runtime's queue order in a bounded scroll area; they do
+not cover the composer or approval controls. Unconfirmed submissions still use
+the existing exact retry/draft path and are not invented as accepted queue rows.
+
+The existing durable `admit-request` transition marks each picked-up batch member
+with derived `queueAdmitted` state. Ledger replay reconstructs this fact for old
+requests without rewriting history. This is runtime pickup, **not evidence of a
+native model turn** or a changed dispatch policy. At pickup the request moves
+once into the normal conversation. Displayed times remain the original receipt
+times; no pickup/model-start timestamp is invented.
+
+Stop, rejection or Recovery before pickup retains the request separately in
+**Not started history**. Requests picked up before Stop/Recovery remain in the
+conversation with their actual disposition. Reconnect reads these same durable
+facts; it never re-enqueues, edits or deletes a request. Both presentations keep
+the original private audit, request IDs and attachment references unchanged.
+
 A valid current-role terminal result is durably saved and applied once without
 waiting for native tools, permissions, children, turn-end, idle or quiescence.
 Role/request/schema validation and actual persistence failures remain enforced.

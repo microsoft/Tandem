@@ -14,6 +14,7 @@ import { createImplementationConfirmations } from './implementation-confirmation
 import { installProjectPresentation } from './project-presentation.js';
 import { projectOutputs } from './project-outputs.js';
 import { parseRoleMention } from './role-hint.js';
+import { createQueuedRequests } from './queued-requests.js';
 
 const $ = (id) => document.getElementById(id);
 const splitter = installPanelSplitter({ layout: document.querySelector('.human-layout'),
@@ -180,7 +181,8 @@ questionArtifact.setAttribute('aria-label', 'Workflow questions');
 $('question-panel').append(questionArtifact);
 const conversation = createConversationRenderer({ messages: $('messages'), history: $('state-history'),
   current: $('current-state'), currentDetail: $('current-detail'), newer: $('newer'),
-  onSelectState: () => { $('history-details')?.remove(); } });
+  onSelectState: transition => { $('history-details')?.remove(); queuedRequests.focusRequest(transition.source?.requestId); } });
+const queuedRequests = createQueuedRequests($('queued-requests'));
 let annotation;
 const designView = createSharedDesignView({ tabs: $('backbone-tabs'), mount: $('design-artifacts'),
   onChange: () => {
@@ -375,13 +377,21 @@ function render() {
     inspectQuestionSource: (_resultId, requestId) => {
       $('question-panel').hidden = true;
       $('show-questions').setAttribute('aria-expanded', 'false');
-      conversation.focusRequest(requestId);
+      if (!queuedRequests.focusRequest(requestId)) conversation.focusRequest(requestId);
     },
   });
   $('private-history-status').hidden = snapshot.conversationStatus !== 'unverified';
-  const entries = snapshot.messages;
+  queuedRequests.render(snapshot.messages, view?.queue, !projectPresentation || projectPresentation.workingDevelopment());
+  const entries = snapshot.messages.filter(entry => !entry.queuedStatus);
   const transitions = projectHumanHistory(snapshot.events, entries, snapshot.streamId, snapshot.historyRequests, snapshot.recoveries);
   conversation.render(entries, transitions);
+  for (const entry of snapshot.messages.filter(entry => entry.queuedStatus)) {
+    const button = $('state-history').querySelector(`[data-transition-id="${CSS.escape(entry.id)}"] > button`);
+    if (button) {
+      button.setAttribute('aria-controls', 'queued-requests');
+      button.setAttribute('aria-label', 'Your request. View queued request or not-started history.');
+    }
+  }
   renderImplementationConfirmations();
   conversation.current({ kind: view?.status ?? 'host', label: compaction?.active ? `Compacting · ${humanLoopStatusLabel(view.status)}`
     : compaction?.requested ? 'Compaction requested'
@@ -408,6 +418,7 @@ function render() {
         label.textContent += `; Preference: @${entry.roleHint.role}`;
         label.title = 'Per-message preference only. Router decides who responds.';
       }
+      if (entry.kind === 'user') row.querySelector('time').title = `Received ${new Date(entry.timestamp).toLocaleString()}`;
     }
   }
   renderPermissions();
@@ -710,8 +721,11 @@ $('question-panel').addEventListener('keydown', event => {
   $('show-questions').focus();
 });
 $('focus-current-message').onclick = () => {
-  if (!revealCurrentQuestion()) conversation.focusRequest(snapshot?.workflow?.activeRequestId
-    ?? snapshot?.workflow?.questionInteractions?.[0]?.source.requestId ?? snapshot?.messages.at(-1)?.requestId);
+  if (!revealCurrentQuestion()) {
+    const requestId = snapshot?.workflow?.activeRequestId
+      ?? snapshot?.workflow?.questionInteractions?.[0]?.source.requestId ?? snapshot?.messages.at(-1)?.requestId;
+    if (!queuedRequests.focusRequest(requestId)) conversation.focusRequest(requestId);
+  }
 };
 function requestStopAfterStep() { return requestWorkflowStop('after-step'); }
 function requestWorkflowStop(mode) {

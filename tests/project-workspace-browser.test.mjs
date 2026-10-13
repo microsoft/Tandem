@@ -188,7 +188,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         canSetReasoningEffort: true, effortManaged: true, projectReasoningEffort: "low" }),
       async send(request) {
         nativeRequests.push(request);
-        nativeState.requests.push({ ...request, status: "active", blockingAnswerRefs: [] });
+        nativeState.requests.push({ ...request, status: "active", queueAdmitted: true, blockingAnswerRefs: [] });
         nativeState.activeRequestId = request.id; events.touch();
         if (request.answers) for (const question of nativeState.questions) {
           question.state = "answered"; question.answerRequestId = request.id; question.blockingActive = false;
@@ -197,7 +197,10 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       async stop(id, options) {
         mutations.push({ path: "native-stop", id, options });
         nativeState.activeRequestId = null;
-        nativeState.requests.forEach(request => { request.status = "completed"; });
+        nativeState.requests.forEach(request => {
+          if (request.status === "waiting") request.status = "discarded";
+          else if (request.status === "active") request.status = "stopped";
+        });
         events.touch();
       },
       async decideImplementation(input) {
@@ -859,10 +862,32 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await waitInside('[...document.querySelectorAll(".conversation-assistant .conversation-role")].some(node => node.textContent === "agent")');
       assert.match(await inside('[...document.querySelectorAll(".conversation-user .conversation-role")].at(-1).textContent'), /Preference: @designer/);
       if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "role-hint-integrated.png"), await browser.screenshot());
+      const queuedInputs = [
+        { id: "queued-one", message: "@agent Rerun the game after update.", receivedAt: new Date().toISOString(),
+          answers: null, roleHint: { schemaVersion: "human-role-hint/v1", role: "agent" } },
+        { id: "queued-two", message: "  Keep this exact second request.\nDo not start yet.", receivedAt: new Date().toISOString(), answers: null },
+      ];
+      nativeState.requests.push(...queuedInputs.map(request => ({ ...request, status: "waiting", blockingAnswerRefs: [], questionGatesReleased: false })));
+      events.touch();
+      await waitInside('document.querySelectorAll("[data-queued-waiting] [data-queued-request-id]").length === 2');
+      assert.equal(await inside('document.querySelector("#messages [data-request-id=queued-one]")'), null);
+      assert.deepEqual(await inside('[...document.querySelectorAll("[data-queued-waiting] [data-queued-request-id]")].map(node=>node.dataset.queuedRequestId)'), ["queued-one", "queued-two"]);
+      await click('[data-queued-request-id=queued-one] > details > summary', true);
+      assert.match(await inside('document.querySelector("[data-queued-request-id=queued-one] .conversation-role").textContent'), /Preference: @agent/);
+      for (const width of [980, 390, 1360]) {
+        await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 1000, deviceScaleFactor: 1, mobile: false });
+        const geometry = await inside(`(() => { const q=document.querySelector("#queued-requests").getBoundingClientRect(),
+          c=document.querySelector("#composer").getBoundingClientRect(); return {bottom:q.bottom,top:c.top,height:q.height,overflow:document.documentElement.scrollWidth>innerWidth}; })()`);
+        assert.ok(geometry.bottom <= geometry.top + 1 && geometry.height <= 181 && !geometry.overflow, JSON.stringify(geometry));
+      }
+      if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "queued-integrated.png"), await browser.screenshot());
       await waitInside('!document.querySelector("#stop-current-flow").disabled');
       await click("#stop-current-flow", true);
       await waitInside('document.querySelector("#stop-current-flow").disabled');
       assert.equal(mutations.filter(x => x.path === "native-stop").length, 1);
+      await waitInside('document.querySelectorAll("[data-queued-history] [data-queued-request-id]").length === 2');
+      assert.equal(await inside('document.querySelector("#messages [data-request-id=queued-one]")'), null);
+      assert.equal(await inside('document.querySelector("#messages [data-request-id=queued-two]")'), null);
       const requestId = nativeRequests[0].id;
       nativeState.handoffs.push({ id: "handoff:question-result", presented: true,
         result: { resultId: "question-result", outcome: { kind: "designer-questions", summary: "Confirm scope." } } });
@@ -890,8 +915,11 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       nativeState.implementationConfirmations = [{ id: "confirmation-one", requestId: nativeRequests[1].id,
         requestIds: [nativeRequests[1].id], routeResultId: "route-confirmation", status: "pending",
         design: designBinding }];
+      nativeState.requests.push({ id: "queued-during-consent", message: "Keep this queued while I decide.",
+        receivedAt: new Date().toISOString(), answers: null, status: "waiting", blockingAnswerRefs: [], questionGatesReleased: false });
       accessRequests = [{ id: "permission-one", title: "Read project files", scopes: ["Purpose: Inspect the current source"], canApproveAll: false }];
       events.touch();
+      await waitInside('document.querySelectorAll("[data-queued-waiting] [data-queued-request-id]").length === 1');
       await waitInside('Boolean(document.querySelector("[data-access-decision=denied]"))');
       await click('[data-access-decision="denied"]', true);
       await waitInside('!document.querySelector("[data-request-id=permission-one]")');
@@ -901,6 +929,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await click('[data-implementation-decision="cancelled"]', true);
       await waitInside('document.querySelector(".implementation-confirmation").textContent.includes("Implementation declined")');
       assert.equal(mutations.find(x => x.path === "native-confirmation").confirmationId, "confirmation-one");
+      assert.equal(nativeRequests.length, 2, "Pinned queue presentation cannot dispatch work while approvals are decided.");
       for (const width of [980, 390, 1360]) {
         await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 1000, deviceScaleFactor: 1, mobile: width < 600 });
         assert.equal(await browser.evaluate("innerWidth"), width, "Exercise the real CSS viewport, not mobile page scaling.");

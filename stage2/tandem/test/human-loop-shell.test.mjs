@@ -1376,15 +1376,15 @@ test("retained cycle stays at its originating request through unrelated Router, 
   assert.deepEqual(browser.exceptions, []);
 });
 
-test("independent queued messages stay in their own rows as request-bound workflow ownership changes", { skip: !browserAvailable, timeout: 60_000 }, async t => {
+test("independent queued messages stay pinned until request-bound workflow pickup", { skip: !browserAvailable, timeout: 60_000 }, async t => {
   const f = await fixture(t), { browser } = f;
   const messages = [
     { id: "first-row", kind: "user", requestId: "first-request", text: "Design a small garden plan.",
       timestamp: "2026-09-15T01:00:00Z", queueState: "active" },
     { id: "waiting-row", kind: "user", requestId: "waiting-request", text: "Inspect the independent weather fixture.",
-      timestamp: "2026-09-15T01:00:01Z", queueState: "waiting" },
+      timestamp: "2026-09-15T01:00:01Z", queueState: "waiting", queuedStatus: "queued", queuedOrder: 1 },
     { id: "answer-row", kind: "user", requestId: "answer-request", text: "Use the previously offered compact layout.",
-      timestamp: "2026-09-15T01:00:02Z", queueState: "waiting" },
+      timestamp: "2026-09-15T01:00:02Z", queueState: "waiting", queuedStatus: "queued", queuedOrder: 2 },
   ];
   const ordinary = { id: "waiting-request", message: messages[1].text, status: "waiting", kind: "ordinary", priority: false };
   const answer = { id: "answer-request", message: messages[2].text, status: "waiting", kind: "answer", priority: true };
@@ -1405,14 +1405,16 @@ test("independent queued messages stay in their own rows as request-bound workfl
         rows:inputs.map(input=>{
           const row=document.querySelector('[data-entry-id="'+input.id+'"]');
           return {id:row.dataset.entryId,status:row.querySelector('.conversation-role').textContent,
-            copies:[...document.querySelectorAll('#messages .conversation-text')].filter(node=>node.textContent===input.text).length,
+            copies:[...document.querySelectorAll('.conversation-text')].filter(node=>node.textContent===input.text).length,
             nestedOther:inputs.some(other=>other.id!==input.id&&row.textContent.includes(other.text))};
         })
       };
     })()`);
-    assert.deepEqual(actual.users, ["first-row", "waiting-row", "answer-row"], "Receipt order is independent of dispatch priority.");
+    assert.deepEqual(actual.users, messages.filter(entry => entry.kind === "user" && !entry.queuedStatus).map(entry => entry.id));
+    assert.deepEqual(await browser.evaluate('[...document.querySelectorAll("[data-queued-waiting] [data-queued-request-id]")].map(node=>node.dataset.queuedRequestId)'),
+      f.current.workflow.queue.map(request => request.id), "Pinned rows follow authoritative dispatch priority.");
     for (const [index, row] of actual.rows.entries()) {
-      assert.equal(row.status, messages[index].queueState);
+      assert.equal(row.status, messages[index].queuedStatus ? "Queued; not started" : messages[index].queueState);
       assert.equal(row.copies, 1);
       assert.equal(row.nestedOther, false, row.id);
     }
@@ -1435,6 +1437,7 @@ test("independent queued messages stay in their own rows as request-bound workfl
 
   for (const [index, remaining] of [[2, [ordinary]], [1, []]]) {
     messages[index].queueState = "active";
+    delete messages[index].queuedStatus; delete messages[index].queuedOrder;
     Object.assign(f.current.workflow, { status: "working", activeRole: "agent",
       activeRequestId: messages[index].requestId, queue: remaining, lastHandoff: null });
     f.update(); await assertRows(messages[index].id);
