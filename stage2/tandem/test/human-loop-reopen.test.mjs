@@ -360,7 +360,10 @@ test("failure after repair creation consumes its decision and preserves uncertai
 
 for (const changed of [false, true]) test(`reopen retains a pending human confirmation without dispatch and replaces stale Design approval: changed=${changed}`, async t => {
   const f = await fixture(t, { ask: true, autoConfirm: false });
-  assert.equal((await f.send("proposal")).status, "waiting-confirmation");
+  const request = { id: "proposal", message: "@agent Implement the agreed Design.", receivedAt: new Date().toISOString(),
+    answers: null, roleHint: { schemaVersion: "human-role-hint/v1", role: "agent" } };
+  await f.runtime.send(request);
+  assert.equal((await f.runtime.whenIdle()).status, "waiting-confirmation");
   const original = (await f.runtime.state()).implementationConfirmations[0], sends = f.counts.sends;
   await f.installation.close();
   if (changed) f.setDesign({ ...design, binding: { ...design.binding, revisionId: "changed-design" } });
@@ -368,6 +371,10 @@ for (const changed of [false, true]) test(`reopen retains a pending human confir
   f.runtime.wake();
   assert.equal((await f.runtime.whenIdle()).status, "waiting-confirmation");
   const current = (await f.runtime.state()).implementationConfirmations.at(-1);
+  const retained = (await f.runtime.state()).requests[0];
+  assert.deepEqual(retained.roleHint, request.roleHint);
+  assert.equal(retained.message, request.message);
+  assert.equal(retained.receivedAt, request.receivedAt);
   assert.equal(f.counts.sends, sends, "Reopen and replacement of a pending card send no native turn.");
   if (changed) {
     assert.notEqual(current.id, original.id);
@@ -996,8 +1003,8 @@ for (const legacyNamespaces of [false, true]) test(`interrupted recovery retains
   const store = f.runtime.store, before = await f.runtime.state();
   const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=", "base64");
   const attachment = await new ImageAttachmentStore(f.workspace).put(png, "image/png");
-  const request = { id: "interrupted", message: "  Exact retained image request.\n", receivedAt: new Date().toISOString(),
-    answers: null, attachments: [attachment] };
+  const request = { id: "interrupted", message: "@designer  Exact retained image request.\n", receivedAt: new Date().toISOString(),
+    answers: null, attachments: [attachment], roleHint: { schemaVersion: "human-role-hint/v1", role: "designer" } };
   await store.dispatch("user", "receive-interrupted", "receive-request", request);
   await store.dispatch("host", "admit-interrupted", "admit-request", { requestId: request.id });
   const packet = createHumanTask({ id: "interrupted-role", dispatchId: "interrupted-dispatch", sessionId: f.runtime.sessionId,
@@ -1039,6 +1046,10 @@ for (const legacyNamespaces of [false, true]) test(`interrupted recovery retains
   assert.deepEqual(await new ImageAttachmentStore(f.workspace).read(attachment), png);
   const visible = projectHumanConversation(recovered, messages);
   assert.deepEqual(visible.find(({ requestId }) => requestId === request.id).attachments, [attachment]);
+  assert.deepEqual(visible.find(({ requestId }) => requestId === request.id).roleHint, request.roleHint);
+  assert.equal(visible.find(({ requestId }) => requestId === request.id).text, request.message);
+  assert.equal(recovered.requests.find(({ id }) => id === request.id).receivedAt, request.receivedAt);
+  assert.equal(Object.hasOwn(recovered.requests.find(({ id }) => id === "old-queue"), "roleHint"), false);
   assert.equal(recovered.recoveries[0].taskId, packet.binding.id);
   assert.deepEqual(recovered.recoveries[0].uncertainty, interrupted.uncertainty);
   assert.equal(recovered.uncertainty, null);

@@ -13,6 +13,7 @@ import { installPanelSplitter } from './panel-splitter.js';
 import { createImplementationConfirmations } from './implementation-confirmation.js';
 import { installProjectPresentation } from './project-presentation.js';
 import { projectOutputs } from './project-outputs.js';
+import { parseRoleMention } from './role-hint.js';
 
 const $ = (id) => document.getElementById(id);
 const splitter = installPanelSplitter({ layout: document.querySelector('.human-layout'),
@@ -290,7 +291,19 @@ function renderComposer() {
   $('send').dataset.retry = String(pendingSubmitted && !sending);
   $('send').setAttribute('aria-label', pendingSubmitted && !sending ? 'Retry exact request' : 'Send message');
   $('send').title = pendingSubmitted && !sending ? 'Retry exact request' : 'Send message';
+  renderRoleHint();
 }
+function renderRoleHint() {
+  const help = $('role-hint-help');
+  help.hidden = Boolean(projectPresentation?.discovery());
+  const parsed = pending ? { roleHint: pending.roleHint, error: null } : parseRoleMention($('message').value);
+  const text = parsed.error ?? (parsed.roleHint
+    ? `Preference: @${parsed.roleHint.role} for this message. Router decides who responds.`
+    : 'Start with @designer or @agent to suggest a role. Router decides.');
+  if (help.textContent !== text) help.textContent = text;
+  $('message').setAttribute('aria-invalid', String(!help.hidden && Boolean(parsed.error)));
+}
+$('message').addEventListener('input', renderRoleHint);
 function render() {
   clipboard.refresh();
   if (!snapshot) return;
@@ -391,6 +404,10 @@ function render() {
       const label = row.querySelector('.conversation-role');
       if (label) label.textContent = entry.id.startsWith('discovery:') ? entry.role : entry.kind === 'user'
         ? entry.queueState === 'retired' ? 'Not resumed after Recovery' : entry.queueState ?? '' : entry.role ?? '';
+      if (label && entry.kind === 'user' && entry.roleHint) {
+        label.textContent += `; Preference: @${entry.roleHint.role}`;
+        label.title = 'Per-message preference only. Router decides who responds.';
+      }
     }
   }
   renderPermissions();
@@ -600,7 +617,10 @@ $('composer').addEventListener('submit', async (event) => {
   try {
     if (pending && pending.message !== $('message').value) throw new Error('The previous request is unconfirmed. Refresh before replacing its text.');
     if (!pending) {
-      pending = { id: crypto.randomUUID(), message: $('message').value, receivedAt: new Date().toISOString() };
+      const { roleHint, error } = parseRoleMention($('message').value);
+      if (error) throw new Error(error);
+      pending = { id: crypto.randomUUID(), message: $('message').value, receivedAt: new Date().toISOString(),
+        ...(roleHint ? { roleHint } : {}) };
       const preview = annotation.preview();
       if (preview && clipboard.current()) throw new Error('Remove either the pasted image or diagram snapshot before sending. One image is supported per request.');
       pendingPreviewUrl = preview?.url ?? null;

@@ -460,8 +460,9 @@ export function transitionHumanLoop(current: HumanLoopState, authority: Authorit
       const request = bindQuestionOptions(parseRequest(command.data), state.questions);
       const previous = state.requests.find(({ id }) => id === request.id);
       if (previous) {
-        const { id, message, receivedAt, answers, attachments } = previous;
-        requireCondition(same(request, { id, message, receivedAt, answers, ...(attachments ? { attachments } : {}) }),
+        const { id, message, receivedAt, answers, attachments, roleHint } = previous;
+        requireCondition(same(request, { id, message, receivedAt, answers, ...(attachments ? { attachments } : {}),
+          ...(roleHint ? { roleHint } : {}) }),
           'Conflicting retry of a saved user request.');
         break;
       }

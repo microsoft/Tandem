@@ -29,6 +29,29 @@ const request = id => ({ id, message: `  Exact ${id}\ncontent.`, receivedAt: "20
 const receive = (store, id) => store.dispatch("user", `receive:${id}`, "receive-request", request(id));
 const replay = async file => replayHumanLoopLedger(JSON.parse(await file.read())).state;
 
+test("role hints roundtrip with exact requests while legacy text stays unhinted and retries cannot retarget", async t => {
+  const f = await fixture(t, 1);
+  const legacy = { ...request("legacy"), message: "@designer Explain the old text." };
+  const modern = { ...request("modern"), message: "@designer Explain without changing Design.\n",
+    roleHint: { schemaVersion: "human-role-hint/v1", role: "designer" } };
+  for (const input of [legacy, modern]) await f.store.dispatch("user", `receive:${input.id}`, "receive-request", input);
+  const before = await f.file.read(), state = await f.store.load();
+  assert.deepEqual(await new HumanLoopStore(f.owner).load(), state);
+  assert.deepEqual(state, await replay(f.file));
+  assert.equal(Object.hasOwn(state.requests.find(r => r.id === "legacy"), "roleHint"), false);
+  assert.deepEqual(state.requests.find(r => r.id === "modern").roleHint, modern.roleHint);
+  for (const input of [legacy, modern]) await f.store.dispatch("user", `receive:${input.id}`, "receive-request", input);
+  assert.equal(await f.file.read(), before);
+  const { roleHint, ...withoutHint } = modern;
+  for (const [id, input] of [
+    ["remove", withoutHint], ["add", { ...legacy, roleHint }],
+    ["change", { ...modern, message: "@agent Explain without changing Design.\n", roleHint: { ...roleHint, role: "agent" } }],
+  ]) {
+    await assert.rejects(f.store.dispatch("user", `conflicting:${id}`, "receive-request", input), /Conflicting retry/);
+  }
+  assert.equal(await f.file.read(), before);
+});
+
 test("normal long-session reads and successful appends apply transitions without replay", async t => {
   const f = await fixture(t, 72), inspector = new Session(); inspector.connect();
   const post = promisify(inspector.post.bind(inspector));

@@ -6,7 +6,7 @@ import { InMemoryEventStore, SqliteEventStore } from "../runtime-src/event-store
 import { AnnotationAttachmentStore } from "../runtime-src/domain/workflow/annotation-attachment.ts";
 import { ImageAttachmentStore, isImageAttachment, parseRequestAttachments, readRequestAttachment } from "../runtime-src/domain/workflow/image-attachment.ts";
 import { humanExecutionQueue, isPriorityAnswer, hasQuestionBlockers, questionBlocksNewWork, currentImplementationConfirmation, implementationDecisionMessage } from "../runtime-src/domain/human-loop/model.ts";
-import { advisoryContinuationIssue } from "../runtime-src/domain/human-loop/contracts.ts";
+import { advisoryContinuationIssue, parseRequest } from "../runtime-src/domain/human-loop/contracts.ts";
 import { requireCondition, object, text } from "../runtime-src/domain/workflow/validation.ts";
 import { policyHash } from "../runtime-src/domain/workflow/policy.ts";
 import { getHostStateWal } from "../runtime-src/domain/host-state-wal.ts";
@@ -152,6 +152,7 @@ export function projectHumanConversation(state, originals) {
   const requests = state.requests.map((request) => ({
     id: `request:${request.id}`, kind: "user", requestId: request.id, text: request.message,
     timestamp: request.receivedAt, queueState: request.status, stopId: request.stopId,
+    ...(request.roleHint ? { roleHint: request.roleHint } : {}),
     ...(request.attachments ? { attachments: request.attachments } : {}),
     ...(request.answers ? { answerDetails: request.answers.answers.map((answer) => {
       const question = state.questions.find((q) => q.id === answer.questionId && q.source.resultId === answer.sourceResultId);
@@ -333,9 +334,11 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
       }
       if (request.method === "POST" && ["/api/requests", "/api/answers"].includes(path)) {
         const data = await body(request), keys = ["id", "message", "receivedAt", ...(path === "/api/answers" ? ["answers"] : []),
+          ...(path === "/api/requests" && Object.hasOwn(data, "roleHint") ? ["roleHint"] : []),
           ...(Object.hasOwn(data, "attachments") ? ["attachments"] : [])];
         object(data, keys);
         admission = { id: data.id, message: data.message, receivedAt: data.receivedAt,
+          ...(Object.hasOwn(data, "roleHint") ? { roleHint: data.roleHint } : {}),
           answers: path === "/api/answers" ? data.answers : null, attachments: data.attachments ?? [] };
         requireCondition((await getInstallation().read()).status === "ready",
           "The runtime is not ready for admission; closing or reopening does not accept new requests.");
@@ -352,8 +355,9 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
           if (!state.requests.some(({ id }) => id === data.id)) validateArtifactAnnotationSource(attachment.source, state.design, design.content);
         }
         requireCondition(typeof data.message === "string" && (data.message.trim() || ref.length), "A request needs text or an image.");
-        const input = { id: text(data.id), message: data.message, receivedAt: text(data.receivedAt),
-          answers: path === "/api/answers" ? data.answers : null, ...(ref.length ? { attachments: ref } : {}) };
+        const input = parseRequest({ id: text(data.id), message: data.message, receivedAt: text(data.receivedAt),
+          answers: path === "/api/answers" ? data.answers : null, ...(ref.length ? { attachments: ref } : {}),
+          ...(Object.hasOwn(data, "roleHint") ? { roleHint: data.roleHint } : {}) });
         await instance.send(input);
         return json(response, 202, { requestId: input.id });
       }
@@ -490,6 +494,7 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
           const saved = state?.requests.find(({ id }) => id === admission.id);
           if (saved) {
             const original = { id: saved.id, message: saved.message, receivedAt: saved.receivedAt,
+              ...(saved.roleHint ? { roleHint: saved.roleHint } : {}),
               answers: saved.answers, attachments: saved.attachments ?? [] };
             if (policyHash(original) === policyHash(admission)) outcome.accepted = true;
             else outcome.notAccepted = true;

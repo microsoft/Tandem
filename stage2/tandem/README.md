@@ -61,6 +61,32 @@ or adding structured actions. Normal Send still goes through Router; presets
 do not grant permissions or bypass workflow boundaries. Presets are disabled
 during submission and while an exact request is awaiting acknowledgement.
 
+In the private Development composer, start a message with exactly one lowercase
+`@designer` or `@agent`, followed by whitespace and your request, to **suggest**
+a responding role. The inline guidance shows the preference; Router still
+chooses from actual intent and current workflow and may choose a different role.
+There is no recipient selector, persistent preference, or direct dispatch.
+Assistant messages show their actual responding role, not the hint.
+
+The mention must begin at the very first character. Emails, indented code,
+quoted/backtick text, embedded mentions, `@designer:`, uppercase names and other
+`@words` are ordinary text. Only a leading mention has syntax: subsequent
+mentions within the request body are literal text, not additional preferences.
+Consecutive supported leading mentions (including repeats or newline-separated
+ones) and a hint without request text are rejected before submission, keeping
+the draft and any attachment. Add request text even when attaching an image.
+Select/edit/delete mention text normally; Enter, Shift+Enter, Escape and IME
+keep their normal composer behavior. No popup captures those keys.
+
+New submissions bind optional `roleHint` metadata (`human-role-hint/v1`) to the
+original unmodified text, ID, timestamp and attachments. The shared private
+parser validates that metadata at admission; retries cannot add, remove or
+change it. Retained requests and older clients without metadata remain
+unhinted, even if their text starts with `@designer` or `@agent`. Reopen never
+reparses history or replays work. Question-form answers have no composer hints.
+Hints grant no implementation confirmation, permissions or role authority;
+all existing Stop, ownership, read-only and result gates remain unchanged.
+
 A valid current-role terminal result is durably saved and applied once without
 waiting for native tools, permissions, children, turn-end, idle or quiescence.
 Role/request/schema validation and actual persistence failures remain enforced.

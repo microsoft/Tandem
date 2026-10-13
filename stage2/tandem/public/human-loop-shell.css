@@ -202,6 +202,7 @@
 .human-app .conversation-state-strip { background: var(--blue-soft); }
 .human-app .human-loop { background: var(--surface-raised); }
 .human-app .command-bar { background: var(--surface-raised); }
+.human-app #role-hint-help { margin: 4px 0 0; color: var(--muted); font-size: calc(var(--shell-font-size) - 2px); }
 .human-app :is(button, select, textarea, input, summary):focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
 .human-app #message:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
 .human-app :is(.artifact-navigation-row button[aria-selected="true"], .state-history-step.is-current button) { color: var(--blue); background: var(--blue-soft); }

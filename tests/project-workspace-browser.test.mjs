@@ -17,6 +17,7 @@ import { JSDOM } from "jsdom";
 import { installProjectPresentation } from "../stage2/tandem/public/project-presentation.js";
 import { createConversationRenderer } from "../stage2/tandem/public/renderers/conversation.js";
 import { sharedDesignExampleV3 } from "../stage2/tandem/test/helpers/shared-design-fixture.mjs";
+import { exerciseRoleHintDraft } from "../stage2/tandem/test/helpers/role-hint-browser.mjs";
 
 test("saved evidence updates without rewriting immutable native conversation", t => {
   const dom = new JSDOM('<div><div id="history"></div></div><div id="messages"></div><div id="current"></div><div id="detail"></div><button id="newer"></button>', { pretendToBeVisual: true });
@@ -174,7 +175,12 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       readiness: async () => ({ status: stopped ? "closed" : nativeState.activeRequestId ? "working" : "ready",
         workspacePath: root, reason: stopped ? "Closed; saved history retained. Reopen explicitly." : null }),
       conversation: async () => [{ id: "handoff:fixture-review", kind: "assistant", role: "reviewer", requestId: "fixture-origin",
-        content: "Original saved Review record.", timestamp: "2026-10-10T08:01:00Z" }],
+        content: "Original saved Review record.", timestamp: "2026-10-10T08:01:00Z" },
+        ...nativeRequests.filter(request => request.roleHint).map(request => ({
+          id: `actual:${request.id}`, kind: "assistant", role: "agent", requestId: request.id,
+          content: "Read-only Agent response; deterministic fixture, not a model.",
+          timestamp: new Date(Date.parse(request.receivedAt) + 1).toISOString(),
+        }))],
       currentDesign: async () => ({ binding: designBinding, content: sharedDesignExampleV3() }),
       commands: { read: async () => ({ apps: [], commands: [] }) },
       modelSettings: async () => ({ models: [{ id: "fixture", name: "Fixture", supportedReasoningEfforts: ["low"] }],
@@ -841,10 +847,18 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
       await waitInside('!document.querySelector("#canvas-settings").open');
       await browser.waitFor('document.activeElement.id==="project-settings"');
-      await click("#message", true); await browser.call("Input.insertText", { text: "Review current implementation without changes." });
+      const beforeHintDrafts = mutations.length;
+      await exerciseRoleHintDraft({ browser, evaluate: inside, click: selector => click(selector, true) });
+      assert.equal(nativeRequests.length, 0);
+      assert.equal(mutations.length, beforeHintDrafts, "Role-hint editing never mutates Stage1 or dispatches a request.");
+      await click("#message", true); await browser.call("Input.insertText", { text: "@designer Review current implementation without changes." });
       await click("#send", true);
       await waitInside('document.querySelector("#message").value===""');
       assert.equal(nativeRequests.length, 1); assert.match(nativeRequests[0].message, /Review current/);
+      assert.deepEqual(nativeRequests[0].roleHint, { schemaVersion: "human-role-hint/v1", role: "designer" });
+      await waitInside('[...document.querySelectorAll(".conversation-assistant .conversation-role")].some(node => node.textContent === "agent")');
+      assert.match(await inside('[...document.querySelectorAll(".conversation-user .conversation-role")].at(-1).textContent'), /Preference: @designer/);
+      if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "role-hint-integrated.png"), await browser.screenshot());
       await waitInside('!document.querySelector("#stop-current-flow").disabled');
       await click("#stop-current-flow", true);
       await waitInside('document.querySelector("#stop-current-flow").disabled');
@@ -870,6 +884,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await waitInside('document.querySelector("#question-panel").textContent.includes("Submitted answer:")');
       assert.equal(nativeRequests.length, 2);
       assert.equal(nativeRequests[1].answers.answers[0].sourceResultId, "question-result");
+      assert.equal(Object.hasOwn(nativeRequests[1], "roleHint"), false, "Hints never persist into question answers.");
       await click("#show-questions", true);
       nativeState.requests.at(-1).route = { resultId: "route-confirmation", outcome: { summary: "Implement the approved scope." } };
       nativeState.implementationConfirmations = [{ id: "confirmation-one", requestId: nativeRequests[1].id,

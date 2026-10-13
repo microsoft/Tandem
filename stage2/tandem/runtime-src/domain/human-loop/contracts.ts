@@ -1,4 +1,5 @@
 import { isAbsolute } from 'node:path';
+import { parseRoleMention, type RoleHint } from '../../../public/role-hint.js';
 import { parseRequestAttachments, type RequestAttachment } from '../workflow/image-attachment.ts';
 import { policyHash } from '../workflow/policy.ts';
 import { choice, integer, list, object, requireCondition, strings, text, unique } from '../workflow/validation.ts';
@@ -58,6 +59,7 @@ export interface AnswerBatch { schemaVersion: 'human-question-answers/v1'; answe
 export interface HumanRequest {
   id: string; message: string; receivedAt: string; answers: AnswerBatch | null;
   attachments?: RequestAttachment[];
+  roleHint?: RoleHint;
 }
 export interface TaskBinding {
   id: string; dispatchId: string; sessionId: string; requestId: string; cycleId: string | null;
@@ -265,13 +267,25 @@ export function parseAnswerBatch(value: unknown): AnswerBatch {
 }
 export function parseRequest(value: unknown): HumanRequest {
   const data = object(value, ['id', 'message', 'receivedAt', 'answers',
+    ...(Object.hasOwn(value ?? {}, 'roleHint') ? ['roleHint'] : []),
     ...(Object.hasOwn(value ?? {}, 'attachments') ? ['attachments'] : [])]);
   const receivedAt = text(data.receivedAt);
   requireCondition(Number.isFinite(Date.parse(receivedAt)), 'Invalid request timestamp.');
   const attachments = data.attachments === undefined ? undefined : parseRequestAttachments(data.attachments);
   requireCondition(typeof data.message === 'string' && (data.message.trim().length > 0 || attachments?.length === 1), 'A request needs text or an image.');
+  let roleHint: RoleHint | undefined;
+  if (Object.hasOwn(data, 'roleHint')) {
+    requireCondition(data.answers === null, 'Question answers cannot carry composer role hints.');
+    const hint = object(data.roleHint, ['schemaVersion', 'role']);
+    requireCondition(hint.schemaVersion === 'human-role-hint/v1', 'Incompatible role-hint schema.');
+    roleHint = { schemaVersion: hint.schemaVersion, role: choice(hint.role, ['designer', 'agent'] as const) };
+    const parsed = parseRoleMention(data.message);
+    requireCondition(!parsed.error, parsed.error ?? 'Invalid role hint.');
+    requireCondition(parsed.roleHint?.role === roleHint.role, 'Role hint does not match the original leading mention.');
+  }
   return { id: text(data.id), message: data.message, receivedAt,
     answers: data.answers === null ? null : parseAnswerBatch(data.answers),
+    ...(roleHint ? { roleHint } : {}),
     ...(attachments !== undefined ? { attachments } : {}) };
 }
 export function bindQuestionOptions(request: HumanRequest, questions: readonly QuestionRecord[]): HumanRequest {

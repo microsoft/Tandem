@@ -232,6 +232,23 @@ test('modern native input evidence keeps acknowledgement, event, interaction and
   assert.deepEqual(replayHumanLoopLedger(f.ledger).state, f.state);
 });
 
+test('batched role hints stay attached to each exact message and never select a role before Router', () => {
+  const f = fixture();
+  for (const role of ['designer', 'agent'] as const) f.emit('receive-request', {
+    id: role, message: `@${role} Discuss the current work.`, receivedAt: '2026-10-13T00:00:00Z', answers: null,
+    roleHint: { schemaVersion: 'human-role-hint/v1', role },
+  }, 'user');
+  f.receive('automatic', null, 'Explain the status.');
+  assert.deepEqual(nextHumanBatch(f.state).map(request => [request.id, request.roleHint?.role]),
+    [['designer', 'designer'], ['agent', 'agent'], ['automatic', undefined]]);
+  f.admit('designer');
+  assert.equal(f.state.activeTask, null);
+  assert.throws(() => f.start('designer'), /Router|router|route/);
+  assert.throws(() => f.start('agent'), /Router|router|route/);
+  assert.equal(f.start('router').binding.role, 'router');
+  assert.deepEqual(replayHumanLoopLedger(JSON.parse(JSON.stringify(f.ledger))).state, f.state);
+});
+
 test('legacy input evidence remains readable without adding invented envelope fields', () => {
   const f = fixture();
   f.receive('legacy'); f.admit('legacy'); f.start('router');
