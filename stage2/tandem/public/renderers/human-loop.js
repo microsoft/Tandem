@@ -32,7 +32,7 @@ function questionKey(question) {
   return JSON.stringify([question.id, question.context, question.question, question.whyItMatters,
     question.importance, question.options.map(({ id, label, implication, resolutionTarget }) => [id, label, implication, resolutionTarget]),
     question.allowFreeform, binding(question.source), question.source.resultId,
-    question.source.requestIds, question.source.planDigest, question.designRefs ?? []]);
+    question.source.requestIds, question.source.planDigest, question.designRefs ?? [], question.unanswered ?? null]);
 }
 
 function appendDesignReferences(state, node, references, design) {

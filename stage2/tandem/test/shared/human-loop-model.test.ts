@@ -4,8 +4,8 @@ import test from 'node:test';
 import { DEFAULT_POLICY, policyHash } from '../../runtime-src/domain/workflow/policy.ts';
 import { validatePolicyShape } from '../../runtime-src/domain/workflow/policy-contracts.ts';
 import { createHumanLoop, transitionHumanLoop, nextHumanRequest, nextHumanBatch, humanExecutionQueue, hasQuestionBlockers, type HumanLoopState } from '../../runtime-src/domain/human-loop/model.ts';
-import { parseRoleResult, parseTaskBinding, roles, type Authority, type HumanRole, type RoleOutcome, type SnapshotRef, type QuestionDraft, type QuestionResolution } from '../../runtime-src/domain/human-loop/contracts.ts';
-import { humanLoopResultTools, humanLoopProgressTool, humanLoopStopTool } from '../../runtime-src/domain/human-loop/tool-contracts.ts';
+import { parseRoleResult, parseTaskBinding, roles, parseQuestions, requireDeclaredAdvisoryContinuations, type Authority, type HumanRole, type RoleOutcome, type SnapshotRef, type QuestionDraft, type QuestionResolution } from '../../runtime-src/domain/human-loop/contracts.ts';
+import { humanLoopResultTools, humanLoopProgressTool, humanLoopStopTool, humanQuestionSchema } from '../../runtime-src/domain/human-loop/tool-contracts.ts';
 import { createHumanLoopLedger, replayHumanLoopLedger } from '../../runtime-src/domain/human-loop/ledger.ts';
 import { validateHumanImplementationAuthorization } from '../../runtime-src/domain/human-loop/authorization.ts';
 
@@ -20,6 +20,7 @@ const question: QuestionDraft = {
     { id: 'change', label: 'Revise the Design', implication: 'Discuss the changed requirement first.' },
   ], allowFreeform: true,
 };
+const unanswered = { action: 'keep-current-design' as const, explanation: 'Keep the currently agreed behavior; the proposed revision is not applied.' };
 const plan = () => ({
   schemaVersion: 'internal-plan/v1' as const, id: 'internal', version: 1, goal: 'Build the requested feature.',
   design, baseline, tasks: [
@@ -30,14 +31,15 @@ const plan = () => ({
   ],
 });
 
-function fixture(liveAuthorization = true, autoConfirm = true) {
+function fixture(liveAuthorization = true, autoConfirm = true, legacyQuestions = false) {
   let n = 0;
   let state = createHumanLoop({ schemaVersion: 'human-loop-owner/v1', id: 'owner', mainSessionId: 'main',
     privateSessionId: 'private', workspacePath: resolve('human-loop-fixture'), policy: DEFAULT_POLICY }, design);
   const ledger = createHumanLoopLedger(state.owner, design);
   const emit = (type: string, data: unknown, authority: Authority = 'host') => {
-    const command = { id: `command-${++n}`, expectedRevision: state.revision, type, data };
-    const next = transitionHumanLoop(state, authority, command);
+    const command = { id: `command-${++n}`, expectedRevision: state.revision, type, data,
+      ...(legacyQuestions ? {} : { questionPolicy: 'explicit-continuation/v1' }) };
+    const next = transitionHumanLoop(state, authority, command, legacyQuestions);
     if (liveAuthorization) validateHumanImplementationAuthorization(state, type, data);
     state = next;
     ledger.events.push({ authority, command });
@@ -95,6 +97,100 @@ function fixture(liveAuthorization = true, autoConfirm = true) {
   const present = () => emit('present-handoff', { handoffId: state.handoffs.at(-1)!.id });
   return { get state() { return state; }, ledger, emit, receive, admit, start, submit, end, apply, finish, route, createCycle, accept, planCycle, taskResult, present };
 }
+
+test('new advisory questions require a structured safe continuation, not recommended wording', () => {
+  const advisory = { ...question, importance: 'advisory' as const,
+    options: question.options.map(o => ({ ...o, label: `${o.label} (Recommended)` })) };
+  assert.throws(() => requireDeclaredAdvisoryContinuations(parseQuestions([advisory])), /Every new advisory/);
+  assert.throws(() => validatePolicyShape(humanQuestionSchema, advisory), /./);
+  for (const invalid of [null, { action: 'change-design', explanation: 'Pick the recommended option' },
+    { action: 'keep-current-design', explanation: ' ' }, { action: 'keep-current-design' }]) {
+    assert.throws(() => parseQuestions([{ ...advisory, unanswered: invalid }]));
+  }
+  assert.throws(() => parseQuestions([{ ...question, unanswered }]), /Blocking questions/);
+  const valid = { ...advisory, unanswered };
+  assert.doesNotThrow(() => validatePolicyShape(humanQuestionSchema, valid));
+  const f = fixture();
+  f.receive('design'); f.admit('design'); f.route('design'); f.start('designer');
+  assert.throws(() => f.submit({ kind: 'designer-unchanged', summary: 'Proposed improvement', explanation: 'No changes',
+    questions: [advisory] }), /Every new advisory/);
+  assert.equal(f.state.activeTask!.result, null, 'Rejected output remains correctable through the same result tool.');
+  f.finish({ kind: 'designer-unchanged', summary: 'Keep agreed behavior', explanation: 'No Design change', questions: [valid] });
+  f.present();
+  assert.equal(f.state.questions[0]!.state, 'open');
+  assert.equal(f.state.questions[0]!.answerRequestId, null);
+  assert.deepEqual(f.state.design, design);
+  assert.equal(hasQuestionBlockers(f.state), false);
+  f.receive('explain'); f.admit('explain'); f.route('answer'); f.start('agent');
+  f.finish({ kind: 'answer', summary: 'Explanation', report: 'Current Design retained.', evidenceRefs: [] }); f.present();
+  assert.equal(f.state.questions[0]!.state, 'open');
+  assert.equal(f.state.implementationConfirmations?.length ?? 0, 0);
+  const source = f.state.questions[0]!.source.resultId;
+  f.receive('explicit-change', { schemaVersion: 'human-question-answers/v1',
+    answers: [{ questionId: question.id, sourceResultId: source, kind: 'option', value: 'change' }] });
+  assert.equal(f.state.questions[0]!.state, 'answered');
+  assert.equal(f.state.questions[0]!.answerRequestId, 'explicit-change');
+  assert.deepEqual(f.state.design, design, 'Saving the explicit answer does not itself publish a Design.');
+  f.admit('explicit-change'); f.route('design'); f.start('designer');
+  f.submit({ kind: 'designer-changed', summary: 'Requested change', artifactRef: 'updated-design', questions: [] }); f.end();
+  const next = { revisionId: 'design-2', digest: 'c'.repeat(64) };
+  f.apply({ previous: design, current: next, receiptId: 'publication', artifactRef: 'updated-design' }); f.present();
+  assert.deepEqual(f.state.design, next);
+  assert.equal(f.state.cycles.length, 0, 'Neither the default nor a Design answer authorizes implementation.');
+  assert.deepEqual(replayHumanLoopLedger(f.ledger).state, f.state);
+});
+
+test('stale advisory continuations hold new work until an explicit contextual answer', () => {
+  const f = fixture();
+  f.receive('first'); f.admit('first'); f.route('design'); f.start('designer');
+  f.finish({ kind: 'designer-unchanged', summary: 'Optional', explanation: 'Retained', questions: [{ ...question, importance: 'advisory', unanswered }] }); f.present();
+  f.receive('update'); f.admit('update'); f.route('design'); f.start('designer');
+  f.submit({ kind: 'designer-changed', summary: 'New Design', artifactRef: 'new', questions: [] }); f.end();
+  f.apply({ previous: design, current: { revisionId: 'new', digest: 'd'.repeat(64) }, receiptId: 'publication', artifactRef: 'new' }); f.present();
+  const retained = structuredClone(f.state.questions[0]!);
+  f.receive('new-work');
+  assert.equal(nextHumanRequest(f.state), null);
+  assert.throws(() => f.admit('new-work'), /prerequisites/);
+  assert.deepEqual(f.state.questions[0], retained, 'A stale default is not rewritten as blocking, answered or invalidated.');
+  f.receive('clarify', { schemaVersion: 'human-question-answers/v1', answers: [
+    { questionId: retained.id, sourceResultId: retained.source.resultId, kind: 'freeform', value: 'Keep the newly agreed Design.' },
+  ] });
+  assert.equal(nextHumanRequest(f.state)?.id, 'clarify');
+  assert.deepEqual(replayHumanLoopLedger(f.ledger).state, f.state);
+});
+
+test('legacy advisory journals remain unchanged while new commands require explicit clarification', () => {
+  const f = fixture(false, false, true);
+  f.receive('old-design'); f.admit('old-design'); f.route('design'); f.start('designer');
+  f.finish({ kind: 'designer-unchanged', summary: 'Legacy question', explanation: 'No recorded default',
+    questions: [{ ...question, importance: 'advisory' }] }); f.present();
+  f.receive('old-work'); f.admit('old-work'); f.route('answer'); f.start('agent');
+  const original = JSON.stringify(f.ledger);
+  const active = replayHumanLoopLedger(JSON.parse(original)).state;
+  assert.equal(active.activeTask?.binding.id, f.state.activeTask?.binding.id, 'Reading legacy state does not cancel active work.');
+  assert.equal(hasQuestionBlockers(active), true);
+  assert.deepEqual(active.questions, f.state.questions);
+  f.finish({ kind: 'answer', summary: 'Historical answer', report: 'Old work completed.', evidenceRefs: [] }); f.present();
+  f.receive('queued');
+  const before = JSON.stringify(f.ledger);
+  const old = replayHumanLoopLedger(f.ledger).state;
+  assert.equal(JSON.stringify(f.ledger), before);
+  assert.equal(Object.hasOwn(old.questions[0]!, 'unanswered'), false);
+  assert.equal(old.questions[0]!.importance, 'advisory');
+  assert.equal(old.questions[0]!.blockingActive, false);
+  assert.equal(nextHumanRequest(old), null);
+  const q = old.questions[0]!;
+  const command = { id: 'new-clarification', expectedRevision: old.revision, type: 'receive-request',
+    questionPolicy: 'explicit-continuation/v1', data: { id: 'clarification', message: 'Keep the agreed Design.', receivedAt: '2026-10-13T00:00:00Z',
+      answers: { schemaVersion: 'human-question-answers/v1', answers: [
+        { questionId: q.id, sourceResultId: q.source.resultId, kind: 'option', value: 'keep' },
+      ] } } };
+  const next = transitionHumanLoop(old, 'user', command);
+  assert.equal(nextHumanRequest(next)?.id, 'clarification');
+  assert.equal(next.questions[0]!.answerRequestId, 'clarification');
+  assert.equal(next.questions[0]!.importance, 'advisory');
+  assert.deepEqual(replayHumanLoopLedger({ ...f.ledger, events: [...f.ledger.events, { authority: 'user', command }] }).state, next);
+});
 
 test('modern native input evidence keeps acknowledgement, event, interaction and turn identities distinct', () => {
   const f = fixture();
@@ -442,7 +538,7 @@ function designerContentAnswer(liveAuthorization = true) {
     questions: [{
       id: 'content-readiness', context: 'Business details are incomplete.',
       question: 'How should those business details be handled when the website is implemented?',
-      whyItMatters: 'The published website needs accurate details.', importance: 'advisory',
+      whyItMatters: 'The published website needs accurate details.', importance: 'advisory', unanswered,
       options: [{ id: 'placeholders', label: 'Build with clear placeholders', implication: 'Draft details before launch.' },
         { id: 'collect', label: 'Collect the details first', implication: 'Provide accurate details before implementation.' }],
       allowFreeform: false,
@@ -765,7 +861,7 @@ test('an advisory Designer question permits explicit implementation and remains 
   const f = fixture();
   f.receive('design'); f.admit('design'); f.route('design'); f.start('designer');
   const original = f.finish({ kind: 'designer-unchanged', summary: 'Optional detail.', explanation: 'Enough Design to proceed.',
-    questions: [{ ...question, importance: 'advisory' }] }); f.present();
+    questions: [{ ...question, importance: 'advisory', unanswered }] }); f.present();
   const originalQuestion = structuredClone(f.state.questions[0]);
   assert.equal(f.state.cycles.length, 0);
   f.receive('implement', null, 'Continue implementation without deciding the optional detail.');
@@ -779,7 +875,7 @@ test('an advisory Designer question permits explicit implementation and remains 
   f.finish({ kind: 'review-result', planDigest: digest, summary: 'Review complete.', evidenceRefs: ['engine.ts', 'view.ts'],
     assessments: [{ taskId: 'engine', criterionId: 'engine-correct', status: 'supported', evidenceRefs: ['engine.ts'] },
       { taskId: 'view', criterionId: 'view-correct', status: 'supported', evidenceRefs: ['view.ts'] }],
-    findings: [], verificationLimits: [], questions: [{ ...question, id: 'review-detail', importance: 'advisory' }] });
+    findings: [], verificationLimits: [], questions: [{ ...question, id: 'review-detail', importance: 'advisory', unanswered }] });
   f.present();
   assert.deepEqual(f.state.questions[0], originalQuestion);
   assert.equal(f.state.questions.length, 2);
@@ -838,7 +934,7 @@ test('mixed answers save atomically and retain priority, exact retries and hold-
   const f = fixture();
   f.receive('design'); f.admit('design'); f.route('design'); f.start('designer');
   const result = f.finish({ kind: 'designer-unchanged', summary: 'Mixed choices.', explanation: 'One required prerequisite.',
-    questions: [question, { ...question, id: 'optional', importance: 'advisory' }, { ...question, id: 'remaining' }] });
+    questions: [question, { ...question, id: 'optional', importance: 'advisory', unanswered }, { ...question, id: 'remaining' }] });
   f.present(); f.receive('normal-1');
   const answers = { schemaVersion: 'human-question-answers/v1', answers: [
     { questionId: 'direction', sourceResultId: result.resultId, kind: 'option', value: 'keep' },

@@ -348,6 +348,21 @@ automatically resumes.
 The Conversation Questions control shows unanswered/effective-blocker counts and
 source-grouped forms. Exact-source in-memory drafts, focus and retry identity
 survive projection updates; drafts are not persisted across browser reload.
+New advisory questions must declare `unanswered` with action
+`keep-current-design` and a specific explanation of the retained behavior.
+Recommended option wording is not a declaration. The Host binds this no-change
+continuation to the producing Design; it is never recorded as a human answer,
+Design acceptance, implementation confirmation or tool permission. Questions
+whose next action needs a consequential decision must be blocking instead.
+The original form and conversation show the declaration and its attribution.
+
+Missing legacy declarations remain missing in the original journal. A stale
+producing Design or missing declaration requires explicit clarification before
+dependent new work, without cancelling an already running role. New commands
+record `questionPolicy: "explicit-continuation/v1"` so replay can preserve old
+historical decisions while enforcing the new rule on later commands. No old
+importance, answer or gate record is rewritten or supplied a fabricated default.
+
 Blocking and advisory meaning have distinct labels/colors, independent of saved
 answer processing status.
 

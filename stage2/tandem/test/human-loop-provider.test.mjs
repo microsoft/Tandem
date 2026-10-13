@@ -17,6 +17,35 @@ import { AnnotationAttachmentStore } from "../runtime-src/domain/workflow/annota
 import { multiFormatDesign } from "./fixtures/multi-format.mjs";
 import jpeg from "../node_modules/jpeg-js/index.js";
 
+test("advisory view and history distinguish declared continuation from legacy uncertainty without rewriting records", () => {
+  const state = createHumanLoop({ schemaVersion: "human-loop-owner/v1", id: "owner", mainSessionId: "main", privateSessionId: "private",
+    workspacePath: process.cwd(), policy: DEFAULT_POLICY }, { revisionId: "design", digest: "a".repeat(64) });
+  const q = { id: "optional", context: "Possible later improvement", question: "Change the display?", whyItMatters: "Optional display choice",
+    importance: "advisory", options: [], allowFreeform: true, state: "open", answerRequestId: null, blockingActive: false,
+    unanswered: { action: "keep-current-design", explanation: "Keep the agreed display unchanged." },
+    source: { role: "designer", resultId: "result", requestId: "request", requestIds: ["request"], cycleId: null,
+      design: { ...state.design }, planDigest: null } };
+  state.questions.push(q);
+  state.handoffs.push({ id: "handoff", result: { resultId: "result", outcome: { kind: "designer-unchanged" } }, presented: true });
+  const original = structuredClone(state);
+  const live = projectHumanLoopView(state, { status: "ready" });
+  assert.equal(live.questionCounts.blockers, 0);
+  assert.deepEqual(live.questionInteractions[0].questions[0].unanswered, q.unanswered);
+  const messages = [{ id: "handoff", kind: "assistant", role: "designer", content: "No changes",
+    requestId: "request", timestamp: "2026-10-13T00:00:00Z" }];
+  assert.deepEqual(projectHumanConversation(state, messages)[0].questionHistory[0].unanswered, q.unanswered);
+  assert.deepEqual(state, original);
+  state.design = { revisionId: "new-design", digest: "b".repeat(64) };
+  assert.equal(projectHumanLoopView(state, { status: "ready" }).questionCounts.blockers, 1);
+  delete q.unanswered;
+  const legacy = structuredClone(state);
+  const historical = projectHumanConversation(state, messages)[0].questionHistory[0];
+  assert.equal(historical.continuationIssue, "missing");
+  assert.equal(Object.hasOwn(historical, "unanswered"), false);
+  assert.equal(historical.importance, "advisory"); assert.equal(historical.blockingActive, false);
+  assert.deepEqual(state, legacy);
+});
+
 test("routine activity projection retains exact individual events across durable reload and UI grouping", async t => {
   const root = await mkdtemp(join(tmpdir(), "human-history-provenance-"));
   const events = new HumanLoopEvents(), restored = new HumanLoopEvents();
@@ -126,6 +155,31 @@ async function fixture(t, { onSend, content = sharedDesignExample(), openProject
   return { root, provider, received, state, design, post, events, permissions, openBrowser, runtime, installation, starts: () => starts,
     setInstallationStatus: (value) => { installationStatus = value; events.touch(); } };
 }
+
+test("browser advisory form shows declared continuation and legacy clarification without submitting defaults",
+  { skip: !browserAvailable, timeout: 30_000 }, async t => {
+  const f = await fixture(t);
+  const q = f.state.questions[0];
+  q.importance = "advisory"; q.blockingActive = false;
+  q.unanswered = { action: "keep-current-design", explanation: "Keep the current local-file storage; do not apply the proposed alternative." };
+  const before = structuredClone(q);
+  const browser = await f.openBrowser();
+  await browser.call("Emulation.setDeviceMetricsOverride", { width: 390, height: 620, deviceScaleFactor: 1, mobile: false });
+  await browser.call("Page.navigate", { url: f.provider.url });
+  await browser.waitFor('!!document.querySelector(".human-loop-questions .question-continuation")');
+  assert.match(await browser.evaluate('document.querySelector(".human-loop-questions").textContent'), /If unanswered:.*local-file storage.*not a user answer or approval/);
+  assert.equal(await browser.evaluate('document.querySelector(".human-loop-questions select").value'), "");
+  assert.equal(f.received.length, 0); assert.deepEqual(q, before);
+  await browser.evaluate('document.querySelector(".question-continuation").scrollIntoView({block:"center"})');
+  if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "advisory-declared-390.png"), await browser.screenshot());
+  delete q.unanswered; f.events.touch();
+  await browser.waitFor('document.querySelector(".human-loop-questions").textContent.includes("No unanswered continuation was recorded")');
+  assert.match(await browser.evaluate('document.querySelector(".human-loop-questions").textContent'), /clarification required before new work/);
+  assert.equal(f.received.length, 0);
+  assert.equal(q.importance, "advisory"); assert.equal(q.answerRequestId, null);
+  if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "advisory-legacy-390.png"), await browser.screenshot());
+  assert.deepEqual(browser.exceptions, []);
+});
 
 test("unverified or empty private history never substitutes the parent's conversation or permission stream", async t => {
   const f = await fixture(t);

@@ -1627,6 +1627,7 @@ test("a contextual Designer answer uses ordinary Router authority, without autom
     explanation: "The current layout is sufficient.", questions: [{ id: "content",
       context: "Business details are missing.", question: "How should missing details be handled when implemented?",
       whyItMatters: "Draft accuracy.", importance: "advisory", allowFreeform: true,
+      unanswered: { action: "keep-current-design", explanation: "Retain the agreed draft without applying a proposed change." },
       options: [{ id: "placeholder", label: "Build with clear placeholders", implication: "Draft before launch." }] }] });
   await f.dispatch("host", "present-handoff", { handoffId: (await f.store.load()).handoffs.at(-1).id });
   assert.equal((await f.store.load()).cycles.length, 0);

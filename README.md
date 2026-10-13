@@ -263,6 +263,12 @@ labelled as unverified, not empty or deleted.
 Browsing does not require starting both engines. Development work and pending
 questions, confirmations and permissions remain bound to the private session;
 return to Development to interact with them.
+New advisory questions explicitly explain their unanswered continuation: keep
+the producing Design unchanged. Recommended option text is not a default, and
+silence never records an answer, accepts a Design change or approves implementation.
+If no safe no-change continuation exists, the question must be blocking. Older
+questions retain their original records; missing or stale continuations require
+clarification before dependent new work rather than fabricated defaults.
 New Design output and a Prototype update awaiting Apply are marked in navigation.
 
 The original discovery phase forms remain independently owned. Finish/Reopen

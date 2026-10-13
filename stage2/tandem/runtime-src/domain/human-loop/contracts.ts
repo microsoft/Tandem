@@ -34,6 +34,7 @@ export interface QuestionDraft {
   options: QuestionOption[];
   allowFreeform: boolean;
   designRefs?: string[];
+  unanswered?: { action: 'keep-current-design'; explanation: string };
 }
 export interface QuestionSource {
   role: 'designer' | 'reviewer' | 'planner' | 'implementer';
@@ -194,7 +195,8 @@ export function parseInternalPlan(value: unknown): InternalPlan {
 }
 export function parseQuestions(value: unknown): QuestionDraft[] {
   const questions = list(value, (value): QuestionDraft => {
-    const data = referencedObject(value, ['id', 'context', 'question', 'whyItMatters', 'importance', 'options', 'allowFreeform']);
+    const data = referencedObject(value, ['id', 'context', 'question', 'whyItMatters', 'importance', 'options', 'allowFreeform',
+      ...(Object.hasOwn(value ?? {}, 'unanswered') ? ['unanswered'] : [])]);
     requireCondition(typeof data.allowFreeform === 'boolean', 'Question free-text support must be explicit.');
     const options = list(data.options, (value) => {
       const option = object(value, ['id', 'label', 'implication',
@@ -206,12 +208,31 @@ export function parseQuestions(value: unknown): QuestionDraft[] {
     });
     unique(options.map(({ id }) => id));
     requireCondition(options.length >= 2 || data.allowFreeform, 'A question needs choices or free-text input.');
+    let unanswered: QuestionDraft['unanswered'];
+    if (Object.hasOwn(data, 'unanswered')) {
+      const continuation = object(data.unanswered, ['action', 'explanation']);
+      requireCondition(data.importance === 'advisory', 'Blocking questions cannot declare an unanswered continuation.');
+      requireCondition(continuation.action === 'keep-current-design',
+        'An advisory continuation must keep the current Design; choices requiring a change or authorization must be blocking.');
+      unanswered = { action: 'keep-current-design', explanation: text(continuation.explanation) };
+      requireCondition(unanswered.explanation.length <= 2000, 'Explain the unanswered continuation in at most 2000 characters.');
+    }
     return { id: text(data.id), context: text(data.context), question: text(data.question),
       whyItMatters: text(data.whyItMatters), importance: choice(data.importance, ['blocking', 'advisory']),
-      options, allowFreeform: data.allowFreeform, ...designRefs(data) };
+      options, allowFreeform: data.allowFreeform, ...designRefs(data), ...(unanswered ? { unanswered } : {}) };
   });
   unique(questions.map(({ id }) => id));
   return questions;
+}
+export function requireDeclaredAdvisoryContinuations(questions: readonly QuestionDraft[]): void {
+  requireCondition(questions.every(q => q.importance !== 'advisory' || q.unanswered?.action === 'keep-current-design'),
+    'Every new advisory question must declare unanswered: { action: "keep-current-design", explanation: "..." }. State the safe continuation, or classify the question as blocking. Recommended option text is not a default.');
+}
+
+export function advisoryContinuationIssue(question: QuestionRecord, currentDesign: DesignBinding): 'missing' | 'stale' | null {
+  if (question.importance !== 'advisory') return null;
+  if (!question.unanswered || question.unanswered.action !== 'keep-current-design' || !question.unanswered.explanation?.trim()) return 'missing';
+  return question.source.design.revisionId !== currentDesign.revisionId || question.source.design.digest !== currentDesign.digest ? 'stale' : null;
 }
 function parseSelectedOption(value: unknown): Omit<QuestionOption, 'id'> {
   const data = object(value, ['label', 'implication',

@@ -132,7 +132,8 @@ export class HumanLoopStore {
         await this.#publishAfterCommit(derived, true);
         return { content, result: structuredClone(state) };
       }
-      const command = { id: text(id), expectedRevision: state.revision, type, data: structuredClone(data) };
+      const command = { id: text(id), expectedRevision: state.revision, type, data: structuredClone(data),
+        questionPolicy: "explicit-continuation/v1" };
       const next = transitionHumanLoop(state, authority, command);
       validateHumanImplementationAuthorization(state, type, data);
       await prepare?.();

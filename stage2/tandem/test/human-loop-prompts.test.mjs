@@ -61,6 +61,21 @@ test("format and answer-authorization guidance preserve unrelated role instructi
   assert.deepEqual(cases.map(({ name }) => name), baseline.cases.map(({ name }) => name));
 });
 
+test("every role receives the explicit advisory continuation and consent distinction", () => {
+  const guidance = humanLoopPrompts.shared.find(line => line.includes("Every new advisory question"));
+  assert.match(guidance, /unanswered:.*keep-current-design.*specific safe behavior/);
+  assert.match(guidance, /not a selected option, user answer, acceptance or implementation\/permission approval/);
+  assert.match(guidance, /Recommended option wording alone is not a default/);
+  assert.match(guidance, /irreversible action.*security\/data-loss.*blocking/);
+  const legacy = humanLoopPrompts.shared.find(line => line.startsWith("Legacy advisory"));
+  assert.match(legacy, /original history.*explicit clarification.*Never cancel active work/);
+  for (const { name, packet } of cases) {
+    const prompt = evaluateWrapper(transport, packet, humanLoopPrompts);
+    assert.ok(prompt.includes(guidance), name);
+    assert.ok(prompt.includes(legacy), name);
+  }
+});
+
 test("all roles receive natural public milestone guidance without changing result authority", () => {
   assert.match(progressInstruction, /short, concrete user-facing progress sentence.*meaningful milestones/);
   assert.match(progressInstruction, /Do not expose private reasoning, prompts or credentials/);

@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { HumanLoopPreferences, validateProjectReasoningEffort } from "./human-loop-preferences.mjs";
 import { humanLoopPrompts } from "../public/prompts/human-loop.js";
-import { parseRequest } from "../runtime-src/domain/human-loop/contracts.ts";
+import { parseRequest, advisoryContinuationIssue } from "../runtime-src/domain/human-loop/contracts.ts";
 import { bindSelectedOptions } from "./human-loop-answers.mjs";
 import { decisionReportText } from "../public/review-decisions.js";
 import { nextHumanRequest, isStaleAnswer, humanExecutionQueue, hasQuestionBlockers, isPriorityAnswer, requireHumanRequestRunning, allowsHumanRoleSettlement,
-  currentImplementationConfirmation, requestsImplementationAfterDesign } from "../runtime-src/domain/human-loop/model.ts";
+  currentImplementationConfirmation, requestsImplementationAfterDesign, questionBlocksNewWork } from "../runtime-src/domain/human-loop/model.ts";
 import { policyHash } from "../runtime-src/domain/workflow/policy.ts";
 import { requireCondition } from "../runtime-src/domain/workflow/validation.ts";
 import { HumanLoopStore } from "./human-loop-store.mjs";
@@ -479,7 +479,7 @@ export class HumanLoopRuntime {
     const state = this.#state ?? await this.#store.load();
     const confirmation = currentImplementationConfirmation(state);
     const awaitingAnswer = hasQuestionBlockers(state);
-    const openPrerequisite = state.questions.some(q => q.state === "open" && q.blockingActive);
+    const openPrerequisite = state.questions.some(q => questionBlocksNewWork(state, q));
     return {
       schemaVersion: "human-loop-runtime-view/v1",
       status: this.#closed ? "closed" : state.uncertainty || this.#queueFailure ? "execution-unknown"
@@ -869,7 +869,12 @@ export class HumanLoopRuntime {
       design: { ...design, references: design.content ? designReferenceCatalog(design.content) : [] },
       ...(role === "designer" ? { designGeneration: this.#designer.generation?.() ?? designGenerationContract } : {}),
       code: { baseline: cycle?.baseline ?? before, current: before }, cycle, boundCycles,
-      questions, questionAnswers, pendingQuestionAnswers, lastOutcome: state.handoffs.at(-1)?.result ?? null,
+      questions,
+      questionContinuations: questions.filter(q => q.importance === "advisory").map(q => ({
+        questionId: q.id, sourceResultId: q.source.resultId, declaration: q.unanswered ?? null,
+        issue: advisoryContinuationIssue(q, state.design),
+        attribution: q.unanswered ? "Declared by the source role; not a user answer or approval." : "No continuation was recorded; do not invent one." })),
+      questionAnswers, pendingQuestionAnswers, lastOutcome: state.handoffs.at(-1)?.result ?? null,
       recordedQuestionAnswers: state.requests.filter(source => source.id === request.id
         || ["completed", "cancelled"].includes(source.status)).flatMap(source => (source.answers?.answers ?? []).map(answer => ({
         requestId: source.id, requestStatus: source.status, answer,
@@ -987,7 +992,7 @@ export class HumanLoopRuntime {
     this.#requireRunning(state, request.id, taskId);
     const confirmAfterDesign = !state.stop && ["designer-changed", "designer-unchanged"].includes(outcome.kind)
       && requestsImplementationAfterDesign(state, state.requests.find(r => r.id === request.id))
-      && !state.questions.some(q => q.state === "open" && q.blockingActive);
+      && !state.questions.some(q => questionBlocksNewWork(state, q));
     await this.#store.dispatch("host", `present:${handoff.id}`, "present-handoff", { handoffId: handoff.id,
       ...(confirmAfterDesign ? { implementationConfirmation: {
         id: `confirmation-after-design:${handoff.result.resultId}`, createdAt: previous?.timestamp ?? new Date().toISOString(),

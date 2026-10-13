@@ -5,7 +5,8 @@ import { resolve, relative, isAbsolute, extname, sep } from "node:path";
 import { InMemoryEventStore, SqliteEventStore } from "../runtime-src/event-store.ts";
 import { AnnotationAttachmentStore } from "../runtime-src/domain/workflow/annotation-attachment.ts";
 import { ImageAttachmentStore, isImageAttachment, parseRequestAttachments, readRequestAttachment } from "../runtime-src/domain/workflow/image-attachment.ts";
-import { humanExecutionQueue, isPriorityAnswer, hasQuestionBlockers, currentImplementationConfirmation, implementationDecisionMessage } from "../runtime-src/domain/human-loop/model.ts";
+import { humanExecutionQueue, isPriorityAnswer, hasQuestionBlockers, questionBlocksNewWork, currentImplementationConfirmation, implementationDecisionMessage } from "../runtime-src/domain/human-loop/model.ts";
+import { advisoryContinuationIssue } from "../runtime-src/domain/human-loop/contracts.ts";
 import { requireCondition, object, text } from "../runtime-src/domain/workflow/validation.ts";
 import { policyHash } from "../runtime-src/domain/workflow/policy.ts";
 import { getHostStateWal } from "../runtime-src/domain/host-state-wal.ts";
@@ -66,6 +67,8 @@ export function projectHumanLoopView(state, readiness) {
     id: q.id, context: q.context, question: q.question, whyItMatters: q.whyItMatters, importance: q.importance,
     options: q.options.map((option) => ({ ...option })), allowFreeform: q.allowFreeform,
     state: q.state, answerRequestId: q.answerRequestId, blockingActive: q.blockingActive,
+    ...(q.unanswered ? { unanswered: q.unanswered } : {}),
+    continuationIssue: advisoryContinuationIssue(q, state.design), effectiveBlocking: questionBlocksNewWork(state, q),
     processingState: q.answerRequestId ? state.requests.find(r => r.id === q.answerRequestId)?.status ?? null : null,
     ...(q.invalidation ? { invalidation: q.invalidation } : {}),
     designRefs: q.designRefs ?? [],
@@ -83,8 +86,8 @@ export function projectHumanLoopView(state, readiness) {
     group.canAnswer ||= permitted && question.state === "open";
     groups.set(group.resultId, group);
   }
-  const questionInteractions = [...groups.values()].sort((a, b) => Number(b.questions.some(q => q.state === "open" && q.blockingActive))
-    - Number(a.questions.some(q => q.state === "open" && q.blockingActive)));
+  const questionInteractions = [...groups.values()].sort((a, b) => Number(b.questions.some(q => q.effectiveBlocking))
+    - Number(a.questions.some(q => q.effectiveBlocking)));
   const queue = humanExecutionQueue(state);
   const sourceTask = latest && state.executions.find(({ result }) => result?.resultId === latest.result.resultId);
   const sourceRole = sourceTask?.binding.role;
@@ -110,7 +113,7 @@ export function projectHumanLoopView(state, readiness) {
     currentCycle: cycle ? projectHumanCycle(cycle) : null,
     questionInteractions,
     questionCounts: { unanswered: questions.filter(q => q.state === "open").length,
-      blockers: questions.filter(q => q.state === "open" && q.blockingActive).length,
+      blockers: questions.filter(q => q.effectiveBlocking).length,
       processing: state.requests.filter(r => isPriorityAnswer(r) && ["waiting", "active", "handoff-pending"].includes(r.status)).length },
     queue: queue.map((request) => ({
       id: request.id, message: request.message, status: request.status, kind: request.answers ? "answer" : "ordinary",
@@ -138,6 +141,8 @@ export function projectHumanConversation(state, originals) {
       question: question.question, context: question.context, whyItMatters: question.whyItMatters,
       importance: question.importance, options: question.options, design: question.source.design,
       state: question.state, blockingActive: question.blockingActive,
+      ...(question.unanswered ? { unanswered: question.unanswered } : {}),
+      continuationIssue: advisoryContinuationIssue(question, state.design), effectiveBlocking: questionBlocksNewWork(state, question),
       processingState: question.answerRequestId ? state.requests.find(r => r.id === question.answerRequestId)?.status ?? null : null,
       designRefs: question.designRefs ?? [] });
     historicalQuestions.set(question.source.resultId, group);

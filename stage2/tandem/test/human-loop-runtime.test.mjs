@@ -1906,7 +1906,8 @@ test("product WAL atomically saves mixed answers, retries lost acknowledgement, 
     }
     if (packet.binding.role === "designer") return submit(session, packet, "submit_designer_outcome", {
       kind: "designer-unchanged", summary: "Two choices.", explanation: "Current Design retained.",
-      questions: [question, { ...question, id: "optional", importance: "advisory" }],
+      questions: [question, { ...question, id: "optional", importance: "advisory",
+        unanswered: { action: "keep-current-design", explanation: "Keep the agreed behavior until a later explicit answer." } }],
     });
     return ordinary(packet, session);
   }, { realDesign: true });
