@@ -41,9 +41,10 @@
 .development-provenance[open] { max-height: 130px; overflow: auto; }
 .development-provenance summary { cursor: pointer; }
 .development-empty { padding: 16px; }
-.development-process { position: relative; }
-.development-process > summary { cursor: pointer; }
-.development-process[open] > .process-controls { position: absolute; right: 0; z-index: 10; width: min(440px, 85vw); max-height: 65vh; overflow: auto; background: var(--studio-surface); border: 1px solid var(--studio-border); padding: 12px; }
+.development-handoff-status { padding: 4px 8px; color: var(--studio-muted); font-size: 12px; overflow-wrap: anywhere; }
+.dialog-overlay.process-dialog-overlay { z-index: 90; }
+.dialog-content.process-dialog { z-index: 91; width: min(680px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow: auto; }
+.process-dialog .root-settings-heading { position: sticky; top: -24px; padding-block: 8px; background: var(--studio-surface); z-index: 1; }
 
 .sketch-panel {
   display: flex;

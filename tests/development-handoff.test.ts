@@ -88,6 +88,33 @@ async function retainedFiles(root: string): Promise<Record<string, Buffer>> {
     return result;
 }
 
+test("handoff status inspection is exact, read-only and never admits work", async t => {
+    const f = await fixture("build");
+    t.after(f.cleanup);
+    assert.equal(await f.store.admissionFor(f.state), null);
+    const receipt = await f.store.prepare(f.state);
+    f.state.development = { handoffId: receipt.id, requestId: receipt.request.id, snapshotPath: receipt.source.snapshotPath };
+    const path = join(f.store.root, `${receipt.id}.admission.json`);
+    const prepared = await f.store.admissionFor(f.state);
+    assert.equal(prepared?.status, "prepared");
+    for (const status of ["prepared", "sending", "uncertain", "admitted"] as const) {
+        await writeJsonAtomically(path, { ...prepared, status, privateSessionId: status === "prepared" ? null : "private" });
+        const before = await retainedFiles(f.store.root);
+        assert.equal((await f.store.admissionFor(f.state))?.status, status);
+        assert.deepEqual(await retainedFiles(f.store.root), before);
+    }
+    await assert.rejects(new DevelopmentHandoffs(f.workspace, f.shared, "other-main").admissionFor(f.state), /another workspace or owner/);
+    await assert.rejects(f.store.admissionFor({ ...f.state, generation: "other-generation" }), /current effort/);
+    const next = structuredClone(f.state);
+    next.lifecycle.outputs[0].path = ".tandem/efforts/fixture/stages/prototype-r5.json";
+    assert.equal(await f.store.admissionFor(next), null, "An old admission is not completion of a newly saved input.");
+    await writeJsonAtomically(path, { ...prepared, requestId: "foreign" });
+    await assert.rejects(f.store.admissionFor(f.state), /admission is unavailable or invalid/);
+    await writeJsonAtomically(path, prepared);
+    await writeFile(f.path, "{}");
+    await assert.rejects(f.store.admissionFor(f.state), /Prototype changed/);
+});
+
 test("empty-setup repair inspection preserves prepared handoffs and refuses every admission or owner change", async t => {
     const f = await fixture("build");
     t.after(f.cleanup);

@@ -668,6 +668,34 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await click("#close-settings", true);
       await waitInside('!document.querySelector("#canvas-settings").open');
       await browser.waitFor('document.activeElement.id==="project-settings"');
+      const beforeAdvanced = mutations.length;
+      for (const [width, height] of [[1360, 900], [920, 620], [390, 620]]) {
+        await browser.call("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+        await click("#acceptance-delivery");
+        await browser.waitFor('!!document.querySelector(".process-dialog")');
+        const advanced = await browser.evaluate(`(() => {
+          const d=document.querySelector(".process-dialog"),r=d.getBoundingClientRect(),b=document.querySelector("#close-acceptance-delivery"),
+            c=b.getBoundingClientRect(),hit=document.elementFromPoint(c.x+c.width/2,c.y+c.height/2);
+          return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:innerWidth,height:innerHeight,
+            closeHit:hit===b||b.contains(hit),hit:hit?.outerHTML.slice(0,500),close:{top:c.top,bottom:c.bottom,left:c.left,right:c.right},count:document.querySelectorAll("#handoff-approver").length,
+            rootToggle:!!d.querySelector(".process-controls > button.ledger-summary")};
+        })()`);
+        assert.ok(advanced.left>=0 && advanced.right<=advanced.width && advanced.top>=0 && advanced.bottom<=advanced.height, JSON.stringify(advanced));
+        if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `advanced-delivery-open-${width}.png`), await browser.screenshot());
+        assert.equal(advanced.closeHit, true, JSON.stringify(advanced));
+        assert.equal(advanced.count, 1);
+        assert.equal(advanced.rootToggle, false, "Opening advanced delivery must expose controls, not an empty nested disclosure.");
+        await click("#handoff-approver");
+        await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Tab", windowsVirtualKeyCode: 9 });
+        await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Tab", windowsVirtualKeyCode: 9 });
+        assert.equal(await browser.evaluate('document.querySelector(".process-dialog").contains(document.activeElement)'), true);
+        if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `advanced-delivery-${width}.png`), await browser.screenshot());
+        await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", windowsVirtualKeyCode: 27 });
+        await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", windowsVirtualKeyCode: 27 });
+        await browser.waitFor('!document.querySelector(".process-dialog") && document.activeElement.id==="acceptance-delivery"');
+      }
+      assert.equal(mutations.length, beforeAdvanced);
+      await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 1000, deviceScaleFactor: 1, mobile: false });
       await click("#message", true); await browser.call("Input.insertText", { text: "As a user, I keep my draft while viewing Design." });
       assert.equal(await inside('document.querySelector("#message").value'), "As a user, I keep my draft while viewing Design.");
       await inside(`(() => {

@@ -8,6 +8,94 @@ import { reactHarness, state, response } from "./helpers/react-harness.js";
 import { browserAvailable, openFixtureBrowser } from "../stage2/tandem/test/helpers/browser-fixture.mjs";
 import { projectDiscovery } from "../src/renderer/project-conversation.js";
 
+test("handoff presentation distinguishes exact admission, pending, uncertainty and new saved input without replay", async t => {
+    const h = await reactHarness(t, undefined, "development");
+    let value = state("development");
+    const snapshotPath = ".tandem/efforts/fixture/stages/prototype-r7.json";
+    const id = `handoff-${"a".repeat(64)}`;
+    value.lifecycle.outputs = [{ stageId: "prototype", path: snapshotPath, completedAt: value.updatedAt }];
+    value.development = { handoffId: id, requestId: id, snapshotPath };
+    let admissionStatus = "admitted";
+    let invalid = false;
+    h.setFetch(async (path, options) => {
+        if (path === "/api/development/handoff") return response({ generation: invalid ? "other" : value.generation,
+            snapshotPath: value.lifecycle.outputs[0].path, handoffId: id,
+            admission: { version: 1, handoffId: id, requestId: id, privateSessionId: "private", status: admissionStatus, message: "Fixture receipt" } });
+        if (path === "/api/state") return response(value);
+        assert.equal(path, "/api/development/continue");
+        assert.equal(options.method, "POST");
+        admissionStatus = "admitted";
+        return response(value);
+    });
+    h.render(value); await h.flush();
+    const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
+    h.window.dispatchEvent(new h.window.MessageEvent("message", { origin: "http://127.0.0.1:8765", source: frame.contentWindow,
+        data: { protocol: "tandem-project/v1", channel: "fixture-project", type: "status", status: "ready", active: true } }));
+    await h.flush();
+    assert.equal(h.document.querySelector("#continue-design"), null);
+    assert.match(h.document.querySelector(".development-handoff-status")!.textContent!, /handoff admitted/);
+    const mutations = () => h.requests.filter(request => request.options?.method === "POST");
+    assert.equal(mutations().length, 0);
+    admissionStatus = "sending";
+    value = { ...value, revision: value.revision + 1 }; h.render(value); await h.flush();
+    assert.equal(h.document.querySelector("#continue-design"), null);
+    await h.click("check-design-handoff");
+    assert.equal(mutations().length, 0, "Checking pending admission cannot send or reconcile work.");
+    admissionStatus = "uncertain";
+    value = { ...value, revision: value.revision + 1 }; h.render(value); await h.flush();
+    assert.match(h.get("continue-design").textContent!, /Reconcile saved handoff/);
+    assert.ok(h.get("continue-design").classList.contains("secondary"));
+    assert.match(h.document.querySelector(".development-handoff-status")!.textContent!, /may submit it if not admitted/);
+    invalid = true;
+    value = { ...value, revision: value.revision + 1 }; h.render(value); await h.flush();
+    assert.equal(h.document.querySelector("#continue-design"), null);
+    assert.match(h.document.querySelector(".development-handoff-status [role=alert]")!.textContent!, /changed/);
+    invalid = false; admissionStatus = "prepared";
+    await h.click("check-design-handoff");
+    assert.match(h.get("continue-design").textContent!, /Continue saved Prototype/);
+    await h.click("continue-design");
+    assert.equal(mutations().length, 1);
+    assert.equal(h.document.querySelector("#continue-design"), null);
+    value = { ...value, revision: value.revision + 1, lifecycle: { ...value.lifecycle,
+        outputs: [{ ...value.lifecycle.outputs[0], path: ".tandem/efforts/fixture/stages/prototype-r8.json" }] } };
+    h.render(value); await h.flush();
+    assert.match(h.get("continue-design").textContent!, /updated Prototype/);
+    assert.equal(mutations().length, 1, "A new saved input is an explicit action, not automatic admission.");
+    h.render({ ...value, revision: value.revision + 1, preparation: { ...value.preparation, status: "running" } }); await h.flush();
+    assert.equal(h.document.querySelector("#continue-design"), null);
+    assert.equal(mutations().length, 1);
+    assert.deepEqual(h.errors, []);
+});
+
+test("advanced delivery has one accessible panel, retains drafts and preserves confirmation", async t => {
+    const h = await reactHarness(t, undefined, "development");
+    h.render(state("development")); await h.flush();
+    h.get("acceptance-delivery").focus();
+    await h.click("acceptance-delivery");
+    const dialog = h.document.querySelector('[role="dialog"]')!;
+    assert.ok(dialog);
+    assert.match(dialog.textContent!, /Optional advanced controls/);
+    assert.equal(dialog.querySelectorAll(".process-controls").length, 1);
+    assert.equal(dialog.querySelector(".process-controls > button.ledger-summary"), null);
+    assert.equal(h.document.querySelectorAll("#handoff-approver").length, 1);
+    await h.input("handoff-approver", "Preserved draft");
+    const settings = Array.from(dialog.querySelectorAll("button")).find(button => button.textContent?.includes("Process settings"))!;
+    await h.click(settings);
+    await h.click("save-process");
+    assert.ok(h.document.querySelector('[role="alertdialog"]'));
+    await h.confirm(false);
+    assert.equal(h.requests.length, 0, "Opening or cancelling advanced controls cannot publish or configure.");
+    await h.click("close-acceptance-delivery");
+    assert.equal(h.document.querySelector('[role="dialog"]'), null);
+    assert.equal(h.document.activeElement?.id, "acceptance-delivery");
+    await h.click("acceptance-delivery");
+    assert.equal(h.get<HTMLInputElement>("handoff-approver").value, "Preserved draft");
+    await h.fire(h.document.querySelector('[role="dialog"]')!, "keydown", { key: "Escape", code: "Escape" });
+    assert.equal(h.document.querySelector('[role="dialog"]'), null);
+    assert.equal(h.document.activeElement?.id, "acceptance-delivery");
+    assert.deepEqual(h.errors, []);
+});
+
 test("Development presentation cannot arm a competing discovery input and rejects foreign messages", async t => {
     const h = await reactHarness(t, undefined, "development"), value = state("requirements");
     value.requirements.substage = "usage";
@@ -54,7 +142,9 @@ test("fresh projects open Development directly without creating Stage1 state or 
     const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
     assert.equal(frame.src, "http://127.0.0.1:8765/?panel=workspace");
     assert.equal(h.document.querySelector("#continue-design"), null);
+    await h.click("acceptance-delivery");
     assert.ok(h.get("capture-development"), "Direct projects retain the explicit capture/delivery controls.");
+    await h.click("close-acceptance-delivery");
     await h.fire(h.get("preparation-tab"), "mousedown", { button: 0 });
     assert.equal(h.get("studio-workspace").hidden, false);
     assert.equal(h.document.querySelector("#open-development"), null);
@@ -234,6 +324,11 @@ test("real React Development keeps handoff controls in view across long-status h
                 response.writeHead(200, { "Content-Type": "text/javascript" }); response.end(bundle.outputFiles[0].text);
             } else if (path === "/api/state" && request.method === "GET") {
                 response.writeHead(200, { "Content-Type": "application/json" }); response.end(JSON.stringify(snapshot));
+            } else if (path === "/api/development/handoff" && request.method === "GET") {
+                response.writeHead(200, { "Content-Type": "application/json" });
+                response.end(JSON.stringify({ generation: snapshot.generation, snapshotPath, handoffId: snapshot.development!.handoffId,
+                    admission: { version: 1, handoffId: snapshot.development!.handoffId, requestId: snapshot.development!.requestId,
+                        privateSessionId: null, status: "prepared", message: "Not submitted." } }));
             } else if (path === "/api/project-entry") {
                 response.writeHead(200, { "Content-Type": "application/json" });
                 response.end(JSON.stringify({ projectPath: "C:\\layout-fixture", startingPath: "development" }));
@@ -263,6 +358,7 @@ test("real React Development keeps handoff controls in view across long-status h
         await browser.call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
         await browser.call("Page.navigate", { url: appUrl });
         await browser.waitFor('Boolean(window.developmentFixture && document.querySelector("#project-conversation-frame")?.src)');
+        await browser.waitFor('document.querySelector("#continue-design")?.disabled === false');
         await browser.evaluate('window.originalDevelopmentFrame = document.querySelector("#project-conversation-frame"); true');
         await browser.waitFor(`Boolean(document.querySelector("#project-conversation-frame")?.src === ${JSON.stringify(frameUrl + "?panel=workspace")})`);
         const settle = () => browser.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))");
@@ -297,7 +393,7 @@ test("real React Development keeps handoff controls in view across long-status h
                 const guide = document.querySelector("#next-action-guide");
                 return { viewport: innerWidth, app: bounds(".app"), workspace: bounds("#studio-workspace"),
                     iframe: bounds("#project-conversation-frame"), footer: bounds("#next-action-bar"),
-                    button: bounds("#continue-design"), acceptance: bounds(".development-process > summary"),
+                    button: bounds("#continue-design"), acceptance: bounds("#acceptance-delivery"),
                     guide: guide.textContent, guideTitle: guide.title, guideClipped: guide.scrollWidth > guide.clientWidth,
                     active: document.activeElement.id || document.activeElement.tagName,
                     frameRetained: window.originalDevelopmentFrame === document.querySelector("#project-conversation-frame") };
@@ -349,7 +445,7 @@ test("real React Development keeps handoff controls in view across long-status h
             if (width === 640) {
                 // Stress translated-length copy in the fixture without changing product labels.
                 await browser.evaluate(`document.querySelector("#continue-design").textContent = "Reconcile the retained Prototype handoff and continue Design";
-                    document.querySelector(".development-process > summary").textContent = "Acceptance and delivery history";`);
+                    document.querySelector("#acceptance-delivery").textContent = "Acceptance and delivery history";`);
             }
             await settle();
             await move("#project-conversation-frame", true);
@@ -364,14 +460,14 @@ test("real React Development keeps handoff controls in view across long-status h
             assertBounded(focused);
             await tab();
             const acceptanceFocused = await measure(`${width}-keyboard-acceptance`);
-            assert.equal(acceptanceFocused.active, "SUMMARY");
+            assert.equal(acceptanceFocused.active, "acceptance-delivery");
             assertBounded(acceptanceFocused);
         }
         assert.equal(requests.filter(request => request.path === "/api/development/continue").length, 0,
             "Hover, focus, resize and drafting must never submit a handoff.");
-        await click(".development-process > summary");
-        assert.equal(await browser.evaluate('document.querySelector(".development-process").open'), true);
-        await click(".development-process > summary");
+        await click("#acceptance-delivery");
+        assert.equal(await browser.evaluate('!!document.querySelector(".process-dialog")'), true);
+        await click("#close-acceptance-delivery");
         await browser.call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
         await settle();
         await browser.evaluate('document.querySelector("#content-tab").scrollIntoView({block:"nearest"})');

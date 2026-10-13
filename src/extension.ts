@@ -6440,6 +6440,13 @@ async function handleRequest(entry, req, res) {
     }
     if (requestUrl.pathname.startsWith("/api/development/")) {
         if (!(await isPreferredAnswerProvider(entry.extensionId))) throw new CanvasError("read_only_provider", "Open the writable provider for Development.");
+        if (req.method === "GET" && requestUrl.pathname === "/api/development/handoff") {
+            const state = await loadState(entry.prototypeId);
+            sendJson(res, 200, { generation: state.generation,
+                snapshotPath: state.lifecycle.outputs.find(output => output.stageId === "prototype")?.path ?? null,
+                handoffId: state.development?.handoffId ?? null, admission: await handoffs.admissionFor(state) });
+            return;
+        }
         if (req.method === "GET" && requestUrl.pathname === "/api/development/status") {
             sendJson(res, 200, { ...await development.status(), mainSessionModel: await session.rpc.model.getCurrent() });
             return;

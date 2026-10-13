@@ -424,8 +424,11 @@ request referencing the retained handoff, for example:
 `Continue Design from retained handoff <id> and its source. Preserve confirmed
 decisions and identify mocks. Do not implement.`
 
-**Reconcile Design handoff** remains idempotent and cannot revive a retired
-request. Do not use unused-setup initialization, delete history, or substitute a
+An exactly admitted handoff shows **Prototype handoff admitted**, not a repeated
+primary submission button. Uncertain admission offers **Reconcile saved handoff**;
+pending submission offers a read-only status check. Reconciliation remains
+idempotent and cannot revive a retired request. A newly saved Prototype offers a
+separate explicit continuation. Do not use unused-setup initialization, delete history, or substitute a
 new private identity to retry admitted work. If Close or reopen fails, retain
 the reported ownership/history error rather than treating it as success.
 
@@ -457,7 +460,7 @@ five-minute confirmation, not ordinary Retry, Reconcile, or implementation
 approval. The application rechecks the bound evidence and records consumption
 before issuing creation. Existing WAL frames, handoff files, request IDs and
 startup uncertainty remain retained; it sends no project/model request.
-After **Ready**, explicitly select **Reconcile Design handoff** to admit the
+After **Ready**, explicitly select **Continue saved Prototype handoff** to admit the
 original prepared handoff. Never delete saved state or locks to bypass a
 rejected recovery check.
 
@@ -483,10 +486,15 @@ files remain intact. This reinitializes empty setup; it does not restore
 nonexistent native history, create a replacement UUID, or send a dummy turn.
 Native model/effort readback must succeed before reporting completion. The
 prepared handoff stays unsent until a separate explicit **Continue Design from
-Prototype** / **Reconcile Design handoff** action. A failed or uncertain repair
+Prototype** / **Continue saved Prototype handoff** action. A failed or uncertain repair
 cannot reuse its consumed confirmation.
 
 ## Acceptance, export and process adapters
+
+Open **Acceptance, export and delivery** in Development for the optional advanced
+panel. Its Close button and Escape return focus to the opener; the controls are
+not required for ordinary Design work. Opening or closing it does not accept,
+export, publish or start work.
 
 Use **Capture Development outcome for review**, inspect the original Development
 outcome and captured artifact, then explicitly accept it. The projection binds
