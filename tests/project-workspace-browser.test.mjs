@@ -155,6 +155,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
     const owner = { schemaVersion: "human-loop-owner/v1", id: "owner", mainSessionId: "main", privateSessionId: "private",
       workspacePath: root, policy: DEFAULT_POLICY };
     const designBinding = { revisionId: "fixture-design", digest: "a".repeat(64) };
+    let currentDesignBinding = designBinding;
     let nativeState = replayHumanLoopLedger(createHumanLoopLedger(owner, designBinding)).state;
     nativeState.requests.push({ id: "fixture-origin", message: "Previously saved work", receivedAt: "2026-10-10T08:00:00Z", status: "completed", stopId: null,
       blockingAnswerRefs: [], questionGatesReleased: true });
@@ -181,7 +182,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
           content: "Read-only Agent response; deterministic fixture, not a model.",
           timestamp: new Date(Date.parse(request.receivedAt) + 1).toISOString(),
         }))],
-      currentDesign: async () => ({ binding: designBinding, content: sharedDesignExampleV3() }),
+      currentDesign: async () => ({ binding: currentDesignBinding, content: sharedDesignExampleV3() }),
       commands: { read: async () => ({ apps: [], commands: [] }) },
       modelSettings: async () => ({ models: [{ id: "fixture", name: "Fixture", supportedReasoningEfforts: ["low"] }],
         actual: "fixture", actualReasoningEffort: "low", desired: "fixture", canChange: true,
@@ -653,7 +654,8 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         })`);
         const luminance = color => {
           const channels = color.match(/[\d.]+/g).slice(0, 3).map(value => {
-            const channel = Number(value) / 255; return channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4;
+            const channel = Number(value) / (color.startsWith("color(srgb ") ? 1 : 255);
+            return channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4;
           });
           return channels[0] * .2126 + channels[1] * .7152 + channels[2] * .0722;
         };
@@ -663,6 +665,15 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
           assert.ok((values[0] + .05) / (values[1] + .05) >= 4.5, `${item.selector} needs readable contrast.`);
           assert.ok(item.height >= 30, `${item.selector} uses the actual shared control geometry.`);
         }
+        await browser.waitFor('Boolean(document.querySelector("#development-tab .project-availability"))');
+        const marker = await browser.evaluate(`(() => {const row=document.querySelector("#development-tab"),
+          dot=row.querySelector(".project-availability");return {color:getComputedStyle(dot).backgroundColor,
+            background:getComputedStyle(row).backgroundColor,title:dot.title,name:row.getAttribute("aria-label")};})()`);
+        for (const color of [marker.color, marker.background]) assert.match(color, /^(rgb\(|color\(srgb )/);
+        const values = [luminance(marker.color), luminance(marker.background)].sort((a, b) => b - a);
+        assert.ok((values[0] + .05) / (values[1] + .05) >= 3, `Availability marker contrast: ${JSON.stringify(marker)}`);
+        assert.equal(marker.title, "Design available");
+        assert.equal(marker.name, "Development, Design available");
       };
       const checkEffortLayout = async () => {
         const geometry = await inside(`(() => {const panel=document.querySelector("#canvas-settings").getBoundingClientRect();
@@ -1032,25 +1043,41 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         await waitInside('document.body.dataset.projectDesign==="true"');
         await waitInside(`document.body.dataset.projectStacked==="${width < 800}"`);
         assert.equal(await browser.evaluate('document.activeElement.id'), "development-tab");
-        for (const badge of ["Available", "New output", "Update ready"]) {
+        for (const mode of ["available", "new-output"]) {
+          if (mode === "new-output") {
+            await click("#preparation-tab");
+            currentDesignBinding = { revisionId: `fixture-design-${width}`, digest: "e".repeat(64) };
+            nativeState.design = currentDesignBinding;
+            events.touch();
+            await browser.waitFor('document.querySelector("#development-tab .artifact-count")?.textContent==="New output"');
+          }
           const fit = await browser.evaluate(`(() => {
             const row=document.querySelector("#development-tab"), list=document.querySelector("#project-contents");
-            const badge=row.querySelector(".artifact-count"), label=row.querySelector(".project-tab-label");
-            badge.textContent=${JSON.stringify(badge)};
+            const badge=row.querySelector(".project-availability, .artifact-count"), label=row.querySelector(".project-tab-label");
             const r=row.getBoundingClientRect(), b=badge.getBoundingClientRect(), l=label.getBoundingClientRect();
             return {sidebar:document.querySelector("#requirements-pane").getBoundingClientRect().width,
               rowFits:row.scrollWidth<=row.clientWidth+1,listFits:list.scrollWidth<=list.clientWidth+1,
               labelFits:l.left>=r.left&&l.right<=r.right,label:label.textContent,
-              badgeFits:b.left>=r.left&&b.right<=r.right,badge:badge.textContent,
-              selected:row.getAttribute("aria-selected")};
+              badgeFits:b.left>=r.left&&b.right<=r.right,badge:badge.textContent,title:badge.title,
+              sameRow:Math.abs((b.top+b.bottom)/2-(l.top+l.bottom)/2)<1,
+              name:row.getAttribute("aria-label"),selected:row.getAttribute("aria-selected")};
           })()`);
           assert.equal(fit.label, "Development");
-          assert.equal(fit.badge, badge);
-          assert.equal(fit.selected, "true");
+          assert.equal(fit.badge, mode === "available" ? "" : "New output");
+          assert.equal(fit.selected, mode === "available" ? "true" : "false");
+          assert.equal(fit.name, `Development, ${mode === "available" ? "Design available" : "New Design output"}`);
+          if (mode === "available") {
+            assert.equal(fit.title, "Design available");
+            assert.equal(fit.sameRow, true, "The passive marker stays beside Development, not on a second row.");
+          }
           assert.ok(fit.rowFits && fit.listFits && fit.labelFits && fit.badgeFits,
-            `Navigation keeps full labels and ${badge} without horizontal scrolling at ${width}: ${JSON.stringify(fit)}`);
+            `Navigation keeps full labels and ${mode} without horizontal scrolling at ${width}: ${JSON.stringify(fit)}`);
           if (width === 980) assert.equal(fit.sidebar, 180);
+          if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `design-marker-${mode}-${width}.png`), await browser.screenshot());
         }
+        await click("#development-tab");
+        await browser.waitFor('Boolean(document.querySelector("#development-tab .project-availability"))');
+        assert.equal(await browser.evaluate('document.activeElement.id'), "development-tab");
         if (width < 800) {
           assert.equal(await inside('document.querySelector("#workspace-divider").hidden'), true);
           const sizes = await inside('({conversation:document.querySelector("#conversation-panel").getBoundingClientRect().width, layout:document.querySelector(".human-layout").clientWidth})');

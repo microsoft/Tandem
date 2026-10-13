@@ -300,8 +300,10 @@ Saved appearance settings apply to the whole project surface. Resizing the
 artifact/conversation split carries across artifact navigation; constrained
 windows stack the contents without replacing the conversation or its draft.
 Source diagrams and documents retain their own authored styling.
-Navigation labels remain fully visible in constrained sidebars; output-status
-badges occupy a second line rather than requiring horizontal scrolling.
+Navigation labels remain fully visible in constrained sidebars. A compact dot
+beside Development means **Design available**, with that tooltip and accessible
+name; it does not imply completion or approval. New-output and attention cues
+remain distinct, with longer output-status badges on a second line.
 
 Development conversation is visible **only on Development**. Earlier phases use
 their original inputs and root-owned Discovery history; the private renderer stays

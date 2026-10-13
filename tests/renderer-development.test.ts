@@ -188,6 +188,40 @@ test("fresh projects open Development directly without creating Stage1 state or 
     assert.deepEqual(h.errors, []);
 });
 
+test("Design availability uses a named dot without hiding new output or attention", async t => {
+    const h = await reactHarness(t, undefined, "development");
+    h.render(state("development")); await h.flush();
+    const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
+    const send = async (designRevision: string) => {
+        h.window.dispatchEvent(new h.window.MessageEvent("message", {
+            origin: "http://127.0.0.1:8765", source: frame.contentWindow,
+            data: { protocol: "tandem-project/v1", channel: "fixture-project", type: "status",
+                status: "waiting-permission", active: true, designRevision, questions: 1, permissions: 2, confirmations: 1 },
+        }));
+        await h.flush();
+    };
+    await h.fire(h.get("development-tab"), "mousedown", { button: 0 });
+    h.get("development-tab").focus();
+    await send("first");
+    assert.equal(h.get("development-tab").textContent, "Development");
+    assert.equal(h.get("development-tab").getAttribute("aria-label"), "Development, Design available");
+    assert.equal(h.document.querySelector(".project-availability")?.getAttribute("title"), "Design available");
+    assert.equal(h.document.querySelector(".project-availability")?.getAttribute("aria-hidden"), "true");
+    await send("first");
+    assert.equal(h.document.activeElement?.id, "development-tab", "Polling does not move focus to the passive marker.");
+    await h.fire(h.get("preparation-tab"), "mousedown", { button: 0 });
+    await send("second");
+    assert.equal(h.get("development-tab").querySelector(".project-availability"), null);
+    assert.equal(h.get("development-tab").querySelector(".artifact-count")?.textContent, "New output");
+    assert.equal(h.get("development-tab").getAttribute("aria-label"), "Development, New Design output");
+    assert.match(h.get("project-current-work").textContent!, /4 needs attention/);
+    await h.fire(h.get("development-tab"), "mousedown", { button: 0 });
+    assert.ok(h.get("development-tab").querySelector(".project-availability"));
+    assert.equal(h.get("development-tab").querySelector(".artifact-count"), null);
+    assert.equal(h.get("project-conversation-frame"), frame);
+    assert.equal(h.requests.length, 0, "The marker never starts work, answers a question or grants approval.");
+});
+
 test("idle unfinished Stage1 can browse Development but active work and read-only ownership cannot open it", async t => {
     const h = await reactHarness(t);
     h.setFetch(async path => {

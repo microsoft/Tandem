@@ -438,13 +438,16 @@ function Workspace(props: WorkspaceProps) {
                 const skipped = skippedStage(state, tab.stage);
                 const output = [...(state.lifecycle.history || []), ...state.lifecycle.outputs].reverse().find(item => item.stageId === tab.stage);
                 const label = tab.stage === "sketch" ? "Drawings" : tab.label;
+                const designStatus = tab.stage === "development" && projectView.designRevision
+                  ? projectView.designChanged ? "New Design output" : "Design available" : null;
                 return <Tabs.Trigger key={tab.value} value={tab.value} id={tab.id + "-tab"}
                 className="preview-tab" data-stage-id={tab.stage} disabled={tab.stage === "development" ? !canOpenDevelopment(state) : tab.stage !== "prepare" && !canBrowseStage(state, tab.stage)}
-                title={skipped?.reason || output?.path || label}
-                aria-label={`${label}${skipped ? `, not applicable. ${skipped.reason}` : ""}`}
+                title={`${skipped?.reason || output?.path || label}${designStatus ? `. ${designStatus}` : ""}`}
+                aria-label={`${label}${skipped ? `, not applicable. ${skipped.reason}` : ""}${designStatus ? `, ${designStatus}` : ""}`}
                 aria-controls={tab.id + "-panel"}><tab.icon size={15} aria-hidden="true" />
-                <span className="project-tab-label">{label}</span>
-                {tab.stage === "development" && projectView.designRevision && <span className="artifact-count">{projectView.designChanged ? "New output" : "Available"}</span>}
+                <span className="project-tab-label">{label}{designStatus === "Design available"
+                  && <span className="project-availability" title="Design available" aria-hidden="true" />}</span>
+                {designStatus === "New Design output" && <span className="artifact-count">New output</span>}
                 {tab.stage === "prototype" && state.prototypeFlow?.pendingCheckpointId && <span className="artifact-count">Ready to inspect</span>}
               </Tabs.Trigger>; })}
             </Tabs.List>
