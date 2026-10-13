@@ -82,7 +82,8 @@ test("artifact navigation has one empty state and only populated stage groups", 
     ] });
     assert.equal(h.get("artifact-list").querySelectorAll(".artifact-stage-group").length, 2);
     assert.match(text(h, "artifact-list"), /stale/);
-    await h.click("context-toggle"); await h.click(h.get("artifact-list").querySelector('[data-artifact-id="contract"]')!);
+    await h.click("context-toggle"); await h.click("artifact-group-discovery-design");
+    await h.click(h.get("artifact-list").querySelector('[data-artifact-id="contract"]')!);
     assert.equal(h.get("studio-workspace").dataset.contextOpen, "false");
     assert.equal(text(h, "artifact-heading"), "UI contract");
     assert.equal(hidden(h, "content-panel"), false); assert.equal(h.requests.length, 0);

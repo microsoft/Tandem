@@ -1,11 +1,36 @@
-import { FileText, FileWarning, FolderOpen } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { ChevronRight, FileText, FileWarning, FolderOpen } from "lucide-react";
 import { lifecycleStages, isRetiredStage, retiredStages } from "../workflow.js";
 import { Diagram } from "./diagram.js";
-import { useUi } from "./ui-context.js";
+import { useDraft, useUi } from "./ui-context.js";
 import { useProjectView } from "./project-conversation.js";
 
 interface ArtifactSelectionProps { selectedArtifactId: string | null }
 const artifactGroups = [...lifecycleStages, ...retiredStages.map(id => ({ id, label: `Historical ${id}` }))];
+
+function ArtifactGroup({ source, name, label, count, version, selected, children }: {
+  source: "discovery" | "development"; name: string; label: string; count: number; version: string;
+  selected: boolean; children: ReactNode;
+}) {
+  const { state } = useUi();
+  const [initial] = useState(() => ({ open: false, seen: version }));
+  const [disclosure, setDisclosure] = useDraft(
+    JSON.stringify([state.prototypeId, state.generation, "artifact-group", source, name]), initial);
+  const id = `artifact-group-${source}-${name.toLowerCase()}`;
+  const updated = !disclosure.open && disclosure.seen !== version;
+  const Heading = source === "development" ? "h4" : "h3";
+  return <section className="artifact-stage-group" aria-label={`${source === "development" ? "Development " : ""}${label} artifacts`}>
+    <Heading className="artifact-stage-heading"><button id={id} type="button" className="artifact-group-toggle"
+      aria-expanded={disclosure.open} aria-controls={`${id}-items`} data-selected={selected}
+      aria-label={`${label} artifacts, ${count} items${selected ? ", contains current selection" : ""}${updated ? ", new output" : ""}`}
+      onClick={() => setDisclosure({ open: !disclosure.open, seen: version })}>
+      <ChevronRight size={14} aria-hidden="true" /><span className="artifact-group-name">{label}</span>
+      <span className="artifact-group-count">{count}</span>{updated && <span className="artifact-group-new">New</span>}
+      {selected && <span className="visually-hidden">Current selection</span>}
+    </button></Heading>
+    <div id={`${id}-items`} hidden={!disclosure.open}>{children}</div>
+  </section>;
+}
 
 export function ArtifactList({ selectedArtifactId, active = true }: ArtifactSelectionProps & { active?: boolean }) {
   const { state, selectArtifact } = useUi();
@@ -16,8 +41,9 @@ export function ArtifactList({ selectedArtifactId, active = true }: ArtifactSele
     {artifactGroups.map(stage => {
       const artifacts = state.artifacts.filter(artifact => (artifact.stage || "requirements") === stage.id);
       if (!artifacts.length) return null;
-      return <section key={stage.id} className="artifact-stage-group" aria-label={`${stage.label} artifacts`}>
-        <h3 className="artifact-stage-heading">{stage.label}<span>{artifacts.length}</span></h3>
+      return <ArtifactGroup key={stage.id} source="discovery" name={stage.id} label={stage.label} count={artifacts.length}
+        version={JSON.stringify(artifacts.map(item => [item.id, item.sourceRevision, item.path, item.reviewStatus]))}
+        selected={artifacts.some(item => item.id === selected)}>
         <ul className="artifact-stage-items">{artifacts.map(artifact => {
           const meta = [artifact.kind, artifact.path, artifact.reviewStatus === "stale" ? "stale" : ""].filter(Boolean).join(" · ");
           return <li key={artifact.id}><button className="artifact-button" type="button" data-artifact-id={artifact.id}
@@ -29,7 +55,7 @@ export function ArtifactList({ selectedArtifactId, active = true }: ArtifactSele
               {meta && <span className="artifact-list-meta">{meta}</span>}</span>
           </button></li>;
         })}</ul>
-      </section>;
+      </ArtifactGroup>;
     })}
   </div>;
 }
@@ -46,8 +72,9 @@ export function DevelopmentArtifactList({ active }: { active: boolean }) {
     {view.outputError && <p role="alert">{view.outputError}</p>}
     {(["Design", "Plan", "Implementation", "Review"] as const).map(group => {
       const items = view.outputs.filter(item => item.group === group);
-      return items.length ? <section key={group} aria-label={`Development ${group} outputs`}>
-        <h4 className="artifact-stage-heading">{group}<span>{items.length}</span></h4>
+      return items.length ? <ArtifactGroup key={group} source="development" name={group} label={group} count={items.length}
+        version={JSON.stringify(items.map(item => [item.id, item.binding]))}
+        selected={active && items.some(item => item.id === view.selectedOutput)}>
         <ul className="artifact-stage-items">{items.map(item => <li key={item.id}>
           <button type="button" className="artifact-button" data-development-output={item.id}
             disabled={view.outputStatus !== "verified"} aria-current={active && view.selectedOutput === item.id}
@@ -57,7 +84,7 @@ export function DevelopmentArtifactList({ active }: { active: boolean }) {
               <span className="artifact-list-meta">{item.detail}</span></span>
           </button>
         </li>)}</ul>
-      </section> : null;
+      </ArtifactGroup> : null;
     })}
   </div>;
 }

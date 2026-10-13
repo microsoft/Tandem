@@ -3206,6 +3206,16 @@ textarea {
 .artifact-stage-heading span {
   font-weight: var(--font-weight-normal, 400);
 }
+.artifact-group-toggle {
+  display: grid; grid-template-columns: 14px minmax(0, 1fr) auto auto; gap: 5px; align-items: center;
+  width: 100%; min-width: 0; padding: 5px 3px; border: 1px solid transparent; border-radius: 4px;
+  background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.artifact-group-name { min-width: 0; overflow-wrap: anywhere; }
+.artifact-group-toggle[aria-expanded="true"] > .lucide { transform: rotate(90deg); }
+.artifact-group-toggle[data-selected="true"] { color: var(--studio-accent); border-color: var(--studio-border); }
+.artifact-group-count, .artifact-group-new { font-size: 11px; white-space: nowrap; }
+.artifact-group-new { color: var(--studio-accent); }
 
 .artifact-stage-items {
   display: grid;

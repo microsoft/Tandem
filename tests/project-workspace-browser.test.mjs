@@ -672,12 +672,14 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       for (const [width, height] of [[1360, 900], [920, 620], [390, 620]]) {
         await browser.call("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
         await click("#acceptance-delivery");
-        await browser.waitFor('!!document.querySelector(".process-dialog")');
+        await browser.waitFor('!!document.querySelector(".process-dialog") && getComputedStyle(document.querySelector(".process-dialog")).pointerEvents !== "none"');
         const advanced = await browser.evaluate(`(() => {
           const d=document.querySelector(".process-dialog"),r=d.getBoundingClientRect(),b=document.querySelector("#close-acceptance-delivery"),
             c=b.getBoundingClientRect(),hit=document.elementFromPoint(c.x+c.width/2,c.y+c.height/2);
           return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:innerWidth,height:innerHeight,
-            closeHit:hit===b||b.contains(hit),hit:hit?.outerHTML.slice(0,500),close:{top:c.top,bottom:c.bottom,left:c.left,right:c.right},count:document.querySelectorAll("#handoff-approver").length,
+            closeHit:hit===b||b.contains(hit),hit:hit?.outerHTML.slice(0,500),pointerEvents:getComputedStyle(d).pointerEvents,
+            zIndex:getComputedStyle(d).zIndex,overlayZ:getComputedStyle(document.querySelector(".process-dialog-overlay")).zIndex,
+            close:{top:c.top,bottom:c.bottom,left:c.left,right:c.right},count:document.querySelectorAll("#handoff-approver").length,
             rootToggle:!!d.querySelector(".process-controls > button.ledger-summary")};
         })()`);
         assert.ok(advanced.left>=0 && advanced.right<=advanced.width && advanced.top>=0 && advanced.bottom<=advanced.height, JSON.stringify(advanced));
@@ -696,7 +698,11 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       }
       assert.equal(mutations.length, beforeAdvanced);
       await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 1000, deviceScaleFactor: 1, mobile: false });
-      await click("#message", true); await browser.call("Input.insertText", { text: "As a user, I keep my draft while viewing Design." });
+      await waitInside('document.body.dataset.projectStacked==="false"');
+      await browser.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))');
+      await click("#message", true);
+      await waitInside('document.activeElement.id==="message"');
+      await browser.call("Input.insertText", { text: "As a user, I keep my draft while viewing Design." });
       assert.equal(await inside('document.querySelector("#message").value'), "As a user, I keep my draft while viewing Design.");
       await inside(`(() => {
         const transfer = new DataTransfer();
@@ -758,13 +764,44 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       assert.equal(mutations.filter(x => x.path === "/api/development/open").length, 2);
       await browser.waitFor('Boolean(document.querySelector("[data-development-output=\'plan:fixture-cycle\']"))');
       const beforeOutputNavigation = mutations.length;
+      for (const group of ["design", "plan", "implementation", "review"]) {
+        assert.equal(await browser.evaluate(`document.querySelector("#artifact-group-development-${group}").getAttribute("aria-expanded")`), "false");
+      }
+      await click("#artifact-group-development-plan");
       await click('[data-development-output="plan:fixture-cycle"]');
       await waitInside('!document.querySelector("#project-output-view").hidden && document.querySelector("#project-output-view").textContent.includes("Original saved plan")');
+      await click("#artifact-group-development-plan");
+      await browser.evaluate('window.retainedArtifactGroup = document.querySelector("#artifact-group-development-plan"); true');
+      nativeState.cycles[0].plan = { ...nativeState.cycles[0].plan, version: 3, digest: "c".repeat(64) }; events.touch();
+      await browser.waitFor('document.querySelector("#artifact-group-development-plan").textContent.includes("New")');
+      assert.equal(await browser.evaluate('document.querySelector("#artifact-group-development-plan").getAttribute("aria-expanded")'), "false");
+      assert.equal(await browser.evaluate('document.activeElement === window.retainedArtifactGroup'), true);
+      for (const width of [920, 390]) {
+        await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 620, deviceScaleFactor: 1, mobile: false });
+        await browser.evaluate('document.querySelector("#artifact-group-development-plan").scrollIntoView({block:"nearest"})');
+        const group = await browser.evaluate('(() => {const e=document.querySelector("#artifact-group-development-plan"),r=e.getBoundingClientRect();return {left:r.left,right:r.right,overflow:e.scrollWidth-e.clientWidth,label:e.getAttribute("aria-label")};})()');
+        assert.ok(group.left >= 0 && group.right <= width && group.overflow <= 1, JSON.stringify(group));
+        assert.match(group.label, /1 items.*new output/);
+        if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `collapsed-artifact-groups-${width}.png`), await browser.screenshot());
+      }
+      await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 1000, deviceScaleFactor: 1, mobile: false });
+      await browser.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))');
+      await click("#artifact-group-development-plan");
+      await browser.waitFor('document.activeElement.id==="artifact-group-development-plan"');
+      for (const type of ["keyDown", "keyUp"]) await browser.call("Input.dispatchKeyEvent", { type, key: "Enter", code: "Enter", windowsVirtualKeyCode: 13,
+        ...(type === "keyDown" ? { text: "\r" } : {}) });
+      await browser.waitFor('document.querySelector("#artifact-group-development-plan").getAttribute("aria-expanded")==="false"');
+      for (const type of ["keyDown", "keyUp"]) await browser.call("Input.dispatchKeyEvent", { type, key: " ", code: "Space", windowsVirtualKeyCode: 32,
+        ...(type === "keyDown" ? { text: " " } : {}) });
+      await browser.waitFor('document.querySelector("#artifact-group-development-plan").getAttribute("aria-expanded")==="true"');
+      await click("#artifact-group-development-implementation");
       await click('[data-development-output="implementation:fixture-cycle"]');
       await waitInside('document.querySelector("#project-output-view").textContent.includes("Original reported implementation")');
       await waitInside('document.activeElement.hasAttribute("data-implementation-result")');
+      await click("#artifact-group-development-review");
       await click('[data-development-output="review:handoff:fixture-review"]');
       await waitInside('document.querySelector("[data-entry-id=\'handoff:fixture-review\']").classList.contains("state-focused")');
+      await click("#artifact-group-development-design");
       await click('[data-development-output="design:interaction"]');
       await waitInside('document.querySelector("#project-output-view").hidden && document.querySelector("[data-artifact-tab=interaction]").getAttribute("aria-pressed")==="true"');
       assert.equal(mutations.length, beforeOutputNavigation, "Artifact viewing dispatches no work or runtime activation.");

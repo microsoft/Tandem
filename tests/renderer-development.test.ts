@@ -8,6 +8,36 @@ import { reactHarness, state, response } from "./helpers/react-harness.js";
 import { browserAvailable, openFixtureBrowser } from "../stage2/tandem/test/helpers/browser-fixture.mjs";
 import { projectDiscovery } from "../src/renderer/project-conversation.js";
 
+test("Discovery and Development artifact groups keep separate disclosure keys through live index updates", async t => {
+    const h = await reactHarness(t, undefined, "development"), value = state("development");
+    value.artifacts = [{ id: "old", title: "Original discovery Design", stage: "design", kind: "markdown",
+        path: "old.md", language: "markdown", content: "Retained", mermaid: "" }];
+    h.render(value); await h.flush();
+    const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
+    const item = { id: "design:current", group: "Design", title: "Current Design", detail: "Current binding", binding: "binding-one" };
+    const publish = async (items: object[], selected: string | null = null) => {
+        h.window.dispatchEvent(new h.window.MessageEvent("message", { origin: "http://127.0.0.1:8765", source: frame.contentWindow,
+            data: { protocol: "tandem-project/v1", channel: "fixture-project", type: "outputs", status: "verified", reason: "", items, selected } }));
+        await h.flush();
+    };
+    await publish([item]);
+    const discovery = h.get("artifact-group-discovery-design"), development = h.get("artifact-group-development-design");
+    assert.equal(discovery.getAttribute("aria-expanded"), "false");
+    assert.equal(development.getAttribute("aria-expanded"), "false");
+    await h.click(discovery);
+    assert.equal(discovery.getAttribute("aria-expanded"), "true");
+    assert.equal(development.getAttribute("aria-expanded"), "false");
+    development.focus();
+    await publish([item, { ...item, id: "design:second", binding: "binding-two" }], item.id);
+    assert.equal(h.get("artifact-group-development-design"), development);
+    assert.equal(h.document.activeElement, development);
+    assert.equal(development.getAttribute("aria-expanded"), "false");
+    assert.match(development.getAttribute("aria-label")!, /2 items.*current selection.*new output/);
+    assert.equal(discovery.getAttribute("aria-expanded"), "true");
+    assert.equal(h.get("project-conversation-frame"), frame);
+    assert.equal(h.requests.length, 0);
+});
+
 test("handoff presentation distinguishes exact admission, pending, uncertainty and new saved input without replay", async t => {
     const h = await reactHarness(t, undefined, "development");
     let value = state("development");

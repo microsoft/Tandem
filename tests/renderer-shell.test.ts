@@ -59,9 +59,42 @@ test("artifact rows retain full metadata and distinguish stale records with icon
     assert.equal(button.dataset.stale, "true");
     assert.match(button.title, /An intentionally long.*records\/design\/specification\.md.*stale/);
     assert.ok(button.querySelector('svg[aria-hidden="true"]'));
+    await h.click("artifact-group-discovery-design");
     await h.click(button);
     assert.equal(hidden(h, "content-panel"), false);
     assert.equal(text(h, "artifact-content"), "Existing specification");
+    assert.equal(h.requests.length, 0);
+});
+
+test("artifact groups default closed and retain user choices, focus, counts and selected cues through updates", async t => {
+    const value = state("requirements");
+    value.artifacts = [{ id: "requirements", title: "Saved requirements", stage: "requirements", kind: "markdown",
+        path: "requirements.md", language: "markdown", content: "Original", mermaid: "", sourceRevision: 1 }];
+    const h = await setup(t, value);
+    const group = h.get("artifact-group-discovery-requirements");
+    assert.equal(group.getAttribute("aria-expanded"), "false");
+    assert.equal(h.get("artifact-group-discovery-requirements-items").hidden, true);
+    assert.match(group.getAttribute("aria-label")!, /1 items/);
+    assert.ok(h.get("content-tab"));
+    group.focus();
+    h.render({ ...value, revision: 2, artifacts: [...value.artifacts, { ...value.artifacts[0], id: "more", title: "More requirements" }] });
+    await h.flush();
+    assert.equal(h.get("artifact-group-discovery-requirements"), group);
+    assert.equal(h.document.activeElement, group);
+    assert.equal(group.getAttribute("aria-expanded"), "false");
+    assert.match(group.getAttribute("aria-label")!, /2 items.*new output/);
+    await h.click(group);
+    assert.equal(group.getAttribute("aria-expanded"), "true");
+    await h.click(h.document.querySelector('[data-artifact-id="requirements"]')!);
+    assert.equal(group.dataset.selected, "true");
+    await h.click(group);
+    h.render({ ...current(h), revision: 3, artifacts: current(h).artifacts.map(item => ({ ...item, sourceRevision: 2 })) });
+    await h.flush();
+    assert.equal(group.getAttribute("aria-expanded"), "false", "New versions cannot override a manual collapse.");
+    assert.match(group.getAttribute("aria-label")!, /contains current selection.*new output/);
+    await h.click(group);
+    h.render({ ...current(h), revision: 4 }); await h.flush();
+    assert.equal(group.getAttribute("aria-expanded"), "true");
     assert.equal(h.requests.length, 0);
 });
 

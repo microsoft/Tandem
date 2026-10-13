@@ -260,6 +260,10 @@ implementation results and Review records. Each opens its original native
 viewer/work view or history entry, with its original binding; revisions are not
 copied into the discovery store or counted again. Unverified cold outputs are
 labelled as unverified, not empty or deleted.
+Artifact groups start collapsed with their labels and counts visible. Group
+choices persist through polling and new output arrivals; a collapsed group marks
+new output without reopening itself. Current selection remains marked on its
+group, and the shared Saved artifacts entry stays directly accessible.
 Browsing does not require starting both engines. Development work and pending
 questions, confirmations and permissions remain bound to the private session;
 return to Development to interact with them.
