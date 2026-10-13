@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="stage2/tandem/public/branding/tandem-blue-dark.png">
+  <img src="stage2/tandem/public/branding/tandem-blue-light.png" alt="Tandem logo: a blue bicycle built for two beside the Tandem wordmark." width="420">
+</picture>
+
 # Tandem
 
 **You and Copilot, thinking together before building.**
