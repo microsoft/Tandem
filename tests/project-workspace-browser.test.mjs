@@ -587,7 +587,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         assert.ok(local.ok, `${selector} must be visible and hit-testable: ${JSON.stringify(local)}`);
         const offset = embedded ? await browser.evaluate(`(() => {const e=document.querySelector("#project-conversation-frame");
           e.scrollIntoView({block:"nearest"}); const r=e.getBoundingClientRect(); return {x:r.x,y:r.y};})()`) : { x: 0, y: 0 };
-        if (!activate) return;
+        if (!activate) return { local, offset };
         for (const type of ["mousePressed", "mouseReleased"]) await browser.call("Input.dispatchMouseEvent",
           { type, x: local.x + offset.x, y: local.y + offset.y, button: "left", clickCount: 1 });
       };
@@ -856,6 +856,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         await click("#save-appearance", true);
         await browser.waitFor(`document.documentElement.dataset.projectTheme==="${theme}"`);
         await checkRootChrome();
+        if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `design-marker-theme-${theme}.png`), await browser.screenshot());
         assert.equal(await inside('getComputedStyle(document.querySelector("#design-panel")).backgroundColor'),
           await browser.evaluate('getComputedStyle(document.documentElement).backgroundColor'), `${theme}: shared surface palette`);
         assert.equal(await inside('getComputedStyle(document.body).fontSize'),
@@ -986,7 +987,10 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
           const panel = document.querySelector("#access-approval"), bounds = panel.getBoundingClientRect();
           const nodes = [...panel.querySelectorAll("#access-requests, .access-request-picker, .access-request-decisions, button, select, p, pre")]
             .filter(node => node.getClientRects().length && !node.closest("[hidden]"));
-          return { width: bounds.width, overflow: panel.scrollWidth > panel.clientWidth + 1,
+          const conversation = document.querySelector("#conversation-panel").getBoundingClientRect();
+          return { width: bounds.width, panel: {left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom},
+            conversation: {left: conversation.left, right: conversation.right, width: conversation.width},
+            viewport: {width: innerWidth, height: innerHeight}, overflow: panel.scrollWidth > panel.clientWidth + 1,
             clipped: nodes.filter(node => { const rect = node.getBoundingClientRect();
               return rect.left < bounds.left || rect.right > bounds.right || node.scrollWidth > node.clientWidth + 1;
             }).map(node => ({ tag: node.tagName, text: node.textContent.slice(0, 60), width: node.getBoundingClientRect().width })) };
@@ -995,8 +999,15 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         assert.ok(!fit.overflow && !fit.clipped.length, `Permission contents fit at ${width}: ${JSON.stringify(fit)}`);
         await click("#access-requests > .access-card:not([hidden]) .access-request-details > summary", true);
         await click("#access-requests > .access-card:not([hidden]) .access-request-details > summary", true);
-        for (const decision of ["once", "denied"]) {
+        const decisions = {};
+        for (const decision of ["once", "denied"]) decisions[decision] =
           await click(`#access-requests > .access-card:not([hidden]) [data-access-decision=${decision}]`, true, false);
+        if (process.env.TANDEM_UI_EVIDENCE) {
+          await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `permission-geometry-${width}.json`), JSON.stringify({
+            rootViewport: { width, height: 620 }, fixture: process.env.TANDEM_PERMISSION_FIXTURE ?? "synthetic",
+            requestIds: permissionIds, fit, decisions, nativeDecisionsIssued: false,
+          }, null, 2));
+          await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `permission-controls-${width}.png`), await browser.screenshot());
         }
       }
       assert.equal(mutations.filter(item => item.path === "native-consent").length, consentCount,
