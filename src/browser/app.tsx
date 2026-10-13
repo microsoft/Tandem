@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Dialog } from "radix-ui";
-import { ArrowUp, FolderOpen, Info, LoaderCircle, LogIn, PackageOpen, RefreshCw, RotateCcw, ScrollText, ShieldAlert, ShieldCheck, Square, X } from "lucide-react";
+import { ArrowUp, FolderOpen, Info, LoaderCircle, RefreshCw, ScrollText, ShieldAlert, ShieldCheck, Square, X } from "lucide-react";
 import { BrowserStore } from "./client.js";
 import type { BackendCommand, HostCommand, HostRequest, HostSnapshot, WorkspaceListing } from "./contracts.js";
 import { Brand } from "../renderer/brand.js";
@@ -194,28 +194,6 @@ export function BrowserApp({ store, connect = true }: { store: BrowserStore; con
                     disabled={!active || busy} onClick={() => setDialog("workspace")}><FolderOpen size={16} aria-hidden="true" /></button>
                 <button type="button" className="host-icon-button" aria-label="Reload page" title="Reload page"
                     disabled={!host?.canvasUrl} onClick={() => setReload((value) => value + 1)}><RefreshCw size={16} aria-hidden="true" /></button>
-                {application.header && <>
-                    <button type="button" className="host-icon-button" aria-label="Reload extension"
-                        title={`Reload extension: ${application.header.controls.reload?.title || "Unavailable"}`}
-                        disabled={!connected || application.header.controls.reload?.disabled !== false}
-                        aria-busy={application.header.controls.reload?.busy}
-                        onClick={() => application.send("reload")}><PackageOpen size={16} aria-hidden="true" /></button>
-                    <button type="button" className="host-icon-button" aria-label="Reset effort"
-                        title={application.header.controls.reset?.busy ? "Resetting effort..." : application.header.controls.reset?.title || "Reset unavailable"}
-                        disabled={!connected || application.header.controls.reset?.disabled !== false}
-                        aria-busy={application.header.controls.reset?.busy}
-                        onClick={() => application.send("reset")}><RotateCcw size={16} aria-hidden="true" /></button>
-                    <button type="button" className="host-icon-button" aria-label="Sign in with Microsoft"
-                        title={application.header.controls.signIn?.busy ? "Microsoft sign-in is in progress" : application.header.controls.signIn?.title || "Sign-in unavailable"}
-                        disabled={!connected || application.header.controls.signIn?.disabled !== false}
-                        aria-busy={application.header.controls.signIn?.busy}
-                        onClick={() => application.send("signIn")}>
-                        {application.header.controls.signIn?.busy ? <LoaderCircle className="spin" size={16} aria-hidden="true" /> : <LogIn size={16} aria-hidden="true" />}
-                    </button>
-                    {application.header.controls.cancelSignIn && <button type="button" className="host-icon-button" aria-label="Cancel Microsoft sign-in" title="Cancel Microsoft sign-in"
-                        disabled={!connected || application.header.controls.cancelSignIn.disabled}
-                        onClick={() => application.send("cancelSignIn")}><X size={16} aria-hidden="true" /></button>}
-                </>}
                 <label className="host-permissions" title={permissionsTitle} data-mode={host?.permissionMode || "ask"} data-disabled={permissionsDisabled}>
                     {host?.permissionMode === "allow-all" ? <ShieldAlert size={16} aria-hidden="true" /> : <ShieldCheck size={16} aria-hidden="true" />}
                     <select aria-label="Tool permissions" title={permissionsTitle} value={host?.permissionMode || "ask"}

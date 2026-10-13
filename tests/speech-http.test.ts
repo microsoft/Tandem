@@ -64,7 +64,9 @@ test("missing speech configuration fails visibly without Azure access", async ()
         });
 
         assert.equal(result.status, 503);
-        assert.match((await result.json() as { error: string }).error, /TANDEM_Speech__ResourceId/);
+        const failure = await result.json() as { error: string; speechSignInRequired?: boolean };
+        assert.match(failure.error, /TANDEM_Speech__ResourceId/);
+        assert.equal(failure.speechSignInRequired, undefined, "Signing in is not a remedy for missing resource configuration.");
         assert.equal(h.speechTokenRequests(), 0);
     } finally {
         clearInterval(entry.heartbeat);

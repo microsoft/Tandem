@@ -147,10 +147,48 @@ test("embedded Settings exposes one shared effort choice with busy, unsupported 
   assert.equal(sent.some(message => message.type === "activate"), false);
 });
 
+test("composed diagnostics presents only the validated supported root reload action", t => {
+  const dom = new JSDOM(`<body data-project-panel="workspace" data-project-origin="http://127.0.0.1:4000" data-project-channel="maintenance">
+    <form id="composer"><textarea id="message"></textarea></form>
+    <div id="project-provider-maintenance" hidden><button id="project-reload-extension" disabled></button>
+    <p id="project-reload-purpose"></p><p id="project-reload-status"></p></div>`);
+  t.after(() => dom.window.close());
+  const sent = [], parent = { postMessage: data => sent.push(data) };
+  Object.defineProperty(dom.window, "parent", { value: parent });
+  installProjectPresentation({ document: dom.window.document, window: dom.window, changed() {} });
+  const get = id => dom.window.document.getElementById(id);
+  const receive = (data, origin = "http://127.0.0.1:4000") => dom.window.dispatchEvent(new dom.window.MessageEvent("message",
+    { source: parent, origin, data: { protocol: "tandem-project/v1", channel: "maintenance", ...data } }));
+  const context = { type: "context", entries: [], discovery: { key: "none", label: "Discovery", help: "Use phase controls", enabled: false },
+    providerReload: { scope: "exact-root", supported: true, disabled: false, label: "Reload Tandem extension",
+      title: "Installed provider only; no download or page refresh.", message: "", error: false } };
+  receive(context, "http://127.0.0.1:9999");
+  assert.equal(get("project-provider-maintenance").hidden, true);
+  receive({ ...context, providerReload: { ...context.providerReload, supported: false } });
+  assert.equal(get("project-provider-maintenance").hidden, true);
+  receive({ ...context, providerReload: { ...context.providerReload, scope: null } });
+  assert.equal(get("project-reload-extension").disabled, true);
+  receive(context);
+  assert.equal(get("project-reload-extension").textContent, "Reload Tandem extension");
+  get("project-reload-extension").click();
+  const request = sent.at(-1);
+  assert.equal(request.type, "project-reload");
+  assert.equal(request.scope, "exact-root");
+  assert.equal(get("project-reload-extension").disabled, true);
+  receive({ type: "project-reload-result", id: "foreign", error: "Not ours" });
+  assert.equal(get("project-reload-extension").disabled, true);
+  receive({ type: "project-reload-result", id: request.id, error: "Provider reload refused: runtime is not quiet." });
+  assert.match(get("project-reload-status").textContent, /runtime is not quiet/);
+  receive({ ...context, providerReload: { ...context.providerReload, disabled: true } });
+  get("project-reload-extension").click();
+  assert.equal(sent.filter(value => value.type === "project-reload").length, 1);
+});
+
 test("whole project workspace uses one actual embedded renderer for navigation, drafting, activation and recovery",
   { skip: !browserAvailable, timeout: 90_000 }, async t => {
     const root = await mkdtemp(join(tmpdir(), "tandem-project-ui-"));
     const events = new HumanLoopEvents(), mutations = [], nativeRequests = [];
+    let voiceLoginAborted = false;
     let accessRequests = [];
     const owner = { schemaVersion: "human-loop-owner/v1", id: "owner", mainSessionId: "main", privateSessionId: "private",
       workspacePath: root, policy: DEFAULT_POLICY };
@@ -166,6 +204,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
     let active = false, stopped = false, installationStatus = "new";
     let startingPath = null;
     const value = discoveryState("requirements");
+    value.provider = { ...value.provider, canReload: true };
     const drawings = sketchFixture();
     value.requirements.substage = "usage";
     let previewAvailable = true, holdPreviewChecks = false, previewChecks = 0;
@@ -288,7 +327,18 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         else if (request.method === "POST") {
           const chunks = []; for await (const chunk of request) chunks.push(chunk);
           const body = JSON.parse(Buffer.concat(chunks).toString() || "{}"); mutations.push({ path, body });
-          if (path === "/api/development/open") {
+          if (path === "/api/speech/token") {
+            response.writeHead(503, { "Content-Type": "application/json" });
+            response.end(JSON.stringify({ error: "Voice input needs Azure Speech sign-in.", speechSignInRequired: true }));
+          }
+          else if (path === "/api/speech/login") {
+            response.on("close", () => { voiceLoginAborted = true; });
+          }
+          else if (path === "/api/reload") {
+            value.reloadReceipt = { status: "success", message: "Fixture provider reload accepted." };
+            value.revision++; json({ scheduled: true });
+          }
+          else if (path === "/api/development/open") {
             const first = mutations.filter(item => item.path === "/api/development/open").length === 1;
             active = !first; stopped = false; installationStatus = first ? "starting" : "ready";
             events.touch(); json({ url: provider.url });
@@ -340,19 +390,69 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         assert.fail("Root reload did not reach a new, loaded document.");
       };
       const clickRoot = async selector => {
+        await browser.evaluate(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:"nearest"})`);
+        await browser.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
         const point = await browser.evaluate(`(() => {const e=document.querySelector(${JSON.stringify(selector)});
           e.scrollIntoView({block:"nearest"});const r=e.getBoundingClientRect();
           const hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);
-          return {x:r.x+r.width/2,y:r.y+r.height/2,ok:!e.disabled&&r.width>0&&(hit===e||e.contains(hit))};})()`);
-        assert.ok(point.ok, `Root control reachable: ${selector}`);
+          return {x:r.x+r.width/2,y:r.y+r.height/2,element:e.outerHTML.slice(0,300),hit:hit?.outerHTML.slice(0,300),
+            ok:!e.disabled&&r.width>0&&(hit===e||e.contains(hit))};})()`);
+        if (!point.ok && process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "root-unreachable-control.png"), await browser.screenshot());
+        assert.ok(point.ok, `Root control reachable: ${selector}: ${JSON.stringify(point)}`);
         for (const type of ["mousePressed", "mouseReleased"]) await browser.call("Input.dispatchMouseEvent", { type, x: point.x, y: point.y, button: "left", clickCount: 1 });
       };
       await browser.waitFor('Boolean(document.querySelector("#entry-preparation"))');
       assert.equal(await browser.evaluate('document.querySelector("#project-conversation-frame")===null'), true);
       await clickRoot("#entry-preparation");
       await browser.waitFor('!document.querySelector("#entry-preparation")');
+      assert.equal(await browser.evaluate('document.querySelector(".topbar #reload-extension, .topbar #reset-effort, .topbar #speech-sign-in")'), null);
+      await clickRoot("#preparation-tab");
+      await clickRoot("#preparation-maintenance > summary");
+      await clickRoot("#reset-effort");
+      await browser.waitFor('Boolean(document.querySelector("[role=alertdialog]"))');
+      assert.match(await browser.evaluate('document.querySelector("[role=alertdialog]").textContent'),
+        /Restart Preparation.*first stop active discovery work.*state\/files are archived.*Design, conversation, application files and admitted handoffs are preserved/s);
+      await clickRoot('[role="alertdialog"] button');
+      await browser.waitFor('document.activeElement.id==="reset-effort"');
+      assert.equal(mutations.some(item => item.path === "/api/effort/reset"), false);
+      await clickRoot("#project-settings");
+      await browser.waitFor('Boolean(document.querySelector("#root-maintenance"))');
+      await clickRoot("#root-maintenance > summary");
+      assert.equal(await browser.evaluate('document.querySelector("#reload-extension").textContent.trim()'), "Reload Tandem extension");
+      await clickRoot("#reload-extension");
+      await browser.waitFor('!document.querySelector("#reload-extension").disabled');
+      assert.equal(mutations.filter(item => item.path === "/api/reload").length, 1);
+      assert.equal(active, false);
+      if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "root-maintenance-settings.png"), await browser.screenshot());
+      await clickRoot('[role="alertdialog"] button');
+      await browser.waitFor('document.activeElement.id==="project-settings"');
+      await browser.waitFor('!document.querySelector("[role=alertdialog]")');
+      value.effortReset = { requestId: "retained-reset", generation: value.generation, error: "Worker termination is unconfirmed." };
+      value.revision++;
+      await browser.waitFor('document.querySelector("#preparation-maintenance").open && document.querySelector("#effort-message").textContent.includes("unconfirmed")');
+      assert.equal(await browser.evaluate('document.querySelector("#studio-workspace").inert'), false);
+      await clickRoot("#reset-effort");
+      await browser.waitFor('Boolean(document.querySelector("[role=alertdialog]"))');
+      await clickRoot('[role="alertdialog"] button');
+      if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "preparation-restart-recovery.png"), await browser.screenshot());
+      value.effortReset = null; value.revision++;
+      await browser.waitFor('!document.querySelector("#effort-message").textContent.includes("unconfirmed")');
       await clickRoot("#design-tree-tab");
       await clickRoot("#usage-input"); await browser.call("Input.insertText", { text: "As a user, I retain the original Requirements input." });
+      assert.equal(mutations.some(item => item.path.startsWith("/api/speech/")), false, "Typing and opening Settings do not start voice auth.");
+      assert.equal(await browser.evaluate('document.querySelector("[data-ui-key=usage-input-speech-sign-in]")'), null);
+      await clickRoot('[data-ui-key="usage-input-speech-toggle"]');
+      await browser.waitFor('document.querySelector("[data-ui-key=usage-input-speech-sign-in]")?.textContent==="Sign in for voice input"');
+      assert.equal(await browser.evaluate('document.querySelector("#usage-input").value'), "As a user, I retain the original Requirements input.");
+      assert.equal(await browser.evaluate('document.querySelector("[data-ui-key=usage-input-speech-toggle]").getAttribute("aria-pressed")'), "false");
+      if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "contextual-voice-sign-in.png"), await browser.screenshot());
+      await clickRoot('[data-ui-key="usage-input-speech-sign-in"]');
+      await browser.waitFor('!document.querySelector("[data-ui-key=usage-input-speech-cancel]").hidden');
+      await clickRoot('[data-ui-key="usage-input-speech-cancel"]');
+      await browser.waitFor('document.querySelector("#usage-input").closest(".voice-composer").textContent.includes("sign-in cancelled")');
+      await browser.waitFor('document.activeElement.id==="usage-input"');
+      for (let attempt = 0; !voiceLoginAborted && attempt < 100; attempt++) await new Promise(resolve => setTimeout(resolve, 20));
+      assert.equal(voiceLoginAborted, true);
       await clickRoot("#add-usage");
       await browser.waitFor('document.querySelector("#usage-input").value===""');
       assert.equal(mutations.at(-1).path, "/api/answer");
@@ -845,6 +945,14 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       assert.equal(await inside('document.querySelector("#setting-effort").disabled'), true);
       assert.equal(await inside('getComputedStyle(document.querySelector(".brand")).display'), "none");
       assert.equal(await inside('getComputedStyle(document.querySelector("#browser-session-guidance")).display'), "none");
+      value.provider = { ...value.provider, canReload: true }; value.revision++;
+      await waitInside('!document.querySelector("#project-provider-maintenance").hidden');
+      assert.equal(await inside('document.querySelector("#project-reload-extension").textContent'), "Reload Tandem extension");
+      assert.equal(await inside('document.querySelector("#project-reload-extension").disabled'), true,
+        "Composed diagnostics cannot reload an active private runtime.");
+      assert.equal(await inside('document.querySelector("#project-provider-maintenance").closest("section").getAttribute("aria-labelledby")'), "diagnostics-settings-title");
+      await inside('document.querySelector("#project-provider-maintenance").scrollIntoView({block:"nearest"})');
+      if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "composed-maintenance-settings.png"), await browser.screenshot());
       for (const [theme, index] of [["light", 1], ["dark", 2]]) {
         await click("#setting-theme", true);
         for (const key of ["Home", ...Array(index).fill("ArrowDown"), "Enter"]) {

@@ -44,8 +44,15 @@ Development operations. Development owns a separate real Interactive session,
 with the PR's private permission broker, once-only consent and native enforcement.
 Its model, compaction, permissions, Stop and Close controls remain independently
 owned, inside the persistent project conversation and Project settings.
-Main permission, Reset, speech and extension-reload controls are scoped or disabled
-while the private runtime is active, not merely while browsing Design.
+Main permission and speech controls remain scoped or disabled while the private
+runtime is active, not merely while browsing Design. Maintenance is not in the
+branded root or hosted header. Supported providers expose **Reload Tandem extension**
+in Project settings' advanced diagnostics. Its explanation warns that this
+session's extension connections restart and unsent form text may be lost;
+Tandem's saved data/history are not reset or archived. It does not refresh the
+page or app preview or download updates. The composed Settings
+surface delegates this existing action to its owning root; standalone Stage 2
+does not acquire a root maintenance action.
 
 One composed public `tandem` provider owns both surfaces. The Node host retains
 user > project > session preference when those providers are present. It checks
@@ -409,6 +416,14 @@ identities remain read-only evidence; they do not become Stage 2 authorization.
 Active or termination-unconfirmed legacy work blocks cutover until its original
 owner settles it. Work owned by a different worktree is not silently adopted.
 
+**Restart Preparation...** lives under Preparation's **Advanced Preparation
+actions**, not global navigation. Its confirmation explains that current upstream
+state/files are archived, while Development Design, conversation, application
+files, admitted handoffs and the immutable starting choice are retained.
+Direct-Development projects without discovery do not offer this reset starter.
+An interrupted reset reveals its recovery action in Preparation, with ordinary
+work still blocked until recovery is confirmed.
+
 Reset/reopen use a shared upstream-mutation/request-admission boundary, not a
 second role scheduler. They recheck private readiness under that boundary.
 Unopened saved Development ownership must be recovered and explicitly settled or
@@ -598,9 +613,14 @@ use **Open Tandem in browser** if the embedded canvas blocks microphone access.
 Every conversational input has a **Mic** control: project goals, usages,
 requirement answers, prototype revisions and clarifications, artifact reviews
 (including test design), plan revisions, and implementation strategy adjustments.
-Select **Sign in** on the right of the top bar to open your default browser, choose your work
-account, and complete any MFA prompt. Return to Tandem after it confirms sign-in,
-then click **Mic**, allow microphone access, and speak naturally. Partial text updates
+Voice input is optional; typed input and Development never require voice sign-in.
+There is no generic Sign in action in the root or hosted header. Select **Mic**
+when you want to dictate. If Azure Speech authentication requires attention,
+**Sign in for voice input** appears beside that input, with an explanation of its
+scope. It opens your browser only when explicitly selected. Choose your work
+account and complete any MFA prompt, then return and select **Mic** again:
+successful sign-in never starts recording. Allow microphone access and speak.
+Audio is sent to Azure. Partial text updates
 in place; **Stop** finishes the recognized text so you can edit and send it.
 **Cancel** or Escape restores the original draft. Recording never sends a message
 or starts an agent. One input can record at a time, for up to two minutes.
@@ -625,8 +645,8 @@ with PKCE and a local loopback callback. Browser sign-in has a three-minute limi
 does not cancel sign-in. It never starts the microphone or sends your draft.
 
 The selected account and token cache are memory-only for this extension session;
-sign in again after restarting or reloading the extension. Selecting **Sign in**
-again lets you change accounts. Failed or cancelled sign-in
+sign in again when requested after restarting or reloading the extension.
+Failed or cancelled sign-in
 does not replace an already selected account. Once a browser account is selected,
 Tandem does not silently switch to another identity if its tokens expire.
 Before browser sign-in, existing `DefaultAzureCredential` sources (such as

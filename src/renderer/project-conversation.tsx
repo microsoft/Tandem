@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { PanelRightClose, PanelRightOpen } from "lucide-react";
 import { canOpenDevelopment, hasActiveJobs, useUi, type UiState } from "./ui-context.js";
-import { DiscoveryProjectSettings, ProjectEffortError, requestProjectEffort } from "./project-effort.js";
+import { DiscoveryProjectSettings, ProjectEffortError, requestProjectEffort, useProviderReload } from "./project-effort.js";
 import type { LifecycleStageId } from "../types.js";
 import type { StartingPath } from "../project-entry.js";
 
@@ -72,8 +72,8 @@ export const useProjectView = () => {
     if (!value) throw new Error("Project presentation is unavailable.");
     return value;
 };
-export function ProjectConversationProvider({ children, designVisible, viewedStage, showDesign, onEntry }: {
-    children: ReactNode; designVisible: boolean; viewedStage: LifecycleStageId; showDesign(): void;
+export function ProjectConversationProvider({ children, designVisible, viewedStage, showDesign, onEntry, effortBusy }: {
+    children: ReactNode; designVisible: boolean; viewedStage: LifecycleStageId; showDesign(): void; effortBusy: boolean;
     onEntry(path: StartingPath, firstChoice: boolean): void;
 }) {
     const { state, post, pending, setBusy, browseStage } = useUi();
@@ -82,13 +82,14 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
         outputs: [] as ProjectOutput[], outputStatus: "unverified", outputReason: "Development outputs have not been verified.",
         outputError: "", selectedOutput: null as string | null });
     const frame = useRef<HTMLIFrameElement>(null);
+    const providerReload = useProviderReload(view.active || view.starting || view.status === "unknown" || effortBusy);
     const [entry, setEntry] = useState({ loading: true, busy: false, projectPath: state.projectPath ?? "", startingPath: null as StartingPath | null, error: "", ready: false });
     const choosing = useRef(false);
     const [discoverySettings, setDiscoverySettings] = useState(false);
     const [viewRequested, setViewRequested] = useState(false);
     const pendingCommand = useRef<string | null>(null);
     const entryCallback = useRef(onEntry); entryCallback.current = onEntry;
-    const latest = useRef({ state, post, pending, view, designVisible, viewedStage, showDesign, setBusy, browseStage }); latest.current = { state, post, pending, view, designVisible, viewedStage, showDesign, setBusy, browseStage };
+    const latest = useRef({ state, post, pending, view, designVisible, viewedStage, showDesign, setBusy, browseStage, providerReload }); latest.current = { state, post, pending, view, designVisible, viewedStage, showDesign, setBusy, browseStage, providerReload };
     const opening = useRef(false), submissions = useRef(new Map<string, { key: string; text: string; work: Promise<void> }>());
     const startRequested = useRef(false);
     const effortApplying = useRef(false);
@@ -134,7 +135,8 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
             developmentEntered: view.developmentEntered,
             canActivate: canOpenDevelopment(state), developmentActive: view.active, designVisible,
             developmentEnabled: canOpenDevelopment(state), starting: view.starting,
-            canChangeEffort: state.provider?.canSubmitAnswers !== false && !pending });
+            canChangeEffort: state.provider?.canSubmitAnswers !== false && !pending,
+            providerReload: latest.current.providerReload.view });
         syncLayout();
     }
     function syncLayout() {
@@ -186,7 +188,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
         })();
         return () => { disposed = true; };
     }, [entry.ready, viewRequested, state.provider?.canSubmitAnswers]);
-    useEffect(() => { sync(); }, [state, pending, view.url, view.active, view.starting, view.developmentEntered, designVisible, viewedStage]);
+    useEffect(() => { sync(); }, [state, pending, view.url, view.active, view.starting, view.developmentEntered, designVisible, viewedStage, JSON.stringify(providerReload.view)]);
     useEffect(() => {
         const observer = new ResizeObserver(syncLayout);
         const workspace = document.getElementById("studio-workspace");
@@ -202,6 +204,12 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
             if (!view.url || event.source !== frame.current?.contentWindow || event.origin !== new URL(view.url).origin
                 || event.data?.protocol !== "tandem-project/v1" || event.data.channel !== view.channel) return;
             const message = event.data;
+            if (message.type === "project-reload" && typeof message.id === "string" && message.id.length > 0 && message.id.length <= 100
+                && typeof message.scope === "string" && message.scope.length <= 1024) {
+                void latest.current.providerReload.reload(message.scope).then(result =>
+                    send({ type: "project-reload-result", id: message.id, ...result }));
+                return;
+            }
             if (message.type === "outputs") {
                 if (!["verified", "unverified", "not-started"].includes(message.status) || typeof message.reason !== "string"
                     || !Array.isArray(message.items) || message.items.length > 10000
@@ -331,7 +339,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
             if (latest.current.view.outputStatus !== "verified") return;
             latest.current.showDesign();
             send({ type: "output-open", id: item.id, binding: item.binding });
-        } }}>{children}{discoverySettings && <DiscoveryProjectSettings close={() => setDiscoverySettings(false)} />}</Context.Provider>;
+        } }}>{children}{discoverySettings && <DiscoveryProjectSettings providerReload={providerReload} close={() => setDiscoverySettings(false)} />}</Context.Provider>;
 }
 export function ProjectConversation() {
     const view = useProjectView();

@@ -114,6 +114,12 @@ test("authentication failure does not request the microphone", async () => {
     h.setResponse({ ok: false, json: async () => ({ error: "Configure your Speech resource." }) });
     await assert.rejects(h.create(h.events, new AbortController().signal), /Configure your Speech resource/);
     assert.equal(requested, false);
+    h.setResponse({ ok: false, json: async () => ({ error: "Sign in for voice input.", speechSignInRequired: true }) });
+    await assert.rejects(h.create(h.events, new AbortController().signal), error => {
+        assert.ok(error && typeof error === "object" && "speechSignInRequired" in error && error.speechSignInRequired === true);
+        return true;
+    });
+    assert.equal(requested, false, "Contextual auth guidance cannot request a microphone.");
 });
 
 test("pending microphone permission is cleaned up after cancellation", async () => {

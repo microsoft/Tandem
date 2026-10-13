@@ -108,17 +108,20 @@ test("confirmation actions keep visible names alongside decorative icons", async
     assert.equal(h.requests.length, 0);
 });
 
-test("header suppresses reload success text and places version after Reset", async (t) => {
+test("header omits maintenance while supported reload belongs to advanced Project settings", async (t) => {
     const value = { ...state(), provider: { canSubmitAnswers: true, canReload: true },
         reloadReceipt: { status: "success", message: "Reloaded latest extension." } };
     const h = await setup(t, value);
+    assert.equal(h.document.querySelector(".topbar #reload-extension, .topbar #reset-effort"), null);
+    assert.ok(h.get("preparation-panel").contains(h.get("reset-effort")));
+    assert.equal(text(h, "reset-effort"), "Restart Preparation...");
+    await h.click("project-settings");
     assert.equal(text(h, "reload-status"), "");
-    assert.equal(text(h, "reload-extension"), "Reload");
+    assert.equal(text(h, "reload-extension"), "Reload Tandem extension");
     assert.equal(disabled(h, "reload-extension"), false);
+    assert.ok(h.get("root-maintenance").contains(h.get("reload-extension")));
     const actions = h.document.querySelector(".topbar-actions")!;
     assert.equal(actions.lastElementChild!.className, "build-version");
-    assert.ok(h.get("reset-effort").compareDocumentPosition(actions.lastElementChild!) & 4,
-        "Version follows Reset; upstream speech controls may appear between them.");
     h.render({ ...value, revision: 2, reloadReceipt: { status: "error", message: "Could not reload extension." } });
     assert.equal(text(h, "reload-status"), "Could not reload extension.");
     assert.equal(h.get("reload-status").dataset.status, "error");
@@ -169,9 +172,9 @@ test("Radix confirmation has a safe initial focus and restores its invoker on Es
 test("standalone read-only guidance returns to its owning session", async (t) => {
     const h = await setup(t, { ...state(), provider: { source: "session", canSubmitAnswers: false, canReload: false } });
     assert.match(text(h, "usage-message"), /Tandem session that owns this effort/);
-    assert.match(text(h, "reload-status"), /Reopen the workspace/);
-    assert.equal(disabled(h, "reload-extension"), true);
-    assert.equal(h.requests.length, 0);
+    await h.click("project-settings");
+    assert.equal(h.document.querySelector("#reload-extension"), null, "Unsupported reload is not a dead primary control.");
+    assert.deepEqual(h.requests.map(request => request.path), ["/api/settings/project-effort"], "Only a settings read is attempted.");
 });
 
 test("goal entry waits for an explicit valid start and retains drafts, focus and caret", async (t) => {
@@ -195,7 +198,8 @@ test("goal entry waits for an explicit valid start and retains drafts, focus and
     assert.equal(input.selectionStart, 3);
     let release!: (r: Response) => void;
     h.setFetch(() => new Promise((resolve) => { release = resolve; }));
-    await submit(h, "start-form"); await submit(h, "start-form"); await h.click("reset-effort");
+    await submit(h, "start-form"); await submit(h, "start-form");
+    assert.equal(h.document.querySelector("#reset-effort"), null, "An empty Preparation has nothing to archive.");
     assert.equal(disabled(h, "start-effort"), true);
     assert.equal(h.requests.length, 1);
     assert.deepEqual(h.requests[0].body, { expectedRevision: 2, generation: "fixture-generation", goal: "Build a team task board" });
@@ -219,9 +223,9 @@ test("invalid and rejected goals retain drafts and read-only goal entry cannot s
     assert.equal(field(h, "start-goal").value, "Build a focused app");
     assert.match(text(h, "start-message"), /effort changed/);
     h.render({ ...value, revision: 3, provider: { canSubmitAnswers: false } });
-    await submit(h, "start-form"); await h.click("reset-effort");
+    await submit(h, "start-form");
     assert.equal(disabled(h, "start-goal"), true);
-    assert.equal(disabled(h, "reset-effort"), true);
+    assert.equal(h.document.querySelector("#reset-effort"), null);
     assert.equal(h.requests.length, 1);
 });
 
@@ -238,7 +242,7 @@ test("reset during active work confirms first and only clears local drafts after
     h.setFetch(() => new Promise((resolve) => { release = resolve; }));
     await h.click("reset-effort"); await h.confirm();
     assert.equal(disabled(h, "reset-effort"), true);
-    assert.match(text(h, "effort-message"), /Stopping active work/);
+    assert.match(text(h, "effort-message"), /Stopping active discovery work/);
     assert.equal(h.get("studio-workspace").hasAttribute("inert"), true);
     assert.equal(h.get("studio-workspace").getAttribute("aria-busy"), "true");
     assert.equal(field(h, "process-repository").value, "owner/old");
@@ -281,7 +285,9 @@ test("reset cannot claim success without a new empty generation", async (t) => {
 test("persisted reset barriers block ordinary actions while leaving Reset retry available", async (t) => {
     const value = { ...state(), effortReset: { requestId: "reset-request", generation: "fixture-generation", error: "Worker termination is unconfirmed." } };
     const h = await setup(t, value);
-    assert.equal(h.get("studio-workspace").hasAttribute("inert"), true);
+    assert.equal(h.get("studio-workspace").hasAttribute("inert"), false, "The pending recovery control must remain reachable.");
+    assert.equal(h.get("preparation-panel").hidden, false);
+    assert.equal((h.get("preparation-maintenance") as HTMLDetailsElement).open, true);
     assert.equal(disabled(h, "reset-effort"), false);
     assert.equal(hidden(h, "next-action-bar"), false, "Reset does not remove the status/help surface.");
     assert.equal(hidden(h, "show-next-action"), true);
@@ -290,12 +296,29 @@ test("persisted reset barriers block ordinary actions while leaving Reset retry 
     await h.input("usage-input", "Should not submit"); await submit(h, "usage-form");
     assert.equal(h.requests.length, 0);
     h.render({ ...value, revision: 2, effortReset: { ...value.effortReset, error: "" } });
-    assert.match(text(h, "effort-message"), /Reset is pending/);
+    assert.match(text(h, "effort-message"), /Preparation restart is pending/);
     h.setFetch(async () => response(blankEffort(4, "after-retry")));
     await h.click("reset-effort"); await h.confirm();
     assert.equal(h.requests[0].body.expectedRevision, 2);
     assert.equal(hidden(h, "start-panel"), false);
     assert.equal(disabled(h, "start-goal"), false);
+});
+
+test("supported diagnostic reload remains a recovery option without clearing a reset barrier", async t => {
+    const value = { ...state(), provider: { canSubmitAnswers: true, canReload: true },
+        effortReset: { requestId: "pending-reset", generation: "fixture-generation", error: "Worker termination is unconfirmed." },
+        preparationRuntime: { liveAgentCount: 1 } };
+    const h = await setup(t, value);
+    h.setFetch(async path => path === "/api/reload" ? response({ accepted: true })
+        : response({ error: "Effort readback unavailable during recovery." }, 503));
+    await h.click("project-settings");
+    assert.equal(disabled(h, "reload-extension"), false);
+    await h.click("reload-extension");
+    assert.equal(disabled(h, "reload-extension"), true);
+    assert.deepEqual(h.requests.filter(request => request.path === "/api/reload").map(request => request.body), [{}]);
+    assert.equal(current(h).effortReset?.requestId, "pending-reset");
+    assert.equal(current(h).goal, value.goal);
+    assert.equal(h.requests.some(request => request.path === "/api/effort/reset"), false);
 });
 
 test("snapshots reject older revisions and late equal-revision provider/runtime responses", async (t) => {
@@ -307,7 +330,8 @@ test("snapshots reject older revisions and late equal-revision provider/runtime 
     h.render({ ...newer, provider: { ...newer.provider, canReload: false }, preparationRuntime: { liveAgentCount: 1 } }, 19);
     assert.equal(current(h).provider.canReload, true);
     assert.equal(current(h).preparationRuntime.liveAgentCount, 2);
-    assert.equal(disabled(h, "reload-extension"), false);
+    await h.click("project-settings");
+    assert.equal(disabled(h, "reload-extension"), false, "The accepted provider capability is retained; stale runtime counts are not a running-work signal.");
     const next = { ...newer, revision: 4 }; delete next.provider;
     h.render(next, 21);
     assert.equal(current(h).preparationRuntime.liveAgentCount, 2);

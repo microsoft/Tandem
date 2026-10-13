@@ -6,7 +6,7 @@ const browserLoginTimeoutMs = 180_000;
 const minimumTokenLifetimeMs = 180_000;
 
 export class SpeechAuthError extends Error {
-    constructor(message: string, public readonly statusCode: number) {
+    constructor(message: string, public readonly statusCode: number, public readonly speechSignInRequired = false) {
         super(message);
         this.name = "SpeechAuthError";
     }
@@ -138,12 +138,14 @@ export function createSpeechTokenService(
                 throw new SpeechAuthError(
                     "Azure Speech Entra authentication timed out. Check connectivity and select Sign in with Microsoft, or sign in with az login in the resource's tenant, then retry.",
                     504,
+                    true,
                 );
             }
             // Do not retain a cause: identity errors can include credentials and process output.
             throw new SpeechAuthError(
                 "Azure Speech Entra authentication failed. Select Sign in with Microsoft to use your browser, or sign in with az login in the resource's tenant. Your account needs the Cognitive Services Speech User role on the configured resource.",
                 503,
+                true,
             );
         } finally {
             clearTimeout(timer);

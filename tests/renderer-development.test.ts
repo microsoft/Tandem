@@ -171,6 +171,7 @@ test("fresh projects open Development directly without creating Stage1 state or 
     await h.click("entry-development");
     const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
     assert.equal(frame.src, "http://127.0.0.1:8765/?panel=workspace");
+    assert.equal(h.document.querySelector("#reset-effort"), null, "Direct Development does not offer a discovery reset starter.");
     assert.equal(h.document.querySelector("#continue-design"), null);
     await h.click("acceptance-delivery");
     assert.ok(h.get("capture-development"), "Direct projects retain the explicit capture/delivery controls.");
@@ -186,6 +187,43 @@ test("fresh projects open Development directly without creating Stage1 state or 
     assert.equal(h.store.getSnapshot().state.lifecycle.currentStage, "prepare");
     assert.deepEqual(h.store.getSnapshot().state.lifecycle.completedStages, []);
     assert.deepEqual(h.errors, []);
+});
+
+test("composed reload is root-owned and rejects foreign, stale, active and unknown requests", async t => {
+    const h = await reactHarness(t, undefined, "development");
+    const value = { ...state("development"), provider: { canSubmitAnswers: true, canReload: true, extensionId: "user:tandem" } };
+    h.render(value); await h.flush();
+    const frame = h.get<HTMLIFrameElement>("project-conversation-frame"), replies: Array<Record<string, unknown>> = [];
+    frame.contentWindow!.postMessage = message => { replies.push(message); };
+    const scope = JSON.stringify([value.prototypeId, value.generation, value.provider.extensionId]);
+    const send = async (data: object, origin = "http://127.0.0.1:8765", source: Window | null = frame.contentWindow) => {
+        h.window.dispatchEvent(new h.window.MessageEvent("message", { origin, source,
+            data: { protocol: "tandem-project/v1", channel: "fixture-project", ...data } }));
+        await h.flush();
+    };
+    h.setFetch(async path => { assert.equal(path, "/api/reload"); return response({ scheduled: true }); });
+    const request = { type: "project-reload", id: "reload-one", scope };
+    await send(request, "http://127.0.0.1:9999");
+    await send(request, undefined, null);
+    await send({ ...request, channel: "foreign" });
+    await send({ ...request, scope: "old-owner" });
+    assert.equal(h.requests.length, 0);
+    await send({ type: "status", status: "working", active: true });
+    await send(request);
+    await send({ type: "status", status: "unknown", active: false, installationStatus: "unknown" });
+    await send(request);
+    assert.equal(h.requests.length, 0, "Private active/unknown status cannot become a quiet reload boundary.");
+    await send({ type: "status", status: "closed", active: false, installationStatus: "closed" });
+    await send(request);
+    assert.equal(h.requests.length, 1);
+    assert.deepEqual(h.requests[0].body, {});
+    assert.ok(replies.some(reply => reply.type === "project-reload-result" && reply.id === request.id && reply.accepted === true));
+    await send({ ...request, id: "second-click" });
+    assert.equal(h.requests.length, 1, "Awaiting reload readback cannot submit a duplicate operation.");
+    h.render({ ...value, revision: 2, provider: { ...value.provider, canReload: false } }); await h.flush();
+    await send({ ...request, id: "unsupported" });
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.document.querySelector(".topbar #reload-extension"), null);
 });
 
 test("Design availability uses a named dot without hiding new output or attention", async t => {

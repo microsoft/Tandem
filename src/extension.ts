@@ -6716,6 +6716,7 @@ async function startServer(
             if (!res.headersSent) {
                 sendJson(res, error instanceof ProjectStoreError || error instanceof AnswerRequestError || error instanceof SpeechAuthError || error instanceof SketchLiveError ? error.statusCode : error instanceof CanvasError ? 409 : 500, {
                     error: error instanceof Error ? error.message : "Tandem request failed.",
+                    ...(error instanceof SpeechAuthError && error.speechSignInRequired ? { speechSignInRequired: true } : {}),
                 });
             } else {
                 res.end();

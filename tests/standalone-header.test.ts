@@ -40,14 +40,14 @@ test("standalone handshake requires its exact parent, origin and channel before 
     assert.equal(h.document.querySelector<HTMLDivElement>(".topbar")!.hidden, true);
     const value = header(h.headerMessages);
     assert.match(value.lifecycle, /Requirements/);
-    assert.equal(value.controls.reload?.disabled, true);
-    assert.equal(value.controls.reset?.disabled, false);
+    assert.equal(value.controls.reload, null);
+    assert.equal(value.controls.reset, null);
     await h.sendHeaderMessage({ type: "tandem:header:disconnect" });
     assert.equal(h.document.querySelector<HTMLDivElement>(".topbar")!.hidden, false);
     assert.equal(h.requests.length, 0);
 });
 
-test("hosted reset uses the existing confirmation and cannot bypass stale or read-only state", async (t) => {
+test("hosted maintenance messages cannot revive removed primary actions; Preparation keeps confirmation", async (t) => {
     const h = await reactHarness(t, host);
     const initial = state();
     h.render(initial);
@@ -58,34 +58,42 @@ test("hosted reset uses the existing confirmation and cannot bypass stale or rea
     assert.equal(h.document.querySelector('[role="alertdialog"]'), null);
     assert.ok(h.headerMessages.some((message) => message.type === "tandem:header:error"));
     await h.sendHeaderMessage({ type: "tandem:header:action", scope: value.scope, action: "reset" });
-    assert.match(h.document.querySelector('[role="alertdialog"]')!.textContent!, /current state and files will be archived/);
+    assert.equal(h.document.querySelector('[role="alertdialog"]'), null);
+    assert.ok(h.get("preparation-panel").contains(h.get("reset-effort")));
+    await h.click("reset-effort");
+    assert.match(h.document.querySelector('[role="alertdialog"]')!.textContent!, /first stop active discovery work.*state\/files are archived/s);
     assert.equal(h.requests.length, 0);
     await h.confirm(false);
     assert.equal(h.requests.length, 0);
     h.render({ ...initial, revision: 2, provider: { ...initial.provider, canSubmitAnswers: false } });
     await h.flush();
-    assert.equal(header(h.headerMessages).controls.reset?.disabled, true);
+    assert.equal(header(h.headerMessages).controls.reset, null);
+    assert.equal((h.get("reset-effort") as HTMLButtonElement).disabled, true);
     await h.sendHeaderMessage({ type: "tandem:header:action", scope: value.scope, action: "reset" });
     assert.equal(h.document.querySelector('[role="alertdialog"]'), null);
     assert.equal(h.requests.length, 0);
 });
 
-test("hosted reload reuses the provider action and reports failures instead of hiding them", async (t) => {
+test("hosted reload cannot bypass the relocated Project settings control", async (t) => {
     const h = await reactHarness(t, host);
     h.render({ ...state(), provider: { canSubmitAnswers: true, canReload: true } });
     h.setFetch(async () => response({ error: "Provider reload failed." }, 503));
     await h.flush();
     await h.sendHeaderMessage({ type: "tandem:header:connect" });
     await h.sendHeaderMessage({ type: "tandem:header:action", scope: header(h.headerMessages).scope, action: "reload" });
-    assert.equal(h.requests[0].path, "/api/reload");
-    assert.ok(header(h.headerMessages).messages.some((message) => message.error && message.text === "Provider reload failed."));
+    assert.equal(h.requests.length, 0);
+    await h.click("project-settings");
+    await h.click("reload-extension");
+    assert.equal(h.requests.at(-1)!.path, "/api/reload");
+    assert.equal(h.get("reload-status").textContent, "Provider reload failed.");
+    assert.equal(h.document.querySelector(".topbar #reload-extension"), null);
 });
 
-test("hosted speech sign-in and cancellation preserve the existing auth and microphone boundaries", async (t) => {
+test("hosted speech login stays at its requesting input and cannot be invoked from chrome", async (t) => {
     const h = await reactHarness(t, host);
     h.render(state());
     let aborted = false;
-    h.setSpeechFactory(async () => { throw new Error("Sign-in must not start microphone capture."); });
+    h.setSpeechFactory(async () => { throw Object.assign(new h.window.Error("Voice sign-in required."), { speechSignInRequired: true }); });
     h.setFetch(async (path, options) => {
         assert.equal(path, "/api/speech/login");
         return new Promise((_resolve, reject) => {
@@ -96,14 +104,20 @@ test("hosted speech sign-in and cancellation preserve the existing auth and micr
     await h.sendHeaderMessage({ type: "tandem:header:connect" });
     const scope = header(h.headerMessages).scope;
     await h.sendHeaderMessage({ type: "tandem:header:action", scope, action: "signIn" });
+    assert.equal(h.requests.length, 0);
+    const input = h.get<HTMLTextAreaElement>("usage-input");
+    const composer = input.closest(".voice-composer")!;
+    await h.click(composer.querySelector(".speech-toggle")!);
+    await h.click(composer.querySelector(".speech-sign-in")!);
     assert.equal(h.requests.length, 1);
-    assert.equal(header(h.headerMessages).controls.signIn?.busy, true);
-    assert.equal(header(h.headerMessages).controls.signIn?.disabled, true);
-    assert.ok(header(h.headerMessages).controls.cancelSignIn);
+    assert.equal(header(h.headerMessages).controls.signIn, null);
+    assert.equal(header(h.headerMessages).controls.cancelSignIn, null);
     await h.sendHeaderMessage({ type: "tandem:header:action", scope, action: "cancelSignIn" });
+    assert.equal(aborted, false, "Hosted messages do not invoke a removed header control.");
+    await h.click(composer.querySelector(".speech-cancel")!);
     assert.equal(aborted, true);
     assert.equal(header(h.headerMessages).controls.cancelSignIn, null);
-    assert.ok(header(h.headerMessages).messages.some((message) => /sign-in cancelled/.test(message.text)));
+    assert.match(composer.querySelector(".speech-status")!.textContent!, /sign-in cancelled/);
 });
 
 test("standalone header configuration cannot target arbitrary websites or carry unbounded controls", () => {

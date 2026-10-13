@@ -229,24 +229,19 @@ test("combined header delegates application icons only to the current frame and 
     await h.fromApplication({ type: "tandem:header:ready" });
     assert.equal(sent.at(-1)!.data.type, "tandem:header:connect");
     await h.fromApplication({ type: "tandem:header:state", header: applicationHeader });
-    for (const label of ["Reload extension", "Reset effort", "Sign in with Microsoft"]) {
-        const button = h.button(label);
-        assert.ok(h.document.querySelector(".host-header-actions")!.contains(button));
-        assert.equal(button.textContent, "");
+    for (const label of ["Reload extension", "Reset effort", "Sign in with Microsoft", "Cancel Microsoft sign-in"]) {
+        assert.equal(h.document.querySelector(`[aria-label="${label}"]`), null, "Maintenance is not recreated in hosted chrome.");
     }
-    await h.click("Reset effort");
-    assert.deepEqual(sent.at(-1), { origin: "http://127.0.0.1:5000",
-        data: { type: "tandem:header:action", channel: sent[0].data.channel, scope: applicationHeader.scope, action: "reset" } });
+    assert.equal(sent.some(item => item.data.type === "tandem:header:action"), false);
     assert.equal(h.requests.length, 0, "application actions must not bypass existing iframe handlers through host HTTP");
     await h.fromApplication({ type: "tandem:header:state", header: {
         ...applicationHeader, controls: { ...applicationHeader.controls, signIn: { ...applicationHeader.controls.signIn, disabled: true, busy: true },
             cancelSignIn: { label: "Cancel Microsoft sign-in", title: "Cancel", disabled: false, busy: false } },
         messages: [{ id: "speech", text: "Complete Microsoft sign-in", error: false }],
     } });
-    assert.equal(h.button("Sign in with Microsoft").disabled, true);
+    assert.equal(h.document.querySelector('[aria-label="Sign in with Microsoft"]'), null);
     assert.match(h.document.body.textContent!, /Complete Microsoft sign-in/);
-    await h.click("Cancel Microsoft sign-in");
-    assert.equal(sent.at(-1)!.data.action, "cancelSignIn");
+    assert.equal(h.document.querySelector('[aria-label="Cancel Microsoft sign-in"]'), null, "Voice cancellation belongs to the requesting input.");
     await h.fromApplication({ type: "tandem:header:state", header: {
         ...applicationHeader, messages: [{ id: "reset", text: "Reset could not stop the active work.", error: true }],
     } });

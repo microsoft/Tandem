@@ -1,6 +1,6 @@
 import { Component, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ErrorInfo, type ReactNode } from "react";
 import { AlertDialog, Tabs, Tooltip } from "radix-ui";
-import { ArrowRight, Check, ChevronDown, ClipboardList, Code, FileText, FolderOpen, GitBranch, Layers, ListChecks, Monitor, PanelLeft, PanelLeftClose, PanelLeftOpen, PencilRuler, Play, RefreshCw, RotateCcw, Sparkles, X } from "lucide-react";
+import { ArrowRight, Check, ChevronDown, ClipboardList, Code, FileText, FolderOpen, GitBranch, Layers, ListChecks, Monitor, PanelLeft, PanelLeftClose, PanelLeftOpen, PencilRuler, Play, RotateCcw, Sparkles, X } from "lucide-react";
 import { lifecycleStages } from "../workflow.js";
 import type { LifecycleStageId } from "../types.js";
 import { StudioStore } from "./state-store.js";
@@ -15,7 +15,7 @@ import { DevelopmentPanel } from "./development-panel.js";
 import { WorkflowActivity } from "./workflow-activity.js";
 import { ProjectConversation, ProjectConversationProvider, useProjectView } from "./project-conversation.js";
 import { DiscoveryRecovery } from "./discovery-recovery.js";
-import { SpeechProvider, SpeechSignInControl, SpeechTextarea, useSpeechSignInControl } from "./speech-textarea.js";
+import { SpeechProvider, SpeechTextarea } from "./speech-textarea.js";
 import { Brand } from "./brand.js";
 import { useStandaloneHeader } from "./standalone-header.js";
 
@@ -142,8 +142,8 @@ function EffortApp({ state, store, version, connectionError, confirm }: {
       : "Open the installed user-scoped Tandem to " + action + ".",
     confirm, browseStage, selectArtifact, setBusy,
   };
-  return <UiContext.Provider value={value}><SpeechProvider signInPlacement="header">
-    <ProjectConversationProvider designVisible={activeTab === "development"}
+  return <UiContext.Provider value={value}><SpeechProvider signInPlacement="on-demand">
+    <ProjectConversationProvider designVisible={activeTab === "development"} effortBusy={busy.has("effort")}
       viewedStage={stageTabs.find(tab => tab.value === activeTab)?.stage
         ?? stageTabs.find(tab => tab.stage === state.artifacts.find(item => item.id === selectedArtifact)?.stage)?.stage ?? state.lifecycle.currentStage}
       onEntry={(path, firstChoice) => { if (path === "development") setActiveTab("development"); else if (firstChoice) setActiveTab("preparation"); }}
@@ -184,88 +184,73 @@ function GoalEntry() {
   </section>;
 }
 
-function Header({ version, connectionError, store, effortBusy, developmentView }: { version: string; connectionError: string; store: StudioStore; effortBusy: boolean; developmentView: boolean }) {
-  const { state, confirm, post } = useUi();
-  const reset = useAction("effort");
-  const reload = useAction("reload");
-  const [message, setMessage] = useState("");
-  const [reloadRequested, setReloadRequested] = useState(false);
+function Header({ version, connectionError, developmentView }: { version: string; connectionError: string; developmentView: boolean }) {
+  const { state } = useUi();
   const stageIndex = Math.max(0, lifecycleStages.findIndex((stage) => stage.id === state.lifecycle.currentStage));
-  const reloadReceipt = state.reloadReceipt;
-  useEffect(() => {
-    if (["success", "error"].includes(reloadReceipt?.status)) setReloadRequested(false);
-  }, [reloadReceipt?.status]);
-  const reloadStatus = reload.error || (state.provider?.canReload !== true
-    ? state.provider?.source === "session" ? "Reopen the workspace to update Tandem" : state.provider?.source === "project" ? "Available from the user-installed Tandem" : "Reload unavailable"
-    : reloadReceipt?.status === "success" ? "" : reloadReceipt?.message || (reloadRequested ? "Reloading this session..." : "Current session only"));
-  const reloadDisabled = developmentView || state.provider?.canReload !== true || reload.busy || reloadRequested || reloadReceipt?.status === "reloading" || effortBusy;
-  const reloadTitle = state.provider?.canReload ? "Restart this session's provider from the latest installed user extension. This does not download updates." : reloadStatus;
-  const reloadLabel = reload.busy ? "Checking..." : reloadRequested || reloadReceipt?.status === "reloading" ? "Reloading..." : "Reload";
-  const resetDisabled = developmentView || state.provider?.canSubmitAnswers === false || effortBusy;
-  const resetTitle = developmentView ? "Close the private runtime in Project settings before resetting discovery."
-    : "Archive upstream discovery and return to goal entry; Development and admitted handoffs are retained";
-  const effortMessage = reset.error || state.effortReset?.error
-    || (state.effortReset ? "Reset is pending. Use Reset to confirm worker termination and finish clearing this effort." : message);
-  const reloadExtension = () => {
-    if (reloadDisabled) return;
-    void reload.run(async () => {
-      const response = await fetch("/api/reload", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Reload request failed.");
-      setReloadRequested(true);
-    });
-  };
-  const resetEffort = async () => {
-    if (resetDisabled) return;
-    if (!await confirm("Reset upstream discovery? Its current state and files will be archived. Development must be at an explicit quiet boundary; its canonical Design, conversation and admitted handoffs will not be erased. A later handoff refines that same project. Use another workspace for an unrelated project.", "Reset upstream discovery?")) return;
-    void reset.run(async () => {
-      setMessage("Stopping active work and resetting this effort...");
-      await post("/api/effort/reset", { expectedRevision: state.revision ?? 0, generation: state.generation, confirm: true }, 120000);
-      const current = store.getSnapshot().state;
-      if (!current || !isGoalEntry(current) || current.generation === state.generation) throw new Error("Reset has not been confirmed. Reload the project state before retrying.");
-    });
-  };
-  const speech = useSpeechSignInControl();
   const hosted = useStandaloneHeader({
     scope: JSON.stringify([state.prototypeId, state.generation, state.provider?.extensionId]),
     version, lifecycle: isGoalEntry(state) ? "" : `${stageIndex + 1}. ${lifecycleStages[stageIndex].label} | ${state.phase || "discovery"}`,
     permissionScope: developmentView ? "development" : "main",
     controls: {
-      reload: { label: reloadLabel, title: reloadTitle, disabled: reloadDisabled, busy: reload.busy || reloadRequested || reloadReceipt?.status === "reloading" },
-      reset: { label: reset.busy ? "Resetting..." : "Reset", title: resetTitle, disabled: resetDisabled, busy: reset.busy },
-      signIn: { label: speech.signingIn ? "Signing in..." : "Sign in", title: developmentView ? "Speech sign-in belongs to upstream discovery, not Development." : speech.title, disabled: developmentView || speech.disabled, busy: speech.signingIn },
-      cancelSignIn: speech.signingIn ? { label: "Cancel Microsoft sign-in", title: "Cancel Microsoft sign-in", disabled: false, busy: false } : null,
+      reload: null,
+      reset: null,
+      signIn: null,
+      cancelSignIn: null,
     },
     messages: [
-      { id: "reload", text: reload.error || reloadReceipt?.status === "error" ? reloadStatus : "", error: true },
-      { id: "effort", text: effortMessage, error: Boolean(reset.error || state.effortReset?.error) },
-      { id: "speech", text: speech.message, error: speech.status === "error" },
       { id: "connection", text: connectionError, error: true },
     ].filter((message) => message.text).map((message) => ({ ...message, text: message.text.slice(0, 8192) })),
-  }, { reload: reloadExtension, reset: resetEffort, signIn: speech.signIn, cancelSignIn: speech.cancel });
+  }, { reload: () => { throw new Error("Use Project settings diagnostics to reload Tandem."); },
+    reset: () => { throw new Error("Use Preparation actions to restart Preparation."); },
+    signIn: () => { throw new Error("Use the voice input's sign-in control."); },
+    cancelSignIn: () => { throw new Error("Use the voice input's cancel control."); } });
   return <header className="topbar" hidden={hosted} data-hosted={hosted || undefined}><Brand /><div className="topbar-actions">
     <div id="lifecycle-status" className="lifecycle" aria-label="Development lifecycle" hidden={isGoalEntry(state)}>
       <span id="current-stage" className="stage" aria-label={"Current lifecycle stage: " + lifecycleStages[stageIndex].label}>
         <span id="current-stage-index" className="stage-index" aria-hidden="true">{stageIndex + 1}</span><span id="stage">{lifecycleStages[stageIndex].label}</span>
       </span><span id="phase" className="phase">{state.phase || "discovery"}</span>
     </div>
-    <div className="reload-control" data-status-help={reloadStatus}><button id="reload-extension" className="reload-button" type="button"
-      disabled={reloadDisabled} title={reloadTitle}
-      onClick={reloadExtension}><RefreshCw size={15} aria-hidden="true" />{reloadLabel}</button>
-      <span id="reload-status" className={reload.error || reloadReceipt?.status === "error" ? "reload-status" : "visually-hidden"} role="status"
-        data-status={reload.error || reloadReceipt?.status === "error" ? "error" : "idle"}>{reloadStatus}</span></div>
-    <button id="reset-effort" className="reset-button" type="button" disabled={resetDisabled}
-      title={resetTitle} onClick={resetEffort}><RotateCcw size={15} aria-hidden="true" />{reset.busy ? "Resetting..." : "Reset"}</button>
-    {!developmentView && <SpeechSignInControl />}
     <span className="build-version" title="Tandem extension version">v{version}</span>
   </div>
-    <p id="effort-message" className="effort-message" role="status" data-status={reset.error || state.effortReset?.error ? "error" : "idle"}>
-      {effortMessage}
-    </p>
     <p id="connection-status" className="connection-status" role="status">{connectionError}</p>
   </header>;
 }
 
+function PreparationRestart({ store, effortBusy }: { store: StudioStore; effortBusy: boolean }) {
+  const { state, confirm, post } = useUi();
+  const project = useProjectView();
+  const reset = useAction("effort");
+  const [message, setMessage] = useState("");
+  const disabled = project.active || project.starting || project.status === "unknown"
+    || state.provider?.canSubmitAnswers === false || effortBusy;
+  const latest = useRef(disabled); latest.current = disabled;
+  if (project.entry.startingPath !== "preparation" && !state.effortReset) return null;
+  if (isGoalEntry(state) && !state.effortReset && !reset.error) return null;
+  const error = reset.error || state.effortReset?.error;
+  return <details id="preparation-maintenance" className="preparation-stage-card" open={state.effortReset ? true : undefined}>
+    <summary>Advanced Preparation actions</summary>
+    <p>Stop current discovery work, archive Preparation, Requirements, Drawings and Prototype state/files, and return to the goal form. Development work and the project's saved starting choice are kept.</p>
+    <button id="reset-effort" className="plan-button secondary" type="button" disabled={disabled}
+      title={project.active ? "Close the private runtime in Project settings before restarting Preparation." : "Archive upstream discovery; retain Development and admitted handoffs"}
+      onClick={async () => {
+        if (latest.current) return;
+        if (!await confirm("Tandem will first stop active discovery work. If stopping cannot be confirmed, the current effort is kept and a recovery message is shown.\n\nOn success, Preparation, Requirements, Drawings and Prototype state/files are archived and the goal form opens. Development Design, conversation, application files and admitted handoffs are preserved. Close Development before restarting Preparation.\n\nThe project's saved starting choice stays unchanged. This restarts discovery for the same project; use another folder for a different project.", "Restart Preparation?")) return;
+        void reset.run(async () => {
+          const current = store.getSnapshot().state;
+          if (latest.current || !current || current.generation !== state.generation || current.revision !== state.revision) {
+            throw new Error("The project changed while confirmation was open. Review Preparation before retrying.");
+          }
+          setMessage("Stopping active discovery work and archiving this effort...");
+          await post("/api/effort/reset", { expectedRevision: state.revision ?? 0, generation: state.generation, confirm: true }, 120000);
+          const saved = store.getSnapshot().state;
+          if (!saved || !isGoalEntry(saved) || saved.generation === state.generation) throw new Error("Preparation restart has not been confirmed. Refresh the project state before retrying.");
+        });
+      }}><RotateCcw size={15} aria-hidden="true" />{reset.busy ? "Restarting Preparation..." : "Restart Preparation..."}</button>
+    <p id="effort-message" role="status" data-status={error ? "error" : "idle"}>
+      {error || (state.effortReset ? "Preparation restart is pending. Use Restart Preparation to confirm worker termination and finish the interrupted archive/reset." : message)}
+    </p>
+  </details>;
+}
 interface WorkspaceProps {
   version: string; connectionError: string; store: StudioStore; activeTab: TabId; onTabChange: (tab: TabId) => void;
   selectedArtifact: string | null; contextOpen: boolean; setContextOpen: (open: boolean) => void;
@@ -287,6 +272,7 @@ function Workspace(props: WorkspaceProps) {
   const developmentView = activeTab === "development";
   const contextHelp = useStatusHelp(`${activeTab}:${contextOpen}:${contextCollapsed}:${atStart}:${projectView.entry.ready}`);
   const previousAtStart = useRef(atStart);
+  useEffect(() => { if (state.effortReset) onTabChange("preparation"); }, [state.effortReset?.requestId]);
   useLayoutEffect(() => {
     if (atStart && projectView.entry.ready && !projectView.developmentEntered) document.getElementById("start-goal")?.focus();
     else if (previousAtStart.current) document.getElementById("preparation-panel")?.focus();
@@ -422,7 +408,7 @@ function Workspace(props: WorkspaceProps) {
     </AlertDialog.Root>
     <Tabs.Root value={activeTab} onValueChange={navigate} asChild>
       <main id="studio-workspace" ref={workspace} className="workspace project-workspace" data-development={developmentView} data-context-open={contextOpen} data-context-collapsed={contextCollapsed}
-        inert={!projectView.entry.ready || props.effortBusy || Boolean(state.effortReset)}
+        inert={!projectView.entry.ready || props.effortBusy}
         aria-busy={props.effortBusy || Boolean(state.effortReset)} style={{ "--requirements-width": width + "px" } as CSSProperties}>
         <button id="context-toggle" className="context-toggle" type="button" aria-expanded={contextOpen} aria-controls="requirements-pane" onClick={() => setContextOpen(!contextOpen)}>
           <PanelLeft size={15} aria-hidden="true" /><span>Project context</span><span id="context-stage" className="context-stage">{lifecycleStages.find((stage) => stage.id === current)?.label}</span><ChevronDown className="context-chevron" size={16} aria-hidden="true" />
@@ -430,7 +416,7 @@ function Workspace(props: WorkspaceProps) {
         <aside id="requirements-pane" className="requirements" aria-label="Project context" onKeyDown={(event) => {
           if (event.key === "Escape" && contextOpen) { setContextOpen(false); document.getElementById("context-toggle")?.focus(); event.preventDefault(); }
         }}>
-          <Header version={props.version} connectionError={props.connectionError} store={props.store} effortBusy={props.effortBusy} developmentView={projectView.active} />
+          <Header version={props.version} connectionError={props.connectionError} developmentView={projectView.active} />
           <nav className="project-navigation" aria-label="Project navigation">
             <button id="project-settings" type="button" className="plan-button" onClick={() => projectView.command("settings")}>Project settings</button>
             <Tabs.List id="project-contents" className="preview-tabs project-tabs" aria-label="Project contents">
@@ -502,6 +488,7 @@ function Workspace(props: WorkspaceProps) {
             id={tab.id + "-panel"} className={tab.className} aria-labelledby={tab.id + "-tab"} tabIndex={0}>
             {activeTab === tab.value && tab.stage !== "development" && !atStart && phaseActions}
             <UiContext.Provider value={tab.stage === "development" ? ui : { ...ui, canEdit: (stage, allowCompleted) => !projectView.developmentEntered && ui.canEdit(stage, allowCompleted) }}>
+            {tab.stage === "prepare" && <PreparationRestart store={props.store} effortBusy={props.effortBusy} />}
             {tab.stage === "prepare" ? atStart ? projectView.developmentEntered
               ? <div className="start-panel"><h2>Preparation was not used</h2><p>This project is working in Development. Its conversation remains alongside the project artifacts.</p></div>
               : <GoalEntry /> : <PreparationPanel /> : tab.stage === "requirements" ? <RequirementsPanel />

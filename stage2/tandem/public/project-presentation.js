@@ -11,6 +11,33 @@ export function installProjectPresentation({ document, window, changed, settings
   const effort = document.querySelector("#project-effort"), effortApply = document.querySelector("#apply-project-effort");
   const effortRefresh = document.querySelector("#refresh-project-effort"), effortStatus = document.querySelector("#project-effort-status");
   const effortError = document.querySelector("#project-effort-error");
+  const reloadPanel = document.querySelector("#project-provider-maintenance");
+  const reloadButton = document.querySelector("#project-reload-extension");
+  const reloadPurpose = document.querySelector("#project-reload-purpose"), reloadStatus = document.querySelector("#project-reload-status");
+  let reloadPending = null, reloadError = "";
+  const validReload = value => value && ["supported", "disabled", "error"].every(key => typeof value[key] === "boolean")
+    && typeof value.scope === "string" && value.scope.length <= 1024
+    && typeof value.label === "string" && value.label.length <= 100
+    && typeof value.title === "string" && value.title.length <= 2000
+    && typeof value.message === "string" && value.message.length <= 8192;
+  function renderReload() {
+    if (!reloadPanel) return;
+    const view = context?.providerReload, valid = validReload(view);
+    reloadPanel.hidden = !valid || !view.supported && !view.message && !reloadError;
+    reloadButton.hidden = !valid || !view.supported;
+    reloadButton.disabled = !valid || view.disabled || Boolean(reloadPending);
+    if (valid) {
+      reloadButton.textContent = view.label;
+      reloadPurpose.textContent = view.title;
+      reloadStatus.textContent = reloadError || view.message;
+    }
+  }
+  if (reloadButton) reloadButton.onclick = () => {
+    const view = context?.providerReload;
+    if (!validReload(view) || !view.supported || view.disabled || reloadPending) return;
+    reloadPending = crypto.randomUUID(); reloadError = ""; renderReload();
+    send({ type: "project-reload", id: reloadPending, scope: view.scope });
+  };
   let effortPending = null;
   if (effortPanel) {
     effortPanel.hidden = false;
@@ -97,6 +124,7 @@ export function installProjectPresentation({ document, window, changed, settings
       document.body.dataset.projectDesign = String(message.designVisible === true);
       document.body.dataset.projectWorking = message.developmentEntered === true ? "development" : "discovery";
       renderEffort();
+      renderReload();
       update(); changed();
     } else if (message.type === "layout" && typeof message.stacked === "boolean"
       && Number.isFinite(message.conversationWidth) && message.conversationWidth >= 0 && message.conversationWidth <= 20000) {
@@ -113,6 +141,11 @@ export function installProjectPresentation({ document, window, changed, settings
     } else if (message.type === "command") {
       if (message.command === "settings") { settings(); requestEffort(); }
       if (message.command === "current-work") currentWork();
+    } else if (message.type === "project-reload-result" && reloadPending === message.id) {
+      reloadPending = null;
+      reloadError = typeof message.error === "string" ? message.error
+        : message.accepted === true ? "" : "Provider reload was not confirmed. Inspect project status before retrying.";
+      renderReload();
     } else if (message.type === "project-effort-result" && effortPending === message.id) {
       effortPending = null;
       const value = message.settings;

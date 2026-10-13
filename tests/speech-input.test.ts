@@ -7,11 +7,12 @@ import { reactHarness, state, decision, response } from "./helpers/react-harness
 async function fixture(t: TestContext, value = state()) {
   const h = await reactHarness(t);
   const sessions: { events: SpeechEvents; signal: AbortSignal; closed: boolean; stopped: boolean }[] = [];
-  h.setSpeechFactory(async (events, signal) => {
+  const createSession: Parameters<typeof h.setSpeechFactory>[0] = async (events, signal) => {
     const record = { events, signal, closed: false, stopped: false };
     sessions.push(record);
     return { start: async () => {}, stop: async () => { record.stopped = true; }, close: () => { record.closed = true; } };
-  });
+  };
+  h.setSpeechFactory(createSession);
   h.render(value);
   await h.flush();
   const control = (input: HTMLTextAreaElement, kind = ".speech-toggle") => {
@@ -24,8 +25,14 @@ async function fixture(t: TestContext, value = state()) {
     await h.click(control(input));
     return sessions.at(-1)!;
   };
+  const requireSignIn = async (input: HTMLTextAreaElement) => {
+    h.setSpeechFactory(async () => { throw Object.assign(new h.window.Error("Sign in is required for Azure voice input."), { speechSignInRequired: true }); });
+    await h.click(control(input));
+    h.setSpeechFactory(createSession);
+    assert.equal(control(input, ".speech-sign-in").textContent, "Sign in for voice input");
+  };
   t.after(() => assert.deepEqual(h.errors, [], "Speech renders without React errors"));
-  return { ...h, sessions, control, start };
+  return { ...h, sessions, control, start, requireSignIn };
 }
 function dag() {
   const value = state();
@@ -41,8 +48,8 @@ test("speech controls cover conversational fields and exclude process configurat
     "prototype-detail", "revision-input", "sketch-instruction", "usage-input",
   ]);
   assert.equal(h.document.querySelectorAll(".speech-toggle").length, inputs.length);
-  assert.equal(h.document.querySelectorAll(".speech-sign-in").length, 0, "Per-field sign-in is replaced by the shared header action.");
-  assert.equal(h.document.querySelectorAll("#speech-sign-in").length, 1);
+  assert.equal(h.document.querySelectorAll(".speech-sign-in").length, 0, "Voice authentication is not shown before it is needed.");
+  assert.equal(h.document.querySelectorAll("#speech-sign-in").length, 0);
   for (const input of inputs) {
     const toggle = h.control(input as HTMLTextAreaElement);
     assert.equal(toggle.getAttribute("aria-label"), "Start speech input");
@@ -60,14 +67,15 @@ test("explicit Microsoft sign-in retains drafts through polling without requesti
   const h = await fixture(t);
   const input = h.get<HTMLTextAreaElement>("usage-input");
   await h.input(input, "Keep this thought");
+  await h.requireSignIn(input);
   let release!: (value: Response) => void;
   h.setFetch(() => new Promise((resolve) => { release = resolve; }));
-  await h.click("speech-sign-in");
+  await h.click(h.control(input, ".speech-sign-in"));
   assert.equal(h.requests.length, 1);
   assert.equal(h.requests[0].path, "/api/speech/login");
   assert.equal(input.readOnly, false);
   assert.equal(h.control(input).disabled, true);
-  await h.click("speech-sign-in");
+  await h.click(h.control(input, ".speech-sign-in"));
   await h.click(h.control(input));
   assert.equal(h.sessions.length, 0);
   Object.defineProperty(h.document, "visibilityState", { value: "hidden", configurable: true });
@@ -80,23 +88,26 @@ test("explicit Microsoft sign-in retains drafts through polling without requesti
   assert.match(h.control(input, ".speech-status").textContent!, /Signed in to Microsoft/);
   assert.equal(h.sessions.length, 0);
   assert.equal(h.control(input).disabled, false);
+  assert.equal(input.closest(".voice-composer")!.querySelector(".speech-sign-in"), null);
 });
 
 test("sign-in cancellation and errors are visible and leave the draft untouched", async (t) => {
   const h = await fixture(t), input = h.get<HTMLTextAreaElement>("usage-input");
   await h.input(input, "Original");
+  await h.requireSignIn(input);
   let signal: AbortSignal | null | undefined;
   h.setFetch((_path, options) => new Promise((_resolve, reject) => {
     signal = options.signal;
     signal!.addEventListener("abort", () => reject(new Error("Aborted")));
   }));
-  await h.click("speech-sign-in");
-  await h.click(h.document.querySelector('.speech-header-sign-in [aria-label="Cancel Microsoft sign-in"]')!);
+  await h.click(h.control(input, ".speech-sign-in"));
+  await h.click(h.control(input, ".speech-cancel"));
   assert.equal(signal!.aborted, true);
   assert.equal(input.value, "Original");
   assert.match(h.control(input, ".speech-status").textContent!, /cancelled/);
+  assert.equal(h.document.activeElement, input);
   h.setFetch(async () => response({ error: "Your organization requires an approved desktop application." }, 503));
-  await h.click("speech-sign-in");
+  await h.click(h.control(input, ".speech-sign-in"));
   assert.match(h.control(input, ".speech-status").textContent!, /approved desktop application/);
   assert.equal(h.control(input, ".speech-status").dataset.status, "error");
   assert.equal(input.value, "Original");
@@ -109,6 +120,34 @@ test("speech composes at the selection without changing surrounding text", () =>
   assert.equal(composeSpeechDraft("unchanged", 2, 6, ""), "unchanged");
 });
 
+test("voice authentication is contextual and never required for typed input or ordinary errors", async t => {
+  const h = await fixture(t), input = h.get<HTMLTextAreaElement>("usage-input");
+  h.setSpeechFactory(async () => { throw new h.window.Error("Allow microphone access in browser settings."); });
+  await h.click(h.control(input));
+  assert.equal(input.closest(".voice-composer")!.querySelector(".speech-sign-in"), null);
+  await h.requireSignIn(input);
+  assert.match(h.control(input, ".speech-sign-in").title, /does not turn on the microphone or sign in to Copilot/);
+  assert.match(h.control(input).title, /Audio is sent to Azure/);
+  await h.input(input, "Typed input remains available");
+  h.setFetch(async path => { assert.equal(path, "/api/answer"); return response(state()); });
+  await h.click("add-usage");
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.sessions.length, 0);
+  assert.equal(h.document.querySelector(".topbar .speech-sign-in, .topbar #speech-sign-in"), null);
+});
+
+test("leaving the requesting voice input cancels its pending login without recording", async t => {
+  const h = await fixture(t), input = h.get<HTMLTextAreaElement>("usage-input");
+  await h.requireSignIn(input);
+  let cancelled = false;
+  h.setFetch((_path, options) => new Promise((_resolve, reject) => {
+    options.signal?.addEventListener("abort", () => { cancelled = true; reject(new Error("cancelled")); }, { once: true });
+  }));
+  await h.click(h.control(input, ".speech-sign-in"));
+  await h.fire(h.get("preparation-tab"), "mousedown", { button: 0 });
+  assert.equal(cancelled, true);
+  assert.equal(h.sessions.length, 0);
+});
 test("live hypotheses replace each other and Stop keeps only final text for manual submission", async (t) => {
   const h = await fixture(t), input = h.get<HTMLTextAreaElement>("usage-input");
   await h.input(input, "I want");

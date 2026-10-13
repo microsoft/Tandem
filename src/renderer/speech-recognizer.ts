@@ -31,7 +31,8 @@ async function requestToken(signal: AbortSignal): Promise<SpeechToken> {
     signal,
   });
   const value = await response.json();
-  if (!response.ok) throw new Error(value.error || "Azure Speech authentication failed.");
+  if (!response.ok) throw Object.assign(new Error(value.error || "Azure Speech authentication failed."),
+    { speechSignInRequired: value.speechSignInRequired === true });
   if (typeof value.authorizationToken !== "string" || !value.authorizationToken.startsWith("aad#")
     || typeof value.region !== "string" || typeof value.language !== "string"
     || !Number.isFinite(value.expiresAt) || value.expiresAt < Date.now() + 150_000) {
