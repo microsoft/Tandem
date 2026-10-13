@@ -423,7 +423,8 @@ factory work and no native events during the guarded write. Active, resumable,
 unavailable or changing native evidence keeps recovery blocked. No workers are
 cancelled and nothing is replayed; continuing requires a new explicit action.
 
-Operational data is ignored `.tandem` data, not Git publication:
+Operational data lives in `.tandem`, not Git publication. The target project must
+ignore `.tandem/` explicitly; the host does not add a Git ignore rule:
 
 - Shared upstream efforts and snapshots: `.tandem\efforts\<effortId>`.
 - Archived upstream resets: `.tandem\effort-history\<effortId>\<archiveId>`.

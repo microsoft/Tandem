@@ -18,7 +18,8 @@ For the idea behind the product, read [the Tandem story](the-tandem-story.md).
 These guides describe the integrated **source preview**, not a promise that every
 feature is in an installed or published release. Use the instructions supplied
 with an installed release; do not overwrite it to match this guide.
-Windows, PowerShell and actual Node 24+ are the currently qualified environment.
+Use Windows, PowerShell and actual Node 24.15+ (24.x LTS) or Node 26+ for the
+source dependency requirements. See the [quick start](quick-start.md).
 [Source provenance](engineering-reference.md) and
 [package version](../package.json) are recorded separately from user instructions.
 

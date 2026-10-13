@@ -32,8 +32,9 @@ example.
 ## Get started
 
 **Source preview:** the instructions below build this checkout; they do not
-install a published release. Use Windows with PowerShell, actual **Node 24+**,
-Git, and a Copilot account with the required model access. Other platforms are
+install a published release. Use Windows with PowerShell, actual **Node 24.15+
+(24.x LTS) or Node 26+**, Git, and a Copilot account with the required model access.
+Other platforms are
 not yet qualified. The browser app does not require .NET or a running Copilot
 desktop app.
 
@@ -49,7 +50,8 @@ node .\dist\browser\cli.mjs --workspace C:\projects\my-app
 Replace `C:\projects\my-app` with your project's Git repository/worktree root,
 not the Tandem source folder. For a new project, create a folder and initialize
 Git first; [the quick start](docs/quick-start.md) shows both paths. Use a test
-project or worktree for your first trial.
+project or worktree for your first trial. Ensure the target project's `.gitignore`
+includes `.tandem/` to keep local session state and diagnostics out of commits.
 
 **What you will see:** Tandem opens your project folder and asks where to start:
 

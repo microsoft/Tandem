@@ -8,9 +8,11 @@ explicit decision.**
 
 ## 1. Launch the source preview
 
-You need Windows, PowerShell, actual **Node 24+**, Git, and a Copilot account
-with the required model access. These commands build source, not a published
+You need Windows, PowerShell, actual **Node 24.15+ (24.x LTS) or Node 26+**, Git,
+and a Copilot account with the required model access. These commands build source, not a published
 release or global installation. No .NET or running Copilot desktop app is needed.
+Check `node --version` first: Node 24.0 through 24.14 and Node 25 do not satisfy
+the locked source dependencies, even if npm only warns and the build succeeds.
 
 Use an existing Git repository/worktree root, preserving its files. For your first
 trial, use a test project or worktree. To create a new project instead:
@@ -18,9 +20,13 @@ trial, use a test project or worktree. To create a new project instead:
 ```powershell
 New-Item -ItemType Directory -Path C:\projects\counter
 git -C C:\projects\counter init
+Add-Content -Path C:\projects\counter\.gitignore -Value '.tandem/'
 ```
 
-An initial commit is not required. Tandem does not initialize Git for you.
+An initial commit is not required. Tandem does not initialize Git or add an ignore
+rule for you. For an existing project, ensure its `.gitignore` contains `.tandem/`
+before launching. This keeps local session state and diagnostics out of commits;
+do not ignore `tandem-records` merely because operational state is private.
 From your **Tandem source checkout**, separate from that target project:
 
 ```powershell
