@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-labelledby="title description">
+  <title id="title">Tandem: you and Copilot, thinking together</title>
+  <desc id="description">An original conceptual illustration, not a product screenshot. A person and a friendly Copilot robot stand beside a whiteboard, discussing an interface sketch, a user journey and technical decisions before implementation.</desc>
+  <defs>
+    <linearGradient id="background" x2="1" y2="1">
+      <stop stop-color="#edf5ff"/>
+      <stop offset="1" stop-color="#f7fafc"/>
+    </linearGradient>
+    <linearGradient id="shirt" x2="1" y2="1">
+      <stop stop-color="#3269df"/>
+      <stop offset="1" stop-color="#204eb3"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="420" rx="20" fill="url(#background)"/>
+  <circle cx="165" cy="198" r="142" fill="#e1edff"/>
+  <circle cx="1020" cy="207" r="140" fill="#e0f3f1"/>
+  <path d="M90 374H1110" stroke="#bfcee0" stroke-width="2" stroke-linecap="round"/>
+
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <rect x="309" y="60" width="584" height="280" rx="18" fill="#c9d8e9" opacity=".45"/>
+    <rect x="299" y="50" width="584" height="280" rx="16" fill="#fff" stroke="#b8c9de" stroke-width="2"/>
+    <path d="M390 333L374 372M792 333L808 372" stroke="#7188a3" stroke-width="8" stroke-linecap="round"/>
+    <rect x="319" y="325" width="544" height="8" rx="4" fill="#8da6c3"/>
+    <rect x="736" y="319" width="37" height="6" rx="3" fill="#3269df"/>
+    <rect x="780" y="319" width="26" height="6" rx="3" fill="#1c8a7d"/>
+    <text x="336" y="88" fill="#172b49" font-size="23" font-weight="650">What should happen?</text>
+    <text x="336" y="112" fill="#566b83" font-size="14">Make the journey clear. Decide together.</text>
+
+    <rect x="335" y="137" width="112" height="128" rx="8" fill="#f5f8ff" stroke="#a8bbd9" stroke-width="2"/>
+    <path d="M336 159H446" stroke="#a8bbd9" stroke-width="2"/>
+    <circle cx="346" cy="148" r="3" fill="#7b94b4"/>
+    <circle cx="357" cy="148" r="3" fill="#7b94b4"/>
+    <rect x="350" y="174" width="81" height="13" rx="4" fill="#c8d9fa"/>
+    <path d="M350 202H427M350 214H406" stroke="#9cb0ca" stroke-width="4" stroke-linecap="round"/>
+    <rect x="350" y="234" width="55" height="18" rx="5" fill="#3269df"/>
+    <text x="350" y="291" fill="#566b83" font-size="13">Sketch the experience</text>
+
+    <g fill="none" stroke="#3269df" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M474 181H490M484 175L490 181L484 187"/>
+      <path d="M584 181H602M596 175L602 181L596 187"/>
+      <path d="M696 181H714M708 175L714 181L708 187"/>
+    </g>
+    <rect x="496" y="158" width="88" height="46" rx="9" fill="#edf3ff" stroke="#96b4ef" stroke-width="1.5"/>
+    <text x="540" y="186" text-anchor="middle" fill="#254f9e" font-size="16" font-weight="600">Intent</text>
+    <rect x="608" y="158" width="88" height="46" rx="9" fill="#edf3ff" stroke="#96b4ef" stroke-width="1.5"/>
+    <text x="652" y="186" text-anchor="middle" fill="#254f9e" font-size="16" font-weight="600">Design</text>
+    <rect x="720" y="158" width="112" height="46" rx="9" fill="#e8f6f2" stroke="#8cc8ba" stroke-width="1.5"/>
+    <text x="776" y="186" text-anchor="middle" fill="#166557" font-size="16" font-weight="600">Implement</text>
+    <path d="M652 208V232H551" fill="none" stroke="#8299b4" stroke-width="2" stroke-dasharray="5 5"/>
+    <rect x="487" y="234" width="134" height="62" rx="8" fill="#fff5de" stroke="#e1c68c" stroke-width="1.5" transform="rotate(-3 554 265)"/>
+    <text x="504" y="259" fill="#785826" font-size="14" font-weight="600">What if...?</text>
+    <text x="504" y="280" fill="#785826" font-size="13">Open questions</text>
+    <path d="M670 253L679 262L697 243" fill="none" stroke="#1b8975" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="708" y="260" fill="#296c60" font-size="15" font-weight="600">Agree before code</text>
+    <text x="669" y="286" fill="#566b83" font-family="Consolas, monospace" font-size="12">onReset() { count = 0; }</text>
+
+    <path d="M147 313L140 367H167L184 316M183 314L197 367H223L213 312" fill="#263b5a"/>
+    <path d="M136 366H169V375H131Q128 368 136 366M196 366H222L232 371V375H194Z" fill="#172b49"/>
+    <path d="M129 233Q134 206 163 204H196Q219 207 225 236L219 319H137Z" fill="url(#shirt)"/>
+    <path d="M157 207Q178 228 202 208L193 193H166Z" fill="#bc7e60"/>
+    <path d="M155 148Q158 119 184 121Q211 123 212 152V171Q207 194 183 197Q159 192 155 170Z" fill="#dba17f"/>
+    <path d="M152 154Q142 126 164 114Q188 101 208 120Q218 125 213 149L203 148L198 134Q172 145 159 138L160 156Z" fill="#253750"/>
+    <circle cx="201" cy="158" r="2.5" fill="#253750"/>
+    <path d="M201 177Q194 181 188 177" fill="none" stroke="#955a45" stroke-width="2" stroke-linecap="round"/>
+    <path d="M137 239L123 274L157 295" fill="none" stroke="#2b5bca" stroke-width="25" stroke-linecap="round"/>
+    <path d="M151 292L167 299" stroke="#dba17f" stroke-width="16" stroke-linecap="round"/>
+    <path d="M212 233L251 253L295 207" fill="none" stroke="#3269df" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M294 207L311 190" stroke="#dba17f" stroke-width="16" stroke-linecap="round"/>
+    <path d="M309 191L326 171" stroke="#263b5a" stroke-width="5" stroke-linecap="round"/>
+    <text x="176" y="399" text-anchor="middle" fill="#29466b" font-size="14" font-weight="700" letter-spacing="2">YOU</text>
+
+    <path d="M977 309L971 369H994L1007 314M1017 314L1031 369H1054L1045 309" fill="#637d9e"/>
+    <path d="M970 365H996V375H961Q960 368 970 365M1030 365H1055L1064 371V375H1028Z" fill="#263b5a"/>
+    <rect x="967" y="218" width="85" height="103" rx="26" fill="#284e74"/>
+    <rect x="982" y="232" width="54" height="63" rx="16" fill="#d0e6ed"/>
+    <path d="M1000 252L991 261L1000 270M1018 252L1027 261L1018 270" fill="none" stroke="#3269df" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M979 239L939 257L895 220" fill="none" stroke="#446b91" stroke-width="21" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="893" cy="218" r="13" fill="#b4d5df" stroke="#446b91" stroke-width="2"/>
+    <path d="M891 216L875 199" stroke="#446b91" stroke-width="6" stroke-linecap="round"/>
+    <path d="M1043 242L1071 270L1050 293" fill="none" stroke="#446b91" stroke-width="21" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="1049" cy="295" r="11" fill="#b4d5df"/>
+    <rect x="992" y="193" width="35" height="29" rx="10" fill="#7295b0"/>
+    <path d="M967 153Q968 119 1010 118Q1052 119 1053 153V177Q1050 204 1010 209Q970 204 967 177Z" fill="#d4e7ee" stroke="#446b91" stroke-width="3"/>
+    <path d="M964 153H955V175H967M1055 153H1063V175H1054" fill="#7295b0" stroke="#446b91" stroke-width="3" stroke-linejoin="round"/>
+    <path d="M1010 119V104" stroke="#446b91" stroke-width="4" stroke-linecap="round"/>
+    <circle cx="1010" cy="100" r="6" fill="#3269df"/>
+    <rect x="974" y="139" width="31" height="34" rx="12" fill="#172b49"/>
+    <rect x="1016" y="139" width="31" height="34" rx="12" fill="#172b49"/>
+    <path d="M1005 150H1016" stroke="#172b49" stroke-width="6"/>
+    <path d="M983 150V159M1025 150V159" stroke="#93dbed" stroke-width="4" stroke-linecap="round"/>
+    <path d="M996 188Q1010 198 1024 188" fill="none" stroke="#446b91" stroke-width="3" stroke-linecap="round"/>
+    <text x="1010" y="399" text-anchor="middle" fill="#29466b" font-size="14" font-weight="700" letter-spacing="2">COPILOT</text>
+
+    <path d="M120 79Q120 58 143 58H221Q244 58 244 79V96Q244 114 224 114H176L158 130V114H141Q120 114 120 94Z" fill="#fff" stroke="#b8c9de" stroke-width="1.5"/>
+    <text x="182" y="84" text-anchor="middle" fill="#29466b" font-size="14" font-weight="600">Let's think</text>
+    <text x="182" y="103" text-anchor="middle" fill="#29466b" font-size="14" font-weight="600">it through.</text>
+    <path d="M947 54Q947 34 969 34H1064Q1087 34 1087 54V72Q1087 91 1067 91H1047V108L1029 91H969Q947 91 947 71Z" fill="#fff" stroke="#b1d2cf" stroke-width="1.5"/>
+    <text x="1017" y="60" text-anchor="middle" fill="#296c60" font-size="14" font-weight="600">One shared</text>
+    <text x="1017" y="79" text-anchor="middle" fill="#296c60" font-size="14" font-weight="600">understanding.</text>
+  </g>
+</svg>

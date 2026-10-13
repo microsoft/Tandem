@@ -25,16 +25,17 @@ test("responsive layout and graph keyboard focus have explicit accessible styles
 
 test("compact density is shared by all stage headers, panels, controls, and composers", async () => {
     const css = await readFile(new URL("../src/renderer/styles.css", import.meta.url), "utf8");
+    const theme = await readFile(new URL("../stage2/tandem/public/project-theme.css", import.meta.url), "utf8");
     const rules = (selector: string) => {
         const start = css.search(new RegExp("^" + selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + " \\{", "m"));
         assert.ok(start >= 0, `Missing ${selector}`);
         return css.slice(start, css.indexOf("}", start));
     };
     for (const [token, size] of [["space", 8], ["card-padding", 10], ["control-height", 30], ["tab-height", 36]]) {
-        assert.match(css, new RegExp(`--studio-${token}:\\s*${size}px`));
+        assert.match(theme, new RegExp(`--studio-${token}:\\s*${size}px`));
     }
     for (const token of ["small-control-height", "composer-height"]) {
-        assert.match(rules(":root"), new RegExp(`--studio-${token}:\\s*var\\(--studio-control-height\\)`),
+        assert.match(theme, new RegExp(`--studio-${token}:\\s*var\\(--studio-control-height\\)`),
             "Compact controls and composers share the approved control-height token.");
     }
     assert.match(rules(".topbar"), /min-height:\s*var\(--studio-header-height\)/);
@@ -49,7 +50,7 @@ test("compact density is shared by all stage headers, panels, controls, and comp
         assert.match(rules(selector), /padding:\s*var\(--studio-heading-padding\)/, selector);
     }
     assert.match(rules("form textarea[data-speech-input]"), /height:\s*var\(--studio-composer-height\)/);
-    assert.match(rules("form:focus-within textarea[data-speech-input]"), /var\(--studio-composer-expanded-height\)/);
+    assert.match(rules("#question-host:focus-within textarea[data-speech-input]"), /var\(--studio-composer-expanded-height\)/);
     assert.match(rules(".start-form textarea[data-speech-input]"), /min-height:\s*112px/);
     assert.match(rules(".artifact-content"), /line-height:\s*1\.55/);
     assert.match(rules(".requirements"), /padding-inline-end:\s*4px/);
@@ -72,7 +73,8 @@ test("desktop activity bar keeps completion visible as an icon-only action", asy
 });
 
 test("compact theme preserves host colors, standalone dark mode, and accessible input variants", async () => {
-    const css = await readFile(new URL("../src/renderer/styles.css", import.meta.url), "utf8");
+    const css = (await Promise.all(["../src/renderer/styles.css", "../stage2/tandem/public/project-theme.css"]
+        .map(path => readFile(new URL(path, import.meta.url), "utf8")))).join("\n");
     assert.match(css, /--studio-surface:\s*var\(--background-color-default,\s*light-dark\(/);
     assert.match(css, /--studio-text:\s*var\(--text-color-default,\s*light-dark\(/);
     assert.match(css, /--studio-muted:\s*var\(--text-color-muted,\s*light-dark\(/);

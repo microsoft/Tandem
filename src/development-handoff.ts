@@ -188,6 +188,55 @@ export class DevelopmentHandoffs {
     private saveAdmission(admission: HandoffAdmission): Promise<void> {
         return writeJsonAtomically(this.admissionPath(admission.handoffId), admission);
     }
+    async admissionFor(state: TandemState): Promise<HandoffAdmission | null> {
+        const reference = state.development;
+        const output = state.lifecycle.outputs.find(entry => entry.stageId === "prototype");
+        if (!reference || reference.snapshotPath !== output?.path) return null;
+        const receipt = await this.read(reference.handoffId);
+        if (receipt.request.id !== reference.requestId || receipt.generation !== state.generation
+            || receipt.effortId !== state.prototypeId || receipt.source.snapshotPath !== output.path) {
+            return fail("The saved handoff does not match the current effort and Prototype.");
+        }
+        if (sha256(await readRetainedFile(safePath(this.sharedRoot, output.path), MAX_SNAPSHOT)) !== receipt.source.snapshotHash) {
+            return fail("The saved Prototype changed after handoff capture; its admission does not verify the changed input.");
+        }
+        const admission = await readJsonFile(this.admissionPath(receipt.id));
+        if (!object(admission) || admission.version !== 1 || admission.handoffId !== receipt.id
+            || admission.requestId !== receipt.request.id || typeof admission.message !== "string"
+            || !["prepared", "sending", "admitted", "uncertain"].includes(admission.status)
+            || (admission.status === "prepared" ? admission.privateSessionId !== null
+                : typeof admission.privateSessionId !== "string" || !admission.privateSessionId)) {
+            return fail("The saved handoff admission is unavailable or invalid; its status could not be verified.");
+        }
+        return admission as HandoffAdmission;
+    }
+    async inspectUnadmitted(): Promise<unknown> {
+        try { await lstat(this.root); } catch (error) {
+            if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+                return { mainSessionId: this.mainSessionId, workspaceRoot: this.workspaceRoot, handoffs: [] };
+            }
+            throw error;
+        }
+        await ensureMaterializedDirectories(this.root);
+        const names = (await readdir(this.root)).sort();
+        if (names.length > 200 || names.some(name => !/^handoff-[a-f0-9]{64}(?:\.admission\.json)?$/.test(name))) {
+            return fail("Unrecognized retained handoff data prevents empty-setup repair.");
+        }
+        const handoffs = [];
+        for (const id of names.filter(name => !name.endsWith(".json"))) {
+            const receipt = await this.read(id);
+            const admission = await readJsonFile(this.admissionPath(id));
+            if (admission !== undefined && (!object(admission) || admission.version !== 1 || admission.handoffId !== id
+                || admission.requestId !== receipt.request.id || admission.privateSessionId !== null || admission.status !== "prepared")) {
+                return fail("Handoff admission is used or uncertain; empty-setup repair cannot resend or rebind it.");
+            }
+            handoffs.push({ id, digest: receipt.digest, admission: admission ?? null });
+        }
+        if (names.some(name => name.endsWith(".admission.json") && !names.includes(name.slice(0, -".admission.json".length)))) {
+            return fail("An orphan handoff admission prevents empty-setup repair.");
+        }
+        return { mainSessionId: this.mainSessionId, workspaceRoot: this.workspaceRoot, handoffs };
+    }
     async admit(id: string, runtime: HumanLoopRuntimeHandle): Promise<HandoffAdmission> {
         return this.locked(async () => {
             const receipt = await this.read(id);

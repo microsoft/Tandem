@@ -399,6 +399,7 @@ test("credential construction and authentication failures are sanitized, actiona
             await assert.rejects(getToken, (error) => {
                 errorWithStatus(503)(error);
                 const safeError = error as SpeechAuthError;
+                assert.equal(safeError.speechSignInRequired, true, "Only credential failure offers contextual voice sign-in.");
                 assert.match(safeError.message, /az login/);
                 assert.match(safeError.message, /Cognitive Services Speech User/);
                 assert.match(safeError.message, /tenant/);

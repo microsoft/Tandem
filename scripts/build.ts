@@ -1,7 +1,6 @@
 import {
     build,
     context,
-    transform,
     type BuildOptions,
     type Plugin,
 } from "esbuild";
@@ -42,8 +41,11 @@ async function stageComposition() {
     const skillDirectory = join(targetRoot, "skills", "tandem");
     await mkdir(skillDirectory, { recursive: true });
     await copyFile(join(repositoryRoot, "skills", "tandem", "SKILL.md"), join(skillDirectory, "SKILL.md"));
+    await build({ entryPoints: [join(repositoryRoot, "src", "preview-launcher.ts")],
+        outfile: join(targetRoot, "preview-launcher.mjs"), bundle: true, platform: "node", format: "esm", target: "node24",
+        banner: { js: 'import { createRequire } from "node:module"; const require = createRequire(import.meta.url);' } });
     await createPayload(targetRoot, packageMetadata.version, [
-        "extension.mjs", "skills/tandem/SKILL.md", "stage2/manifest.json",
+        "extension.mjs", "preview-launcher.mjs", "skills/tandem/SKILL.md", "stage2/manifest.json",
         ...manifest.files.map((file: { path: string }) => `stage2/${file.path}`),
     ]);
 }
@@ -108,6 +110,7 @@ const rendererAssetsPlugin: Plugin = {
                     write: false,
                     metafile: true,
                     platform: "browser",
+                    loader: { ".png": "dataurl" },
                     target: "es2020",
                     format: "iife",
                     minify: true,
@@ -154,15 +157,12 @@ const rendererAssetsPlugin: Plugin = {
         buildApi.onLoad(
             { filter: /.*/, namespace: "tandem-styles" },
             async () => {
-                const source = await readFile(stylesEntry, "utf8");
-                const compiled = await transform(source, {
-                    loader: "css",
-                    minify: true,
-                });
+                const compiled = await build({ entryPoints: [stylesEntry], bundle: true,
+                    write: false, minify: true, metafile: true });
                 return {
-                    contents: `export default ${JSON.stringify(compiled.code)};`,
+                    contents: `export default ${JSON.stringify(compiled.outputFiles[0].text)};`,
                     loader: "js",
-                    watchFiles: [stylesEntry],
+                    watchFiles: Object.keys(compiled.metafile.inputs).map((path) => resolve(path)),
                 };
             },
         );

@@ -1,18 +1,21 @@
 import { Component, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ErrorInfo, type ReactNode } from "react";
 import { AlertDialog, Tabs, Tooltip } from "radix-ui";
-import { ArrowRight, Check, ChevronDown, CircleDot, ClipboardList, Code, FileText, FolderOpen, GitBranch, Layers, ListChecks, LockKeyhole, Minus, Monitor, PanelLeft, PanelLeftClose, PanelLeftOpen, PencilRuler, Play, RefreshCw, RotateCcw, Sparkles, Target, X } from "lucide-react";
+import { ArrowRight, Check, ChevronDown, ClipboardList, Code, FileText, FolderOpen, GitBranch, Layers, ListChecks, Monitor, PanelLeft, PanelLeftClose, PanelLeftOpen, PencilRuler, Play, RotateCcw, Sparkles, X } from "lucide-react";
 import { lifecycleStages } from "../workflow.js";
 import type { LifecycleStageId } from "../types.js";
 import { StudioStore } from "./state-store.js";
-import { DraftProvider, hasActiveJobs, hasStageData, skippedStage, UiContext, useAction, useDraft, useStatusHelp, useUi, type UiContextValue, type UiState } from "./ui-context.js";
+import { canBrowseStage, canOpenDevelopment, DraftProvider, hasActiveJobs, skippedStage, UiContext, useAction, useDraft, useStatusHelp, useUi, type UiContextValue, type UiState } from "./ui-context.js";
 import { PreparationPanel } from "./preparation-panel.js";
 import { RequirementsPanel } from "./requirements-panel.js";
 import { SketchPanel, SketchCompletionContext, isSketchRevisionApproved } from "./sketch-panel.js";
 import { PrototypePanel, prototypeCompletionBlocked } from "./prototype-panel.js";
-import { ArtifactList, ArtifactsPanel } from "./artifacts-panel.js";
+import { ArtifactList, ArtifactsPanel, DevelopmentArtifactList } from "./artifacts-panel.js";
 import { ProcessPanel } from "./process-panel.js";
 import { DevelopmentPanel } from "./development-panel.js";
-import { SpeechProvider, SpeechSignInControl, SpeechTextarea, useSpeechSignInControl } from "./speech-textarea.js";
+import { WorkflowActivity } from "./workflow-activity.js";
+import { ProjectConversation, ProjectConversationProvider, useProjectView } from "./project-conversation.js";
+import { DiscoveryRecovery } from "./discovery-recovery.js";
+import { SpeechProvider, SpeechTextarea } from "./speech-textarea.js";
 import { Brand } from "./brand.js";
 import { useStandaloneHeader } from "./standalone-header.js";
 
@@ -98,7 +101,10 @@ function EffortApp({ state, store, version, connectionError, confirm }: {
   state: UiState; store: StudioStore; version: string; connectionError: string; confirm: UiContextValue["confirm"];
 }) {
   const [busy, setBusyKeys] = useState<Set<string>>(() => new Set());
-  const [activeTab, setActiveTab] = useState<TabId>(() => tabFor(state.lifecycle.currentStage));
+  const [activeTab, setActiveTab] = useState<TabId>(() =>
+    state.lifecycle.currentStage === "development" && !state.development
+      && state.lifecycle.outputs.some(output => output.stageId === "prototype")
+      ? canBrowseStage(state, "prototype") ? "preview" : "design-tree" : tabFor(state.lifecycle.currentStage));
   const [selectedArtifact, setSelectedArtifact] = useState<string | null>(null);
   const [contextOpen, setContextOpen] = useState(false);
   const previousStage = useRef(state.lifecycle.currentStage);
@@ -110,7 +116,7 @@ function EffortApp({ state, store, version, connectionError, confirm }: {
     return next;
   }), []);
   const browseStage = useCallback((stage: LifecycleStageId) => {
-    if (!hasStageData(state, stage) || skippedStage(state, stage)) return;
+    if (!canBrowseStage(state, stage)) return;
     setActiveTab(tabFor(stage)); setContextOpen(false);
   }, [state]);
   const selectArtifact = useCallback((id: string) => { setSelectedArtifact(id); setActiveTab("content"); setContextOpen(false); }, []);
@@ -118,7 +124,7 @@ function EffortApp({ state, store, version, connectionError, confirm }: {
     const stage = state.lifecycle.currentStage;
     if (previousStage.current !== stage) {
       const previous = previousStage.current;
-      setActiveTab((current) => current === tabFor(previous) ? tabFor(stage) : current);
+      setActiveTab((current) => stage !== "development" && current === tabFor(previous) ? tabFor(stage) : current);
       previousStage.current = stage;
     }
   }, [state.lifecycle.currentStage]);
@@ -136,10 +142,14 @@ function EffortApp({ state, store, version, connectionError, confirm }: {
       : "Open the installed user-scoped Tandem to " + action + ".",
     confirm, browseStage, selectArtifact, setBusy,
   };
-  return <UiContext.Provider value={value}><SpeechProvider signInPlacement="header">
-    <Workspace version={version} connectionError={connectionError} store={store} activeTab={activeTab} onTabChange={setActiveTab}
+  return <UiContext.Provider value={value}><SpeechProvider signInPlacement="on-demand">
+    <ProjectConversationProvider designVisible={activeTab === "development"} effortBusy={busy.has("effort")}
+      viewedStage={stageTabs.find(tab => tab.value === activeTab)?.stage
+        ?? stageTabs.find(tab => tab.stage === state.artifacts.find(item => item.id === selectedArtifact)?.stage)?.stage ?? state.lifecycle.currentStage}
+      onEntry={(path, firstChoice) => { if (path === "development") setActiveTab("development"); else if (firstChoice) setActiveTab("preparation"); }}
+      showDesign={() => setActiveTab("development")}><Workspace version={version} connectionError={connectionError} store={store} activeTab={activeTab} onTabChange={setActiveTab}
       selectedArtifact={selectedArtifact} contextOpen={contextOpen} setContextOpen={setContextOpen}
-      sketchBlocked={sketchBlocked} onSketchBlocked={setSketchBlocked} effortBusy={busy.has("effort")} />
+      sketchBlocked={sketchBlocked} onSketchBlocked={setSketchBlocked} effortBusy={busy.has("effort")} /></ProjectConversationProvider>
   </SpeechProvider></UiContext.Provider>;
 }
 
@@ -149,7 +159,7 @@ function GoalEntry() {
   const [goal, setGoal] = useDraft("start-goal", "");
   const input = useRef<HTMLTextAreaElement>(null);
   const writable = state.provider?.canSubmitAnswers !== false;
-  return <main id="start-panel" className="start-panel" aria-labelledby="start-title">
+  return <section id="start-panel" className="start-panel" aria-labelledby="start-title">
     <div className="start-content"><h2 id="start-title">What do you want to build?</h2>
       <form id="start-form" className="start-form" aria-busy={action.busy} onSubmit={(event) => {
         event.preventDefault();
@@ -169,99 +179,89 @@ function GoalEntry() {
             data-status-help="Starting runs AI preparation: Tandem inspects the workspace and relevant sources, then opens Requirements. Implementation comes later."><Play size={16} aria-hidden="true" />{action.busy ? "Starting..." : "Start project"}</button></div>
         <p id="start-message" className="start-message" role="status" data-status={action.error ? "error" : "idle"}>{action.error || (!writable ? "Open the writable Tandem provider to start this project." : "")}</p>
       </form>
+      <p className="muted">Describe the project here to begin Preparation. Implementation remains a separate, confirmed step.</p>
     </div>
-  </main>;
+  </section>;
 }
 
-function Header({ version, connectionError, store, effortBusy, developmentView }: { version: string; connectionError: string; store: StudioStore; effortBusy: boolean; developmentView: boolean }) {
-  const { state, confirm, post } = useUi();
-  const reset = useAction("effort");
-  const reload = useAction("reload");
-  const [message, setMessage] = useState("");
-  const [reloadRequested, setReloadRequested] = useState(false);
+function Header({ version, connectionError, developmentView }: { version: string; connectionError: string; developmentView: boolean }) {
+  const { state } = useUi();
+  const { maintenanceError } = useProjectView();
   const stageIndex = Math.max(0, lifecycleStages.findIndex((stage) => stage.id === state.lifecycle.currentStage));
-  const reloadReceipt = state.reloadReceipt;
-  useEffect(() => {
-    if (["success", "error"].includes(reloadReceipt?.status)) setReloadRequested(false);
-  }, [reloadReceipt?.status]);
-  const reloadStatus = reload.error || (state.provider?.canReload !== true
-    ? state.provider?.source === "session" ? "Reopen the workspace to update Tandem" : state.provider?.source === "project" ? "Available from the user-installed Tandem" : "Reload unavailable"
-    : reloadReceipt?.status === "success" ? "" : reloadReceipt?.message || (reloadRequested ? "Reloading this session..." : "Current session only"));
-  const reloadDisabled = developmentView || state.provider?.canReload !== true || reload.busy || reloadRequested || reloadReceipt?.status === "reloading" || effortBusy;
-  const reloadTitle = state.provider?.canReload ? "Restart this session's provider from the latest installed user extension. This does not download updates." : reloadStatus;
-  const reloadLabel = reload.busy ? "Checking..." : reloadRequested || reloadReceipt?.status === "reloading" ? "Reloading..." : "Reload";
-  const resetDisabled = developmentView || state.provider?.canSubmitAnswers === false || effortBusy;
-  const resetTitle = developmentView ? "Use Development controls for its private session. Return upstream to reset discovery."
-    : "Archive upstream discovery and return to goal entry; Development and admitted handoffs are retained";
-  const effortMessage = reset.error || state.effortReset?.error
-    || (state.effortReset ? "Reset is pending. Use Reset to confirm worker termination and finish clearing this effort." : message);
-  const reloadExtension = () => {
-    if (reloadDisabled) return;
-    void reload.run(async () => {
-      const response = await fetch("/api/reload", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Reload request failed.");
-      setReloadRequested(true);
-    });
-  };
-  const resetEffort = async () => {
-    if (resetDisabled) return;
-    if (!await confirm("Reset upstream discovery? Its current state and files will be archived. Development must be at an explicit quiet boundary; its canonical Design, conversation and admitted handoffs will not be erased. A later handoff refines that same project. Use another workspace for an unrelated project.", "Reset upstream discovery?")) return;
-    void reset.run(async () => {
-      setMessage("Stopping active work and resetting this effort...");
-      await post("/api/effort/reset", { expectedRevision: state.revision ?? 0, generation: state.generation, confirm: true }, 120000);
-      const current = store.getSnapshot().state;
-      if (!current || !isGoalEntry(current) || current.generation === state.generation) throw new Error("Reset has not been confirmed. Reload the project state before retrying.");
-    });
-  };
-  const speech = useSpeechSignInControl();
   const hosted = useStandaloneHeader({
     scope: JSON.stringify([state.prototypeId, state.generation, state.provider?.extensionId]),
     version, lifecycle: isGoalEntry(state) ? "" : `${stageIndex + 1}. ${lifecycleStages[stageIndex].label} | ${state.phase || "discovery"}`,
     permissionScope: developmentView ? "development" : "main",
     controls: {
-      reload: { label: reloadLabel, title: reloadTitle, disabled: reloadDisabled, busy: reload.busy || reloadRequested || reloadReceipt?.status === "reloading" },
-      reset: { label: reset.busy ? "Resetting..." : "Reset", title: resetTitle, disabled: resetDisabled, busy: reset.busy },
-      signIn: { label: speech.signingIn ? "Signing in..." : "Sign in", title: developmentView ? "Speech sign-in belongs to upstream discovery, not Development." : speech.title, disabled: developmentView || speech.disabled, busy: speech.signingIn },
-      cancelSignIn: speech.signingIn ? { label: "Cancel Microsoft sign-in", title: "Cancel Microsoft sign-in", disabled: false, busy: false } : null,
+      reload: null,
+      reset: null,
+      signIn: null,
+      cancelSignIn: null,
     },
     messages: [
-      { id: "reload", text: reload.error || reloadReceipt?.status === "error" ? reloadStatus : "", error: true },
-      { id: "effort", text: effortMessage, error: Boolean(reset.error || state.effortReset?.error) },
-      { id: "speech", text: speech.message, error: speech.status === "error" },
+      { id: "maintenance", text: maintenanceError, error: true },
       { id: "connection", text: connectionError, error: true },
     ].filter((message) => message.text).map((message) => ({ ...message, text: message.text.slice(0, 8192) })),
-  }, { reload: reloadExtension, reset: resetEffort, signIn: speech.signIn, cancelSignIn: speech.cancel });
+  }, { reload: () => { throw new Error("Use Project settings diagnostics to reload Tandem."); },
+    reset: () => { throw new Error("Use Preparation actions to restart Preparation."); },
+    signIn: () => { throw new Error("Use the voice input's sign-in control."); },
+    cancelSignIn: () => { throw new Error("Use the voice input's cancel control."); } });
   return <header className="topbar" hidden={hosted} data-hosted={hosted || undefined}><Brand /><div className="topbar-actions">
     <div id="lifecycle-status" className="lifecycle" aria-label="Development lifecycle" hidden={isGoalEntry(state)}>
       <span id="current-stage" className="stage" aria-label={"Current lifecycle stage: " + lifecycleStages[stageIndex].label}>
         <span id="current-stage-index" className="stage-index" aria-hidden="true">{stageIndex + 1}</span><span id="stage">{lifecycleStages[stageIndex].label}</span>
       </span><span id="phase" className="phase">{state.phase || "discovery"}</span>
     </div>
-    <div className="reload-control" data-status-help={reloadStatus}><button id="reload-extension" className="reload-button" type="button"
-      disabled={reloadDisabled} title={reloadTitle}
-      onClick={reloadExtension}><RefreshCw size={15} aria-hidden="true" />{reloadLabel}</button>
-      <span id="reload-status" className={reload.error || reloadReceipt?.status === "error" ? "reload-status" : "visually-hidden"} role="status"
-        data-status={reload.error || reloadReceipt?.status === "error" ? "error" : "idle"}>{reloadStatus}</span></div>
-    <button id="reset-effort" className="reset-button" type="button" disabled={resetDisabled}
-      title={resetTitle} onClick={resetEffort}><RotateCcw size={15} aria-hidden="true" />{reset.busy ? "Resetting..." : "Reset"}</button>
-    {!developmentView && <SpeechSignInControl />}
     <span className="build-version" title="Tandem extension version">v{version}</span>
   </div>
-    <p id="effort-message" className="effort-message" role="status" data-status={reset.error || state.effortReset?.error ? "error" : "idle"}>
-      {effortMessage}
-    </p>
     <p id="connection-status" className="connection-status" role="status">{connectionError}</p>
   </header>;
 }
 
+function PreparationRestart({ store, effortBusy }: { store: StudioStore; effortBusy: boolean }) {
+  const { state, confirm, post } = useUi();
+  const project = useProjectView();
+  const reset = useAction("effort");
+  const [message, setMessage] = useState("");
+  const disabled = project.active || project.starting || project.status === "unknown"
+    || state.provider?.canSubmitAnswers === false || effortBusy;
+  const latest = useRef(disabled); latest.current = disabled;
+  if (project.entry.startingPath !== "preparation" && !state.effortReset) return null;
+  if (isGoalEntry(state) && !state.effortReset && !reset.error) return null;
+  const error = reset.error || state.effortReset?.error;
+  return <details id="preparation-maintenance" className="preparation-stage-card" open={state.effortReset ? true : undefined}>
+    <summary>Advanced Preparation actions</summary>
+    <p>Stop current discovery work, archive Preparation, Requirements, Drawings and Prototype state/files, and return to the goal form. Development work and the project's saved starting choice are kept.</p>
+    <button id="reset-effort" className="plan-button secondary" type="button" disabled={disabled}
+      title={project.active ? "Close the private runtime in Project settings before restarting Preparation." : "Archive upstream discovery; retain Development and admitted handoffs"}
+      onClick={async () => {
+        if (latest.current) return;
+        if (!await confirm("Tandem will first stop active discovery work. If stopping cannot be confirmed, the current effort is kept and a recovery message is shown.\n\nOn success, Preparation, Requirements, Drawings and Prototype state/files are archived and the goal form opens. Development Design, conversation, application files and admitted handoffs are preserved. Close Development before restarting Preparation.\n\nThe project's saved starting choice stays unchanged. This restarts discovery for the same project; use another folder for a different project.", "Restart Preparation?")) return;
+        void reset.run(async () => {
+          const current = store.getSnapshot().state;
+          if (latest.current || !current || current.generation !== state.generation || current.revision !== state.revision) {
+            throw new Error("The project changed while confirmation was open. Review Preparation before retrying.");
+          }
+          setMessage("Stopping active discovery work and archiving this effort...");
+          await post("/api/effort/reset", { expectedRevision: state.revision ?? 0, generation: state.generation, confirm: true }, 120000);
+          const saved = store.getSnapshot().state;
+          if (!saved || !isGoalEntry(saved) || saved.generation === state.generation) throw new Error("Preparation restart has not been confirmed. Refresh the project state before retrying.");
+        });
+      }}><RotateCcw size={15} aria-hidden="true" />{reset.busy ? "Restarting Preparation..." : "Restart Preparation..."}</button>
+    <p id="effort-message" role="status" data-status={error ? "error" : "idle"}>
+      {error || (state.effortReset ? "Preparation restart is pending. Use Restart Preparation to confirm worker termination and finish the interrupted archive/reset." : message)}
+    </p>
+  </details>;
+}
 interface WorkspaceProps {
   version: string; connectionError: string; store: StudioStore; activeTab: TabId; onTabChange: (tab: TabId) => void;
   selectedArtifact: string | null; contextOpen: boolean; setContextOpen: (open: boolean) => void;
   sketchBlocked: boolean; onSketchBlocked: (blocked: boolean) => void; effortBusy: boolean;
 }
 function Workspace(props: WorkspaceProps) {
-  const { state, pending, browseStage, post, confirm } = useUi();
+  const ui = useUi();
+  const { state, pending, browseStage, post, confirm } = ui;
+  const projectView = useProjectView();
   const { activeTab, onTabChange, selectedArtifact, contextOpen, setContextOpen, sketchBlocked } = props;
   const stageAction = useAction("stage");
   const workspace = useRef<HTMLElement>(null);
@@ -272,38 +272,47 @@ function Workspace(props: WorkspaceProps) {
   const [nextAction, setNextAction] = useState<{ id: string; label: string; revealId: string | null } | null>(null);
   const atStart = isGoalEntry(state);
   const developmentView = activeTab === "development";
-  const contextHelp = useStatusHelp(`${activeTab}:${contextOpen}:${contextCollapsed}:${atStart}`);
+  const contextHelp = useStatusHelp(`${activeTab}:${contextOpen}:${contextCollapsed}:${atStart}:${projectView.entry.ready}`);
   const previousAtStart = useRef(atStart);
+  useEffect(() => { if (state.effortReset) onTabChange("preparation"); }, [state.effortReset?.requestId]);
   useLayoutEffect(() => {
-    if (atStart) document.getElementById("start-goal")?.focus();
+    if (atStart && projectView.entry.ready && !projectView.developmentEntered) document.getElementById("start-goal")?.focus();
     else if (previousAtStart.current) document.getElementById("preparation-panel")?.focus();
     previousAtStart.current = atStart;
-  }, [atStart]);
+  }, [atStart, projectView.entry.ready, projectView.developmentEntered]);
   const current = state.lifecycle.currentStage;
   const viewed = stageTabs.find((tab) => tab.value === activeTab)?.stage
     || state.artifacts.find((artifact) => artifact.id === selectedArtifact)?.stage || current;
-  const readOnly = viewed !== current || state.lifecycle.completedStages.includes(viewed);
+  const readOnly = projectView.developmentEntered || viewed !== current || state.lifecycle.completedStages.includes(viewed);
   const complete = !pending && canCompleteStage(state) && (current !== "sketch" || !sketchBlocked);
   const allComplete = lifecycleStages.every((stage) => state.lifecycle.completedStages.includes(stage.id) || skippedStage(state, stage.id));
-  const completionLabel = allComplete ? "All stages complete" : stageAction.busy ? "Saving stage output..."
-    : current === "prototype" ? "Finish Prototype and continue Design"
-    : current === "requirements" && state.prototypeApproach.mode === "not-applicable" ? "Finish Requirements and continue Design"
+  const finalizingPrototype = current === "prototype" && state.processing?.action === "generate-design-spec"
+    && ["starting", "running"].includes(state.processing.status);
+  const completionLabel = finalizingPrototype ? "Finishing prototype..." : allComplete ? "All stages complete" : stageAction.busy ? "Saving stage output..."
+    : current === "prototype" ? "Finish Prototype and save outputs"
+    : current === "requirements" && state.prototypeApproach.mode === "not-applicable" ? "Finish Requirements and save outputs"
+    : current === "sketch" ? "Finish Drawings and continue"
     : current === "prepare" ? "Preparation runs automatically" : "Finish " + (lifecycleStages.find((stage) => stage.id === current)?.label || current).toLowerCase();
   const completionHelp = contextCollapsed && !allComplete && !stageAction.busy && !["prepare", "development"].includes(current)
     ? "Next stage: " + completionLabel : completionLabel;
-  const completedCount = lifecycleStages.filter((stage) => state.lifecycle.completedStages.includes(stage.id)).length;
-  const selectedLabel = lifecycleStages.find((stage) => stage.id === viewed)?.label || viewed;
-  const statusBarError = props.connectionError || stageAction.error;
+  const selectedLabel = viewed === "sketch" ? "Drawings" : lifecycleStages.find((stage) => stage.id === viewed)?.label || viewed;
+  const statusBarError = props.connectionError || stageAction.error || projectView.maintenanceError || state.effortReset?.error;
+  const savedPrototype = state.lifecycle.currentStage === "development" && state.lifecycle.outputs.some(output => output.stageId === "prototype")
+    && state.status === "Prototype outputs saved. Stage 1 is complete. You can close now and open Development later with these files as input.";
   const statusBarText = statusBarError || contextHelp || (nextAction ? "Next action: " + nextAction.label
+    : savedPrototype ? "Prototype saved. Continue in Development when you're ready."
     : state.status || (atStart ? "Ready to start a project." : "Ready."));
   const narrow = () => window.matchMedia("(max-width: 760px)").matches;
+  // Keep both artifact and conversation minimum widths, including the two dividers.
+  const maximumContextWidth = () => Math.max(minimumContextWidth,
+    (workspace.current?.getBoundingClientRect().width || minimumContextWidth + 587) - 587);
   const resize = (value: number) => {
     if (narrow() || contextCollapsed) return;
-    const max = Math.max(minimumContextWidth, (workspace.current?.getBoundingClientRect().width || minimumContextWidth + 361) - 1 - 360);
+    const max = maximumContextWidth();
     setMaximum(max); setWidth(Math.round(Math.min(max, Math.max(minimumContextWidth, value))));
   };
   useEffect(() => {
-    const update = () => { const max = Math.max(minimumContextWidth, (workspace.current?.getBoundingClientRect().width || minimumContextWidth + 361) - 361); setMaximum(max); setWidth((width) => Math.min(max, width)); };
+    const update = () => { const max = maximumContextWidth(); setMaximum(max); setWidth((width) => Math.min(max, width)); };
     update(); window.addEventListener("resize", update); return () => window.removeEventListener("resize", update);
   }, [atStart]);
   useEffect(() => {
@@ -321,7 +330,7 @@ function Workspace(props: WorkspaceProps) {
           : [["complete-stage", "Finish requirements collection"]],
       sketch: [["sketch-retry-revision", "Retry the failed drawing revision", "sketch-history-toggle"], ["complete-stage", "Finish Sketch and continue to Prototype"],
         ["sketch-approve", "Approve drawings and continue"], ["sketch-generate", "Generate screen drawings"]],
-      prototype: [["apply-prototype-update", "Apply the prepared prototype update"], ["extend-prototype-budget", "Review an additional prototype work window"],
+      prototype: [["apply-prototype-update", "Show the prepared prototype version"], ["extend-prototype-budget", "Review an additional prototype work window"],
         ["retry-prototype-checkpoint", "Retry incomplete prototype work"], ["start-prototype", "Start the prototype build"],
         ["submit-clarification", "Answer the prototype clarification"], ["complete-stage", "Finish prototype iteration"]],
       development: state.development ? [] : [["continue-design", "Continue Design from the completed Prototype"]],
@@ -347,15 +356,61 @@ function Workspace(props: WorkspaceProps) {
   }, [state, pending, atStart, current]);
   function navigate(tab: string) {
     const target = stageTabs.find((item) => item.value === tab);
-    if (target && (!hasStageData(state, target.stage) || skippedStage(state, target.stage))) return;
+    if (target && !canBrowseStage(state, target.stage)) return;
     onTabChange(tab as TabId);
     setContextOpen(false);
   }
-  return <div className="app">
-    <Header version={props.version} connectionError={props.connectionError} store={props.store} effortBusy={props.effortBusy} developmentView={developmentView} />
-    {atStart ? <GoalEntry /> : <Tabs.Root value={activeTab} onValueChange={navigate} asChild>
-      <main id="studio-workspace" ref={workspace} className="workspace" data-development={developmentView} data-context-open={contextOpen} data-context-collapsed={contextCollapsed}
-        inert={props.effortBusy || Boolean(state.effortReset)}
+  const phaseActions = <section className="phase-actions" aria-label={`${selectedLabel} actions`} aria-describedby="stage-browsing stage-message">
+    <button id="complete-stage" className="complete-stage" type="button" hidden={projectView.developmentEntered || current === "prepare" || current === "development" || viewed !== current || Boolean(skippedStage(state, current))} aria-describedby="stage-message"
+      aria-label={completionHelp} title={completionHelp} data-status-help={completionHelp}
+      disabled={!complete} onClick={() => { if (complete) void stageAction.run(() => post("/api/stage/complete", { stageId: current })); }}>
+      <Check size={16} aria-hidden="true" /><span className="complete-stage-label">{completionLabel}</span>
+    </button>
+    <p id="stage-browsing" className="visually-hidden">{readOnly ? `Viewing ${selectedLabel} · read only. Reopen explicitly to change its scope.` : ""}</p>
+    <button id="reopen-stage" className="complete-stage" type="button" aria-describedby="stage-browsing"
+      hidden={viewed === "development" || !lifecycleStages.some(stage => stage.id === viewed) || !readOnly || Boolean(skippedStage(state, viewed)) || lifecycleStages.findIndex((stage) => stage.id === viewed) > lifecycleStages.findIndex((stage) => stage.id === current)}
+      disabled={pending || state.provider?.canSubmitAnswers === false || hasActiveJobs(state)}
+      onClick={async () => {
+        if (!await confirm(`Reopen ${selectedLabel}? Its outputs and dependent stage outputs will be marked stale. ${["requirements", "sketch"].includes(viewed) ? "Sketch approval and dependent prototype evidence must be reviewed again. " : ""}Saved evidence is retained, but affected stages must be completed again.`)) return;
+        void stageAction.run(async () => {
+          const latest = props.store.getSnapshot().state;
+          if (!latest || latest.generation !== state.generation || latest.revision !== state.revision
+            || latest.provider?.canSubmitAnswers === false || hasActiveJobs(latest)) {
+            throw new Error("The effort changed while confirmation was open. Review the stage before reopening it.");
+          }
+          const stage = lifecycleStages.find(stage => stage.id === viewed);
+          if (!stage) throw new Error("Historical stages cannot be reopened.");
+          await post("/api/stage/reopen", { stageId: stage.id }); projectView.resumeDiscovery(); browseStage(stage.id);
+        });
+      }}><RotateCcw size={16} aria-hidden="true" />Reopen {selectedLabel}</button>
+    <p id="stage-message" className={stageAction.error ? "stage-message" : "visually-hidden"} title={stageAction.error || undefined} role="status" data-status={stageAction.error ? "error" : "idle"}>{stageAction.error || (state.lifecycle.outputs?.at(-1) ? "Saved " + state.lifecycle.outputs.at(-1)!.path : current === "prepare" ? "Preparation advances automatically when analysis completes." : "Complete the active stage to unlock the next.")}</p>
+  </section>;
+  return <div className="app project-workspace-app">
+    {projectView.entry.loading && <p className="project-entry-loading" role="status">Reading project metadata...</p>}
+    <AlertDialog.Root open={!projectView.entry.loading && !projectView.entry.ready}>
+      <AlertDialog.Portal><AlertDialog.Overlay className="dialog-overlay" /><AlertDialog.Content className="dialog-content project-entry">
+        <AlertDialog.Title>Choose where to start</AlertDialog.Title>
+        <AlertDialog.Description>
+          <span className="project-entry-path">{projectView.entry.projectPath || "Reading project folder..."}</span>
+          This starting choice is saved for this project folder, so you won't be asked again. Preparation can still progress into Development.
+        </AlertDialog.Description>
+        {projectView.entry.error ? <div role="alert"><p>{projectView.entry.error}</p><button type="button" className="plan-button" onClick={() => void projectView.reloadEntry()}>Retry project entry</button></div>
+          : projectView.entry.loading ? <p role="status">Reading project metadata...</p>
+            : <div className="project-entry-choices">
+              <button id="entry-preparation" type="button" autoFocus disabled={projectView.entry.busy || state.provider?.canSubmitAnswers === false}
+                onClick={() => void projectView.chooseEntry("preparation")}><strong>Start with Preparation</strong>
+                <span>Start here if your project is empty or you want help clarifying requirements and shaping the UX. Work through requirements, drawings, and a prototype before Development.</span></button>
+              <button id="entry-development" type="button" disabled={projectView.entry.busy || !canOpenDevelopment(state)}
+                onClick={() => void projectView.chooseEntry("development")}><strong>Go to Development</strong>
+                <span>Go directly to Development if you already have project files, an initial implementation, or a rough idea you want to work on. You can refine the Design there without going through Preparation.</span></button>
+            </div>}
+        {projectView.entry.busy && <p role="status">Preparing your selected project context...</p>}
+        {state.provider?.canSubmitAnswers === false && <p role="status">This provider is read-only. Use the project's owning writable provider to make the initial choice.</p>}
+      </AlertDialog.Content></AlertDialog.Portal>
+    </AlertDialog.Root>
+    <Tabs.Root value={activeTab} onValueChange={navigate} asChild>
+      <main id="studio-workspace" ref={workspace} className="workspace project-workspace" data-development={developmentView} data-context-open={contextOpen} data-context-collapsed={contextCollapsed}
+        inert={!projectView.entry.ready || props.effortBusy}
         aria-busy={props.effortBusy || Boolean(state.effortReset)} style={{ "--requirements-width": width + "px" } as CSSProperties}>
         <button id="context-toggle" className="context-toggle" type="button" aria-expanded={contextOpen} aria-controls="requirements-pane" onClick={() => setContextOpen(!contextOpen)}>
           <PanelLeft size={15} aria-hidden="true" /><span>Project context</span><span id="context-stage" className="context-stage">{lifecycleStages.find((stage) => stage.id === current)?.label}</span><ChevronDown className="context-chevron" size={16} aria-hidden="true" />
@@ -363,8 +418,35 @@ function Workspace(props: WorkspaceProps) {
         <aside id="requirements-pane" className="requirements" aria-label="Project context" onKeyDown={(event) => {
           if (event.key === "Escape" && contextOpen) { setContextOpen(false); document.getElementById("context-toggle")?.focus(); event.preventDefault(); }
         }}>
+          <Header version={props.version} connectionError={props.connectionError} developmentView={projectView.active} />
+          <nav className="project-navigation" aria-label="Project navigation">
+            <button id="project-settings" type="button" className="plan-button" onClick={() => projectView.command("settings")}>Project settings</button>
+            <Tabs.List id="project-contents" className="preview-tabs project-tabs" aria-label="Project contents">
+              {stageTabs.map(tab => {
+                const skipped = skippedStage(state, tab.stage);
+                const output = [...(state.lifecycle.history || []), ...state.lifecycle.outputs].reverse().find(item => item.stageId === tab.stage);
+                const label = tab.stage === "sketch" ? "Drawings" : tab.label;
+                const designStatus = tab.stage === "development" && projectView.designRevision
+                  ? projectView.designChanged ? "New Design output" : "Design available" : null;
+                return <Tabs.Trigger key={tab.value} value={tab.value} id={tab.id + "-tab"}
+                className="preview-tab" data-stage-id={tab.stage} disabled={tab.stage === "development" ? !canOpenDevelopment(state) : tab.stage !== "prepare" && !canBrowseStage(state, tab.stage)}
+                title={`${skipped?.reason || output?.path || label}${designStatus ? `. ${designStatus}` : ""}`}
+                aria-label={`${label}${skipped ? `, not applicable. ${skipped.reason}` : ""}${designStatus ? `, ${designStatus}` : ""}`}
+                aria-controls={tab.id + "-panel"}><tab.icon size={15} aria-hidden="true" />
+                <span className="project-tab-label">{label}{designStatus === "Design available"
+                  && <span className="project-availability" title="Design available" aria-hidden="true" />}</span>
+                {designStatus === "New Design output" && <span className="artifact-count">New output</span>}
+                {tab.stage === "prototype" && state.prototypeFlow?.pendingCheckpointId && <span className="artifact-count">Ready to inspect</span>}
+              </Tabs.Trigger>; })}
+            </Tabs.List>
+            <button id="project-current-work" type="button" className="plan-button"
+              aria-label={projectView.developmentEntered ? `Current work: Development ${projectView.status}` : "Current work"}
+              onClick={() => projectView.command("current-work")}>
+              Current work{projectView.attention ? ` (${projectView.attention} needs attention)` : ""}
+            </button>
+          </nav>
           <div className="context-pane-heading">
-            <p className="eyebrow"><Target size={14} aria-hidden="true" />Project brief</p>
+            <span className="project-folder" title={projectView.entry.projectPath}>{projectView.entry.projectPath.split(/[\\/]/).filter(Boolean).at(-1)}</span>
             <button id="toggle-context-pane" className="context-collapse" type="button" aria-controls="requirements-pane"
               aria-expanded={!contextCollapsed} aria-label={contextCollapsed ? "Expand project context" : "Collapse project context"}
               title={contextCollapsed ? "Expand project context" : "Collapse to stage activity bar"}
@@ -372,56 +454,24 @@ function Workspace(props: WorkspaceProps) {
               {contextCollapsed ? <PanelLeftOpen size={16} aria-hidden="true" /> : <PanelLeftClose size={16} aria-hidden="true" />}
             </button>
           </div>
-          <section className="section project-brief" data-status-help={state.status}><p id="goal" className="goal" title={state.goal}>{state.goal}</p>
-            <p id="status" className={hasActiveJobs(state) || state.processing?.status === "error" ? "status" : "visually-hidden"} title={state.status}>{state.status}</p></section>
-          <section className="section workflow-section" aria-describedby="stage-browsing stage-message"><div className="section-heading"><p className="eyebrow"><Layers size={14} aria-hidden="true" />Workflow</p>
-            <span className="section-count" aria-label={`${completedCount} of ${lifecycleStages.length} stages complete`}>{completedCount}/{lifecycleStages.length}</span></div>
-            <ol id="stage-list" className="stage-list">
-            {lifecycleStages.map((stage, index) => {
-              const skipped = skippedStage(state, stage.id);
-              const done = state.lifecycle.completedStages.includes(stage.id);
-              const status = skipped ? "not applicable" : done ? "complete" : current === stage.id ? "active" : "locked";
-              const StageIcon = stageTabs.find((tab) => tab.stage === stage.id)!.icon;
-              const StatusIcon = skipped ? Minus : done ? Check : current === stage.id ? CircleDot : LockKeyhole;
-              const output = [...(state.lifecycle.history || []), ...(state.lifecycle.outputs || [])].reverse().find((item) => item.stageId === stage.id);
-              const stageHelp = `${stage.label} · ${status}${skipped ? ". " + skipped.reason : output?.path ? " · " + output.path : ""}`;
-              return <li key={stage.id}><button className="stage-step" type="button" data-stage-id={stage.id} data-status={status} data-ui-key={"stage:" + stage.id}
-                aria-current={current === stage.id && !allComplete ? "step" : undefined} aria-pressed={viewed === stage.id}
-                disabled={Boolean(skipped) || !hasStageData(state, stage.id)} data-status-help={stageHelp}
-                title={contextCollapsed ? stageHelp : skipped?.reason || output?.path || `${index + 1}. ${stage.label} · ${status}`}
-                aria-label={`${stage.label}, ${status}${skipped ? ". " + skipped.reason : ""}`}
-                onClick={() => browseStage(stage.id)}>
-                <span className="stage-step-index" aria-hidden="true"><StageIcon size={15} /></span>
-                <span className="stage-step-label">{stage.label}</span><span className="stage-step-status"><StatusIcon size={13} aria-hidden="true" /><span className="visually-hidden">{status}</span></span>
-              </button></li>;
-            })}
-          </ol>
-            <button id="complete-stage" className="complete-stage" type="button" hidden={current === "development" || viewed !== current || Boolean(skippedStage(state, current))} aria-describedby="stage-message"
-              aria-label={completionHelp} title={completionHelp} data-status-help={completionHelp}
-              disabled={!complete} onClick={() => { if (complete) void stageAction.run(() => post("/api/stage/complete", { stageId: current })); }}>
-              {contextCollapsed && current !== "development" && !allComplete ? <ArrowRight size={16} aria-hidden="true" /> : <Check size={16} aria-hidden="true" />}
-              <span className="complete-stage-label">{completionLabel}</span>
-            </button>
-            <p id="stage-browsing" className="visually-hidden">{readOnly ? `Viewing ${selectedLabel} · read only. Reopen explicitly to change its scope.` : ""}</p>
-            <button id="reopen-stage" className="complete-stage" type="button" aria-describedby="stage-browsing"
-              hidden={viewed === "development" || !lifecycleStages.some(stage => stage.id === viewed) || !readOnly || Boolean(skippedStage(state, viewed)) || lifecycleStages.findIndex((stage) => stage.id === viewed) > lifecycleStages.findIndex((stage) => stage.id === current)}
-              disabled={pending || state.provider?.canSubmitAnswers === false || hasActiveJobs(state)}
-              onClick={async () => {
-                if (!await confirm(`Reopen ${selectedLabel}? Its outputs and dependent stage outputs will be marked stale. ${["requirements", "sketch"].includes(viewed) ? "Sketch approval and dependent prototype evidence must be reviewed again. " : ""}Saved evidence is retained, but affected stages must be completed again.`)) return;
-                void stageAction.run(async () => {
-                  const latest = props.store.getSnapshot().state;
-                  if (!latest || latest.generation !== state.generation || latest.revision !== state.revision
-                    || latest.provider?.canSubmitAnswers === false || hasActiveJobs(latest)) {
-                    throw new Error("The effort changed while confirmation was open. Review the stage before reopening it.");
-                  }
-                  const stage = lifecycleStages.find(stage => stage.id === viewed);
-                  if (!stage) throw new Error("Historical stages cannot be reopened.");
-                  await post("/api/stage/reopen", { stageId: stage.id }); browseStage(stage.id);
-                });
-              }}><RotateCcw size={16} aria-hidden="true" />Reopen {selectedLabel}</button>
-            <p id="stage-message" className={stageAction.error ? "stage-message" : "visually-hidden"} title={stageAction.error || undefined} role="status" data-status={stageAction.error ? "error" : "idle"}>{stageAction.error || (state.lifecycle.outputs?.at(-1) ? "Saved " + state.lifecycle.outputs.at(-1)!.path : current === "prepare" ? "Preparation advances automatically when analysis completes." : "Complete the active stage to unlock the next.")}</p>
+          {!projectView.visible && (projectView.error || ["unknown", "execution-unknown", "failed"].includes(projectView.status)) &&
+            <p role="alert">Development needs attention. Open Current work to inspect the private session.</p>}
+          <DiscoveryRecovery />
+          <WorkflowActivity />
+          <section id="project-artifact-library" className="section" aria-label="Artifacts">
+            <div className="section-heading"><p className="eyebrow"><FolderOpen size={14} aria-hidden="true" />Artifacts</p>
+              {projectView.outputStatus === "verified" && <span aria-label="Verified project output count">{state.artifacts.length + projectView.outputs.length}</span>}
+            </div>
+            <div role="group" aria-label="Discovery outputs"><h3 className="artifact-stage-heading">Discovery</h3>
+            <Tabs.List className="artifact-library-nav" aria-label="Saved artifact library">
+              <Tabs.Trigger value="content" id="content-tab" className="preview-tab" aria-controls="content-panel">
+                <FileText size={15} aria-hidden="true" />Saved artifacts <span id="artifact-count">{state.artifacts.length}</span>
+              </Tabs.Trigger>
+            </Tabs.List>
+              <ArtifactList selectedArtifactId={selectedArtifact} active={activeTab === "content"} />
+            </div>
+            <DevelopmentArtifactList active={developmentView} />
           </section>
-          <section className="section"><div className="section-heading"><p className="eyebrow"><FolderOpen size={14} aria-hidden="true" />Artifacts</p><span className="section-count">{state.artifacts.length}</span></div><ArtifactList selectedArtifactId={selectedArtifact} /></section>
           {!developmentView && <ProcessPanel />}
           <details className="section ledger-details"><summary className="eyebrow ledger-summary">Requirement ledger</summary>
             <div className="ledger">{(["confirmed", "assumed", "deferred"] as const).map((kind) => <div key={kind}><h3>{kind[0].toUpperCase() + kind.slice(1)}</h3><ul id={kind}>{(state[kind] || []).map((text, index) => <li key={index}>{text}</li>)}</ul></div>)}</div>
@@ -430,30 +480,30 @@ function Workspace(props: WorkspaceProps) {
         <div id="studio-splitter" className={"splitter" + (dragging !== null ? " is-dragging" : "")} role="separator" tabIndex={0}
           aria-label="Resize requirements and output panels" aria-orientation="vertical" aria-controls="requirements-pane preview-pane"
           aria-valuemin={minimumContextWidth} aria-valuemax={maximum} aria-valuenow={width} title="Drag or use Left and Right arrow keys to resize"
-          onPointerDown={(event) => { if (event.button !== 0 || narrow()) return; setDragging(event.pointerId); event.currentTarget.setPointerCapture(event.pointerId); resize(event.clientX - (workspace.current?.getBoundingClientRect().left || 0)); event.preventDefault(); }}
+          onPointerDown={(event) => { if (event.button !== 0 || narrow()) return; event.currentTarget.focus({ preventScroll: true }); setDragging(event.pointerId); event.currentTarget.setPointerCapture(event.pointerId); resize(event.clientX - (workspace.current?.getBoundingClientRect().left || 0)); event.preventDefault(); }}
           onPointerMove={(event) => { if (dragging === event.pointerId) resize(event.clientX - (workspace.current?.getBoundingClientRect().left || 0)); }}
           onPointerUp={(event) => { if (dragging === event.pointerId) { setDragging(null); if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); } }}
           onPointerCancel={() => setDragging(null)} onLostPointerCapture={() => setDragging(null)}
           onKeyDown={(event) => { if (["ArrowLeft", "ArrowRight"].includes(event.key)) { resize(width + (event.key === "ArrowLeft" ? -1 : 1) * (event.shiftKey ? 48 : 24)); event.preventDefault(); } }} />
         <section id="preview-pane" className="preview" aria-label="Stage workspace">
-          <div className="previewbar"><Tabs.List className="preview-tabs" aria-label="Stage workspace">
-            {stageTabs.map((tab) => <Tabs.Trigger key={tab.value} value={tab.value} id={tab.id + "-tab"} data-tab={tab.value}
-              className="preview-tab" disabled={!hasStageData(state, tab.stage) || Boolean(skippedStage(state, tab.stage))}
-              title={skippedStage(state, tab.stage)?.reason || tab.label} aria-label={tab.label}
-              aria-controls={tab.id + "-panel"} onFocus={(event) => event.currentTarget.scrollIntoView?.({ block: "nearest", inline: "nearest" })}>
-              <tab.icon size={15} aria-hidden="true" /><span className="tab-label">{tab.label}</span></Tabs.Trigger>)}
-            <Tabs.Trigger value="content" id="content-tab" className="preview-tab" data-tab="content" aria-controls="content-panel"><FileText size={15} aria-hidden="true" />Artifacts <span id="artifact-count" className="artifact-count">{state.artifacts.length || ""}</span></Tabs.Trigger>
-          </Tabs.List></div>
           {stageTabs.map((tab) => <Tabs.Content key={tab.value} value={tab.value} forceMount hidden={activeTab !== tab.value}
             id={tab.id + "-panel"} className={tab.className} aria-labelledby={tab.id + "-tab"} tabIndex={0}>
-            {tab.stage === "prepare" ? <PreparationPanel /> : tab.stage === "requirements" ? <RequirementsPanel />
+            {activeTab === tab.value && tab.stage !== "development" && !atStart && phaseActions}
+            <UiContext.Provider value={tab.stage === "development" ? ui : { ...ui, canEdit: (stage, allowCompleted) => !projectView.developmentEntered && ui.canEdit(stage, allowCompleted) }}>
+            {tab.stage === "prepare" && <PreparationRestart store={props.store} effortBusy={props.effortBusy} />}
+            {tab.stage === "prepare" ? atStart ? projectView.developmentEntered
+              ? <div className="start-panel"><h2>Preparation was not used</h2><p>This project is working in Development. Its conversation remains alongside the project artifacts.</p></div>
+              : <GoalEntry /> : <PreparationPanel /> : tab.stage === "requirements" ? <RequirementsPanel />
               : tab.stage === "sketch" ? <SketchCompletionContext.Provider value={props.onSketchBlocked}><SketchPanel /></SketchCompletionContext.Provider>
-              : tab.stage === "prototype" ? <PrototypePanel /> : <DevelopmentPanel active={developmentView} />}
+              : tab.stage === "prototype" ? <PrototypePanel active={activeTab === "preview" && projectView.entry.ready}
+                connected={!props.connectionError} /> : <DevelopmentPanel active={developmentView} />}
+            </UiContext.Provider>
           </Tabs.Content>)}
           <Tabs.Content value="content" forceMount hidden={activeTab !== "content"} id="content-panel" className="content-panel" aria-labelledby="content-tab" tabIndex={0}><ArtifactsPanel selectedArtifactId={selectedArtifact} /></Tabs.Content>
         </section>
+        <ProjectConversation />
       </main>
-    </Tabs.Root>}
+    </Tabs.Root>
     <div id="next-action-bar" className="next-action-bar" data-status={statusBarError ? "error" : "idle"}>
       <span id="next-action-guide" role="status" title={statusBarText}>{statusBarText}</span>
       <button id="show-next-action" type="button" hidden={!nextAction}

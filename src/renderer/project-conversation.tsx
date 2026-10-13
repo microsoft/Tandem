@@ -1,0 +1,396 @@
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { PanelRightClose, PanelRightOpen } from "lucide-react";
+import { canOpenDevelopment, hasActiveJobs, useUi, type UiState } from "./ui-context.js";
+import { DiscoveryProjectSettings, ProjectEffortError, requestProjectEffort, useProviderReload } from "./project-effort.js";
+import type { LifecycleStageId } from "../types.js";
+import type { StartingPath } from "../project-entry.js";
+
+type Entry = { id: string; kind: "user" | "status"; role: string; text: string; timestamp: string };
+export function projectDiscovery(state: UiState, busy: boolean, viewedStage: LifecycleStageId = state.lifecycle.currentStage) {
+    const stage = state.lifecycle.currentStage;
+    const writable = state.provider?.canSubmitAnswers !== false && !state.effortReset && !busy;
+    const active = hasActiveJobs(state);
+    const action = viewedStage !== stage ? "none" : !state.goal.trim() ? "goal" : stage === "requirements" && state.requirements.substage === "usage" ? "usage"
+        : stage === "sketch" ? "sketch" : stage === "prototype" ? "prototype" : "none";
+    const label = { goal: "Start discovery", usage: "Add requirement usage", sketch: "Revise saved drawings",
+        prototype: "Prototype feedback", none: "Discovery (use artifact controls)" }[action];
+    const key = JSON.stringify([state.prototypeId, state.generation, viewedStage, action, state.sketch?.current?.id,
+        state.prototypeFlow?.displayedCheckpointId, state.lifecycle.completedStages]);
+    return { stage: viewedStage, action, key, label, enabled: writable && action !== "none" && !state.lifecycle.completedStages.includes(stage)
+        && (action === "prototype" ? state.processing?.action !== "generate-design-spec" : !active),
+        help: action === "sketch" ? "Revise the saved drawing revision; unsaved canvas edits are not included."
+            : action === "prototype" ? "Queue feedback against the displayed prototype. Applying an update remains explicit."
+                : action === "usage" ? "Add a first-person usage to Requirements. Answer existing questions in the Requirements view."
+                    : action === "goal" ? "Start optional discovery with this goal. This runs Preparation, not implementation."
+                        : "Browse the saved evidence or answer/confirm using this phase's controls." };
+}
+export function discoveryEntries(state: UiState): Entry[] {
+    const entries: Entry[] = [];
+    const push = (id: string, kind: Entry["kind"], text: string, timestamp = state.updatedAt) => {
+        if (text) entries.push({ id: `discovery:${state.generation}:${id}`, kind, role: "Discovery evidence", text: text.slice(0, 20000), timestamp });
+    };
+    push("goal", "user", state.goal);
+    state.requirements.usageItems.forEach((text, index) => push(`usage:${index}`, "user", text));
+    state.decisionGraph.nodes.filter(node => node.answer).forEach(node =>
+        push(`answer:${node.id}`, "status", `${node.title}\n${node.answer}`));
+    for (const request of state.sketch.requests ?? []) {
+        push(`drawing-request:${request.requestId}`, request.kind === "revise" ? "user" : "status", request.instruction, request.requestedAt);
+    }
+    for (const checkpoint of state.prototypeFlow?.checkpoints ?? []) {
+        push(`checkpoint:${checkpoint.id}`, "status", `${checkpoint.milestone}: ${checkpoint.status}. ${checkpoint.summary || ""}`,
+            checkpoint.completedAt || checkpoint.requestedAt);
+    }
+    for (const revision of state.prototypeReview?.revisions ?? []) {
+        push(`revision:${revision.id}`, "user", revision.suggestion);
+    }
+    for (const output of state.lifecycle.outputs) push(`saved:${output.path}`, "status", `Saved ${output.stageId}: ${output.path}`, output.completedAt);
+    for (const receipt of state.factoryRuns ?? []) if (receipt.recovery) {
+        push(`recovery:${receipt.recovery.decisionId}`, "status",
+            `Request ${receipt.requestId} explicitly abandoned with uncertain outcome. Saved work retained; nothing replayed.`,
+            receipt.recovery.recordedAt);
+    }
+    return entries.slice(-1000);
+}
+
+export interface ProjectOutput { id: string; group: "Design" | "Plan" | "Implementation" | "Review"; title: string; detail: string; binding: string }
+interface ProjectView {
+    visible: boolean;
+    url: string | null; channel: string; error: string; active: boolean; starting: boolean; developmentEntered: boolean;
+    status: string; detail: string; designRevision: string | null; designChanged: boolean; attention: number;
+    maintenanceError: string;
+    activate(retry?: boolean): Promise<void>; command(command: string): void;
+    outputs: ProjectOutput[]; outputStatus: string; outputReason: string; outputError: string; selectedOutput: string | null;
+    openOutput(item: ProjectOutput): void;
+    prepareDevelopmentView(): void;
+    resumeDiscovery(): void;
+    entry: { loading: boolean; busy: boolean; projectPath: string; startingPath: StartingPath | null; error: string; ready: boolean };
+    chooseEntry(path: StartingPath): Promise<void>; reloadEntry(): Promise<void>;
+    frame: React.RefObject<HTMLIFrameElement | null>; sync(): void;
+}
+const Context = createContext<ProjectView | null>(null);
+export const useProjectView = () => {
+    const value = useContext(Context);
+    if (!value) throw new Error("Project presentation is unavailable.");
+    return value;
+};
+export function ProjectConversationProvider({ children, designVisible, viewedStage, showDesign, onEntry, effortBusy }: {
+    children: ReactNode; designVisible: boolean; viewedStage: LifecycleStageId; showDesign(): void; effortBusy: boolean;
+    onEntry(path: StartingPath, firstChoice: boolean): void;
+}) {
+    const { state, post, pending, setBusy, browseStage } = useUi();
+    const [view, setView] = useState({ url: null as string | null, channel: "", error: "", active: false, starting: false, developmentEntered: false,
+        status: "Not activated", detail: "", designRevision: null as string | null, designChanged: false, attention: 0,
+        outputs: [] as ProjectOutput[], outputStatus: "unverified", outputReason: "Development outputs have not been verified.",
+        outputError: "", selectedOutput: null as string | null });
+    const frame = useRef<HTMLIFrameElement>(null);
+    const providerReload = useProviderReload(view.active || view.starting || view.status === "unknown" || effortBusy);
+    const [entry, setEntry] = useState({ loading: true, busy: false, projectPath: state.projectPath ?? "", startingPath: null as StartingPath | null, error: "", ready: false });
+    const choosing = useRef(false);
+    const [discoverySettings, setDiscoverySettings] = useState(false);
+    const [viewRequested, setViewRequested] = useState(false);
+    const pendingCommand = useRef<string | null>(null);
+    const entryCallback = useRef(onEntry); entryCallback.current = onEntry;
+    const latest = useRef({ state, post, pending, view, designVisible, viewedStage, showDesign, setBusy, browseStage, providerReload }); latest.current = { state, post, pending, view, designVisible, viewedStage, showDesign, setBusy, browseStage, providerReload };
+    const opening = useRef(false), submissions = useRef(new Map<string, { key: string; text: string; work: Promise<void> }>());
+    const startRequested = useRef(false);
+    const effortApplying = useRef(false);
+    async function loadEntry(firstChoice = false, choice?: StartingPath) {
+        if (choosing.current) return;
+        choosing.current = true;
+        setEntry(v => ({ ...v, busy: true, error: "" }));
+        try {
+            const response = await fetch("/api/project-entry", choice ? { method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ startingPath: choice }) } : undefined);
+            const value = await response.json();
+            if (!response.ok || value.error) throw new Error(value.error || "Project metadata could not be read.");
+            if (typeof value.projectPath !== "string" || ![null, "preparation", "development"].includes(value.startingPath)) throw new Error("Invalid project entry metadata.");
+            let starting = false, developmentEntered = false;
+            if (value.startingPath && latest.current.state.provider?.canSubmitAnswers !== false) {
+                const opened = await fetch("/api/project-entry/open", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+                const result = await opened.json();
+                if (!opened.ok) throw new Error(result.error || "Project entry could not be prepared.");
+                starting = result.developmentStarted === true;
+                developmentEntered = result.developmentContext === true;
+            }
+            setEntry({ loading: false, busy: false, projectPath: value.projectPath, startingPath: value.startingPath, error: "", ready: Boolean(value.startingPath) });
+            if (value.startingPath) entryCallback.current(value.startingPath, firstChoice);
+            if (developmentEntered) { setViewRequested(true); setView(v => ({ ...v, developmentEntered: true })); }
+            if (starting) {
+                startRequested.current = true;
+                setView(v => ({ ...v, starting: true }));
+            }
+        } catch (error) {
+            setEntry(v => ({ ...v, loading: false, busy: false, ready: false, error: error instanceof Error ? error.message : "Project entry failed." }));
+        } finally { choosing.current = false; }
+    }
+    useEffect(() => { void loadEntry(); }, []);
+    function send(value: object) {
+        const { url, channel } = latest.current.view;
+        if (url) frame.current?.contentWindow?.postMessage({ protocol: "tandem-project/v1", channel, ...value }, new URL(url).origin);
+    }
+    function sync() {
+        const { state, pending, view, designVisible } = latest.current;
+        const workingStage = view.developmentEntered ? "development" : state.lifecycle.currentStage;
+        const viewLabel = { prepare: "Preparation", requirements: "Requirements", sketch: "Drawings", prototype: "Prototype", development: "Development" }[workingStage];
+        send({ type: "context", entries: [], discovery: projectDiscovery(state, pending, workingStage), viewedStage: workingStage, viewLabel,
+            developmentEntered: view.developmentEntered,
+            canActivate: canOpenDevelopment(state), developmentActive: view.active, designVisible,
+            developmentEnabled: canOpenDevelopment(state), starting: view.starting,
+            canChangeEffort: state.provider?.canSubmitAnswers !== false && !pending,
+            providerReload: latest.current.providerReload.view });
+        syncLayout();
+    }
+    function syncLayout() {
+        const workspace = document.getElementById("studio-workspace");
+        if (!workspace) return;
+        const columns = getComputedStyle(workspace).gridTemplateColumns.split(/\s+/);
+        const conversationWidth = columns.length === 5 ? parseFloat(columns[4]!)
+            : window.innerWidth >= 800 ? parseFloat(workspace.style.getPropertyValue("--conversation-width")) || 300 : 0;
+        const divider = document.getElementById("project-conversation-divider");
+        if (divider && conversationWidth > 0) {
+            divider.setAttribute("aria-valuenow", String(Math.round(conversationWidth)));
+            divider.setAttribute("aria-valuemax", String(Math.round(workspace.clientWidth - parseFloat(columns[0]!) - 287)));
+            divider.setAttribute("aria-valuetext", `Conversation ${Math.round(conversationWidth)} pixels`);
+        }
+        send({ type: "layout", stacked: window.innerWidth < 800,
+            conversationWidth });
+    }
+    async function activate(retry = false) {
+        if (!canOpenDevelopment(latest.current.state)) { setView(v => ({ ...v, error: "Finish current discovery work or resolve ownership before activating Development." })); return; }
+        setView(v => ({ ...v, developmentEntered: true }));
+        if (opening.current || startRequested.current || latest.current.view.active) return;
+        opening.current = true;
+        setViewRequested(true);
+        startRequested.current = true;
+        setView(v => ({ ...v, starting: true, developmentEntered: true, error: "" }));
+        try {
+            const response = await fetch("/api/development/open", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ retry }) });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || "Development could not activate.");
+        } catch (error) {
+            startRequested.current = false;
+            setView(v => ({ ...v, starting: false, error: error instanceof Error ? error.message : "Development could not start." }));
+        }
+        finally { opening.current = false; }
+    }
+    useEffect(() => {
+        let disposed = false;
+        if (!entry.ready || !viewRequested || state.provider?.canSubmitAnswers === false) return;
+        void (async () => {
+            try {
+                const response = await fetch("/api/development/view", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.error || "Project conversation could not load.");
+                const url = new URL(result.url);
+                if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || url.origin === location.origin
+                    || typeof result.channel !== "string" || !/^[a-zA-Z0-9-]{1,100}$/.test(result.channel)) throw new Error("Invalid project presentation binding.");
+                if (!disposed) setView(v => ({ ...v, url: url.href, channel: result.channel }));
+            } catch (error) { if (!disposed) setView(v => ({ ...v, error: error instanceof Error ? error.message : "Conversation unavailable." })); }
+        })();
+        return () => { disposed = true; };
+    }, [entry.ready, viewRequested, state.provider?.canSubmitAnswers]);
+    useEffect(() => { sync(); }, [state, pending, view.url, view.active, view.starting, view.developmentEntered, designVisible, viewedStage, JSON.stringify(providerReload.view)]);
+    useEffect(() => {
+        const observer = new ResizeObserver(syncLayout);
+        const workspace = document.getElementById("studio-workspace");
+        if (workspace) observer.observe(workspace);
+        if (frame.current) observer.observe(frame.current);
+        window.addEventListener("resize", syncLayout);
+        return () => { observer.disconnect(); window.removeEventListener("resize", syncLayout); };
+    }, [view.url]);
+    useEffect(() => { if (designVisible) setView(v => v.designChanged ? { ...v, designChanged: false } : v); }, [designVisible]);
+    useEffect(() => {
+        const receive = (event: MessageEvent) => {
+            const { state, pending, view, post } = latest.current;
+            if (!view.url || event.source !== frame.current?.contentWindow || event.origin !== new URL(view.url).origin
+                || event.data?.protocol !== "tandem-project/v1" || event.data.channel !== view.channel) return;
+            const message = event.data;
+            if (message.type === "project-reload" && typeof message.id === "string" && message.id.length > 0 && message.id.length <= 100
+                && typeof message.scope === "string" && message.scope.length <= 1024) {
+                void latest.current.providerReload.reload(message.scope).then(result =>
+                    send({ type: "project-reload-result", id: message.id, ...result }));
+                return;
+            }
+            if (message.type === "outputs") {
+                if (!["verified", "unverified", "not-started"].includes(message.status) || typeof message.reason !== "string"
+                    || !Array.isArray(message.items) || message.items.length > 10000
+                    || !message.items.every((item: ProjectOutput) => item && ["Design", "Plan", "Implementation", "Review"].includes(item.group)
+                        && ["id", "title", "detail", "binding"].every(key => typeof item[key as keyof ProjectOutput] === "string"
+                            && item[key as keyof ProjectOutput].length <= 10000))
+                    || new Set(message.items.map((item: ProjectOutput) => item.id)).size !== message.items.length) {
+                    setView(v => ({ ...v, outputStatus: "unverified", outputError: "Development output index is invalid; nothing was opened." }));
+                    return;
+                }
+                setView(v => {
+                    const items = message.status === "verified" ? message.items : v.outputs;
+                    const selected = message.status === "verified" ? typeof message.selected === "string" ? message.selected : null : v.selectedOutput;
+                    if (v.outputStatus === message.status && v.outputReason === message.reason && v.selectedOutput === selected
+                        && JSON.stringify(v.outputs) === JSON.stringify(items)) return v;
+                    return { ...v, outputs: items, outputStatus: message.status, outputReason: message.reason, selectedOutput: selected };
+                });
+                return;
+            }
+            if (message.type === "output-opened") {
+                if (typeof message.error === "string") setView(v => ({ ...v, outputError: message.error }));
+                else if (latest.current.view.outputs.some(item => item.id === message.id && item.binding === message.binding)) {
+                    setView(v => ({ ...v, selectedOutput: message.id, outputError: "" }));
+                }
+                return;
+            }
+            if (message.type === "ready") {
+                sync();
+                if (pendingCommand.current) { send({ type: "command", command: pendingCommand.current }); pendingCommand.current = null; }
+                return;
+            }
+            if (message.type === "view-stage" && ["prepare", "requirements", "sketch", "prototype", "development"].includes(message.stage)) {
+                latest.current.browseStage(message.stage);
+                return;
+            }
+            if (message.type === "show-design") { latest.current.showDesign(); return; }
+            if (message.type === "settings-closed") { document.getElementById("project-settings")?.focus(); return; }
+            if (message.type === "conversation-resize" && window.innerWidth >= 800
+                && Number.isFinite(message.width) && message.width >= 300 && message.width <= window.innerWidth) {
+                document.getElementById("studio-workspace")?.style.setProperty("--conversation-width", `${message.width}px`);
+                syncLayout();
+                return;
+            }
+            if (message.type === "appearance" && ["system", "light", "dark"].includes(message.theme)
+                && ["normal", "larger", "largest"].includes(message.fontSize)) {
+                document.documentElement.dataset.projectTheme = message.theme;
+                document.documentElement.dataset.projectFontSize = message.fontSize;
+                return;
+            }
+            if (["project-effort-read", "project-effort-apply"].includes(message.type)) {
+                if (typeof message.id !== "string" || message.id.length > 100) return;
+                const applying = message.type === "project-effort-apply";
+                if (applying && (typeof message.effort !== "string" || message.effort.length > 40
+                    || effortApplying.current || latest.current.pending || state.provider?.canSubmitAnswers === false)) {
+                    send({ type: "project-effort-result", id: message.id, error: "Project effort cannot change while work or ownership is pending." }); return;
+                }
+                if (applying) { effortApplying.current = true; latest.current.setBusy("project-effort", true); }
+                void requestProjectEffort(applying ? message.effort : undefined)
+                    .then(settings => send({ type: "project-effort-result", id: message.id, settings }))
+                    .catch(error => send({ type: "project-effort-result", id: message.id,
+                        error: error instanceof Error ? error.message : "Project effort request failed.",
+                        settings: error instanceof ProjectEffortError ? error.settings : undefined }))
+                    .finally(() => { if (applying) { effortApplying.current = false; latest.current.setBusy("project-effort", false); } });
+                return;
+            }
+            if (message.type === "activate") { void activate(message.retry === true); return; }
+            if (message.type === "status" && typeof message.status === "string") {
+                const retryable = message.canRetry === true || message.canReopen === true || ["failed", "unknown", "closed"].includes(message.installationStatus);
+                const settled = message.active === true || retryable;
+                if (retryable) startRequested.current = false;
+                setView(v => ({ ...v, status: message.status.slice(0, 80), detail: typeof message.reason === "string" ? message.reason.slice(0, 2000) : "",
+                    active: message.active === true,
+                    starting: settled ? false : v.starting,
+                    designRevision: typeof message.designRevision === "string" ? message.designRevision : null,
+                    designChanged: !latest.current.designVisible && Boolean(message.designRevision)
+                        && (v.designChanged || v.designRevision !== message.designRevision),
+                    attention: [message.questions, message.permissions, message.confirmations].reduce((n, x) => n + (Number.isSafeInteger(x) && x > 0 ? x : 0), 0) }));
+                return;
+            }
+            if (!["discovery-send", "discovery-status"].includes(message.type) || typeof message.id !== "string" || message.id.length > 100) return;
+            const reply = (ok: boolean, error?: string) => send({ type: "discovery-result", id: message.id, ok, error });
+            let submission = submissions.current.get(message.id);
+            if (message.type === "discovery-status") {
+                if (!submission) send({ type: "discovery-unknown", id: message.id });
+                else void submission.work.then(() => reply(true), error => reply(false, error instanceof Error ? error.message : "Submission failed."));
+                return;
+            }
+            if (submission && (submission.key !== message.key || submission.text !== message.text)) {
+                reply(false, "This submission ID is already bound to different content."); return;
+            }
+            if (!submission) {
+                const work = (async () => {
+                    if (latest.current.view.developmentEntered) throw new Error("Use the owning phase's original input; Development cannot submit discovery work.");
+                    const context = projectDiscovery(state, pending);
+                    if (message.key !== context.key || !context.enabled) throw new Error("The discovery target changed or is unavailable. Review it before sending.");
+                    if (typeof message.text !== "string" || !message.text.trim() || message.text.length > 4000) throw new Error("Enter between 1 and 4,000 characters.");
+                    const text = message.text.trim();
+                    if (context.action === "goal") await post("/api/effort/start", { generation: state.generation, expectedRevision: state.revision, goal: text });
+                    else if (context.action === "usage") await post("/api/answer", { questionId: "usage-intake", answer: text, action: "add-usage" });
+                    else if (context.action === "sketch") await post("/api/sketch", { action: "revise", expectedRevision: state.sketch.current?.id ?? null, expectedGeneration: state.generation, instruction: text });
+                    else if (context.action === "prototype") await post("/api/revision", { suggestion: text, clientRequestId: message.id,
+                        baseCheckpointId: state.prototypeFlow?.displayedCheckpointId ?? null });
+                })();
+                submission = { key: message.key, text: message.text, work };
+                submissions.current.set(message.id, submission);
+            }
+            void submission.work.then(() => reply(true), error => reply(false, error instanceof Error ? error.message : "Submission failed."));
+        };
+        window.addEventListener("message", receive);
+        return () => window.removeEventListener("message", receive);
+    }, []);
+    return <Context.Provider value={{ ...view, maintenanceError: providerReload.view.error ? providerReload.view.message : "",
+        visible: designVisible, entry, chooseEntry: path => loadEntry(true, path), reloadEntry: () => loadEntry(),
+        frame, sync, activate,
+        prepareDevelopmentView: () => { setViewRequested(true); setView(v => ({ ...v, developmentEntered: true })); },
+        resumeDiscovery: () => setView(v => ({ ...v, developmentEntered: false })),
+        command: command => {
+            if (!latest.current.designVisible || !latest.current.view.developmentEntered) {
+                if (command === "settings") setDiscoverySettings(true);
+                else if (command === "current-work") {
+                    if (latest.current.view.developmentEntered) latest.current.showDesign();
+                    else latest.current.browseStage(latest.current.state.lifecycle.currentStage);
+                }
+            } else if (!latest.current.view.url) { pendingCommand.current = command; setViewRequested(true); }
+            else send({ type: "command", command });
+        },
+        openOutput: item => {
+            if (latest.current.view.outputStatus !== "verified") return;
+            latest.current.showDesign();
+            send({ type: "output-open", id: item.id, binding: item.binding });
+        } }}>{children}{discoverySettings && <DiscoveryProjectSettings providerReload={providerReload} close={() => setDiscoverySettings(false)} />}</Context.Provider>;
+}
+export function ProjectConversation() {
+    const view = useProjectView();
+    const { state } = useUi();
+    const [historyChoice, setHistoryChoice] = useState<boolean | null>(null);
+    const [narrowHistory, setNarrowHistory] = useState(() => window.innerWidth < 1000);
+    const historyCollapsed = historyChoice ?? narrowHistory;
+    useEffect(() => {
+        const resize = () => setNarrowHistory(window.innerWidth < 1000);
+        window.addEventListener("resize", resize);
+        return () => window.removeEventListener("resize", resize);
+    }, []);
+    useEffect(() => {
+        const workspace = document.getElementById("studio-workspace");
+        if (workspace) workspace.dataset.historyCollapsed = String(historyCollapsed && !view.visible);
+        view.sync();
+    }, [historyCollapsed, view.visible]);
+    const drag = useRef<number | null>(null);
+    const resize = (delta: number) => {
+        const panel = document.getElementById("project-conversation");
+        const workspace = document.getElementById("studio-workspace");
+        if (!panel || !workspace || window.innerWidth < 1000) return;
+        const navigationWidth = document.getElementById("requirements-pane")?.getBoundingClientRect().width ?? 220;
+        const width = Math.max(300, Math.min(workspace.clientWidth - navigationWidth - 287, panel.getBoundingClientRect().width + delta));
+        workspace.style.setProperty("--conversation-width", `${width}px`);
+    };
+    return <><div id="project-conversation-divider" role="separator" tabIndex={0} aria-label="Resize artifact and conversation"
+        aria-orientation="vertical" aria-controls="preview-pane project-conversation" aria-valuemin={300}
+        onKeyDown={event => { if (["ArrowLeft", "ArrowRight"].includes(event.key)) { resize(event.key === "ArrowLeft" ? 24 : -24); event.preventDefault(); } }}
+        onPointerDown={event => { if (event.button === 0) { event.currentTarget.focus({ preventScroll: true }); drag.current = event.clientX; event.currentTarget.setPointerCapture(event.pointerId); event.preventDefault(); } }}
+        onPointerMove={event => { if (drag.current !== null) { resize(drag.current - event.clientX); drag.current = event.clientX; } }}
+        onPointerUp={event => { drag.current = null; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); }}
+        onLostPointerCapture={() => { drag.current = null; }} />
+      <aside id="project-conversation" aria-label="Project conversation" data-history-collapsed={historyCollapsed && !view.visible}>
+        {!view.visible && !historyCollapsed && <div className="project-conversation-heading"><strong>Discovery history</strong>
+            <button type="button" onClick={() => view.command("current-work")}>Current work</button></div>}
+        {!view.visible && <button id="toggle-discovery-history" className="plan-button secondary" type="button" aria-controls="discovery-history"
+            aria-label={historyCollapsed ? "Show discovery history" : "Hide discovery history"} title={historyCollapsed ? "Show discovery history" : "Hide discovery history"}
+            aria-expanded={!historyCollapsed} onClick={() => setHistoryChoice(!historyCollapsed)}>
+            {historyCollapsed ? <PanelRightOpen size={16} aria-hidden="true" /> : <><PanelRightClose size={16} aria-hidden="true" />Hide history</>}</button>}
+        {view.visible && view.error && <p role="alert">{view.error}</p>}
+        {view.url && <iframe ref={view.frame} id="project-conversation-frame" title="Private Development conversation"
+            hidden={!view.visible} src={`${view.url}?panel=workspace`} onLoad={view.sync} allow="clipboard-read; clipboard-write" />}
+        {!view.visible && <div id="discovery-history" className="discovery-history" aria-label="Discovery history" hidden={historyCollapsed}>
+                {discoveryEntries(state).map(item => <article key={item.id} data-entry-id={item.id}>
+                    <details><summary>{item.id.endsWith(":goal") ? "Original project brief" : item.text.split("\n")[0]!.slice(0, 100) + (item.text.length > 100 ? "..." : "")}</summary><p>{item.text}</p></details>
+                </article>)}
+                {!state.goal && <p>{view.entry.startingPath === "development" ? "Preparation was not used for this project."
+                    : "Project history will appear here. Use Preparation's goal form to begin."}</p>}
+              </div>}
+    </aside></>;
+}

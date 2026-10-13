@@ -30,7 +30,7 @@ function record(value: unknown): value is Record<string, unknown> {
 export async function runSketchStreamWorker(options: SketchWorkerOptions): Promise<SketchDocument> {
     options.signal.throwIfAborted();
     const stream = new SketchOperationStream(options.base, options.decisionIds, options.preview);
-    const messages = new Map<string, { text: string; completed: boolean }>();
+    const messages = new Map<string, { text: string; completed: boolean; commentary: boolean | undefined; appended: number }>();
     let agentId: string | undefined;
     let toolCallId: string | undefined;
     let received = "";
@@ -41,6 +41,7 @@ export async function runSketchStreamWorker(options: SketchWorkerOptions): Promi
     let lookupCount = 0;
     let bufferedBytes = 0;
     let bufferedEvents = 0;
+    let commentaryBytes = 0;
     const encoder = new TextEncoder();
     const fail = (cause: unknown) => {
         if (failure) return;
@@ -50,6 +51,14 @@ export async function runSketchStreamWorker(options: SketchWorkerOptions): Promi
     const append = (text: string) => {
         stream.append(text);
         received += text;
+    };
+    const flushMessages = () => {
+        for (const message of messages.values()) {
+            if (message.commentary === undefined) return;
+            if (!message.commentary && message.text.length > message.appended) append(message.text.slice(message.appended));
+            message.appended = message.text.length;
+            if (!message.completed) return;
+        }
     };
     const aborted = () => fail(new Error("Drawing generation was cancelled. The previous saved revision is unchanged."));
     options.signal.addEventListener("abort", aborted, { once: true });
@@ -87,16 +96,16 @@ export async function runSketchStreamWorker(options: SketchWorkerOptions): Promi
         const data = event.data;
         try {
             if (event.type === "subagent.started") {
-                if (data.parentId || (data.factoryRunId !== undefined && data.factoryRunId !== options.runId)) return;
+                if (data.parentId || (data.workflowRunId !== undefined && data.workflowRunId !== options.runId)) return;
                 if (typeof data.toolCallId !== "string" || !data.toolCallId) {
                     throw new Error("The drawing worker started without a stream identity.");
                 }
-                // Older runtimes omit factoryRunId; never infer ownership from arrival order or an agent name.
-                if (data.factoryRunId === undefined) verifyWorker(data.toolCallId, event.agentId);
+                // Older runtimes omit workflowRunId; never infer ownership from arrival order or an agent name.
+                if (data.workflowRunId === undefined) verifyWorker(data.toolCallId, event.agentId);
                 else bindWorker(data.toolCallId, event.agentId);
                 return;
             }
-            if (event.type !== "assistant.message_delta" && event.type !== "assistant.message") return;
+            if (!["assistant.message_start", "assistant.message_delta", "assistant.message"].includes(event.type)) return;
             if (!(agentId && event.agentId === agentId)
                 && !(toolCallId && data.parentToolCallId === toolCallId)) {
                 const pending = [...pendingWorkers.entries()].find(([id, worker]) =>
@@ -119,24 +128,38 @@ export async function runSketchStreamWorker(options: SketchWorkerOptions): Promi
             let message = messages.get(data.messageId);
             if (!message) {
                 if (messages.size >= 32) throw new Error("The drawing worker returned too many messages.");
-                message = { text: "", completed: false };
+                message = { text: "", completed: false, commentary: data.phase === undefined ? undefined : data.phase === "commentary", appended: 0 };
                 messages.set(data.messageId, message);
             }
+            if (data.phase !== undefined) {
+                if (message.commentary !== undefined && (data.phase === "commentary") !== message.commentary) {
+                    throw new Error("The drawing message changed its native commentary/data phase.");
+                }
+                message.commentary = data.phase === "commentary";
+            }
+            if (event.type === "assistant.message_start") return;
+            const bufferMessage = (text: string) => {
+                if (message.commentary === false) return;
+                commentaryBytes += encoder.encode(text).length;
+                if (commentaryBytes > MAX_SKETCH_STREAM_RESPONSE_BYTES) throw new Error("Unclassified drawing text or commentary exceeded its separate buffer limit.");
+            };
             if (event.type === "assistant.message_delta") {
                 if (message.completed || typeof data.deltaContent !== "string") {
                     throw new Error("The drawing worker sent an invalid or late content delta.");
                 }
-                append(data.deltaContent);
+                bufferMessage(data.deltaContent);
                 message.text += data.deltaContent;
             } else {
                 if (typeof data.content !== "string" || !data.content.startsWith(message.text)
                     || (message.completed && data.content !== message.text)) {
                     throw new Error("The completed drawing message does not match its streamed content.");
                 }
-                append(data.content.slice(message.text.length));
+                bufferMessage(data.content.slice(message.text.length));
                 message.text = data.content;
                 message.completed = true;
+                message.commentary ??= false;
             }
+            flushMessages();
         } catch (error) {
             fail(error);
         }
@@ -151,6 +174,11 @@ export async function runSketchStreamWorker(options: SketchWorkerOptions): Promi
         if (typeof result !== "string" || !result.trim()) {
             throw new Error("The drawing worker returned no drawing operations.");
         }
+        for (const message of messages.values()) {
+            message.commentary ??= false;
+            message.completed = true;
+        }
+        flushMessages();
         const authoritative = result.trim();
         const streamed = received.trimStart();
         if (authoritative.startsWith(streamed)) append(authoritative.slice(streamed.length));

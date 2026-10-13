@@ -5,13 +5,20 @@ import type { SketchDocument } from "./sketch.js";
 export const tandemWorkerInteractionRules = [
     "Tandem owns user interaction. Do not call ask_user, ask_user_question, or any",
     "other interactive question tool, open a question dialog, or request answers",
-    "through the parent chat. Return only the structured result for this work item.",
+    "through the parent chat. Keep the final response exactly the structured result for this work item.",
     "Product clarifications belong only in the schema's tracked decision/question",
     "fields. If this schema has none, report unknowns in its assumptions, deferred",
     "work, notes, or blockers instead of interviewing the user or adding fields.",
     "Never invent a user answer, convert a suggestion into an accepted intent, or",
     "treat a missing answer or denied tool call as approval. Permission and safety",
     "boundaries still apply; report a blocker rather than bypassing them.",
+    "During longer work, give a short user-facing sentence at meaningful milestones",
+    "or a real blocked/waiting state using a separate native public commentary/intent",
+    "channel when available, or a tool's ordinary description. Do not expose private",
+    "reasoning, prompts or credentials, invent periodic heartbeats, or add user turns.",
+    "Progress is not completion or verification evidence. Never prepend or mix",
+    "progress prose into final JSON/schema results or NDJSON drawing operations.",
+    "If the runtime offers no separate progress channel, keep the result format pure.",
 ].join("\n");
 
 export function buildDevelopmentHandoffPrompt(input: {
@@ -161,6 +168,7 @@ export function buildSketchPrompt(args: {
 }): string {
     return [
         "You are Tandem's sketch worker. Stream ONLY newline-delimited JSON drawing operations.",
+        "Any optional short milestone commentary must be in a separate native commentary message/phase, never in the drawing-operation stream or final returned NDJSON. If that separation is unavailable, emit only drawing operations.",
         tandemWorkerInteractionRules,
         "Use only the supplied context. Do not use tools, edit files, start servers, open canvases, call other agents, or advance stages.",
         "The host owns persistence, rendering, revision history and explicit user approval.",
@@ -276,7 +284,7 @@ export function buildPrototypeCheckpointPrompt(args: {
     projectRoot: string;
     checkpoint: {
         id: string; milestone: "structure" | "interaction" | "visual"; workspacePath: string;
-        timeoutSeconds: number; baseCheckpointId: string | null;
+        timeoutSeconds?: number | null; baseCheckpointId: string | null;
     };
     goal: string;
     approach: "build" | "validate-existing";
@@ -289,8 +297,6 @@ export function buildPrototypeCheckpointPrompt(args: {
     artifacts?: unknown[];
     sketch?: PrototypeSketchInput | null;
 }): string {
-    const timeout = Number.isFinite(args.checkpoint.timeoutSeconds) ?
-        Math.max(1, Math.min(300, Math.floor(args.checkpoint.timeoutSeconds))) : 300;
     const milestones = {
         structure: [
             "STRUCTURE: deliver the smallest real clickable primary journey ASAP.",
@@ -338,7 +344,6 @@ export function buildPrototypeCheckpointPrompt(args: {
         `Checkpoint ID: ${args.checkpoint.id}`,
         `Milestone: ${args.checkpoint.milestone}${args.revision ? " (existing fidelity; revision scope takes precedence)" : ""}`,
         `Newest selected base checkpoint: ${args.checkpoint.baseCheckpointId ?? "(initial source copy)"}`,
-        `Bounded execution budget: ${timeout} seconds, never more than 300 seconds.`,
         "",
         ...scope,
         "",
@@ -421,8 +426,8 @@ export function buildPrototypeCheckpointPrompt(args: {
         "observations. Server startup text, code inspection, or worker claims alone",
         "are not readiness evidence. Never claim incomplete controls work: remove,",
         "disable with a clear label, or explicitly report unfinished controls.",
-        "Stop within the time budget with a useful tiny complete slice instead of",
-        "overbuilding. Return previewUrl null if the preview cannot be verified.",
+        "Prefer a useful small complete slice to overbuilding.",
+        "Return previewUrl null if the preview cannot be verified.",
         "",
         "Queued revision handling: a suggestion may refer to an older published base",
         "than the newest selected base copied into this candidate. Explain that",

@@ -56,7 +56,7 @@ function snapshot(state: TandemState) {
 }
 function worker(h: Awaited<ReturnType<typeof extensionHarness>>, result: (request: any) => any = changes, factory?: any) {
     let agents = 0;
-    h.api.setSession({ ...h.session, ...(factory ? { factory } : {}), rpc: { ...h.session.rpc, factory: {
+    h.api.setSession({ ...h.session, ...(factory ? { workflow: factory } : {}), rpc: { ...h.session.rpc, workflow: {
         run: async (request: any) => {
             h.requests.push(plain(request));
             const runId = `run-${h.requests.length}`;
@@ -98,7 +98,7 @@ async function interruptedBatch(f: Awaited<ReturnType<typeof setup>>) {
         },
         resume: async () => { counts.resumes++; throw new Error("Recovery must not resume a terminal batch"); },
     };
-    f.h.api.setSession({ ...f.h.session, factory: sdk, rpc: { ...f.h.session.rpc, factory: {
+    f.h.api.setSession({ ...f.h.session, workflow: sdk, rpc: { ...f.h.session.rpc, workflow: {
         run: async (request: any) => {
             f.h.requests.push(plain(request));
             const runId = "interrupted-run";
@@ -143,7 +143,7 @@ test("one bounded factory reconciles every dependent snapshot default without du
         assert.equal(request.args.defaultBatch.revision, f.initial.revision);
         assert.equal(request.args.defaultBatch.generation, f.initial.generation);
         assert.equal(request.options.limits.maxTotalSubagents, 1);
-        assert.equal(request.options.limits.timeoutSeconds, 300);
+        assert.equal(request.options.limits.timeoutSeconds, undefined);
         assert.equal(request.options.limits.maxAiCredits, 128);
         assert.equal(Object.hasOwn(request, "limits"), false);
         for (const key of ["artifacts", "confirmed", "lifecycle", "previewUrl", "processing", "implementation", "question"]) {
@@ -293,7 +293,7 @@ test("reload recovers the existing run without another worker and repairs an uno
         pending.processing.runId = "reload-run";
         await f.h.api.persistState(pending);
         const run = { runId: "reload-run", status: "completed", result: changes() };
-        reloaded.api.setSession({ ...reloaded.session, factory: { getRun: async () => run } });
+        reloaded.api.setSession({ ...reloaded.session, workflow: { getRun: async () => run } });
         reloaded.api.recoverAnswerFactory(await reloaded.api.loadState("sample"), true);
         await reloaded.api.waitForAnswer("sample");
         const ready = await reloaded.api.loadState("sample");
@@ -304,12 +304,12 @@ test("reload recovers the existing run without another worker and repairs an uno
         // Repair the same old receipt shape at the completion boundary, but only after SDK verification.
         ready.factoryRuns![0] = { ...ready.factoryRuns![0], terminal: false, runId: null };
         await reloaded.api.persistState(ready);
-        reloaded.api.setSession({ ...reloaded.session, factory: {
+        reloaded.api.setSession({ ...reloaded.session, workflow: {
             getRun: async () => ({ ...run, status: "running" }),
         } });
         await assert.rejects(reloaded.api.completeLifecycleStage("sample", "requirements", "project:tandem"), /hidden Tandem agent/);
         assert.ok((await reloaded.api.loadState("sample")).jobOwner);
-        reloaded.api.setSession({ ...reloaded.session, factory: { getRun: async () => run } });
+        reloaded.api.setSession({ ...reloaded.session, workflow: { getRun: async () => run } });
         const completed = await reloaded.api.completeLifecycleStage("sample", "requirements", "project:tandem");
         assert.equal(completed.lifecycle.currentStage, "sketch");
         assert.equal(completed.processing.action, "generate-sketch");
@@ -409,8 +409,8 @@ test("reload recovers errored batches using processing IDs, receipts, or establi
             if (missing !== "processing") failed.factoryRuns![0].runId = null;
             if (missing !== "receipt") failed.processing.runId = null;
             await f.h.api.persistState(failed);
-            reloaded.api.setSession({ ...reloaded.session, factory: { ...interrupted.sdk,
-                listRuns: async () => [{ runId: "interrupted-run", factoryName: failed.processing.factoryName,
+            reloaded.api.setSession({ ...reloaded.session, workflow: { ...interrupted.sdk,
+                listRuns: async () => [{ runId: "interrupted-run", workflowName: failed.processing.factoryName,
                     createdAt: Date.parse(failed.processing.requestedAt) }],
                 getRunProgress: async () => ({ records: [{ text: `Request ${failed.processing.requestId}; recovered` }] }),
             } });
@@ -439,7 +439,7 @@ test("reload monitors an errored active batch outside the claim, and records ter
             let finish!: (run: any) => void;
             let monitoring!: () => void;
             const started = new Promise<void>((resolve) => { monitoring = resolve; });
-            reloaded.api.setSession({ ...reloaded.session, factory: { ...interrupted.sdk,
+            reloaded.api.setSession({ ...reloaded.session, workflow: { ...interrupted.sdk,
                 getRun: async () => ({ runId: "interrupted-run", status: "running" }),
                 waitForRun: async () => new Promise((resolve) => { finish = resolve; monitoring(); }),
             } });
@@ -500,7 +500,7 @@ test("reload ignores late completion after the frozen inputs or request identity
             let finish!: (run: any) => void;
             let monitoring!: () => void;
             const started = new Promise<void>((resolve) => { monitoring = resolve; });
-            reloaded.api.setSession({ ...reloaded.session, factory: {
+            reloaded.api.setSession({ ...reloaded.session, workflow: {
                 getRun: async () => ({ runId: "interrupted-run", status: "running" }),
                 waitForRun: async () => new Promise((resolve) => { finish = resolve; monitoring(); }),
             } });

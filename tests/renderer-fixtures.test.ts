@@ -13,7 +13,7 @@ export const disabled = (h: Harness, id: string) => h.get<HTMLButtonElement>(id)
 export const hidden = (h: Harness, id: string) => !h.document.getElementById(id) || h.get(id).hidden;
 export const current = (h: Harness) => h.store.getSnapshot().state;
 export const submit = (h: Harness, id: string) => h.fire(h.get(id), "submit");
-export const browse = (h: Harness, stage: string) => h.click(h.document.querySelector(`[data-stage-id="${stage}"]`)!);
+export const browse = (h: Harness, stage: string) => h.fire(h.document.querySelector(`[data-stage-id="${stage}"]`)!, "mousedown", { button: 0 });
 export async function waitFor(h: Harness, predicate: () => boolean) {
     for (let attempt = 0; attempt < 50; attempt++) {
         await h.flush();

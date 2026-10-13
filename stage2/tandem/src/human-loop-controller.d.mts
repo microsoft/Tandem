@@ -18,26 +18,42 @@ export interface HumanLoopController {
   observe: NonNullable<SessionConfig["onEvent"]>;
   attach(session: CopilotSession): Promise<void>;
   start(options?: { retry?: boolean }): Promise<HumanLoopRuntimeHandle>;
-  openView(id: string, options?: { surface?: "browser" }): Promise<{ url: string; close(): Promise<void> }>;
+  openView(id: string, options?: { surface?: "browser"; projectHost?: { origin: string; channel: string } }): Promise<{ url: string; close(): Promise<void> }>;
   closeView(id: string): Promise<void>;
   assertQuiet(): Promise<void>;
+  validateReasoningEffort(effort: string): Promise<void>;
+  selectReasoningEffort(effort: string): Promise<DevelopmentEffortStatus>;
+  reasoningEffortStatus(): Promise<DevelopmentEffortStatus>;
   close(): Promise<{ status: string; warnings: string[] }>;
   status(): Promise<{ installation: { status: string; reason?: string | null }; workflow: { status: string; reason?: string | null } | null }>;
   reportError(error: Error): void;
   installation?: { runtime: HumanLoopRuntimeHandle | null; configuration: { owner: HumanLoopState["owner"] } | null };
 }
+export interface DevelopmentEffortStatus {
+  desired: string | null;
+  actual: string | null;
+  model: string | null;
+  supported: string[];
+  status: string;
+  error: string | null;
+}
 export function createHumanLoopController(options: {
   workspacePath: string;
   sdkModulePath: string;
+  privateExtensionPath?: string;
   cliPath?: string;
   nodePath?: string;
   runtimeRoot?: string;
   mainPermissionHandler?: NonNullable<SessionConfig["onPermissionRequest"]>;
   withRequestAdmission?<T>(operation: () => Promise<T>): Promise<T>;
+  withEmptyRepairExclusion?<T>(operation: () => Promise<T>): Promise<T>;
+  inspectRepairAdmissions?(): Promise<unknown>;
   beforeStart?(): Promise<void>;
+  projectEffortControl?: boolean;
   contextProvider?(input: { role: HumanRole; request: RequestRecord; cycle: WorkCycle | null; state: HumanLoopState }): Promise<unknown>;
   onHandoff?(handoff: Handoff): Promise<void>;
 }): HumanLoopController;
 export function createDurablePrivateSession(
   client: import("@github/copilot-sdk").CopilotClient, configuration: SessionConfig,
+  onCreated?: (sessionId: string) => Promise<void>,
 ): Promise<CopilotSession>;

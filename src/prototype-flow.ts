@@ -17,7 +17,7 @@ export interface PrototypeCheckpoint {
     focus: string;
     requestedAt: string;
     completedAt: string | null;
-    timeoutSeconds: number;
+    timeoutSeconds: number | null;
     sourceFingerprint?: string | null;
     sketchRevisionId?: string | null;
     sketchInputHash?: string | null;
@@ -31,10 +31,9 @@ export interface PrototypeFlow {
     pendingCheckpointId: string | null;
     activeCheckpointId: string | null;
     visualRequested: boolean;
-    budget: { limitSeconds: number; usedSeconds: number };
+    budget: { limitSeconds: number | null; usedSeconds: number };
 }
 
-export const PROTOTYPE_WORK_WINDOW_SECONDS = 900;
 export const prototypeMilestoneLabels: Record<PrototypeMilestone, string> = {
     structure: "Structure",
     interaction: "Interaction",
@@ -45,7 +44,7 @@ export function newPrototypeFlow(): PrototypeFlow {
     return {
         version: 1, checkpoints: [], displayedCheckpointId: null,
         pendingCheckpointId: null, activeCheckpointId: null, visualRequested: false,
-        budget: { limitSeconds: PROTOTYPE_WORK_WINDOW_SECONDS, usedSeconds: 0 },
+        budget: { limitSeconds: null, usedSeconds: 0 },
     };
 }
 
@@ -53,6 +52,8 @@ const record = (value: unknown): value is Record<string, unknown> =>
     value !== null && typeof value === "object" && !Array.isArray(value);
 const nullableString = (value: unknown): value is string | null =>
     value === null || typeof value === "string";
+const historicalSeconds = (value: unknown): value is number | null =>
+    value === null || typeof value === "number" && Number.isFinite(value) && value >= 0;
 
 export function readPrototypeFlow(value: unknown): PrototypeFlow | null {
     if (value == null) return null;
@@ -61,10 +62,9 @@ export function readPrototypeFlow(value: unknown): PrototypeFlow | null {
     if (!record(value) || value.version !== 1 || !Array.isArray(value.checkpoints) ||
         !nullableString(value.displayedCheckpointId) || !nullableString(value.pendingCheckpointId) ||
         !nullableString(value.activeCheckpointId) || typeof value.visualRequested !== "boolean" ||
-        !record(value.budget) || typeof value.budget.limitSeconds !== "number" ||
+        !record(value.budget) || !historicalSeconds(value.budget.limitSeconds) ||
         typeof value.budget.usedSeconds !== "number" ||
-        !Number.isFinite(value.budget.limitSeconds) || !Number.isFinite(value.budget.usedSeconds) ||
-        value.budget.usedSeconds < 0 || value.budget.limitSeconds < value.budget.usedSeconds) throw invalid();
+        !Number.isFinite(value.budget.usedSeconds) || value.budget.usedSeconds < 0) throw invalid();
     const checkpoints = value.checkpoints.map((entry): PrototypeCheckpoint => {
         if (!record(entry) || typeof entry.id !== "string" || !entry.id ||
             typeof entry.requestId !== "string" || typeof entry.generation !== "string" ||
@@ -75,7 +75,7 @@ export function readPrototypeFlow(value: unknown): PrototypeFlow | null {
             typeof entry.workspacePrepared !== "boolean" || !nullableString(entry.previewUrl) ||
             typeof entry.summary !== "string" || typeof entry.focus !== "string" ||
             typeof entry.requestedAt !== "string" || !nullableString(entry.completedAt) ||
-            typeof entry.timeoutSeconds !== "number" || !Number.isFinite(entry.timeoutSeconds) ||
+            !historicalSeconds(entry.timeoutSeconds) ||
             (entry.sourceFingerprint !== undefined && !nullableString(entry.sourceFingerprint)) ||
             (entry.sketchRevisionId !== undefined && !nullableString(entry.sketchRevisionId)) ||
             (entry.sketchInputHash !== undefined && !nullableString(entry.sketchInputHash)) ||
@@ -86,7 +86,7 @@ export function readPrototypeFlow(value: unknown): PrototypeFlow | null {
                 entry.sketchImagesRead.length > 8 || entry.sketchImagesRead.some((id) => typeof id !== "string") ||
                 new Set(entry.sketchImagesRead).size !== entry.sketchImagesRead.length)) ||
             (!entry.sketchRevisionId && Array.isArray(entry.sketchImagesRead) && entry.sketchImagesRead.length > 0) ||
-            entry.timeoutSeconds < 0 || entry.timeoutSeconds > 300) throw invalid();
+            (entry.timeoutSeconds !== null && (entry.timeoutSeconds < 0 || entry.timeoutSeconds > 300))) throw invalid();
         return {
             id: entry.id, requestId: entry.requestId, generation: entry.generation,
             milestone: entry.milestone,
@@ -109,6 +109,9 @@ export function readPrototypeFlow(value: unknown): PrototypeFlow | null {
         };
     });
     if (new Set(checkpoints.map((item) => item.id)).size !== checkpoints.length) throw invalid();
+    // Legacy capped accounting remains readable; new unbounded work can exceed its retained historical limit.
+    if (value.budget.limitSeconds !== null && value.budget.usedSeconds > value.budget.limitSeconds
+        && !checkpoints.some(item => item.timeoutSeconds === null)) throw invalid();
     const ids = [value.displayedCheckpointId, value.pendingCheckpointId, value.activeCheckpointId,
         ...checkpoints.flatMap((item) => [item.baseCheckpointId, item.sourceCheckpointId])];
     if (ids.some((id) => id !== null && !checkpoints.some((item) => item.id === id))) throw invalid();
@@ -155,12 +158,9 @@ export function nextPrototypeMilestone(flow: PrototypeFlow): PrototypeMilestone 
 
 export function reservePrototypeCheckpoint(flow: PrototypeFlow, checkpoint: Omit<PrototypeCheckpoint, "timeoutSeconds">): PrototypeFlow {
     if (flow.activeCheckpointId || flow.pendingCheckpointId) throw new Error("Apply the prepared update or finish active work before building another checkpoint.");
-    const timeoutSeconds = Math.min(300, Math.floor(flow.budget.limitSeconds - flow.budget.usedSeconds));
-    if (timeoutSeconds < 1) throw new Error("The prototype work budget is exhausted. Explicitly extend the work window to continue.");
     return {
         ...flow, activeCheckpointId: checkpoint.id,
-        checkpoints: [...flow.checkpoints, { ...checkpoint, timeoutSeconds }],
-        budget: { ...flow.budget, usedSeconds: flow.budget.usedSeconds + timeoutSeconds },
+        checkpoints: [...flow.checkpoints, { ...checkpoint, timeoutSeconds: null }],
     };
 }
 
@@ -181,7 +181,8 @@ export function settlePrototypeCheckpoint(flow: PrototypeFlow, id: string,
         pendingCheckpointId: ready && flow.displayedCheckpointId ? id : flow.pendingCheckpointId,
         budget: {
             ...flow.budget,
-            usedSeconds: flow.budget.usedSeconds - checkpoint.timeoutSeconds + Math.min(checkpoint.timeoutSeconds, elapsed),
+            usedSeconds: checkpoint.timeoutSeconds === null ? flow.budget.usedSeconds + elapsed
+                : flow.budget.usedSeconds - checkpoint.timeoutSeconds + Math.min(checkpoint.timeoutSeconds, elapsed),
         },
     };
 }

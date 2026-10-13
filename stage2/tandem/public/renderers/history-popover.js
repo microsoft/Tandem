@@ -38,6 +38,7 @@ export function createHistoryPopover(history) {
   };
   function position() {
     if (!anchor) return;
+    if (document.querySelector('.canvas-settings[open], dialog[open]')) { hide(); return; }
     const box = anchor.getBoundingClientRect(), rail = history.getBoundingClientRect();
     if (box.bottom < rail.top || box.top > rail.bottom) { hide(); return; }
     panel.style.width = box.left >= 266 ? `${Math.min(360, box.left - 16)}px` : '';
@@ -55,6 +56,7 @@ export function createHistoryPopover(history) {
     }
   }
   function show(button, transition) {
+    if (document.querySelector('.canvas-settings[open], dialog[open]')) { hide(); return; }
     cancel();
     anchor?.removeAttribute('aria-describedby');
     anchor = button;
@@ -79,6 +81,7 @@ export function createHistoryPopover(history) {
   }
   panel.addEventListener('pointerenter', cancel);
   panel.addEventListener('pointerleave', leave);
+  document.addEventListener('focusin', event => { if (!history.contains(event.target) && !panel.contains(event.target)) hide(); });
   document.addEventListener('keydown', event => { if (event.key === 'Escape' && !panel.hidden) hide(); });
   window.addEventListener('resize', position);
   document.addEventListener('scroll', event => { if (!panel.contains(event.target)) position(); }, true);

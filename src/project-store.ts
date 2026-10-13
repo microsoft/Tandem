@@ -200,7 +200,7 @@ export class ProjectStore<T extends StoredProject> {
         });
     }
 
-    async save(state: T): Promise<void> {
+    async save(state: T, beforeCommit?: () => void): Promise<void> {
         return this.transaction(state.prototypeId, async () => {
             const transaction = this.transactions.getStore()!;
             const stored = await readJsonFile(this.statePath(state.prototypeId));
@@ -209,7 +209,10 @@ export class ProjectStore<T extends StoredProject> {
                 throw new ProjectStoreError("state_conflict", "This update is based on an older project revision. Reload and retry.");
             }
             const next = { ...state, revision: revision + 1 };
-            await writeJsonAtomically(this.statePath(state.prototypeId), next, transaction.assertOwned);
+            await writeJsonAtomically(this.statePath(state.prototypeId), next, () => {
+                transaction.assertOwned();
+                beforeCommit?.();
+            });
             state.revision = next.revision;
         });
     }

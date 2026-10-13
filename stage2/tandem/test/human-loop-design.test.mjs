@@ -117,6 +117,7 @@ test("Designer answers retain Router intent authority without automatically admi
   result.outcome.questions = [{ id: "content", context: "Missing business details.",
     question: "How should missing details be handled when implemented?", whyItMatters: "Draft accuracy.",
     importance: "advisory", allowFreeform: true,
+    unanswered: { action: "keep-current-design", explanation: "Keep the published Design until the user requests a change." },
     options: [{ id: "placeholder", label: "Build with clear placeholders", implication: "Draft before launch." }] }];
   await f.finish(f.packet, result);
   await f.dispatch("host", "apply-result", { resultId: result.resultId, designPublication: null });

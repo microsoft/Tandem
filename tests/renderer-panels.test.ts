@@ -82,7 +82,8 @@ test("artifact navigation has one empty state and only populated stage groups", 
     ] });
     assert.equal(h.get("artifact-list").querySelectorAll(".artifact-stage-group").length, 2);
     assert.match(text(h, "artifact-list"), /stale/);
-    await h.click("context-toggle"); await h.click(h.get("artifact-list").querySelector('[data-artifact-id="contract"]')!);
+    await h.click("context-toggle"); await h.click("artifact-group-discovery-design");
+    await h.click(h.get("artifact-list").querySelector('[data-artifact-id="contract"]')!);
     assert.equal(h.get("studio-workspace").dataset.contextOpen, "false");
     assert.equal(text(h, "artifact-heading"), "UI contract");
     assert.equal(hidden(h, "content-panel"), false); assert.equal(h.requests.length, 0);
@@ -120,7 +121,7 @@ test("Preparation runtime stays ordered and advances automatically to Requiremen
     const value = state("prepare"); value.preparation.status = "running";
     value.preparation.workItems = [{ id: "context", title: "Inspect context", status: "running", detail: "Read guidance" }];
     const h = await setup(t, value); h.render(value, 10);
-    assert.equal(h.get("stage-list").querySelectorAll("button").length, 5);
+    assert.equal(h.get("project-contents").querySelectorAll("[data-stage-id]").length, 5);
     assert.equal(text(h, "current-stage-index"), "1");
     assert.equal(disabled(h, "design-tree-tab"), true);
     assert.equal(disabled(h, "complete-stage"), true);

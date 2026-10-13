@@ -49,15 +49,17 @@ function stageLabel(stage: HistoricalStageId): string {
   return lifecycleStages.find((candidate) => candidate.id === stage)?.label || stage;
 }
 
-function ProcessSection({ name, label, children, outer = false }: {
+function ProcessSection({ name, label, children, outer = false, expanded = false }: {
   name: string;
   label: ReactNode;
   children: ReactNode;
   outer?: boolean;
+  expanded?: boolean;
 }) {
   const { state } = useUi();
   const [open, setOpen] = useDraft(
     JSON.stringify([state.prototypeId, state.generation, "process-disclosure", name]), false);
+  if (expanded) return <section className="section process-controls">{children}</section>;
   return <Collapsible.Root open={open} onOpenChange={setOpen} asChild>
     <section className={outer ? "section process-controls" : "process-section"}>
       <Collapsible.Trigger asChild>
@@ -133,7 +135,7 @@ function ToolEvidence() {
   </div>;
 }
 
-export function ProcessPanel() {
+export function ProcessPanel({ development = false, expanded = false }: { development?: boolean; expanded?: boolean } = {}) {
   const ui = useUi();
   const { state, pending, post, confirm, guidance } = ui;
   const scope = JSON.stringify([state.prototypeId, state.generation, "process"]);
@@ -248,10 +250,10 @@ export function ProcessPanel() {
   const status = action.error || (action.busy ? "Processing..."
     : message && state.revision <= message.revision ? message.text : process?.message || "");
 
-  return <ProcessSection name="root" label="Handoffs & process" outer>
+  return <ProcessSection name="root" label="Handoffs & process" outer expanded={expanded}>
     <p id="handoff-help" className="visually-hidden">Finish a stage, then accept its immutable handoff. Exports never commit or publish.</p>
     {!writable && <p id="process-readonly-help" className="visually-hidden" role="status">{guidance("change process settings or handoffs")}</p>}
-    {state.lifecycle.currentStage === "development" && <button id="capture-development" className="complete-stage"
+    {(development || state.lifecycle.currentStage === "development") && <button id="capture-development" className="complete-stage"
       type="button" disabled={blocked} onClick={() => perform({ action: "capture-development" })}>
       <FileText size={14} aria-hidden="true" /> Capture Development outcome for review
     </button>}

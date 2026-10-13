@@ -5,6 +5,7 @@ import { choice, integer, list, object, requireCondition, sameSet, strings, text
 import {
   HUMAN_LOOP_SCHEMA, parseRequest, bindQuestionOptions, parseRoleResult, parseTaskBinding, parseOwnedEnd, parseInternalPlan,
   digest, parseSnapshotRef, parseDesignBinding, parseProgress, parseRoleInputEnvelope, parseNativeUserEvidence,
+  advisoryContinuationIssue, requireDeclaredAdvisoryContinuations,
   type Authority, type HumanRequest, type TaskBinding, type RoleResult, type OwnedEnd, type InternalPlan,
   type InternalAcceptance, type DesignBinding, type SnapshotRef, type QuestionRecord, type QuestionDraft,
   type QuestionSource, type TaskProgress, type QuestionResolution, type RoleInput, type NativeUserEvidence,
@@ -15,6 +16,8 @@ export interface HumanLoopOwner {
   policy: PolicySnapshot;
 }
 export interface RequestRecord extends HumanRequest {
+  /** Queue pickup, not native execution; reconstructed by ledger replay. */
+  queueAdmitted?: true;
   status: 'waiting' | 'active' | 'handoff-pending' | 'completed' | 'discarded' | 'stopped' | 'rejected' | 'retired' | 'cancelled';
   stopId: string | null; route: RoleResult | null; rejectionReason: string | null;
   blockingAnswerRefs: QuestionResolution[];
@@ -88,7 +91,7 @@ export function requireImplementationConfirmation(state: HumanLoopState): void {
   requireCondition(confirmation?.status === 'approved' && same(confirmation.design, state.design)
     && same(confirmation.requestIds, state.activeBatchRequestIds),
   'Explicit user confirmation for this request, route and current Design is required before implementation.');
-  requireCondition(!state.questions.some(q => q.state === 'open' && q.blockingActive),
+  requireCondition(!state.questions.some(q => questionBlocksNewWork(state, q)),
     'Resolve the outstanding Design questions before starting implementation.');
 }
 export interface HumanStop {
@@ -171,8 +174,12 @@ export function isStaleAnswer(state: HumanLoopState, request: RequestRecord): bo
 export function isPriorityAnswer(request: RequestRecord): boolean {
   return !request.questionGatesReleased && request.blockingAnswerRefs.length > 0;
 }
-export function hasQuestionBlockers(state: HumanLoopState): boolean {
-  return state.questions.some(q => q.state === 'open' && q.blockingActive)
+export function questionBlocksNewWork(state: HumanLoopState, question: QuestionRecord, enforceContinuations = true): boolean {
+  return question.state === 'open' && (question.blockingActive
+    || enforceContinuations && advisoryContinuationIssue(question, state.design) !== null);
+}
+export function hasQuestionBlockers(state: HumanLoopState, enforceContinuations = true): boolean {
+  return state.questions.some(q => questionBlocksNewWork(state, q, enforceContinuations))
     || state.requests.some(r => isPriorityAnswer(r) && ['waiting', 'active', 'handoff-pending'].includes(r.status));
 }
 export function requireHumanQuiescence(state: HumanLoopState): void {
@@ -185,15 +192,15 @@ export function humanExecutionQueue(state: HumanLoopState): RequestRecord[] {
   const waiting = state.requests.filter(({ status }) => status === 'waiting');
   return [...waiting.filter(isPriorityAnswer), ...waiting.filter(request => !isPriorityAnswer(request))];
 }
-export function nextHumanRequest(state: HumanLoopState): RequestRecord | null {
+export function nextHumanRequest(state: HumanLoopState, enforceContinuations = true): RequestRecord | null {
   if (state.activeRequestId || state.activeTask || state.stop || state.uncertainty) return null;
   const first = humanExecutionQueue(state).find((request) => !isStaleAnswer(state, request));
   if (!first) return null;
-  if (hasQuestionBlockers(state) && !isPriorityAnswer(first)) return null;
+  if (hasQuestionBlockers(state, enforceContinuations) && !isPriorityAnswer(first)) return null;
   return first;
 }
-export function nextHumanBatch(state: HumanLoopState): RequestRecord[] {
-  const first = nextHumanRequest(state);
+export function nextHumanBatch(state: HumanLoopState, enforceContinuations = true): RequestRecord[] {
+  const first = nextHumanRequest(state, enforceContinuations);
   if (!first) return [];
   if (first.answers) return [first];
   const queue = humanExecutionQueue(state), start = queue.findIndex(({ id }) => id === first.id);
@@ -358,9 +365,12 @@ const authorities: Record<string, Authority> = {
   'request-implementation-confirmation': 'host', 'decide-implementation-confirmation': 'user',
 };
 
-export function transitionHumanLoop(current: HumanLoopState, authority: Authority, value: unknown): HumanLoopState {
+export function transitionHumanLoop(current: HumanLoopState, authority: Authority, value: unknown, replay = false): HumanLoopState {
   requireCondition(current.schemaVersion === HUMAN_LOOP_SCHEMA, 'Incompatible workflow state; old runs cannot be silently converted.');
-  const command = object(value, ['id', 'expectedRevision', 'type', 'data']);
+  const command = object(value, ['id', 'expectedRevision', 'type', 'data',
+    ...(Object.hasOwn(value ?? {}, 'questionPolicy') ? ['questionPolicy'] : [])]);
+  if (Object.hasOwn(command, 'questionPolicy')) requireCondition(command.questionPolicy === 'explicit-continuation/v1', 'Unknown question continuation policy.');
+  const enforceContinuations = !replay || command.questionPolicy === 'explicit-continuation/v1';
   const id = text(command.id), type = text(command.type);
   requireCondition(authorities[type] === authority, 'This actor cannot produce the requested lifecycle fact.');
   const signature = policyHash({ authority, command });
@@ -368,6 +378,12 @@ export function transitionHumanLoop(current: HumanLoopState, authority: Authorit
   if (previous) { requireCondition(previous.signature === signature, 'Conflicting lifecycle command identity.'); return current; }
   requireCondition(integer(command.expectedRevision) === current.revision, 'Stale lifecycle revision.');
   requireCondition(!current.uncertainty || ['receive-request', 'request-stop', 'record-native-stop', 'release-question-gates', 'recover'].includes(type), 'Execution is uncertain; no continuation or blind resend is permitted.');
+  if (enforceContinuations && (['start-cycle', 'resume-cycle', 'prepare-replan', 'request-implementation-confirmation'].includes(type)
+    || type === 'decide-implementation-confirmation' && (command.data as { decision?: string }).decision === 'approved'
+    || type === 'start-role' && ['planner', 'implementer'].includes((command.data as { role: string }).role))) {
+    requireCondition(!current.questions.some(q => q.state === 'open' && advisoryContinuationIssue(q, current.design) !== null),
+      'Clarify advisory questions with missing or stale unanswered continuations before new dependent work. Answer through the original question form; no default or consent is inferred.');
+  }
   const state = structuredClone(current);
   switch (type) {
     case 'recover': {
@@ -446,8 +462,9 @@ export function transitionHumanLoop(current: HumanLoopState, authority: Authorit
       const request = bindQuestionOptions(parseRequest(command.data), state.questions);
       const previous = state.requests.find(({ id }) => id === request.id);
       if (previous) {
-        const { id, message, receivedAt, answers, attachments } = previous;
-        requireCondition(same(request, { id, message, receivedAt, answers, ...(attachments ? { attachments } : {}) }),
+        const { id, message, receivedAt, answers, attachments, roleHint } = previous;
+        requireCondition(same(request, { id, message, receivedAt, answers, ...(attachments ? { attachments } : {}),
+          ...(roleHint ? { roleHint } : {}) }),
           'Conflicting retry of a saved user request.');
         break;
       }
@@ -462,7 +479,7 @@ export function transitionHumanLoop(current: HumanLoopState, authority: Authorit
           'Only a published question accepts answers.');
         requireCondition(answer.kind === 'freeform' ? question.allowFreeform : question.options.some(({ id }) => id === answer.value),
           'Answer is not permitted by the bound question.');
-        if (question.blockingActive) blockingAnswerRefs.push({ questionId: question.id, sourceResultId: question.source.resultId });
+        if (questionBlocksNewWork(state, question, enforceContinuations)) blockingAnswerRefs.push({ questionId: question.id, sourceResultId: question.source.resultId });
         question.state = 'answered'; question.answerRequestId = request.id;
       }
       state.requests.push({ ...request, status: 'waiting', stopId: null, route: null, rejectionReason: null,
@@ -512,11 +529,11 @@ export function transitionHumanLoop(current: HumanLoopState, authority: Authorit
     case 'admit-request': {
       const data = object(command.data, ['requestId']);
       requireCondition(!state.stop && !state.activeTask && state.activeRequestId === null, 'A handoff, internal work or Stop still owns the queue.');
-      const next = nextHumanRequest(state);
+      const next = nextHumanRequest(state, enforceContinuations);
       requireCondition(next && next.id === data.requestId,
         'Blocking question-UI answers have priority; the normal lane waits for prerequisites and their processing. Each queue preserves durable FIFO order.');
-      const batch = nextHumanBatch(state);
-      for (const request of batch) request.status = 'active';
+      const batch = nextHumanBatch(state, enforceContinuations);
+      for (const request of batch) { request.status = 'active'; request.queueAdmitted = true; }
       state.activeRequestId = next.id; state.activeBatchRequestIds = batch.map(({ id }) => id); break;
     }
     case 'start-cycle': {
@@ -682,6 +699,7 @@ export function transitionHumanLoop(current: HumanLoopState, authority: Authorit
         ? ['queued', 'running'].includes(task.condition) && !task.stagedResult
         : task.condition === 'running' && task.interactionId), 'Result window is not active.');
       const result = parseRoleResult(task.binding.role, command.data);
+      if (enforceContinuations && 'questions' in result.outcome) requireDeclaredAdvisoryContinuations(result.outcome.questions);
       requireCondition(!state.executions.some(({ result: previous }) => previous?.resultId === result.resultId), 'Result identity was reused.');
       validateResult(state, task, result);
       if (type === 'stage-result') task.stagedResult = result;

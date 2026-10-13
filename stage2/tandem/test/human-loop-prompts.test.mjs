@@ -20,6 +20,7 @@ const terminalInstruction = "Structured progress is not completion. Submit the e
 const oldTerminalInstruction = "Structured progress is not completion. Submit the exact role result; the Host ends the role after its matching tool completes.";
 const nativeRoleInstruction = "Follow this role's responsibilities. Normal Copilot permissions still apply. Reviewer and its scoped children are read-only; other native tools retain their ordinary contracts. Tandem domain tools retain role-specific contracts. Internal plan acceptance is Host provenance, not user approval.";
 const oldRoleInstruction = "Use only this role's permitted tools. Internal plan acceptance is Host provenance, not user approval.";
+const progressInstruction = humanLoopPrompts.wrapper.find(line => line.startsWith("During longer work,"));
 const currentPrompts = () => structuredClone(humanLoopPrompts);
 const runtime = await readFile(new URL("../src/human-loop-runtime.mjs", import.meta.url), "utf8");
 const transport = await readFile(new URL("../src/human-loop-transport.mjs", import.meta.url), "utf8");
@@ -29,7 +30,7 @@ test("format and answer-authorization guidance preserve unrelated role instructi
   const { cooperativeStop, roles, reviewScope, designRules, missingResultRecovery, ...unchanged } = humanLoopPrompts;
   const { roles: oldRoles, designRules: oldDesignRules, ...oldUnchanged } = baseline.prompts;
   assert.deepEqual({ ...unchanged, shared: unchanged.shared.filter(line => !line.startsWith("recordedQuestionAnswers")).slice(0, oldUnchanged.shared.length),
-    wrapper: unchanged.wrapper.filter((line) => line !== recoveryContext)
+    wrapper: unchanged.wrapper.filter((line) => line !== recoveryContext && line !== progressInstruction)
     .map(line => line === terminalInstruction ? oldTerminalInstruction
       : line === nativeRoleInstruction ? oldRoleInstruction
         : line.startsWith("Keep command permissions separate.") ? "Keep command permissions separate. Do not invent the next user request, delegate, or alter Host state." : line) }, oldUnchanged);
@@ -58,6 +59,30 @@ test("format and answer-authorization guidance preserve unrelated role instructi
   assert.equal(generationContract.rules, humanLoopPrompts.sketchRules);
   for (const rule of designRules) assert.ok(designGenerationContract.rules.includes(rule));
   assert.deepEqual(cases.map(({ name }) => name), baseline.cases.map(({ name }) => name));
+});
+
+test("every role receives the explicit advisory continuation and consent distinction", () => {
+  const guidance = humanLoopPrompts.shared.find(line => line.includes("Every new advisory question"));
+  assert.match(guidance, /unanswered:.*keep-current-design.*specific safe behavior/);
+  assert.match(guidance, /not a selected option, user answer, acceptance or implementation\/permission approval/);
+  assert.match(guidance, /Recommended option wording alone is not a default/);
+  assert.match(guidance, /irreversible action.*security\/data-loss.*blocking/);
+  const legacy = humanLoopPrompts.shared.find(line => line.startsWith("Legacy advisory"));
+  assert.match(legacy, /original history.*explicit clarification.*Never cancel active work/);
+  for (const { name, packet } of cases) {
+    const prompt = evaluateWrapper(transport, packet, humanLoopPrompts);
+    assert.ok(prompt.includes(guidance), name);
+    assert.ok(prompt.includes(legacy), name);
+  }
+});
+
+test("all roles receive natural public milestone guidance without changing result authority", () => {
+  assert.match(progressInstruction, /short, concrete user-facing progress sentence.*meaningful milestones/);
+  assert.match(progressInstruction, /Do not expose private reasoning, prompts or credentials/);
+  assert.match(progressInstruction, /not completion or verification evidence/);
+  assert.match(progressInstruction, /Keep progress separate from terminal tool arguments/);
+  for (const { name, packet } of cases) assert.ok(evaluateWrapper(transport, packet, humanLoopPrompts).includes(progressInstruction), name);
+  assert.ok(humanLoopPrompts.wrapper.includes(terminalInstruction));
 });
 
 test("every effective role receives shared plain-language guidance without changing machine contracts", () => {
@@ -117,7 +142,7 @@ test("effective Reviewer packets have optional bounded scopes and exactly two re
     /General bug hunting, test-coverage audits and correctness verification are not Review responsibilities/,
     /Three is a concurrency ceiling, not a mandatory split or total-task limit.*small or cohesive work directly/,
     /fewer than three.*every child applies BOTH goals/,
-    /batches of up to THREE unsettled tasks.*3\+3\+1.*Do not divide equally by file count/,
+    /tandem_collect_review_scopes.*awaits the native tandem-review-scopes workflow.*native scheduling runs at most THREE workers concurrently.*no total-three cap.*Do not divide equally by file count/,
     /do not poll, rediscover agents, relaunch failed scopes, or repeat every child review sequentially/,
     /taking over platform\/other actors' responsibilities/,
     /Safe, robust and future-proof are not blanket authorization/,

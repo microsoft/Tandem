@@ -21,6 +21,6 @@ export function replayHumanLoopLedger(value: unknown): { ledger: HumanLoopLedger
       command: structuredClone(event.command) };
   });
   let state = createHumanLoop(owner, initialDesign);
-  for (const event of events) state = transitionHumanLoop(state, event.authority, event.command);
+  for (const event of events) state = transitionHumanLoop(state, event.authority, event.command, true);
   return { ledger: { schemaVersion: 'human-loop-ledger/v2', owner, initialDesign, events }, state };
 }

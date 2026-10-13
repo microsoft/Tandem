@@ -27,6 +27,7 @@ async function compile() {
       loader: "tsx", resolveDir: fileURLToPath(new URL("../../src/renderer/", import.meta.url)),
     },
     bundle: true, write: false, platform: "browser", format: "iife", globalName: "TandemTest",
+    loader: { ".png": "dataurl" },
     target: "es2022", logLevel: "silent", define: { "process.env.NODE_ENV": '"development"' },
     plugins: [{
       name: "renderer-test-services",
@@ -49,7 +50,7 @@ export function response(body: unknown, status = 200): Response {
   return { ok: status < 400, status, json: async () => body } as Response;
 }
 
-export async function reactHarness(t?: TestContext, headerHost?: { origin: string; channel: string }) {
+export async function reactHarness(t?: TestContext, headerHost?: { origin: string; channel: string }, startingPath: "preparation" | "development" | null = "preparation") {
   const hash = headerHost ? "#" + new URLSearchParams({ "tandem-host": headerHost.origin, "header-channel": headerHost.channel }) : "";
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
     url: "http://127.0.0.1:4567/" + hash, runScripts: "outside-only", pretendToBeVisual: true,
@@ -57,6 +58,11 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
   const window = dom.window;
   const document = window.document;
   const requests: Request[] = [];
+  const presentationRequests: string[] = [];
+  const entryRequests: string[] = [];
+  const previewRequests: RequestInit[] = [];
+  let previewFetcher: (() => Promise<Response>) | null = null;
+  let entryOpened = false;
   const errors: string[] = [];
   const pngExports: { width: number; height: number; source: string }[] = [];
   const headerMessages: Record<string, any>[] = [];
@@ -78,6 +84,36 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
     PointerEvent: window.MouseEvent,
     fetch: async (input: string | URL | Request, options: RequestInit = {}) => {
       const path = String(input);
+      if (path === "/api/project-entry") {
+        entryRequests.push(path + ":" + (options.method || "GET"));
+        if (options.method === "POST") {
+          const choice = JSON.parse(String(options.body)).startingPath;
+          if (startingPath && choice !== startingPath) return response({ error: "Starting path already chosen." }, 409);
+          startingPath = choice;
+        }
+        return response({ projectPath: "C:\\fixture-project", startingPath });
+      }
+      if (path === "/api/project-entry/open") {
+        entryRequests.push(path);
+        const developmentStarted = !entryOpened && startingPath === "development";
+        entryOpened = true;
+        return response({ developmentStarted, developmentContext: startingPath === "development" });
+      }
+      if (path === "/api/development/view") {
+        presentationRequests.push(path);
+        return response({ url: "http://127.0.0.1:8765/", channel: "fixture-project" });
+      }
+      if (path.startsWith("/api/prototype/preview-status")) {
+        previewRequests.push(options);
+        const target = path.includes("target=pending") ? "pending" : "current";
+        if (previewFetcher && target === "current") return previewFetcher();
+        const current = mounted.store.getSnapshot().state;
+        const checkpoint = current.prototypeFlow?.checkpoints.find((item: { id: string }) =>
+          item.id === (target === "current" ? current.prototypeFlow.displayedCheckpointId : current.prototypeFlow.pendingCheckpointId));
+        return response({ generation: current.generation, checkpointId: checkpoint?.id ?? null,
+          pendingCheckpointId: current.prototypeFlow?.pendingCheckpointId ?? null,
+          url: checkpoint?.previewUrl || current.previewUrl, available: true, reason: "" });
+      }
       requests.push({ path, body: options.body ? JSON.parse(String(options.body)) : null, options });
       return fetcher(path, options);
     },
@@ -125,7 +161,7 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
   };
   const dispose = () => { mounted.dispose(); window.close(); };
   t?.after(dispose);
-  return {
+  return { presentationRequests, entryRequests, previewRequests,
     window, document, requests, errors, pngExports, store: mounted.store, get, click, input, fire, flush, dispose,
     render(value: UiState, sequence?: number) {
       let changed = false;
@@ -141,6 +177,7 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
       await click(button);
     },
     setFetch(handler: typeof fetcher) { fetcher = handler; },
+    setPreviewFetch(handler: () => Promise<Response>) { previewFetcher = handler; },
     headerMessages,
     async sendHeaderMessage(data: Record<string, unknown>, origin = headerHost?.origin || "http://127.0.0.1:9000", source: unknown = parent) {
       const event = new window.MessageEvent("message", { data: { channel: headerHost?.channel, ...data }, origin });

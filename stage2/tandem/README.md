@@ -61,6 +61,52 @@ or adding structured actions. Normal Send still goes through Router; presets
 do not grant permissions or bypass workflow boundaries. Presets are disabled
 during submission and while an exact request is awaiting acknowledgement.
 
+In the private Development composer, start a message with exactly one lowercase
+`@designer` or `@agent`, followed by whitespace and your request, to **suggest**
+a responding role. The inline guidance shows the preference; Router still
+chooses from actual intent and current workflow and may choose a different role.
+There is no recipient selector, persistent preference, or direct dispatch.
+Assistant messages show their actual responding role, not the hint.
+
+The mention must begin at the very first character. Emails, indented code,
+quoted/backtick text, embedded mentions, `@designer:`, uppercase names and other
+`@words` are ordinary text. Only a leading mention has syntax: subsequent
+mentions within the request body are literal text, not additional preferences.
+Consecutive supported leading mentions (including repeats or newline-separated
+ones) and a hint without request text are rejected before submission, keeping
+the draft and any attachment. Add request text even when attaching an image.
+Select/edit/delete mention text normally; Enter, Shift+Enter, Escape and IME
+keep their normal composer behavior. No popup captures those keys.
+
+New submissions bind optional `roleHint` metadata (`human-role-hint/v1`) to the
+original unmodified text, ID, timestamp and attachments. The shared private
+parser validates that metadata at admission; retries cannot add, remove or
+change it. Retained requests and older clients without metadata remain
+unhinted, even if their text starts with `@designer` or `@agent`. Reopen never
+reparses history or replays work. Question-form answers have no composer hints.
+Hints grant no implementation confirmation, permissions or role authority;
+all existing Stop, ownership, read-only and result gates remain unchanged.
+
+Accepted requests that have not been picked up appear in **Queued**, immediately
+above the private Development composer, not as conversation turns. Expand a row
+to inspect its exact text, attachments, question answers or per-message hint.
+Multiple rows keep the runtime's queue order in a bounded scroll area; they do
+not cover the composer or approval controls. Unconfirmed submissions still use
+the existing exact retry/draft path and are not invented as accepted queue rows.
+
+The existing durable `admit-request` transition marks each picked-up batch member
+with derived `queueAdmitted` state. Ledger replay reconstructs this fact for old
+requests without rewriting history. This is runtime pickup, **not evidence of a
+native model turn** or a changed dispatch policy. At pickup the request moves
+once into the normal conversation. Displayed times remain the original receipt
+times; no pickup/model-start timestamp is invented.
+
+Stop, rejection or Recovery before pickup retains the request separately in
+**Not started history**. Requests picked up before Stop/Recovery remain in the
+conversation with their actual disposition. Reconnect reads these same durable
+facts; it never re-enqueues, edits or deletes a request. Both presentations keep
+the original private audit, request IDs and attachment references unchanged.
+
 A valid current-role terminal result is durably saved and applied once without
 waiting for native tools, permissions, children, turn-end, idle or quiescence.
 Role/request/schema validation and actual persistence failures remain enforced.
@@ -86,6 +132,23 @@ interaction or a matching SDK assistant tool-request ID, never chronological
 `parentId` or the most recent role. This additive evidence preserves old ledger
 reads and does not make acknowledgement or event bookkeeping a result gate.
 
+Native `pending_messages.modified` queue hints may arrive without a persisted
+event ID. They are not role input, idle or result evidence and do not settle work;
+queue inspection still uses the native RPC. Session ownership and required
+input/turn/tool identities remain enforced.
+
+Private session creation and same-ID resume disable native tool search so the
+controlled role tools, including terminal results, are preloaded. This avoids
+deferred-discovery steering messages in the Host-owned role conversation; it
+does not whitelist injected system text or relax input/permission checks.
+Foreground-session tool discovery is unchanged.
+
+The private pre-tool hook accepts SDK arguments as either decoded values or a
+single JSON-serialized value; native `apply_patch` retains its raw patch grammar.
+Decoding occurs before the existing role/schema
+and exact-invocation checks; malformed JSON is denied. Permission callbacks and
+tool handlers still validate their actual arguments and require their own grants.
+
 The September 28 isolated native/full-E2E qualification exercised 23 role
 dispatches exactly once with the same attached app through aggregate
 implementation, Review and later work, plus same-ID Close/reopen/reclose.
@@ -97,17 +160,30 @@ establish native behavior. Earlier enqueue-failure receipts remain historical.
 
 Reviewer checks complete agreed-Design conformance and material over-engineering,
 not a third general quality/test audit. It may review directly or use meaningful
-native read-only scopes, at most three concurrently and more total in batches.
+native read-only scopes through the permission-gated `tandem_collect_review_scopes`
+tool. Its native workflow schedules at most three workers concurrently, without
+a total-three cap or a Tandem worker scheduler.
 It first publishes scopes, then reconciles them into one report. Children cannot
 delegate or publish canonical results. Partial/all-child failure and whole-parent
 failure retain implementation/findings, disclose incomplete coverage and release
 the attempt without mandatory successful review retry.
+
+The foreground and private session use the same entrypoint. The private
+registration exposes only the Review workflow and collector, never another
+canvas or runtime. For the composed Node host, bootstrap stages an idempotent
+import shim in the private session's own extension directory, enables native
+extension discovery, and reattaches the exact private hook/permission
+configuration after registration. Mismatched retained shims fail explicitly;
+no user installation or project extension is overwritten.
 
 Native `view`, `glob`, `rg`, `apply_patch` and PowerShell tools execute ordinary
 engineering work. Read-only roles cannot patch files. Native editing requires
 the selected accepted internal Implementer task. Hooks enforce ownership, role,
 read-only and permission boundaries independently of result completion. Eligible
 session grants survive role/child boundaries; Allow once remains once-only.
+Permission cards show the selected request and its Allow once/Deny controls
+before broader set/session actions. Narrow panes wrap long scopes and controls
+and use bounded vertical scrolling; resizing the conversation is not required.
 Historical custom-tool records remain readable, but the old custom file/shell
 execution wrappers and static-preview tool are not registered.
 
@@ -118,6 +194,9 @@ execution wrappers and static-preview tool are not registered.
 existing graceful Stop. Conversation and partial files remain; the stopped
 request is retired and no successor starts automatically. Native interruption
 outcomes and local recording problems are reported separately.
+Concurrent requests share an in-flight Review workflow cancellation. A failed
+native cancellation stays visible; a later explicit Stop may retry it, without
+an automatic retry loop or reporting the first failure as success.
 
 Close attempts native save/shutdown even during work or when local preparation,
 history inspection or persistence fails. Its receipt distinguishes confirmed
@@ -129,6 +208,9 @@ After native shutdown, command cleanup drains local journal writes and closes
 local storage before releasing its writer. It does not query the closed native
 task registry or require historical shell records to appear settled. Real local
 cleanup errors remain visible warnings.
+`assertSettled` and `cleanCloseDigest` still reject live attached tasks when
+settlement evidence is requested. Those inspections do not gate storage
+`close()`, and closing storage does not invent a process exit or completion.
 
 Cold reopening validates retained Conversation, attachments, Design and native
 history, and resumes the same private identity with `continuePendingWork: false`

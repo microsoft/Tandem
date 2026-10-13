@@ -88,6 +88,53 @@ async function retainedFiles(root: string): Promise<Record<string, Buffer>> {
     return result;
 }
 
+test("handoff status inspection is exact, read-only and never admits work", async t => {
+    const f = await fixture("build");
+    t.after(f.cleanup);
+    assert.equal(await f.store.admissionFor(f.state), null);
+    const receipt = await f.store.prepare(f.state);
+    f.state.development = { handoffId: receipt.id, requestId: receipt.request.id, snapshotPath: receipt.source.snapshotPath };
+    const path = join(f.store.root, `${receipt.id}.admission.json`);
+    const prepared = await f.store.admissionFor(f.state);
+    assert.equal(prepared?.status, "prepared");
+    for (const status of ["prepared", "sending", "uncertain", "admitted"] as const) {
+        await writeJsonAtomically(path, { ...prepared, status, privateSessionId: status === "prepared" ? null : "private" });
+        const before = await retainedFiles(f.store.root);
+        assert.equal((await f.store.admissionFor(f.state))?.status, status);
+        assert.deepEqual(await retainedFiles(f.store.root), before);
+    }
+    await assert.rejects(new DevelopmentHandoffs(f.workspace, f.shared, "other-main").admissionFor(f.state), /another workspace or owner/);
+    await assert.rejects(f.store.admissionFor({ ...f.state, generation: "other-generation" }), /current effort/);
+    const next = structuredClone(f.state);
+    next.lifecycle.outputs[0].path = ".tandem/efforts/fixture/stages/prototype-r5.json";
+    assert.equal(await f.store.admissionFor(next), null, "An old admission is not completion of a newly saved input.");
+    await writeJsonAtomically(path, { ...prepared, requestId: "foreign" });
+    await assert.rejects(f.store.admissionFor(f.state), /admission is unavailable or invalid/);
+    await writeJsonAtomically(path, prepared);
+    await writeFile(f.path, "{}");
+    await assert.rejects(f.store.admissionFor(f.state), /Prototype changed/);
+});
+
+test("empty-setup repair inspection preserves prepared handoffs and refuses every admission or owner change", async t => {
+    const f = await fixture("build");
+    t.after(f.cleanup);
+    const receipt = await f.store.prepare(f.state);
+    const before = await retainedFiles(f.store.root);
+    const proof = await f.store.inspectUnadmitted();
+    assert.match(JSON.stringify(proof), /prepared/);
+    assert.deepEqual(await retainedFiles(f.store.root), before);
+    const path = join(f.store.root, `${receipt.id}.admission.json`);
+    const original = JSON.parse(await readFile(path, "utf8"));
+    for (const status of ["sending", "admitted", "uncertain"]) {
+        await writeJsonAtomically(path, { ...original, status, privateSessionId: "private" });
+        const bytes = await readFile(path);
+        await assert.rejects(f.store.inspectUnadmitted(), /used or uncertain/);
+        assert.deepEqual(await readFile(path), bytes);
+    }
+    await writeJsonAtomically(path, original);
+    await assert.rejects(new DevelopmentHandoffs(f.workspace, f.shared, "other-main").inspectUnadmitted(), /ownership|another|target/i);
+});
+
 async function installationFixture(f: Awaited<ReturnType<typeof fixture>>) {
     const installed = join(f.root, "installed");
     await mkdir(installed);
@@ -111,6 +158,12 @@ async function installationFixture(f: Awaited<ReturnType<typeof fixture>>) {
     class NoModelClient {
         constructor() { clients++; }
         async start() {}
+        async createSession(config) {
+            creations++;
+            if (creationFailure) throw new Error("Native create result was not acknowledged.");
+            nativeSessionId = config.sessionId;
+            return this.resumeSession(config.sessionId, { ...config, continuePendingWork: false, suppressResumeEvent: true });
+        }
         async getSessionMetadata(sessionId: string) {
             if (observations.has("metadata")) return observations.get("metadata")!();
             return sessionId === nativeSessionId ? { sessionId, isRemote: false } : undefined;
@@ -137,6 +190,7 @@ async function installationFixture(f: Awaited<ReturnType<typeof fixture>>) {
                 sessionId, abort: async () => {}, getEvents: async () => [...nativeHistory],
                 disconnect: async () => {},
                 rpc: {
+                    name: { set: async () => {} },
                     mode: { get: async () => "interactive" },
                     metadata: { isProcessing: async () => ({ processing: false }), activity: async () => ({ hasActiveWork: false }) },
                     queue: { pendingItems: async () => ({ items: [], steeringMessages: [] }) },
@@ -168,7 +222,7 @@ async function installationFixture(f: Awaited<ReturnType<typeof fixture>>) {
         },
         loadSdk: async () => ({ RuntimeConnection: { forStdio: () => ({ kind: "stdio" }) }, CopilotClient: NoModelClient }),
         createRuntime: async options => new HumanLoopRuntime({ ...options,
-            createPrivateSession: config => createDurablePrivateSession(options.client, config),
+            createPrivateSession: config => createDurablePrivateSession(options.client, config, options.afterNativeCreate),
             contextProvider: () => f.store.context(),
             onHandoff: async () => assert.fail("Opening storage must not publish a model outcome."),
         }),
@@ -409,7 +463,8 @@ test("Reconcile preserves the failed-start diagnosis and cannot silently retry o
         h.setBeforeDevelopmentStart(async () => {
             throw new Error("Original pre-native Git failure. Select Retry runtime inside Development.");
         });
-        await assert.rejects(h.api.completeLifecycleStage(state.prototypeId, "requirements", "project:tandem"), /Original pre-native Git failure/);
+        await h.api.completeLifecycleStage(state.prototypeId, "requirements", "project:tandem");
+        await assert.rejects(h.api.continueDevelopment(state.prototypeId, "project:tandem"), /Original pre-native Git failure/);
         const saved = await h.api.loadState(state.prototypeId);
         await assert.rejects(h.api.continueDevelopment(state.prototypeId, "project:tandem"), /Original pre-native Git failure.*Retry runtime/);
         const retried = await h.api.loadState(state.prototypeId);
@@ -505,6 +560,16 @@ test("first Prototype handoff precedes the real WAL, installation and runtime wi
         assert.deepEqual(await retained.read(receipt.id), receipt);
         assert.deepEqual(native.counts(), { clients: 1, sends: 0 }, "Reusing an already-retired handoff must not replay it.");
         await installation.close();
+        const used = await runtime.store.load(), nativeEvents = native.history();
+        const walBefore = await readFile(journal);
+        const handoffsBefore = await retainedFiles(f.store.root);
+        native.setMainSessionId("different-main");
+        await assert.rejects(native.create().open(), /another main session/);
+        assert.deepEqual(await runtime.store.load(), used);
+        assert.deepEqual(await readFile(journal), walBefore, "A fresh host cannot rewrite used Stage2 ownership or history.");
+        assert.deepEqual(native.history(), nativeEvents);
+        assert.equal(native.creations(), 1);
+        assert.deepEqual(await retainedFiles(f.store.root), handoffsBefore);
     } finally {
         await getHostStateWal(f.workspace).close();
         await f.cleanup();
@@ -806,6 +871,134 @@ test("a stale generation cannot create a new handoff or submit work", async () =
     } finally { await h.close(); }
 });
 
+for (const stage of ["prepare", "requirements"] as const) test(`direct Development HTTP open preserves ${stage} without handoff or model work`, async () => {
+    const h = await extensionHarness();
+    const state = h.api.createState("direct", stage === "prepare" ? "" : "An existing project");
+    state.stage = state.lifecycle.currentStage = stage;
+    state.lifecycle.completedStages = stage === "prepare" ? [] : ["prepare"];
+    if (stage === "requirements") state.preparation.status = "ready";
+    await h.api.persistState(state);
+    const entry = await h.api.startServer("direct", "direct", "project:tandem", true);
+    try {
+        const before = await h.api.loadState("direct");
+        const status = await fetch(new URL("api/development/status", entry.url));
+        assert.equal(status.status, 200);
+        assert.deepEqual((await status.json()).mainSessionModel, { modelId: "fixture-model" });
+        assert.equal(h.developmentOpens.length, 0, "Reading the owning model does not initialize Development.");
+        let starts = 0;
+        h.setBeforeDevelopmentStart(async () => { starts++; });
+        const views = [];
+        for (let attempt = 0; attempt < 2; attempt++) {
+            const presented = await fetch(new URL("api/development/view", entry.url), { method: "POST" });
+            assert.equal(presented.status, 200, await presented.clone().text());
+            views.push(await presented.json());
+        }
+        assert.deepEqual(views[0], views[1], "The presentation binding survives repeated view reads.");
+        assert.match(views[0].channel, /^[a-zA-Z0-9-]+$/);
+        assert.equal(starts, 0, "A conversation view must not initialize or resume the native runtime.");
+        h.developmentOpens.length = 0;
+        for (let attempt = 0; attempt < 2; attempt++) {
+            const opened = await fetch(new URL("api/development/open", entry.url), {
+                method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+            });
+            assert.equal(opened.status, 200, await opened.clone().text());
+            assert.deepEqual(await opened.json(), { url: "http://127.0.0.1:8765/" });
+        }
+        assert.equal(JSON.stringify(await h.api.loadState("direct")), JSON.stringify(before));
+        assert.deepEqual(h.developmentOpens, ["development-browser", "development-browser"]);
+        assert.equal(h.developmentRequests.length, 0);
+        assert.equal(starts, 2);
+        assert.equal(h.requests.length, 0);
+        await assert.rejects(h.api.continueDevelopment("direct", "project:tandem"), /Complete Prototype/);
+        assert.equal(h.developmentRequests.length, 0, "Opening directly does not weaken the strict Prototype handoff.");
+    } finally {
+        clearInterval(entry.heartbeat);
+        await new Promise<void>((resolve, reject) => entry.server.close(error => error ? reject(error) : resolve()));
+        await h.close();
+    }
+});
+
+test("synthetic fresh provider opens Development from finished Stage1 files without retaining the Stage1 connection", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tandem-stage-independence-"));
+    const first = await extensionHarness({}, root);
+    let fresh: Awaited<ReturnType<typeof extensionHarness>> | undefined;
+    let entry: Awaited<ReturnType<typeof first.api.startServer>> | undefined;
+    try {
+        const state = first.api.createState("portable-input", "A command-line tool");
+        state.stage = state.lifecycle.currentStage = "requirements";
+        state.lifecycle.completedStages = ["prepare"];
+        state.preparation.status = "ready";
+        state.requirements = { substage: "dag", usageItems: ["Use the command"], suggestions: [] };
+        state.decisionGraph.nodes = [{ id: "choice", title: "Command behavior", dependencies: [],
+            question: null, answer: "Use the CLI", status: "answered" }];
+        state.prototypeApproach = { mode: "not-applicable", reason: "CLI only" };
+        await first.api.persistState(state);
+        first.setBeforeDevelopmentStart(async () => { throw new Error("No Stage2 connection may exist yet."); });
+        const completed = await first.api.completeLifecycleStage(state.prototypeId, "requirements", "project:tandem");
+        const files = await retainedFiles(join(root, ".tandem", "efforts"));
+        assert.ok(completed.development == null);
+        assert.equal(first.developmentRequests.length, 0);
+        await assert.rejects(access(join(root, ".tandem", "living-canvas")), { code: "ENOENT" });
+        await first.close();
+
+        fresh = await extensionHarness({}, root);
+        fresh.api.setSession({ ...fresh.session, sessionId: "fresh-provider-fixture" });
+        const loaded = await fresh.api.loadState(state.prototypeId);
+        assert.equal(loaded.generation, completed.generation);
+        assert.deepEqual(await retainedFiles(join(root, ".tandem", "efforts")), files);
+        for (const output of loaded.lifecycle.outputs) {
+            const document = JSON.parse(await readFile(join(root, output.path), "utf8"));
+            assert.equal(document.result.decisionGraph.nodes[0].answer, "Use the CLI");
+        }
+        entry = await fresh.api.startServer("later-view", state.prototypeId, "project:tandem", true);
+        const opened = await fetch(new URL("api/development/open", entry.url), {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+        });
+        assert.equal(opened.status, 200, await opened.clone().text());
+        assert.equal(fresh.developmentOpens.length, 1);
+        assert.equal(fresh.developmentRequests.length, 0, "Files remain optional inputs, not automatic request or implementation authority.");
+        assert.equal(fresh.requests.length, 0);
+        assert.ok((await fresh.api.loadState(state.prototypeId)).development == null);
+        assert.deepEqual(await retainedFiles(join(root, ".tandem", "efforts")), files);
+    } finally {
+        if (entry) {
+            clearInterval(entry.heartbeat); entry.live.close();
+            await new Promise<void>((resolve, reject) => entry.server.close(error => error ? reject(error) : resolve()));
+        }
+        await first.close(); await fresh?.close();
+        await rm(root, { recursive: true, force: true });
+    }
+});
+
+test("direct Development HTTP open still excludes active upstream work and a read-only provider", async () => {
+    const h = await extensionHarness();
+    const state = h.api.createState("active");
+    state.preparation.status = "running";
+    await h.api.persistState(state);
+    const entry = await h.api.startServer("active", "active", "project:tandem", true);
+    try {
+        const post = () => fetch(new URL("api/development/open", entry.url), {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+        });
+        const active = await post();
+        assert.notEqual(active.status, 200);
+        assert.match(await active.text(), /Finish upstream work/);
+        state.preparation.status = "not-started";
+        await h.api.persistState(state);
+        h.api.setSession({ ...h.session, rpc: { ...h.session.rpc,
+            extensions: { list: async () => ({ extensions: [{ id: "user:tandem", status: "running" }] }) } } });
+        const readOnly = await post();
+        assert.notEqual(readOnly.status, 200);
+        assert.match(await readOnly.text(), /writable provider/);
+        assert.deepEqual(h.developmentOpens, []);
+        assert.equal(h.developmentRequests.length, 0);
+    } finally {
+        clearInterval(entry.heartbeat);
+        await new Promise<void>((resolve, reject) => entry.server.close(error => error ? reject(error) : resolve()));
+        await h.close();
+    }
+});
+
 test("shared upstream storage does not make another worktree's active work a local cutover blocker", async () => {
     const root = await mkdtemp(join(tmpdir(), "tandem-shared-worktrees-"));
     const shared = join(root, "shared"), local = join(root, "local"), other = join(root, "other");
@@ -837,9 +1030,10 @@ test("Reset racing a prepared handoff waits for admission and cannot erase admit
             question: null, answer: "Use the CLI", status: "answered" }];
         state.prototypeApproach = { mode: "not-applicable", reason: "CLI only" };
         await h.api.persistState(state);
+        await h.api.completeLifecycleStage("race", "requirements", "project:tandem");
         const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
         h.setBeforeDevelopmentStart(async () => { entered.resolve(); await release.promise; });
-        const handoff = h.api.completeLifecycleStage("race", "requirements", "project:tandem");
+        const handoff = h.api.continueDevelopment("race", "project:tandem");
         await entered.promise;
         const prepared = await h.api.loadState("race");
         let resetSettled = false;

@@ -1,6 +1,8 @@
 import { createContext, useContext, useEffect, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import type { HistoricalStageId, LifecycleStageId, TandemState } from "../types.js";
 import type { SketchPreview } from "../sketch-stream.js";
+import type { WorkflowActivitySnapshot } from "../workflow-activity.js";
+import { isPendingFactoryRun } from "../agent-runner.js";
 
 export interface RuntimeAgent {
   id?: string;
@@ -21,6 +23,7 @@ export interface RuntimeSnapshot {
 }
 
 export interface UiState extends TandemState {
+  projectPath?: string;
   developmentBlocker?: string | null;
   provider?: {
     canSubmitAnswers?: boolean;
@@ -31,6 +34,7 @@ export interface UiState extends TandemState {
   };
   preparationRuntime?: RuntimeSnapshot | null;
   sketchPreview?: SketchPreview | null;
+  workflowRuntime?: WorkflowActivitySnapshot | null;
 }
 
 export interface UiContextValue {
@@ -127,6 +131,15 @@ export function hasStageData(state: UiState, stage: LifecycleStageId): boolean {
     || (state.lifecycle.history || []).some((entry) => entry.stageId === stage)
     || (state.artifacts || []).some((artifact) => artifact.stage === stage)
     || (stage === "sketch" && Boolean(state.sketch?.current));
+}
+
+export function canBrowseStage(state: UiState, stage: LifecycleStageId): boolean {
+  return stage === "development" || (hasStageData(state, stage) && !skippedStage(state, stage));
+}
+
+export function canOpenDevelopment(state: UiState): boolean {
+  return state.provider?.canSubmitAnswers !== false && !state.effortReset
+    && !state.developmentBlocker && !hasActiveJobs(state) && !state.factoryRuns?.some(isPendingFactoryRun);
 }
 
 export function useAction(key: string) {

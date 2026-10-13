@@ -57,7 +57,7 @@ function accepts(group, path) {
   const extension = extname(path).toLowerCase();
   if (group.target === "src") return extension === ".mjs";
   if (group.target === "runtime-src") return extension === ".ts";
-  if (group.target === "public") return rendererExtensions.has(extension);
+  if (group.target === "public") return rendererExtensions.has(extension) || path.endsWith(".d.ts");
   return extension === ".md";
 }
 

@@ -854,8 +854,10 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
         <Save size={16} aria-hidden="true" />
       </button>
       <button id="sketch-approve" className="plan-button" type="button"
+        hidden={isSketchRevisionApproved(state.sketch) && !dirty && !conflict}
         disabled={!writable || emptyScreens || conflict || state.sketch.status === "stale" || invalidFields}
         onClick={() => void submit("approve")}><Check size={14} aria-hidden="true" /> Approve drawings and continue</button>
+      {isSketchRevisionApproved(state.sketch) && !dirty && !conflict && <span role="status">Saved drawings approved</span>}
     </div>
     <p id="sketch-status" className={incoming.preview || loadState.loading || action.busy || conflict || dirty || state.sketch.status === "stale" ? "muted" : "visually-hidden"} role="status" aria-live="polite" hidden={!status}>{status}</p>
     <p id="sketch-empty" className="sketch-empty" hidden={Boolean(screen)}

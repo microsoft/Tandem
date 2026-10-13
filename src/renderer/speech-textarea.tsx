@@ -8,7 +8,7 @@ import { useUi } from "./ui-context.js";
 import { composeSpeechDraft } from "./speech-input.js";
 
 type CaptureState = "starting" | "listening" | "stopping";
-type Status = { text: string; kind: "idle" | "error" };
+type Status = { text: string; kind: "idle" | "error"; authenticated?: boolean };
 interface OperationBase {
   owner: string;
   identity: string;
@@ -25,8 +25,8 @@ interface SpeechContextValue {
   enabled: boolean;
   active: Operation | null;
   loginStatus: Status | null;
-  signInPlacement: "inline" | "header";
-  signIn: () => Promise<void>;
+  signInPlacement: "inline" | "on-demand";
+  signIn: (inputOwner?: string) => Promise<void>;
   createSession: SpeechSessionFactory;
   acquire: (operation: Operation) => boolean;
   release: (operation: Operation) => void;
@@ -44,7 +44,7 @@ export function useSpeechCoordinator() {
 /** One provider per effort root; changing effort identity also releases any microphone or sign-in. */
 export function SpeechProvider({
   children, createSession = createAzureSpeechSession, signInPlacement = "inline",
-}: { children: ReactNode; createSession?: SpeechSessionFactory; signInPlacement?: "inline" | "header" }) {
+}: { children: ReactNode; createSession?: SpeechSessionFactory; signInPlacement?: "inline" | "on-demand" }) {
   const { state } = useUi();
   const identity = JSON.stringify([state.prototypeId, state.generation]);
   const enabled = state.provider?.canSubmitAnswers !== false && !state.effortReset;
@@ -76,11 +76,11 @@ export function SpeechProvider({
     record.abort.abort();
     publishLogin(result);
   }, [release, publishLogin]);
-  const signIn = useCallback(async () => {
+  const signIn = useCallback(async (inputOwner = owner) => {
     if (!enabled || !mounted.current) return;
     const record: Login = {
       operation: {
-        owner, identity, draftKey: identity, kind: "login",
+        owner: inputOwner, identity, draftKey: identity, kind: "login",
         cancel: (message, failed) => completeLogin(record, {
           text: message || "Microsoft sign-in cancelled. Your draft is unchanged.", kind: failed ? "error" : "idle",
         }),
@@ -106,7 +106,7 @@ export function SpeechProvider({
       if (!response.ok || result.authenticated !== true) {
         throw new Error(result.error || "Microsoft sign-in was not confirmed. Please retry.");
       }
-      completeLogin(record, { text: "Signed in to Microsoft. Select Mic when you are ready to speak.", kind: "idle" });
+      completeLogin(record, { text: "Signed in to Microsoft. Select Mic when you are ready to speak.", kind: "idle", authenticated: true });
     } catch (error) {
       if (login.current === record) completeLogin(record, {
         text: error instanceof Error ? error.message : "Microsoft sign-in failed. Please retry.", kind: "error",
@@ -158,39 +158,6 @@ export function SpeechProvider({
     identity, enabled, active, loginStatus, signInPlacement, signIn, createSession, acquire, release, publishLogin,
   }), [identity, enabled, active, loginStatus, signInPlacement, signIn, createSession, acquire, release, publishLogin]);
   return <SpeechContext.Provider value={context}>{children}</SpeechContext.Provider>;
-}
-
-export function useSpeechSignInControl() {
-  const speech = useSpeechCoordinator();
-  const signingIn = speech.active?.kind === "login";
-  const message = signingIn
-    ? "Complete Microsoft sign-in in your browser. Your microphone is off."
-    : speech.loginStatus?.text || "";
-  return {
-    signingIn, message, status: speech.loginStatus?.kind,
-    disabled: !speech.enabled || Boolean(speech.active),
-    title: "Sign in with Microsoft for Azure Speech. This does not turn on the microphone.",
-    signIn: speech.signIn,
-    cancel: () => { if (speech.active?.kind === "login") speech.active.cancel(); },
-  };
-}
-
-export function SpeechSignInControl() {
-  const control = useSpeechSignInControl();
-  return <div className="speech-header-sign-in">
-    <button id="speech-sign-in" className="reload-button" type="button"
-      disabled={control.disabled}
-      title={control.title}
-      aria-describedby="speech-header-status" onClick={() => { void control.signIn(); }}>
-      <LogIn size={15} aria-hidden="true" />{control.signingIn ? "Signing in..." : "Sign in"}
-    </button>
-    {control.signingIn && <button className="reload-button" type="button" title="Cancel sign-in" aria-label="Cancel Microsoft sign-in"
-      onClick={control.cancel}><X size={15} aria-hidden="true" /></button>}
-    <span id="speech-header-status" role="status" aria-live="polite" data-status={control.status}
-      className={control.status === "error" ? "speech-status speech-header-error" : "visually-hidden"}>
-      {control.message}
-    </span>
-  </div>;
 }
 
 export interface VoiceComposerOptions {
@@ -263,15 +230,20 @@ export function SpeechTextarea({
   const [phase, setPhase] = useState<CaptureState | null>(null);
   const [status, setStatus] = useState(initialStatus);
   const [available, setAvailable] = useState(false);
+  const [needsSignIn, setNeedsSignIn] = useState(false);
+  const loginRequested = useRef(false);
   const key = JSON.stringify([speech.identity, speechKey, attributes.id || attributes.name || ""]);
-  const latest = useRef({ key, enabled: speech.enabled && !disabled && !readOnly });
+  const latest = useRef({ key, enabled: speech.enabled && !disabled && !readOnly, active: speech.active });
   useLayoutEffect(() => {
-    latest.current = { key, enabled: speech.enabled && !disabled && !readOnly };
+    latest.current = { key, enabled: speech.enabled && !disabled && !readOnly, active: speech.active };
     checkAvailability();
   });
 
   function checkAvailability() {
     const next = isAvailable(input.current) && latest.current.enabled;
+    if (!next && latest.current.active?.kind === "login" && latest.current.active.owner === owner) {
+      latest.current.active.cancel("Voice sign-in cancelled because its input is no longer available. Your draft is unchanged.");
+    }
     if (mounted.current) setAvailable((previous) => previous === next ? previous : next);
     const operation = capture.current?.operation;
     if (operation && (!next || operation.draftKey !== latest.current.key)) {
@@ -297,7 +269,16 @@ export function SpeechTextarea({
     capture.current?.operation.cancel("Speech cancelled because the active conversation changed. Your original draft is unchanged.");
   }, [key]);
   useLayoutEffect(() => {
-    if (speech.loginStatus && !capture.current) setStatus(speech.loginStatus);
+    if (speech.loginStatus && !capture.current) {
+      setStatus(speech.loginStatus);
+      if (speech.loginStatus.authenticated) setNeedsSignIn(false);
+      if (loginRequested.current) {
+        loginRequested.current = false;
+        if (document.activeElement === document.body || input.current?.closest(".voice-composer")?.contains(document.activeElement)) {
+          focusAfterCommit.current = { key, position: input.current?.selectionEnd ?? value.length };
+        }
+      }
+    }
   }, [speech.loginStatus]);
   useLayoutEffect(() => {
     const focus = focusAfterCommit.current;
@@ -415,6 +396,8 @@ export function SpeechTextarea({
       clearTimeout(record.timer);
       record.timer = setTimeout(() => { void stop(record); }, 120_000);
     } catch (error) {
+      if (capture.current === record && error && typeof error === "object"
+        && "speechSignInRequired" in error && error.speechSignInRequired === true) setNeedsSignIn(true);
       cancelCapture(record, error instanceof Error ? error.message : "Could not start speech input. Retry or type your message.", true);
     }
   }
@@ -429,6 +412,7 @@ export function SpeechTextarea({
       : status === initialStatus && speech.loginStatus ? speech.loginStatus : status;
   const uiKey = attributes.id || attributes.name || owner;
   const busy = Boolean(speech.active);
+  const showSignIn = speech.signInPlacement === "inline" || speech.signInPlacement === "on-demand" && needsSignIn;
 
   const textarea = <textarea {...attributes} ref={input} value={value} disabled={disabled} maxLength={maxLength}
       readOnly={readOnly || Boolean(phase)} data-speech-input=""
@@ -460,13 +444,16 @@ export function SpeechTextarea({
           : ownCapture ? <Square size={14} aria-hidden="true" /> : <Mic size={14} aria-hidden="true" />}
       </button>;
   const feedback = <>
-      {speech.signInPlacement === "inline" && <button type="button" className="speech-sign-in" data-ui-key={`${uiKey}-speech-sign-in`}
+      {showSignIn && <button type="button" className="speech-sign-in" data-ui-key={`${uiKey}-speech-sign-in`}
         disabled={!available || busy} aria-describedby={statusId}
-        title="Open Microsoft sign-in in your browser. This does not turn on the microphone." onClick={() => { void speech.signIn(); }}>
-        <LogIn size={14} aria-hidden="true" />{signingIn ? "Signing in..." : "Sign in with Microsoft"}
+        title="Optional Azure voice input. Opens Microsoft sign-in; it does not turn on the microphone or sign in to Copilot. Audio goes to Azure only after you select Mic." onClick={() => {
+          if (!available || busy) return;
+          loginRequested.current = true; void speech.signIn(owner);
+        }}>
+        <LogIn size={14} aria-hidden="true" />{signingIn ? "Signing in for voice input..." : "Sign in for voice input"}
       </button>}
       <button type="button" className="speech-cancel" data-ui-key={`${uiKey}-speech-cancel`}
-        hidden={!ownCapture && !(signingIn && speech.signInPlacement === "inline")}
+        hidden={!ownCapture && !signingIn}
         aria-label={signingIn ? "Cancel Microsoft sign-in" : "Cancel speech and restore draft"}
         onClick={() => speech.active?.cancel()}>
         <X size={14} aria-hidden="true" />{signingIn ? "Cancel sign-in" : "Cancel"}
@@ -481,7 +468,7 @@ export function SpeechTextarea({
   </>;
   if (composer) return <VoiceComposer {...composer} input={textarea} toggle={toggle}
     feedback={<div className="speech-controls voice-composer-feedback" data-ui-key={`${uiKey}-speech-controls`}
-      hidden={!phase && visibleStatus.kind !== "error" && speech.signInPlacement !== "inline"}>{feedback}</div>} />;
+      hidden={!phase && !signingIn && visibleStatus === initialStatus && !showSignIn}>{feedback}</div>} />;
   return <VoiceComposer input={textarea} toggle={toggle} voiceOptions={null} actions={null}
     feedback={<div className="speech-controls voice-composer-feedback" data-ui-key={`${uiKey}-speech-controls`}>{feedback}</div>} />;
 }

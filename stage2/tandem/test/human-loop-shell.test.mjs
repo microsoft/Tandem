@@ -1376,15 +1376,15 @@ test("retained cycle stays at its originating request through unrelated Router, 
   assert.deepEqual(browser.exceptions, []);
 });
 
-test("independent queued messages stay in their own rows as request-bound workflow ownership changes", { skip: !browserAvailable, timeout: 60_000 }, async t => {
+test("independent queued messages stay pinned until request-bound workflow pickup", { skip: !browserAvailable, timeout: 60_000 }, async t => {
   const f = await fixture(t), { browser } = f;
   const messages = [
     { id: "first-row", kind: "user", requestId: "first-request", text: "Design a small garden plan.",
       timestamp: "2026-09-15T01:00:00Z", queueState: "active" },
     { id: "waiting-row", kind: "user", requestId: "waiting-request", text: "Inspect the independent weather fixture.",
-      timestamp: "2026-09-15T01:00:01Z", queueState: "waiting" },
+      timestamp: "2026-09-15T01:00:01Z", queueState: "waiting", queuedStatus: "queued", queuedOrder: 1 },
     { id: "answer-row", kind: "user", requestId: "answer-request", text: "Use the previously offered compact layout.",
-      timestamp: "2026-09-15T01:00:02Z", queueState: "waiting" },
+      timestamp: "2026-09-15T01:00:02Z", queueState: "waiting", queuedStatus: "queued", queuedOrder: 2 },
   ];
   const ordinary = { id: "waiting-request", message: messages[1].text, status: "waiting", kind: "ordinary", priority: false };
   const answer = { id: "answer-request", message: messages[2].text, status: "waiting", kind: "answer", priority: true };
@@ -1405,14 +1405,16 @@ test("independent queued messages stay in their own rows as request-bound workfl
         rows:inputs.map(input=>{
           const row=document.querySelector('[data-entry-id="'+input.id+'"]');
           return {id:row.dataset.entryId,status:row.querySelector('.conversation-role').textContent,
-            copies:[...document.querySelectorAll('#messages .conversation-text')].filter(node=>node.textContent===input.text).length,
+            copies:[...document.querySelectorAll('.conversation-text')].filter(node=>node.textContent===input.text).length,
             nestedOther:inputs.some(other=>other.id!==input.id&&row.textContent.includes(other.text))};
         })
       };
     })()`);
-    assert.deepEqual(actual.users, ["first-row", "waiting-row", "answer-row"], "Receipt order is independent of dispatch priority.");
+    assert.deepEqual(actual.users, messages.filter(entry => entry.kind === "user" && !entry.queuedStatus).map(entry => entry.id));
+    assert.deepEqual(await browser.evaluate('[...document.querySelectorAll("[data-queued-waiting] [data-queued-request-id]")].map(node=>node.dataset.queuedRequestId)'),
+      f.current.workflow.queue.map(request => request.id), "Pinned rows follow authoritative dispatch priority.");
     for (const [index, row] of actual.rows.entries()) {
-      assert.equal(row.status, messages[index].queueState);
+      assert.equal(row.status, messages[index].queuedStatus ? "Queued; not started" : messages[index].queueState);
       assert.equal(row.copies, 1);
       assert.equal(row.nestedOther, false, row.id);
     }
@@ -1435,6 +1437,7 @@ test("independent queued messages stay in their own rows as request-bound workfl
 
   for (const [index, remaining] of [[2, [ordinary]], [1, []]]) {
     messages[index].queueState = "active";
+    delete messages[index].queuedStatus; delete messages[index].queuedOrder;
     Object.assign(f.current.workflow, { status: "working", activeRole: "agent",
       activeRequestId: messages[index].requestId, queue: remaining, lastHandoff: null });
     f.update(); await assertRows(messages[index].id);
@@ -1583,13 +1586,15 @@ test("Settings sections distinguish access status from its action across narrow 
     await browser.waitFor("document.querySelector('[data-session-access-off]')");
     await browser.call("Page.bringToFront");
     await click(browser, "#canvas-settings > summary");
-    assert.deepEqual(await browser.evaluate("[...document.querySelectorAll('.settings-section h3')].map(n=>n.textContent)"), headings);
+    assert.equal(await browser.evaluate("document.querySelector('#project-effort-settings').checkVisibility()"), false,
+      "Standalone Settings never exposes the composed shared-effort controls.");
+    assert.deepEqual(await browser.evaluate("[...document.querySelectorAll('.settings-section h3')].filter(n=>n.checkVisibility()).map(n=>n.textContent)"), headings);
     assert.equal(await browser.evaluate("document.querySelector('#setting-model').disabled && document.querySelector('#apply-model').disabled && document.querySelector('#request-compaction').disabled"), true);
     assert.match(await browser.evaluate("document.querySelector('#model-setting-status').textContent"), /Model changes require Ready/);
     const layout = await browser.evaluate(`(() => {
       const panel=document.querySelector('#canvas-settings'), bounds=panel.getBoundingClientRect();
       return {left:bounds.left,right:bounds.right,overflow:panel.scrollWidth-panel.clientWidth,
-        sections:[...panel.querySelectorAll('.settings-section')].map(n=>({border:getComputedStyle(n).borderTopWidth,
+        sections:[...panel.querySelectorAll('.settings-section')].filter(n=>n.checkVisibility()).map(n=>({border:getComputedStyle(n).borderTopWidth,
           spacing:getComputedStyle(n).marginTop,heading:n.querySelector('h3').textContent})),
         controls:[...panel.querySelectorAll('button,select')].filter(n=>n.checkVisibility()).map(n=>{
           const r=n.getBoundingClientRect();return {left:r.left,right:r.right};})};
@@ -1644,7 +1649,7 @@ test("Settings sections distinguish access status from its action across narrow 
   await browser.waitFor("!document.querySelector('#apply-model').disabled");
   assert.deepEqual(f.posts.slice(3), [
     { path: "/api/settings", data: { theme: "light", fontSize: "larger" } },
-    { path: "/api/settings/model", data: { action: "select", model: "fixture" } },
+    { path: "/api/settings/model", data: { action: "select", model: "fixture", reasoningEffort: null } },
   ]);
   assert.equal(await browser.evaluate("document.querySelector('#settings-error').hidden"), true);
   assert.equal(await browser.evaluate("document.querySelector('#request-compaction').disabled"), true);

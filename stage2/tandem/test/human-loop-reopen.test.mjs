@@ -25,7 +25,7 @@ const question = { id: "scope", context: "Product scope is not decided.", questi
     { id: "large", label: "Large", implication: "Discuss a larger scope." }], allowFreeform: true };
 
 async function fixture(t, { ask = false, autoConfirm = true, stopDelivery = null, model = null, legacyNamespaces = false,
-  deferred = false, failCreate = false, failStartup = false } = {}) {
+  reasoningEffort = null, deferred = false, failCreate = false, failStartup = false, empty = false } = {}) {
   const root = await mkdtemp(join(process.cwd(), ".human-reopen-")), workspace = join(root, "project");
   await mkdir(workspace); await git(workspace, "init", "--quiet");
   await writeFile(join(workspace, "original.txt"), "existing work\n");
@@ -36,6 +36,7 @@ async function fixture(t, { ask = false, autoConfirm = true, stopDelivery = null
   const installed = { sdk: { modulePath: file, digest: hash("installed fixture") },
     cli: { path: file, digest: hash("installed fixture") }, node: { path: file, digest: hash("installed fixture") }, buildId: "fixture" };
   let runtime, native, saved = null, mode = "interactive", nativeMissing = false, failReset = false, currentDesign = design;
+  if (empty) currentDesign = { binding: { revisionId: null, digest: null }, content: null };
   const counts = { creates: 0, resumes: 0, clients: 0, stops: 0, saves: 0, resets: 0, brokerResets: 0, sends: 0, compactions: 0, disconnects: 0 };
   let failDisconnect = false, failClientStop = false;
   let compactWork = async () => ({ success: true });
@@ -43,7 +44,7 @@ async function fixture(t, { ask = false, autoConfirm = true, stopDelivery = null
   let coldHistory = (events) => events;
   let resumeState = {};
   const errors = [], sessions = [];
-  let actualModel = model ?? "one";
+  let actualModel = model ?? "one", actualEffort = reasoningEffort;
   class Session extends NativeSession {
     emit(type, data) {
       const event = { id: `event-${++this.count}`, type, data, parentId: this.events.at(-1)?.id ?? null, timestamp: new Date().toISOString() };
@@ -79,7 +80,8 @@ async function fixture(t, { ask = false, autoConfirm = true, stopDelivery = null
           ...(result.success ? {} : { error: "Fixture compaction failed." }) });
         return result;
       } };
-      if (model) this.rpc.model = { getCurrent: async () => ({ modelId: actualModel }) };
+      if (model) this.rpc.model = { getCurrent: async () => ({ modelId: actualModel, reasoningEffort: actualEffort }),
+        setReasoningEffort: async ({ reasoningEffort }) => { actualEffort = reasoningEffort; return { reasoningEffort }; } };
     }
     async setModel(id) { actualModel = id; }
     async send(input) {
@@ -140,11 +142,12 @@ async function fixture(t, { ask = false, autoConfirm = true, stopDelivery = null
       counts.creates++;
       if (failCreate === true) throw new Error("Native creation failed before creating the session.");
       native = new Session(config); sessions.push(native);
+      if (empty) nativeMissing = false;
       if (failCreate === "after-create") throw new Error("Native creation acknowledgement was lost after creation.");
       return native;
     }
     async start() {}
-    async listModels() { return [{ id: "one" }, { id: "two" }]; }
+    async listModels() { return [{ id: "one", supportedReasoningEfforts: ["low", "high"] }, { id: "two", supportedReasoningEfforts: ["low", "high"] }]; }
     async getSessionMetadata(sessionId) { return nativeMissing || (!native && !saved) ? undefined : { sessionId, isRemote: false }; }
     async resumeSession(id, config) {
       counts.resumes++; assert.equal(config.continuePendingWork, false); assert.equal(id, saved.sessionId);
@@ -159,7 +162,10 @@ async function fixture(t, { ask = false, autoConfirm = true, stopDelivery = null
       if (!config.suppressResumeEvent) native.emit("session.resume", { eventCount: native.events.length });
       return native;
     }
-    rpc = { sessions: { readPersistedEvents: async () => {
+    rpc = { sessions: {
+      ...(empty ? { checkInUse: async () => ({ inUse: [] }),
+        getSizes: async () => ({ sizes: nativeMissing || !saved ? {} : { [saved.sessionId]: 100 } }) } : {}),
+      readPersistedEvents: async () => {
       if (nativeMissing || !saved) throw new Error("Retained native history is unavailable.");
       return { events: coldHistory(structuredClone(saved.events)), cursor: "complete", cursorStatus: "ok", hasMore: false };
     }, save: async () => {
@@ -189,7 +195,7 @@ async function fixture(t, { ask = false, autoConfirm = true, stopDelivery = null
   };
   if (legacyNamespaces) await mkdir(join(workspace, ".teleos"));
   let installation = new HumanLoopInstallation(options);
-  if (model) await new HumanLoopPreferences(workspace).update({ model, theme: "dark" });
+  if (model) await new HumanLoopPreferences(workspace).update({ model, reasoningEffort, theme: "dark" });
   if (!deferred) runtime = await installation.open();
   const send = async (id, answers = null) => {
     await runtime.send({ id, message: `Exact request ${id}.`, receivedAt: new Date().toISOString(), answers });
@@ -209,6 +215,7 @@ async function fixture(t, { ask = false, autoConfirm = true, stopDelivery = null
     setColdHistory: (transform) => { coldHistory = transform; },
     setResumeState: value => { resumeState = value; },
     setActualModel: (id) => { actualModel = id; },
+    setActualEffort: value => { actualEffort = value; },
     setCreateFailure: value => { failCreate = value; },
     setStartupFailure: value => { failStartup = value; },
     setDisconnectFailure: value => { failDisconnect = value; },
@@ -231,9 +238,132 @@ async function fixture(t, { ask = false, autoConfirm = true, stopDelivery = null
   };
 }
 
+async function emptyCreatedFixture(t) {
+  const f = await fixture(t, { empty: true, model: "one", reasoningEffort: "low" });
+  await f.installation.close();
+  f.missing();
+  await assert.rejects(f.reopen(true), /private session is unavailable/);
+  return f;
+}
+
+test("verified empty-created repair is same-ID, one-use and preserves all original audit without a request", async t => {
+  const f = await emptyCreatedFixture(t);
+  const file = f.record(), wal = getHostStateWal(f.workspace);
+  const before = await wal.history(file.namespace, file.key);
+  const owner = structuredClone(f.installation.configuration.owner);
+  const inspect = await f.installation.requestEmptySetupRepair();
+  assert.equal(inspect.privateSessionId, owner.privateSessionId);
+  assert.match(inspect.message, /not restore nonexistent history/);
+  assert.deepEqual(await f.installation.decideEmptySetupRepair({ confirmationId: inspect.confirmationId, approve: false }), { repaired: false });
+  assert.deepEqual(await wal.history(file.namespace, file.key), before, "Inspection and cancellation append no installation mutation.");
+  const next = await f.installation.requestEmptySetupRepair();
+  const decisions = await Promise.allSettled([
+    f.installation.decideEmptySetupRepair({ confirmationId: next.confirmationId, approve: true }),
+    f.installation.decideEmptySetupRepair({ confirmationId: next.confirmationId, approve: true }),
+  ]);
+  assert.equal(decisions.filter(value => value.status === "fulfilled").length, 1);
+  const runtime = f.installation.runtime, record = JSON.parse(await file.read());
+  assert.deepEqual(f.installation.configuration.owner, owner);
+  assert.equal(record.nativeCreation.authorization.repair.kind, "verified-empty-created");
+  assert.equal(record.nativeCreation.authorization.id, next.confirmationId);
+  assert.equal(f.counts.creates, 2); assert.equal(f.counts.resumes, 0); assert.equal(f.counts.sends, 0);
+  assert.equal((await runtime.state()).requests.length, 0);
+  assert.equal((await runtime.state()).design.revisionId, null);
+  assert.match((await runtime.conversation()).at(-1).content, /reinitialized.*No native history was restored/);
+  assert.deepEqual((await wal.history(file.namespace, file.key)).slice(0, before.length), before);
+  assert.deepEqual(await f.installation.decideEmptySetupRepair({ confirmationId: next.confirmationId, approve: true }), { repaired: true, duplicate: true });
+  assert.equal(f.counts.creates, 2);
+});
+
+test("empty repair keeps text admission blocked until actual private model readback succeeds", async t => {
+  const f = await emptyCreatedFixture(t);
+  f.setActualModel(null);
+  const proposal = await f.installation.requestEmptySetupRepair();
+  await f.installation.decideEmptySetupRepair({ confirmationId: proposal.confirmationId, approve: true });
+  const runtime = f.installation.runtime;
+  assert.equal((await runtime.readiness()).modelBlocked, true);
+  await assert.rejects(runtime.send({ id: "must-not-send", message: "Do not admit while model is unverified.",
+    receivedAt: new Date().toISOString() }), /model|SDK/);
+  assert.equal((await runtime.state()).requests.length, 0);
+  await runtime.changeModel({ model: "one", reasoningEffort: "low" });
+  assert.equal((await runtime.readiness()).modelBlocked, false);
+  assert.equal((await runtime.modelSettings()).actualReasoningEffort, "low");
+  assert.equal(f.counts.sends, 0);
+});
+
+test("empty repair rejects changed handoff proof and authoritative absence API failures", async t => {
+  const f = await emptyCreatedFixture(t);
+  let admission = "prepared";
+  f.options.inspectRepairAdmissions = async () => ({ admission });
+  const proposal = await f.installation.requestEmptySetupRepair();
+  admission = "changed-proof";
+  await assert.rejects(f.installation.decideEmptySetupRepair({ confirmationId: proposal.confirmationId, approve: true }), /evidence changed/);
+  assert.equal(f.counts.creates, 1);
+  const sdk = await f.options.loadSdk();
+  f.options.loadSdk = async () => ({ ...sdk, CopilotClient: class extends sdk.CopilotClient {
+    constructor(...args) { super(...args); this.rpc.sessions.getSizes = async () => { throw new Error("Native inventory unavailable"); }; }
+  } });
+  await assert.rejects(f.installation.requestEmptySetupRepair(), /Native inventory unavailable/);
+  assert.equal(f.counts.creates, 1);
+});
+
+test("empty repair refuses native conversation or unknown retained Design instead of deleting it", async t => {
+  const f = await emptyCreatedFixture(t);
+  const store = f.installation.runtime.store;
+  await store.recordMessage({ id: "native:foreign", role: "assistant", kind: "assistant", requestId: null,
+    content: "Retained native content", timestamp: new Date().toISOString() });
+  await assert.rejects(f.installation.requestEmptySetupRepair(), /conversation/);
+  assert.equal((await store.messages()).some(message => message.id === "native:foreign"), true);
+  assert.equal(f.counts.creates, 1);
+});
+
+test("created-session repair never replaces a used request", async t => {
+  const f = await fixture(t, { empty: true });
+  await f.send("used");
+  await f.installation.close(); f.missing();
+  await assert.rejects(f.reopen(true), /private session is unavailable/);
+  await assert.rejects(f.installation.requestEmptySetupRepair(), /used setup/);
+  assert.equal(f.counts.creates, 1);
+});
+
+for (const change of ["design", "owner", "live-native", "extra-state"]) test(`empty repair blocks ${change} evidence`, async t => {
+  const f = await emptyCreatedFixture(t);
+  if (change === "design") {
+    const file = new HostStateFile(f.workspace, join(f.workspace, ".tandem", "living-canvas", "design", "document.json"));
+    await file.mutate("fixture-design", () => ({ content: JSON.stringify(design), result: null }));
+  } else if (change === "owner") f.options.mainSession.sessionId = "different-main";
+  else if (change === "live-native") {
+    const sdk = await f.options.loadSdk();
+    f.options.loadSdk = async () => ({ ...sdk, CopilotClient: class extends sdk.CopilotClient {
+      constructor(...args) { super(...args); this.rpc.sessions.checkInUse = async () => ({ inUse: [f.installation.configuration.owner.privateSessionId] }); }
+    } });
+  } else {
+    const file = new HostStateFile(f.workspace, join(f.workspace, ".tandem", "living-canvas", "unknown-state.json"));
+    await file.mutate("fixture-extra", () => ({ content: "{}", result: null }));
+  }
+  await assert.rejects(f.installation.requestEmptySetupRepair(), /Design|unknown state|main session|owner|active|unverified/i);
+  assert.equal(f.counts.creates, 1); assert.equal(f.counts.sends, 0);
+});
+
+test("failure after repair creation consumes its decision and preserves uncertainty", async t => {
+  const f = await emptyCreatedFixture(t);
+  const proposal = await f.installation.requestEmptySetupRepair();
+  f.setCreateFailure("after-create");
+  await assert.rejects(f.installation.decideEmptySetupRepair({ confirmationId: proposal.confirmationId, approve: true }), /acknowledgement was lost/);
+  const record = JSON.parse(await f.record().read());
+  assert.equal(record.nativeCreation.status, "requested");
+  assert.equal(record.nativeCreation.authorization.id, proposal.confirmationId);
+  assert.equal((await f.installation.read()).status, "unknown");
+  await assert.rejects(f.installation.decideEmptySetupRepair({ confirmationId: proposal.confirmationId, approve: true }), /stale or consumed/);
+  assert.equal(f.counts.creates, 2); assert.equal(f.counts.sends, 0);
+});
+
 for (const changed of [false, true]) test(`reopen retains a pending human confirmation without dispatch and replaces stale Design approval: changed=${changed}`, async t => {
   const f = await fixture(t, { ask: true, autoConfirm: false });
-  assert.equal((await f.send("proposal")).status, "waiting-confirmation");
+  const request = { id: "proposal", message: "@agent Implement the agreed Design.", receivedAt: new Date().toISOString(),
+    answers: null, roleHint: { schemaVersion: "human-role-hint/v1", role: "agent" } };
+  await f.runtime.send(request);
+  assert.equal((await f.runtime.whenIdle()).status, "waiting-confirmation");
   const original = (await f.runtime.state()).implementationConfirmations[0], sends = f.counts.sends;
   await f.installation.close();
   if (changed) f.setDesign({ ...design, binding: { ...design.binding, revisionId: "changed-design" } });
@@ -241,6 +371,10 @@ for (const changed of [false, true]) test(`reopen retains a pending human confir
   f.runtime.wake();
   assert.equal((await f.runtime.whenIdle()).status, "waiting-confirmation");
   const current = (await f.runtime.state()).implementationConfirmations.at(-1);
+  const retained = (await f.runtime.state()).requests[0];
+  assert.deepEqual(retained.roleHint, request.roleHint);
+  assert.equal(retained.message, request.message);
+  assert.equal(retained.receivedAt, request.receivedAt);
   assert.equal(f.counts.sends, sends, "Reopen and replacement of a pending card send no native turn.");
   if (changed) {
     assert.notEqual(current.id, original.id);
@@ -395,6 +529,7 @@ test("private create and same-ID resume retain repository discovery but opt out 
   const owner = structuredClone(f.installation.configuration.owner);
   const assertPrivate = session => {
     assert.equal(session.config.requestExtensions, false);
+    assert.deepEqual(session.config.toolSearch, { enabled: false });
     assert.equal(session.config.enableConfigDiscovery, true);
     assert.equal(session.config.workingDirectory, f.workspace);
     assert.equal(typeof session.config.hooks.onPreToolUse, "function");
@@ -868,8 +1003,8 @@ for (const legacyNamespaces of [false, true]) test(`interrupted recovery retains
   const store = f.runtime.store, before = await f.runtime.state();
   const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=", "base64");
   const attachment = await new ImageAttachmentStore(f.workspace).put(png, "image/png");
-  const request = { id: "interrupted", message: "  Exact retained image request.\n", receivedAt: new Date().toISOString(),
-    answers: null, attachments: [attachment] };
+  const request = { id: "interrupted", message: "@designer  Exact retained image request.\n", receivedAt: new Date().toISOString(),
+    answers: null, attachments: [attachment], roleHint: { schemaVersion: "human-role-hint/v1", role: "designer" } };
   await store.dispatch("user", "receive-interrupted", "receive-request", request);
   await store.dispatch("host", "admit-interrupted", "admit-request", { requestId: request.id });
   const packet = createHumanTask({ id: "interrupted-role", dispatchId: "interrupted-dispatch", sessionId: f.runtime.sessionId,
@@ -911,6 +1046,10 @@ for (const legacyNamespaces of [false, true]) test(`interrupted recovery retains
   assert.deepEqual(await new ImageAttachmentStore(f.workspace).read(attachment), png);
   const visible = projectHumanConversation(recovered, messages);
   assert.deepEqual(visible.find(({ requestId }) => requestId === request.id).attachments, [attachment]);
+  assert.deepEqual(visible.find(({ requestId }) => requestId === request.id).roleHint, request.roleHint);
+  assert.equal(visible.find(({ requestId }) => requestId === request.id).text, request.message);
+  assert.equal(recovered.requests.find(({ id }) => id === request.id).receivedAt, request.receivedAt);
+  assert.equal(Object.hasOwn(recovered.requests.find(({ id }) => id === "old-queue"), "roleHint"), false);
   assert.equal(recovered.recoveries[0].taskId, packet.binding.id);
   assert.deepEqual(recovered.recoveries[0].uncertainty, interrupted.uncertainty);
   assert.equal(recovered.uncertainty, null);
@@ -937,6 +1076,33 @@ test("persisted model preferences allow original automatic creation and same-ses
   await f.runtime.changeModel({ acceptActual: true });
   assert.equal((await new HumanLoopPreferences(f.workspace).read()).model, "one");
   assert.deepEqual(await f.runtime.conversation(), messages);
+});
+
+test("explicit effort survives cold reopen without overwriting native history or replaying work", async t => {
+  const f = await fixture(t, { model: "one", reasoningEffort: "low" });
+  assert.equal(f.sessions[0].config.reasoningEffort, "low");
+  await f.send("first");
+  const identity = f.runtime.sessionId, sends = f.counts.sends, messages = await f.runtime.conversation();
+  await f.installation.close(); await f.reopen(true);
+  assert.equal(f.runtime.sessionId, identity);
+  assert.equal(f.counts.sends, sends);
+  assert.equal((await f.runtime.modelSettings()).actualReasoningEffort, "low");
+  assert.equal(Object.hasOwn(f.sessions.at(-1).config, "reasoningEffort"), false);
+  await f.installation.close(); f.setActualEffort("high"); await f.reopen(true);
+  await assert.rejects(f.runtime.send({}), /reasoning effort differs/);
+  assert.equal(f.counts.creates, 1);
+  await f.runtime.changeModel({ model: "one", reasoningEffort: "low" });
+  assert.equal((await f.runtime.modelSettings()).actualReasoningEffort, "low");
+  assert.deepEqual(await f.runtime.conversation(), messages);
+  const preferences = new HumanLoopPreferences(f.workspace);
+  await preferences.update({ pendingModel: "one", pendingReasoningEffort: "high" });
+  await f.installation.close(); await f.reopen(true);
+  await assert.rejects(f.runtime.send({}), /unconfirmed/);
+  assert.equal((await preferences.read()).pendingReasoningEffort, "high");
+  assert.equal(f.counts.sends, sends);
+  await f.runtime.changeModel({ acceptActual: true });
+  assert.equal((await preferences.read()).reasoningEffort, "low");
+  assert.equal((await preferences.read()).pendingReasoningEffort, null);
 });
 
 test("same-ID reopen retains an actual immediate Stop without reinjection", { timeout: 90_000 }, async (t) => {

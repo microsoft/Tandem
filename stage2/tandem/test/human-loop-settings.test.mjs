@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { HumanLoopPreferences, parsePreferences } from "../src/human-loop-preferences.mjs";
 import { HumanLoopRuntime } from "../src/human-loop-runtime.mjs";
+import { createHumanLoopController } from "../src/human-loop-controller.mjs";
 import { DEFAULT_POLICY, policyHash } from "../runtime-src/domain/workflow/policy.ts";
 import { getHostStateWal } from "../runtime-src/domain/host-state-wal.ts";
 import { NativeSession, git } from "./helpers/native-session-fixture.mjs";
@@ -12,27 +13,169 @@ import { installComposerEnter } from "../public/composer-enter.js";
 import { createHumanLoopProvider, HumanLoopEvents } from "../src/human-loop-provider.mjs";
 import { openFixtureBrowser, browserAvailable } from "./helpers/browser-fixture.mjs";
 
-async function fixture(t, initial = {}) {
+async function fixture(t, initial = {}, projectEffortControl = false) {
   const root = resolve(".settings-fixtures", randomUUID());
   await mkdir(root, { recursive: true }); await git(root, "init", "--quiet");
   t.after(async () => { await getHostStateWal(root).close(); await rm(root, { recursive: true, force: true }); });
   const preferences = new HumanLoopPreferences(root);
   if (Object.keys(initial).length) await preferences.update(initial);
   const session = new NativeSession(); session.abort = async () => {};
-  let actual = "one", switchImpl = async (id) => { actual = id; }, listImpl = async () => [{ id: "one", name: "One" }, { id: "two", name: "Two" }];
-  session.rpc.model = { getCurrent: async () => ({ modelId: actual }) };
+  let actual = "one", effort = null, switchImpl = async (id) => { actual = id; effort = null; },
+    listImpl = async () => [{ id: "one", name: "One", supportedReasoningEfforts: ["low", "high"] }, { id: "two", name: "Two" }];
+  session.rpc.model = { getCurrent: async () => ({ modelId: actual, reasoningEffort: effort }),
+    setReasoningEffort: async ({ reasoningEffort }) => { effort = reasoningEffort; return { reasoningEffort }; } };
   session.setModel = (id) => switchImpl(id);
   const client = { start: async () => {}, listModels: () => listImpl(),
-    createSession: async (config) => { session.config = config; actual = config.model ?? actual; return session; }, stop: async () => [] };
+    createSession: async (config) => { session.config = config; actual = config.model ?? actual; effort = config.reasoningEffort ?? null; return session; }, stop: async () => [] };
   const configuration = { schemaVersion: "human-loop-runtime/v1", owner: { schemaVersion: "human-loop-owner/v1", id: "owner",
     mainSessionId: "main", privateSessionId: "private", workspacePath: root, policy: DEFAULT_POLICY },
     runtimeDirectory: root, node: { path: process.execPath }, sdk: {}, cli: {}, buildId: "fixture" };
   const runtime = new HumanLoopRuntime({ configuration, client, verifyOwnership: async () => {}, onHandoff: async () => {},
+    projectEffortControl,
     readDesign: async () => ({ binding: { revisionId: null, digest: null }, content: null }) });
   await runtime.open();
   return { root, preferences, session, runtime, configuration, client,
-    actual: (id) => { actual = id; }, switch: (fn) => { switchImpl = fn; }, list: (fn) => { listImpl = fn; } };
+    actual: (id) => { actual = id; }, effort: (value) => { effort = value; },
+    switch: (fn) => { switchImpl = fn; }, list: (fn) => { listImpl = fn; } };
 }
+
+test("composed private effort validates and applies its own intent without changing model or workflow history", async t => {
+  const f = await fixture(t, { model: "one", projectReasoningEffort: "low" }, true);
+  const before = await f.runtime.store.load();
+  await f.runtime.applyProjectEffort();
+  let settings = await f.runtime.modelSettings();
+  assert.equal(settings.actual, "one");
+  assert.equal(settings.actualReasoningEffort, "low");
+  assert.equal(settings.effortManaged, true);
+  await assert.rejects(f.runtime.changeModel({ model: "one", reasoningEffort: "high" }), /single project control/);
+  await assert.rejects(f.runtime.changeModel({ model: "two" }), /not advertised/);
+  await f.runtime.selectProjectEffort("high");
+  settings = await f.runtime.modelSettings();
+  assert.equal(settings.actual, "one");
+  assert.equal(settings.actualReasoningEffort, "high");
+  assert.equal((await f.preferences.read()).projectReasoningEffort, "high");
+  assert.deepEqual(await f.runtime.store.load(), before);
+});
+
+test("composed effort preserves busy and pending-model state instead of silently overriding it", async t => {
+  const f = await fixture(t, {}, true), before = await f.preferences.read();
+  f.session.processing = true;
+  await assert.rejects(f.runtime.selectProjectEffort("low"), /quiescent|idle/);
+  assert.deepEqual(await f.preferences.read(), before);
+  f.session.processing = false;
+  await f.preferences.update({ pendingModel: "one", pendingReasoningEffort: "low" });
+  await assert.rejects(f.runtime.selectProjectEffort("high"), /pending private model/);
+  assert.equal((await f.preferences.read()).pendingReasoningEffort, "low");
+});
+
+test("composed effort can wait for a private model, then uses the saved choice without a second selector", async t => {
+  const f = await fixture(t, {}, true);
+  f.actual(null);
+  await f.runtime.selectProjectEffort("low");
+  assert.equal((await f.preferences.read()).projectReasoningEffort, "low");
+  assert.equal((await f.runtime.modelSettings()).actual, null);
+  await f.runtime.changeModel({ model: "one" });
+  assert.equal((await f.runtime.modelSettings()).actualReasoningEffort, "low");
+});
+
+test("unopened Development persists only its own effort intent and reserves no private identity", async t => {
+  const root = resolve(".settings-fixtures", randomUUID());
+  await mkdir(root, { recursive: true }); await git(root, "init", "--quiet");
+  t.after(async () => { await getHostStateWal(root).close(); await rm(root, { recursive: true, force: true }); });
+  const controller = createHumanLoopController({ workspacePath: root, projectEffortControl: true,
+    sdkModulePath: import.meta.resolve("@github/copilot-sdk") });
+  await controller.attach({ sessionId: "main", on() { return () => {}; }, getEvents: async () => [] });
+  await controller.selectReasoningEffort("low");
+  assert.equal((await controller.status()).installation.status, "new");
+  assert.equal(controller.installation.runtime, null);
+  assert.equal(controller.installation.configuration, null);
+  assert.equal((await controller.reasoningEffortStatus()).status, "pending");
+  assert.equal(await new HumanLoopPreferences(root).isOnlySavedState(), true);
+  await controller.close();
+});
+
+test("saved project effort never replaces an unresolved or different saved private model", async t => {
+  const f = await fixture(t, { model: "one", reasoningEffort: "low", projectReasoningEffort: "high" }, true);
+  const before = await f.preferences.read();
+  f.actual("two");
+  f.switch(async () => assert.fail("Saved project intent cannot adopt another actual model."));
+  await f.runtime.applyProjectEffort();
+  assert.match((await f.runtime.modelSettings()).error, /differs from the saved selection/);
+  assert.deepEqual(await f.preferences.read(), before);
+  await f.preferences.update({ pendingModel: "one", pendingReasoningEffort: "high" });
+  const pending = await f.preferences.read();
+  await f.runtime.applyProjectEffort();
+  assert.match((await f.runtime.modelSettings()).error, /unconfirmed/);
+  assert.deepEqual(await f.preferences.read(), pending);
+});
+
+test("failed private readback retains project intent visibly without native setting effects", async t => {
+  const f = await fixture(t, {}, true);
+  f.session.rpc.model.getCurrent = async () => { throw new Error("Native read unavailable"); };
+  f.switch(async () => assert.fail("No model may be inferred from a failed read."));
+  const settings = await f.runtime.selectProjectEffort("low");
+  assert.match(settings.error, /Native read unavailable/);
+  assert.equal(settings.actualReasoningEffort, null);
+  assert.equal((await f.preferences.read()).projectReasoningEffort, "low");
+  assert.equal((await f.preferences.read()).pendingModel, null);
+  await f.runtime.applyProjectEffort();
+  assert.match((await f.runtime.modelSettings()).error, /Native read unavailable/);
+});
+
+test("legacy preferences retain native effort defaults; explicit effort is validated and read back", async t => {
+  const old = { schemaVersion: "human-loop-preferences/v1", theme: "system", fontSize: "normal", model: "one", pendingModel: null };
+  assert.equal(parsePreferences(old).reasoningEffort, null);
+  assert.throws(() => parsePreferences({ ...old, model: null, reasoningEffort: "low" }), /invalid/);
+  const f = await fixture(t, { model: "one" });
+  assert.equal(Object.hasOwn(f.session.config, "reasoningEffort"), false);
+  await f.runtime.changeModel({ model: "one", reasoningEffort: "low" });
+  assert.equal((await f.preferences.read()).reasoningEffort, "low");
+  assert.equal((await f.runtime.modelSettings()).actualReasoningEffort, "low");
+  assert.deepEqual((await f.runtime.modelSettings()).models[0].supportedReasoningEfforts, ["low", "high"]);
+  f.effort("high");
+  await assert.rejects(f.runtime.send({}), /reasoning effort differs/);
+  await f.runtime.changeModel({ acceptActual: true });
+  assert.equal((await f.preferences.read()).reasoningEffort, "high");
+  await f.runtime.changeModel({ model: "two" });
+  assert.equal((await f.preferences.read()).reasoningEffort, null);
+});
+
+test("fresh explicit effort is passed to native creation and unsupported effort never causes a native switch", async t => {
+  const f = await fixture(t, { model: "one", reasoningEffort: "low" });
+  assert.equal(f.session.config.reasoningEffort, "low");
+  f.switch(async () => assert.fail("Unsupported selection must not switch."));
+  for (const selection of [{ model: "one", reasoningEffort: "invented" }, { model: "two", reasoningEffort: "low" }])
+    await assert.rejects(f.runtime.changeModel(selection), /not advertised/);
+  delete f.session.rpc.model.setReasoningEffort;
+  await assert.rejects(f.runtime.changeModel({ model: "one", reasoningEffort: "high" }), /cannot set/);
+  assert.equal((await f.preferences.read()).pendingModel, null);
+});
+
+test("failed effort effect and readback preserve pending intent and require explicit reconciliation", async t => {
+  const f = await fixture(t);
+  f.session.rpc.model.setReasoningEffort = async () => { throw new Error("effort failed"); };
+  await assert.rejects(f.runtime.changeModel({ model: "one", reasoningEffort: "low" }), /effort failed/);
+  assert.equal((await f.preferences.read()).pendingReasoningEffort, "low");
+  await assert.rejects(f.runtime.send({}), /unconfirmed/);
+  await f.runtime.changeModel({ acceptActual: true });
+  assert.equal((await f.preferences.read()).pendingReasoningEffort, null);
+  f.session.rpc.model.setReasoningEffort = async () => ({ reasoningEffort: "low" });
+  await assert.rejects(f.runtime.changeModel({ model: "one", reasoningEffort: "low" }), /readback/);
+  assert.equal((await f.preferences.read()).pendingReasoningEffort, "low");
+  f.effort("low");
+  await f.runtime.changeModel({ acceptActual: true });
+  assert.equal((await f.preferences.read()).reasoningEffort, "low");
+});
+
+test("effort changes share busy and unavailable-metadata guards", async t => {
+  const f = await fixture(t);
+  f.session.processing = true;
+  await assert.rejects(f.runtime.changeModel({ model: "one", reasoningEffort: "low" }), /quiescent/);
+  assert.equal((await f.preferences.read()).pendingReasoningEffort, null);
+  f.session.processing = false;
+  f.list(async () => [{ id: "one", supportedReasoningEfforts: ["low", "low"] }]);
+  await assert.rejects(f.runtime.changeModel({ model: "one", reasoningEffort: "low" }), /efforts are invalid/);
+});
 
 test("remembered approval reset excludes active work before touching SDK or broker and reports SDK failure", async t => {
   const f = await fixture(t), original = f.runtime.store.load.bind(f.runtime.store), state = await original();
@@ -242,6 +385,46 @@ test("appearance survives provider restart and new port; API rejects malformed a
   } finally { await provider.close(); events.close(); }
 });
 
+test("standalone Settings has labelled mouse Close and Escape with focus return and no mutations", { skip: !browserAvailable }, async t => {
+  const f = await fixture(t), events = new HumanLoopEvents(), cleanups = [];
+  let closes = 0, modelChanges = 0;
+  f.switch(async () => { modelChanges++; });
+  const before = await f.preferences.read();
+  const provider = await createHumanLoopProvider({ repositoryRoot: f.root, publicDirectory: resolve(import.meta.dirname, "..", "public"), events,
+    getInstallation: () => ({ runtime: f.runtime, read: async () => ({ status: "ready" }), close: async () => { closes++; } }),
+    permissions: { list: () => [] } });
+  try {
+    const browser = await openFixtureBrowser({ after: cleanup => cleanups.push(cleanup) });
+    await browser.call("Page.navigate", { url: provider.url });
+    await browser.waitFor('document.querySelector("#model-setting-status").textContent.includes("Actual private model: one")');
+    const click = async selector => {
+      const point = await browser.evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});e.scrollIntoView({block:"nearest"});
+        const r=e.getBoundingClientRect(),hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);
+        return {x:r.x+r.width/2,y:r.y+r.height/2,visible:r.width>0&&r.height>0&&(hit===e||e.contains(hit))};})()`);
+      assert.ok(point.visible, selector);
+      for (const type of ["mousePressed", "mouseReleased"]) await browser.call("Input.dispatchMouseEvent",
+        { type, x: point.x, y: point.y, button: "left", clickCount: 1 });
+    };
+    await click("#canvas-settings > summary");
+    await browser.waitFor('document.querySelector("#canvas-settings").open');
+    await browser.evaluate('document.querySelector("#setting-theme").value="dark"');
+    await click("#close-settings");
+    await browser.waitFor('!document.querySelector("#canvas-settings").open');
+    assert.equal(await browser.evaluate('document.activeElement===document.querySelector("#canvas-settings > summary")'), true);
+    assert.equal(await browser.evaluate('document.querySelector("#setting-theme").value'), "dark");
+    await click("#canvas-settings > summary");
+    await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+    await browser.waitFor('!document.querySelector("#canvas-settings").open');
+    assert.equal(await browser.evaluate('document.activeElement===document.querySelector("#canvas-settings > summary")'), true);
+    assert.deepEqual(await f.preferences.read(), before);
+    assert.equal(closes, 0); assert.equal(modelChanges, 0); assert.equal(f.session.sends.length, 0);
+    assert.deepEqual(browser.exceptions, []);
+  } finally {
+    for (const cleanup of cleanups) await cleanup();
+    await provider.close(); events.close();
+  }
+});
+
 test("model HTTP actions validate inputs and target only the verified private runtime", async (t) => {
   const f = await fixture(t), events = new HumanLoopEvents();
   const provider = await createHumanLoopProvider({ repositoryRoot: f.root, publicDirectory: resolve(import.meta.dirname, "..", "public"), events,
@@ -250,7 +433,9 @@ test("model HTTP actions validate inputs and target only the verified private ru
     headers: { "content-type": "application/json" }, body: JSON.stringify(data) });
   try {
     for (const data of [{ action: "select", model: 42 }, { action: "select", model: "two", hidden: true },
-      { action: "accept-actual", model: "two" }, { action: "unknown", model: null }]) {
+      { action: "accept-actual", model: "two" }, { action: "unknown", model: null },
+      { action: "select", model: "one", reasoningEffort: 3 }, { action: "select", model: "two", reasoningEffort: "low" },
+      { action: "accept-actual", model: null, reasoningEffort: "low" }]) {
       assert.equal((await post(data)).status, 409);
     }
     const response = await post({ action: "select", model: "two" });
@@ -259,6 +444,10 @@ test("model HTTP actions validate inputs and target only the verified private ru
     assert.equal((await post({ action: "select", model: "one" })).status, 409);
     assert.equal((await f.preferences.read()).pendingModel, "one");
     assert.equal((await post({ action: "accept-actual", model: null })).status, 200);
+    f.switch(async id => { f.actual(id); f.effort(null); });
+    const effort = await post({ action: "select", model: "one", reasoningEffort: "low" });
+    assert.equal(effort.status, 200);
+    assert.equal((await effort.json()).model.actualReasoningEffort, "low");
     assert.equal(f.runtime.sessionId, "private");
   } finally { await provider.close(); events.close(); }
 });
@@ -282,7 +471,39 @@ test("native-unselected model remains explicit in browser Settings until verifie
       document.querySelector('#apply-model').click();`);
     await browser.waitFor("document.querySelector('#model-setting-status').textContent.includes('Actual private model: two.')");
     assert.equal((await f.preferences.read()).model, "two");
+    await browser.evaluate(`document.querySelector('#setting-model').value='one';
+      document.querySelector('#setting-model').dispatchEvent(new Event('change'));`);
+    assert.deepEqual(await browser.evaluate("Array.from(document.querySelector('#setting-effort').options).map(o=>o.value)"), ["", "low", "high"]);
+    await browser.evaluate(`document.querySelector('#setting-effort').value='low'; document.querySelector('#apply-model').click();`);
+    await browser.waitFor("document.querySelector('#model-setting-status').textContent.includes('Actual reasoning effort: low.')");
+    assert.equal((await f.preferences.read()).reasoningEffort, "low");
+    await browser.call("Page.reload");
+    await browser.waitFor("document.querySelector('#setting-effort').value==='low'");
     assert.equal(f.runtime.sessionId, "private");
+    assert.deepEqual(browser.exceptions, []);
+  } finally {
+    for (const cleanup of cleanups) await cleanup();
+    await provider.close(); events.close();
+  }
+});
+
+test("composed browser Settings keeps effort read-only while model selection applies project intent", { skip: !browserAvailable }, async t => {
+  const f = await fixture(t, { projectReasoningEffort: "low" }, true), events = new HumanLoopEvents(), cleanups = [];
+  f.actual(undefined);
+  const provider = await createHumanLoopProvider({ repositoryRoot: f.root, publicDirectory: resolve(import.meta.dirname, "..", "public"), events,
+    getInstallation: () => ({ runtime: f.runtime, read: async () => ({ status: "ready" }) }), permissions: { list: () => [] } });
+  try {
+    const browser = await openFixtureBrowser({ after: cleanup => cleanups.push(cleanup) });
+    await browser.call("Page.navigate", { url: provider.url });
+    await browser.waitFor("!document.querySelector('#setting-model').disabled");
+    assert.equal(await browser.evaluate("document.querySelector('#setting-effort').disabled"), true);
+    await browser.evaluate(`document.querySelector('#canvas-settings').open=true;
+      document.querySelector('#setting-model').value='one';
+      document.querySelector('#setting-model').dispatchEvent(new Event('change'));
+      document.querySelector('#apply-model').click();`);
+    await browser.waitFor("document.querySelector('#model-setting-status').textContent.includes('Actual reasoning effort: low.')");
+    assert.equal((await f.runtime.modelSettings()).actualReasoningEffort, "low");
+    assert.equal(await browser.evaluate("document.querySelector('#setting-effort').disabled"), true);
     assert.deepEqual(browser.exceptions, []);
   } finally {
     for (const cleanup of cleanups) await cleanup();

@@ -42,10 +42,13 @@ async function requestPreparation(fixture: Awaited<ReturnType<typeof extensionHa
     return { pending, args: request.args };
 }
 
-test("automatic Preparation binds its run before agents and writes a versioned Requirements handoff", async () => {
+for (const effort of [undefined, "low"]) test(`automatic Preparation binds its run, preserves ${effort ?? "default"} effort and writes a versioned Requirements handoff`, async () => {
     const fixture = await extensionHarness();
     try {
         await writeFile(join(fixture.root, "package.json"), '{"name":"existing-app"}');
+        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, model: {
+            getCurrent: async () => ({ modelId: "fixture-model", ...(effort ? { reasoningEffort: effort } : {}) }),
+        } } });
         const state = fixture.api.createState("sample", "Build an app");
         await fixture.api.persistState(state);
         const pending = await fixture.api.ensurePreparationStarted(state, true);
@@ -66,15 +69,16 @@ test("automatic Preparation binds its run before agents and writes a versioned R
         const result = await fixture.api.preparationFactory.run({
             args: request.args, runId: "prepare-run", phase() {}, log() {},
             step: async (key: string, work: () => Promise<unknown>) => { keys.push(key); return work(); },
-            agent: async (_prompt: string, options: { label: string; agent?: string }) => {
+            agent: async (_prompt: string, options: { label: string; agent?: string; reasoningEffort: string }) => {
                 assert.equal((await fixture.api.loadState("sample")).preparation.processing?.runId, "prepare-run");
                 assert.equal(options.agent, options.label === "prepare:requirements" ? fixture.api.textWorkerAgent.name : undefined);
+                assert.equal(options.reasoningEffort, effort ?? (options.label === "prepare:workspace" ? "low" : "medium"));
                 return results.shift();
             },
         });
         assert.equal(keys.length, 3);
         assert.ok(keys.every((key) => key.startsWith(pending.preparation.processing!.requestId!)));
-        fixture.api.setSession({ ...fixture.session, factory: {
+        fixture.api.setSession({ ...fixture.session, workflow: {
             waitForRun: async () => ({ runId: "prepare-run", status: "completed", result }),
         } });
         await fixture.api.waitForEffortRun("sample", "prepare-run");
@@ -122,7 +126,7 @@ test("empty and metadata-only projects use one goal-only worker and persist a re
             assert.deepEqual(await fixture.api.preparationFactory.run(context), result);
             assert.deepEqual(labels, ["prepare:goal-only"], "durable replay must not repeat agent work");
             assert.ok([...journal.keys()].every((key) => key.startsWith(pending.preparation.processing!.requestId!)));
-            fixture.api.setSession({ ...fixture.session, factory: {
+            fixture.api.setSession({ ...fixture.session, workflow: {
                 waitForRun: async () => ({ runId: context.runId, status: "completed", result }),
             } });
             await fixture.api.waitForEffortRun("sample", context.runId);
@@ -207,7 +211,7 @@ test("an imported source record keeps full preparation even without project file
 test("empty-workspace inspection preserves guidance, hidden files, subdirectories, and linked metadata", async (t) => {
     for (const name of ["AGENTS.md", "README.md", "package.json", ".gitignore", ".env", ".git", ".tandem", "src"]) {
         await t.test(name, async () => {
-            const fixture = await extensionHarness();
+            const fixture = await extensionHarness({}, undefined, "", undefined, true);
             try {
                 if (name === "src") await mkdir(join(fixture.root, name));
                 else await writeFile(join(fixture.root, name), "Existing project context");
@@ -216,7 +220,7 @@ test("empty-workspace inspection preserves guidance, hidden files, subdirectorie
         });
     }
     await t.test("metadata junction", async () => {
-        const fixture = await extensionHarness();
+        const fixture = await extensionHarness({}, undefined, "", undefined, true);
         try {
             const target = join(fixture.root, ".tandem");
             await mkdir(target);
@@ -314,16 +318,17 @@ test("canvas reset preserves revisions and cannot repeat during rehydration or a
     } finally { await fixture.close(); }
 });
 
-test("non-GUI Requirements bypass Sketch and Prototype with snapshots and a feature-spec handoff", async () => {
+test("non-GUI Requirements finish with durable source snapshots without starting Stage2", async () => {
     const fixture = await extensionHarness();
     try {
         const state = readyRequirements(fixture.api.createState("sample", "Build a CLI"));
         state.prototypeApproach = { mode: "not-applicable", reason: "Command-line contract only." };
         await fixture.api.persistState(state);
+        fixture.setBeforeDevelopmentStart(async () => { throw new Error("Stage2 must not start as part of Stage1 completion."); });
         const completed = await fixture.api.completeLifecycleStage("sample", "requirements", "project:tandem");
         assert.equal(completed.lifecycle.currentStage, "development");
-        assert.equal(fixture.developmentRequests.length, 1);
-        assert.match(String(fixture.developmentRequests[0].message), /Do not implement/);
+        assert.equal(fixture.developmentRequests.length, 0);
+        assert.ok(completed.development == null);
         assert.deepEqual(Array.from(completed.lifecycle.skippedStages, (stage) => stage.stageId), ["sketch", "prototype"]);
         assert.equal(completed.lifecycle.outputs.length, 3);
         assert.ok(completed.artifacts.some((artifact) => artifact.id === "draft-feature-spec"));

@@ -443,6 +443,75 @@ const submit = (session, packet, name, outcome) => session.call(name, {
 const route = (session, packet, intent, cycleId = null, resolvedQuestions = []) => submit(session, packet, "submit_human_route", {
   kind: "route", intent, cycleId, resolvedQuestions, summary: "Interpret this exact user request.",
 });
+
+for (const [preferred, intent, actual] of [["designer", "answer", "agent"], ["agent", "design", "designer"]]) {
+  test(`role hint @${preferred} still runs Router and permits contrary ${actual} response`, async t => {
+    const roleHint = { schemaVersion: "human-role-hint/v1", role: preferred };
+    const input = { id: "hinted", message: `@${preferred} ${intent === "answer" ? "Explain without changes." : "Discuss a Design change."}\n`,
+      receivedAt: "2026-10-13T00:00:00Z", answers: null, roleHint };
+    const f = await fixture(t, async (packet, session) => {
+      assert.equal(packet.context.request.message, input.message);
+      assert.deepEqual(packet.context.request.roleHint, roleHint);
+      if (packet.binding.role === "router") {
+        assert.match(packet.context.instructions.join("\n"), /different role or implementation confirmation/);
+        await assert.rejects(submit(session, packet, "submit_human_route", {
+          kind: "route", intent: "agent", cycleId: null, summary: "Invalid direct role.", resolvedQuestions: [],
+        }), /not an allowed value/);
+        return route(session, packet, intent);
+      }
+      assert.equal(packet.binding.role, actual);
+      await assert.rejects(patchFile(session, { path: "not-authorized.txt", expectedDigest: null, content: "Not allowed\n" }),
+        /Native permission denied/);
+      await assert.rejects(session.call("view", { path: "original.txt" }), /Native permission denied/);
+      await assert.rejects(session.call("read_cycle_changes", {}), /role|cycle|Reviewer|reviewer/);
+      return actual === "agent" ? submit(session, packet, "submit_readonly_answer", {
+        kind: "answer", summary: "Actual Agent response.", report: "No changes.", evidenceRefs: [],
+      }) : submit(session, packet, "submit_designer_outcome", {
+        kind: "designer-unchanged", summary: "Actual Designer response.", explanation: "Discussed without publishing changes.", questions: [],
+      });
+    }, { realDesign: true, autoConfirm: false, filePermissionHandler: () => ({ kind: "reject" }) });
+    await f.runtime.send(input);
+    assert.equal((await f.runtime.whenIdle()).status, "ready", f.errors.map(e => e.stack).join("\n"));
+    assert.deepEqual(f.history.map(entry => entry.role), ["router", actual]);
+    assert.deepEqual(f.errors, []);
+    const state = await f.runtime.state();
+    assert.equal(state.implementationConfirmations?.length ?? 0, 0);
+    assert.equal(state.cycles.length, 0);
+    assert.equal(state.requests[0].message, input.message);
+    const entries = projectHumanConversation(state, await f.runtime.conversation());
+    assert.deepEqual(entries.find(entry => entry.kind === "user").roleHint, roleHint);
+    assert.ok(entries.some(entry => entry.kind === "assistant" && entry.role === actual));
+    await f.runtime.send(input);
+    await f.runtime.whenIdle();
+    assert.deepEqual(f.history.map(entry => entry.role), ["router", actual], "Exact retry never replays role execution.");
+  });
+}
+
+test("role hints never skip implementation confirmation, and Stop prevents a successor or replay", async t => {
+  const f = await fixture(t, (packet, session) => {
+    assert.equal(packet.binding.role, "router", "No Planner or implementation before confirmation.");
+    return route(session, packet, "implement");
+  }, { autoConfirm: false });
+  const input = { id: "hinted-implementation", message: "@agent Implement the agreed Design.",
+    receivedAt: "2026-10-13T00:00:00Z", answers: null, roleHint: { schemaVersion: "human-role-hint/v1", role: "agent" } };
+  await f.runtime.send(input);
+  assert.equal((await f.runtime.whenIdle()).status, "waiting-confirmation");
+  let state = await f.runtime.state();
+  assert.equal(state.cycles.length, 0);
+  const confirmation = state.implementationConfirmations.at(-1);
+  assert.equal(confirmation.status, "pending");
+  assert.deepEqual(confirmation.requestIds, [input.id]);
+  await f.runtime.stop("hint-stop", "immediate");
+  await f.runtime.whenIdle();
+  await assert.rejects(f.runtime.decideImplementation({ confirmationId: confirmation.id, decision: "approved" }), /invalidated|pending|current/i);
+  await f.runtime.send(input);
+  await f.runtime.whenIdle();
+  state = await f.runtime.state();
+  assert.deepEqual(f.history.map(entry => entry.role), ["router"]);
+  assert.equal(state.cycles.length, 0);
+  assert.deepEqual(f.errors, []);
+});
+
 const plan = (packet) => ({
   schemaVersion: "internal-plan/v1", id: "internal", version: 1, goal: "Implement both parts.",
   design: packet.context.design.binding, baseline: packet.context.code.current,
@@ -1906,7 +1975,8 @@ test("product WAL atomically saves mixed answers, retries lost acknowledgement, 
     }
     if (packet.binding.role === "designer") return submit(session, packet, "submit_designer_outcome", {
       kind: "designer-unchanged", summary: "Two choices.", explanation: "Current Design retained.",
-      questions: [question, { ...question, id: "optional", importance: "advisory" }],
+      questions: [question, { ...question, id: "optional", importance: "advisory",
+        unanswered: { action: "keep-current-design", explanation: "Keep the agreed behavior until a later explicit answer." } }],
     });
     return ordinary(packet, session);
   }, { realDesign: true });

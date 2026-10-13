@@ -70,6 +70,13 @@ export interface SketchState {
     current: SketchRevision | null;
     approved: SketchApproval | null;
     history: SketchRevision[];
+    requests?: Array<{
+        requestId: string;
+        kind: "generate" | "revise";
+        instruction: string;
+        requestedAt: string;
+        baseRevisionId: string | null;
+    }>;
 }
 
 const MAX_DOCUMENT_BYTES = 256 * 1024;
@@ -414,7 +421,7 @@ export function emptySketchState(): SketchState {
 
 export function readSketchState(value: unknown): SketchState {
     if (value === undefined) return emptySketchState();
-    const item = object(value, ["version", "status", "current", "approved", "history"]);
+    const item = object(value, ["version", "status", "current", "approved", "history"], ["requests"]);
     if (item.version !== 1 || !["empty", "draft", "approved", "stale"].includes(item.status as string)) {
         return invalid("unsupported persisted state.");
     }
@@ -437,5 +444,13 @@ export function readSketchState(value: unknown): SketchState {
         approved.requirementsDigest !== current.requirementsDigest || approved.documentHash !== current.documentHash)) {
         return invalid("approval does not match the current revision.");
     }
-    return { version: 1, status: item.status as SketchState["status"], current, approved, history };
+    const requests = item.requests === undefined ? undefined : list(item.requests, "request history", 0, Infinity).map((value): NonNullable<SketchState["requests"]>[number] => {
+        const request = object(value, ["requestId", "kind", "instruction", "requestedAt", "baseRevisionId"]);
+        if (request.kind !== "generate" && request.kind !== "revise") return invalid("unsupported drawing request kind.");
+        return { requestId: uuid(request.requestId), kind: request.kind,
+            instruction: text(request.instruction, "request instruction", 4000), requestedAt: timestamp(request.requestedAt),
+            baseRevisionId: request.baseRevisionId === null ? null : uuid(request.baseRevisionId) };
+    });
+    if (requests) unique(requests.map(request => request.requestId), "drawing request IDs");
+    return { version: 1, status: item.status as SketchState["status"], current, approved, history, ...(requests ? { requests } : {}) };
 }

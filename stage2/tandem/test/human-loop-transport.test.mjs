@@ -40,12 +40,28 @@ async function observeLongRole(t, f, task) {
 const git = async (root, ...args) => (await promisify(execFile)("git", ["-C", root, ...args])).stdout.trim();
 const design = { revisionId: "design", digest: "a".repeat(64) };
 class Session {
+  factoryRuns = new Map();
+  scopeRoots = new Map();
+  scopeEnds = new Map();
+  cancelledFactories = [];
+  workflow = {
+    getRun: async id => structuredClone(this.factoryRuns.get(id)),
+    cancel: async id => {
+      this.cancelledFactories.push(id);
+      const run = this.factoryRuns.get(id);
+      assert.ok(run);
+      run.status = "cancelled";
+      this.emit("workflow.run_settled", { runId: id, status: "cancelled" });
+      return structuredClone(run);
+    },
+  };
   internImages = false;
   terminalIdle = true;
   suppressTurnEnd = false;
   turnId = "0";
   completeTool = true;
   stopPending = false;
+  serializedHookArgs = false;
   sessionId = "private"; history = []; calls = 0; processing = false; sends = []; onSend = null; onImmediate = null; aborts = 0;
   rpc = {
     name: { set: async () => {} },
@@ -104,7 +120,7 @@ class Session {
     const tool = this.config.tools.find((tool) => tool.name === name);
     const invocation = { sessionId: this.sessionId, toolName: name, toolCallId: `call-${++this.calls}`, arguments: args };
     const allowed = await this.config.hooks.onPreToolUse({
-      sessionId: this.sessionId, toolName: name, toolArgs: args,
+      sessionId: this.sessionId, toolName: name, toolArgs: this.serializedHookArgs ? JSON.stringify(args) : args,
     }, { sessionId: this.sessionId });
     assert.notEqual(allowed.permissionDecision, "deny", allowed.permissionDecisionReason);
     if (tool.skipPermission === false) {
@@ -265,6 +281,144 @@ const capturedOrders = [
   ["user", "start", "ack"], ["start", "user", "ack"], ["ack", "user", "start"],
   ["ack", "start", "user"], ["user", "ack", "start"], ["start", "ack", "user"],
 ];
+test("serialized SDK hook arguments admit the exact Router result without changing its handler payload", async t => {
+  const f = await fixture(t);
+  capturedDispatch(f.session);
+  await f.request(); const packet = await f.begin("router");
+  f.session.serializedHookArgs = true;
+  const result = await f.finish(packet, "submit_human_route", { kind: "route", intent: "design", cycleId: null,
+    summary: "Continue the retained Design.", resolvedQuestions: [] });
+  assert.equal(result.inputDigest, packet.binding.inputDigest);
+  assert.equal(result.outcome.intent, "design");
+  assert.equal((await f.store.load()).uncertainty, null);
+  assert.deepEqual((await replayDurableState(f.root)).state, await f.store.load());
+});
+
+test("serialized SDK hook arguments preserve exact native invocation matching", async t => {
+  const f = await fixture(t, { nativeFiles: true });
+  await f.request(); const packet = await f.begin("router");
+  const args = { path: "app.js" };
+  f.session.emit("tool.execution_start", { toolCallId: "serialized-read", toolName: "view", arguments: args,
+    turnId: f.session.turnId, interactionId: f.session.interactionId });
+  assert.deepEqual(await f.session.config.hooks.onPreToolUse({
+    sessionId: "private", toolName: "view", toolArgs: JSON.stringify(args),
+  }, { sessionId: "private" }), {});
+  f.session.emit("tool.execution_complete", { toolCallId: "serialized-read", success: true,
+    turnId: f.session.turnId, interactionId: f.session.interactionId });
+  await f.finish(packet, "submit_human_route", { kind: "route", intent: "answer", cycleId: null,
+    summary: "Read complete.", resolvedQuestions: [] });
+});
+
+test("serialized SDK hook admission matches object permission and handler arguments without granting consent", async t => {
+  const f = await fixture(t, { permission: true });
+  await f.request();
+  const route = await f.begin("router");
+  await f.finish(route, "submit_human_route", { kind: "route", intent: "answer", cycleId: null,
+    summary: "Read only.", resolvedQuestions: [] });
+  const packet = await f.begin("agent");
+  f.session.serializedHookArgs = true;
+  const result = f.session.call("run_owned_check", {});
+  await waitFor(() => f.broker.list().length === 1, "real permission after serialized hook");
+  await f.broker.decide(f.broker.list()[0].id, "once");
+  assert.equal(await result, "Checked");
+  const tool = f.session.config.tools.find(tool => tool.name === "run_owned_check");
+  await assert.rejects(tool.handler({}, { sessionId: "private", toolName: tool.name, toolCallId: "unapproved-second" }),
+    /genuine permission grant/);
+  await f.finish(packet, "submit_readonly_answer", { kind: "answer", summary: "One consented call.",
+    report: "The once-only grant authorized exactly the admitted arguments.", evidenceRefs: [] });
+});
+
+test("serialized SDK hook arguments do not grant malformed, primitive, foreign or mismatched result authority", async t => {
+  const f = await fixture(t);
+  await f.request(); const packet = await f.begin("router");
+  const valid = { schemaVersion: "human-role-result/v1", resultId: "valid", inputDigest: packet.binding.inputDigest,
+    outcome: { kind: "route", intent: "design", cycleId: null, summary: "Design only.", resolvedQuestions: [] } };
+  for (const [toolArgs, sessionId] of [
+    ["{bad-json", "private"], ["null", "private"], ["[]", "private"], ['"text"', "private"], ["42", "private"],
+    [JSON.stringify(valid), "foreign"],
+    [JSON.stringify({ ...valid, inputDigest: "f".repeat(64) }), "private"],
+  ]) {
+    const denied = await f.session.config.hooks.onPreToolUse({
+      sessionId, toolName: "submit_human_route", toolArgs,
+    }, { sessionId: "private" });
+    assert.equal(denied.permissionDecision, "deny");
+    assert.ok(denied.permissionDecisionReason);
+    assert.equal((await f.store.load()).activeTask.result, null);
+  }
+  f.session.serializedHookArgs = true;
+  await f.finish(packet, "submit_human_route", valid.outcome);
+});
+
+test("private controlled roles preload tools instead of relying on deferred discovery", async t => {
+  const f = await fixture(t);
+  assert.deepEqual(f.session.config.toolSearch, { enabled: false });
+  assert.ok(f.session.config.tools.some(tool => tool.name === "submit_human_route"));
+  assert.ok(f.session.config.tools.some(tool => tool.name === "submit_designer_outcome"));
+  assert.equal(f.session.config.requestExtensions, false);
+});
+
+test("native system steering is not accepted as another Host input or completion", async t => {
+  const f = await fixture(t);
+  capturedDispatch(f.session);
+  await f.request();
+  await f.begin("router");
+  f.session.emit("user.message", { content: "", transformedContent: "Native deferred-tool catalog context.",
+    source: "system", delivery: "steering", interactionId: f.session.interactionId });
+  await assert.rejects(f.transport.drain(), /Private input envelope is invalid/);
+  await waitFor(async () => (await f.store.load()).uncertainty, "system injection remains unowned");
+  const state = await f.store.load();
+  assert.equal(state.activeTask.inputs.length, 1);
+  assert.equal(state.activeTask.result, null);
+  assert.equal(f.session.sends.length, 1);
+});
+
+for (const id of [undefined, null]) test(`identityless queue notifications do not become role evidence: id=${id}`, async t => {
+  const f = await fixture(t, { nativeFiles: true });
+  const queueChanged = () => f.session.config.onEvent({
+    type: "pending_messages.modified", data: {}, ...(id === undefined ? {} : { id }),
+  });
+  queueChanged();
+  await f.transport.drain();
+  const deliver = capturedDispatch(f.session, ["user", "ack", "start"], queueChanged);
+  await f.request();
+  const packet = await f.begin("router");
+  queueChanged();
+  deliver();
+  await f.transport.drain();
+  const state = await f.store.load();
+  assert.equal(state.activeTask.messageId, "sdk-ack-1");
+  assert.equal(state.activeTask.interactionId, "native-interaction-1");
+  assert.equal(state.activeTask.inputs[0].native.user.id,
+    f.session.history.find(event => event.type === "user.message").id);
+  assert.equal(state.activeTask.result, null);
+  assert.equal(f.session.sends.length, 1);
+  await f.finish(packet, "submit_human_route", { kind: "route", intent: "answer", cycleId: null,
+    summary: "Queue status hints did not settle the role.", resolvedQuestions: [] });
+  queueChanged();
+  await f.transport.drain();
+  assert.equal((await f.store.load()).uncertainty, null);
+  assert.deepEqual((await replayDurableState(f.root)).state, await f.store.load());
+});
+
+test("identityless notifications cannot bypass foreign-session or role-event identity checks", async t => {
+  for (const event of [
+    { type: "pending_messages.modified", data: {}, sessionId: "foreign" },
+    { type: "pending_messages.modified", data: {}, id: "" },
+    { type: "user.message", data: {}, ephemeral: true },
+    { type: "assistant.turn_start", data: { turnId: "0", interactionId: "native-interaction-1" }, ephemeral: true },
+    { type: "tool.execution_start", data: { toolCallId: "call", toolName: "view" }, ephemeral: true },
+    { type: "tool.execution_complete", data: { toolCallId: "result", success: true }, ephemeral: true },
+  ]) {
+    await t.test(event.type, async t => {
+      const f = await fixture(t);
+      f.session.config.onEvent(event);
+      await assert.rejects(f.transport.drain(), /another private session|expected non-empty text/);
+      await waitFor(async () => (await f.store.load()).uncertainty, "invalid native identity is retained");
+      assert.equal(f.session.sends.length, 0);
+    });
+  }
+});
+
 for (const order of capturedOrders) test(`captured native input binds exact envelope independently of ACK order: ${order.join(",")}`, async t => {
   const f = await fixture(t, { nativeFiles: true });
   const deliver = capturedDispatch(f.session, order);
@@ -741,11 +895,27 @@ function nativeCompletion(f, id, success = true, agentId = null) {
     ...(success ? {} : { error: { message: "Observed native invocation failure." } }) },
   undefined, agentId ? { agentId } : {});
 }
-async function reviewScope(f, id, { start = true } = {}) {
-  const hook = await nativeAdmission(f, id, "task", { agent_type: "tandem-review-scope", mode: "sync",
-    description: id, name: id, prompt: "Review both goals against the complete shared producing Design and implementation." });
+async function reviewFactory(f, id, scopes, start = true) {
+  const args = { scopes: scopes.map(id => ({ id, prompt: "Inspect both Review goals." })) };
+  const hook = await nativeAdmission(f, id, "tandem_collect_review_scopes", args);
+  if (hook.permissionDecision === "deny") return hook;
+  const input = hook.modifiedArgs;
+  assert.equal(input.toolCallId, id);
+  assert.equal(input.packet.binding.role, "reviewer");
+  for (const scope of scopes) f.session.scopeRoots.set(scope, id);
+  if (start) {
+    f.session.factoryRuns.set(`factory:${id}`, { runId: `factory:${id}`, status: "running",
+      result: { binding: input.packet.binding, toolCallId: id, scopes: scopes.map(id => ({ id, evidence: null })) } });
+    f.session.scopeEnds.set(id, new Set());
+    f.session.emit("workflow.run_started", { runId: `factory:${id}`, workflowName: "tandem-review-scopes", attempt: 1 });
+  }
+  return {};
+}
+async function reviewScope(f, id, { start = true, factoryId = id } = {}) {
+  const hook = factoryId === id ? await reviewFactory(f, id, [id], start) : {};
   if (hook.permissionDecision !== "deny" && start) f.session.emit("subagent.started", {
-    toolCallId: id, agentName: "tandem-review-scope", executionMode: "sync",
+    toolCallId: `native-factory-child:${id}`, workflowRunId: `factory:${factoryId}`,
+    agentName: "tandem-review-scope", executionMode: "sync",
   }, undefined, { agentId: `agent:${id}` });
   return hook;
 }
@@ -754,15 +924,25 @@ function scopeEnd(f, id, status = "completed") {
     toolCallId: id, agentName: "tandem-review-scope",
     ...(status === "failed" ? { error: "Observed native scope failure." } : status === "cancelled" ? { cancelled: true } : {}),
   }, undefined, { agentId: `agent:${id}` });
+  const root = f.session.scopeRoots.get(id), run = f.session.factoryRuns.get(`factory:${root}`);
+  if (run?.status !== "running" || f.session.scopeEnds.get(root).has(id)) return;
+  f.session.scopeEnds.get(root).add(id);
+  run.result.scopes.find(scope => scope.id === id).evidence = status === "completed" ? `Observed evidence for ${id}` : null;
+  if (f.session.scopeEnds.get(root).size === run.result.scopes.length) {
+    run.status = status === "cancelled" ? "cancelled" : "completed";
+    f.session.emit("workflow.run_settled", { runId: run.runId, status: run.status });
+  }
 }
 
-test("Reviewer supports native 3+3+1 batches, holds delayed settlement slots and rejects fourth concurrent or nested work", async t => {
+test("Reviewer admits seven scopes as one native factory, rejects competing factories and denies nested/write/domain work", async t => {
   const f = await fixture(t, { nativeFiles: true });
   const { packet, outcome } = await beginReview(f);
   assert.deepEqual(f.session.config.customAgents[0].tools, ["view", "grep", "glob"]);
-  for (const id of ["one", "two", "three"]) assert.deepEqual(await reviewScope(f, id), {});
+  const ids = ["one", "two", "three", "four", "five", "six", "seven"];
+  assert.deepEqual(await reviewFactory(f, "group", ids), {});
+  for (const id of ids.slice(0, 3)) assert.deepEqual(await reviewScope(f, id, { factoryId: "group" }), {});
   const denied = await reviewScope(f, "fourth");
-  assert.match(denied.permissionDecisionReason, /three native Review scopes/);
+  assert.match(denied.permissionDecisionReason, /Collect the current native factory/);
   nativeCompletion(f, "fourth", false);
   const nested = await nativeAdmission(f, "nested", "task", {}, "agent:one");
   assert.match(nested.permissionDecisionReason, /nested delegation/);
@@ -776,21 +956,17 @@ test("Reviewer supports native 3+3+1 batches, holds delayed settlement slots and
   for (const type of ["assistant.turn_end", "assistant.idle", "session.error"]) f.session.emit(type, {},
     undefined, { agentId: "agent:one" });
   assert.equal((await f.store.load()).activeTask.result, null);
-  nativeCompletion(f, "one");
-  await f.transport.drain();
-  assert.equal((await reviewScope(f, "still-full")).permissionDecision, "deny", "Task return is not child completion.");
-  nativeCompletion(f, "still-full", false);
   scopeEnd(f, "one");
   const duplicate = f.session.history.at(-1);
   f.session.config.onEvent(duplicate);
   scopeEnd(f, "one", "cancelled");
-  for (const id of ["two", "three"]) { scopeEnd(f, id); nativeCompletion(f, id); }
+  for (const id of ["two", "three"]) scopeEnd(f, id);
   await f.transport.drain();
-  for (const id of ["four", "five", "six"]) assert.deepEqual(await reviewScope(f, id), {});
-  for (const id of ["four", "five", "six"]) { scopeEnd(f, id); nativeCompletion(f, id); }
+  for (const id of ["four", "five", "six"]) assert.deepEqual(await reviewScope(f, id, { factoryId: "group" }), {});
+  for (const id of ["four", "five", "six"]) scopeEnd(f, id);
   await f.transport.drain();
-  assert.deepEqual(await reviewScope(f, "seven"), {});
-  scopeEnd(f, "seven"); nativeCompletion(f, "seven"); await f.transport.drain();
+  assert.deepEqual(await reviewScope(f, "seven", { factoryId: "group" }), {});
+  scopeEnd(f, "seven"); nativeCompletion(f, "group"); await f.transport.drain();
   await f.finish(packet, "submit_whole_plan_review", outcome);
   const state = await f.store.load();
   assert.equal(state.handoffs.length, 1);
@@ -823,6 +999,112 @@ test("native Review child pre-hook precedes bridged tool start but remains ident
   scopeEnd(f, "native-order"); nativeCompletion(f, "native-order"); await f.transport.drain();
   assert.equal((await f.session.config.hooks.onPreToolUse(hook, invoke)).permissionDecision, "deny");
   await f.finish(packet, "submit_whole_plan_review", outcome);
+});
+
+test("Review factory admission rejects model/limit/context overrides and old-run resume", async t => {
+  const f = await fixture(t, { nativeFiles: true });
+  const { packet, outcome } = await beginReview(f);
+  const args = { scopes: [{ id: "one", prompt: "Inspect" }] };
+  const invalid = [
+    { ...args, limits: { maxConcurrentSubagents: 4 } },
+    { ...args, model: "other" },
+    { ...args, resumeFromRunId: "old" },
+    { ...args, packet: { binding: {} } },
+    { ...args, name: "unrelated-factory" },
+  ];
+  for (const [index, input] of invalid.entries()) {
+    const id = `invalid-factory-${index}`;
+    assert.equal((await nativeAdmission(f, id, "tandem_collect_review_scopes", input)).permissionDecision, "deny");
+    nativeCompletion(f, id, false);
+  }
+  assert.equal((await nativeAdmission(f, "legacy-task", "task", {
+    agent_type: "tandem-review-scope", mode: "sync", prompt: "Inspect",
+  })).permissionDecision, "deny");
+  nativeCompletion(f, "legacy-task", false);
+  assert.equal((await nativeAdmission(f, "background-factory", "run_dynamic_workflow", {
+    name: "tandem-review-scopes", args,
+  })).permissionDecision, "deny");
+  nativeCompletion(f, "background-factory", false);
+  await f.transport.drain();
+  await f.finish(packet, "submit_whole_plan_review", outcome);
+});
+
+test("factory consent remains native and altered result bindings become unavailable coverage", async t => {
+  const f = await fixture(t, { nativeFiles: true });
+  const { packet, outcome } = await beginReview(f);
+  await reviewScope(f, "bound");
+  const request = { kind: "custom-tool", toolCallId: "bound", toolName: "tandem_collect_review_scopes",
+    toolDescription: "Run the declared read-only factory with at most three workers.", args: {} };
+  assert.equal((await f.session.config.onPermissionRequest({ ...request, kind: "factory" },
+    { sessionId: "private" })).kind, "reject");
+  const consent = f.session.config.onPermissionRequest(request, { sessionId: "private" });
+  await waitFor(() => f.broker.list().length === 1, "native factory consent");
+  assert.match(f.broker.list()[0].description, /Review scopes \(1\): bound.*concurrency limit: 3/);
+  await f.broker.decide(f.broker.list()[0].id, "once");
+  assert.equal((await consent).kind, "approve-once");
+  scopeEnd(f, "bound"); nativeCompletion(f, "bound"); await f.transport.drain();
+  f.session.factoryRuns.get("factory:bound").result.binding.inputDigest = "f".repeat(64);
+  await f.finish(packet, "submit_whole_plan_review", outcome);
+  const report = (await f.store.load()).cycles[0].reviewResult.outcome;
+  assert.equal(report.coverageStatus, "unavailable");
+  assert.match(report.verificationLimits.join("\n"), /differs from its admitted Review/);
+});
+
+test("failed factory cancellation cannot prevent foreground interruption or claim a successful Stop", async t => {
+  const f = await fixture(t, { nativeFiles: true });
+  await beginReview(f);
+  await reviewScope(f, "cancel-fails");
+  t.mock.method(f.session.workflow, "cancel", async () => { throw new Error("Factory cancellation unavailable"); });
+  await assert.rejects(f.transport.stop("stop-failed-cancel"), /Factory cancellation unavailable/);
+  assert.equal(f.session.aborts, 1);
+  assert.equal((await f.session.config.hooks.onPreToolUse({
+    sessionId: "agent:cancel-fails", toolName: "view", toolArgs: { path: "app.js" },
+  }, { sessionId: "private" })).permissionDecision, "deny");
+});
+
+test("explicit Stop retries a failed Review cancellation while concurrent attempts share the native call", async t => {
+  const f = await fixture(t, { nativeFiles: true });
+  await beginReview(f);
+  await reviewScope(f, "retry-cancel");
+  const first = Promise.withResolvers();
+  let calls = 0;
+  const cancel = f.session.workflow.cancel;
+  t.mock.method(f.session.workflow, "cancel", async id => {
+    calls++;
+    if (calls === 1) return first.promise;
+    return cancel(id);
+  });
+  const one = f.transport.stop("explicit-stop");
+  const duplicate = f.transport.stop("explicit-stop");
+  const observed = Promise.allSettled([one, duplicate]);
+  assert.equal(calls, 1, "Concurrent Stop requests must share the in-flight cancellation.");
+  first.reject(new Error("Transient native cancellation failure"));
+  const results = await observed;
+  assert.ok(results.every(result => result.status === "rejected"));
+  assert.equal(calls, 1, "Failure must not trigger an automatic retry.");
+  const retried = await f.transport.stop("explicit-stop-retry");
+  assert.equal(calls, 2);
+  assert.equal(retried.interrupted, true);
+  assert.equal(f.session.factoryRuns.get("factory:retry-cancel").status, "cancelled");
+});
+
+test("parent publication does not await a factory and late factory children cannot borrow the next role", async t => {
+  const f = await fixture(t, { nativeFiles: true });
+  const { packet, outcome } = await beginReview(f);
+  await reviewFactory(f, "late-group", ["late-child"]);
+  await f.finish(packet, "submit_whole_plan_review", outcome);
+  assert.deepEqual(f.session.cancelledFactories, ["factory:late-group"]);
+  const state = await f.store.load();
+  assert.equal(state.cycles[0].reviewResult.outcome.coverageStatus, "unavailable");
+  await f.dispatch("host", "present-handoff", { handoffId: state.handoffs[0].id });
+  await f.request();
+  const next = await f.begin("router");
+  f.session.emit("subagent.started", { workflowRunId: "factory:late-group",
+    toolCallId: "late-native-child", agentName: "tandem-review-scope" }, undefined, { agentId: "late-child" });
+  assert.equal((await nativeAdmission(f, "late-read", "view", { path: "app.js" }, "late-child")).permissionDecision, "deny");
+  nativeCompletion(f, "late-read", false, "late-child");
+  await f.finish(next, "submit_human_route", { kind: "route", intent: "answer", cycleId: null,
+    summary: "Independent authorized request.", resolvedQuestions: [] });
 });
 
 for (const callbackFirst of [false, true]) test(`native Review consent precedes tool-start: SDK callback first=${callbackFirst}`, async t => {
@@ -953,6 +1235,7 @@ for (const taskReturn of [true, false]) test(`Stop during Review children withdr
   await f.dispatch("user", "request-stop", { stopId: "stop-review" });
   const stopped = await f.transport.stop("stop-review");
   assert.equal(stopped.interrupted, true);
+  assert.deepEqual(f.session.cancelledFactories, ["factory:stopped-child"]);
   if (!taskReturn) {
     assert.equal(f.session.history.some(event => event.type === "tool.execution_complete"
       && event.data.toolCallId === "stopped-child"), false, "Interrupted task return must not be synthesized.");
@@ -1344,6 +1627,7 @@ test("a contextual Designer answer uses ordinary Router authority, without autom
     explanation: "The current layout is sufficient.", questions: [{ id: "content",
       context: "Business details are missing.", question: "How should missing details be handled when implemented?",
       whyItMatters: "Draft accuracy.", importance: "advisory", allowFreeform: true,
+      unanswered: { action: "keep-current-design", explanation: "Retain the agreed draft without applying a proposed change." },
       options: [{ id: "placeholder", label: "Build with clear placeholders", implication: "Draft before launch." }] }] });
   await f.dispatch("host", "present-handoff", { handoffId: (await f.store.load()).handoffs.at(-1).id });
   assert.equal((await f.store.load()).cycles.length, 0);

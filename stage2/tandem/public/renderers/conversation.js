@@ -233,6 +233,7 @@ export function createConversationRenderer({ messages, history, current, current
     if (messages.scrollHeight - messages.scrollTop - messages.clientHeight < 60) newer.hidden = true;
   });
   return {
+    focusEntry,
     render(entries, transitions, progress = new Map()) {
       const pinned = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 60;
       const anchor = [...messages.children].find((node) =>
@@ -243,6 +244,18 @@ export function createConversationRenderer({ messages, history, current, current
       let previous = null;
       for (const entry of entries) {
         let node = rendered.get(entry.id);
+        const previousEntry = entryData.get(entry.id);
+        // Saved-evidence projections may change; native conversation records remain immutable.
+        if (node && entry.savedEvidenceProjection === true && previousEntry?.savedEvidenceProjection === true
+          && entry.id.startsWith('discovery:') && entry.kind !== 'assistant'
+          && (entry.text !== previousEntry.text || entry.timestamp !== previousEntry.timestamp)) {
+          renderPlainResponse(node.querySelector('.conversation-text'), entry.text);
+          const time = node.querySelector('time');
+          time.dateTime = entry.timestamp;
+          time.textContent = new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          time.title = new Date(entry.timestamp).toLocaleString();
+          changed = true;
+        }
         if (node && entry.questionHistory?.length && !node.querySelector('[data-question-history]')) {
           node.append(renderQuestionHistory(document, entry.questionHistory));
           changed = true;

@@ -1,4 +1,5 @@
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { CopilotClient, type CopilotSession, type ResumeSessionConfig } from "@github/copilot-sdk";
 import { isPreferredTandemProvider } from "../provider-identity.js";
@@ -10,6 +11,20 @@ import { stagePayload, type TandemPayload } from "../payload.js";
 
 export const PRIVATE_CLOSE_DEADLINE_MS = 30_000;
 export const MAIN_CLOSE_DEADLINE_MS = 8_000;
+
+export interface DesktopModelSelection {
+    model: string;
+    reasoningEffort?: ResumeSessionConfig["reasoningEffort"];
+}
+
+export function parseDesktopModelSelection(model?: string, effort?: string): DesktopModelSelection | undefined {
+    if (model === undefined && effort === undefined) return undefined;
+    if (!model?.trim() || model !== model.trim()) throw new Error("Select an explicit non-empty model for the native host.");
+    const efforts: NonNullable<ResumeSessionConfig["reasoningEffort"]>[] = ["low", "medium", "high", "xhigh", "max"];
+    const reasoningEffort = efforts.find(value => value === effort);
+    if (effort !== undefined && reasoningEffort === undefined) throw new Error("The native host reasoning effort is invalid.");
+    return { model, ...(reasoningEffort === undefined ? {} : { reasoningEffort }) };
+}
 
 export function assertComposedProvider(canvas: { extensionId: string; actions?: { name: string }[] }): void {
     if (!["get_integration", "close_development", "continue_design"].every(name => canvas.actions?.some(action => action.name === name))) {
@@ -45,9 +60,10 @@ export function developmentCloseResult(value: unknown): { status: "closed" | "no
 }
 
 export function desktopSessionConfig(
-    workspace: string, runtimeDirectory: string, protocol: DesktopProtocol,
+    workspace: string, runtimeDirectory: string, protocol: DesktopProtocol, modelSelection?: DesktopModelSelection,
 ): ResumeSessionConfig {
     return {
+        ...modelSelection,
         workingDirectory: workspace,
         clientName: "Tandem Desktop",
         streaming: true,
@@ -55,6 +71,7 @@ export function desktopSessionConfig(
         enableConfigDiscovery: true,
         requestCanvasRenderer: true,
         requestExtensions: true,
+        extensionSdkPath: dirname(fileURLToPath(import.meta.resolve("@github/copilot-sdk"))),
         continuePendingWork: false,
         suppressResumeEvent: true,
         onPermissionRequest: protocol.permission.bind(protocol),
@@ -70,21 +87,18 @@ export function desktopSessionConfig(
 }
 
 export async function openDesktopSession(
-    client: Pick<CopilotClient, "rpc" | "resumeSession">,
+    client: Pick<CopilotClient, "rpc" | "createSession" | "resumeSession">,
     ownership: { sessionId: string; workspace: string; resume: boolean },
     config: ResumeSessionConfig,
 ): Promise<CopilotSession> {
     if (!ownership.resume) {
-        // Unnamed SDK sessions are not durable until a user turn; desktop factories do not need one.
-        const opened = await client.rpc.sessions.open({
-            kind: "create",
-            options: { sessionId: ownership.sessionId, name: "Tandem Desktop",
-                workingDirectory: ownership.workspace, clientName: "Tandem Desktop" },
-        });
-        if (opened.status !== "created" || opened.sessionId !== ownership.sessionId) {
+        const session = await client.createSession({ ...config, sessionId: ownership.sessionId });
+        if (session.sessionId !== ownership.sessionId) {
             throw new Error("Copilot could not create the requested desktop session identity.");
         }
+        await session.rpc.name.set({ name: "Tandem Desktop" });
         await client.rpc.sessions.save({ sessionId: ownership.sessionId });
+        return session;
     }
     return client.resumeSession(ownership.sessionId, config);
 }
@@ -109,6 +123,7 @@ export async function runDesktopRuntime(options: {
     runtimeDirectory: string;
     protocol: DesktopProtocol;
     signal: AbortSignal;
+    modelSelection?: DesktopModelSelection;
 }): Promise<void> {
     const { protocol, signal } = options;
     if (Number(process.versions.node.split(".")[0]) < 24 || process.versions.electron || process.versions.bun) {
@@ -147,9 +162,25 @@ export async function runDesktopRuntime(options: {
         if (!auth.isAuthenticated) {
             throw new Error("Copilot is not signed in. Run 'copilot login' in a terminal, complete sign-in, then reopen this folder. No Copilot app is required.");
         }
-        const config = desktopSessionConfig(ownership.workspace, options.runtimeDirectory, protocol);
+        if (options.modelSelection) {
+            const requested = options.modelSelection;
+            const selected = (await client.listModels()).find(model => model.id === requested.model);
+            if (!selected || selected.policy?.state === "disabled" || options.modelSelection.reasoningEffort
+                && !selected.supportedReasoningEfforts?.includes(options.modelSelection.reasoningEffort)) {
+                throw new Error("The requested native host model/effort is unavailable; no substitute was selected.");
+            }
+        }
+        const config = desktopSessionConfig(ownership.workspace, options.runtimeDirectory, protocol, options.modelSelection);
+        config.onEvent = event => protocol.observeNativeEvent(ownership.sessionId, event);
         session = await openDesktopSession(client, ownership, config);
         await ownership.save();
+        if (options.modelSelection) {
+            const current = await session.rpc.model.getCurrent();
+            if (current.modelId !== options.modelSelection.model || options.modelSelection.reasoningEffort !== undefined
+                && current.reasoningEffort !== options.modelSelection.reasoningEffort) {
+                throw new Error("The native host did not confirm the requested model/effort; its identity was retained without starting work.");
+            }
+        }
         signal.throwIfAborted();
         if (!session.workspacePath) throw new Error("The Copilot runtime did not provide a durable session workspace.");
         const extensionDirectory = join(session.workspacePath, "extensions", "tandem");

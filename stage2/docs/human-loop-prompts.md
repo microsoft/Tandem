@@ -196,13 +196,18 @@ activity or queue. The joined identity still binds attachment and routing; actua
 private execution still requires its own supported Interactive, activity and queue
 APIs. Main idle does not start or wake private work.
 
-Private session create and same-ID resume explicitly set `requestExtensions: false`
-while retaining `enableConfigDiscovery: true`. In the qualified native runtime,
-explicit false prevents extension loading, not only extension tool exposure. This
-avoids recursively starting Tandem inside its own private session when the owning
-CLI enables experimental extensions. Main-session extension discovery is unchanged;
-repository instructions/configuration, native permissions and content exclusions
-still apply. No global extension preference or permission grant is changed.
+Private startup sets `TANDEM_PRIVATE_WORKFLOW_SESSION` to the exact private ID.
+In that environment Tandem registers only its native workflow and permission-gated
+collector tool, not its canvas,
+browser tool, audit observer or another private runtime. Create and same-ID resume
+temporarily request extensions with the installed SDK path, wait for the native
+Tandem provider to be running with its collector in the native tool catalog, then resume the same ID with
+`requestExtensions: false` and `continuePendingWork: false`. Registration survives that resident
+opt-out, and the collector's availability is checked again. The bounded startup wait does not mistake an initial `failed` inventory
+snapshot for a final launch outcome. Full restart registers a fresh provider;
+it never resumes old workflow runs. Repository configuration discovery, native
+permissions and content exclusions remain enabled. No global extension preference
+or permission grant is changed, and no explicit extension reload is requested.
 
 Idle model changes, explicit compaction and approval reset do not require answers
 to open questions or completion of plans/cycles. They preserve those records,
@@ -343,6 +348,21 @@ automatically resumes.
 The Conversation Questions control shows unanswered/effective-blocker counts and
 source-grouped forms. Exact-source in-memory drafts, focus and retry identity
 survive projection updates; drafts are not persisted across browser reload.
+New advisory questions must declare `unanswered` with action
+`keep-current-design` and a specific explanation of the retained behavior.
+Recommended option wording is not a declaration. The Host binds this no-change
+continuation to the producing Design; it is never recorded as a human answer,
+Design acceptance, implementation confirmation or tool permission. Questions
+whose next action needs a consequential decision must be blocking instead.
+The original form and conversation show the declaration and its attribution.
+
+Missing legacy declarations remain missing in the original journal. A stale
+producing Design or missing declaration requires explicit clarification before
+dependent new work, without cancelling an already running role. New commands
+record `questionPolicy: "explicit-continuation/v1"` so replay can preserve old
+historical decisions while enforcing the new rule on later commands. No old
+importance, answer or gate record is rewritten or supplied a fabricated default.
+
 Blocking and advisory meaning have distinct labels/colors, independent of saved
 answer processing status.
 
@@ -574,12 +594,19 @@ are not a third responsibility. Incidental limitations remain separate disclosur
 One externally sequential Reviewer may work directly or divide actual implementation
 and Design into useful complementary scopes, including cross-component interactions.
 Every child applies both goals to the same producing Design and evidence, and may
-inspect dependencies. Native sync `task` calls use `tandem-review-scope` in optional
-batches of at most three unsettled invocations; more than three total scopes are
-allowed. Three is neither a mandatory split nor a file-count partition. Existing
-native call records enforce the cap until both invocation and child outcome settle.
-Children cannot nest delegation. There is no custom scheduler, pool, retry loop,
-model override or additional persisted child store. The parent collects results,
+inspect dependencies. The native `tandem-review-scopes` workflow calls
+`ctx.parallel`/`ctx.agent` with `tandem-review-scope` and a declared
+`maxConcurrentSubagents: 3`. More than three total scopes are allowed; unique
+labels keep independent scopes distinct from native memoization. The parent uses
+`tandem_collect_review_scopes`, retaining native tool consent. Its provider awaits
+`session.workflow.run` with completion notifications disabled, unlike the background
+`run_dynamic_workflow` tool. No automatic parent turn or second queue is introduced.
+Host admission binds the exact current
+task packet and native tool-call ID and rejects limit overrides, old-run resume
+and overlapping workflow groups. Three is neither a mandatory split nor a
+file-count partition. Children cannot nest delegation. There is no custom
+scheduler, pool, retry loop, model override or additional persisted child store.
+The parent collects results,
 resolves overlaps and contradictions, and publishes one report without repeating
 every child inspection.
 
@@ -587,8 +614,12 @@ The native child pre-tool hook can precede delivery of its tool-start event.
 Admission therefore requires its already observed running child identity, current
 owned Reviewer and read-only tool. The subsequent permission callback still needs
 the exact native tool-call identity and ordinary permission. Child events cannot
-finish the root role. A later native teardown cancellation does not replace an
-already completed scope's outcome.
+finish the root role. Workflow envelopes and returned scope identities are checked
+against their admitted parent binding; missing evidence is unavailable coverage.
+Immediate Stop cancels the owned workflow as well as interrupting the foreground.
+Accepted parent results remain the sole completion authority, even with pending
+children; release withdraws their authority and requests native cancellation
+without adding a settlement gate.
 
 Reports state coverage as complete, partial or unavailable. Failed scopes add
 visible scope/reason/unreviewed-coverage warnings, preserving supported findings.
@@ -744,7 +775,7 @@ local snapshots; failures saving intent or recording local effects are disclosed
 separately and do not veto attempting native Stop. Stop does not fabricate a
 role result or mark unfinished implementation complete.
 
-Permission, read-only and at-most-three native Review-scope admission checks
+Permission and read-only checks, together with the native workflow's three-worker limit,
 remain independent policies. They cannot reject a valid parent terminal result
 because low-level task records are still pending. A report with unfinished or
 failed scopes discloses unavailable coverage rather than implying approval.

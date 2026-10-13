@@ -23,11 +23,15 @@ const questionOption: PolicySchema = {
   ...obj({ id: string, label: string, implication: string, resolutionTarget }),
   required: ['id', 'label', 'implication'],
 };
-export const humanQuestionSchema = referenced({
+const questionFields = {
   id: string, context: string, question: string, whyItMatters: string,
-  importance: { type: 'string', enum: ['blocking', 'advisory'] },
   options: array(questionOption), allowFreeform: { type: 'boolean' },
-});
+};
+export const humanQuestionSchema: PolicySchema = { anyOf: [
+  referenced({ ...questionFields, importance: { const: 'blocking' } }),
+  referenced({ ...questionFields, importance: { const: 'advisory' },
+    unanswered: obj({ action: { const: 'keep-current-design' }, explanation: { ...string, pattern: '\\S', maxLength: 2000 } }) }),
+] };
 export const humanAnswerBatchSchema = obj({
   schemaVersion: { const: 'human-question-answers/v1' },
   answers: { ...array(obj({ questionId: string, sourceResultId: string, kind: { enum: ['option', 'freeform'] }, value: string })), minItems: 1 },

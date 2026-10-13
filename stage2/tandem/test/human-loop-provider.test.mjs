@@ -3,9 +3,9 @@ import { mkdtemp, rm, access, mkdir, writeFile, readFile } from "node:fs/promise
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
-import { createHumanLoopProvider, HumanLoopEvents, projectHumanLoopView, projectHumanProgress } from "../src/human-loop-provider.mjs";
+import { createHumanLoopProvider, HumanLoopEvents, projectHumanConversation, projectHumanLoopView, projectHumanProgress, projectPrivateEvents } from "../src/human-loop-provider.mjs";
 import { projectHumanHistory } from "../public/renderers/human-loop-history.js";
 import { createHumanLoop } from "../runtime-src/domain/human-loop/model.ts";
 import { DEFAULT_POLICY, policyHash } from "../runtime-src/domain/workflow/policy.ts";
@@ -16,6 +16,38 @@ import { getHostStateWal } from "../runtime-src/domain/host-state-wal.ts";
 import { AnnotationAttachmentStore } from "../runtime-src/domain/workflow/annotation-attachment.ts";
 import { multiFormatDesign } from "./fixtures/multi-format.mjs";
 import jpeg from "../node_modules/jpeg-js/index.js";
+import { parseRequest } from "../runtime-src/domain/human-loop/contracts.ts";
+import { packageExtension } from "../scripts/package-extension.mjs";
+import { exerciseRoleHintDraft } from "./helpers/role-hint-browser.mjs";
+
+test("advisory view and history distinguish declared continuation from legacy uncertainty without rewriting records", () => {
+  const state = createHumanLoop({ schemaVersion: "human-loop-owner/v1", id: "owner", mainSessionId: "main", privateSessionId: "private",
+    workspacePath: process.cwd(), policy: DEFAULT_POLICY }, { revisionId: "design", digest: "a".repeat(64) });
+  const q = { id: "optional", context: "Possible later improvement", question: "Change the display?", whyItMatters: "Optional display choice",
+    importance: "advisory", options: [], allowFreeform: true, state: "open", answerRequestId: null, blockingActive: false,
+    unanswered: { action: "keep-current-design", explanation: "Keep the agreed display unchanged." },
+    source: { role: "designer", resultId: "result", requestId: "request", requestIds: ["request"], cycleId: null,
+      design: { ...state.design }, planDigest: null } };
+  state.questions.push(q);
+  state.handoffs.push({ id: "handoff", result: { resultId: "result", outcome: { kind: "designer-unchanged" } }, presented: true });
+  const original = structuredClone(state);
+  const live = projectHumanLoopView(state, { status: "ready" });
+  assert.equal(live.questionCounts.blockers, 0);
+  assert.deepEqual(live.questionInteractions[0].questions[0].unanswered, q.unanswered);
+  const messages = [{ id: "handoff", kind: "assistant", role: "designer", content: "No changes",
+    requestId: "request", timestamp: "2026-10-13T00:00:00Z" }];
+  assert.deepEqual(projectHumanConversation(state, messages)[0].questionHistory[0].unanswered, q.unanswered);
+  assert.deepEqual(state, original);
+  state.design = { revisionId: "new-design", digest: "b".repeat(64) };
+  assert.equal(projectHumanLoopView(state, { status: "ready" }).questionCounts.blockers, 1);
+  delete q.unanswered;
+  const legacy = structuredClone(state);
+  const historical = projectHumanConversation(state, messages)[0].questionHistory[0];
+  assert.equal(historical.continuationIssue, "missing");
+  assert.equal(Object.hasOwn(historical, "unanswered"), false);
+  assert.equal(historical.importance, "advisory"); assert.equal(historical.blockingActive, false);
+  assert.deepEqual(state, legacy);
+});
 
 test("routine activity projection retains exact individual events across durable reload and UI grouping", async t => {
   const root = await mkdtemp(join(tmpdir(), "human-history-provenance-"));
@@ -40,7 +72,38 @@ test("routine activity projection retains exact individual events across durable
     originals.map(event => [restored.streamId, event.sequence, event.timestamp]));
 });
 
-async function fixture(t, { onSend, content = sharedDesignExample(), openProjectFolder, surface } = {}) {
+test("private history excludes legacy main copies and root projections without mutating stored records", () => {
+  const owner = { schemaVersion: "human-loop-owner/v1", id: "owner", mainSessionId: "main", privateSessionId: "private",
+    workspacePath: process.cwd(), policy: DEFAULT_POLICY };
+  const state = createHumanLoop(owner, { revisionId: null, digest: null });
+  state.requests.push({ id: "real-handoff", message: "Continue Design using the saved Prototype references.", receivedAt: "2026-10-12T00:00:00Z",
+    answers: null, status: "completed", stopId: null });
+  const entry = { kind: "assistant", role: "assistant", requestId: null, content: "Original text", timestamp: "2026-10-12T00:00:01Z" };
+  const originals = [
+    { ...entry, id: "main:old", role: "host-assistant" },
+    { ...entry, id: "other-prefix", role: "host-assistant" },
+    { ...entry, id: "main:other-role" },
+    { ...entry, id: "discovery:g:goal", role: "Discovery evidence" },
+    { ...entry, id: "project-copy", savedEvidenceProjection: true },
+    { ...entry, id: "native:private-reply", requestId: "real-handoff" },
+  ];
+  const before = structuredClone(originals);
+  assert.deepEqual(projectHumanConversation(state, originals).map(item => item.id), ["request:real-handoff", "native:private-reply"]);
+  assert.deepEqual(originals, before);
+  const events = [
+    { type: "permission.requested", data: { sessionId: "main" } },
+    { type: "permission.requested", data: { sessionId: "private" } },
+    { type: "permission.granted", data: {} },
+    { type: "human.role", data: { activity: { sessionId: "main" } } },
+    { type: "human.role", data: { activity: { sessionId: "private" } } },
+    { type: "main.message", data: {} },
+  ];
+  assert.deepEqual(projectPrivateEvents(events, "private"), [events[1], events[4]]);
+});
+
+async function fixture(t, { onSend, content = sharedDesignExample(), openProjectFolder, surface, finishEmptyRepair,
+  publicDirectory = fileURLToPath(new URL("../public", import.meta.url)), providerFactory = createHumanLoopProvider,
+  hostStateWal = getHostStateWal } = {}) {
   const root = await mkdtemp(join(tmpdir(), "human-loop-provider-"));
   const events = new HumanLoopEvents(), permissions = new PermissionBroker(events);
   const owner = { schemaVersion: "human-loop-owner/v1", id: "owner", mainSessionId: "main", privateSessionId: "private",
@@ -82,21 +145,144 @@ async function fixture(t, { onSend, content = sharedDesignExample(), openProject
   const installation = { runtime, read: async () => ({ status: installationStatus, reason: null,
     canStart: installationStatus === "saved-state", canReopen: installationStatus === "closed" }),
     close: async () => { status = "closed"; installationStatus = "closed"; } };
-  const provider = await createHumanLoopProvider({ repositoryRoot: root,
-    publicDirectory: fileURLToPath(new URL("../public", import.meta.url)), events, permissions, getInstallation: () => installation,
-    start: async () => { starts++; installationStatus = "ready"; status = "waiting-answer"; }, openProjectFolder, surface });
+  const provider = await providerFactory({ repositoryRoot: root,
+    publicDirectory, events, permissions, getInstallation: () => installation,
+    start: async () => { starts++; installationStatus = "ready"; status = "waiting-answer"; }, openProjectFolder, surface, finishEmptyRepair });
   const browserCleanups = [];
   const openBrowser = () => openFixtureBrowser({ after: (cleanup) => browserCleanups.push(cleanup) });
   t.after(async () => {
     // Close browser HTTP/SSE clients before awaiting the provider's server.close().
     try { for (const cleanup of browserCleanups) await cleanup(); }
-    finally { await provider.close(); events.close(); await getHostStateWal(root).close(); await rm(root, { recursive: true, force: true }); }
+    finally { await provider.close(); events.close(); await hostStateWal(root).close(); await rm(root, { recursive: true, force: true }); }
   });
   const post = (path, value, origin) => fetch(new URL(path, provider.url), { method: "POST",
     headers: { "content-type": "application/json", ...(origin ? { Origin: origin } : {}) }, body: JSON.stringify(value) });
   return { root, provider, received, state, design, post, events, permissions, openBrowser, runtime, installation, starts: () => starts,
     setInstallationStatus: (value) => { installationStatus = value; events.touch(); } };
 }
+
+test("browser advisory form shows declared continuation and legacy clarification without submitting defaults",
+  { skip: !browserAvailable, timeout: 30_000 }, async t => {
+  const f = await fixture(t);
+  const q = f.state.questions[0];
+  q.importance = "advisory"; q.blockingActive = false;
+  q.unanswered = { action: "keep-current-design", explanation: "Keep the current local-file storage; do not apply the proposed alternative." };
+  const before = structuredClone(q);
+  const browser = await f.openBrowser();
+  await browser.call("Emulation.setDeviceMetricsOverride", { width: 390, height: 620, deviceScaleFactor: 1, mobile: false });
+  await browser.call("Page.navigate", { url: f.provider.url });
+  await browser.waitFor('!!document.querySelector(".human-loop-questions .question-continuation")');
+  assert.match(await browser.evaluate('document.querySelector(".human-loop-questions").textContent'), /If unanswered:.*local-file storage.*not a user answer or approval/);
+  assert.equal(await browser.evaluate('document.querySelector(".human-loop-questions select").value'), "");
+  assert.equal(f.received.length, 0); assert.deepEqual(q, before);
+  await browser.evaluate('document.querySelector(".question-continuation").scrollIntoView({block:"center"})');
+  if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "advisory-declared-390.png"), await browser.screenshot());
+  delete q.unanswered; f.events.touch();
+  await browser.waitFor('document.querySelector(".human-loop-questions").textContent.includes("No unanswered continuation was recorded")');
+  assert.match(await browser.evaluate('document.querySelector(".human-loop-questions").textContent'), /clarification required before new work/);
+  assert.equal(f.received.length, 0);
+  assert.equal(q.importance, "advisory"); assert.equal(q.answerRequestId, null);
+  if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "advisory-legacy-390.png"), await browser.screenshot());
+  assert.deepEqual(browser.exceptions, []);
+});
+
+test("unverified or empty private history never substitutes the parent's conversation or permission stream", async t => {
+  const f = await fixture(t);
+  f.state.requests = []; f.state.questions = []; f.state.handoffs = [];
+  f.runtime.conversation = async () => [{ id: "main:retained", kind: "assistant", role: "host-assistant",
+    requestId: null, content: "Parent answer", timestamp: "2026-10-12T00:00:00Z" }];
+  f.events.append({ type: "permission.requested", source: "copilot", summary: "Parent-only request", data: { sessionId: "main" } });
+  let snapshot = await (await fetch(new URL("api/snapshot", f.provider.url))).json();
+  assert.equal(snapshot.conversationStatus, "verified");
+  assert.deepEqual(snapshot.messages, []);
+  assert.equal(snapshot.events.some(event => event.summary === "Parent-only request"), false);
+  f.setInstallationStatus("unknown");
+  snapshot = await (await fetch(new URL("api/snapshot", f.provider.url))).json();
+  assert.equal(snapshot.conversationStatus, "unverified");
+  assert.deepEqual(snapshot.messages, []);
+  assert.deepEqual(snapshot.accessRequests, []);
+});
+
+test("provider admits exact role hints only on composer requests and detects conflicting saved admission", async t => {
+  const f = await fixture(t), roleHint = { schemaVersion: "human-role-hint/v1", role: "designer" };
+  const input = { id: "hinted", message: "@designer Explain this without changes.\n", receivedAt: "2026-10-13T00:00:00Z", roleHint };
+  assert.equal((await f.post("/api/requests", input)).status, 202);
+  assert.deepEqual(f.received[0], { ...input, answers: null });
+  const view = await (await fetch(new URL("/api/snapshot", f.provider.url))).json();
+  assert.deepEqual(view.messages.find(entry => entry.requestId === input.id).roleHint, roleHint);
+  assert.equal(view.messages.find(entry => entry.requestId === input.id).text, input.message);
+  for (const roleHint of [null, "designer", { role: "designer" }, { schemaVersion: "v2", role: "designer" },
+    { schemaVersion: "human-role-hint/v1", role: "planner" }, { schemaVersion: "human-role-hint/v1", role: "agent" }]) {
+    assert.equal((await f.post("/api/requests", { ...input, id: "invalid", roleHint })).status, 409);
+  }
+  assert.equal((await f.post("/api/answers", { ...input, answers: {} })).status, 409);
+  assert.equal(f.received.length, 1);
+  const { roleHint: _hint, ...legacy } = input;
+  assert.equal((await f.post("/api/requests", { ...legacy, id: "legacy" })).status, 202);
+  assert.equal(Object.hasOwn(f.received.at(-1), "roleHint"), false);
+  f.runtime.send = async value => { parseRequest(value); throw new Error("Injected post-admission acknowledgement failure."); };
+  let response = await f.post("/api/requests", input);
+  assert.equal(response.status, 409);
+  assert.equal((await response.json()).accepted, true);
+  response = await f.post("/api/requests", legacy);
+  assert.equal((await response.json()).notAccepted, true, "Removing a saved hint is not an accepted retry.");
+  response = await f.post("/api/requests", { ...legacy, id: "legacy", roleHint });
+  assert.equal((await response.json()).notAccepted, true, "Adding a hint to legacy text is not an accepted retry.");
+});
+
+test("packaged standalone role hints preserve editing, IME, images and truthful actual responder labels",
+  { skip: !browserAvailable, timeout: 90_000 }, async t => {
+    const staging = await mkdtemp(join(tmpdir(), "role-hint-package-")), outputDirectory = join(staging, "tandem");
+    t.after(() => rm(staging, { recursive: true, force: true }));
+    await packageExtension({ outputDirectory });
+    const { createHumanLoopProvider: providerFactory } = await import(pathToFileURL(join(outputDirectory, "src", "human-loop-provider.mjs")).href);
+    const { getHostStateWal: hostStateWal } = await import(pathToFileURL(join(outputDirectory, "runtime-src", "domain", "host-state-wal.ts")).href);
+    const f = await fixture(t, { providerFactory, hostStateWal, publicDirectory: join(outputDirectory, "public"), surface: "browser" });
+    f.state.questions = []; f.state.handoffs = [];
+    f.runtime.readiness = async () => ({ status: "ready", reason: null, workspacePath: f.root });
+    const browser = await f.openBrowser();
+    await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 1000, deviceScaleFactor: 1, mobile: false });
+    await browser.call("Page.navigate", { url: f.provider.url });
+    await browser.waitFor("!document.querySelector('#send').disabled");
+    const click = selector => clickBrowser(browser, selector);
+    await exerciseRoleHintDraft({ browser, evaluate: browser.evaluate, click });
+    assert.equal(f.received.length, 0, "Draft/error/IME interactions must not submit.");
+    await browser.evaluate(`(() => {
+      const bytes=Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII="), c=>c.charCodeAt(0));
+      const transfer=new DataTransfer(); transfer.items.add(new File([bytes], "hint.png", {type:"image/png"}));
+      document.querySelector("#message").dispatchEvent(new ClipboardEvent("paste", {clipboardData:transfer,bubbles:true,cancelable:true}));
+    })()`);
+    await browser.waitFor("!document.querySelector('#clipboard-preview').hidden && !document.querySelector('#send').disabled");
+    await click("#message");
+    await browser.call("Input.insertText", { text: "@designer" });
+    await click("#send");
+    assert.equal(await browser.evaluate('document.querySelector("#clipboard-preview").hidden'), false);
+    assert.equal(f.received.length, 0, "Hint-only errors retain unsent attachments.");
+    await click("#message");
+    await browser.evaluate('document.querySelector("#message").setSelectionRange(9, 9)');
+    await browser.call("Input.insertText", { text: " Explain this image without changes.\n" });
+    await click("#send");
+    await browser.waitFor("document.querySelector('#message').value === ''");
+    const input = f.received[0];
+    assert.equal(input.message, "@designer Explain this image without changes.\n");
+    assert.deepEqual(input.roleHint, { schemaVersion: "human-role-hint/v1", role: "designer" });
+    assert.equal(input.attachments[0].schemaVersion, "image-attachment/v1");
+    const pickedUp = f.state.requests.find(request => request.id === input.id);
+    pickedUp.status = "active"; pickedUp.queueAdmitted = true;
+    f.runtime.conversation = async () => [{ id: "actual-agent", requestId: input.id, kind: "assistant", role: "agent",
+      timestamp: new Date().toISOString(), content: "Actual read-only Agent response; fixture, not a model." }];
+    f.events.touch();
+    await browser.waitFor('document.querySelector("[data-entry-id=actual-agent] .conversation-role")?.textContent === "agent"');
+    assert.match(await browser.evaluate('[...document.querySelectorAll(".conversation-user .conversation-role")].at(-1).textContent'), /Preference: @designer/);
+    assert.equal(await browser.evaluate('document.querySelectorAll(".conversation-user img").length'), 1);
+    await browser.call("Page.reload");
+    await browser.waitFor('document.querySelector("[data-entry-id=actual-agent] .conversation-role")?.textContent === "agent"');
+    await browser.evaluate('document.querySelector("[data-entry-id=actual-agent]").scrollIntoView({block:"nearest"})');
+    assert.equal(f.received.length, 1, "Reload only reads saved requests; it never sends them again.");
+    if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "role-hint-standalone.png"), await browser.screenshot());
+    t.diagnostic(`Actual standalone package ${outputDirectory}; ${(await browser.call("Browser.getVersion")).product}; deterministic provider, no model calls.`);
+    assert.deepEqual(browser.exceptions, []);
+  });
 
 test("implementation confirmation has its own endpoint, never a tool-permission or text-request side effect", async t => {
   const f = await fixture(t), decisions = [];
@@ -122,6 +308,7 @@ test("unused-setup recovery requires its own exact confirmation and never submit
     confirmationId: "exact-startup", privateSessionId: "reserved-private", mainSessionId: "main", workspacePath: f.root,
     message: "One-time unused setup only. No implementation or request is sent.", reason: "Original pre-native Git failure.",
   });
+
   f.installation.decideInitialCreationRecovery = async input => {
     decisions.push(input); return { recovered: input.approve };
   };
@@ -140,6 +327,41 @@ test("unused-setup recovery requires its own exact confirmation and never submit
   assert.deepEqual(f.received, []);
 });
 
+test("Repair Development setup has a separate cancel/confirm UI and performs readback without start or send",
+    { skip: !browserAvailable, timeout: 60_000 }, async t => {
+      let readbacks = 0, ready = false;
+      const f = await fixture(t, { finishEmptyRepair: async () => { readbacks++; return { model: "one", reasoningEffort: "low" }; } });
+      const decisions = [];
+      f.installation.read = async () => ({ status: ready ? "ready" : "unknown", canInspectEmptyRepair: !ready, reason: "Empty native journal is unavailable." });
+      f.installation.requestEmptySetupRepair = async () => ({
+        confirmationId: `repair-${decisions.length}`, privateSessionId: "same-private", mainSessionId: "main",
+        workspacePath: f.root, binding: { installationDigest: "a".repeat(64) },
+        message: "Repair the same reserved ID. No project request is sent; the prepared handoff stays unsent.",
+      });
+      f.installation.decideEmptySetupRepair = async input => { decisions.push(input); ready = input.approve; return { repaired: input.approve }; };
+      const browser = await f.openBrowser();
+      await browser.call("Emulation.setDeviceMetricsOverride", { width: 390, height: 700, deviceScaleFactor: 1, mobile: false });
+      await browser.call("Page.navigate", { url: f.provider.url });
+      const click = async selector => {
+        await browser.evaluate(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:"center"})`);
+        const point = await browser.evaluate(`(() => {const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
+        for (const type of ["mousePressed", "mouseReleased"]) await browser.call("Input.dispatchMouseEvent", { type, ...point, button: "left", clickCount: 1 });
+      };
+      await browser.waitFor('document.querySelector("#repair-empty-setup")?.hidden === false');
+      await click("#repair-empty-setup");
+      await browser.waitFor('document.querySelector("#empty-setup-approval").open');
+      assert.match(await browser.evaluate('document.querySelector("#empty-setup-identity").textContent'), /same-private/);
+      assert.equal(await browser.evaluate('document.querySelector("#empty-setup-approval").getBoundingClientRect().right <= innerWidth'), true);
+      await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+      await browser.waitFor('!document.querySelector("#empty-setup-approval").open');
+      await click("#repair-empty-setup");
+      await browser.waitFor('document.querySelector("#empty-setup-approval").open');
+      await click("#approve-empty-setup");
+      await browser.waitFor('document.querySelector("#repair-empty-setup").hidden');
+      assert.deepEqual(decisions, [{ confirmationId: "repair-0", approve: false }, { confirmationId: "repair-1", approve: true }]);
+      assert.equal(readbacks, 1); assert.equal(f.starts(), 0); assert.deepEqual(f.received, []);
+      assert.equal((await f.post("/api/runtime/empty-setup/decision", { confirmationId: "foreign", approve: true, privateSessionId: "replacement" })).status, 409);
+    });
 test("real browser unused-setup recovery keeps inspection, cancellation and one-time approval distinct",
   { skip: !browserAvailable, timeout: 60_000 }, async t => {
     const f = await fixture(t), decisions = [];
@@ -427,7 +649,8 @@ test("clipboard-event PNG preview, removal, image-only retry and retained Conver
   assert.deepEqual(retainedSnapshot.historyRequests.find(request => request.id === id),
     { id, receivedAt: f.received[0].receivedAt });
   await browser.evaluate(`document.querySelector('[data-transition-id="request:${id}"] button').click()`);
-  assert.equal(await browser.evaluate("document.querySelector('#messages .state-focused').dataset.entryId"), `request:${id}`);
+  assert.equal(await browser.evaluate("document.activeElement.closest('[data-queued-request-id]').dataset.queuedRequestId"), id);
+  assert.equal(await browser.evaluate(`document.querySelector('#messages [data-entry-id="request:${id}"]')`), null);
   if (process.env.TANDEM_CLIPBOARD_EVIDENCE_DIR) {
     const screenshot = await browser.call('Page.captureScreenshot', { format: 'png' });
     await writeFile(join(process.env.TANDEM_CLIPBOARD_EVIDENCE_DIR, 'clipboard-conversation.png'), Buffer.from(screenshot.data, 'base64'));
@@ -860,7 +1083,7 @@ test("browser exposes verified reopen for closed workflow and saved-state startu
   assert.deepEqual(browser.exceptions, []);
 });
 
-test("composer retains the exact envelope after lost acknowledgement and failed refresh instead of generating a duplicate", { skip: !browserAvailable, timeout: 60_000 }, async (t) => {
+test("composer retains the exact hinted envelope after lost acknowledgement and failed refresh instead of generating a duplicate", { skip: !browserAvailable, timeout: 60_000 }, async (t) => {
   const f = await fixture(t), browser = await f.openBrowser();
   await browser.call("Emulation.setDeviceMetricsOverride", { width: 1500, height: 1100, deviceScaleFactor: 1, mobile: false });
   await browser.call("Page.navigate", { url: f.provider.url });
@@ -874,11 +1097,12 @@ test("composer retains the exact envelope after lost acknowledgement and failed 
     };
   })()`);
   await clickBrowser(browser, "#message");
-  await browser.call("Input.insertText", { text: "Keep this exact request." });
-  assert.equal(await browser.evaluate("document.querySelector('#message').value"), "Keep this exact request.");
+  await browser.call("Input.insertText", { text: "@designer Keep this exact request." });
+  assert.equal(await browser.evaluate("document.querySelector('#message').value"), "@designer Keep this exact request.");
   await clickBrowser(browser, "#send");
   await browser.waitFor("document.querySelector('#send').textContent === 'Retry exact request'");
   assert.equal(f.received.length, 1);
+  assert.deepEqual(f.received[0].roleHint, { schemaVersion: "human-role-hint/v1", role: "designer" });
   assert.equal(await browser.evaluate("document.querySelector('#message').disabled"), true);
   await browser.evaluate("window.blockSnapshots = false");
   await clickBrowser(browser, "#send");
@@ -933,7 +1157,8 @@ test("actual browser entrypoint renders dynamic shared artifacts, answers and or
   await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
   const submitSelector = await browser.evaluate("(() => { const b=[...document.querySelectorAll('.human-loop-questions button')].find(b=>/send.*answer|submit.*answer/i.test(b.textContent)); if(!b) throw new Error('No answer submission control'); b.id='answer-submit-test'; return '#answer-submit-test'; })()");
   await click(submitSelector);
-  await browser.waitFor("document.querySelectorAll('#messages [data-kind=user]').length >= 2");
+  await browser.waitFor("document.querySelectorAll('#queued-requests [data-kind=user]').length === 1");
+  assert.equal(await browser.evaluate("document.querySelectorAll('#messages [data-kind=user]').length"), 1);
   assert.equal(f.received[0].answers.schemaVersion, "human-question-answers/v1");
   assert.match(await browser.evaluate("document.querySelector('.question-answer-record').textContent"), /Choose the current direction/);
   await click("#message"); await browser.call("Input.insertText", { text: "This is ordinary discussion, not a question answer." });
@@ -960,10 +1185,11 @@ test("artifact PNG stays bound to its producing Design and artifact when selecti
   assert.equal(f.received.length, 0);
   await clickBrowser(browser, '[data-artifact-tab="architecture-example"]');
   await clickBrowser(browser, "#message");
-  await browser.call("Input.insertText", { text: "Explain this marked interaction without editing." });
+  await browser.call("Input.insertText", { text: "@agent Explain this marked interaction without editing." });
   await clickBrowser(browser, "#send");
   await browser.waitFor("document.querySelector('#message').value === ''");
   assert.equal(f.received.length, 1);
+  assert.deepEqual(f.received[0].roleHint, { schemaVersion: "human-role-hint/v1", role: "agent" });
   const ref = f.received[0].attachments[0];
   assert.equal(ref.source.schemaVersion, "artifact-annotation/v1");
   assert.equal(ref.source.artifactId, "interaction");

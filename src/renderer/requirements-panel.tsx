@@ -507,7 +507,8 @@ export function RequirementsPanel() {
                             + (nodes.some((node) => node.status === "toAnswer") ? ` · ${nodes.filter((node) => node.status === "toAnswer").length} to answer` : "")
                         : "Waiting for the active decision..."}</strong>
                 </div>
-                <span id="design-tree-phase" className="design-tree-phase">{state.phase || "discovery"}</span>
+                <span id="design-tree-phase" className="design-tree-phase">{state.lifecycle.completedStages.includes("requirements")
+                  ? "Saved requirements" : state.requirements.substage === "usage" ? "Collecting usages" : "Requirements decisions"}</span>
             </div>
             <div className="design-tree-body">
                 <div className="design-tree-legend" aria-label="Decision status legend">

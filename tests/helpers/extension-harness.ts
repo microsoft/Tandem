@@ -3,11 +3,12 @@ import { randomUUID } from "node:crypto";
 import fs, { mkdir, readFile, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { runInNewContext } from "node:vm";
 import type { TandemState } from "../../src/types.js";
 import type { PreparationToken } from "../../src/agent-runner.js";
 import { assertFactoryRequestEnvelope, type FactoryLaunchRequest } from "../../src/agent-runner.js";
+import { chooseProjectEntry } from "../../src/project-entry.js";
 
 interface CanvasContext {
     instanceId: string;
@@ -43,12 +44,12 @@ interface HarnessApi {
     waitForAnswer(id: string): Promise<void>;
     recoverAnswerFactory(state: TandemState, writable: boolean): void;
     answerFactoryPrompt(args: unknown): string;
-    answerFactory: { run(ctx: Record<string, unknown>): Promise<unknown> };
-    usageSuggestionFactory: { run(ctx: Record<string, unknown>): Promise<unknown> };
+    answerFactory: { meta: { limits: { timeoutSeconds?: number } }; run(ctx: Record<string, unknown>): Promise<unknown> };
+    usageSuggestionFactory: { meta: { limits: { timeoutSeconds?: number } }; run(ctx: Record<string, unknown>): Promise<unknown> };
     textWorkerAgent: { name: string; tools: string[]; infer: boolean; prompt: string };
     processAction(id: string, provider: string, input: unknown): Promise<TandemState>;
     preparationFactory: {
-        meta: { argsSchema: { properties: Record<string, unknown> } };
+        meta: { argsSchema: { properties: Record<string, unknown> }; limits: { timeoutSeconds?: number } };
         run(ctx: Record<string, unknown>): Promise<unknown>;
     };
     continueDevelopment(id: string, provider: string, input?: Record<string, unknown>): Promise<TandemState>;
@@ -64,6 +65,7 @@ interface HarnessApi {
     }>;
     closeServers(): Promise<void>;
     runEffortFactory(id: string, requestId: string, request: FactoryLaunchRequest): Promise<unknown>;
+    resumeEffortRun(id: string, runId: string): Promise<unknown>;
     waitForEffortRun(id: string, runId: string): Promise<unknown>;
 }
 
@@ -71,9 +73,9 @@ let compiled: Promise<string> | undefined;
 async function compile(): Promise<string> {
     const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "src");
     const source = (await readFile(join(sourceRoot, "extension.ts"), "utf8")).replaceAll("\r\n", "\n");
-    const end = source.indexOf("session = await joinSession(");
+    const end = source.indexOf("const privateRegistration = privateReviewRegistration(");
     if (end === -1) throw new Error("The extension session entry point could not be located.");
-    const prefix = source.slice(0, end).replaceAll("import.meta.url", JSON.stringify("file:///project/.github/extensions/tandem/extension.mjs"))
+    const prefix = source.slice(0, end).replaceAll("import.meta.url", JSON.stringify(pathToFileURL(join(sourceRoot, "..", ".github", "extensions", "tandem", "extension.mjs")).href))
         .replaceAll('import.meta.resolve("@github/copilot-sdk")', JSON.stringify("file:///fixture-sdk/index.mjs"));
     const openStart = source.lastIndexOf("open: async (ctx) => {");
     const openEnd = source.indexOf(",\n            onClose:", openStart);
@@ -106,22 +108,27 @@ async function compile(): Promise<string> {
         logLevel: "silent",
         define: { __TANDEM_VERSION__: JSON.stringify("test") },
     });
-    return result.outputFiles[0].text + "\nmodule.exports.assertDevelopmentAvailable = assertDevelopmentAvailable;";
+    return result.outputFiles[0].text + "\nmodule.exports.assertDevelopmentAvailable = assertDevelopmentAvailable; module.exports.resumeEffortRun = resumeEffortRun; module.exports.waitForSuggestion = id => activeSuggestionRuns.get(id);";
 }
 
-export async function extensionHarness(speechEnvironment: Record<string, string> = {}, sharedRoot?: string, rendererHtml = "", workspaceRoot?: string) {
+export async function extensionHarness(speechEnvironment: Record<string, string> = {}, sharedRoot?: string, rendererHtml = "", workspaceRoot?: string, unselectedEntry = false) {
     const root = sharedRoot || resolve("node_modules", "tandem-test-fixtures", randomUUID());
     await mkdir(root, { recursive: true });
     const workspace = workspaceRoot ?? root;
     await mkdir(workspace, { recursive: true });
+    if (!unselectedEntry) await chooseProjectEntry(workspace, "preparation");
     const requests: unknown[] = [];
     const developmentRequests: Array<Record<string, unknown>> = [];
+    const developmentOpens: string[] = [];
+    let mainReasoningEffort: string | undefined;
+    let developmentReasoningEffort: string | null = null, developmentEffortActive = false, developmentEffortError: string | null = null;
     let beforeDevelopmentStart: () => Promise<void> = async () => {};
     const logs: string[] = [];
     let speechTokenRequests = 0;
     let browserSignIns = 0;
     let browserTokenRequests = 0;
     let previewHtml = '<html><meta name="tandem-prototype-id" content="sample"></html>';
+    let previewFetch: typeof fetch = async () => new Response(previewHtml);
     let signIn: (signal: AbortSignal) => Promise<void> = async () => {};
     let rename = fs.rename;
     const require = createRequire(import.meta.url);
@@ -134,8 +141,14 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
         openCanvases: [] as { instanceId: string }[],
         log: async (message: string) => { logs.push(message); },
         rpc: {
+            model: {
+                getCurrent: async () => ({ modelId: "fixture-model", reasoningEffort: mainReasoningEffort }),
+                list: async () => ({ list: [{ id: "fixture-model", capabilities: { supports: { reasoning_effort: ["low", "high"] } } }] }),
+                setReasoningEffort: async ({ reasoningEffort }: { reasoningEffort: string }) => { mainReasoningEffort = reasoningEffort; return { reasoningEffort }; },
+            },
+            metadata: { isProcessing: async () => ({ processing: false }), activity: async () => ({ hasActiveWork: false }) },
             extensions: { list: async () => ({ extensions: [{ id: "project:tandem", status: "running" }] }) },
-            factory: { run: async (request: FactoryLaunchRequest) => {
+            workflow: { run: async (request: FactoryLaunchRequest) => {
                 assertFactoryRequestEnvelope(request);
                 requests.push(request);
                 return new Promise<never>(() => {});
@@ -152,6 +165,19 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
                     if (developmentRequests.length) throw new Error("Finish or close Development before changing upstream discovery.");
                 },
                 status: async () => ({ installation: { status: "new" }, workflow: null }),
+                validateReasoningEffort: async () => {
+                    if (developmentRequests.length) throw new Error("Private native work is busy.");
+                },
+                selectReasoningEffort: async (effort: string) => {
+                    if (developmentEffortError) throw new Error(developmentEffortError);
+                    developmentReasoningEffort = effort;
+                },
+                reasoningEffortStatus: async () => ({ desired: developmentReasoningEffort,
+                    actual: developmentEffortActive ? developmentReasoningEffort : null, model: developmentEffortActive ? "private-model" : null,
+                    supported: ["low", "high"], status: developmentEffortError ? "error" : developmentReasoningEffort === null ? "unset" : developmentEffortActive ? "applied" : "pending",
+                    error: developmentEffortError }),
+                openView: async (id: string) => { developmentOpens.push(id); return { url: "http://127.0.0.1:8765/" }; },
+                reportError: (error: Error) => { logs.push(error.message); },
                 close: async () => ({ status: "closed", warnings: [] }),
                 start: async () => { await beforeDevelopmentStart(); return {
                     sessionId: "fixture-private",
@@ -184,7 +210,7 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
                     };
                 },
             },
-            fetch: async () => new Response(previewHtml),
+            fetch: (input: Parameters<typeof fetch>[0], init?: RequestInit) => previewFetch(input, init),
             process: new Proxy(process, {
                 get(target, key) {
                     if (key === "cwd") return () => workspace;
@@ -208,8 +234,8 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
                     } };
                 }
                 if (name === "@github/copilot-sdk/extension") return {
-                    CanvasError, defineFactory: (value: unknown) => value,
-                    isFactoryRunTerminal: (status: string) => ["completed", "failed", "cancelled", "halted", "error"].includes(status),
+                    CanvasError, defineWorkflow: (value: unknown) => value,
+                    isWorkflowRunTerminal: (status: string) => ["completed", "failed", "cancelled", "halted", "error"].includes(status),
                 };
                 if (name === "./renderer.js") return { renderTandemHtml: () => rendererHtml };
                 return require(name);
@@ -223,10 +249,13 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
             }
             if (requests.length < count) throw new Error("The expected factory dispatch was not observed.");
         };
-        return { api, root, requests, developmentRequests, logs, session, waitForRequests,
+        return { api, root, requests, developmentRequests, developmentOpens, logs, session, waitForRequests,
+            setDevelopmentEffortActive(value: boolean) { developmentEffortActive = value; },
+            setDevelopmentEffortError(value: string | null) { developmentEffortError = value; },
             setBeforeDevelopmentStart(handler: () => Promise<void>) { beforeDevelopmentStart = handler; },
             setRename(value: typeof fs.rename) { rename = value; },
             setPreviewHtml(value: string) { previewHtml = value; },
+            setPreviewFetch(value: typeof fetch) { previewFetch = value; },
             browserSignIns: () => browserSignIns,
             browserTokenRequests: () => browserTokenRequests,
             setSpeechSignIn(value: typeof signIn) { signIn = value; },

@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { readFile, rename, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { extensionHarness } from "./helpers/extension-harness.js";
 import { sketchDocument, screenPng } from "./helpers/sketch-lifecycle-fixture.js";
 import { SketchStore } from "../src/sketch-store.js";
 import { buildPrototypeCheckpointPrompt, buildSketchPrompt } from "../src/planning-prompts.js";
+import { newPrototypeFlow } from "../src/prototype-flow.js";
+import { fingerprintPrototypeWorkspace } from "../src/prototype-runtime.js";
 
 async function readyRequirements(fixture: Awaited<ReturnType<typeof extensionHarness>>, noGui = false) {
     const state = fixture.api.createState("sample", "A task app");
@@ -23,7 +25,7 @@ async function readyRequirements(fixture: Awaited<ReturnType<typeof extensionHar
 }
 
 function generateDrawings(fixture: Awaited<ReturnType<typeof extensionHarness>>) {
-    fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, factory: {
+    fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, workflow: {
         run: async (request) => {
             fixture.requests.push(request);
             return { status: "completed", runId: `drawing-${fixture.requests.length}`, result: sketchDocument() };
@@ -40,6 +42,39 @@ async function approveDrawings(fixture: Awaited<ReturnType<typeof extensionHarne
     });
 }
 
+test("drawing requests retain original text and identity through successful and failed revisions", async () => {
+    const fixture = await extensionHarness();
+    try {
+        await readyRequirements(fixture);
+        generateDrawings(fixture);
+        await fixture.api.completeLifecycleStage("sample", "requirements", "project:tandem");
+        await fixture.api.waitForAnswer("sample");
+        const first = await fixture.api.loadState("sample");
+        const instruction = "Move the save status below the title.";
+        const pending = await fixture.api.sketchAction("sample", "project:tandem", {
+            action: "revise", expectedRevision: first.sketch.current.id, instruction,
+        });
+        const request = pending.sketch.requests.at(-1);
+        assert.equal(request.instruction, instruction);
+        assert.equal(request.requestId, pending.processing.requestId);
+        assert.equal(request.baseRevisionId, first.sketch.current.id);
+        await fixture.api.waitForAnswer("sample");
+        const saved = await fixture.api.loadState("sample");
+        assert.deepEqual(saved.sketch.requests.at(-1), request);
+        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, workflow: {
+            run: async () => ({ runId: "failed-drawing", status: "failed", error: "Synthetic failure" }),
+        } } });
+        await fixture.api.sketchAction("sample", "project:tandem", {
+            action: "revise", expectedRevision: saved.sketch.current.id, instruction: "Retain this failed request too.",
+        });
+        await fixture.api.waitForAnswer("sample");
+        const failed = await fixture.api.loadState("sample");
+        assert.equal(failed.processing.status, "error");
+        assert.equal(failed.sketch.requests.at(-1).instruction, "Retain this failed request too.");
+        assert.deepEqual(failed.sketch.requests[1], request);
+    } finally { await fixture.close(); }
+});
+
 test("Requirements generates drawings once and cannot start Prototype before explicit approval", async () => {
     const fixture = await extensionHarness();
     try {
@@ -50,7 +85,8 @@ test("Requirements generates drawings once and cannot start Prototype before exp
         assert.equal(pending.processing.action, "generate-sketch");
         await fixture.waitForRequests();
         assert.deepEqual(JSON.parse(JSON.stringify((fixture.requests[0] as { options: unknown }).options)), {
-            limits: { maxConcurrentSubagents: 1, maxTotalSubagents: 1, timeoutSeconds: 300, maxAiCredits: 128 },
+            notifyOnComplete: false,
+            limits: { maxConcurrentSubagents: 1, maxTotalSubagents: 1, maxAiCredits: 128 },
         });
         await fixture.api.waitForAnswer("sample");
         const draft = await fixture.api.loadState("sample");
@@ -71,6 +107,52 @@ test("Requirements generates drawings once and cannot start Prototype before exp
         assert.equal(prototype.prototypeFlow!.checkpoints[0].sketchRevisionId, approved.sketch.current!.id);
         const request = fixture.requests[1] as { args: { sketchInput: { document: unknown } } };
         assert.deepEqual(JSON.parse(JSON.stringify(request.args.sketchInput.document)), sketchDocument());
+    } finally { await fixture.close(); }
+});
+
+test("graphical Prototype completion saves approved evidence without starting or requesting Stage2", async () => {
+    const fixture = await extensionHarness();
+    try {
+        await readyRequirements(fixture);
+        generateDrawings(fixture);
+        await fixture.api.completeLifecycleStage("sample", "requirements", "project:tandem");
+        await fixture.api.waitForAnswer("sample");
+        const ready = await approveDrawings(fixture);
+        const source = join(fixture.root, ".tandem", "efforts", "sample", "previews", "completed-fixture");
+        await mkdir(source, { recursive: true });
+        const html = "<!doctype html><button>Complete task</button>";
+        await writeFile(join(source, "index.html"), html);
+        ready.stage = ready.lifecycle.currentStage = "prototype";
+        ready.lifecycle.completedStages.push("sketch");
+        ready.previewStatus = "ready";
+        ready.prototypeFlow = { ...newPrototypeFlow(), displayedCheckpointId: "completed-fixture", checkpoints: [{
+            id: "completed-fixture", requestId: "completed-fixture", generation: ready.generation,
+            milestone: "interaction", status: "ready", revisionId: null, baseCheckpointId: null, sourceCheckpointId: null,
+            workspacePath: source, workspacePrepared: true, previewUrl: "http://127.0.0.1:12345/", summary: "Synthetic retained HTML fixture",
+            focus: "", requestedAt: ready.updatedAt, completedAt: ready.updatedAt, timeoutSeconds: 300,
+            sourceFingerprint: await fingerprintPrototypeWorkspace(source),
+            sketchRevisionId: ready.sketch.current!.id, sketchInputHash: ready.sketch.current!.documentHash,
+        }] };
+        ready.prototypeFlow.checkpoints.unshift({ ...ready.prototypeFlow.checkpoints[0],
+            id: "structure-fixture", requestId: "structure-fixture", milestone: "structure" });
+        ready.prototypeReview.designSpecArtifactId = "draft-feature-spec";
+        ready.artifacts.push({ id: "draft-feature-spec", title: "Feature evidence", stage: "prototype",
+            kind: "design-spec", path: "", language: "markdown", content: "Confirmed task interaction.", mermaid: "" });
+        await fixture.api.persistState(ready);
+        fixture.setBeforeDevelopmentStart(async () => { throw new Error("Stage1 cannot depend on private startup."); });
+        const completed = await fixture.api.completeLifecycleStage("sample", "prototype", "project:tandem");
+        assert.equal(completed.lifecycle.currentStage, "development");
+        assert.equal(completed.status, "Prototype saved. Continue in Development when you're ready.");
+        assert.ok(completed.development == null);
+        assert.equal(fixture.developmentRequests.length, 0);
+        assert.equal(fixture.requests.length, 1, "Only the explicitly mocked Stage1 sketch generation ran.");
+        await assert.rejects(access(join(fixture.root, ".tandem", "living-canvas")), { code: "ENOENT" });
+        const output = completed.lifecycle.outputs.find(value => value.stageId === "prototype")!;
+        const snapshot = JSON.parse(await readFile(join(fixture.root, output.path), "utf8"));
+        assert.equal(snapshot.result.prototypeFlow.checkpoints[0].sourceFingerprint, ready.prototypeFlow.checkpoints[0].sourceFingerprint);
+        assert.equal(snapshot.result.sketch.approved.revisionId, ready.sketch.approved!.revisionId);
+        assert.equal(await readFile(join(source, "index.html"), "utf8"), html);
+        await new SketchStore(fixture.root).verifyApproval("sample", ready.sketch.current!, ready.sketch.approved!);
     } finally { await fixture.close(); }
 });
 
@@ -166,9 +248,9 @@ test("a failed terminal-receipt save releases drawing work only after SDK verifi
         const before = await approveDrawings(fixture);
         const statePath = join(fixture.root, ".tandem", "efforts", "sample", "state.json");
         const run = { status: "completed", runId: "failed-save-run", result: sketchDocument() };
-        fixture.api.setSession({ ...fixture.session, factory: {
+        fixture.api.setSession({ ...fixture.session, workflow: {
             getRun: async (id: string) => { assert.equal(id, run.runId); verified++; return run; },
-        }, rpc: { ...fixture.session.rpc, factory: {
+        }, rpc: { ...fixture.session.rpc, workflow: {
             run: async (request) => {
                 fixture.requests.push(request);
                 const current = await fixture.api.loadState("sample");
@@ -199,9 +281,14 @@ test("a failed terminal-receipt save releases drawing work only after SDK verifi
         assert.match(failed.processing.message, /EPERM|Cannot replace/);
         assert.equal(failed.factoryRuns!.at(-1)!.terminal, false);
         assert.ok(failed.jobOwner);
-        assert.equal(JSON.stringify(failed.sketch), JSON.stringify(before.sketch));
+        const drawing = (sketch: typeof before.sketch) => {
+            const { requests, ...result } = sketch;
+            return JSON.stringify(result);
+        };
+        assert.equal(drawing(failed.sketch), drawing(before.sketch));
+        assert.equal(failed.sketch.requests.at(-1).instruction, "Improve the coffee cup.");
         fixture.setRename(rename);
-        fixture.api.setSession({ ...fixture.session, factory: {
+        fixture.api.setSession({ ...fixture.session, workflow: {
             getRun: async (id: string) => { assert.equal(id, run.runId); verified++; return run; },
         } });
         const retried = await fixture.api.sketchAction("sample", "project:tandem", {
@@ -211,7 +298,8 @@ test("a failed terminal-receipt save releases drawing work only after SDK verifi
         assert.equal(verified, 1);
         assert.notEqual(retried.processing.requestId, failed.processing.requestId);
         assert.equal(retried.factoryRuns!.find((receipt) => receipt.requestId === failed.processing.requestId)!.terminal, true);
-        assert.equal(JSON.stringify(retried.sketch), JSON.stringify(before.sketch), "Recovery must not apply an uncommitted result.");
+        assert.equal(drawing(retried.sketch), drawing(before.sketch), "Recovery must not apply an uncommitted result.");
+        assert.equal(retried.sketch.requests.at(-1).instruction, "Improve the cup handle.");
         assert.equal(retried.generation, before.generation);
     } finally { await fixture.close(); }
 });
@@ -225,7 +313,7 @@ test("rehydration releases failed drawing receipts for SDK-confirmed terminal ru
                 const fresh = await extensionHarness({}, fixture.root);
                 let reads = 0;
                 try {
-                    fresh.api.setSession({ ...fresh.session, factory: {
+                    fresh.api.setSession({ ...fresh.session, workflow: {
                         getRun: async (runId: string) => {
                             assert.equal(runId, state.processing.runId);
                             reads++;
@@ -261,7 +349,7 @@ test("running, unknown, conflicting, and foreign drawing jobs cannot be released
                 if (kind === "foreign") state.jobOwner = { sessionId: "foreign-session", workspaceRoot: fixture.root };
                 await fixture.api.persistState(state);
                 let reads = 0;
-                fixture.api.setSession({ ...fixture.session, factory: {
+                fixture.api.setSession({ ...fixture.session, workflow: {
                     getRun: async (runId: string) => {
                         reads++;
                         if (kind === "unavailable") throw new Error("SDK connection closed");
@@ -291,8 +379,8 @@ test("failed drawing recovery correlates missing run IDs using SDK request logs,
                 state.factoryRuns!.at(-1)!.runId = null;
                 await fixture.api.persistState(state);
                 let verified = false;
-                fixture.api.setSession({ ...fixture.session, factory: {
-                    listRuns: async () => [{ runId: "correlated-run", factoryName: state.processing.factoryName,
+                fixture.api.setSession({ ...fixture.session, workflow: {
+                    listRuns: async () => [{ runId: "correlated-run", workflowName: state.processing.factoryName,
                         createdAt: Date.parse(state.processing.requestedAt) }],
                     getRunProgress: async () => ({ records: [{
                         text: `Request ${matching ? state.processing.requestId : "unrelated-request"}; prototype sample;`,
@@ -333,7 +421,7 @@ test("drawing recovery waits for termination and rechecks the request before rel
                 let started!: () => void;
                 const waiting = new Promise<void>((resolve) => { started = resolve; });
                 const terminal = new Promise<{ runId: string; status: string }>((resolve) => { finish = resolve; });
-                fixture.api.setSession({ ...fixture.session, factory: {
+                fixture.api.setSession({ ...fixture.session, workflow: {
                     getRun: async (runId: string) => ({ runId, status: "running" }),
                     waitForRun: async (runId: string) => { assert.equal(runId, state.processing.runId); started(); return terminal; },
                 } });
@@ -451,7 +539,7 @@ test("prototype readiness requires actual approved image delivery, not worker cl
         await approveDrawings(fixture);
         let deliverImage = false;
         let imageCalls = 0;
-        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, factory: {
+        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, workflow: {
             run: async (request) => {
                 fixture.requests.push(request);
                 const checkpoint = request.args.state.prototypeFlow.checkpoints.at(-1);
@@ -528,7 +616,7 @@ test("the real Sketch stage snapshot accepts and exports frozen image bytes", as
         await fixture.api.completeLifecycleStage("sample", "requirements", "project:tandem");
         await fixture.api.waitForAnswer("sample");
         const approved = await approveDrawings(fixture);
-        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, factory: {
+        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, workflow: {
             run: async () => ({ status: "failed", runId: "prototype-paused", error: "No AI in this fixture." }),
         } } });
         await fixture.api.completeLifecycleStage("sample", "sketch", "project:tandem");
@@ -559,7 +647,7 @@ test("failed drawing jobs preserve drafts and never retry implicitly after reloa
         await fixture.api.completeLifecycleStage("sample", "requirements", "project:tandem");
         await fixture.api.waitForAnswer("sample");
         const draft = await fixture.api.loadState("sample");
-        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, factory: {
+        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, workflow: {
             run: async (request) => {
                 fixture.requests.push(request);
                 return { status: "failed", runId: "failed-revision", error: "Drawing worker exceeded its budget." };

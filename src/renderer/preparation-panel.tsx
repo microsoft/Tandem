@@ -29,7 +29,7 @@ export function PreparationPanel() {
   const editable = canEdit("prepare");
   const retryDisabled = pending || action.busy || !editable || hasActiveJobs(state);
   const liveByWorkItem = new Map(
-    (runtime?.agents || []).map((agent) => [String(agent.label || "").replace(/^prepare:/, ""), agent]),
+    (preparing ? runtime?.agents || [] : []).map((agent) => [String(agent.label || "").replace(/^prepare:/, ""), agent]),
   );
   const messages = [
     ...(preparation.messages || []).map((message) => ({
@@ -63,6 +63,9 @@ export function PreparationPanel() {
   }
 
   return <div>
+    {state.goal && <section className="preparation-stage-card" aria-label="Original project brief">
+      <h3>Original project brief</h3><p id="goal" className="goal">{state.goal}</p>
+    </section>}
     <section className="preparation-stage-card">
       <div className="preparation-stage-heading" aria-describedby="preparation-stage-progress">
         <div>

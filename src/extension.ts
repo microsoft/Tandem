@@ -9,11 +9,13 @@ import { fileURLToPath } from "node:url";
 import {
     CanvasError,
     createCanvas,
-    defineFactory,
-    isFactoryRunTerminal,
+    defineWorkflow,
+    isWorkflowRunTerminal,
     joinSession,
 } from "@github/copilot-sdk/extension";
 import { renderTandemHtml } from "./renderer.js";
+import { chooseProjectEntry, readProjectEntry } from "./project-entry.js";
+import { PreviewLaunches, type PreviewTarget } from "./preview-launch.js";
 import { isPreferredTandemProvider } from "./provider-identity.js";
 import { resolveSharedProjectRoot } from "./workspace-root.js";
 import { buildDecisionGraphMermaid } from "./decision-diagram.js";
@@ -24,9 +26,10 @@ import {
 import type { HistoricalStageId, LifecycleStageId, LifecycleState, TandemState } from "./types.js";
 import { ProjectStore, ProjectStoreError, normalizeProjectId, readJsonFile, writeJsonAtomically } from "./project-store.js";
 import {
-    assertFactoryRequestEnvelope, jsonResult, rejectedFactoryLaunch,
+    assertFactoryRequestEnvelope, isPendingFactoryRun, jsonResult, rejectedFactoryLaunch, workflowReasoningEffort,
     type FactoryLaunchRequest, type PreparationToken,
 } from "./agent-runner.js";
+import { inspectIdleNativeSession, validFactoryAbandonment } from "./effort-recovery.js";
 import {
     executionDigest, fingerprintWorkspace,
 } from "./execution.js";
@@ -45,6 +48,8 @@ import {
     type PrototypeSketchInput,
 } from "./planning-prompts.js";
 import { inspectEmptyPreparationWorkspace } from "./preparation.js";
+import { NativeWorkflowActivity, workflowBinding } from "./workflow-activity.js";
+import { MainSessionEffort } from "./main-session-effort.js";
 import {
     emptySketchState, readSketchState, sketchDocumentSchema, validateSketchDocument,
     type SketchDocument, type SketchRevision,
@@ -58,12 +63,13 @@ import { fingerprintPrototypeWorkspace, PROTOTYPE_FINGERPRINT_PREFIX } from "./p
 import {
     newPrototypeFlow, nextPrototypeMilestone, prototypeCheckpoint, prototypeFlowCompletionError, prototypeRetrySource,
     prototypeMilestoneLabels, promotePrototypeCheckpoint, readPrototypeFlow,
-    reservePrototypeCheckpoint, settlePrototypeCheckpoint, PROTOTYPE_WORK_WINDOW_SECONDS,
+    reservePrototypeCheckpoint, settlePrototypeCheckpoint,
     type PrototypeCheckpoint, type PrototypeFlow, type PrototypeMilestone,
 } from "./prototype-flow.js";
 import { createProcessAdapters } from "./process-adapters.js";
 import { assertDeliveryCurrent, prepareDeliveryDraft } from "./delivery.js";
 import { createHumanLoopController } from "../stage2/tandem/src/human-loop-controller.mjs";
+import { privateReviewRegistration } from "../stage2/tandem/src/native-evidence-workflow.mjs";
 import { DevelopmentHandoffs } from "./development-handoff.js";
 import { DevelopmentTransition } from "./development-transition.js";
 import { nodeMainConsent } from "./main-consent.js";
@@ -174,22 +180,87 @@ const projectStore = new ProjectStore<TandemState>({
 });
 
 let session;
+let previewLaunches: PreviewLaunches | null = null;
+function ownedPreviewLaunches() {
+    return previewLaunches ??= new PreviewLaunches({
+        root: WORKSPACE_ROOT, storageRoot: STATE_DIRECTORY, mainSessionId: () => session.sessionId,
+        executable: process.env.TANDEM_NODE_EXECUTABLE || process.execPath,
+        launcher: join(dirname(fileURLToPath(import.meta.url)), "preview-launcher.mjs"),
+        tools: { execute: input => session.rpc.tools.execute(input) }, verifyIdentity: verifyPreviewIdentity,
+        readState: loadState,
+        guard: async () => {
+            if (process.platform !== "win32") throw new Error("Saved preview restart currently requires the native Windows PowerShell launch adapter.");
+            if (typeof session.rpc.tools?.initializeAndValidate !== "function" || typeof session.rpc.tools?.execute !== "function") {
+                throw new Error("The installed native runtime lacks permission-aware direct tool execution. No alternate command path was used.");
+            }
+            await session.rpc.tools.initializeAndValidate();
+            const processing = await session.rpc.metadata.isProcessing();
+            const queue = await session.rpc.queue.pendingItems();
+            if (processing.processing || queue.items?.length || queue.steeringMessages?.length) throw new Error("Wait for the owning foreground session to finish its current work before restarting a preview.");
+        },
+    });
+}
 let handoffs: DevelopmentHandoffs;
 const developmentTransition = new DevelopmentTransition(WORKSPACE_ROOT);
 const nodePermissionOwner = process.env.TANDEM_NODE_MAIN_SESSION_ID;
+const workflowActivity = new NativeWorkflowActivity();
+const mainEffort = new MainSessionEffort(WORKSPACE_ROOT, () => session);
+let projectEffortChanging = false;
 const development = createHumanLoopController({
     workspacePath: WORKSPACE_ROOT,
     sdkModulePath: import.meta.resolve("@github/copilot-sdk"),
+    privateExtensionPath: fileURLToPath(import.meta.url),
+    projectEffortControl: true,
     ...(/^copilot(?:\.exe)?$/i.test(basename(process.execPath)) ? { cliPath: process.execPath } : {}),
     ...(process.env.TANDEM_NODE_EXECUTABLE ? { nodePath: process.env.TANDEM_NODE_EXECUTABLE } : {}),
-    beforeStart: assertDevelopmentAvailable,
+    beforeStart: async () => {
+        if (projectEffortChanging) throw new Error("Wait for the project effort choice before opening Development.");
+        await assertDevelopmentAvailable();
+    },
     contextProvider: () => handoffs.context(),
-    ...(nodePermissionOwner ? { mainPermissionHandler: nodeMainConsent(nodePermissionOwner, () => session?.sessionId) } : {}),
-    withRequestAdmission: operation => developmentTransition.run(async () => {
+    inspectRepairAdmissions: () => handoffs.inspectUnadmitted(),
+    withEmptyRepairExclusion: operation => developmentTransition.run(async () => {
+        if (projectEffortChanging) throw new Error("Wait for the project effort choice before repairing Development.");
         await assertDevelopmentAvailable();
         return operation();
     }),
+    ...(nodePermissionOwner ? { mainPermissionHandler: nodeMainConsent(nodePermissionOwner, () => session?.sessionId) } : {}),
+    withRequestAdmission: operation => developmentTransition.run(async () => {
+        if (projectEffortChanging) throw new Error("Wait for the project effort choice to finish applying.");
+        await assertDevelopmentAvailable();
+        const desired = await mainEffort.desired();
+        if (desired !== null && (await development.reasoningEffortStatus()).desired !== desired) {
+            throw new Error("Project effort is not synchronized with Development. Apply it again through the project control.");
+        }
+        return operation();
+    }),
 });
+
+async function projectEffortStatus() {
+    const [stage1, stage2] = await Promise.all([mainEffort.status(), development.reasoningEffortStatus()]);
+    return { desired: stage1.desired, stage1, stage2, changing: projectEffortChanging };
+}
+
+async function changeProjectEffort(effort: unknown) {
+    if (typeof effort !== "string") throw new Error("Choose one reasoning effort.");
+    if (projectEffortChanging) throw new Error("A project effort change is already in progress.");
+    projectEffortChanging = true;
+    try {
+        return await developmentTransition.run(async () => {
+            await assertDevelopmentAvailable();
+            await Promise.all([mainEffort.validate(effort), development.validateReasoningEffort(effort)]);
+            const outcomes = await Promise.allSettled([mainEffort.select(effort), development.selectReasoningEffort(effort)]);
+            const errors = outcomes.flatMap((outcome, index) => outcome.status === "rejected"
+                ? [`Stage ${index + 1}: ${outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)}`] : []);
+            const settings = await projectEffortStatus();
+            for (const [index, stage] of [settings.stage1, settings.stage2].entries()) {
+                if (stage.status === "error") errors.push(`Stage ${index + 1}: ${stage.error}`);
+            }
+            if (errors.length) throw new Error(`Project effort was not fully applied. ${errors.join(" ")} Read both stage states before retrying.`);
+            return { ...settings, changing: false };
+        });
+    } finally { projectEffortChanging = false; }
+}
 
 async function assertDevelopmentAvailable() {
     let efforts;
@@ -270,7 +341,7 @@ async function continueDevelopmentLocked(prototypeId, extensionId, input: Record
 }
 
 function hasActiveWork(state) {
-    return Boolean(state.effortReset || state.factoryRuns?.some((run) => !run.terminal)) || hasWorkflowActiveWork(state);
+    return Boolean(state.effortReset || state.factoryRuns?.some(isPendingFactoryRun)) || hasWorkflowActiveWork(state);
 }
 
 function isObject(value: unknown): value is Record<string, any> {
@@ -1223,6 +1294,7 @@ function normalizeStoredState(value, prototypeId): TandemState {
         value.factoryRuns.some((run) => !isObject(run) || typeof run.requestId !== "string" ||
             run.generation !== value.generation || (run.runId !== null && typeof run.runId !== "string") ||
             (run.terminal !== undefined && typeof run.terminal !== "boolean") ||
+            (run.recovery !== undefined && (run.runId !== null || run.terminal === true || !validFactoryAbandonment(run.recovery))) ||
             (run.launchRejection !== undefined && (!isObject(run.launchRejection) ||
                 typeof run.launchRejection.message !== "string" || typeof run.launchRejection.recordedAt !== "string"))))) ||
         (value.effortReset != null && (!isObject(value.effortReset) ||
@@ -1418,7 +1490,7 @@ async function loadState(prototypeId) {
     return state;
 }
 
-async function persistState(state) {
+async function persistState(state, beforeCommit?: () => void) {
     Object.assign(state, deriveRequirementsState(state));
     state.process = normalizeProcessState(state.process);
     if (!hasActiveWork(state) && state.lifecycle.currentStage !== "prepare" &&
@@ -1431,7 +1503,7 @@ async function persistState(state) {
     state.jobOwner = hasActiveWork(state)
         ? state.jobOwner || { sessionId: session.sessionId, workspaceRoot: WORKSPACE_ROOT }
         : null;
-    await projectStore.save(state);
+    await projectStore.save(state, beforeCommit);
     stateCache.set(state.prototypeId, state);
 }
 
@@ -1477,12 +1549,14 @@ async function recordEffortFactoryReceipt(prototypeId, requestId, generation, ru
         const receipt = receipts.find((item) => item.requestId === requestId && (!item.runId || item.runId === run.runId));
         if (!receipt) return;
         await persistState({ ...current, factoryRuns: receipts.map((item) => item === receipt
-            ? { ...item, runId: run.runId, terminal: isFactoryRunTerminal(run.status) } : item) });
+            ? { ...item, runId: run.runId, terminal: isWorkflowRunTerminal(run.status) } : item) });
     }, false, true);
 }
 
 async function runEffortFactory(prototypeId: string, requestId: string, request: FactoryLaunchRequest) {
     assertFactoryRequestEnvelope(request);
+    if (projectEffortChanging) throw new Error("Wait for the project effort choice before starting Stage1 work.");
+    await mainEffort.assertApplied();
     let launched;
     let generation;
     await withAnswerClaim(prototypeId, async () => {
@@ -1490,6 +1564,9 @@ async function runEffortFactory(prototypeId: string, requestId: string, request:
         const identities = [current.preparation?.processing, current.processing, current.suggestionProcessing,
             current.designReview?.processing, current.testDesignReview?.processing, current.planning?.processing,
             current.implementation, current.testing];
+        if (current.factoryRuns?.some(receipt => receipt.requestId === requestId && receipt.recovery)) {
+            throw new AnswerRequestError(409, "An abandoned request cannot be replayed. Submit a new explicit action.");
+        }
         if (!identities.some((item) => item?.requestId === requestId)) {
             throw new AnswerRequestError(409, "This factory request no longer owns the effort.");
         }
@@ -1497,7 +1574,10 @@ async function runEffortFactory(prototypeId: string, requestId: string, request:
         await persistState({ ...current, factoryRuns: [...(current.factoryRuns || []),
             { requestId, generation, runId: null, terminal: false }] });
         // Dispatch while owning the claim, but release it before awaiting SDK callbacks.
-        launched = Promise.resolve().then(() => session.rpc.factory.run(request))
+        // The extension consumes the durable result; a native notification would start an unrelated foreground turn.
+        launched = Promise.resolve().then(() => session.rpc.workflow.run({
+            ...request, options: { ...request.options, notifyOnComplete: false },
+        }))
             .then((run) => ({ run }), (error: unknown) => ({ error }));
     });
     const outcome = await launched;
@@ -1516,7 +1596,7 @@ async function recordRejectedFactoryLaunch(prototypeId: string, requestId: strin
         const current = await loadState(prototypeId);
         const receipts = current.factoryRuns || [];
         if (current.generation !== generation || receipts.some((item) => item.requestId === requestId && item.runId)) return current;
-        const rejected = receipts.filter((item) => item.requestId === requestId && item.generation === generation && !item.terminal);
+        const rejected = receipts.filter((item) => item.requestId === requestId && item.generation === generation && isPendingFactoryRun(item));
         if (!rejected.length) return current;
         const now = new Date().toISOString();
         const next = { ...current, factoryRuns: receipts.map((item) => rejected.includes(item)
@@ -1542,27 +1622,80 @@ async function recoverRejectedFactoryLaunch(prototypeId: string): Promise<Tandem
 }
 
 async function waitForEffortRun(prototypeId, runId) {
-    const run = await session.factory.waitForRun(runId);
+    const run = await session.workflow.waitForRun(runId);
     return observeEffortRun(prototypeId, runId, run);
 }
 
+async function abandonUncertainFactory(prototypeId: string, extensionId: string, input: unknown) {
+    if (!isObject(input) || Object.keys(input).sort().join() !== "confirm,decisionId,expectedRevision,generation,owner,requestId"
+        || input.confirm !== true || !Number.isSafeInteger(input.expectedRevision)
+        || !["decisionId", "generation", "requestId"].every(key => typeof input[key] === "string" && input[key].length > 0 && input[key].length <= 100)
+        || !isObject(input.owner) || typeof input.owner.sessionId !== "string" || typeof input.owner.workspaceRoot !== "string") {
+        throw new AnswerRequestError(400, "Recovery requires an explicit decision bound to the saved request, revision and owner.");
+    }
+    return developmentTransition.run(() => withAnswerClaim(prototypeId, async () => {
+        if (!(await isPreferredAnswerProvider(extensionId))) throw new AnswerRequestError(409, "Use the writable owning provider for recovery.");
+        const current = await loadState(prototypeId);
+        if (input.generation !== current.generation || !sameOwner(input.owner, { sessionId: session.sessionId, workspaceRoot: WORKSPACE_ROOT })) {
+            throw new AnswerRequestError(409, "Recovery owner or generation does not match.");
+        }
+        const receipts = current.factoryRuns || [];
+        const matching = receipts.filter(receipt => receipt.requestId === input.requestId && receipt.generation === input.generation);
+        if (matching.length !== 1) throw new AnswerRequestError(409, "Recovery request identity is missing or ambiguous.");
+        const receipt = matching[0];
+        if (receipt.recovery?.decisionId === input.decisionId && sameOwner(receipt.recovery.owner, input.owner)) return current;
+        if (current.revision !== input.expectedRevision || receipt.runId !== null || !isPendingFactoryRun(receipt)
+            || !current.jobOwner || !sameOwner(current.jobOwner, input.owner)) {
+            throw new AnswerRequestError(409, "The saved request or ownership changed. Review recovery again.");
+        }
+        if (hasWorkflowActiveWork(current) || activePreparationRuns.has(prototypeId)
+            || activeAnswerRuns.has(prototypeId) || activeSuggestionRuns.has(prototypeId)) {
+            throw new AnswerRequestError(409, "Discovery still has active or unconfirmed local work. Close it normally before recovery.");
+        }
+        await development.assertQuiet();
+        let nativeChanged = false;
+        const unsubscribe = session.on(() => { nativeChanged = true; });
+        try {
+            const first = await inspectIdleNativeSession(session);
+            const second = await inspectIdleNativeSession(session);
+            if (nativeChanged || JSON.stringify(first.runs) !== JSON.stringify(second.runs)
+                || !(await isPreferredAnswerProvider(extensionId))) {
+                throw new AnswerRequestError(409, "Native activity or provider ownership changed while inspecting. No recovery was applied.");
+            }
+            const recordedAt = new Date().toISOString();
+            const next: TandemState = { ...current, factoryRuns: receipts.map(item => item === receipt ? {
+                ...item, recovery: { outcome: "abandoned-uncertain", decisionId: input.decisionId, recordedAt,
+                    owner: { sessionId: session.sessionId, workspaceRoot: WORKSPACE_ROOT }, observations: [first, second] },
+            } : item), status: `Request ${receipt.requestId} was explicitly abandoned with an uncertain outcome. Saved work is retained; nothing was replayed.`,
+            updatedAt: recordedAt };
+            await persistState(next, () => {
+                if (nativeChanged) throw new AnswerRequestError(409, "Native activity changed before recovery could be saved.");
+            });
+            publishState(prototypeId);
+            return next;
+        } finally { unsubscribe(); }
+    }, true));
+}
+
 async function getEffortRun(prototypeId, runId) {
-    return observeEffortRun(prototypeId, runId, await session.factory.getRun(runId));
+    return observeEffortRun(prototypeId, runId, await session.workflow.getRun(runId));
 }
 
 async function observeEffortRun(prototypeId, runId, run) {
     await withAnswerClaim(prototypeId, async () => {
         const current = await loadState(prototypeId);
         if (run.runId !== runId) throw new Error("The SDK returned a different factory run.");
-        if (!isFactoryRunTerminal(run.status)) return;
+        if (!isWorkflowRunTerminal(run.status)) return;
         if (!current.factoryRuns?.some((item) => item.runId === runId && !item.terminal)) return;
         await persistState({ ...current, factoryRuns: current.factoryRuns.map((item) =>
-            item.runId === runId ? { ...item, terminal: isFactoryRunTerminal(run.status) } : item) });
+            item.runId === runId ? { ...item, terminal: isWorkflowRunTerminal(run.status) } : item) });
     }, false, true);
     return run;
 }
 
 async function resumeEffortRun(prototypeId, runId) {
+    if (projectEffortChanging) throw new Error("Wait for the project effort choice before resuming Stage1 work.");
+    await mainEffort.assertApplied();
     let resumed;
     await withAnswerClaim(prototypeId, async () => {
         const current = await loadState(prototypeId);
@@ -1583,7 +1716,7 @@ async function resumeEffortRun(prototypeId, runId) {
             await persistState({ ...current, factoryRuns: receipts.map((item) =>
                 item.runId === runId ? { ...item, terminal: false } : item) });
         }
-        resumed = session.factory.resume(runId);
+        resumed = session.workflow.resume(runId, { notifyOnComplete: false });
     });
     const run = await resumed;
     const current = await loadState(prototypeId);
@@ -1598,7 +1731,7 @@ async function refreshEntryAnswerCapability(entry) {
     entry.canSubmitAnswers = await isPreferredAnswerProvider(entry.extensionId) &&
         (!hasActiveWork(state) || !state.jobOwner ||
             sameOwner(state.jobOwner, { sessionId: session.sessionId, workspaceRoot: WORKSPACE_ROOT }));
-    if (state.effortReset) return;
+    if (state.effortReset || (await projectEntryView()).startingPath !== "preparation") return;
     if (entry.canSubmitAnswers) {
         state = await recoverRejectedFactoryLaunch(entry.prototypeId);
         if (!wasEnabled) {
@@ -1614,11 +1747,18 @@ async function refreshEntryAnswerCapability(entry) {
     }
 }
 
+async function projectEntryView() {
+    try { return { ...await readProjectEntry(WORKSPACE_ROOT), error: null }; }
+    catch (error) { return { projectPath: WORKSPACE_ROOT, startingPath: null,
+        error: error instanceof Error ? error.message : "Project metadata could not be read." }; }
+}
+
 function publicState(entry, state) {
     const source = String(entry.extensionId || "").split(":", 1)[0] || "unknown";
     const legacyContinuation = state.lifecycle.currentStage === "development" && state.lifecycle.migration && !state.development;
     return {
         ...state,
+        projectPath: WORKSPACE_ROOT,
         ...(legacyContinuation ? { phase: "iterating",
             status: legacyCutoverError(state) || "Legacy history is retained. Continue Design explicitly from the completed Prototype; opening this view sends no project request." } : {}),
         sketchPreview: currentSketchPreview(state),
@@ -2156,17 +2296,16 @@ async function runPreparationFactory(prototypeId, state, resumeFromRunId = null)
             limits: {
                 maxConcurrentSubagents: 1,
                 maxTotalSubagents: 3,
-                timeoutSeconds: 240,
                 maxAiCredits: 1024000,
             },
         },
     });
     token.runId = run.runId;
     if (!(await bindPreparationRun(prototypeId, token))) {
-        if (!isFactoryRunTerminal(run.status) && !resumeFromRunId) await session.factory.cancel(run.runId);
+        if (!isWorkflowRunTerminal(run.status) && !resumeFromRunId) await session.workflow.cancel(run.runId);
         return;
     }
-    const terminal = isFactoryRunTerminal(run.status)
+    const terminal = isWorkflowRunTerminal(run.status)
         ? run
         : await waitForEffortRun(prototypeId, run.runId);
     await settlePreparationRun(prototypeId, terminal, token);
@@ -2293,7 +2432,7 @@ function recoverPreparationFactory(state, canSubmitAnswers) {
             await runPreparationFactory(state.prototypeId, state, runId);
             return;
         }
-        if (!isFactoryRunTerminal(run.status)) {
+        if (!isWorkflowRunTerminal(run.status)) {
             run = await waitForEffortRun(state.prototypeId, run.runId);
         }
         await settlePreparationRun(state.prototypeId, run, token);
@@ -2348,6 +2487,13 @@ function assertEffortRevision(state, input) {
 }
 
 async function startEffort(prototypeId, extensionId, input) {
+    return developmentTransition.run(async () => {
+        await development.assertQuiet();
+        return startEffortLocked(prototypeId, extensionId, input);
+    });
+}
+
+async function startEffortLocked(prototypeId, extensionId, input) {
     validateEffortRequest(input, "start");
     if (!(await isPreferredAnswerProvider(extensionId))) {
         throw new AnswerRequestError(409, "Start the effort from its writable Tandem provider.");
@@ -2369,7 +2515,7 @@ async function startEffort(prototypeId, extensionId, input) {
 
 function effortRunsToStop(state) {
     const receipts = state.factoryRuns || [];
-    const pending = [...receipts.filter((run) => !run.terminal)];
+    const pending = [...receipts.filter(isPendingFactoryRun)];
     const add = (processing, active = true) => {
         if (!active || !processing) return;
         if (receipts.some((run) => run.requestId === processing.requestId)) return;
@@ -2446,12 +2592,12 @@ async function resetEffortLocked(prototypeId, extensionId, input) {
         const runIds = [...new Set(pending.map((item) => item.runId).filter(Boolean))] as string[];
         // No effort lock is held while cancellation waits for worker callbacks.
         const results = await Promise.allSettled(runIds.map((runId) => resetDeadline((async () => {
-            let run = await session.factory.getRun(runId);
+            let run = await session.workflow.getRun(runId);
             if (!isObject(run) || run.runId !== runId) throw new Error("The SDK returned a different factory run.");
-            if (!isFactoryRunTerminal(run.status)) run = await session.factory.cancel(runId);
+            if (!isWorkflowRunTerminal(run.status)) run = await session.workflow.cancel(runId);
             if (!isObject(run) || run.runId !== runId) throw new Error("Cancellation did not confirm the requested run identity.");
-            if (!isFactoryRunTerminal(run.status)) run = await session.factory.waitForRun(runId);
-            if (!isObject(run) || run.runId !== runId || !isFactoryRunTerminal(run.status)) {
+            if (!isWorkflowRunTerminal(run.status)) run = await session.workflow.waitForRun(runId);
+            if (!isObject(run) || run.runId !== runId || !isWorkflowRunTerminal(run.status)) {
                 throw new Error(`Termination of ${runId} remains unconfirmed.`);
             }
         })())));
@@ -2794,7 +2940,7 @@ async function saveSketchRevision(state: TandemState, value: unknown, source: Sk
     });
     return {
         ...state,
-        sketch: { version: 1, status: "draft", current: revision, approved: null, history: [...state.sketch.history, revision] },
+        sketch: { ...state.sketch, version: 1, status: "draft", current: revision, approved: null, history: [...state.sketch.history, revision] },
         artifacts: invalidateArtifacts(state.artifacts, "sketch"),
         status: "Drawings saved. Review the screens and approve this revision before prototyping.",
         phase: "iterating", updatedAt: revision.createdAt,
@@ -2907,6 +3053,10 @@ async function sketchAction(prototypeId: string, extensionId: string, value: unk
         const requestedAt = new Date().toISOString();
         const saved = {
             ...state, phase: "building" as const, status: PROCESSING_MESSAGES[action],
+            sketch: { ...state.sketch, requests: [...(state.sketch.requests || []), {
+                requestId, kind: input.action === "revise" ? "revise" as const : "generate" as const,
+                instruction: instruction.trim(), requestedAt, baseRevisionId: state.sketch.current?.id || null,
+            }] },
             processing: {
                 status: "running", action, requestId, question, answer: instruction.trim(), factoryName: ANSWER_FACTORY_NAME,
                 runId: null, requestedAt, completedAt: null, originalDecisionGraph: null,
@@ -3123,7 +3273,7 @@ async function completeLifecycleStage(prototypeId, requestedStageId, extensionId
     // ownership from a success badge or from the absence of an in-memory promise.
     const snapshot = await loadState(prototypeId);
     for (const receipt of snapshot.factoryRuns || []) {
-        if (receipt.terminal) continue;
+        if (!isPendingFactoryRun(receipt)) continue;
         if (snapshot.processing?.status === "error" && canRecoverDefaultBatch(snapshot) &&
             receipt === defaultBatchReceipt(snapshot)) {
             await recoverDefaultBatch(snapshot);
@@ -3132,7 +3282,7 @@ async function completeLifecycleStage(prototypeId, requestedStageId, extensionId
         const runId = receipt.runId || (snapshot.processing?.requestId === receipt.requestId
             ? snapshot.processing.runId : null);
         if (!runId) continue;
-        const run = await session.factory.getRun(runId);
+        const run = await session.workflow.getRun(runId);
         if (run.runId !== runId) throw new Error("The SDK returned a different factory run.");
         await recordEffortFactoryReceipt(prototypeId, receipt.requestId, receipt.generation, run);
     }
@@ -3305,7 +3455,9 @@ async function completeLifecycleStage(prototypeId, requestedStageId, extensionId
                 completedStages.length === LIFECYCLE_STAGES.length
                     ? "All lifecycle stages are complete."
                     : skipPrototype
-                      ? `Requirements completed. Sketch and Prototype are not applicable: ${state.prototypeApproach.reason} Development is now enabled.`
+                      ? `Requirements saved. Sketch and Prototype are not applicable: ${state.prototypeApproach.reason} Continue in Development when you're ready.`
+                    : currentStage === "development"
+                      ? "Prototype saved. Continue in Development when you're ready."
                     : `${LIFECYCLE_STAGES.find((stage) => stage.id === stageId).label} completed. ${LIFECYCLE_STAGES.find((stage) => stage.id === currentStage).label} is now enabled.`,
             updatedAt: completedAt,
         };
@@ -3321,10 +3473,6 @@ async function completeLifecycleStage(prototypeId, requestedStageId, extensionId
     ) {
         return beginPrototypeBuild(prototypeId, extensionId);
     }
-    if (completed.lifecycle.currentStage === "development") return continueDevelopment(prototypeId, extensionId, {
-        generation: completed.generation, expectedRevision: completed.revision,
-        snapshotPath: completed.lifecycle.outputs.find(output => output.stageId === "prototype")?.path,
-    });
     return completed;
 }
 
@@ -3472,9 +3620,6 @@ async function dispatchPrototypeCheckpoint(prototypeId: string, extensionId: str
         const milestone: PrototypeMilestone | null = failed && options.retry ? failed.milestone
             : revision && base ? base.milestone : nextPrototypeMilestone(flow);
         if (!milestone) return state;
-        if (flow.budget.usedSeconds >= flow.budget.limitSeconds) {
-            throw new CanvasError("prototype_budget_exhausted", "The prototype work window is used up. Your preview and feedback are saved. Extend the budget explicitly to continue.");
-        }
         const now = new Date().toISOString();
         const requestId = randomUUID();
         const source = failed && options.retry ? prototypeRetrySource(flow, failed) : base;
@@ -3538,15 +3683,6 @@ async function continuePrototypeWork(prototypeId: string) {
         state.prototypeFlow.pendingCheckpointId || paused) return;
     if (!nextPrototypeMilestone(state.prototypeFlow) &&
         !state.prototypeReview.revisions.some((item) => item.status === "queued")) return;
-    if (state.prototypeFlow.budget.usedSeconds >= state.prototypeFlow.budget.limitSeconds) {
-        await withAnswerClaim(prototypeId, async () => {
-            const current = await loadState(prototypeId);
-            if (hasActiveWork(current)) return;
-            await persistState({ ...current, status: "Prototype work budget reached. Your working preview and queued feedback are saved. Extend the work window to continue." });
-            publishState(prototypeId);
-        });
-        return;
-    }
     await dispatchPrototypeCheckpoint(prototypeId, PROVIDER_EXTENSION_ID);
 }
 
@@ -3581,9 +3717,6 @@ async function prototypeAction(prototypeId: string, extensionId: string, input: 
             if (flow.pendingCheckpointId || !flow.checkpoints.some((item) => item.milestone === "interaction" && item.status === "ready")) {
                 throw new CanvasError("prototype_interaction_required", "Apply the Interaction checkpoint before choosing Visual direction.");
             }
-            if (flow.budget.usedSeconds >= flow.budget.limitSeconds) {
-                throw new CanvasError("prototype_budget_exhausted", "Extend the work budget before requesting optional Visual direction.");
-            }
             flow = { ...flow, visualRequested: true };
         } else if (action === "skip-visual") {
             const last = flow.checkpoints.at(-1);
@@ -3592,10 +3725,7 @@ async function prototypeAction(prototypeId: string, extensionId: string, input: 
             }
             flow = { ...flow, visualRequested: false };
         } else if (action === "extend-budget") {
-            if (!Number.isInteger(input.expectedRevision) || input.expectedRevision !== state.revision) {
-                throw new CanvasError("prototype_budget_stale", "Review the current budget before extending it.");
-            }
-            flow = { ...flow, budget: { ...flow.budget, limitSeconds: flow.budget.limitSeconds + PROTOTYPE_WORK_WINDOW_SECONDS } };
+            throw new CanvasError("prototype_budget_retired", "Prototype work no longer has an automatic time limit. Use Retry or Continue explicitly; historical budgets are unchanged.");
         } else throw new CanvasError("invalid_prototype_action", "Choose a supported prototype action.");
         review.designSpecArtifactId = null;
         const updated = { ...state, prototypeFlow: flow, prototypeReview: review, previewUrl,
@@ -3607,7 +3737,7 @@ async function prototypeAction(prototypeId: string, extensionId: string, input: 
         publishState(prototypeId);
         return updated;
     });
-    if ((action === "extend-budget" || action === "visual") &&
+    if (action === "visual" &&
         !next.prototypeReview.question && !next.prototypeFlow.pendingCheckpointId) {
         return dispatchPrototypeCheckpoint(prototypeId, extensionId, { retry: true });
     }
@@ -4533,7 +4663,7 @@ async function recordFactoryFailure(prototypeId, requestId, error) {
 
 async function settleAnswerRun(prototypeId, requestId, run) {
     let terminalRun = run;
-    if (!isFactoryRunTerminal(terminalRun.status)) {
+    if (!isWorkflowRunTerminal(terminalRun.status)) {
         terminalRun = await waitForEffortRun(prototypeId, terminalRun.runId);
     }
     if (terminalRun.status === "halted" &&
@@ -4683,9 +4813,9 @@ async function runAnswerFactory(
         },
         ...(checkpoint ? {
             options: { limits: { maxConcurrentSubagents: 1, maxTotalSubagents: 1,
-                timeoutSeconds: checkpoint.timeoutSeconds, maxAiCredits: 10_000 } },
+                maxAiCredits: 10_000 } },
         } : action === "apply-defaults" || isSketchAction(action) ? {
-            options: { limits: { maxConcurrentSubagents: 1, maxTotalSubagents: 1, timeoutSeconds: 300, maxAiCredits: 128 } },
+            options: { limits: { maxConcurrentSubagents: 1, maxTotalSubagents: 1, maxAiCredits: 128 } },
         } : {}),
     });
     const currentRequest = await recordFactoryRunId(
@@ -4696,8 +4826,8 @@ async function runAnswerFactory(
         state.generation,
     );
     if (!currentRequest) {
-        if (!isFactoryRunTerminal(run.status)) {
-            await session.factory.cancel(run.runId);
+        if (!isWorkflowRunTerminal(run.status)) {
+            await session.workflow.cancel(run.runId);
         }
         return;
     }
@@ -4710,7 +4840,7 @@ function defaultBatchReceipt(state) {
 }
 
 function canRecoverDefaultBatch(state) {
-    return state.processing?.action === "apply-defaults" && Boolean(defaultBatchReceipt(state)) &&
+    return state.processing?.action === "apply-defaults" && Boolean(defaultBatchReceipt(state)) && !defaultBatchReceipt(state).recovery &&
         (state.processing.status === "running" ||
             (state.processing.status === "error" && !defaultBatchReceipt(state).terminal));
 }
@@ -4742,7 +4872,7 @@ async function recoverDefaultBatch(state, monitor = false, expectedRevision = un
     const runId = state.processing.runId || receipt.runId;
     let run;
     try {
-        run = runId ? await session.factory.getRun(runId)
+        run = runId ? await session.workflow.getRun(runId)
             : await findAnswerFactoryRun(state.prototypeId, state.processing, { attempts: monitor ? 5 : 1, observe: false });
         if (!run?.runId || (runId && run.runId !== runId)) {
             throw new Error("The durable factory run could not be correlated.");
@@ -4758,7 +4888,7 @@ async function recoverDefaultBatch(state, monitor = false, expectedRevision = un
         }
         if (observedRun?.runId !== recoveredRunId) throw new Error("The SDK returned a different factory run.");
         const currentReceipt = assertDefaultBatchRecovery(current, state, recoveredRunId);
-        const terminal = isFactoryRunTerminal(observedRun.status);
+        const terminal = isWorkflowRunTerminal(observedRun.status);
         if (terminal || !current.processing.runId || !currentReceipt.runId) {
             await persistState({
                 ...current,
@@ -4780,8 +4910,8 @@ async function recoverDefaultBatch(state, monitor = false, expectedRevision = un
         return loadState(state.prototypeId);
     });
     let recovered = await settle(run, expectedRevision);
-    if (monitor && !isFactoryRunTerminal(run.status)) {
-        run = await session.factory.waitForRun(recoveredRunId);
+    if (monitor && !isWorkflowRunTerminal(run.status)) {
+        run = await session.workflow.waitForRun(recoveredRunId);
         recovered = await settle(run);
     }
     return recovered;
@@ -4790,7 +4920,7 @@ async function recoverDefaultBatch(state, monitor = false, expectedRevision = un
 function failedSketchReceipt(state: TandemState) {
     if (state.effortReset || state.lifecycle.currentStage !== "sketch" ||
         state.processing?.status !== "error" || !isSketchAction(state.processing.action)) return undefined;
-    return state.factoryRuns?.find((receipt) => !receipt.terminal &&
+    return state.factoryRuns?.find((receipt) => isPendingFactoryRun(receipt) &&
         receipt.generation === state.generation && receipt.requestId === state.processing.requestId);
 }
 
@@ -4805,21 +4935,21 @@ async function recoverFailedSketchRun(prototypeId: string, monitor = false): Pro
     const runId = processing.runId || receipt.runId;
     let run;
     try {
-        run = runId ? await session.factory.getRun(runId)
+        run = runId ? await session.workflow.getRun(runId)
             : await findAnswerFactoryRun(prototypeId, processing, { attempts: 1, observe: false });
         if (!run?.runId || (runId && run.runId !== runId)) {
             throw new Error("The durable factory run could not be correlated.");
         }
-        if (monitor && !isFactoryRunTerminal(run.status)) {
+        if (monitor && !isWorkflowRunTerminal(run.status)) {
             const recoveredRunId = run.runId;
-            run = await session.factory.waitForRun(recoveredRunId);
+            run = await session.workflow.waitForRun(recoveredRunId);
             if (run.runId !== recoveredRunId) throw new Error("The SDK returned a different factory run.");
         }
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         throw new AnswerRequestError(409, `The previous drawing job could not be verified with the SDK. Saved drawings and run ownership were preserved: ${message}`);
     }
-    if (!isFactoryRunTerminal(run.status)) return observed;
+    if (!isWorkflowRunTerminal(run.status)) return observed;
     return withAnswerClaim(prototypeId, async () => {
         const current = await loadState(prototypeId);
         const currentReceipt = failedSketchReceipt(current);
@@ -4930,7 +5060,7 @@ function recoverAnswerFactory(state, canSubmitAnswers) {
         }
 
         if (currentProcessing.factoryName !== ANSWER_FACTORY_NAME) {
-            if (!isFactoryRunTerminal(run.status)) {
+            if (!isWorkflowRunTerminal(run.status)) {
                 run = await waitForEffortRun(state.prototypeId, run.runId);
             }
             if (["halted", "cancelled"].includes(run.status)) {
@@ -4975,21 +5105,21 @@ async function findAnswerFactoryRun(prototypeId, processing, { attempts = 5, obs
 
     const marker = `Request ${processing.requestId};`;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
-        const runs = await session.factory.listRuns();
+        const runs = await session.workflow.listRuns();
         const candidates = runs.filter(
             (run) =>
-                run.factoryName === processing.factoryName &&
+                run.workflowName === processing.factoryName &&
                 run.createdAt >= requestedAt - 1_000 &&
                 run.createdAt <= requestedAt + 30_000,
         );
         for (const candidate of candidates) {
-            const progress = await session.factory.getRunProgress(
+            const progress = await session.workflow.getRunProgress(
                 candidate.runId,
                 { limit: 500 },
             );
             if (progress.records.some((record) => record.text.includes(marker))) {
                 const run = observe ? await getEffortRun(prototypeId, candidate.runId)
-                    : await session.factory.getRun(candidate.runId);
+                    : await session.workflow.getRun(candidate.runId);
                 if (run.runId !== candidate.runId) throw new Error("The SDK returned a different factory run.");
                 return run;
             }
@@ -5004,15 +5134,23 @@ function trackSuggestionRun(prototypeId, requestId, work) {
         .catch(async (error) => {
             await recordSuggestionFailure(prototypeId, requestId, error);
         })
-        .finally(() => {
+        .finally(async () => {
             if (activeSuggestionRuns.get(prototypeId) === tracked) {
                 activeSuggestionRuns.delete(prototypeId);
+                const current = await loadState(prototypeId);
+                const pending = current.suggestionProcessing;
+                if (!current.effortReset && current.lifecycle.currentStage === "requirements" &&
+                    current.requirements.substage === "usage" && pending?.status === "running" &&
+                    pending.requestId !== requestId && current.processing?.status !== "running") {
+                    startSuggestionFactory(prototypeId, pending.requestId, current.goal, pending.usageItems);
+                }
             }
         });
     activeSuggestionRuns.set(prototypeId, tracked);
 }
 
 function startSuggestionFactory(prototypeId, requestId, goal, usageItems) {
+    if (activeSuggestionRuns.has(prototypeId)) return;
     trackSuggestionRun(
         prototypeId,
         requestId,
@@ -5091,6 +5229,10 @@ async function ensureUsageSuggestionsStarted(state, canSubmitAnswers) {
 
 async function runSuggestionFactory(prototypeId, requestId, goal, usageItems) {
     if (!(await isPreferredAnswerProvider(PROVIDER_EXTENSION_ID))) return;
+    const state = await loadState(prototypeId);
+    if (state.factoryRuns?.some(isPendingFactoryRun)) {
+        throw new Error("Previous native work is not confirmed terminal. Usage is saved; suggestions were not started.");
+    }
     const run = await runEffortFactory(prototypeId, requestId, {
         name: SUGGESTION_FACTORY_NAME,
         args: {
@@ -5121,14 +5263,15 @@ async function runSuggestionFactory(prototypeId, requestId, goal, usageItems) {
         return true;
     });
     if (!currentRequest) {
-        if (!isFactoryRunTerminal(run.status)) {
-            await session.factory.cancel(run.runId);
+        if (!isWorkflowRunTerminal(run.status)) {
+            const cancelled = await observeEffortRun(prototypeId, run.runId, await session.workflow.cancel(run.runId));
+            if (!isWorkflowRunTerminal(cancelled.status)) await waitForEffortRun(prototypeId, run.runId);
         }
         return;
     }
 
     let terminalRun = run;
-    if (!isFactoryRunTerminal(terminalRun.status)) {
+    if (!isWorkflowRunTerminal(terminalRun.status)) {
         terminalRun = await waitForEffortRun(prototypeId, terminalRun.runId);
     }
     if (terminalRun.status === "halted") {
@@ -5224,7 +5367,7 @@ function recoverSuggestionFactory(state, canSubmitAnswers) {
         if (processing.runId) {
             try {
                 let run = await getEffortRun(state.prototypeId, processing.runId);
-                if (!isFactoryRunTerminal(run.status)) {
+                if (!isWorkflowRunTerminal(run.status)) {
                     run = await waitForEffortRun(state.prototypeId, run.runId);
                 }
                 if (run.status === "halted") {
@@ -6122,11 +6265,13 @@ async function preparationRuntimeState(entry) {
     const state = await loadState(entry.prototypeId);
     const payload = publicState(entry, state);
     const runId = state.preparation.processing?.runId;
-    if (!runId) return { ...payload, preparationRuntime: null };
+    if (!runId) return { ...payload, preparationRuntime: null, workflowRuntime: null };
     try {
-        const detail = await session.factory.getRunDetail(runId);
+        const detail = await session.workflow.getRunDetail(runId);
+        const binding = workflowBinding(state);
         return {
             ...payload,
+            workflowRuntime: binding?.runId === runId ? workflowActivity.snapshot(binding, detail) : null,
             preparationRuntime: {
                 runId,
                 status: detail.status,
@@ -6160,6 +6305,10 @@ async function preparationRuntimeState(entry) {
         );
         return {
             ...payload,
+            workflowRuntime: workflowBinding(state)?.runId === runId ? {
+                ...workflowBinding(state), status: "unavailable", lastNativeActivityAt: null, agents: [],
+                error: "Live native activity is unavailable. This does not mean the workflow failed.",
+            } : null,
             preparationRuntime: {
                 runId,
                 status: "unavailable",
@@ -6170,6 +6319,20 @@ async function preparationRuntimeState(entry) {
                 error: message,
             },
         };
+    }
+}
+
+async function workflowRuntimeState(entry) {
+    const state = await loadState(entry.prototypeId);
+    const payload = publicState(entry, state), binding = workflowBinding(state);
+    if (!binding) return { ...payload, workflowRuntime: null };
+    try {
+        const detail = await session.workflow.getRunDetail(binding.runId);
+        return { ...payload, workflowRuntime: workflowActivity.snapshot(binding, detail) };
+    } catch (error) {
+        await logSafely(`Native workflow activity is unavailable: ${error instanceof Error ? error.message : "Unknown SDK error"}`, "warning");
+        return { ...payload, workflowRuntime: { ...binding, status: "unavailable", lastNativeActivityAt: null, agents: [],
+            error: "Live native activity is unavailable. This does not mean the workflow failed." } };
     }
 }
 
@@ -6193,8 +6356,8 @@ async function submitPreparationRetry(entry, res) {
         }
         const previousRunId = current.preparation.processing?.runId;
         if (previousRunId) {
-            const previous = await session.factory.getRun(previousRunId);
-            if (!isFactoryRunTerminal(previous.status)) {
+            const previous = await session.workflow.getRun(previousRunId);
+            if (!isWorkflowRunTerminal(previous.status)) {
                 throw new AnswerRequestError(409, "The previous preparation run is still active. Stop it before retrying.");
             }
         }
@@ -6225,28 +6388,92 @@ async function handleRequest(entry, req, res) {
         return;
     }
     const requestUrl = new URL(req.url || "/", "http://127.0.0.1");
+    if (requestUrl.pathname === "/api/project-entry" && req.method === "GET") {
+        sendJson(res, 200, await projectEntryView()); return;
+    }
+    if (requestUrl.pathname === "/api/project-entry" && req.method === "POST") {
+        if (!entry.canSubmitAnswers || !await isPreferredAnswerProvider(entry.extensionId)) throw new CanvasError("read_only_provider", "Use the owning writable provider to choose the starting path.");
+        const input = await readRequestBody(req);
+        if (!isObject(input) || Object.keys(input).some(key => key !== "startingPath")) throw new Error("Supply only the starting path.");
+        sendJson(res, 200, await chooseProjectEntry(WORKSPACE_ROOT, input.startingPath)); return;
+    }
+    if (requestUrl.pathname === "/api/project-entry/open" && req.method === "POST") {
+        const metadata = await readProjectEntry(WORKSPACE_ROOT);
+        if (!metadata.startingPath) throw new CanvasError("project_entry_required", "Choose a starting path for this project folder first.");
+        if (!entry.canSubmitAnswers || !await isPreferredAnswerProvider(entry.extensionId)) throw new CanvasError("read_only_provider", "Use the owning writable provider to open this project.");
+        const state = await loadState(entry.prototypeId);
+        const prepareDevelopment = metadata.startingPath === "development" || state.lifecycle.currentStage === "development";
+        const firstOpen = !entry.projectEntryOpened;
+        if (firstOpen) {
+            entry.projectEntryOpening ??= (async () => {
+                if (prepareDevelopment) {
+                    assertLegacyCutover(state);
+                    if (hasActiveWork(state)) throw new CanvasError("upstream_active", "Finish upstream work before entering Development.");
+                    await assertDevelopmentAvailable();
+                }
+                entry.projectEntryOpened = true;
+                entry.developmentContext = prepareDevelopment;
+                if (prepareDevelopment) void development.start().catch(development.reportError);
+                else if (state.lifecycle.currentStage === "prepare") await ensurePreparationStarted(state, true);
+            })().finally(() => { entry.projectEntryOpening = null; });
+            await entry.projectEntryOpening;
+        }
+        sendJson(res, 200, { ...metadata, developmentContext: entry.developmentContext === true, developmentStarted: prepareDevelopment && firstOpen }); return;
+    }
+    if (req.method === "POST" && /^\/api\/(?:effort\/start|answer|sketch(?:\/|$)|prototype\/|revision|stage\/|development\/(?:open|continue))/.test(requestUrl.pathname)) {
+        if (!(await readProjectEntry(WORKSPACE_ROOT)).startingPath) throw new CanvasError("project_entry_required", "Choose a starting path for this project folder first.");
+    }
+    if (requestUrl.pathname === "/api/settings/project-effort") {
+        if (!(await isPreferredAnswerProvider(entry.extensionId))) throw new CanvasError("read_only_provider", "Use the writable provider for project settings.");
+        if (req.method === "GET") { sendJson(res, 200, await projectEffortStatus()); return; }
+        if (req.method === "POST") {
+            const input = await readRequestBody(req);
+            if (!isObject(input) || Object.keys(input).some(key => key !== "effort")) throw new Error("Supply only the selected effort.");
+            try { await changeProjectEffort(input.effort); sendJson(res, 200, await projectEffortStatus()); }
+            catch (error) { sendJson(res, 409, { error: error instanceof Error ? error.message : "Effort update failed.", settings: await projectEffortStatus() }); }
+            return;
+        }
+    }
     if (/^\/api\/(?:design-review|plan|implementation|test)(?:\/|$)/.test(requestUrl.pathname)) {
         sendJson(res, 410, { code: "stage_retired", error: "The Design/Plan/Implement/Test pipeline is retired. Use Development's native requests and confirmations." });
         return;
     }
     if (requestUrl.pathname.startsWith("/api/development/")) {
         if (!(await isPreferredAnswerProvider(entry.extensionId))) throw new CanvasError("read_only_provider", "Open the writable provider for Development.");
+        if (req.method === "GET" && requestUrl.pathname === "/api/development/handoff") {
+            const state = await loadState(entry.prototypeId);
+            sendJson(res, 200, { generation: state.generation,
+                snapshotPath: state.lifecycle.outputs.find(output => output.stageId === "prototype")?.path ?? null,
+                handoffId: state.development?.handoffId ?? null, admission: await handoffs.admissionFor(state) });
+            return;
+        }
         if (req.method === "GET" && requestUrl.pathname === "/api/development/status") {
-            sendJson(res, 200, await development.status());
+            sendJson(res, 200, { ...await development.status(), mainSessionModel: await session.rpc.model.getCurrent() });
+            return;
+        }
+        if (req.method === "POST" && requestUrl.pathname === "/api/development/view") {
+            entry.projectViewChannel ??= randomUUID();
+            const provider = await development.openView(`project-workspace:${entry.projectViewChannel}`, {
+                surface: "browser", projectHost: { origin: new URL(entry.url).origin, channel: entry.projectViewChannel },
+            });
+            sendJson(res, 200, { url: provider.url, channel: entry.projectViewChannel });
             return;
         }
         if (req.method === "POST" && requestUrl.pathname === "/api/development/open") {
             const state = await loadState(entry.prototypeId);
             assertLegacyCutover(state);
-            if (state.lifecycle.currentStage !== "development") throw new CanvasError("prototype_incomplete", "Complete Prototype before opening Development.");
+            if (hasActiveWork(state)) throw new CanvasError("upstream_active", "Finish upstream work before starting Development in this workspace.");
             await assertDevelopmentAvailable();
+            entry.developmentContext = true;
             const provider = await development.openView("development-browser", { surface: "browser" });
-            void development.start().catch(development.reportError);
+            const input = await readRequestBody(req);
+            void development.start(input.retry === true ? { retry: true } : {}).catch(development.reportError);
             sendJson(res, 200, { url: provider.url });
             return;
         }
         if (req.method === "POST" && requestUrl.pathname === "/api/development/continue") {
             const state = await continueDevelopment(entry.prototypeId, entry.extensionId, await readRequestBody(req));
+            entry.developmentContext = true;
             sendJson(res, 200, publicState(entry, state));
             return;
         }
@@ -6275,6 +6502,50 @@ async function handleRequest(entry, req, res) {
         const document = state.sketch.current ? await sketchStore.read(entry.prototypeId, state.sketch.current) : null;
         sendJson(res, 200, { sketch: state.sketch, document });
         return;
+    }
+    if (req.method === "GET" && requestUrl.pathname === "/api/prototype/preview-status") {
+        const state = await loadState(entry.prototypeId);
+        const target = requestUrl.searchParams.get("target") ?? "current";
+        if (!["current", "pending"].includes(target)) throw new Error("Choose the current or pending preview.");
+        const selectedId = target === "current" ? state.prototypeFlow?.displayedCheckpointId : state.prototypeFlow?.pendingCheckpointId;
+        const checkpoint = state.prototypeFlow?.checkpoints.find(item => item.id === selectedId);
+        const url = checkpoint?.previewUrl || (target === "current" ? state.previewUrl : null);
+        const binding = { generation: state.generation, url: url || null, checkpointId: checkpoint?.id ?? null,
+            pendingCheckpointId: state.prototypeFlow?.pendingCheckpointId ?? null };
+        if (!url) { sendJson(res, 200, { ...binding, available: false, reason: "No saved preview URL is available." }); return; }
+        try {
+            await verifyPreviewIdentity(url, state.prototypeId, checkpoint?.id ?? null);
+            sendJson(res, 200, { ...binding, available: true, reason: "" });
+        } catch (error) {
+            sendJson(res, 200, { ...binding, available: false,
+                reason: error instanceof Error ? error.message : "The saved preview could not be verified." });
+        }
+        return;
+    }
+    if (req.method === "POST" && ["/api/prototype/preview-restart/inspect", "/api/prototype/preview-restart/decision"].includes(requestUrl.pathname)) {
+        if (!(await isPreferredAnswerProvider(entry.extensionId))) throw new CanvasError("read_only_provider", "Restart previews through this project's owning writable provider.");
+        const input = await readRequestBody(req);
+        const result = await withAnswerClaim(entry.prototypeId, async () => {
+            const state = await loadState(entry.prototypeId);
+            if (hasActiveWork(state)) throw new Error("Wait for current phase work before restarting a saved preview.");
+            if (requestUrl.pathname.endsWith("/inspect")) {
+                if (!isObject(input) || !["current", "pending"].includes(input.target)
+                    || Object.keys(input).some(key => !["target", "generation", "checkpointId", "entrypoint", "args"].includes(key))
+                    || input.generation !== state.generation
+                    || input.checkpointId !== (input.target === "current" ? state.prototypeFlow?.displayedCheckpointId : state.prototypeFlow?.pendingCheckpointId)
+                    || input.entrypoint !== undefined && typeof input.entrypoint !== "string"
+                    || input.args !== undefined && (!Array.isArray(input.args) || input.args.some(arg => typeof arg !== "string"))) {
+                    throw new Error("Supply the explicit saved-version target and an optional reviewed Node entrypoint/argument list.");
+                }
+                return ownedPreviewLaunches().inspect(state, input.target as PreviewTarget, input.entrypoint, input.args);
+            }
+            if (!isObject(input) || Object.keys(input).sort().join(",") !== "approve,confirmationId"
+                || typeof input.confirmationId !== "string" || typeof input.approve !== "boolean") {
+                throw new Error("Supply the exact preview restart confirmation and decision.");
+            }
+            return ownedPreviewLaunches().decide(input.confirmationId, input.approve);
+        });
+        sendJson(res, 200, result); return;
     }
     if (req.method === "POST" && requestUrl.pathname === "/api/sketch") {
         const input = await readRequestBody(req, MAX_SKETCH_REQUEST_BYTES);
@@ -6330,6 +6601,11 @@ async function handleRequest(entry, req, res) {
         return;
     }
 
+    if (req.method === "POST" && requestUrl.pathname === "/api/effort/recover") {
+        const state = await abandonUncertainFactory(entry.prototypeId, entry.extensionId, await readRequestBody(req));
+        sendJson(res, 200, publicState(entry, state));
+        return;
+    }
     if (req.method === "POST" && ["/api/effort/reset", "/api/effort/start"].includes(requestUrl.pathname)) {
         const input = await readRequestBody(req);
         const action = requestUrl.pathname.endsWith("/reset") ? resetEffort : startEffort;
@@ -6345,6 +6621,11 @@ async function handleRequest(entry, req, res) {
     ) {
         await refreshEntryAnswerCapability(entry);
         sendJson(res, 200, await preparationRuntimeState(entry));
+        return;
+    }
+    if (req.method === "GET" && requestUrl.pathname === "/api/workflow/status") {
+        await refreshEntryAnswerCapability(entry);
+        sendJson(res, 200, await workflowRuntimeState(entry));
         return;
     }
 
@@ -6435,6 +6716,7 @@ async function startServer(
             if (!res.headersSent) {
                 sendJson(res, error instanceof ProjectStoreError || error instanceof AnswerRequestError || error instanceof SpeechAuthError || error instanceof SketchLiveError ? error.statusCode : error instanceof CanvasError ? 409 : 500, {
                     error: error instanceof Error ? error.message : "Tandem request failed.",
+                    ...(error instanceof SpeechAuthError && error.speechSignInRequired ? { speechSignInRequired: true } : {}),
                 });
             } else {
                 res.end();
@@ -7014,7 +7296,7 @@ const prototypeCheckpointOutputSchema = {
     required: ["summary", "focus", "previewUrl", "question", "artifactChanges", "evidence"],
 };
 
-const preparationFactory = defineFactory({
+const preparationFactory = defineWorkflow({
     meta: {
         name: PREPARATION_FACTORY_NAME,
         description:
@@ -7049,7 +7331,6 @@ const preparationFactory = defineFactory({
         limits: {
             maxConcurrentSubagents: 1,
             maxTotalSubagents: 3,
-            timeoutSeconds: 240,
             maxAiCredits: 1024000,
         },
     },
@@ -7086,7 +7367,7 @@ const preparationFactory = defineFactory({
             const analysis: unknown = jsonResult(await ctx.agent(preparationWorkspacePrompt(args), {
                 label: "prepare:workspace",
                 schema: preparationWorkspaceOutputSchema,
-                reasoningEffort: "low",
+                reasoningEffort: await workflowReasoningEffort(session, "low"),
             }));
             if (!isObject(analysis)) throw new Error("Preparation returned an invalid workspace analysis.");
             return { summary: analysis.summary, checks: analysis.checks };
@@ -7123,7 +7404,7 @@ const preparationFactory = defineFactory({
                         },
                         required: ["requiresSourceResearch", "handoff"],
                     },
-                    reasoningEffort: "low",
+                    reasoningEffort: await workflowReasoningEffort(session, "low"),
                 })))
             : null;
         if (workspaceAnalysis.emptyWorkspace === true &&
@@ -7146,7 +7427,7 @@ const preparationFactory = defineFactory({
             jsonResult(await ctx.agent(preparationSourcesPrompt(args, workspaceAnalysis), {
                 label: "prepare:sources",
                 schema: preparationSourcesOutputSchema,
-                reasoningEffort: "medium",
+                reasoningEffort: await workflowReasoningEffort(session, "medium"),
             })),
         );
         await recordPreparationWorkItem(
@@ -7176,7 +7457,7 @@ const preparationFactory = defineFactory({
                     label: "prepare:requirements",
                     agent: textWorkerAgent.name,
                     schema: preparationFactoryOutputSchema,
-                    reasoningEffort: "medium",
+                    reasoningEffort: await workflowReasoningEffort(session, "medium"),
                 },
             )),
         );
@@ -7211,7 +7492,7 @@ const preparationFactory = defineFactory({
     },
 });
 
-const usageSuggestionFactory = defineFactory({
+const usageSuggestionFactory = defineWorkflow({
     meta: {
         name: SUGGESTION_FACTORY_NAME,
         description:
@@ -7240,7 +7521,6 @@ const usageSuggestionFactory = defineFactory({
         limits: {
             maxConcurrentSubagents: 1,
             maxTotalSubagents: 1,
-            timeoutSeconds: 120,
             maxAiCredits: 1024000,
         },
     },
@@ -7274,14 +7554,14 @@ const usageSuggestionFactory = defineFactory({
                     },
                     required: ["suggestions"],
                 },
-                reasoningEffort: "low",
+                reasoningEffort: await workflowReasoningEffort(session, "low"),
             },
         ) as Promise<any>;
     },
 });
 
 
-const answerFactory = defineFactory({
+const answerFactory = defineWorkflow({
     meta: {
         name: ANSWER_FACTORY_NAME,
         description:
@@ -7345,7 +7625,6 @@ const answerFactory = defineFactory({
         limits: {
             maxConcurrentSubagents: 1,
             maxTotalSubagents: 30,
-            timeoutSeconds: 300,
             maxAiCredits: 1024000,
         },
     },
@@ -7409,9 +7688,10 @@ const answerFactory = defineFactory({
                     decisionIds: current.decisionGraph.nodes.filter((node) => node.status === "answered"
                         && typeof node.answer === "string" && node.answer.trim()).map((node) => node.id),
                     subscribe: (handler) => ctx.session.on(handler),
-                    getRunDetail: () => ctx.session.factory.getRunDetail(ctx.runId),
-                    run: () => ctx.agent(answerFactoryPrompt(args), {
-                        label: "Stream app drawings", agent: textWorkerAgent.name, reasoningEffort: "medium",
+                    getRunDetail: () => ctx.session.workflow.getRunDetail(ctx.runId),
+                    run: async () => ctx.agent(answerFactoryPrompt(args), {
+                        label: "Stream app drawings", agent: textWorkerAgent.name,
+                        reasoningEffort: await workflowReasoningEffort(session, "medium"),
                     }),
                     preview: (document, sequence) => {
                         ctx.signal.throwIfAborted();
@@ -7439,7 +7719,7 @@ const answerFactory = defineFactory({
                 label: args.action === "apply-defaults" ? "Reconcile whole-graph defaults" : "Process Tandem answer",
                 schema: args.state.processing?.prototypeCheckpointId ? prototypeCheckpointOutputSchema
                     : args.action === "apply-defaults" ? requirementsChangeSetSchema : answerFactoryOutputSchema,
-                reasoningEffort: "medium",
+                reasoningEffort: await workflowReasoningEffort(session, "medium"),
             }) as Promise<ReturnType<typeof jsonResult>>;
         });
         if (!isObject(result)) {
@@ -7462,6 +7742,10 @@ const answerFactory = defineFactory({
     },
 });
 
+const privateRegistration = privateReviewRegistration(defineWorkflow, () => session);
+if (privateRegistration) {
+    session = await joinSession(privateRegistration);
+} else {
 session = await joinSession({
     streaming: true,
     includeSubAgentStreamingEvents: true,
@@ -7481,7 +7765,7 @@ session = await joinSession({
         },
         handler: readSketchImage,
     }],
-    factories: [
+    workflows: [
         preparationFactory,
         usageSuggestionFactory,
         answerFactory,
@@ -7557,7 +7841,12 @@ session = await joinSession({
                 {
                     name: "close_development",
                     description: "Explicitly close the owned private Development runtime before main-session shutdown. Closing a view is not shutdown.",
-                    handler: () => development.close(),
+                    handler: async () => {
+                        const [closed, previews] = await Promise.allSettled([development.close(), previewLaunches?.close()]);
+                        if (closed.status === "rejected") throw closed.reason;
+                        if (previews.status === "rejected") closed.value.warnings.push(`Preview shutdown needs attention: ${previews.reason}`);
+                        return closed.value;
+                    },
                 },
                 {
                     name: "continue_design",
@@ -7767,16 +8056,17 @@ session = await joinSession({
                 let state = await loadState(prototypeId);
                 canSubmitAnswers = canSubmitAnswers && (!hasActiveWork(state) || !state.jobOwner ||
                     sameOwner(state.jobOwner, { sessionId: session.sessionId, workspaceRoot: WORKSPACE_ROOT }));
-                if (canSubmitAnswers) state = await recoverRejectedFactoryLaunch(prototypeId);
+                const entryConfigured = (await projectEntryView()).startingPath === "preparation";
+                if (canSubmitAnswers && entryConfigured) state = await recoverRejectedFactoryLaunch(prototypeId);
                 state = await applyCanvasReset(
                     state, input, `${ctx.sessionId}:${ctx.instanceId}`,
                     isCanvasRehydration(ctx), canSubmitAnswers,
                 );
                 if (canSubmitAnswers) state = await markReloadComplete(state, ctx.extensionId);
-                state = await ensureSketchStarted(state, canSubmitAnswers);
-                recoverPreparationFactory(state, canSubmitAnswers);
-                recoverAnswerFactory(state, canSubmitAnswers);
-                recoverSuggestionFactory(state, canSubmitAnswers);
+                state = await ensureSketchStarted(state, canSubmitAnswers && entryConfigured);
+                recoverPreparationFactory(state, canSubmitAnswers && entryConfigured);
+                recoverAnswerFactory(state, canSubmitAnswers && entryConfigured);
+                recoverSuggestionFactory(state, canSubmitAnswers && entryConfigured);
                 if (
                     canSubmitAnswers &&
                     !isCanvasRehydration(ctx) &&
@@ -7806,7 +8096,7 @@ session = await joinSession({
                         ctx.instanceId,
                         prototypeId,
                         ctx.extensionId,
-                        canSubmitAnswers,
+                        canSubmitAnswers && entryConfigured,
                     );
                     servers.set(ctx.instanceId, entry);
                 } else {
@@ -7818,7 +8108,7 @@ session = await joinSession({
                     state.lifecycle.currentStage === "prepare"
                         ? await ensurePreparationStarted(
                               state,
-                              canSubmitAnswers,
+                              canSubmitAnswers && entryConfigured,
                           )
                         : await ensureUsageSuggestionsStarted(
                               state,
@@ -7845,7 +8135,9 @@ session = await joinSession({
         }),
     ],
     onPermissionRequest: development.permissionHandler,
-    onEvent: development.observe,
+    onEvent: event => { development.observe(event); workflowActivity.observe(event); },
 });
 handoffs = new DevelopmentHandoffs(WORKSPACE_ROOT, SHARED_PROJECT_ROOT, session.sessionId);
 await development.attach(session);
+await mainEffort.applySaved().catch(error => logSafely(`Saved main reasoning effort is pending: ${error.message}`, "warning"));
+}

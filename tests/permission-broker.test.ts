@@ -6,6 +6,27 @@ import { test } from "node:test";
 import { build } from "esbuild";
 import { InMemoryEventStore } from "../stage2/tandem/runtime-src/event-store.js";
 import type * as brokerModule from "../stage2/tandem/runtime-src/permissions/permission-broker.js";
+import { PermissionBroker } from "../stage2/tandem/runtime-src/permissions/permission-broker.js";
+
+test("current workflow consent remains scoped and environment access requires its own one-time decision", async () => {
+    const broker = new PermissionBroker(new InMemoryEventStore());
+    const pending = broker.request({
+        kind: "workflow", name: "qualification", description: "No model work.", operation: "run", approvalKey: "exact-workflow",
+    }, { sessionId: "owner" });
+    const workflow = broker.list()[0]!;
+    assert.match(workflow.title, /workflow qualification/);
+    await broker.decide(workflow.id, "session");
+    assert.deepEqual(await pending, { kind: "approve-for-session", approval: { kind: "workflow", approvalKey: "exact-workflow" } });
+    const environment = broker.request({
+        kind: "extension-env-access", extensionName: "owned-extension", environmentVariables: ["EXAMPLE_SECRET_NAME"],
+    }, { sessionId: "owner" });
+    const prompt = broker.list()[0]!;
+    assert.equal(prompt.canApproveAll, false);
+    assert.equal(prompt.canApproveForSession, false);
+    assert.deepEqual(prompt.scopes, ["extension environment access", "owned-extension", "EXAMPLE_SECRET_NAME"]);
+    await broker.decide(prompt.id, "once");
+    assert.equal((await environment).kind, "approve-once");
+});
 
 for (const attributed of [false, true]) test(`permission broker keeps scoped approve-all behavior with attributed SDK results: ${attributed}`, async () => {
     const bundle = await build({

@@ -118,6 +118,32 @@ function fixture(view = projection(), overrides = {}) {
   return { document, container, calls, actions, render, all, action, view };
 }
 
+test('advisory continuation is displayed without selecting, answering or approving for the user', () => {
+  const view = projection();
+  const q = view.questionInteraction.questions[0];
+  q.importance = 'advisory'; q.blockingActive = false;
+  q.unanswered = { action: 'keep-current-design', explanation: 'Keep the existing local file behavior; no storage change is applied.' };
+  const original = structuredClone(q);
+  const ui = fixture(view);
+  assert.match(ui.container.textContent, /If unanswered: keep the Design bound to this question/);
+  assert.match(ui.container.textContent, /Keep the existing local file behavior/);
+  assert.match(ui.container.textContent, /not a user answer or approval/);
+  assert.equal(ui.all('select')[0].value, '');
+  assert.equal(ui.action('submitAnswers').disabled, true);
+  assert.equal(ui.calls.answers.length, 0);
+  assert.deepEqual(q, original);
+  q.continuationIssue = 'stale'; ui.render(view);
+  assert.match(ui.container.textContent, /Design has since changed; clarify/);
+  delete q.unanswered; q.continuationIssue = 'missing'; q.options[0].label += ' (Recommended)';
+  ui.render(view);
+  assert.match(ui.container.textContent, /No unanswered continuation was recorded/);
+  assert.match(ui.container.textContent, /clarification required before new work/);
+  assert.equal(ui.calls.answers.length, 0);
+  ui.all('select')[0].value = 'option:a'; ui.all('select')[0].fire('change');
+  ui.all('form')[0].fire('submit');
+  assert.equal(ui.calls.answers.length, 1, 'Only the explicit original-form submission supplies an answer.');
+});
+
 test('request-bound presentation omits the global queue without changing shared defaults or queue data', () => {
   const view = projection();
   view.activeRole = 'designer';

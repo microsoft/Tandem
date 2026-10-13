@@ -30,11 +30,13 @@ export function renderPermissionRequests(container, requests, { decide, approveP
     return node;
   };
   const nodes = [];
+  let batchToolbar;
   if (approvePendingOnce && requests.length) {
     const toolbar = make('div', undefined, 'access-request-decisions');
     const capturedIds = requests.map(request => request.id);
     const eligible = requests.find(request => request.canApproveAll);
-    toolbar.append(make('p', 'Once approves exactly the displayed pending set, not later arrivals. Session access also covers future eligible native and custom requests; managed-required requests still prompt.'));
+    toolbar.append(make('h3', 'Other permission actions'),
+      make('p', 'Approve pending set once applies to exactly the displayed set, not later arrivals. Session access also covers future eligible native and custom requests; managed-required requests still prompt.'));
     for (const [decision, label, enabled] of [
       ['once', `Approve pending set once (${capturedIds.length})`, true],
       ['all', 'Allow current + future access for this Tandem session', Boolean(eligible)],
@@ -57,7 +59,7 @@ export function renderPermissionRequests(container, requests, { decide, approveP
       };
       toolbar.append(button);
     }
-    nodes.push(toolbar);
+    batchToolbar = toolbar;
   }
   if (requests.length > 1) {
     const label = make('label', `Pending permissions (${requests.length})`, 'access-request-picker');
@@ -152,6 +154,7 @@ export function renderPermissionRequests(container, requests, { decide, approveP
     state.cards.set(request.id, { signature: requestSignature, node: card });
     nodes.push(card);
   }
+  if (batchToolbar) nodes.push(batchToolbar);
   container.replaceChildren(...nodes);
   const readingPane = state.cards.get(state.selected)?.node.querySelector('.access-request-context');
   if (readingPane) readingPane.scrollTop = readingTop;

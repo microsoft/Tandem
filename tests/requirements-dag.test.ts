@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { extensionHarness } from "./helpers/extension-harness.js";
+import { waitFor } from "../stage2/tandem/test/helpers/native-session-fixture.mjs";
 
 function decision(id: string, answer: string | null = null) {
     return {
@@ -27,7 +28,9 @@ test("DAG generation does not turn usage intake into a decision, and a rejected 
         await h.api.persistState(initial);
         let fail = true;
         let attempts = 0;
-        h.api.setSession({ ...h.session, rpc: { ...h.session.rpc, factory: {
+        h.api.setSession({ ...h.session, rpc: { ...h.session.rpc, model: {
+            getCurrent: async () => ({ modelId: "fixture-model", reasoningEffort: "low" }),
+        }, workflow: {
             run: async (request: any) => {
                 h.requests.push(request);
                 attempts++;
@@ -46,7 +49,10 @@ test("DAG generation does not turn usage intake into a decision, and a rejected 
                         args: request.args, runId,
                         phase() {}, log() {},
                         step: (_name: string, run: () => Promise<unknown>) => run(),
-                        agent: async () => result,
+                        agent: async (_prompt, options) => {
+                            assert.equal(options.reasoningEffort, "low");
+                            return result;
+                        },
                     });
                     return { status: "completed", runId, result: accepted };
                 } catch (error) {
@@ -161,8 +167,9 @@ test("usage intents are saved immediately without accepting suggestions or waiti
                 body: JSON.stringify({ questionId: "usage-intake", action: "add-usage", answer: intent }),
                 signal: AbortSignal.timeout(5_000),
             });
+
             assert.equal(response.status, 202);
-            await h.waitForRequests(index + 1);
+            await h.waitForRequests(1);
             const saved = await h.api.loadState("sample");
             assert.deepEqual(Array.from(saved.requirements.usageItems), intents.slice(0, index + 1));
             assert.equal(saved.requirements.substage, "usage");
@@ -172,9 +179,70 @@ test("usage intents are saved immediately without accepting suggestions or waiti
         const saved = await h.api.loadState("sample");
         assert.ok(!saved.requirements.usageItems.includes(initial.requirements.suggestions[0]));
         assert.deepEqual(Array.from(saved.confirmed), []);
+        assert.equal(h.requests.length, 1, "Rapid usage entry keeps one active suggestion workflow, not one launch per click.");
     } finally {
         clearInterval(entry.heartbeat);
         await new Promise<void>((resolve, reject) => entry.server.close((error) => error ? reject(error) : resolve()));
+        await h.close();
+    }
+});
+
+for (const initialStatus of ["completed", "running", "cancellation-unknown"]) test(`rapid usages coalesce behind one ${initialStatus} native suggestion run`, async () => {
+    const h = await extensionHarness();
+    const entry = await h.api.startServer("coalesced", "sample", "project:tandem", true);
+    const first = Promise.withResolvers<{ runId: string; status: string; result: { suggestions: string[] } }>();
+    try {
+        const initial = h.api.createState("sample", "One local checklist");
+        initial.stage = initial.lifecycle.currentStage = "requirements";
+        initial.lifecycle.completedStages = ["prepare"];
+        initial.preparation.status = "ready";
+        await h.api.persistState(initial);
+        const launches: string[][] = [], cancellations: string[] = [];
+        h.api.setSession({ ...h.session, workflow: { cancel: async (runId: string) => {
+            cancellations.push(runId);
+            if (initialStatus === "cancellation-unknown") throw new Error("Native cancellation outcome unavailable.");
+            return { runId, status: "cancelled" };
+        } }, rpc: { ...h.session.rpc, workflow: {
+            run: async (request: { args: { usageItems: string[] } }) => {
+                launches.push([...request.args.usageItems]);
+                if (launches.length === 1) return first.promise;
+                return { runId: "latest-suggestions", status: "completed", result: { suggestions: ["I want visible save errors."] } };
+            },
+        } } });
+        const usages = ["I want to add items.", "I want to edit items.", "I want named deletion confirmation."];
+        for (const [index, answer] of usages.entries()) {
+            const response = await fetch(new URL("api/answer", entry.url), { method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ questionId: "usage-intake", action: "add-usage", answer }) });
+            assert.equal(response.status, 202);
+            await waitFor(() => launches.length === 1, "First suggestion launch");
+            assert.deepEqual(Array.from((await h.api.loadState("sample")).requirements.usageItems), usages.slice(0, index + 1));
+        }
+        assert.equal(launches.length, 1);
+        const firstTracked = h.api.waitForSuggestion("sample");
+        first.resolve({ runId: "first-suggestions", status: initialStatus === "completed" ? "completed" : "running", result: { suggestions: ["Stale suggestion."] } });
+        await firstTracked;
+        if (initialStatus === "cancellation-unknown") {
+            await h.api.waitForSuggestion("sample");
+            const saved = await h.api.loadState("sample");
+            assert.equal(launches.length, 1, "An uncertain cancellation cannot admit another native suggestion run.");
+            assert.equal(saved.factoryRuns[0].terminal, false);
+            assert.equal(saved.suggestionProcessing?.status, "error");
+            return;
+        }
+        await waitFor(() => launches.length === 2, "Latest suggestion launch");
+        await h.api.waitForSuggestion("sample");
+        assert.deepEqual(launches, [[usages[0]], usages]);
+        assert.deepEqual(cancellations, initialStatus === "running" ? ["first-suggestions"] : []);
+        const saved = await h.api.loadState("sample");
+        assert.equal(saved.suggestionProcessing?.status, "success", JSON.stringify(h.logs));
+        assert.deepEqual(Array.from(saved.requirements.suggestions), ["I want visible save errors."]);
+        assert.equal(saved.factoryRuns.length, 2);
+        assert.ok(saved.factoryRuns.every(receipt => receipt.terminal), "No superseded launch receipt remains unresolved.");
+    } finally {
+        first.resolve({ runId: "first-suggestions", status: "completed", result: { suggestions: [] } });
+        clearInterval(entry.heartbeat);
+        await new Promise<void>((resolve, reject) => entry.server.close(error => error ? reject(error) : resolve()));
         await h.close();
     }
 });

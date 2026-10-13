@@ -4,6 +4,7 @@ import { createHumanTask, humanTaskPrompt } from "../../src/human-loop-task.mjs"
 import { sharedDesign } from "./shared-design-fixture.mjs";
 import { requireCondition } from "../../runtime-src/domain/workflow/validation.ts";
 import { isPriorityAnswer } from "../../runtime-src/domain/human-loop/model.ts";
+import { advisoryContinuationIssue } from "../../runtime-src/domain/human-loop/contracts.ts";
 
 export function sourceTree(source) {
   return ts.createSourceFile("source.mjs", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
@@ -38,7 +39,7 @@ export function evaluateWrapper(source, packet, humanLoopPrompts) {
 
 export function contextHarness(source, { designReferenceCatalog, designGenerationContract, humanLoopPrompts }) {
   // Compile only the production private method, preserving its private receiver and body.
-  return new Function("designReferenceCatalog", "designGenerationContract", "humanLoopPrompts", "requireCondition", "isPriorityAnswer", `
+  return new Function("designReferenceCatalog", "designGenerationContract", "humanLoopPrompts", "requireCondition", "isPriorityAnswer", "advisoryContinuationIssue", `
     return class {
       #designer;
       #contextProvider;
@@ -46,7 +47,7 @@ export function contextHarness(source, { designReferenceCatalog, designGeneratio
       ${contextMethod(source).getText()}
       context(...args) { return this.#context(...args); }
     };
-  `)(designReferenceCatalog, designGenerationContract, humanLoopPrompts, requireCondition, isPriorityAnswer);
+  `)(designReferenceCatalog, designGenerationContract, humanLoopPrompts, requireCondition, isPriorityAnswer, advisoryContinuationIssue);
 }
 
 export async function promptCases(source, dependencies) {

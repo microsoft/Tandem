@@ -52,7 +52,7 @@ test("progressive Prototype reports honest milestones and keeps its iframe while
     const displayed = frame(h);
     assert.equal(displayed.hidden, false); assert.equal(displayed.src, value.previewUrl);
     assert.equal(text(h, "prototype-building-title"), "Building Interaction");
-    assert.match(text(h, "prototype-budget"), /used or reserved for active work/);
+    assert.match(text(h, "prototype-budget"), /no automatic execution-time cap/);
     assert.equal(h.get("prototype-milestones").querySelector<HTMLElement>('[aria-current="step"]')!.dataset.milestone, "interaction");
     await h.input("revision-input", "Keep this draft");
     field(h, "revision-input").focus(); field(h, "revision-input").setSelectionRange(2, 5);
@@ -63,7 +63,7 @@ test("progressive Prototype reports honest milestones and keeps its iframe while
     h.render(readyPrototype(4, true));
     assert.equal(frame(h), displayed);
     assert.equal(frame(h).src, value.previewUrl);
-    assert.match(text(h, "prototype-progress-message"), /Update ready/);
+    assert.match(text(h, "prototype-progress-message"), /Interaction prototype ready to inspect.*automatically generated milestone, not a response to feedback/);
     assert.equal(hidden(h, "apply-prototype-update"), false);
     assert.equal(disabled(h, "apply-prototype-update"), false);
     assert.equal(hidden(h, "request-prototype-visual"), true);
@@ -99,6 +99,63 @@ test("compact prototype layout retains expanded details, drafts and iframe acros
     assert.equal(h.get<HTMLDetailsElement>("revision-history-details").open, true);
     assert.equal(field(h, "revision-input").value, "Draft stays here.");
     assert.equal(frame(h), displayed);
+});
+
+test("pending Prototype copy distinguishes automatic milestones from recorded feedback revisions", async t => {
+    const value = readyPrototype(1, true);
+    const h = await setup(t, value);
+    assert.match(text(h, "prototype-progress-message"), /automatically generated milestone, not a response to feedback/);
+    assert.equal(text(h, "apply-prototype-update"), "Show Interaction prototype");
+    assert.match(text(h, "prototype-feedback-help"), /Feedback is optional/);
+    const requested = readyPrototype(2, true);
+    requested.prototypeFlow.checkpoints[1].revisionId = "feedback-one";
+    requested.prototypeReview.revisions = [{ id: "feedback-one", suggestion: "Use a larger button.", status: "ready" }];
+    h.render(requested); await h.flush();
+    assert.match(text(h, "prototype-progress-message"), /Requested prototype revision ready to inspect/);
+    assert.doesNotMatch(text(h, "prototype-progress-message"), /automatically generated/);
+    assert.equal(text(h, "apply-prototype-update"), "Show requested revision");
+    h.render({ ...requested, revision: 3, prototypeReview: { ...requested.prototypeReview, revisions: [] } });
+    await h.flush();
+    assert.match(text(h, "prototype-progress-message"), /Saved prototype version ready to inspect/);
+    assert.doesNotMatch(text(h, "prototype-progress-message"), /Requested|automatically generated/);
+    assert.equal(h.requests.length, 0);
+});
+
+test("unavailable current preview reviews an explicit legacy recipe and native denial remains dismissible without promotion", async t => {
+    const value = readyPrototype(1, true), h = await setup(t, value);
+    h.window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
+    h.window.HTMLDialogElement.prototype.close = function () { this.open = false; };
+    h.setPreviewFetch(async () => response({ generation: value.generation, checkpointId: "structure", pendingCheckpointId: "interaction",
+        url: value.previewUrl, available: false, reason: "Saved preview server is stopped." }));
+    await h.click("check-live-preview");
+    const before = JSON.stringify(value.prototypeFlow);
+    let inspected = 0;
+    h.setFetch(async (path, options) => {
+        const input = JSON.parse(String(options.body));
+        if (path.endsWith("/inspect")) {
+            assert.equal(input.target, "current"); assert.equal(input.checkpointId, "structure");
+            inspected++;
+            return response({ needsRecipe: inspected === 1, target: "current", checkpointId: "structure", cwd: "fixture",
+                url: value.previewUrl, executable: "node.exe", args: ["server.mjs"], entrypoints: ["server.mjs"],
+                message: "Review this saved launch; no generation or promotion.", ...(inspected === 1 ? {} : { confirmationId: "reviewed-once" }) });
+        }
+        assert.equal(path, "/api/prototype/preview-restart/decision");
+        assert.equal(input.confirmationId, "reviewed-once");
+        return input.approve ? response({ error: "Native permission was denied. The saved preview was not started." }, 409)
+            : response({ dismissed: true, previouslySubmitted: true });
+    });
+    await h.click("restart-current-preview");
+    assert.equal(h.document.querySelector("#confirm-current-restart"), null);
+    await h.input("restart-current-entrypoint", "server.mjs");
+    await h.fire(h.document.querySelector(".preview-restart-dialog[open] form")!, "submit");
+    assert.ok(h.get("confirm-current-restart"));
+    await h.click("confirm-current-restart");
+    assert.match(h.document.querySelector(".preview-restart-dialog[open]")!.textContent!, /Native permission was denied/);
+    const cancel = [...h.document.querySelectorAll<HTMLButtonElement>(".preview-restart-dialog[open] button")].find(button => button.textContent === "Cancel")!;
+    await h.click(cancel);
+    assert.equal(h.document.querySelector(".preview-restart-dialog[open]"), null);
+    assert.equal(JSON.stringify(current(h).prototypeFlow), before);
+    assert.equal(h.requests.some(item => ["/api/prototype/action", "/api/prototype/start", "/api/development/open"].includes(item.path)), false);
 });
 
 test("compact prototype controls never hide pending candidates, failures or clarification", async (t) => {
@@ -291,18 +348,17 @@ for (const legacy of [true, false]) test(`${legacy ? "legacy" : "progressive"} f
     assert.equal(hidden(h, "retry-prototype-checkpoint"), true);
 });
 
-test("extending an exhausted prototype work window requires explicit confirmation", async (t) => {
+test("historically exhausted work remains visible and allows only explicit new retry without extending a cap", async (t) => {
     const value = progressivePrototype(); value.prototypeFlow.activeCheckpointId = null;
     value.prototypeFlow.checkpoints[1] = checkpoint("interaction", "interaction", "failed"); value.prototypeFlow.budget.usedSeconds = 900;
     const h = await setup(t, value), displayed = frame(h);
-    assert.equal(hidden(h, "extend-prototype-budget"), false);
-    assert.equal(hidden(h, "retry-prototype-checkpoint"), true);
-    await h.click("extend-prototype-budget");
-    assert.match(h.document.querySelector('[role="alertdialog"]')!.textContent!, /15-minute AI work window/);
-    await h.confirm(false); assert.equal(h.requests.length, 0);
+    assert.equal(h.document.querySelector("#extend-prototype-budget"), null);
+    assert.equal(hidden(h, "retry-prototype-checkpoint"), false);
+    assert.match(text(h, "prototype-budget"), /Legacy 15-minute budget retained for history, not enforced/);
+    assert.equal(h.requests.length, 0);
     h.setFetch(async () => response({ ...value, revision: 2 }));
-    await h.click("extend-prototype-budget"); await h.confirm();
-    assert.equal(h.requests[0].body.action, "extend-budget");
+    await h.click("retry-prototype-checkpoint");
+    assert.equal(h.requests[0].body.action, "retry");
     assert.equal(frame(h), displayed); assert.equal(disabled(h, "revision-input"), false);
 });
 
@@ -319,8 +375,8 @@ test("failed optional visual work can be skipped without losing history, preview
     assert.deepEqual(h.requests[0].body, { action: "skip-visual", expectedRevision: 1 });
     assert.equal(hidden(h, "skip-prototype-visual"), true);
     assert.equal(hidden(h, "retry-prototype-checkpoint"), true);
-    assert.equal(hidden(h, "extend-prototype-budget"), false);
-    assert.equal(disabled(h, "request-prototype-visual"), true);
+    assert.equal(h.document.querySelector("#extend-prototype-budget"), null);
+    assert.equal(disabled(h, "request-prototype-visual"), false);
     assert.equal(disabled(h, "complete-stage"), false);
     assert.match(text(h, "prototype-milestones"), /Visual directionSkipped \(optional\)/);
     assert.doesNotMatch(text(h, "prototype-progress-message"), /latest update failed/);
@@ -440,11 +496,13 @@ test("not-applicable prototypes never expose start, finish or reopen mutations",
     const h = await setup(t, value);
     assert.equal(disabled(h, "live-preview-tab"), true); assert.equal(hidden(h, "start-prototype"), true);
     assert.equal(frame(h).hidden, true); assert.match(text(h, "preview-empty-message"), /Command-line app/);
-    const skipped = h.get("stage-list").querySelector<HTMLButtonElement>('[data-stage-id="prototype"]')!;
+    const skipped = h.get("project-contents").querySelector<HTMLButtonElement>('[data-stage-id="prototype"]')!;
     assert.equal(skipped.disabled, true); assert.match(skipped.getAttribute("aria-label")!, /not applicable/);
     await h.click(h.get("artifact-list").querySelector("button")!); assert.equal(hidden(h, "reopen-stage"), true);
     h.render({ ...value, revision: 2, lifecycle: { ...value.lifecycle, currentStage: "prototype" } });
-    assert.equal(disabled(h, "complete-stage"), true); await h.click("complete-stage");
+    const finish = h.document.querySelector<HTMLButtonElement>("#complete-stage");
+    assert.ok(!finish || finish.disabled);
+    if (finish) await h.click(finish);
     assert.equal(h.requests.filter(request => request.path !== "/api/development/open").length, 0);
 });
 
