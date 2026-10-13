@@ -221,11 +221,13 @@ test("browsing historical artifacts cancels speech without changing retained rev
     id, title: id, stage: "design", kind: "contract", content: id, reviewStatus: "current", path: "", language: "", mermaid: "",
   }));
   const h = await fixture(t, value);
-  const buttons = h.get("artifact-list").querySelectorAll("button");
+  const buttons = h.get("artifact-list").querySelectorAll("[data-artifact-id]");
   const input = h.get<HTMLTextAreaElement>("revision-input");
   await h.input(input, "Original prototype feedback");
   const capture = await h.start(input);
   capture.events.transcript("must not transfer", false); await h.flush();
+  await h.click("artifact-group-discovery-design");
+  assert.equal(capture.closed, false, "Expanding the artifact index does not leave the current phase.");
   await h.click(buttons[0]);
   assert.equal(capture.closed, true);
   assert.equal(h.get("artifact-content").textContent, "first");

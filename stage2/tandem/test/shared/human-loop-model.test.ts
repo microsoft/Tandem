@@ -148,14 +148,26 @@ test('stale advisory continuations hold new work until an explicit contextual an
   f.submit({ kind: 'designer-changed', summary: 'New Design', artifactRef: 'new', questions: [] }); f.end();
   f.apply({ previous: design, current: { revisionId: 'new', digest: 'd'.repeat(64) }, receiptId: 'publication', artifactRef: 'new' }); f.present();
   const retained = structuredClone(f.state.questions[0]!);
-  f.receive('new-work');
+  f.emit('receive-request', { id: 'new-work', message: '@agent discuss the changed Design',
+    receivedAt: '2026-10-13T00:00:00Z', answers: null,
+    roleHint: { schemaVersion: 'human-role-hint/v1', role: 'agent' } }, 'user');
   assert.equal(nextHumanRequest(f.state), null);
+  assert.equal(f.state.requests.find(r => r.id === 'new-work')!.queueAdmitted, undefined,
+    'A hint cannot bypass a stale advisory gate or claim queue pickup.');
   assert.throws(() => f.admit('new-work'), /prerequisites/);
   assert.deepEqual(f.state.questions[0], retained, 'A stale default is not rewritten as blocking, answered or invalidated.');
   f.receive('clarify', { schemaVersion: 'human-question-answers/v1', answers: [
     { questionId: retained.id, sourceResultId: retained.source.resultId, kind: 'freeform', value: 'Keep the newly agreed Design.' },
   ] });
   assert.equal(nextHumanRequest(f.state)?.id, 'clarify');
+  f.admit('clarify'); f.route('answer'); f.start('agent');
+  f.finish({ kind: 'answer', summary: 'Clarified', report: 'Keep the newly agreed Design.', evidenceRefs: [] }); f.present();
+  f.admit('new-work'); f.route('design'); f.start('designer');
+  const pickedUp = f.state.requests.find(r => r.id === 'new-work')!;
+  assert.equal(pickedUp.queueAdmitted, true);
+  assert.equal(pickedUp.roleHint?.role, 'agent');
+  assert.equal(f.state.activeTask?.binding.role, 'designer', 'Router can choose contrary to the hint after clarification.');
+  assert.equal(f.state.implementationConfirmations?.length ?? 0, 0);
   assert.deepEqual(replayHumanLoopLedger(f.ledger).state, f.state);
 });
 
