@@ -1,149 +1,102 @@
 # Quick start
 
-[All user guides](README.md) | [Why Tandem](the-tandem-story.md) | [User manual](user-manual.md)
+[All guides](README.md) | [User manual](user-manual.md)
 
-**Goal:** open a project, make its intended behavior visible, and decide whether
-to implement it. Preparation is optional. Both paths below end in Development,
-where planning and code changes require a separate **Plan and implement**
-decision.
+Open a project, make its intended behavior visible, then decide whether to
+implement it. **Preparation is optional; implementation always needs an
+explicit decision.**
 
-## Launch the source candidate
+## 1. Launch the source preview
 
-These commands run the integrated candidate from a Tandem source checkout.
-They are **not published-release installation instructions**. You need Windows,
-PowerShell, actual **Node 24+**, Git, and a Copilot account with access to the
-models you intend to use. The browser app needs neither .NET nor a running
-Copilot desktop app.
+You need Windows, PowerShell, actual **Node 24+**, Git, and a Copilot account
+with the required model access. These commands build source, not a published
+release or global installation. No .NET or running Copilot desktop app is needed.
 
-Keep the Tandem source folder separate from the project you want to build.
-For this example, the source checkout is `C:\src\Tandem` and the target project
-is `C:\projects\counter`.
-
-For a **new** project, create the folder and initialize Git yourself:
+Use an existing Git repository/worktree root, preserving its files. For your first
+trial, use a test project or worktree. To create a new project instead:
 
 ```powershell
 New-Item -ItemType Directory -Path C:\projects\counter
 git -C C:\projects\counter init
 ```
 
-For an **existing** project, use its Git repository/worktree root as-is; do not
-replace its files or reinitialize it. Preserve uncommitted work and consider a
-test copy or separate worktree for your first trial. Development changes the
-selected working copy after approval, not a hidden staging application.
-An initial Git commit is not required. Tandem does not initialize Git for you.
-
-From the Tandem source checkout:
+An initial commit is not required. Tandem does not initialize Git for you.
+From your **Tandem source checkout**, separate from that target project:
 
 ```powershell
-Set-Location C:\src\Tandem
 npm ci
 npm run build:browser
 node .\dist\browser\cli.mjs login
 node .\dist\browser\cli.mjs --workspace C:\projects\counter
 ```
 
-`login` is Copilot sign-in, not optional Microsoft speech sign-in. The last
-command opens the browser and keeps the host running in this terminal. Review
-startup permission prompts. If an older installed Tandem conflicts with the
-candidate, follow [installation-conflict guidance](troubleshooting.md#startup-and-connection-problems)
-rather than replacing files in a running installation.
+`login` signs in to Copilot, not optional Azure voice input. Review startup
+permissions and keep this terminal open.
 
-**Expected result:** Tandem shows the target folder and, on its first open,
-**Choose where to start**. This choice is saved in that folder's `.tandem`
-metadata, not asked on every visit. Returning projects restore their saved
-choice and progress. The two cards are guidance, not a test of whether the
-folder is empty.
+**You should see:** your project folder and **Choose where to start**.
+Returning projects use their saved choice and progress. If startup fails, use
+[troubleshooting](troubleshooting.md#startup-and-connection-problems).
 
-The launcher also supports:
+## 2. Choose your starting path
 
-```powershell
-node .\dist\browser\cli.mjs --help
-node .\dist\browser\cli.mjs --version
-node .\dist\browser\cli.mjs --workspace C:\projects\counter --no-open
-```
+The choice is saved in this folder's `.tandem` metadata, not asked every visit.
+These are recommendations, not rules about how many files a project contains.
 
-`--no-open` prints a private launch URL instead of opening a browser. Do not
-share that URL. Omitting `--workspace` uses the current directory, which would
-be the Tandem source checkout in the example above.
+### Start with Preparation
 
-## Path A: start with an idea
+Use this path to clarify requirements and UX.
 
-Choose **Start with Preparation** when the project is empty or you want help
-clarifying requirements and UX.
+1. Enter a goal such as "A keyboard-friendly counter with increment, decrement
+   and reset" and select **Start project**.
+2. In **Requirements**, **Add usage** entries you care about, then **Generate
+   requirements DAG**. Answer the connected decisions with **Use this answer**
+   and finish the phase when ready. Recommendations are not accepted automatically.
+3. In **Drawings**, **Generate drawings**, review/edit them, then **Approve
+   drawings and continue**.
+4. In **Prototype**, select **Start prototype** if no build is running.
+   Structure and Interaction are automatic milestones. Try the current preview;
+   use **Show Interaction prototype** when you want to display that ready version.
+   Feedback is optional.
+5. **Finish Prototype and save outputs**, then **Go to Development**.
+   Select **Continue Design from Prototype** to use the saved evidence for Design.
 
-1. Enter a goal such as "A simple counter with increment, decrement and reset,
-   usable with a keyboard" and select **Start project**. Preparation checks the
-   project and gathers relevant context; its progress and results are visible.
-2. In **Requirements**, add a usage such as "I want to reset the count to zero"
-   with **Add usage**. Suggested usages are optional. Select **Generate
-   requirements DAG** to turn the accepted usage list into connected decisions.
-3. Answer active questions with **Use this answer**. A recommended choice is
-   not accepted merely because it is displayed. Finish requirements when the
-   phase's Finish control becomes available.
-4. In **Drawings**, use **Generate drawings**, edit the screens or describe a
-   revision, then review **Approve drawings and continue**. A saved drawing is
-   not automatically an approved drawing.
-5. In **Prototype**, choose **Start prototype** if no build is running.
-   **Structure** and then **Interaction** are automatic milestones once work
-   starts. Try the inline current preview. If an Interaction version is waiting,
-   select **Show Interaction prototype** to display it. Feedback and visual
-   refinement are optional.
-6. Once required work is complete and submitted feedback is resolved, select
-   **Finish Prototype and save outputs**. Then choose **Go to Development**.
-   Use **Continue Design from Prototype** if you want Tandem to send the saved
-   evidence into Design refinement.
+**Result:** saved discovery evidence and a Design to refine. A prototype can
+use mocks; finishing it does not prove a production app works or approve coding.
+No shutdown or manual file transfer is required. Non-GUI work can skip graphical
+prototyping with a recorded reason and **Finish Requirements and save outputs**.
 
-**Expected result:** Requirements, drawings and prototype evidence are saved;
-Development can create the formal Design from those inputs. The prototype is a
-mock/validation artifact, not proof that a production app or backend exists.
-Showing a version and finishing Prototype do not authorize implementation.
-There is no required shutdown or manual file-transfer step between the phases.
+### Go to Development
 
-For a non-GUI project, Tandem can record why a graphical prototype is not
-applicable and use **Finish Requirements and save outputs** instead. Do not
-create meaningless screens merely to advance.
+Use this path for existing code, an initial implementation, or a rough idea.
 
-## Path B: start from existing files or a rough idea
+1. Wait for **Ready**. Opening Development alone does not scan or change the app.
+2. Choose **Quick requests > Understand existing project**, review the inserted
+   text and send it. Or use **Design something new** for an idea without code.
+3. Inspect the Design beside Conversation and answer its questions.
+   Existing behavior is evidence, not automatic agreement to keep it.
 
-Choose **Go to Development** for existing code, an initial implementation, or
-an idea you want to refine directly. You do not need to invent a preliminary
-specification or complete Preparation first.
+**Result:** a Design established directly from your project or idea. Quick
+requests insert editable text; they do not send automatically.
 
-1. Wait for **Ready** in Development. Selection prepares its working context;
-   it does not scan or change the application on your behalf.
-2. Use **Quick requests > Understand existing project**, edit the inserted text
-   if needed, and send it in Development. Or write:
+## 3. Decide when to implement
 
-   > Explore this repository and describe its current behavior in Design
-   > artifacts. Identify unclear intent. Preserve existing files; do not
-   > implement changes.
-
-3. Inspect the published Design beside Conversation and answer its questions.
-   Existing behavior is evidence, not automatic agreement that it should stay
-   that way. For an idea without code, use **Design something new** instead.
-
-**Expected result:** a Design you can inspect and refine without first going
-through the discovery phases. Quick requests only insert editable text; choosing
-one does not send it.
-
-## Decide when to implement
-
-Review the Design and resolve required questions. Then send a separate request,
-for example **Quick requests > Implement agreed design**.
+Review the Design and resolve required questions. Send **Implement agreed design**
+from Quick requests, or write your own implementation request.
 
 At **Start implementation?**, inspect the proposal and Design revision:
 
-| Decision | Result |
+| Choose | What happens |
 | --- | --- |
-| **Plan and implement** | Authorizes planning and implementation for this proposal. Code changes happen in the selected project folder; command permissions remain separate. |
-| **Update Design instead** | Sends the proposal for Design work rather than implementing it. |
-| **Cancel** | Declines this proposal without sending a model turn or deleting the Design. |
+| **Plan and implement** | Planning and code changes begin in your selected working copy. Command permissions remain separate. |
+| **Update Design instead** | The proposal goes to Design work, not implementation. |
+| **Cancel** | The proposal is declined without deleting Design or sending a model turn. |
 
-Implementer builds and validates the agreed work. Reviewer reports Design
-conformance and unnecessary complexity; a Review result is not a universal test
-pass. You decide the next change.
+Inspect implementation and Review outcomes before requesting another change.
+A Review result is not proof that every test or user journey passed.
 
-When done, use the browser host's **Stop** and check the result, or **Ctrl+C**
-in its launch terminal. Closing a browser tab alone leaves work running.
-See [Stop, Close and returning later](troubleshooting.md#stop-close-and-returning-later)
-before interrupting active work.
+## 4. End the visit
+
+Use the browser host's **Stop** or **Ctrl+C** in its terminal, and check any
+reported failure. Closing a tab alone leaves work running.
+See [Stop and reopen](troubleshooting.md#stop-close-and-returning-later) for
+interrupting work or returning to the same project.

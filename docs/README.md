@@ -1,47 +1,33 @@
-# Using Tandem
+# Tandem documentation
 
-Tandem helps you turn an idea or an existing application into a Design you can
-inspect, then implement it with your explicit approval. Open your **project
-folder**; choose how to begin, not which engine to manage.
+**New to Tandem? Start with the [quick start](quick-start.md).**
+For the idea behind the product, read [the Tandem story](the-tandem-story.md).
 
-| Start here | What you will find |
+| I want to... | Read |
 | --- | --- |
-| [The Tandem story](the-tandem-story.md) | Why a running app is not always the app you intended, told through the existing presentation and a concrete project journey. |
-| [Quick start](quick-start.md) | Launch the source candidate and take either the empty-project Preparation path or the existing-files Development path. |
-| [User manual](user-manual.md) | The workspace, phase controls, Design, questions, implementation, settings and saved outputs. |
-| [Use-case recipes](use-cases.md) | Short tasks: revise drawings, inspect a prototype update, refine Design, approve work, and export an outcome. |
-| [Troubleshooting and lifecycle](troubleshooting.md) | Preview recovery, queued work, Stop versus Close, returning later and startup problems. |
+| Open my first project | [Quick start](quick-start.md) |
+| Understand the vision | [The Tandem story](the-tandem-story.md) and [opening slides](../stage2/docs/tandem-opening-slides-v2.html#1) |
+| Learn the workspace | [User manual](user-manual.md) |
+| Revise drawings, refine Design or share output | [Task recipes](use-cases.md) |
+| Stop work, return later or recover a preview | [Troubleshooting](troubleshooting.md) |
+| Configure speech, package Tandem or understand recovery contracts | [Engineering reference](engineering-reference.md) |
 
 ## Which version does this guide describe?
 
-These pages describe the **integrated source candidate**, not a promise that
-the same features are on `main`, in an installed extension, or in a published
-download. The workflow baseline is source commit `1a2a785`; maintenance and voice
-instructions additionally reflect committed cleanup `fe16b72` and its
-error-visibility follow-up `5f27488`. A build without
-that cleanup has different maintenance/sign-in placement.
-[Root package.json](../package.json) is the version authority.
-The [quick start](quick-start.md#launch-the-source-candidate) builds from source;
-it does not install a global extension or publish anything.
-
-If you have an installed release, use the instructions supplied with that
-release. Do not overwrite an installation just to make its UI match this guide.
+These guides describe the integrated **source preview**, not a promise that every
+feature is in an installed or published release. Use the instructions supplied
+with an installed release; do not overwrite it to match this guide.
 Windows, PowerShell and actual Node 24+ are the currently qualified environment.
-These pages do not certify every browser, external integration or accessibility
-scenario.
+[Source provenance](engineering-reference.md) and
+[package version](../package.json) are recorded separately from user instructions.
 
-## Presentations and contributor material
+## For contributors
 
-The [six-slide opening presentation](../stage2/docs/tandem-opening-slides-v2.html#1)
-provides the story and illustrations. The
-[narrative's slide notes](the-tandem-story.md#reading-the-slides-with-the-current-product)
-explain where historical screenshots and diagrams differ from the current UI.
-Open the checked-out HTML in a browser to use its slide controls; a repository
-website may show HTML source instead.
-
-Implementation and architecture material stays separate:
-[root implementation notes](../README.md#standalone-nodebrowser-app),
-[Stage 2 implementation guide](../stage2/tandem/README.md), and
+See [development commands](../README.md#development-and-contributions),
+[Stage 2 instructions](../stage2/AGENTS.md), the
+[Stage 2 implementation guide](../stage2/tandem/README.md), and the
 [design reading guide](../stage2/docs/README.md).
-The Stage 2-only installation guide is not the integrated application's
-quick start.
+The Stage 2-only installation guide is not the integrated application's quick start.
+
+The slides are explanatory material, not a release or test report. Open their
+checked-out HTML in a browser; a repository website may display source instead.
