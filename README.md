@@ -1,6 +1,6 @@
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="stage2/tandem/public/branding/tandem-blue-dark.png">
-  <img src="stage2/tandem/public/branding/tandem-blue-light.png" alt="Tandem logo: a blue bicycle built for two beside the Tandem wordmark." width="420">
+  <source media="(prefers-color-scheme: dark)" srcset="development/tandem/public/branding/tandem-blue-dark.png">
+  <img src="development/tandem/public/branding/tandem-blue-light.png" alt="Tandem logo: a blue bicycle built for two beside the Tandem wordmark." width="420">
 </picture>
 
 # Tandem
@@ -26,8 +26,8 @@ The illustration above expresses that vision; it is not a product screenshot.
 - **Keep implementation tied to your decisions.** Review the Design, approve
   the proposed work, and inspect implementation and Review outcomes.
 
-Read [the Tandem story](docs/the-tandem-story.md) or explore the
-[opening presentation](development/docs/tandem-opening-slides-v2.html#1).
+Read [the Tandem story](docs/the-tandem-story.md) for the approach and a concrete
+example.
 
 ## Get started
 
@@ -71,13 +71,24 @@ Private launch URLs must not be shared.
 | Guide | Use it to |
 | --- | --- |
 | [Quick start](docs/quick-start.md) | Open your first project and reach an implementation decision. |
-| [The Tandem story](docs/the-tandem-story.md) | Understand the vision through a concrete example and the slides. |
+| [The Tandem story](docs/the-tandem-story.md) | Understand the vision through a concrete example. |
 | [User manual](docs/user-manual.md) | Learn the workspace and everyday controls. |
 | [Task recipes](docs/use-cases.md) | Revise a prototype, refine Design, use voice, or export an outcome. |
 | [Troubleshooting](docs/troubleshooting.md) | Handle queued work, unavailable previews, Stop and reopen. |
 
 The [documentation index](docs/README.md) also links advanced configuration and
 engineering references.
+
+<details>
+<summary>Optional presentation background</summary>
+
+The [six-slide opening presentation](development/docs/tandem-opening-slides-v2.html#1)
+and [extended background deck](development/docs/tandem-opening-slides-light.html#1)
+provide historical illustrations, a development walkthrough and discussion notes.
+The guides above stand on their own. Open the checked-out HTML locally; the
+screenshots are not evidence of current capabilities or test results.
+
+</details>
 
 ## Development and contributions
 
