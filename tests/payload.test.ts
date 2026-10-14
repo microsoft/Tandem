@@ -1,12 +1,28 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 import { createPayload, stagePayload, verifyPayload } from "../src/payload.js";
 import { assertComposedProvider, assertComposedVersion, canvasActionResult, developmentCloseResult } from "../src/desktop/runtime.js";
 import { nodeMainConsent } from "../src/main-consent.js";
+
+test("standalone archive contains every manifest file with matching hashes",
+    { skip: !process.env.TANDEM_PACKAGED_ARCHIVE }, async () => {
+    const root = await mkdtemp(join(tmpdir(), "tandem-archive-"));
+    try {
+        await promisify(execFile)("tar", ["-xzf", resolve(process.env.TANDEM_PACKAGED_ARCHIVE!), "-C", root]);
+        const directory = join(root, "package");
+        const manifest = await verifyPayload(directory);
+        const metadata = JSON.parse(await readFile(join(directory, "package.json"), "utf8"));
+        assert.equal(metadata.version, manifest.version);
+        assert.ok(manifest.files.some(file => file.path === "preview-launcher.mjs"));
+        for (const name of ["cli.mjs", "host.mjs"]) assert.ok((await stat(join(directory, name))).isFile());
+    } finally { await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
+});
 
 test("composed payload keeps the installed controller path independent of the development source layout",
     { skip: !process.env.TANDEM_PACKAGED_EXTENSION }, async () => {
