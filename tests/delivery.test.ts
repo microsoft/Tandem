@@ -11,8 +11,8 @@ import { writeJsonAtomically } from "../src/project-store.js";
 import type { TandemState } from "../src/types.js";
 import { createProcessAdapters, HANDOFF_BODY_LIMIT_BYTES } from "../src/process-adapters.js";
 import { projectDevelopmentDelivery } from "../src/development-delivery.js";
-import { createHumanLoop } from "../stage2/tandem/runtime-src/domain/human-loop/model.ts";
-import { DEFAULT_POLICY } from "../stage2/tandem/runtime-src/domain/workflow/policy.ts";
+import { createHumanLoop } from "../development/tandem/runtime-src/domain/human-loop/model.ts";
+import { DEFAULT_POLICY } from "../development/tandem/runtime-src/domain/workflow/policy.ts";
 
 const projection = (summary: string) => JSON.stringify({
     schemaVersion: "tandem-development-delivery/v1",

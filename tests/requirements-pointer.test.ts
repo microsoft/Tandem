@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { state } from "./helpers/react-harness.js";
-import { browserAvailable, openFixtureBrowser } from "../stage2/tandem/test/helpers/browser-fixture.mjs";
+import { browserAvailable, openFixtureBrowser } from "../development/tandem/test/helpers/browser-fixture.mjs";
 
 test("defaults mouse activation stays on its button when focus leaves the answer form",
     { skip: !browserAvailable, timeout: 60_000 }, async t => {

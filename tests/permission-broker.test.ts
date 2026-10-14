@@ -4,9 +4,9 @@ import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
 import { test } from "node:test";
 import { build } from "esbuild";
-import { InMemoryEventStore } from "../stage2/tandem/runtime-src/event-store.js";
-import type * as brokerModule from "../stage2/tandem/runtime-src/permissions/permission-broker.js";
-import { PermissionBroker } from "../stage2/tandem/runtime-src/permissions/permission-broker.js";
+import { InMemoryEventStore } from "../development/tandem/runtime-src/event-store.js";
+import type * as brokerModule from "../development/tandem/runtime-src/permissions/permission-broker.js";
+import { PermissionBroker } from "../development/tandem/runtime-src/permissions/permission-broker.js";
 
 test("current workflow consent remains scoped and environment access requires its own one-time decision", async () => {
     const broker = new PermissionBroker(new InMemoryEventStore());
@@ -30,7 +30,7 @@ test("current workflow consent remains scoped and environment access requires it
 
 for (const attributed of [false, true]) test(`permission broker keeps scoped approve-all behavior with attributed SDK results: ${attributed}`, async () => {
     const bundle = await build({
-        entryPoints: [fileURLToPath(new URL("../stage2/tandem/runtime-src/permissions/permission-broker.ts", import.meta.url))],
+        entryPoints: [fileURLToPath(new URL("../development/tandem/runtime-src/permissions/permission-broker.ts", import.meta.url))],
         bundle: true, write: false, platform: "node", format: "cjs", logLevel: "silent",
         plugins: [{
             name: "sdk-permission-result-fixture",

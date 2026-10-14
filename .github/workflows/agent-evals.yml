@@ -6,7 +6,7 @@ on:
       - "skills/**"
       - ".github/copilot-instructions.md"
       - "src/**"
-      - "stage2/**"
+      - "development/**"
       - "scripts/evaluate.ts"
       - "tests/**"
       - ".github/workflows/**"

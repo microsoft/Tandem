@@ -1,6 +1,6 @@
-import type { HumanLoopRuntimeHandle } from "../stage2/tandem/src/human-loop-controller.mjs";
-import type { HumanLoopState } from "../stage2/tandem/runtime-types/domain/human-loop/model.js";
-import type { SnapshotRef } from "../stage2/tandem/runtime-types/domain/human-loop/contracts.js";
+import type { HumanLoopRuntimeHandle } from "../development/tandem/src/human-loop-controller.mjs";
+import type { HumanLoopState } from "../development/tandem/runtime-types/domain/human-loop/model.js";
+import type { SnapshotRef } from "../development/tandem/runtime-types/domain/human-loop/contracts.js";
 import { executionDigest } from "./execution.js";
 import { ProjectStoreError } from "./project-store.js";
 import { readRetainedFile } from "./accepted-artifacts.js";

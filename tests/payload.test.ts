@@ -1,11 +1,36 @@
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createPayload, stagePayload, verifyPayload } from "../src/payload.js";
 import { assertComposedProvider, assertComposedVersion, canvasActionResult, developmentCloseResult } from "../src/desktop/runtime.js";
 import { nodeMainConsent } from "../src/main-consent.js";
+
+test("composed payload keeps the installed controller path independent of the development source layout",
+    { skip: !process.env.TANDEM_PACKAGED_EXTENSION }, async () => {
+    const source = dirname(resolve(process.env.TANDEM_PACKAGED_EXTENSION!));
+    const root = await mkdtemp(fileURLToPath(new URL(".payload-relocation-", import.meta.url)));
+    try {
+        const target = join(root, "relocated");
+        const { manifest } = await stagePayload(source, target);
+        const metadata = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+        assert.equal(manifest.version, metadata.version);
+        assert.equal(manifest.files.some(file => file.path.startsWith("development/")), false);
+        const entry = await readFile(join(target, "extension.mjs"), "utf8");
+        assert.match(entry, /from ["']\.\/stage2\/src\/human-loop-controller\.mjs["']/);
+        assert.doesNotMatch(entry, /from ["'][^"']*development\/tandem\//);
+        const controllerPath = join(target, "stage2", "src", "human-loop-controller.mjs");
+        assert.deepEqual(await readFile(controllerPath),
+            await readFile(new URL("../development/tandem/src/human-loop-controller.mjs", import.meta.url)));
+        // Import only the side-effect-free controller, never the native startup entrypoint.
+        const controller = await import(pathToFileURL(controllerPath).href);
+        assert.equal(typeof controller.createHumanLoopController, "function");
+        assert.equal(typeof controller.createDurablePrivateSession, "function");
+        assert.deepEqual(await verifyPayload(target), manifest);
+    } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 test("full payload relocation includes assets/skills and asset-only changes invalidate staging", async () => {
     const root = await mkdtemp(join(tmpdir(), "tandem-payload-"));

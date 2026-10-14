@@ -709,14 +709,14 @@ process termination.
 ## Develop, validate and package
 
 Maintain root TypeScript/renderer assets under `src` and Stage 2 implementation
-under `stage2\tandem`. Never hand-edit the generated extension.
+under `development\tandem`. Never hand-edit the generated extension.
 
 ```powershell
 npm run check
 npm test
 npm run build
-npm --prefix .\stage2\tandem run build
-npm --prefix .\stage2\tandem test
+npm --prefix .\development\tandem run build
+npm --prefix .\development\tandem test
 ```
 
 Root checking emits Stage 2 type declarations using its strict configuration
@@ -726,6 +726,20 @@ payload. `npm run pack` creates the extension ZIP. Install its complete
 `extensions\tandem` directory and matching `skills\tandem\SKILL.md` together
 only when explicitly authorized; copying the single generated entrypoint is
 insufficient. Large complete payloads may exceed the canvas gist size limits.
+
+The `development/` source folder is distinct from the stable `stage2/` packaged
+runtime directory. See [source and distribution paths](../development/README.md#source-and-distribution-paths).
+After a fresh build, check the actual composed payload and production renderer
+with local deterministic fixtures (no model calls or installation):
+
+```powershell
+$env:TANDEM_PACKAGED_EXTENSION = (Resolve-Path .\.github\extensions\tandem\extension.mjs).Path
+try {
+    node --import tsx --test tests\payload.test.ts tests\project-workspace-browser.test.mjs
+} finally {
+    Remove-Item Env:TANDEM_PACKAGED_EXTENSION
+}
+```
 
 Bridge tests cover source retention, exact request reconciliation, migration,
 retired routes, native capability/provider conflicts, payload hashes and delivery.
@@ -740,5 +754,5 @@ evaluations still require explicit `--live`, `--model`, `--max-cases`,
 `--timeout-seconds` and `--max-ai-credits`. No mock result or worker report
 establishes native end-to-end success.
 
-See [Stage 2 integration](../stage2/stage1-integration-plan.md) and
-[Stage 2 instructions](../stage2/AGENTS.md) for the composition boundary and invariants.
+See [Stage 2 integration](../development/stage1-integration-plan.md) and
+[Stage 2 instructions](../development/AGENTS.md) for the composition boundary and invariants.

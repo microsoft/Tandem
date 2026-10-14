@@ -16,7 +16,7 @@ own files, including when launched from the package directory.
 ## Layout
 
 ```text
-stage2/
+development/
   tandem/                    Complete application, package, scripts and tests
     src/                     Native workflow and extension
     public/                  Browser/canvas renderer and bundled assets
@@ -31,7 +31,22 @@ stage2/
 
 Keeping `tandem/` inside this folder preserves the existing package/test paths
 without changing application behavior. In the transferred guides, "repository
-root" means this `stage2/` source root unless stated otherwise.
+root" means this `development/` source root unless stated otherwise.
+
+### Source and distribution paths
+
+The repository source folder is `development/` (formerly `stage2/`). Integrated
+extension, browser and desktop builds deliberately retain `stage2/` inside the
+runtime payload, including `stage2/src/human-loop-controller.mjs` and
+`stage2/public/`. Payload manifests, verification and installation staging rely
+on those paths. The ZIP includes source under `source/development/` and the
+installed runtime under `extensions/tandem/stage2/`; standalone Stage 2 packaging
+still places `src/`, `public/`, `runtime-src/` and `skills/` at its output root.
+
+This is a source-layout refactor, not a release or state migration. Version,
+provider/protocol IDs, `stage2` response fields, private native-session identities,
+saved project state and historical records are unchanged. Stage 1 and Stage 2
+retain their own UX, workflows and runtime ownership.
 
 ## Browser and CLI runtime
 
@@ -62,9 +77,9 @@ exiting. See [installation and startup](tandem/INSTALL.md).
 Use Node 24+ and the Stage 2 package's own lockfile and scripts:
 
 ```powershell
-npm --prefix stage2\tandem ci
-npm --prefix stage2\tandem run build
-npm --prefix stage2\tandem test
+npm --prefix development\tandem ci
+npm --prefix development\tandem run build
+npm --prefix development\tandem test
 ```
 
 These commands are separate from the Stage 1 root package. No dependency
@@ -75,7 +90,7 @@ For a portable package, create an output parent and use a new destination:
 
 ```powershell
 New-Item -ItemType Directory -Path C:\staging -Force | Out-Null
-npm --prefix stage2\tandem run package:extension -- C:\staging\tandem-stage2
+npm --prefix development\tandem run package:extension -- C:\staging\tandem-stage2
 ```
 
 Building a package does not install or activate it. The nested discovery shim is

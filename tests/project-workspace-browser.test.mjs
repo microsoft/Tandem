@@ -8,16 +8,16 @@ import { build } from "esbuild";
 import { runInNewContext } from "node:vm";
 import { state as discoveryState } from "./helpers/react-harness.ts";
 import { progressivePrototype, readyPrototype, sketchFixture } from "./renderer-fixtures.test.ts";
-import { createHumanLoopProvider, HumanLoopEvents } from "../stage2/tandem/src/human-loop-provider.mjs";
-import { createHumanLoopLedger, replayHumanLoopLedger } from "../stage2/tandem/runtime-src/domain/human-loop/ledger.ts";
-import { DEFAULT_POLICY } from "../stage2/tandem/runtime-src/domain/workflow/policy.ts";
-import { getHostStateWal } from "../stage2/tandem/runtime-src/domain/host-state-wal.ts";
-import { browserAvailable, openFixtureBrowser } from "../stage2/tandem/test/helpers/browser-fixture.mjs";
+import { createHumanLoopProvider, HumanLoopEvents } from "../development/tandem/src/human-loop-provider.mjs";
+import { createHumanLoopLedger, replayHumanLoopLedger } from "../development/tandem/runtime-src/domain/human-loop/ledger.ts";
+import { DEFAULT_POLICY } from "../development/tandem/runtime-src/domain/workflow/policy.ts";
+import { getHostStateWal } from "../development/tandem/runtime-src/domain/host-state-wal.ts";
+import { browserAvailable, openFixtureBrowser } from "../development/tandem/test/helpers/browser-fixture.mjs";
 import { JSDOM } from "jsdom";
-import { installProjectPresentation } from "../stage2/tandem/public/project-presentation.js";
-import { createConversationRenderer } from "../stage2/tandem/public/renderers/conversation.js";
-import { sharedDesignExampleV3 } from "../stage2/tandem/test/helpers/shared-design-fixture.mjs";
-import { exerciseRoleHintDraft } from "../stage2/tandem/test/helpers/role-hint-browser.mjs";
+import { installProjectPresentation } from "../development/tandem/public/project-presentation.js";
+import { createConversationRenderer } from "../development/tandem/public/renderers/conversation.js";
+import { sharedDesignExampleV3 } from "../development/tandem/test/helpers/shared-design-fixture.mjs";
+import { exerciseRoleHintDraft } from "../development/tandem/test/helpers/role-hint-browser.mjs";
 
 test("saved evidence updates without rewriting immutable native conversation", t => {
   const dom = new JSDOM('<div><div id="history"></div></div><div id="messages"></div><div id="current"></div><div id="detail"></div><button id="newer"></button>', { pretendToBeVisual: true });
@@ -358,7 +358,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
     await new Promise(done => server.listen(0, "127.0.0.1", done));
     const url = `http://127.0.0.1:${server.address().port}/`;
     provider = await createHumanLoopProvider({ repositoryRoot: root, publicDirectory: process.env.TANDEM_PACKAGED_EXTENSION
-      ? join(dirname(process.env.TANDEM_PACKAGED_EXTENSION), "stage2", "public") : resolve("stage2", "tandem", "public"),
+      ? join(dirname(process.env.TANDEM_PACKAGED_EXTENSION), "stage2", "public") : resolve("development", "tandem", "public"),
       surface: "browser", projectHost: { origin: new URL(url).origin, channel: "whole-project-fixture" }, events,
       getInstallation: () => ({ runtime: active ? runtime : null,
         close: async () => { stopped = true; installationStatus = "closed"; events.touch(); return {}; },

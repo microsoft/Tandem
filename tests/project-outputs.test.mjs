@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { JSDOM } from "jsdom";
-import { projectOutputs } from "../stage2/tandem/public/project-outputs.js";
-import { installProjectPresentation } from "../stage2/tandem/public/project-presentation.js";
-import { projectHumanCycle } from "../stage2/tandem/src/human-loop-provider.mjs";
+import { projectOutputs } from "../development/tandem/public/project-outputs.js";
+import { installProjectPresentation } from "../development/tandem/public/project-presentation.js";
+import { projectHumanCycle } from "../development/tandem/src/human-loop-provider.mjs";
 
 const binding = { revisionId: "design-one", digest: "a".repeat(64) };
 const cycle = () => ({ id: "cycle-one", originRequestId: "request-one", design: binding, phase: "completed",

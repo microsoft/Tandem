@@ -9,7 +9,7 @@ import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { buildSpeechWorker } from "./speech-worker-build.js";
-import { packageExtension } from "../stage2/tandem/scripts/package-extension.mjs";
+import { packageExtension } from "../development/tandem/scripts/package-extension.mjs";
 import { createPayload } from "../src/payload.js";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -34,10 +34,11 @@ if (Number(process.versions.node.split(".")[0]) < 24 || process.versions.electro
 }
 const targetRoot = desktop || browser ? runtimeDirectory : extensionRoot;
 async function stageComposition() {
+    // Source lives in development/; stage2/ remains the installed payload contract.
     const destination = join(targetRoot, "stage2");
     await mkdir(targetRoot, { recursive: true });
     await rm(destination, { recursive: true, force: true });
-    const { manifest } = await packageExtension({ outputDirectory: destination, repositoryRoot: join(repositoryRoot, "stage2") });
+    const { manifest } = await packageExtension({ outputDirectory: destination, repositoryRoot: join(repositoryRoot, "development") });
     const skillDirectory = join(targetRoot, "skills", "tandem");
     await mkdir(skillDirectory, { recursive: true });
     await copyFile(join(repositoryRoot, "skills", "tandem", "SKILL.md"), join(skillDirectory, "SKILL.md"));
@@ -52,7 +53,7 @@ async function stageComposition() {
 const compositionPlugin: Plugin = {
     name: "tandem-stage2-composition",
     setup(api) {
-        api.onResolve({ filter: /stage2\/tandem\/src\/human-loop-controller\.mjs$/ }, () => ({
+        api.onResolve({ filter: /development\/tandem\/src\/human-loop-controller\.mjs$/ }, () => ({
             path: "./stage2/src/human-loop-controller.mjs", external: true,
         }));
         api.onEnd(async result => { if (!result.errors.length) await stageComposition(); });
