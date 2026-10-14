@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { runInNewContext } from "node:vm";
 import { extensionHarness } from "./helpers/extension-harness.js";
-import { browserAvailable, openFixtureBrowser } from "../stage2/tandem/test/helpers/browser-fixture.mjs";
+import { browserAvailable, openFixtureBrowser } from "../development/tandem/test/helpers/browser-fixture.mjs";
 
 test("packaged guided Git entry uses actual folder APIs and the original startup boundary",
     { skip: !browserAvailable || !process.env.TANDEM_PACKAGED_EXTENSION, timeout: 180_000 }, async t => {
