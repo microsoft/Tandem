@@ -338,6 +338,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
           json({ projectPath: root, startingPath });
         }
         else if (path === "/api/project-entry/open") json({ developmentContext: startingPath === "development", developmentStarted: false });
+        else if (path === "/api/development/preflight") json({ status: "ready", projectPath: root, initialize: false, message: "Fixture Git working copy is ready." });
         else if (path === "/api/development/view") json({ url: provider.url, channel: "whole-project-fixture" });
         else if (path === "/api/settings/project-effort") json({ desired: "low", changing: false,
           stage1: { actual: "low", desired: "low", model: "fixture", status: "applied", supported: ["low"], error: null },

@@ -91,6 +91,18 @@ choice and progress; refreshing an already-open page does not repeat initializat
 Browsing artifacts does not start work, and Close is not undone by a render/poll.
 Foreign ownership or invalid metadata fails visibly without rebinding or resetting.
 
+Development entry first checks Git and effective application-state exclusions
+without writing. `/api/development/preflight` binds an expiring, one-operation
+consent to the observed folder, Git metadata, saved choice and ignore bytes.
+Only explicit `/api/development/setup` consent may initialize local Git and append
+the missing `.tandem/` rule. It never chooses a starting path or starts a runtime.
+The renderer then resumes the originally requested public entry once; the backend
+rechecks readiness before saving a Development choice, opening it or preparing a
+Prototype handoff. Setup does not authorize model submission or implementation.
+Cancel performs no setup or project-entry writes. Partial failures retain and
+report attempted changes, and require a fresh check before another consent.
+The native runtime's independent tracked/untracked inventory checks remain intact.
+
 ### Local npx package
 
 ```powershell
@@ -429,8 +441,9 @@ factory work and no native events during the guarded write. Active, resumable,
 unavailable or changing native evidence keeps recovery blocked. No workers are
 cancelled and nothing is replayed; continuing requires a new explicit action.
 
-Operational data lives in `.tandem`, not Git publication. The target project must
-ignore `.tandem/` explicitly; the host does not add a Git ignore rule:
+Operational data lives in `.tandem`, not Git publication. Keep `.tandem/` ignored:
+guided Development setup can add a preserving rule after explicit consent, or
+the user can add it manually.
 
 - Shared upstream efforts and snapshots: `.tandem\efforts\<effortId>`.
 - Archived upstream resets: `.tandem\effort-history\<effortId>\<archiveId>`.
@@ -491,8 +504,10 @@ the reported ownership/history error rather than treating it as success.
 ### Recover an incomplete first Development startup
 
 New setup checks the actual Git root read-only before reserving native setup.
-Tandem does not run `git init`, change ignore rules or commit for you. An unborn
-Git HEAD is supported. Installation v3 records whether native creation is still
+The guided entry can offer **Set up this folder and continue** for explicit local
+Git initialization and a preserving `.tandem/` ignore rule. It never commits,
+configures a remote, pushes or untracks saved state. An unborn Git HEAD is
+supported. Installation v3 records whether native creation is still
 unrequested, has been issued, or has been confirmed. After a pre-native failure,
 **Retry runtime** can finish initialization using the original reserved private
 ID, after checking that no work or native state exists. An issued creation with

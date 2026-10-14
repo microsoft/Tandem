@@ -4,6 +4,7 @@ import { canOpenDevelopment, hasActiveJobs, useUi, type UiState } from "./ui-con
 import { DiscoveryProjectSettings, ProjectEffortError, requestProjectEffort, useProviderReload } from "./project-effort.js";
 import type { LifecycleStageId } from "../types.js";
 import type { StartingPath } from "../project-entry.js";
+import { useDevelopmentGit } from "./development-git.js";
 
 type Entry = { id: string; kind: "user" | "status"; role: string; text: string; timestamp: string };
 export function projectDiscovery(state: UiState, busy: boolean, viewedStage: LifecycleStageId = state.lifecycle.currentStage) {
@@ -65,6 +66,7 @@ interface ProjectView {
     resumeDiscovery(): void;
     entry: { loading: boolean; busy: boolean; projectPath: string; startingPath: StartingPath | null; error: string; ready: boolean };
     chooseEntry(path: StartingPath): Promise<void>; reloadEntry(): Promise<void>;
+    gitSetupVisible: boolean; requireDevelopmentGit(): Promise<boolean>;
     frame: React.RefObject<HTMLIFrameElement | null>; sync(): void;
 }
 const Context = createContext<ProjectView | null>(null);
@@ -86,6 +88,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
     const providerReload = useProviderReload(view.active || view.starting || view.status === "unknown" || effortBusy);
     const [entry, setEntry] = useState({ loading: true, busy: false, projectPath: state.projectPath ?? "", startingPath: null as StartingPath | null, error: "", ready: false });
     const choosing = useRef(false);
+    const git = useDevelopmentGit();
     const [discoverySettings, setDiscoverySettings] = useState(false);
     const [viewRequested, setViewRequested] = useState(false);
     const pendingCommand = useRef<string | null>(null);
@@ -99,6 +102,10 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
         choosing.current = true;
         setEntry(v => ({ ...v, busy: true, error: "" }));
         try {
+            if (choice === "development" && !await git.requireReady()) {
+                setEntry(v => ({ ...v, loading: false, busy: false }));
+                return;
+            }
             const response = await fetch("/api/project-entry", choice ? { method: "POST", headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ startingPath: choice }) } : undefined);
             const value = await response.json();
@@ -106,6 +113,13 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
             if (typeof value.projectPath !== "string" || ![null, "preparation", "development"].includes(value.startingPath)) throw new Error("Invalid project entry metadata.");
             let starting = false, developmentEntered = false;
             if (value.startingPath && latest.current.state.provider?.canSubmitAnswers !== false) {
+                if (choice !== "development" && (value.startingPath === "development" || latest.current.state.lifecycle.currentStage === "development")
+                    && !await git.requireReady()) {
+                    setEntry({ loading: false, busy: false, projectPath: value.projectPath, startingPath: value.startingPath,
+                        error: "", ready: value.startingPath === "preparation" });
+                    if (value.startingPath === "preparation") entryCallback.current(value.startingPath, firstChoice);
+                    return;
+                }
                 const opened = await fetch("/api/project-entry/open", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
                 const result = await opened.json();
                 if (!opened.ok) throw new Error(result.error || "Project entry could not be prepared.");
@@ -159,13 +173,18 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
     }
     async function activate(retry = false) {
         if (!canOpenDevelopment(latest.current.state)) { setView(v => ({ ...v, error: "Finish current discovery work or resolve ownership before activating Development." })); return; }
-        setView(v => ({ ...v, developmentEntered: true }));
-        if (opening.current || startRequested.current || latest.current.view.active) return;
+        if (opening.current) return;
+        if (startRequested.current || latest.current.view.active) {
+            setView(v => ({ ...v, developmentEntered: true }));
+            return;
+        }
         opening.current = true;
-        setViewRequested(true);
-        startRequested.current = true;
-        setView(v => ({ ...v, starting: true, developmentEntered: true, error: "" }));
         try {
+            if (!await git.requireReady()) return;
+            if (!canOpenDevelopment(latest.current.state)) throw new Error("Project ownership or discovery work changed. Review it before entering Development.");
+            setViewRequested(true);
+            startRequested.current = true;
+            setView(v => ({ ...v, starting: true, developmentEntered: true, error: "" }));
             const response = await fetch("/api/development/open", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ retry }) });
             const result = await response.json();
             if (!response.ok) throw new Error(result.error || "Development could not activate.");
@@ -329,6 +348,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
     }, []);
     return <Context.Provider value={{ ...view, maintenanceError: providerReload.view.error ? providerReload.view.message : "",
         visible: designVisible, entry, chooseEntry: path => loadEntry(true, path), reloadEntry: () => loadEntry(),
+        gitSetupVisible: git.visible, requireDevelopmentGit: git.requireReady,
         frame, sync, activate,
         prepareDevelopmentView: () => { setViewRequested(true); setView(v => ({ ...v, developmentEntered: true })); },
         resumeDiscovery: () => setView(v => ({ ...v, developmentEntered: false })),
@@ -346,7 +366,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
             if (latest.current.view.outputStatus !== "verified") return;
             latest.current.showDesign();
             send({ type: "output-open", id: item.id, binding: item.binding });
-        } }}>{children}{discoverySettings && <DiscoveryProjectSettings providerReload={providerReload} close={() => setDiscoverySettings(false)} />}</Context.Provider>;
+        } }}>{children}{git.dialog}{discoverySettings && <DiscoveryProjectSettings providerReload={providerReload} close={() => setDiscoverySettings(false)} />}</Context.Provider>;
 }
 export function ProjectConversation() {
     const view = useProjectView();

@@ -63,6 +63,7 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
   const previewRequests: RequestInit[] = [];
   let previewFetcher: (() => Promise<Response>) | null = null;
   let entryOpened = false;
+  let gitFetcher: (() => Promise<Response>) | null = null;
   const errors: string[] = [];
   const pngExports: { width: number; height: number; source: string }[] = [];
   const headerMessages: Record<string, any>[] = [];
@@ -84,6 +85,10 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
     PointerEvent: window.MouseEvent,
     fetch: async (input: string | URL | Request, options: RequestInit = {}) => {
       const path = String(input);
+      if (path === "/api/development/preflight") {
+        return gitFetcher ? gitFetcher() : response({ status: "ready", projectPath: "C:\\fixture-project",
+          initialize: false, message: "Fixture Git working copy is ready." });
+      }
       if (path === "/api/project-entry") {
         entryRequests.push(path + ":" + (options.method || "GET"));
         if (options.method === "POST") {
@@ -177,6 +182,7 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
       await click(button);
     },
     setFetch(handler: typeof fetcher) { fetcher = handler; },
+    setGitPreflight(handler: () => Promise<Response>) { gitFetcher = handler; },
     setPreviewFetch(handler: () => Promise<Response>) { previewFetcher = handler; },
     headerMessages,
     async sendHeaderMessage(data: Record<string, unknown>, origin = headerHost?.origin || "http://127.0.0.1:9000", source: unknown = parent) {

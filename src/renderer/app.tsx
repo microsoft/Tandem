@@ -388,7 +388,7 @@ function Workspace(props: WorkspaceProps) {
   </section>;
   return <div className="app project-workspace-app">
     {projectView.entry.loading && <p className="project-entry-loading" role="status">Reading project metadata...</p>}
-    <AlertDialog.Root open={!projectView.entry.loading && !projectView.entry.ready}>
+    <AlertDialog.Root open={!projectView.entry.loading && !projectView.entry.ready && !projectView.gitSetupVisible}>
       <AlertDialog.Portal><AlertDialog.Overlay className="dialog-overlay" /><AlertDialog.Content className="dialog-content project-entry">
         <AlertDialog.Title>Choose where to start</AlertDialog.Title>
         <AlertDialog.Description>
@@ -396,6 +396,8 @@ function Workspace(props: WorkspaceProps) {
           This starting choice is saved for this project folder, so you won't be asked again. Preparation can still progress into Development.
         </AlertDialog.Description>
         {projectView.entry.error ? <div role="alert"><p>{projectView.entry.error}</p><button type="button" className="plan-button" onClick={() => void projectView.reloadEntry()}>Retry project entry</button></div>
+          : projectView.entry.startingPath ? <button id="resume-project-entry" type="button" className="plan-button" disabled={projectView.entry.busy}
+              onClick={() => void projectView.reloadEntry()}>Continue saved {projectView.entry.startingPath === "development" ? "Development" : "Preparation"} entry</button>
           : projectView.entry.loading ? <p role="status">Reading project metadata...</p>
             : <div className="project-entry-choices">
               <button id="entry-preparation" type="button" autoFocus disabled={projectView.entry.busy || state.provider?.canSubmitAnswers === false}

@@ -181,8 +181,9 @@ panel exposes shared effort without starting the Development UI.
 Conversation, images, Design or results. Unsent drafts are different: copy
 important text before page/extension reload or changing browser windows.
 
-Operational data is under `.tandem`; ensure the project's `.gitignore` includes
-`.tandem/`, as shown in the [quick start](quick-start.md). Tandem does not add that
-rule for you. Do not edit this state to force readiness or assume Git backs it up.
+Operational data is under `.tandem`. Before Development, guided setup can add a
+preserving `.tandem/` ignore rule with your explicit consent; the
+[quick start](quick-start.md) also shows a manual alternative. Keep this data out
+of commits. Do not edit it to force readiness or assume Git backs it up.
 Optional [acceptance and export](use-cases.md#locate-and-export-saved-outputs)
 writes reviewed output to `tandem-records`; export is not Git publication.
