@@ -188,9 +188,10 @@ function Header({ version, connectionError, developmentView }: { version: string
   const { state } = useUi();
   const { maintenanceError } = useProjectView();
   const stageIndex = Math.max(0, lifecycleStages.findIndex((stage) => stage.id === state.lifecycle.currentStage));
+  const phase = state.lifecycle.currentStage === "development" ? "" : state.phase || "discovery";
   const hosted = useStandaloneHeader({
     scope: JSON.stringify([state.prototypeId, state.generation, state.provider?.extensionId]),
-    version, lifecycle: isGoalEntry(state) ? "" : `${stageIndex + 1}. ${lifecycleStages[stageIndex].label} | ${state.phase || "discovery"}`,
+    version, lifecycle: isGoalEntry(state) ? "" : `${stageIndex + 1}. ${lifecycleStages[stageIndex].label}${phase ? ` | ${phase}` : ""}`,
     permissionScope: developmentView ? "development" : "main",
     controls: {
       reload: null,
@@ -210,7 +211,7 @@ function Header({ version, connectionError, developmentView }: { version: string
     <div id="lifecycle-status" className="lifecycle" aria-label="Development lifecycle" hidden={isGoalEntry(state)}>
       <span id="current-stage" className="stage" aria-label={"Current lifecycle stage: " + lifecycleStages[stageIndex].label}>
         <span id="current-stage-index" className="stage-index" aria-hidden="true">{stageIndex + 1}</span><span id="stage">{lifecycleStages[stageIndex].label}</span>
-      </span><span id="phase" className="phase">{state.phase || "discovery"}</span>
+      </span><span id="phase" className="phase" hidden={!phase}>{phase}</span>
     </div>
     <span className="build-version" title="Tandem extension version">v{version}</span>
   </div>
