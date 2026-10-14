@@ -37,7 +37,6 @@ export function ArtifactList({ selectedArtifactId, active = true }: ArtifactSele
   const selected = !active ? null : state.artifacts.some(artifact => artifact.id === selectedArtifactId)
     ? selectedArtifactId : state.artifacts[0]?.id ?? null;
   return <div id="artifact-list" className="artifact-list">
-    {!state.artifacts.length && <p className="artifact-empty">No artifacts yet.</p>}
     {artifactGroups.map(stage => {
       const artifacts = state.artifacts.filter(artifact => (artifact.stage || "requirements") === stage.id);
       if (!artifacts.length) return null;

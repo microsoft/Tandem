@@ -133,10 +133,16 @@ test("GitHub intake never sends stale Local JSON to the selected adapter", async
     assert.equal(Object.hasOwn(h.requests[0].body, "content"), false);
 });
 
-test("artifact navigation has one empty state and only populated stage groups", async (t) => {
+test("artifact navigation keeps the zero count, viewer empty state and only populated stage groups", async (t) => {
     const value = state("prototype"), h = await setup(t, value); h.setNarrowViewport(true);
-    assert.equal(h.get("artifact-list").querySelectorAll(".artifact-empty").length, 1);
+    assert.equal(text(h, "artifact-count"), "0");
+    assert.equal(text(h, "content-tab"), "Saved artifacts 0");
+    assert.equal(text(h, "artifact-list"), "");
+    assert.doesNotMatch(text(h, "project-artifact-library"), /No artifacts yet/);
     assert.equal(h.get("artifact-list").querySelectorAll(".artifact-stage-group").length, 0);
+    await h.fire(h.get("content-tab"), "keydown", { key: "Enter" });
+    assert.equal(hidden(h, "content-panel"), false);
+    assert.equal(text(h, "content-empty"), "No artifacts yet");
     h.render({ ...value, revision: 2, artifacts: [
         { id: "intent", title: "User intent", stage: "requirements", kind: "intent", content: "Intent" },
         { id: "contract", title: "UI contract", stage: "design", kind: "contract", content: "Contract", reviewStatus: "stale" },
