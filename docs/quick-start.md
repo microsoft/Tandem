@@ -71,8 +71,10 @@ Use this path to clarify requirements and UX.
 2. In **Requirements**, **Add usage** entries you care about, then **Generate
    requirements DAG**. Answer the connected decisions with **Use this answer**
    and finish the phase when ready. Recommendations are not accepted automatically.
-3. In **Drawings**, **Generate drawings**, review/edit them, then **Approve
-   drawings and continue**.
+3. **Finish requirements** opens **Drawings** and starts the first generation
+   automatically. Wait for it to finish; use **Generate drawings** if no generation
+   is running and you need drawings. Review/edit them, then **Approve drawings
+   and continue**.
 4. In **Prototype**, select **Start prototype** if no build is running.
    Structure and Interaction are automatic milestones. Try the current preview;
    use **Show Interaction prototype** when you want to display that ready version.

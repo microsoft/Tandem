@@ -56,6 +56,8 @@ recommendations, including downstream choices. Recommendations and suggestions
 are not already accepted answers. **Update answer and dependents** can invalidate
 dependent decisions while retaining independent answers.
 
+Finishing Requirements opens Drawings and generates the initial screens
+automatically; generation controls are disabled while that work is running.
 Drawings retains the Sketch editor: generate screens, edit shapes/transitions,
 use Undo/Redo, or send a revision instruction. **Save drawings** saves edits;
 **Approve drawings and continue** explicitly approves that revision.
