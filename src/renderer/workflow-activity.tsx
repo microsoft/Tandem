@@ -43,6 +43,9 @@ export function WorkflowActivity() {
         Date.parse(right.updateAt ?? "") - Date.parse(left.updateAt ?? ""))[0]?.update;
     const inactiveSeconds = current?.lastNativeActivityAt ? Math.floor((now - Date.parse(current.lastNativeActivityAt)) / 1000) : NaN;
     const failure = current?.agents.find(agent => ["failed", "error", "cancelled", "execution-unknown"].includes(agent.status));
+    const singleAgent = current?.agents.length === 1 ? current.agents[0] : null;
+    const sharedFreshness = singleAgent && (singleAgent.lastNativeActivityAt === current?.lastNativeActivityAt
+        || Date.parse(singleAgent.lastNativeActivityAt ?? "") === Date.parse(current?.lastNativeActivityAt ?? ""));
     return <section id="native-workflow-activity" className="section" aria-label="Native workflow activity">
         <strong id="workflow-activity-title">{title}{Number.isFinite(elapsed) ? ` · ${Math.floor(elapsed / 60)}m ${elapsed % 60}s` : ""}</strong>
         <p id="workflow-activity-state" role="status">{status}</p>
@@ -54,11 +57,11 @@ export function WorkflowActivity() {
         {!ended && !permissions && inactiveSeconds >= 60 && <p className="muted">No new activity for {Math.floor(inactiveSeconds / 60)}m {inactiveSeconds % 60}s.</p>}
         <details id="workflow-activity-details"><summary>Details</summary>
             {ended && !Number.isFinite(elapsed) && <p>Request elapsed unavailable: terminal timestamp not available.</p>}
-            <p className="muted">{age(current?.lastNativeActivityAt ?? null, now)}</p>
+            <p className="muted">Workflow: {age(current?.lastNativeActivityAt ?? null, now)}</p>
             {current?.agents.map(agent => <div key={agent.id}>
                 <strong>{agent.label}: {labels[agent.status] || agent.status}</strong>
                 {agent.operation && <span> · {agent.operation}</span>}
-                <p className="muted">{age(agent.lastNativeActivityAt, now)}</p>
+                {!sharedFreshness && <p className="muted">Agent: {age(agent.lastNativeActivityAt, now)}</p>}
             </div>)}
             <p className="muted">Request: {binding.requestId} · Run: {binding.runId}</p>
             <p className="muted">Silence does not mean failure. Updates are not completion or verification evidence.</p>

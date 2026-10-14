@@ -145,15 +145,17 @@ You may leave those decisions open and retain an explicitly limited outcome.
 **Use when:** you want a reviewed snapshot to share.
 
 1. Expand the relevant **Artifacts** group and inspect the original output.
-2. In Development, open **Acceptance, export and delivery**, then **Capture
-   Development outcome for review**. Check the captured and original outcomes,
-   including failed/partial/unverified areas.
+2. Open **Project settings → Advanced handoffs & history**. Choose a saved
+   discovery snapshot, or use **Capture Development outcome for review** in
+   Development. Inspect the captured and original outcomes, including any
+   failed/partial/unverified areas.
 3. Select the completed stage/captured outcome, enter **Accepted by**, and review
    **Accept handoff**.
-4. **Export accepted handoff**, then inspect the `tandem-records` bundle before sharing.
+4. Once that snapshot is accepted, **Export accepted handoff** appears. Export,
+   then inspect the local `tandem-records` bundle before sharing.
 
 **Result:** an exported accepted snapshot, not a Git commit or publication.
-Acceptance records attribution, not implementation approval or a test pass.
+Acceptance records attribution, not authenticated identity, implementation approval or a test pass.
 If source/Design changed, capture and review again.
 
 <details>

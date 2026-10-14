@@ -161,7 +161,7 @@ test("handoff export selects only current acceptance and never authorizes automa
   state.lifecycle.outputs = [{ stageId: "prototype", path: ".tandem\\plan-r2.json", completedAt: "now" }];
   state.process.acceptances = [acceptance("old", ".tandem\\plan-r1.json")];
   const h = await harness(state);
-  assert.equal(h.get<HTMLButtonElement>("#export-handoff").disabled, true);
+  assert.equal(h.get("#process-message").ownerDocument.querySelector("#export-handoff"), null);
   state.process.acceptances.push(acceptance("current", ".tandem\\plan-r2.json"));
   await h.render({ ...state, revision: 2 });
   h.setConfirm(async () => false);

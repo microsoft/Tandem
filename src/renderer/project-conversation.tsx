@@ -5,6 +5,7 @@ import { DiscoveryProjectSettings, ProjectEffortError, requestProjectEffort, use
 import type { LifecycleStageId } from "../types.js";
 import type { StartingPath } from "../project-entry.js";
 import { useDevelopmentGit } from "./development-git.js";
+import { ProcessPanel } from "./process-panel.js";
 
 type Entry = { id: string; kind: "user" | "status"; role: string; text: string; timestamp: string };
 export function projectDiscovery(state: UiState, busy: boolean, viewedStage: LifecycleStageId = state.lifecycle.currentStage) {
@@ -59,6 +60,7 @@ interface ProjectView {
     url: string | null; channel: string; error: string; active: boolean; starting: boolean; developmentEntered: boolean;
     status: string; detail: string; designRevision: string | null; designChanged: boolean; attention: number;
     maintenanceError: string;
+    processError: string;
     activate(retry?: boolean): Promise<void>; command(command: string): void;
     outputs: ProjectOutput[]; outputStatus: string; outputReason: string; outputError: string; selectedOutput: string | null;
     openOutput(item: ProjectOutput): void;
@@ -90,6 +92,9 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
     const choosing = useRef(false);
     const git = useDevelopmentGit();
     const [discoverySettings, setDiscoverySettings] = useState(false);
+    const [processOpen, setProcessOpen] = useState(false);
+    const [processError, setProcessError] = useState("");
+    function openProcess() { setDiscoverySettings(false); setProcessOpen(true); }
     const [viewRequested, setViewRequested] = useState(false);
     const pendingCommand = useRef<string | null>(null);
     const entryCallback = useRef(onEntry); entryCallback.current = onEntry;
@@ -268,6 +273,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
                 return;
             }
             if (message.type === "show-design") { latest.current.showDesign(); return; }
+            if (message.type === "process-open") { openProcess(); return; }
             if (message.type === "settings-closed") { document.getElementById("project-settings")?.focus(); return; }
             if (message.type === "conversation-resize"
                 && (message.width === null || Number.isFinite(message.width) && message.width >= 300
@@ -346,13 +352,14 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
         window.addEventListener("message", receive);
         return () => window.removeEventListener("message", receive);
     }, []);
-    return <Context.Provider value={{ ...view, maintenanceError: providerReload.view.error ? providerReload.view.message : "",
+    return <Context.Provider value={{ ...view, processError, maintenanceError: providerReload.view.error ? providerReload.view.message : "",
         visible: designVisible, entry, chooseEntry: path => loadEntry(true, path), reloadEntry: () => loadEntry(),
         gitSetupVisible: git.visible, requireDevelopmentGit: git.requireReady,
         frame, sync, activate,
         prepareDevelopmentView: () => { setViewRequested(true); setView(v => ({ ...v, developmentEntered: true })); },
         resumeDiscovery: () => setView(v => ({ ...v, developmentEntered: false })),
         command: command => {
+            if (command === "process") { openProcess(); return; }
             if (!latest.current.designVisible || !latest.current.view.developmentEntered) {
                 if (command === "settings") setDiscoverySettings(true);
                 else if (command === "current-work") {
@@ -366,7 +373,11 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
             if (latest.current.view.outputStatus !== "verified") return;
             latest.current.showDesign();
             send({ type: "output-open", id: item.id, binding: item.binding });
-        } }}>{children}{git.dialog}{discoverySettings && <DiscoveryProjectSettings providerReload={providerReload} close={() => setDiscoverySettings(false)} />}</Context.Provider>;
+        } }}>{children}{git.dialog}{discoverySettings && <DiscoveryProjectSettings providerReload={providerReload}
+            close={() => setDiscoverySettings(false)} openProcess={openProcess} />}
+        <ProcessPanel development={view.developmentEntered} expanded dialog={{ open: processOpen, onOpenChange: setProcessOpen }}
+            onErrorChange={setProcessError} />
+    </Context.Provider>;
 }
 export function ProjectConversation() {
     const view = useProjectView();

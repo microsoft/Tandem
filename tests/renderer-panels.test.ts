@@ -2,8 +2,65 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { reactHarness, setup, state, response, text, field, disabled, hidden, current, submit, browse, waitFor } from "./renderer-fixtures.test.js";
 
+test("everyday discovery hides process controls and empty ledger categories without losing ledger expansion", async t => {
+    const value = state("prepare"), h = await setup(t, value);
+    for (const stage of ["prepare", "requirements", "sketch", "prototype"] as const) {
+        h.render({ ...state(stage), revision: ++value.revision }); await h.flush();
+        assert.equal(h.document.querySelector("#handoff-stage, #acceptance-delivery, #process-metrics, #export-handoff"), null);
+        assert.equal(h.document.querySelector<HTMLDetailsElement>(".ledger-details")!.hidden, true);
+    }
+    const populated = { ...state("requirements"), revision: ++value.revision, confirmed: ["Keep the verified requirement"], assumed: [], deferred: [] };
+    h.render(populated); await h.flush();
+    const ledger = h.document.querySelector<HTMLDetailsElement>(".ledger-details")!;
+    ledger.open = true;
+    assert.equal(ledger.hidden, false);
+    assert.equal(h.document.querySelector("#assumed, #deferred"), null);
+    assert.match(ledger.textContent!, /Keep the verified requirement/);
+    h.render({ ...populated, revision: ++value.revision, confirmed: [] }); await h.flush();
+    assert.equal(ledger.hidden, true);
+    h.render({ ...populated, revision: ++value.revision }); await h.flush();
+    assert.equal(ledger.open, true);
+    assert.equal(ledger.hidden, false);
+    assert.equal(h.requests.filter(request => request.options.method === "POST").length, 0);
+});
+
+test("advanced settings retain errors, drafts and audit expansion across close, navigation and late responses", async t => {
+    const value = state("requirements"), h = await setup(t, value);
+    value.process.acceptances = [{ id: "historic", stageId: "prepare", snapshotPath: ".tandem\\old.json",
+        acceptedBy: { label: "Recorded owner" }, acceptedAt: "earlier" }];
+    h.render({ ...value, revision: 2 }); await h.flush();
+    await h.openProcess();
+    assert.equal(h.document.querySelector("#export-handoff, #handoff-approver"), null);
+    await h.click("process-history-toggle");
+    const detail = h.document.querySelector<HTMLDetailsElement>('[data-ui-key="acceptance:historic"]')!;
+    detail.open = true; await h.flush();
+    await h.click("process-settings-toggle");
+    await h.input("process-repository", "owner/draft");
+    let release!: (value: Response) => void;
+    h.setFetch(() => new Promise(resolve => { release = resolve; }));
+    await h.click("save-process"); await h.confirm();
+    await h.click("close-acceptance-delivery");
+    release(response({ error: "GitHub adapter unavailable; no fallback was used." }, 409)); await h.flush();
+    assert.match(h.get("requirements-pane").textContent!, /GitHub adapter unavailable/);
+    const review = [...h.document.querySelectorAll("button")].find(button => button.textContent === "Review handoff error")!;
+    await h.click(review);
+    assert.equal(h.get("process-message").getAttribute("role"), "alert");
+    assert.match(h.get("process-message").textContent!, /no fallback/);
+    assert.equal(field(h, "process-repository").value, "owner/draft");
+    assert.equal(h.get("process-settings-toggle").getAttribute("aria-expanded"), "true");
+    assert.equal(h.get("process-history-toggle").getAttribute("aria-expanded"), "true");
+    assert.equal(h.document.querySelector<HTMLDetailsElement>('[data-ui-key="acceptance:historic"]')!.open, true);
+    await h.click("close-acceptance-delivery");
+    await browse(h, "prepare");
+    await h.openProcess();
+    assert.equal(field(h, "process-repository").value, "owner/draft");
+    assert.match(text(h, "process-message"), /no fallback/);
+    assert.equal(h.requests.length, 1);
+});
+
 test("process setting drafts survive SSE and stale-save errors without rebasing their revision", async (t) => {
     const value = state(), h = await setup(t, value);
+    await h.openProcess();
     await h.input("handoff-adapter", "github"); await h.input("process-repository", "owner/repo");
     h.render({ ...value, revision: 2 });
     assert.equal(field(h, "handoff-adapter").value, "github");
@@ -22,7 +79,8 @@ test("handoff export accepts only current completed-stage acceptance and explici
     value.process.acceptances = [{ id: "old", stageId: "requirements", snapshotPath: ".tandem\\requirements-r1.json",
         acceptedBy: { label: "Owner" }, acceptedAt: "earlier" }];
     const h = await setup(t, value);
-    assert.equal(disabled(h, "export-handoff"), true);
+    await h.openProcess();
+    assert.equal(h.document.querySelector("#export-handoff"), null);
     h.render({ ...value, revision: 2, process: { ...value.process, acceptances: [...value.process.acceptances,
         { id: "current", stageId: "requirements", snapshotPath: ".tandem\\requirements-r2.json", acceptedBy: { label: "Owner" }, acceptedAt: "now" }] } });
     assert.equal(disabled(h, "export-handoff"), false);
@@ -36,6 +94,7 @@ test("pending process mutation blocks completion while preserving newly edited s
     const value = state("prototype"); value.previewStatus = "ready";
     value.prototypeReview.designSpecArtifactId = "draft-feature-spec";
     const h = await setup(t, value);
+    await h.openProcess();
     let release!: (r: Response) => void;
     h.setFetch(() => new Promise((resolve) => { release = resolve; }));
     await h.click("save-process"); await h.confirm(); await h.click("complete-stage");
@@ -54,6 +113,7 @@ test("publication is explicit and adapter receipts survive adapter switching", a
     value.process.deliveryDraft = { id: "delivery", title: "Delivery", body: "Reviewed delivery draft",
         sourceFingerprint: "source", acceptanceIds: ["accepted"], base: "main", head: "work" };
     const h = await setup(t, value);
+    await h.openProcess();
     assert.match(text(h, "process-receipts"), /local \/ handoff/);
     await h.click("publish-delivery");
     await h.confirm(false);
@@ -64,6 +124,7 @@ test("publication is explicit and adapter receipts survive adapter switching", a
 test("GitHub intake never sends stale Local JSON to the selected adapter", async (t) => {
     const value = state(); value.process.settings.adapters.intake = "github";
     const h = await setup(t, value);
+    await h.openProcess();
     await h.input("intake-content", '{"title":"Old local data","body":"Do not send"}');
     await h.input("process-reference", "https://github.com/Example/Tandem/issues/23");
     h.setFetch(async () => response({ ...value, revision: 2 })); await h.click("import-intake"); await h.confirm();

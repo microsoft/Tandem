@@ -562,10 +562,13 @@ cannot reuse its consumed confirmation.
 
 ## Acceptance, export and process adapters
 
-Open **Acceptance, export and delivery** in Development for the optional advanced
-panel. Its Close button and Escape return focus to the opener; the controls are
-not required for ordinary Design work. Opening or closing it does not accept,
-export, publish or start work.
+Open **Project settings → Advanced handoffs & history** from discovery or
+Development. Close and Escape return focus to Project settings; drafts and
+history expansion are retained. These optional controls are not part of the
+everyday sidebar. Opening or closing them does not accept, export, publish or
+start work. Errors remain reachable through **Review handoff error**.
+The sidebar shows the Requirement ledger only when it has entries, omitting
+empty categories.
 
 Use **Capture Development outcome for review**, inspect the original Development
 outcome and captured artifact, then explicitly accept it. The projection binds
@@ -575,7 +578,8 @@ Failed, partial, unavailable and unverified outcomes stay labeled.
 
 Acceptance records attribution, not authenticated code-owner approval or a test
 pass. It does not start work. **Export accepted handoff** is a separate explicit
-operation writing `tandem-records`. Preparing a delivery draft does not export.
+operation writing local `tandem-records`, shown only for the selected snapshot's
+current acceptance. Preparing a delivery draft does not export.
 Source/Design drift requires a fresh capture and review before acceptance or
 publication.
 

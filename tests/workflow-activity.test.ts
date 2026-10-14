@@ -160,6 +160,40 @@ test("activity summary keeps one update and prominent blockers while raw operati
     assert.equal(h.requests.length, 0);
 });
 
+test("activity Details deduplicates only shared single-agent freshness and retains scoped unknown or distinct times", async t => {
+    const h = await reactHarness(t), value = state("prototype");
+    value.processing = { ...value.processing, status: "running", action: "build-prototype",
+        requestId: "request", runId: "run", requestedAt: binding.requestedAt };
+    const current = workflowBinding(value)!;
+    const timestamp = new Date(Date.now() - 65000).toISOString();
+    const earlier = new Date(Date.now() - 120000).toISOString();
+    const agent = { id: "agent", label: "Process Tandem answer", status: "running", operation: "view",
+        update: "", updateAt: null, lastNativeActivityAt: timestamp, pendingPermissions: 0, activeMs: 4000 };
+    for (const scenario of [
+        { overall: timestamp, times: [timestamp], lines: 1 },
+        { overall: timestamp, times: [earlier], lines: 2 },
+        { overall: timestamp, times: [null], lines: 2 },
+        { overall: null, times: [timestamp], lines: 2 },
+        { overall: null, times: [null], lines: 1 },
+        { overall: timestamp, times: [], lines: 1 },
+        { overall: timestamp, times: [timestamp, earlier], lines: 3 },
+        { overall: timestamp, times: [timestamp, timestamp], lines: 3 },
+    ]) {
+        const snapshot = { ...current, status: "running", lastNativeActivityAt: scenario.overall,
+            agents: scenario.times.map((time, index) => ({ ...agent, id: `agent-${index}`, label: `Agent ${index}`, lastNativeActivityAt: time })) };
+        const original = JSON.stringify(snapshot);
+        h.render({ ...value, revision: ++value.revision, workflowRuntime: snapshot }); await h.flush();
+        const details = h.get("workflow-activity-details");
+        const freshness = [...details.querySelectorAll("p")].filter(p => /^(Workflow|Agent):/.test(p.textContent!));
+        assert.equal(freshness.length, scenario.lines, JSON.stringify(scenario));
+        assert.match(freshness[0].textContent!, /^Workflow:/);
+        assert.equal(freshness.filter(p => p.textContent!.startsWith("Agent:")).length, scenario.lines - 1);
+        if (scenario.times.includes(null) && scenario.overall !== null) assert.match(details.textContent!, /Agent: No native activity observed yet/);
+        assert.equal(JSON.stringify(snapshot), original, "Rendering cannot reset or fabricate native timestamps.");
+    }
+    assert.equal(h.requests.length, 0);
+});
+
 test("workflow activity endpoint reads the exact native run and surfaces unavailable metadata without work", async () => {
     const h = await extensionHarness();
     let entry: Awaited<ReturnType<typeof h.api.startServer>> | undefined;

@@ -1,8 +1,6 @@
 import { useEffect, useState } from "react";
-import { Dialog } from "radix-ui";
 import type { HandoffAdmission } from "../development-handoff.js";
 import { canOpenDevelopment, useAction, useUi } from "./ui-context.js";
-import { ProcessPanel } from "./process-panel.js";
 import { useProjectView } from "./project-conversation.js";
 
 export function DevelopmentPanel({ active }: { active: boolean }) {
@@ -12,7 +10,6 @@ export function DevelopmentPanel({ active }: { active: boolean }) {
     const eligible = canOpenDevelopment(state);
     const recoveryNeeded = !project.active && (Boolean(project.error) || ["unknown", "execution-unknown", "failed", "closed"].includes(project.status));
     const snapshot = state.lifecycle.outputs.find(output => output.stageId === "prototype");
-    const [processOpen, setProcessOpen] = useState(false);
     const [check, setCheck] = useState(0);
     const reference = state.development;
     const sameSource = Boolean(reference && reference.snapshotPath === snapshot?.path);
@@ -21,7 +18,6 @@ export function DevelopmentPanel({ active }: { active: boolean }) {
     const checking = sameSource && receipt?.key !== key;
     const admission = receipt?.key === key ? receipt.admission : null;
     const receiptError = receipt?.key === key ? receipt.error : "";
-    useEffect(() => { if (!active) setProcessOpen(false); }, [active]);
     useEffect(() => {
         if (!active || !sameSource || !eligible) return;
         let cancelled = false;
@@ -69,16 +65,6 @@ export function DevelopmentPanel({ active }: { active: boolean }) {
                 })}>{admission?.status === "uncertain" ? "Reconcile saved handoff"
                     : admission?.status === "prepared" ? "Continue saved Prototype handoff"
                     : reference ? "Continue Design from updated Prototype" : "Continue Design from Prototype"}</button>}
-            <Dialog.Root open={processOpen && active} onOpenChange={setProcessOpen}>
-                <Dialog.Trigger asChild><button id="acceptance-delivery" className="plan-button secondary" type="button">Acceptance, export and delivery</button></Dialog.Trigger>
-                {active && <Dialog.Portal><Dialog.Overlay className="dialog-overlay process-dialog-overlay" />
-                    <Dialog.Content className="dialog-content process-dialog" onCloseAutoFocus={event => { if (!active) event.preventDefault(); }}>
-                        <div className="root-settings-heading"><Dialog.Title>Acceptance, export and delivery</Dialog.Title>
-                            <Dialog.Close id="close-acceptance-delivery" className="plan-button secondary">Close</Dialog.Close></div>
-                        <Dialog.Description>Optional advanced controls for recording acceptance, exporting saved outcomes and delivering reviewed work. These are not required to continue Design. Export does not publish.</Dialog.Description>
-                        <ProcessPanel development expanded />
-                    </Dialog.Content></Dialog.Portal>}
-            </Dialog.Root>
         </div>
         {snapshot && sameSource && <div className="development-handoff-status">
             <span role="status">{checking ? "Checking saved handoff..."

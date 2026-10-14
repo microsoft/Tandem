@@ -56,6 +56,11 @@ test("speech controls cover conversational fields and exclude process configurat
     assert.ok(h.document.getElementById(toggle.getAttribute("aria-describedby")!));
   }
   assert.equal(h.get("sketch-instruction").hasAttribute("data-speech-input"), true);
+  const value = dag();
+  value.revision++;
+  value.lifecycle.outputs = [{ stageId: "prepare", path: ".tandem\\prepare-r1.json", completedAt: value.updatedAt }];
+  h.render(value); await h.flush();
+  await h.openProcess();
   for (const name of ["intake-content", "handoff-approver"]) {
     assert.equal(h.get(name).hasAttribute("data-speech-input"), false);
   }

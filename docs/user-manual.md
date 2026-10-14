@@ -19,6 +19,10 @@ diagrams or concrete input/output examples, not just prose. Those views describe
 one agreement: check that the same behavior and boundaries appear consistently.
 Confirmed behavior, assumptions and unanswered questions are not interchangeable.
 
+The circled-dot **Current phase** marker identifies the working phase independently of the selected view;
+it does not mean an AI model is running. Empty requirement ledger sections stay hidden.
+Hosted windows keep the folder identity in the host header rather than repeating
+it in the sidebar; an unhosted canvas retains the sidebar name and full-path tooltip.
 Use the left navigation to browse, **Current work** to find ongoing work/attention,
 and **Project settings** to configure the project. Browsing does not authorize
 work. Development Conversation appears only in Development; its draft and

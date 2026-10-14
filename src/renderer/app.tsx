@@ -1,6 +1,6 @@
 import { Component, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ErrorInfo, type ReactNode } from "react";
 import { AlertDialog, Tabs, Tooltip } from "radix-ui";
-import { ArrowRight, Check, ChevronDown, ClipboardList, Code, FileText, FolderOpen, GitBranch, Layers, ListChecks, Monitor, PanelLeft, PanelLeftClose, PanelLeftOpen, PencilRuler, Play, RotateCcw, Sparkles, X } from "lucide-react";
+import { ArrowRight, Check, ChevronDown, CircleDot, ClipboardList, Code, FileText, FolderOpen, GitBranch, Layers, ListChecks, Monitor, PanelLeft, PanelLeftClose, PanelLeftOpen, PencilRuler, Play, RotateCcw, Sparkles, X } from "lucide-react";
 import { lifecycleStages } from "../workflow.js";
 import type { LifecycleStageId } from "../types.js";
 import { StudioStore } from "./state-store.js";
@@ -10,7 +10,6 @@ import { RequirementsPanel } from "./requirements-panel.js";
 import { SketchPanel, SketchCompletionContext, isSketchRevisionApproved } from "./sketch-panel.js";
 import { PrototypePanel, prototypeCompletionBlocked } from "./prototype-panel.js";
 import { ArtifactList, ArtifactsPanel, DevelopmentArtifactList } from "./artifacts-panel.js";
-import { ProcessPanel } from "./process-panel.js";
 import { DevelopmentPanel } from "./development-panel.js";
 import { WorkflowActivity } from "./workflow-activity.js";
 import { ProjectConversation, ProjectConversationProvider, useProjectView } from "./project-conversation.js";
@@ -184,7 +183,9 @@ function GoalEntry() {
   </section>;
 }
 
-function Header({ version, connectionError, developmentView }: { version: string; connectionError: string; developmentView: boolean }) {
+function Header({ version, connectionError, developmentView, onHostedChange }: {
+  version: string; connectionError: string; developmentView: boolean; onHostedChange(hosted: boolean): void;
+}) {
   const { state } = useUi();
   const { maintenanceError } = useProjectView();
   const stageIndex = Math.max(0, lifecycleStages.findIndex((stage) => stage.id === state.lifecycle.currentStage));
@@ -207,6 +208,7 @@ function Header({ version, connectionError, developmentView }: { version: string
     reset: () => { throw new Error("Use Preparation actions to restart Preparation."); },
     signIn: () => { throw new Error("Use the voice input's sign-in control."); },
     cancelSignIn: () => { throw new Error("Use the voice input's cancel control."); } });
+  useEffect(() => { onHostedChange(hosted); }, [hosted, onHostedChange]);
   return <header className="topbar" hidden={hosted} data-hosted={hosted || undefined}><Brand /><div className="topbar-actions">
     <div id="lifecycle-status" className="lifecycle" aria-label="Development lifecycle" hidden={isGoalEntry(state)}>
       <span id="current-stage" className="stage" aria-label={"Current lifecycle stage: " + lifecycleStages[stageIndex].label}>
@@ -268,6 +270,7 @@ function Workspace(props: WorkspaceProps) {
   const workspace = useRef<HTMLElement>(null);
   const [width, setWidth] = useState(minimumContextWidth);
   const [contextCollapsed, setContextCollapsed] = useState(false);
+  const [headerHosted, setHeaderHosted] = useState(false);
   const [maximum, setMaximum] = useState(minimumContextWidth);
   const [dragging, setDragging] = useState<number | null>(null);
   const [nextAction, setNextAction] = useState<{ id: string; label: string; revealId: string | null } | null>(null);
@@ -421,7 +424,7 @@ function Workspace(props: WorkspaceProps) {
         <aside id="requirements-pane" className="requirements" aria-label="Project context" onKeyDown={(event) => {
           if (event.key === "Escape" && contextOpen) { setContextOpen(false); document.getElementById("context-toggle")?.focus(); event.preventDefault(); }
         }}>
-          <Header version={props.version} connectionError={props.connectionError} developmentView={projectView.active} />
+          <Header version={props.version} connectionError={props.connectionError} developmentView={projectView.active} onHostedChange={setHeaderHosted} />
           <nav className="project-navigation" aria-label="Project navigation">
             <button id="project-settings" type="button" className="plan-button" onClick={() => projectView.command("settings")}>Project settings</button>
             <Tabs.List id="project-contents" className="preview-tabs project-tabs" aria-label="Project contents">
@@ -431,13 +434,17 @@ function Workspace(props: WorkspaceProps) {
                 const label = tab.stage === "sketch" ? "Drawings" : tab.label;
                 const designStatus = tab.stage === "development" && projectView.designRevision
                   ? projectView.designChanged ? "New Design output" : "Design available" : null;
+                const currentPhase = !skipped && (projectView.developmentEntered
+                  ? tab.stage === "development" : current !== "development" && tab.stage === current);
                 return <Tabs.Trigger key={tab.value} value={tab.value} id={tab.id + "-tab"}
                 className="preview-tab" data-stage-id={tab.stage} disabled={tab.stage === "development" ? !canOpenDevelopment(state) : tab.stage !== "prepare" && !canBrowseStage(state, tab.stage)}
                 title={`${skipped?.reason || output?.path || label}${designStatus ? `. ${designStatus}` : ""}`}
-                aria-label={`${label}${skipped ? `, not applicable. ${skipped.reason}` : ""}${designStatus ? `, ${designStatus}` : ""}`}
+                aria-current={currentPhase ? "step" : undefined}
+                aria-label={`${label}${currentPhase ? ", Current phase" : ""}${skipped ? `, not applicable. ${skipped.reason}` : ""}${designStatus ? `, ${designStatus}` : ""}`}
                 aria-controls={tab.id + "-panel"}><tab.icon size={15} aria-hidden="true" />
-                <span className="project-tab-label">{label}{designStatus === "Design available"
+                <span className="project-tab-label"><span className="project-tab-name">{label}</span>{designStatus === "Design available"
                   && <span className="project-availability" title="Design available" aria-hidden="true" />}</span>
+                {currentPhase && <span className="current-phase" title="Current phase" aria-hidden="true"><CircleDot size={13} /></span>}
                 {designStatus === "New Design output" && <span className="artifact-count">New output</span>}
                 {tab.stage === "prototype" && state.prototypeFlow?.pendingCheckpointId && <span className="artifact-count">Ready to inspect</span>}
               </Tabs.Trigger>; })}
@@ -448,8 +455,8 @@ function Workspace(props: WorkspaceProps) {
               Current work{projectView.attention ? ` (${projectView.attention} needs attention)` : ""}
             </button>
           </nav>
-          <div className="context-pane-heading">
-            <span className="project-folder" title={projectView.entry.projectPath}>{projectView.entry.projectPath.split(/[\\/]/).filter(Boolean).at(-1)}</span>
+          <div className="context-pane-heading" data-hosted={headerHosted || undefined}>
+            <span className="project-folder" hidden={headerHosted} title={projectView.entry.projectPath}>{projectView.entry.projectPath.split(/[\\/]/).filter(Boolean).at(-1)}</span>
             <button id="toggle-context-pane" className="context-collapse" type="button" aria-controls="requirements-pane"
               aria-expanded={!contextCollapsed} aria-label={contextCollapsed ? "Expand project context" : "Collapse project context"}
               title={contextCollapsed ? "Expand project context" : "Collapse to stage activity bar"}
@@ -475,9 +482,12 @@ function Workspace(props: WorkspaceProps) {
             </div>
             <DevelopmentArtifactList active={developmentView} />
           </section>
-          {!developmentView && <ProcessPanel />}
-          <details className="section ledger-details"><summary className="eyebrow ledger-summary">Requirement ledger</summary>
-            <div className="ledger">{(["confirmed", "assumed", "deferred"] as const).map((kind) => <div key={kind}><h3>{kind[0].toUpperCase() + kind.slice(1)}</h3><ul id={kind}>{(state[kind] || []).map((text, index) => <li key={index}>{text}</li>)}</ul></div>)}</div>
+          {projectView.processError && <div role="alert" className="stage-message" data-status="error">
+            <p>{projectView.processError}</p>
+            <button type="button" className="plan-button secondary" onClick={() => projectView.command("process")}>Review handoff error</button>
+          </div>}
+          <details className="section ledger-details" hidden={!(["confirmed", "assumed", "deferred"] as const).some(kind => state[kind]?.length)}><summary className="eyebrow ledger-summary">Requirement ledger</summary>
+            <div className="ledger">{(["confirmed", "assumed", "deferred"] as const).filter(kind => state[kind]?.length).map((kind) => <div key={kind}><h3>{kind[0].toUpperCase() + kind.slice(1)}</h3><ul id={kind}>{state[kind].map((text, index) => <li key={index}>{text}</li>)}</ul></div>)}</div>
           </details>
         </aside>
         <div id="studio-splitter" className={"splitter" + (dragging !== null ? " is-dragging" : "")} role="separator" tabIndex={0}
