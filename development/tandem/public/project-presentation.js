@@ -127,7 +127,8 @@ export function installProjectPresentation({ document, window, changed, settings
       renderReload();
       update(); changed();
     } else if (message.type === "layout" && typeof message.stacked === "boolean"
-      && Number.isFinite(message.conversationWidth) && message.conversationWidth >= 0 && message.conversationWidth <= 20000) {
+      && (message.conversationWidth === null
+        || Number.isFinite(message.conversationWidth) && message.conversationWidth >= 0 && message.conversationWidth <= 20000)) {
       document.body.dataset.projectStacked = String(message.stacked);
       layoutChanged?.({ stacked: message.stacked, conversationWidth: message.conversationWidth });
     } else if (message.type === "output-open" && typeof message.id === "string" && typeof message.binding === "string") {

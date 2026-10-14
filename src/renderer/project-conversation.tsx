@@ -152,8 +152,10 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
             divider.setAttribute("aria-valuemax", String(Math.round(workspace.clientWidth - parseFloat(columns[0]!) - 287)));
             divider.setAttribute("aria-valuetext", `Conversation ${Math.round(conversationWidth)} pixels`);
         }
-        send({ type: "layout", stacked: window.innerWidth < 800,
-            conversationWidth });
+        // Development owns its split inside the iframe, not the root's Discovery history track.
+        const developmentWidth = parseFloat(workspace.style.getPropertyValue("--development-conversation-width"));
+        send({ type: "layout", stacked: (frame.current?.clientWidth ?? 0) <= 660,
+            conversationWidth: Number.isFinite(developmentWidth) ? developmentWidth : null });
     }
     async function activate(retry = false) {
         if (!canOpenDevelopment(latest.current.state)) { setView(v => ({ ...v, error: "Finish current discovery work or resolve ownership before activating Development." })); return; }
@@ -248,9 +250,12 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
             }
             if (message.type === "show-design") { latest.current.showDesign(); return; }
             if (message.type === "settings-closed") { document.getElementById("project-settings")?.focus(); return; }
-            if (message.type === "conversation-resize" && window.innerWidth >= 800
-                && Number.isFinite(message.width) && message.width >= 300 && message.width <= window.innerWidth) {
-                document.getElementById("studio-workspace")?.style.setProperty("--conversation-width", `${message.width}px`);
+            if (message.type === "conversation-resize"
+                && (message.width === null || Number.isFinite(message.width) && message.width >= 300
+                    && message.width <= window.innerWidth)) {
+                const style = document.getElementById("studio-workspace")?.style;
+                if (message.width === null) style?.removeProperty("--development-conversation-width");
+                else style?.setProperty("--development-conversation-width", `${message.width}px`);
                 syncLayout();
                 return;
             }

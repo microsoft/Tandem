@@ -328,9 +328,12 @@ keeps annotations and unsent attachments with their original composer, rather
 than creating a second editor. Standalone Stage 2 retains its full shell.
 
 Embedded Development uses the framework's shared color and control tokens.
-Saved appearance settings apply to the whole project surface. Resizing the
-artifact/conversation split carries across artifact navigation; constrained
-windows stack the contents without replacing the conversation or its draft.
+Saved appearance settings apply to the whole project surface. Development uses
+its own responsive Design/Conversation split: Conversation starts at 45% of the
+embedded workspace, or 53% when that workspace is at most 950px wide. Its existing
+pointer/keyboard divider retains explicit resizing across artifact navigation,
+independently of Discovery's read-only history width. At 660px or less of embedded
+width, the contents stack without replacing the conversation or its draft.
 Source diagrams and documents retain their own authored styling.
 Navigation labels remain fully visible in constrained sidebars. A compact dot
 beside Development means **Design available**, with that tooltip and accessible

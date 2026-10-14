@@ -109,12 +109,17 @@
 .human-app[data-project-panel] .artifact-navigation-row[aria-label="Artifact categories"]:has(> [data-artifact-group="ungrouped"]:only-child) { display: none; }
 .human-app[data-project-panel][data-design-content="empty"] .design-assessment { margin: 8px; padding: 12px; }
 .human-app[data-project-panel] #messages { padding: 12px; }
+.human-app[data-project-panel] .human-conversation { overflow: auto; }
+.human-app[data-project-panel] .conversation-layout { min-height: 80px; }
 .human-app[data-project-panel] .command-bar { padding: 10px 12px; border-top: 1px solid var(--border); background: var(--surface); }
 .human-app[data-project-panel] #project-message-context { gap: var(--studio-control-gap); }
 .human-app[data-project-panel] #project-message-context p { margin: 4px 0; }
 .human-app[data-project-panel] .project-output-view { padding: 12px; overflow: auto; }
 .human-app[data-project-panel] .project-output-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .human-app[data-project-panel] .project-output-actions button { font: inherit; padding: var(--studio-control-padding); min-height: var(--studio-control-height); background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; }
+.human-app[data-project-panel][data-project-stacked="false"] .human-conversation {
+  height: 100%; min-height: 0;
+}
 .human-app[data-project-panel][data-project-stacked="true"][data-project-design="true"] .human-layout {
   display: flex; flex-direction: column; overflow: auto;
 }
@@ -129,9 +134,6 @@
 }
 .human-app[data-project-panel][data-project-stacked="true"][data-design-content="empty"] .human-design > .panel-heading { display: none; }
 .human-app[data-project-panel][data-project-stacked="true"][data-design-content="empty"] .design-assessment { min-height: 0; }
-.human-app[data-project-panel][data-project-stacked="true"][data-design-content="empty"] .human-conversation {
-  flex: 1 0 300px; min-height: 300px;
-}
 @media (pointer: coarse) {
   .human-app[data-project-panel] { --studio-control-height: 44px; --studio-tab-height: 44px; }
 }

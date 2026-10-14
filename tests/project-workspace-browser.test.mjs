@@ -111,6 +111,23 @@ test("attachment-only drafts and pending native submissions cannot be silently m
   assert.equal(sent.some(item => ["activate", "discovery-send"].includes(item.type)), false);
 });
 
+test("project layout accepts responsive defaults without treating invalid widths as defaults", t => {
+  const dom = new JSDOM('<body data-project-panel="workspace" data-project-origin="http://127.0.0.1:4000" data-project-channel="layout"><form id="composer"><textarea id="message"></textarea></form>');
+  t.after(() => dom.window.close());
+  const layouts = [], parent = { postMessage() {} };
+  Object.defineProperty(dom.window, "parent", { value: parent });
+  installProjectPresentation({ document: dom.window.document, window: dom.window, changed() {},
+    layoutChanged: layout => layouts.push(layout) });
+  const receive = conversationWidth => dom.window.dispatchEvent(new dom.window.MessageEvent("message", {
+    source: parent, origin: "http://127.0.0.1:4000",
+    data: { protocol: "tandem-project/v1", channel: "layout", type: "layout", stacked: false, conversationWidth },
+  }));
+  for (const width of [undefined, "400", -1, NaN, Infinity, 20001]) receive(width);
+  assert.deepEqual(layouts, []);
+  for (const width of [null, 420, null]) receive(width);
+  assert.deepEqual(layouts, [null, 420, null].map(conversationWidth => ({ stacked: false, conversationWidth })));
+});
+
 test("embedded Settings exposes one shared effort choice with busy, unsupported and partial-error readback", t => {
   const dom = new JSDOM(`<body data-project-panel="workspace" data-project-origin="http://127.0.0.1:4000" data-project-channel="effort">
     <form id="composer"><textarea id="message"></textarea></form><label id="private-effort-setting"></label>
@@ -185,7 +202,7 @@ test("composed diagnostics presents only the validated supported root reload act
 });
 
 test("whole project workspace uses one actual embedded renderer for navigation, drafting, activation and recovery",
-  { skip: !browserAvailable, timeout: 90_000 }, async t => {
+  { skip: !browserAvailable, timeout: 150_000 }, async t => {
     const root = await mkdtemp(join(tmpdir(), "tandem-project-ui-"));
     const events = new HumanLoopEvents(), mutations = [], nativeRequests = [];
     let voiceLoginAborted = false;
@@ -194,6 +211,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       workspacePath: root, policy: DEFAULT_POLICY };
     const designBinding = { revisionId: "fixture-design", digest: "a".repeat(64) };
     let currentDesignBinding = designBinding;
+    let emptyDesign = false;
     let nativeState = replayHumanLoopLedger(createHumanLoopLedger(owner, designBinding)).state;
     nativeState.requests.push({ id: "fixture-origin", message: "Previously saved work", receivedAt: "2026-10-10T08:00:00Z", status: "completed", stopId: null,
       blockingAnswerRefs: [], questionGatesReleased: true });
@@ -221,7 +239,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
           content: "Read-only Agent response; deterministic fixture, not a model.",
           timestamp: new Date(Date.parse(request.receivedAt) + 1).toISOString(),
         }))],
-      currentDesign: async () => ({ binding: currentDesignBinding, content: sharedDesignExampleV3() }),
+      currentDesign: async () => emptyDesign ? null : ({ binding: currentDesignBinding, content: sharedDesignExampleV3() }),
       commands: { read: async () => ({ apps: [], commands: [] }) },
       modelSettings: async () => ({ models: [{ id: "fixture", name: "Fixture", supportedReasoningEfforts: ["low"] }],
         actual: "fixture", actualReasoningEffort: "low", desired: "fixture", canChange: true,
@@ -319,7 +337,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
           }
           json({ projectPath: root, startingPath });
         }
-        else if (path === "/api/project-entry/open") json({ developmentContext: false, developmentStarted: false });
+        else if (path === "/api/project-entry/open") json({ developmentContext: startingPath === "development", developmentStarted: false });
         else if (path === "/api/development/view") json({ url: provider.url, channel: "whole-project-fixture" });
         else if (path === "/api/settings/project-effort") json({ desired: "low", changing: false,
           stage1: { actual: "low", desired: "low", model: "fixture", status: "applied", supported: ["low"], error: null },
@@ -364,7 +382,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         close: async () => { stopped = true; installationStatus = "closed"; events.touch(); return {}; },
         read: async () => ({ status: installationStatus,
         canStart: !active, canRetry: installationStatus === "prepared", canReopen: stopped,
-        reason: installationStatus === "prepared" ? "Owned startup failed; retry is available." : stopped ? "Closed; saved history retained." : null }) }),
+        reason: installationStatus === "prepared" ? "Git observation failed: fatal: not a git repository (or any of the parent directories): .git" : stopped ? "Closed; saved history retained." : null }) }),
       permissions: { list: () => accessRequests, async decide(id, decision, sessionId) {
         mutations.push({ path: "native-consent", id, decision, sessionId });
         accessRequests = accessRequests.filter(item => item.id !== id); events.touch();
@@ -663,7 +681,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         if (!frame) await new Promise(done => setTimeout(done, 30));
       }
       assert.ok(frame);
-      const world = await browser.call("Page.createIsolatedWorld", { frameId: frame.frame.id, worldName: "project-ui" });
+      let world = await browser.call("Page.createIsolatedWorld", { frameId: frame.frame.id, worldName: "project-ui" });
       const inside = async expression => {
         const result = await browser.call("Runtime.evaluate", { contextId: world.executionContextId, expression,
           returnByValue: true, awaitPromise: true });
@@ -675,7 +693,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
           if (await inside(expression)) return;
           await new Promise(done => setTimeout(done, 30));
         }
-        assert.fail(`Embedded condition did not settle: ${expression}\n${JSON.stringify(browser.exceptions)}\n${await inside('document.body.innerText')}\n${await (await fetch(new URL("api/snapshot", provider.url))).text()}`);
+        assert.fail(`Embedded condition did not settle: ${expression}\n${JSON.stringify(browser.exceptions)}\nRoot style: ${await browser.evaluate('document.querySelector("#studio-workspace").getAttribute("style")')}\nPrivate layout: ${await inside('JSON.stringify({width:innerWidth,style:document.querySelector(".human-layout").getAttribute("style"),conversation:document.querySelector("#conversation-panel").getBoundingClientRect().width})')}\n${await inside('document.body.innerText')}\n${await (await fetch(new URL("api/snapshot", provider.url))).text()}`);
       };
       const click = async (selector, embedded = false, activate = true) => {
         const evaluate = embedded ? inside : browser.evaluate;
@@ -690,6 +708,55 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         if (!activate) return { local, offset };
         for (const type of ["mousePressed", "mouseReleased"]) await browser.call("Input.dispatchMouseEvent",
           { type, x: local.x + offset.x, y: local.y + offset.y, button: "left", clickCount: 1 });
+      };
+      const checkDevelopmentLayout = async label => {
+        for (const [width, height] of [[1893, 1000], [1360, 1000], [980, 620], [920, 620], [841, 620], [840, 620], [390, 620], [1360, 480]]) {
+          await browser.call("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+          await browser.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+          const frameWidth = await browser.evaluate('document.querySelector("#project-conversation-frame").clientWidth');
+          const preferred = await browser.evaluate('parseFloat(document.querySelector("#studio-workspace").style.getPropertyValue("--development-conversation-width")) || null');
+          await waitInside(`innerWidth === ${frameWidth} && document.body.dataset.projectStacked === "${frameWidth <= 660}"`);
+          await inside('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+          const fit = await inside(`(() => {
+            const box = selector => { const e=document.querySelector(selector), r=e.getBoundingClientRect();
+              return {width:r.width,height:r.height,left:r.left,right:r.right,top:r.top,bottom:r.bottom}; };
+            return {design:box("#design-panel"),conversation:box("#conversation-panel"),layout:box(".human-layout"),
+              composer:box("#composer"),messages:box(".conversation-layout"),
+              scrollable:document.querySelector("#conversation-panel").scrollHeight>document.querySelector("#conversation-panel").clientHeight
+                && getComputedStyle(document.querySelector("#conversation-panel")).overflowY==="auto",
+              stacked:document.body.dataset.projectStacked==="true",
+              separatorHidden:document.querySelector("#workspace-divider").hidden,
+              overflow:document.documentElement.scrollWidth>innerWidth+1};
+          })()`);
+          assert.equal(fit.overflow, false, `${label} ${width}x${height}: ${JSON.stringify(fit)}`);
+          assert.equal(await browser.evaluate('document.documentElement.scrollWidth<=innerWidth+1'), true);
+          if (!fit.stacked) {
+            const share = frameWidth <= 950 ? .53 : .45;
+            const expected = preferred === null ? fit.layout.width * share : Math.max(300, Math.min(fit.layout.width - 280, preferred));
+            assert.ok(Math.abs(fit.conversation.width - expected) < 2,
+              `Development uses its own default or explicit width: ${label} ${width}x${height} ${JSON.stringify(fit)}`);
+            assert.ok(fit.conversation.width >= (preferred === null ? 340 : 300) && fit.design.width >= 280);
+            assert.ok(fit.design.right <= fit.conversation.left + 1);
+            assert.ok(fit.composer.bottom <= fit.conversation.bottom + 1 || fit.scrollable,
+              `Composer fits or has an explicit scrolling path: ${JSON.stringify(fit)}`);
+          } else {
+            assert.ok(Math.abs(fit.conversation.width - fit.layout.width) <= 20);
+            assert.ok(fit.design.bottom <= fit.conversation.top + 1);
+          }
+          assert.equal(fit.separatorHidden, fit.stacked);
+          assert.ok(fit.messages.height >= 60, `Conversation retains a readable scrolling region: ${JSON.stringify(fit)}`);
+          for (const selector of ["#message", "#send"]) {
+            const geometry = await inside(`(() => { const e=document.querySelector("${selector}"); e.scrollIntoView({block:"nearest"});
+              const r=e.getBoundingClientRect(), hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);
+              return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height,reachable:hit===e||e.contains(hit)}; })()`);
+            assert.ok(geometry.left >= 0 && geometry.right <= frameWidth + 1 && geometry.width > 20 && geometry.height > 20);
+            assert.ok(geometry.reachable, `Composer control is reachable at ${label} ${width}x${height}: ${JSON.stringify(geometry)}`);
+          }
+          t.diagnostic(`${label} ${width}x${height}: Design ${Math.round(fit.design.width)}px, Conversation ${Math.round(fit.conversation.width)}px, stacked=${fit.stacked}`);
+          if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `${label}-${width}x${height}.png`), await browser.screenshot());
+        }
+        await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 1000, deviceScaleFactor: 1, mobile: false });
+        await waitInside('document.body.dataset.projectStacked==="false"');
       };
       await waitInside('document.body.dataset.projectWorking==="development"');
       await waitInside('document.querySelector("#backbone-state").textContent==="Design unverified"');
@@ -707,10 +774,17 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       assert.equal(await inside('document.querySelector("#initialize").hidden'), true, "No redundant setup action while entry initializes.");
       installationStatus = "prepared"; events.touch();
       await waitInside('!document.querySelector("#initialize").hidden && !document.querySelector("#initialize").disabled');
+      await checkDevelopmentLayout("startup-error");
       assert.equal(await inside('document.querySelector("#message").disabled && document.querySelector("#send").disabled'), true);
       assert.equal(nativeRequests.length, 0);
       await click("#initialize", true);
       await waitInside('!document.querySelector("#send").disabled');
+      emptyDesign = true; events.touch();
+      await waitInside('document.querySelector("#assessment-card").textContent.includes("No Design has been published")');
+      await checkDevelopmentLayout("verified-empty-design");
+      emptyDesign = false; events.touch();
+      await waitInside('document.querySelector(".shared-sketch") !== null');
+      await checkDevelopmentLayout("active-design");
       await browser.call("Emulation.setDeviceMetricsOverride", { width: 1233, height: 620, deviceScaleFactor: 1, mobile: false });
       await waitInside('document.querySelector(".shared-sketch") !== null');
       const designGeometry = await inside(`(() => {const figure=document.querySelector(".shared-sketch").getBoundingClientRect(),
@@ -734,7 +808,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       assert.equal(await browser.evaluate('document.querySelector("#usage-input").disabled'), true, "Earlier inputs are read-only while Development owns current work.");
       for (const width of [920, 390]) {
         await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 1000, deviceScaleFactor: 1, mobile: false });
-        await waitInside(`document.body.dataset.projectStacked==="${width < 800}"`);
+        await waitInside('document.body.dataset.projectStacked==="true"');
         assert.equal(await browser.evaluate('document.querySelector("#project-conversation-frame").hidden && document.querySelector("#project-conversation-frame").getBoundingClientRect().height === 0'), true,
           `Private chat is not visible in an earlier phase at ${width}px.`);
         await browser.waitFor('document.querySelector("#discovery-history").hidden');
@@ -742,9 +816,8 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
           "Unchosen secondary history collapses at a constrained width rather than taking artifact space.");
       }
       await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 1000, deviceScaleFactor: 1, mobile: false });
-      await waitInside('document.body.dataset.projectStacked==="false"');
       await click("#development-tab");
-      await waitInside('document.body.dataset.projectDesign==="true"');
+      await waitInside('document.body.dataset.projectDesign==="true" && document.body.dataset.projectStacked==="false"');
       assert.equal(await inside('document.querySelector("#messages").textContent.includes("Discovery evidence")'), false);
       assert.equal(await browser.evaluate('document.querySelector("#discovery-history") === null'), true);
       const checkRootChrome = async () => {
@@ -882,13 +955,12 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       assert.equal(await browser.evaluate('document.querySelector("#project-conversation-frame").hidden'), true);
       assert.equal(await inside('document.querySelector("#message").value'), "As a user, I keep my draft while viewing Design.");
       const returnedWidth = await conversationWidth();
-      assert.ok(Math.abs(returnedWidth - initialWidth - 10) < 2,
-        `Development resizing follows the conversation into discovery: initial ${initialWidth}, returned ${returnedWidth}, ${await browser.evaluate('document.querySelector("#studio-workspace").getAttribute("style")')}.`);
+      assert.ok(Math.abs(returnedWidth - 320) < 2, "Development resizing must not widen Discovery's read-only history.");
       await click("#project-conversation-divider");
       await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "ArrowRight", windowsVirtualKeyCode: 39 });
-      await browser.waitFor(`Math.abs(document.querySelector("#project-conversation").getBoundingClientRect().width-${initialWidth - 14})<2`);
+      await browser.waitFor(`Math.abs(document.querySelector("#project-conversation").getBoundingClientRect().width-300)<2`);
       await click("#development-tab");
-      await waitInside(`document.body.dataset.projectDesign==="true" && Math.abs(document.querySelector("#conversation-panel").getBoundingClientRect().width-${initialWidth - 14})<2`);
+      await waitInside(`document.body.dataset.projectDesign==="true" && Math.abs(document.querySelector("#conversation-panel").getBoundingClientRect().width-${initialWidth + 10})<2`);
       await click("#message", true);
       await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "a", windowsVirtualKeyCode: 65, modifiers: 2 });
       await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "a", windowsVirtualKeyCode: 65, modifiers: 2 });
@@ -1039,6 +1111,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       }
       await click('#question-panel textarea', true);
       await browser.call("Input.insertText", { text: "Keep the current approved scope." });
+      await checkDevelopmentLayout("active-question");
       await click('[data-human-loop-action="submitAnswers"]', true);
       await waitInside('document.querySelector("#question-panel").textContent.includes("Submitted answer:")');
       assert.equal(nativeRequests.length, 2);
@@ -1080,6 +1153,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await waitInside('Boolean(document.querySelector(".access-request-picker select"))');
       await click("#development-tab");
       await waitInside('document.body.dataset.projectDesign==="true"');
+      await checkDevelopmentLayout("active-permissions");
       await click("#workspace-divider", true);
       for (let step = 0; step < 60 && await inside('document.querySelector("#conversation-panel").getBoundingClientRect().width > 325'); step++) {
         for (const type of ["keyDown", "keyUp"]) await browser.call("Input.dispatchKeyEvent",
@@ -1231,6 +1305,47 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await click("#initialize", true);
       await waitInside('document.querySelector("#current-state").textContent.includes("Ready")');
       assert.equal(stopped, false); assert.equal(nativeRequests.length, 2, "Reopen does not replay conversation.");
+      startingPath = "development"; active = false; installationStatus = "prepared";
+      await reloadRoot();
+      await browser.waitFor('document.querySelector("#studio-workspace")?.dataset.development==="true" && Boolean(document.querySelector("#project-conversation-frame"))');
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const tree = await browser.call("Page.getFrameTree");
+        const next = tree.frameTree.childFrames?.find(item => item.frame.url.startsWith(provider.url));
+        if (next) { frame = next; break; }
+        await new Promise(done => setTimeout(done, 30));
+      }
+      world = await browser.call("Page.createIsolatedWorld", { frameId: frame.frame.id, worldName: "direct-development-ui" });
+      await waitInside('document.body.dataset.projectWorking==="development" && document.querySelector("#notice").textContent.includes("not a git repository")');
+      await checkDevelopmentLayout("direct-development-error");
+      assert.equal(nativeRequests.length, 2, "Direct entry and layout cannot send model requests or repair Git.");
+      const beforeDrag = await inside('document.querySelector("#conversation-panel").getBoundingClientRect().width');
+      const drag = async cancel => {
+        const point = await click("#workspace-divider", true, false);
+        const x = point.local.x + point.offset.x, y = point.local.y + point.offset.y;
+        await browser.call("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
+        await browser.call("Input.dispatchMouseEvent", { type: "mouseMoved", x: x - 80, y, button: "left", buttons: 1 });
+        await waitInside(`Math.abs(document.querySelector("#conversation-panel").getBoundingClientRect().width-${beforeDrag + 80})<2`);
+        if (cancel) await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", windowsVirtualKeyCode: 27 });
+        await browser.call("Input.dispatchMouseEvent", { type: "mouseReleased", x: x - 80, y, button: "left", clickCount: 1 });
+      };
+      await drag(true);
+      await waitInside(`Math.abs(document.querySelector("#conversation-panel").getBoundingClientRect().width-${beforeDrag})<2`);
+      await browser.waitFor('document.querySelector("#studio-workspace").style.getPropertyValue("--development-conversation-width")===""');
+      assert.equal(await browser.evaluate('document.querySelector("#studio-workspace").style.getPropertyValue("--development-conversation-width")'), "",
+        "Cancelling the first drag restores responsive defaults, not a fixed pixel width.");
+      await drag(false);
+      await browser.call("Emulation.setDeviceMetricsOverride", { width: 390, height: 620, deviceScaleFactor: 1, mobile: false });
+      await waitInside('document.body.dataset.projectStacked==="true"');
+      await browser.call("Emulation.setDeviceMetricsOverride", { width: 1893, height: 1000, deviceScaleFactor: 1, mobile: false });
+      await waitInside(`!document.querySelector("#workspace-divider").hidden && Math.abs(document.querySelector("#conversation-panel").getBoundingClientRect().width-${beforeDrag + 80})<2`);
+      await click("#workspace-divider", true);
+      for (const [key, code, conversation] of [["End", 35, 300], ["Home", 36, null]]) {
+        await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key, windowsVirtualKeyCode: code });
+        await waitInside(conversation ? `Math.abs(document.querySelector("#conversation-panel").getBoundingClientRect().width-${conversation})<2`
+          : 'Math.abs(document.querySelector("#design-panel").getBoundingClientRect().width-280)<2');
+        assert.equal(await inside('document.activeElement.id'), "workspace-divider");
+        assert.match(await inside('document.querySelector("#workspace-divider").getAttribute("aria-valuetext")'), /Design \d+%, Conversation \d+%/);
+      }
       assert.deepEqual(browser.exceptions, []);
       t.diagnostic(JSON.stringify({ rootMutations: mutations.map(x => x.path), nativeRequests: nativeRequests.length,
         preservedIframe: frame.frame.id, widths: [1360, 980, 390], permissionWidths: [1360, 980, 920, 390],
