@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { Collapsible } from "radix-ui";
+import { Collapsible, Dialog } from "radix-ui";
 import { Check, ChevronDown, Download, FileText, FolderOpen, RefreshCw, Save, Send, Settings, ShieldCheck } from "lucide-react";
 import type { AcceptanceRecord } from "../accepted-artifacts.js";
 import type { IndependentVerdict } from "../execution-proof.js";
@@ -63,7 +63,7 @@ function ProcessSection({ name, label, children, outer = false, expanded = false
   return <Collapsible.Root open={open} onOpenChange={setOpen} asChild>
     <section className={outer ? "section process-controls" : "process-section"}>
       <Collapsible.Trigger asChild>
-        <button type="button" className={outer ? "eyebrow ledger-summary" : "ledger-summary"}>
+        <button id={`process-${name}-toggle`} type="button" className={outer ? "eyebrow ledger-summary" : "ledger-summary"}>
           <ChevronDown size={14} aria-hidden="true" /> {label}
         </button>
       </Collapsible.Trigger>
@@ -72,9 +72,13 @@ function ProcessSection({ name, label, children, outer = false, expanded = false
   </Collapsible.Root>;
 }
 
+function ProcessDetails({ name, children }: { name: string; children: ReactNode }) {
+  const [open, setOpen] = useDraft(`process-detail:${name}`, false);
+  return <details data-ui-key={name} open={open} onToggle={event => setOpen(event.currentTarget.open)}>{children}</details>;
+}
+
 function AcceptanceDetails({ record, current }: { record: AcceptanceRecord; current: boolean }) {
-  return <details data-ui-key={`acceptance:${record.id}`}
-    data-status-help="Acceptance records attribution, not authenticated code-owner approval.">
+  return <ProcessDetails name={`acceptance:${record.id}`}>
     <summary>{stageLabel(record.stageId)} · {current ? "Current snapshot" : "Historical snapshot"} · {record.acceptedAt}</summary>
     <p>Accepted by {record.acceptedBy.label}.</p>
     <pre>{[
@@ -89,11 +93,11 @@ function AcceptanceDetails({ record, current }: { record: AcceptanceRecord; curr
       `Upstream: ${JSON.stringify(record.upstream || [], null, 2)}`,
       `Artifacts: ${JSON.stringify(record.artifactHashes || [], null, 2)}`,
     ].join("\n")}</pre>
-  </details>;
+  </ProcessDetails>;
 }
 
 function EvidenceRecord({ record, current, scope }: { record: CommandEvidence; current: boolean; scope: string }) {
-  return <details data-ui-key={`command-evidence:${scope}:${record.id}`}>
+  return <ProcessDetails name={`command-evidence:${scope}:${record.id}`}>
     <summary>{record.checkId}: {record.status} (exit {record.exitCode ?? "unavailable"}){current ? "" : " · historical / different inputs"}</summary>
     <pre>{[
       `${record.program} ${JSON.stringify(record.args)}`,
@@ -108,7 +112,7 @@ function EvidenceRecord({ record, current, scope }: { record: CommandEvidence; c
       record.error || "",
       record.outputTruncated ? "[Output truncated]" : "",
     ].join("\n")}</pre>
-  </details>;
+  </ProcessDetails>;
 }
 
 function ToolEvidence() {
@@ -128,14 +132,19 @@ function ToolEvidence() {
     <p>{verdict
       ? `Independent verifier: ${verdict.status}. ${verdict.summary}${verdictCurrent ? "" : " Historical verdict; it does not verify the current inputs."}`
       : "No legacy independent verification is recorded."}</p>
-    {verdict && <details data-ui-key={`independent-verdict:${verdict.requestId}:${verdict.runId}`}>
+    {verdict && <ProcessDetails name={`independent-verdict:${verdict.requestId}:${verdict.runId}`}>
       <summary>Independent verifier identities</summary>
       <pre>{`Request: ${verdict.requestId}\nRun: ${verdict.runId}\nSpecification / inputs: ${verdict.inputRevision}\nSources: ${verdict.sourceFingerprint}`}</pre>
-    </details>}
+    </ProcessDetails>}
   </div>;
 }
 
-export function ProcessPanel({ development = false, expanded = false }: { development?: boolean; expanded?: boolean } = {}) {
+export function ProcessPanel({ development = false, expanded = false, dialog, onErrorChange }: {
+  development?: boolean;
+  expanded?: boolean;
+  dialog?: { open: boolean; onOpenChange(open: boolean): void };
+  onErrorChange?(error: string): void;
+} = {}) {
   const ui = useUi();
   const { state, pending, post, confirm, guidance } = ui;
   const scope = JSON.stringify([state.prototypeId, state.generation, "process"]);
@@ -146,6 +155,7 @@ export function ProcessPanel({ development = false, expanded = false }: { develo
   const [reference, setReference] = useDraft(`${scope}:reference`, "");
   const [intake, setIntake] = useDraft(`${scope}:intake`, "");
   const [message, setMessage] = useState<{ text: string; revision: number } | null>(null);
+  const statusMessage = useRef<HTMLParagraphElement>(null);
   const fields = draft?.values || savedSettings(state);
   const process = state.process;
   const outputs = state.lifecycle.outputs || [];
@@ -249,17 +259,28 @@ export function ProcessPanel({ development = false, expanded = false }: { develo
     : process?.meteringError || "";
   const status = action.error || (action.busy ? "Processing..."
     : message && state.revision <= message.revision ? message.text : process?.message || "");
+  const error = action.error || process?.meteringError || "";
+  useEffect(() => { onErrorChange?.(error); }, [error, onErrorChange]);
+  useEffect(() => {
+    if (!error || dialog && !dialog.open) return;
+    const frame = requestAnimationFrame(() => statusMessage.current?.scrollIntoView?.({ block: "nearest" }));
+    return () => cancelAnimationFrame(frame);
+  }, [error, dialog?.open]);
 
-  return <ProcessSection name="root" label="Handoffs & process" outer expanded={expanded}>
-    <p id="handoff-help" className="visually-hidden">Finish a stage, then accept its immutable handoff. Exports never commit or publish.</p>
-    {!writable && <p id="process-readonly-help" className="visually-hidden" role="status">{guidance("change process settings or handoffs")}</p>}
+  const panel = <ProcessSection name="root" label="Handoffs & process" outer expanded={expanded}>
+    <p id="handoff-help">Acceptance records attribution, not authenticated identity, implementation approval or test evidence.
+      Export writes a local bundle to tandem-records; it never commits or publishes.</p>
+    {!writable && <p id="process-readonly-help" role="status">{guidance("change process settings or handoffs")}</p>}
+    {hasActiveJobs(state) && <p role="status">Finish or stop active work before changing process settings or handoffs.</p>}
+    <p id="process-message" ref={statusMessage} className="stage-message" title={error || status || undefined} role={error ? "alert" : "status"} aria-live="polite"
+      data-status={error ? "error" : "idle"}>{error || status}</p>
     {(development || state.lifecycle.currentStage === "development") && <button id="capture-development" className="complete-stage"
       type="button" disabled={blocked} onClick={() => perform({ action: "capture-development" })}>
       <FileText size={14} aria-hidden="true" /> Capture Development outcome for review
     </button>}
-    <label htmlFor="handoff-stage">Completed upstream stage or captured Development outcome</label>
+    {stages.length > 0 ? <>
+    <label htmlFor="handoff-stage">Saved snapshot to review</label>
     <select id="handoff-stage" value={stage || ""} aria-describedby="handoff-help" onChange={(event) => setSelectedStage(event.target.value)}>
-      {!stages.length && <option value="">No completed stages</option>}
       {stages.map((id) => <option key={id} value={id}>{stageLabel(id)}</option>)}
     </select>
     <label htmlFor="handoff-approver">Accepted by</label>
@@ -269,15 +290,16 @@ export function ProcessPanel({ development = false, expanded = false }: { develo
       disabled={blocked || !stage || (stage !== "development" && !state.lifecycle.completedStages.includes(stage))} onClick={acceptHandoff}>
       <Check size={14} aria-hidden="true" /> Accept handoff
     </button>
-    <button id="export-handoff" className="complete-stage" type="button" disabled={blocked || !acceptance} aria-describedby="handoff-help"
+    {acceptance && <button id="export-handoff" className="complete-stage" type="button" disabled={blocked} aria-describedby="handoff-help"
       onClick={() => acceptance && perform({ action: "export", acceptanceId: acceptance.id }, {
         confirmation: "Export the accepted snapshot and artifacts into tandem-records? Review the bundle before sharing; nothing will be committed.",
       })}>
       <Download size={14} aria-hidden="true" /> Export accepted handoff
-    </button>
+    </button>}
     <p id="handoff-record" className="muted">{acceptance
       ? `Accepted by ${acceptance.acceptedBy.label} at ${acceptance.acceptedAt}. ${acceptance.exportPath || "Not exported."}`
-      : "No acceptance for this stage revision."}</p>
+      : "Review and explicitly accept this snapshot before export is available."}</p>
+    </> : <p className="muted">No saved snapshots to accept yet. Complete a discovery stage or capture a Development outcome first.</p>}
 
     <ProcessSection name="delivery" label={<><Send size={14} aria-hidden="true" /> Delivery & maintenance</>}>
       <button id="prepare-delivery" className="complete-stage" type="button" disabled={blocked || !developmentCaptured}
@@ -286,10 +308,10 @@ export function ProcessPanel({ development = false, expanded = false }: { develo
       </button>
       <pre id="delivery-draft" tabIndex={0}>{process?.deliveryDraft?.body
         || "Capture and explicitly accept a Development outcome to prepare a reviewable delivery draft. Export remains a separate action."}</pre>
-      {process?.deliveryDraft && <details data-ui-key={`delivery-draft:${process.deliveryDraft.id}`}>
+      {process?.deliveryDraft && <ProcessDetails name={`delivery-draft:${process.deliveryDraft.id}`}>
         <summary>Delivery draft provenance</summary>
         <pre>{`Draft: ${process.deliveryDraft.id}\nSources: ${process.deliveryDraft.sourceFingerprint}\nAccepted snapshots: ${process.deliveryDraft.acceptanceIds.join(", ")}`}</pre>
-      </details>}
+      </ProcessDetails>}
       <label htmlFor="process-reference">Adapter reference</label>
       <input id="process-reference" placeholder="GitHub PR/issue/run URL or local receipt path / incident ID"
         value={reference} disabled={!writable} onChange={(event) => setReference(event.target.value)} />
@@ -320,8 +342,8 @@ export function ProcessPanel({ development = false, expanded = false }: { develo
         <Download size={14} aria-hidden="true" /> Import linked effort ({intakeAdapter})
       </button>
       <div id="process-receipts">
-        {(process?.receipts || []).slice().reverse().map((receipt) => <details key={receipt.id}
-          data-ui-key={`process-receipt:${receipt.id}`}>
+        {(process?.receipts || []).slice().reverse().map((receipt) => <ProcessDetails key={receipt.id}
+          name={`process-receipt:${receipt.id}`}>
           <summary>{receipt.adapter} / {receipt.block} / {receipt.recordedAt}</summary>
           <pre>{`${receipt.reference}\n${receipt.summary}\nInput hash: ${receipt.inputHash || "unavailable"}`}</pre>
           {receipt.followupId && <button type="button" className="complete-stage" disabled={blocked}
@@ -330,7 +352,7 @@ export function ProcessPanel({ development = false, expanded = false }: { develo
             })}>
             <FolderOpen size={14} aria-hidden="true" /> Open linked effort and start Preparation
           </button>}
-        </details>)}
+        </ProcessDetails>)}
       </div>
     </ProcessSection>
 
@@ -362,14 +384,16 @@ export function ProcessPanel({ development = false, expanded = false }: { develo
         </button>
       </form>
     </ProcessSection>
-    <p id="process-metrics" className="muted">{metricText}</p>
+    {metricText && <ProcessSection name="metrics" label="Usage diagnostics">
+      <p id="process-metrics" className="muted">{metricText}</p>
+    </ProcessSection>}
     <ProcessSection name="history" label="Acceptance & process history">
       {(process?.acceptances || []).slice().reverse().map((record) => <AcceptanceDetails key={record.id} record={record}
         current={outputs.some((output) => output.stageId === record.stageId && output.path === record.snapshotPath)} />)}
-      {(process?.events || []).slice().reverse().map((event) => <details key={event.id} data-ui-key={`process-event:${event.id}`}>
+      {(process?.events || []).slice().reverse().map((event) => <ProcessDetails key={event.id} name={`process-event:${event.id}`}>
         <summary>{stageLabel(event.stage)} · {event.kind} · {event.at}</summary>
         <p>{event.detail}</p>
-      </details>)}
+      </ProcessDetails>)}
       {process?.source && <p className="muted">Source: {process.source.adapter} · {process.source.reference}
         {process.source.parentEffortId ? ` · Parent effort: ${process.source.parentEffortId}` : ""}</p>}
       {!(process?.acceptances || []).length && !(process?.events || []).length && <p className="muted">No handoffs or process events recorded yet.</p>}
@@ -377,7 +401,19 @@ export function ProcessPanel({ development = false, expanded = false }: { develo
     <ProcessSection name="evidence" label={<><ShieldCheck size={14} aria-hidden="true" /> Historical verification evidence</>}>
       <ToolEvidence />
     </ProcessSection>
-    <p id="process-message" className="stage-message" title={status || undefined} role="status" aria-live="polite"
-      data-status={action.error ? "error" : "idle"}>{status}</p>
   </ProcessSection>;
+  if (!dialog) return panel;
+  return <Dialog.Root open={dialog.open} onOpenChange={dialog.onOpenChange}>
+    <Dialog.Portal><Dialog.Overlay className="dialog-overlay process-dialog-overlay" />
+      <Dialog.Content className="dialog-content process-dialog" onCloseAutoFocus={event => {
+        event.preventDefault(); document.getElementById("project-settings")?.focus();
+      }}>
+        <div className="root-settings-heading"><Dialog.Title>Advanced handoffs &amp; history</Dialog.Title>
+          <Dialog.Close id="close-acceptance-delivery" className="plan-button secondary">Close</Dialog.Close></div>
+        <Dialog.Description>Optional controls for saved snapshot acceptance, local export, delivery integrations and audit history.
+          These are not required to continue project work.</Dialog.Description>
+        {panel}
+      </Dialog.Content>
+    </Dialog.Portal>
+  </Dialog.Root>;
 }

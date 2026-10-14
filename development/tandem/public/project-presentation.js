@@ -7,6 +7,14 @@ export function installProjectPresentation({ document, window, changed, settings
   let context = null, draftContext = null, pending = null, nativePending = false;
   let currentSnapshot = null;
   const send = value => window.parent.postMessage({ protocol: "tandem-project/v1", channel, ...value }, origin);
+  const processPanel = document.querySelector("#project-process-settings");
+  if (processPanel) {
+    processPanel.hidden = false;
+    document.querySelector("#acceptance-delivery").onclick = () => {
+      document.querySelector("#canvas-settings").open = false;
+      send({ type: "process-open" });
+    };
+  }
   const effortPanel = document.querySelector("#project-effort-settings");
   const effort = document.querySelector("#project-effort"), effortApply = document.querySelector("#apply-project-effort");
   const effortRefresh = document.querySelector("#refresh-project-effort"), effortStatus = document.querySelector("#project-effort-status");

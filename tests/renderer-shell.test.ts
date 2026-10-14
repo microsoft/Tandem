@@ -233,11 +233,16 @@ test("reset during active work confirms first and only clears local drafts after
     const value = state("prototype"); value.processing = { status: "running" };
     const h = await setup(t, { ...value, preparationRuntime: { liveAgentCount: 2 } });
     assert.equal(disabled(h, "reset-effort"), false);
-    await h.input("handoff-approver", "Previous owner");
+    await h.openProcess();
+    await h.input("process-reference", "Previous reference");
     await h.input("process-repository", "owner/old");
+    await h.click("close-acceptance-delivery");
     await h.click("reset-effort"); await h.confirm(false);
     assert.equal(h.requests.length, 0);
-    assert.equal(field(h, "handoff-approver").value, "Previous owner");
+    await h.openProcess();
+    assert.equal(field(h, "process-reference").value, "Previous reference");
+    assert.equal(field(h, "process-repository").value, "owner/old");
+    await h.click("close-acceptance-delivery");
     let release!: (r: Response) => void;
     h.setFetch(() => new Promise((resolve) => { release = resolve; }));
     await h.click("reset-effort"); await h.confirm();
@@ -245,7 +250,6 @@ test("reset during active work confirms first and only clears local drafts after
     assert.match(text(h, "effort-message"), /Stopping active discovery work/);
     assert.equal(h.get("studio-workspace").hasAttribute("inert"), true);
     assert.equal(h.get("studio-workspace").getAttribute("aria-busy"), "true");
-    assert.equal(field(h, "process-repository").value, "owner/old");
     await h.click("reset-effort");
     assert.equal(h.requests.length, 1);
     assert.deepEqual(h.requests[0].body, { expectedRevision: 1, generation: "fixture-generation", confirm: true });
@@ -255,7 +259,8 @@ test("reset during active work confirms first and only clears local drafts after
     assert.equal(h.document.activeElement, h.get("start-goal"));
     assert.equal(h.render({ ...value, revision: 2 }), false);
     h.render({ ...state("requirements", 5), generation: "reset-generation" }); await h.flush();
-    assert.equal(field(h, "handoff-approver").value, "");
+    await h.openProcess();
+    assert.equal(field(h, "process-reference").value, "");
     assert.equal(field(h, "process-repository").value, "");
     assert.equal(field(h, "usage-input").value, "");
 });
@@ -263,12 +268,16 @@ test("reset during active work confirms first and only clears local drafts after
 test("reset cancellation failures persist without clearing the effort or its drafts", async (t) => {
     const value = state("prepare"); value.preparation.status = "running";
     const h = await setup(t, value);
-    await h.input("handoff-approver", "Keep this draft");
+    await h.openProcess();
+    await h.input("process-reference", "Keep this draft");
+    await h.click("close-acceptance-delivery");
     h.setFetch(async () => response({ error: "Worker termination could not be confirmed. Retry Reset." }, 409));
     await h.click("reset-effort"); await h.confirm();
     h.render({ ...value, revision: 2 });
     assert.equal(hidden(h, "start-panel"), true);
-    assert.equal(field(h, "handoff-approver").value, "Keep this draft");
+    await h.openProcess();
+    assert.equal(field(h, "process-reference").value, "Keep this draft");
+    await h.click("close-acceptance-delivery");
     assert.equal(disabled(h, "reset-effort"), false);
     assert.match(text(h, "effort-message"), /termination could not be confirmed/);
     assert.equal(h.get("effort-message").dataset.status, "error");
@@ -373,17 +382,34 @@ test("accepted mutations wait for a fresh post-mutation poll, not the older in-f
     assert.equal(current(h).revision, 2);
 });
 
+test("current phase is independent of browsing and does not label unopened Development as current", async t => {
+    const value = state("requirements"), h = await setup(t, value);
+    assert.equal(h.get("design-tree-tab").getAttribute("aria-current"), "step");
+    await browse(h, "prepare");
+    assert.equal(h.get("preparation-tab").getAttribute("aria-selected"), "true");
+    assert.equal(h.get("preparation-tab").getAttribute("aria-current"), null);
+    assert.match(h.get("design-tree-tab").getAttribute("aria-label")!, /Current phase/);
+    h.render({ ...state("development"), revision: 2 }); await h.flush();
+    assert.equal(h.get("development-tab").getAttribute("aria-current"), null);
+    assert.equal(h.document.querySelectorAll('#project-contents [aria-current="step"]').length, 0);
+    assert.equal(h.requests.length, 0);
+});
+
 test("compact context retains drafts and closes on navigation or Escape without mutation", async (t) => {
     const value = state(), h = await setup(t, value); h.setNarrowViewport(true);
     assert.equal(h.get("context-toggle").getAttribute("aria-expanded"), "false");
     assert.equal(text(h, "context-stage"), "Requirements");
-    await h.click("context-toggle"); await h.input("handoff-approver", "Design owner");
+    await h.click("context-toggle"); await h.openProcess();
+    await h.input("process-reference", "Design reference");
+    await h.click("close-acceptance-delivery");
     h.render({ ...value, revision: 2 });
     assert.equal(h.get("context-toggle").getAttribute("aria-expanded"), "true");
     await h.fire(h.get("requirements-pane"), "keydown", { key: "Escape" });
     assert.equal(h.get("studio-workspace").dataset.contextOpen, "false");
     assert.equal(h.document.activeElement, h.get("context-toggle"));
-    assert.equal(field(h, "handoff-approver").value, "Design owner");
+    await h.openProcess();
+    assert.equal(field(h, "process-reference").value, "Design reference");
+    await h.click("close-acceptance-delivery");
     await h.click("context-toggle"); await browse(h, "prepare");
     assert.equal(h.get("studio-workspace").dataset.contextOpen, "false");
     assert.equal(hidden(h, "preparation-panel"), false);
@@ -415,7 +441,9 @@ test("owning phase toolbar completes the active stage without expanding context 
     value.requirements.substage = "dag";
     value.decisionGraph.nodes = [decision("accepted", "answered")];
     const h = await setup(t, value);
-    await h.input("handoff-approver", "Design owner");
+    await h.openProcess();
+    await h.input("process-reference", "Design reference");
+    await h.click("close-acceptance-delivery");
     await h.click("toggle-context-pane");
     const button = h.get<HTMLButtonElement>("complete-stage");
     assert.equal(button.hidden, false);
@@ -448,7 +476,8 @@ test("owning phase toolbar completes the active stage without expanding context 
     await h.click("toggle-context-pane");
     assert.equal(text(h, "complete-stage"), "Finish Drawings and continue");
     assert.ok(button.querySelector('svg.lucide-check[aria-hidden="true"]'));
-    assert.equal(field(h, "handoff-approver").value, "Design owner");
+    await h.openProcess();
+    assert.equal(field(h, "process-reference").value, "Design reference");
 });
 
 test("collapsed completion retains readiness, provider, busy, and historical-view guards", async (t) => {

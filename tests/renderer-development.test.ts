@@ -97,14 +97,33 @@ test("handoff presentation distinguishes exact admission, pending, uncertainty a
     assert.deepEqual(h.errors, []);
 });
 
+test("direct Development remains the current phase through startup, failure, ready and historical browsing", async t => {
+    const h = await reactHarness(t, undefined, "development");
+    h.render(state("prepare")); await h.flush();
+    const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
+    for (const status of ["starting", "failed", "ready"]) {
+        h.window.dispatchEvent(new h.window.MessageEvent("message", { origin: "http://127.0.0.1:8765", source: frame.contentWindow,
+            data: { protocol: "tandem-project/v1", channel: "fixture-project", type: "status", status, active: status === "ready" } }));
+        await h.flush();
+        assert.equal(h.get("development-tab").getAttribute("aria-current"), "step");
+        assert.match(h.get("development-tab").getAttribute("aria-label")!, /Current phase/);
+        assert.doesNotMatch(h.get("development-tab").textContent!, /Running/);
+    }
+    await h.fire(h.get("preparation-tab"), "mousedown", { button: 0 });
+    assert.equal(h.get("development-tab").getAttribute("aria-current"), "step");
+    assert.equal(h.get("preparation-tab").getAttribute("aria-current"), null);
+    assert.equal(h.requests.length, 0);
+});
+
 test("advanced delivery has one accessible panel, retains drafts and preserves confirmation", async t => {
     const h = await reactHarness(t, undefined, "development");
-    h.render(state("development")); await h.flush();
-    h.get("acceptance-delivery").focus();
-    await h.click("acceptance-delivery");
+    const value = state("development");
+    value.lifecycle.outputs = [{ stageId: "prototype", path: ".tandem\\prototype-r1.json", completedAt: value.updatedAt }];
+    h.render(value); await h.flush();
+    await h.openProcess();
     const dialog = h.document.querySelector('[role="dialog"]')!;
     assert.ok(dialog);
-    assert.match(dialog.textContent!, /Optional advanced controls/);
+    assert.match(dialog.textContent!, /Optional controls/);
     assert.equal(dialog.querySelectorAll(".process-controls").length, 1);
     assert.equal(dialog.querySelector(".process-controls > button.ledger-summary"), null);
     assert.equal(h.document.querySelectorAll("#handoff-approver").length, 1);
@@ -117,12 +136,12 @@ test("advanced delivery has one accessible panel, retains drafts and preserves c
     assert.equal(h.requests.length, 0, "Opening or cancelling advanced controls cannot publish or configure.");
     await h.click("close-acceptance-delivery");
     assert.equal(h.document.querySelector('[role="dialog"]'), null);
-    assert.equal(h.document.activeElement?.id, "acceptance-delivery");
-    await h.click("acceptance-delivery");
+    assert.equal(h.document.activeElement?.id, "project-settings");
+    await h.openProcess();
     assert.equal(h.get<HTMLInputElement>("handoff-approver").value, "Preserved draft");
     await h.fire(h.document.querySelector('[role="dialog"]')!, "keydown", { key: "Escape", code: "Escape" });
     assert.equal(h.document.querySelector('[role="dialog"]'), null);
-    assert.equal(h.document.activeElement?.id, "acceptance-delivery");
+    assert.equal(h.document.activeElement?.id, "project-settings");
     assert.deepEqual(h.errors, []);
 });
 
@@ -135,7 +154,7 @@ test("Development presentation cannot arm a competing discovery input and reject
         return response(value);
     });
     h.render(value); await h.flush();
-    assert.equal(h.get("development-tab").getAttribute("aria-label"), "Development");
+    assert.equal(h.get("development-tab").getAttribute("aria-label"), "Development, Current phase");
     const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
     const key = projectDiscovery(value, false).key;
     const send = async (data: object, origin = "http://127.0.0.1:8765", source: Window | null = frame.contentWindow) => {
@@ -173,7 +192,7 @@ test("fresh projects open Development directly without creating Stage1 state or 
     assert.equal(frame.src, "http://127.0.0.1:8765/?panel=workspace");
     assert.equal(h.document.querySelector("#reset-effort"), null, "Direct Development does not offer a discovery reset starter.");
     assert.equal(h.document.querySelector("#continue-design"), null);
-    await h.click("acceptance-delivery");
+    await h.openProcess();
     assert.ok(h.get("capture-development"), "Direct projects retain the explicit capture/delivery controls.");
     await h.click("close-acceptance-delivery");
     await h.fire(h.get("preparation-tab"), "mousedown", { button: 0 });
@@ -241,8 +260,8 @@ test("Design availability uses a named dot without hiding new output or attentio
     await h.fire(h.get("development-tab"), "mousedown", { button: 0 });
     h.get("development-tab").focus();
     await send("first");
-    assert.equal(h.get("development-tab").textContent, "Development");
-    assert.equal(h.get("development-tab").getAttribute("aria-label"), "Development, Design available");
+    assert.equal(h.get("development-tab").querySelector(".project-tab-name")?.textContent, "Development");
+    assert.equal(h.get("development-tab").getAttribute("aria-label"), "Development, Current phase, Design available");
     assert.equal(h.document.querySelector(".project-availability")?.getAttribute("title"), "Design available");
     assert.equal(h.document.querySelector(".project-availability")?.getAttribute("aria-hidden"), "true");
     await send("first");
@@ -251,7 +270,7 @@ test("Design availability uses a named dot without hiding new output or attentio
     await send("second");
     assert.equal(h.get("development-tab").querySelector(".project-availability"), null);
     assert.equal(h.get("development-tab").querySelector(".artifact-count")?.textContent, "New output");
-    assert.equal(h.get("development-tab").getAttribute("aria-label"), "Development, New Design output");
+    assert.equal(h.get("development-tab").getAttribute("aria-label"), "Development, Current phase, New Design output");
     assert.match(h.get("project-current-work").textContent!, /4 needs attention/);
     await h.fire(h.get("development-tab"), "mousedown", { button: 0 });
     assert.ok(h.get("development-tab").querySelector(".project-availability"));
@@ -323,7 +342,7 @@ test("Development mounts one isolated full workspace and navigation keeps its or
     });
     h.render(state("development"));
     await h.flush();
-    assert.equal(h.get("development-tab").textContent, "Development");
+    assert.equal(h.get("development-tab").querySelector(".project-tab-name")?.textContent, "Development");
     const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
     assert.equal(frame.src, "http://127.0.0.1:8765/?panel=workspace");
     assert.equal(h.get("studio-workspace").dataset.development, "true");
@@ -498,7 +517,7 @@ test("real React Development keeps handoff controls in view across long-status h
                 const guide = document.querySelector("#next-action-guide");
                 return { viewport: innerWidth, app: bounds(".app"), workspace: bounds("#studio-workspace"),
                     iframe: bounds("#project-conversation-frame"), footer: bounds("#next-action-bar"),
-                    button: bounds("#continue-design"), acceptance: bounds("#acceptance-delivery"),
+                    button: bounds("#continue-design"),
                     guide: guide.textContent, guideTitle: guide.title, guideClipped: guide.scrollWidth > guide.clientWidth,
                     active: document.activeElement.id || document.activeElement.tagName,
                     frameRetained: window.originalDevelopmentFrame === document.querySelector("#project-conversation-frame") };
@@ -511,7 +530,7 @@ test("real React Development keeps handoff controls in view across long-status h
                 assert.ok(Math.abs(geometry[part].width - geometry.viewport) <= 1, `${part} expanded: ${JSON.stringify(geometry)}`);
             }
             assert.ok(geometry.iframe.width > 0 && geometry.iframe.right <= geometry.viewport);
-            for (const part of ["button", "acceptance"] as const) {
+            for (const part of ["button"] as const) {
                 assert.ok(geometry[part].left >= 0 && geometry[part].right <= geometry.viewport && geometry[part].hit,
                     `${part} is not visible and hit-testable: ${JSON.stringify(geometry)}`);
             }
@@ -549,8 +568,7 @@ test("real React Development keeps handoff controls in view across long-status h
             await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: false });
             if (width === 640) {
                 // Stress translated-length copy in the fixture without changing product labels.
-                await browser.evaluate(`document.querySelector("#continue-design").textContent = "Reconcile the retained Prototype handoff and continue Design";
-                    document.querySelector("#acceptance-delivery").textContent = "Acceptance and delivery history";`);
+                await browser.evaluate(`document.querySelector("#continue-design").textContent = "Reconcile the retained Prototype handoff and continue Design";`);
             }
             await settle();
             await move("#project-conversation-frame", true);
@@ -563,16 +581,10 @@ test("real React Development keeps handoff controls in view across long-status h
             const focused = await measure(`${width}-keyboard-button`);
             assert.equal(focused.active, "continue-design");
             assertBounded(focused);
-            await tab();
-            const acceptanceFocused = await measure(`${width}-keyboard-acceptance`);
-            assert.equal(acceptanceFocused.active, "acceptance-delivery");
-            assertBounded(acceptanceFocused);
+            assert.equal(await browser.evaluate('document.querySelector(".development-toolbar #acceptance-delivery")'), null);
         }
         assert.equal(requests.filter(request => request.path === "/api/development/continue").length, 0,
             "Hover, focus, resize and drafting must never submit a handoff.");
-        await click("#acceptance-delivery");
-        assert.equal(await browser.evaluate('!!document.querySelector(".process-dialog")'), true);
-        await click("#close-acceptance-delivery");
         await browser.call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
         await settle();
         await browser.evaluate('document.querySelector("#content-tab").scrollIntoView({block:"nearest"})');

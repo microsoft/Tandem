@@ -201,6 +201,23 @@ test("composed diagnostics presents only the validated supported root reload act
   assert.equal(sent.filter(value => value.type === "project-reload").length, 1);
 });
 
+test("handoff settings entry is composed-only and sends only a presentation request", t => {
+  const markup = `<body><details id="canvas-settings" open><section id="project-process-settings" hidden>
+    <button id="acceptance-delivery"></button></section></details><form id="composer"><textarea id="message"></textarea></form>`;
+  const dom = new JSDOM(markup);
+  t.after(() => dom.window.close());
+  const sent = [], parent = { postMessage: data => sent.push(data) };
+  Object.defineProperty(dom.window, "parent", { value: parent });
+  assert.equal(installProjectPresentation({ document: dom.window.document, window: dom.window, changed() {} }), null);
+  assert.equal(dom.window.document.querySelector("#project-process-settings").hidden, true);
+  Object.assign(dom.window.document.body.dataset, { projectPanel: "workspace", projectOrigin: "http://127.0.0.1:4000", projectChannel: "handoffs" });
+  installProjectPresentation({ document: dom.window.document, window: dom.window, changed() {} });
+  assert.equal(dom.window.document.querySelector("#project-process-settings").hidden, false);
+  dom.window.document.querySelector("#acceptance-delivery").click();
+  assert.equal(dom.window.document.querySelector("#canvas-settings").open, false);
+  assert.deepEqual(sent.at(-1), { protocol: "tandem-project/v1", channel: "handoffs", type: "process-open" });
+});
+
 test("whole project workspace uses one actual embedded renderer for navigation, drafting, activation and recovery",
   { skip: !browserAvailable, timeout: 150_000 }, async t => {
     const root = await mkdtemp(join(tmpdir(), "tandem-project-ui-"));
@@ -304,6 +321,21 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       const json = data => { response.writeHead(200, { "Content-Type": "application/json" }); response.end(JSON.stringify(data)); };
       try {
         if (path === "/") { response.writeHead(200, { "Content-Type": "text/html" }); response.end(template); }
+        else if (path === "/host-fixture") {
+          const channel = "11111111-1111-4111-8111-111111111111", origin = new URL(url).origin;
+          const source = `${url}#${new URLSearchParams({ "tandem-host": origin, "header-channel": channel })}`;
+          response.writeHead(200, { "Content-Type": "text/html" });
+          response.end(`<!doctype html><body style="margin:0"><header id="host-project"></header>
+            <iframe id="hosted-app" style="width:100%;height:calc(100vh - 30px);border:0"></iframe><script>
+            document.querySelector("#host-project").textContent=${JSON.stringify(root)};
+            const frame=document.querySelector("#hosted-app");
+            window.addEventListener("message",event=>{
+              if(event.source===frame.contentWindow && event.data?.type==="tandem:header:ready")
+                frame.contentWindow.postMessage({type:"tandem:header:connect",channel:${JSON.stringify(channel)}},${JSON.stringify(origin)});
+            });
+            frame.src=${JSON.stringify(source)};
+            </script></body>`);
+        }
         else if (path === "/styles.css") { response.writeHead(200, { "Content-Type": "text/css" }); response.end(css); }
         else if (path === "/app.js") { response.writeHead(200, { "Content-Type": "text/javascript" }); response.end(client); }
         else if (path === "/preview-current" || path === "/preview-candidate") {
@@ -363,6 +395,23 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
             events.touch(); json({ url: provider.url });
           }
           else if (path === "/api/answer") { value.requirements.usageItems.push(body.answer); value.revision++; json(value); }
+          else if (path === "/api/process") {
+            if (body.action === "configure") {
+              response.writeHead(409, { "Content-Type": "application/json" });
+              response.end(JSON.stringify({ error: "Fixture adapter conflict; saved settings and history retained." }));
+            } else if (body.action === "accept") {
+              const output = value.lifecycle.outputs.find(output => output.stageId === body.stageId);
+              assert.ok(output);
+              value.process.acceptances.push({ id: "fixture-accepted", stageId: body.stageId, snapshotPath: output.path,
+                snapshotHash: "fixture-hash", acceptedBy: { label: body.approver }, acceptedAt: "2026-10-14T00:00:00Z",
+                source: { fingerprint: "fixture-source" }, producer: { version: "fixture" }, artifactHashes: [], upstream: [] });
+              value.revision++; json(value);
+            } else if (body.action === "export") {
+              const acceptance = value.process.acceptances.find(record => record.id === body.acceptanceId);
+              assert.ok(acceptance); acceptance.exportPath = "tandem-records\\fixture";
+              value.revision++; json(value);
+            } else { response.writeHead(400); response.end(JSON.stringify({ error: "Unsupported fixture process action." })); }
+          }
           else if (path === "/api/prototype/action") {
             assert.deepEqual(body, { action: "apply-update", checkpointId: "interaction", expectedRevision: value.revision });
             value.prototypeFlow.displayedCheckpointId = body.checkpointId;
@@ -394,6 +443,18 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       const browser = await openFixtureBrowser({ after: cleanup => cleanups.push(cleanup) });
       t.diagnostic(`Actual integrated root ${url}; ${(await browser.call("Browser.getVersion")).product}; synthetic runtime, no model calls.`);
       await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 1000, deviceScaleFactor: 1, mobile: false });
+      await browser.call("Page.navigate", { url: new URL("host-fixture", url).href });
+      await browser.waitFor('document.querySelector("#hosted-app")?.contentDocument?.querySelector(".project-folder")?.hidden');
+      const identity = await browser.evaluate(`(() => {
+        const doc=document.querySelector("#hosted-app").contentDocument, heading=doc.querySelector(".context-pane-heading");
+        return {height:heading.getBoundingClientRect().height,margin:doc.defaultView.getComputedStyle(heading).marginBottom,
+          header:document.querySelector("#host-project").textContent,settings:doc.querySelector("#project-settings").textContent};
+      })()`);
+      assert.deepEqual(identity, { height: 0, margin: "0px", header: root, settings: "Project settings" });
+      await browser.evaluate(`document.querySelector("#hosted-app").contentWindow.postMessage({
+        type:"tandem:header:disconnect",channel:"11111111-1111-4111-8111-111111111111"},location.origin)`);
+      await browser.waitFor('document.querySelector("#hosted-app").contentDocument.querySelector(".project-folder").checkVisibility()');
+      assert.equal(await browser.evaluate('document.querySelector("#hosted-app").contentDocument.querySelector(".project-folder").title'), root);
       await browser.call("Page.navigate", { url });
       const reloadRoot = async () => {
         const previous = await browser.evaluate("performance.timeOrigin");
@@ -424,6 +485,109 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       assert.equal(await browser.evaluate('document.querySelector("#project-conversation-frame")===null'), true);
       await clickRoot("#entry-preparation");
       await browser.waitFor('!document.querySelector("#entry-preparation")');
+      const push = async () => {
+        value.revision++;
+        for (const response of rootEvents) response.write(`data: ${JSON.stringify(value)}\n\n`);
+        await browser.evaluate("new Promise(resolve => setTimeout(resolve, 80))");
+      };
+      const assertCleanSidebar = async () => {
+        assert.equal(await browser.evaluate('document.querySelector("#requirements-pane .process-controls, #requirements-pane #handoff-stage, #requirements-pane #process-metrics")'), null);
+        assert.equal(await browser.evaluate('document.querySelector("#export-handoff")'), null);
+        assert.equal(await browser.evaluate('document.querySelector(".ledger-details").checkVisibility()'), false);
+      };
+      await assertCleanSidebar();
+      await clickRoot("#preparation-tab");
+      assert.equal(await browser.evaluate('document.querySelector("#preparation-tab").getAttribute("aria-selected")'), "true");
+      assert.equal(await browser.evaluate('document.querySelector("#design-tree-tab").getAttribute("aria-current")'), "step");
+      assert.equal(await browser.evaluate('document.querySelector("#preparation-tab").getAttribute("aria-current")'), null);
+      await browser.evaluate('document.querySelector("#studio-workspace").style.setProperty("--requirements-width","180px")');
+      for (const theme of ["light", "dark"]) {
+        await browser.evaluate(`document.documentElement.dataset.projectTheme=${JSON.stringify(theme)}`);
+        const marker = await browser.evaluate(`(() => {
+          const row=document.querySelector("#design-tree-tab"), marker=row.querySelector(".current-phase"),
+            label=row.querySelector(".project-tab-name"), m=marker.getBoundingClientRect(), l=label.getBoundingClientRect(), r=row.getBoundingClientRect();
+          return {width:document.querySelector("#requirements-pane").getBoundingClientRect().width,
+            rowHeight:r.height, fullLabel:label.scrollWidth<=label.clientWidth, title:marker.title,
+            sameRow:Math.abs((m.top+m.bottom)/2-(l.top+l.bottom)/2)<1,
+            fits:m.left>=r.left&&m.right<=r.right,color:getComputedStyle(marker).color,background:getComputedStyle(row).backgroundColor};
+        })()`);
+        assert.equal(marker.width, 180);
+        assert.equal(marker.title, "Current phase");
+        assert.ok(marker.sameRow && marker.fits && marker.fullLabel && marker.rowHeight <= 38, `${theme}: ${JSON.stringify(marker)}`);
+        const luminance = color => color.match(/[\d.]+/g).slice(0, 3).map(Number).map(c => c / 255)
+          .map(c => c <= .04045 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4).reduce((sum, c, index) => sum + c * [.2126, .7152, .0722][index], 0);
+        const [bright, dark] = [luminance(marker.color), luminance(marker.background)].sort((a, b) => b - a);
+        assert.ok((bright + .05) / (dark + .05) >= 3, `${theme}: current phase marker contrast`);
+      }
+      await browser.evaluate('delete document.documentElement.dataset.projectTheme;document.querySelector("#studio-workspace").style.setProperty("--requirements-width","220px")');
+      const prepared = structuredClone(value);
+      Object.assign(value, discoveryState("prepare"), { goal: "", revision: value.revision, provider: prepared.provider });
+      await push();
+      await clickRoot("#preparation-tab");
+      await browser.waitFor('Boolean(document.querySelector("#start-goal"))');
+      await assertCleanSidebar();
+      await clickRoot("#project-settings");
+      await clickRoot("#acceptance-delivery");
+      await browser.waitFor('!!document.querySelector(".process-dialog")');
+      assert.equal(await browser.evaluate('document.querySelector("#handoff-approver, #export-handoff")'), null);
+      assert.match(await browser.evaluate('document.querySelector(".process-dialog").textContent'), /No saved snapshots to accept/);
+      await clickRoot("#close-acceptance-delivery");
+      await browser.waitFor('document.activeElement.id==="project-settings"');
+      value.goal = "Populated Preparation fixture"; value.preparation.status = "ready";
+      await push(); await assertCleanSidebar();
+      Object.assign(value, prepared, { revision: value.revision });
+      value.lifecycle.outputs = [{ stageId: "prepare", path: ".tandem\\prepare-fixture.json", completedAt: value.updatedAt }];
+      value.process.acceptances = [{ id: "historic", stageId: "prepare", snapshotPath: ".tandem\\prepare-old.json",
+        acceptedBy: { label: "Historical attribution" }, acceptedAt: "2026-10-13T00:00:00Z" }];
+      value.confirmed = ["A useful confirmed requirement"]; value.assumed = []; value.deferred = [];
+      await push();
+      await browser.waitFor('document.querySelector(".ledger-details").checkVisibility()');
+      await clickRoot(".ledger-details > summary");
+      assert.equal(await browser.evaluate('document.querySelector("#assumed, #deferred")'), null);
+      assert.equal(await browser.evaluate('document.querySelector("#confirmed").checkVisibility()'), true);
+      value.confirmed = []; await push();
+      assert.equal(await browser.evaluate('document.querySelector(".ledger-details").checkVisibility()'), false);
+      value.confirmed = ["A useful confirmed requirement"]; await push();
+      assert.equal(await browser.evaluate('document.querySelector(".ledger-details").open'), true);
+      await clickRoot("#project-settings"); await clickRoot("#acceptance-delivery");
+      await browser.waitFor('!!document.querySelector("#handoff-approver")');
+      assert.equal(await browser.evaluate('document.querySelector("#export-handoff")'), null, "Historical acceptance cannot export a newer snapshot.");
+      await clickRoot("#process-history-toggle");
+      await clickRoot('[data-ui-key="acceptance:historic"] > summary');
+      await clickRoot("#handoff-approver"); await browser.call("Input.insertText", { text: "Fixture reviewer" });
+      await clickRoot("#accept-handoff");
+      await browser.waitFor('!!document.querySelector("[role=alertdialog]")');
+      assert.match(await browser.evaluate('document.querySelector("[role=alertdialog]").textContent'), /not authenticated.*test pass.*Nothing will execute/s);
+      await clickRoot('[role="alertdialog"] .dialog-actions button:last-child');
+      await browser.waitFor('!!document.querySelector("#export-handoff") && !document.querySelector("#export-handoff").disabled');
+      await clickRoot("#export-handoff");
+      await browser.waitFor('!!document.querySelector("[role=alertdialog]")');
+      await clickRoot('[role="alertdialog"] .dialog-actions button:first-child');
+      assert.equal(mutations.some(item => item.body?.action === "export"), false);
+      await clickRoot("#export-handoff");
+      await browser.waitFor('!!document.querySelector("[role=alertdialog]")');
+      await clickRoot('[role="alertdialog"] .dialog-actions button:last-child');
+      await browser.waitFor('document.querySelector("#handoff-record").textContent.includes("tandem-records")');
+      assert.equal(mutations.filter(item => item.body?.action === "accept").length, 1);
+      assert.equal(mutations.filter(item => item.body?.action === "export").length, 1);
+      await clickRoot("#process-settings-toggle");
+      await clickRoot("#process-repository"); await browser.call("Input.insertText", { text: "owner/retained-draft" });
+      await clickRoot("#save-process");
+      await browser.waitFor('!!document.querySelector("[role=alertdialog]")');
+      await clickRoot('[role="alertdialog"] .dialog-actions button:last-child');
+      await browser.waitFor('document.querySelector("#process-message").textContent.includes("Fixture adapter conflict")');
+      await browser.waitFor('(() => {const r=document.querySelector("#process-message").getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight;})()');
+      await clickRoot("#close-acceptance-delivery");
+      await browser.waitFor('document.querySelector("#requirements-pane [role=alert]")?.textContent.includes("Fixture adapter conflict")');
+      await clickRoot("#requirements-pane [role=alert] button");
+      await browser.waitFor('!!document.querySelector(".process-dialog")');
+      assert.equal(await browser.evaluate('document.querySelector("#process-repository").value'), "owner/retained-draft");
+      assert.equal(await browser.evaluate('document.querySelector(\'[data-ui-key="acceptance:historic"]\').open'), true);
+      assert.equal(await browser.evaluate('document.querySelector("#process-settings-toggle").getAttribute("aria-expanded")'), "true");
+      await clickRoot("#close-acceptance-delivery");
+      await browser.waitFor('document.activeElement.id==="project-settings"');
+      await reloadRoot();
+      await browser.waitFor('document.querySelector("#studio-workspace") && !document.querySelector("#studio-workspace").inert');
       assert.equal(await browser.evaluate('document.querySelector(".topbar #reload-extension, .topbar #reset-effort, .topbar #speech-sign-in")'), null);
       await clickRoot("#preparation-tab");
       await clickRoot("#preparation-maintenance > summary");
@@ -847,7 +1011,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         const values = [luminance(marker.color), luminance(marker.background)].sort((a, b) => b - a);
         assert.ok((values[0] + .05) / (values[1] + .05) >= 3, `Availability marker contrast: ${JSON.stringify(marker)}`);
         assert.equal(marker.title, "Design available");
-        assert.equal(marker.name, "Development, Design available");
+        assert.equal(marker.name, "Development, Current phase, Design available");
       };
       const checkEffortLayout = async () => {
         const geometry = await inside(`(() => {const panel=document.querySelector("#canvas-settings").getBoundingClientRect();
@@ -877,9 +1041,11 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await waitInside('!document.querySelector("#canvas-settings").open');
       await browser.waitFor('document.activeElement.id==="project-settings"');
       const beforeAdvanced = mutations.length;
-      for (const [width, height] of [[1360, 900], [920, 620], [390, 620]]) {
+      for (const [width, height] of [[1360, 900], [920, 620], [390, 620], [1360, 480], [390, 480]]) {
         await browser.call("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
-        await click("#acceptance-delivery");
+        await click("#project-settings");
+        await waitInside('document.querySelector("#canvas-settings").open');
+        await click("#acceptance-delivery", true);
         await browser.waitFor('!!document.querySelector(".process-dialog") && getComputedStyle(document.querySelector(".process-dialog")).pointerEvents !== "none"');
         const advanced = await browser.evaluate(`(() => {
           const d=document.querySelector(".process-dialog"),r=d.getBoundingClientRect(),b=document.querySelector("#close-acceptance-delivery"),
@@ -902,7 +1068,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `advanced-delivery-${width}.png`), await browser.screenshot());
         await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", windowsVirtualKeyCode: 27 });
         await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", windowsVirtualKeyCode: 27 });
-        await browser.waitFor('!document.querySelector(".process-dialog") && document.activeElement.id==="acceptance-delivery"');
+        await browser.waitFor('!document.querySelector(".process-dialog") && document.activeElement.id==="project-settings"');
       }
       assert.equal(mutations.length, beforeAdvanced);
       await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 1000, deviceScaleFactor: 1, mobile: false });
@@ -1259,7 +1425,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
           assert.equal(fit.label, "Development");
           assert.equal(fit.badge, mode === "available" ? "" : "New output");
           assert.equal(fit.selected, mode === "available" ? "true" : "false");
-          assert.equal(fit.name, `Development, ${mode === "available" ? "Design available" : "New Design output"}`);
+          assert.equal(fit.name, `Development, Current phase, ${mode === "available" ? "Design available" : "New Design output"}`);
           if (mode === "available") {
             assert.equal(fit.title, "Design available");
             assert.equal(fit.sameRow, true, "The passive marker stays beside Development, not on a second row.");

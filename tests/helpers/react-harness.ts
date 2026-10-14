@@ -63,6 +63,7 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
   const previewRequests: RequestInit[] = [];
   let previewFetcher: (() => Promise<Response>) | null = null;
   let entryOpened = false;
+  let processSettingsFixture = false;
   let gitFetcher: (() => Promise<Response>) | null = null;
   const errors: string[] = [];
   const pngExports: { width: number; height: number; source: string }[] = [];
@@ -85,6 +86,11 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
     PointerEvent: window.MouseEvent,
     fetch: async (input: string | URL | Request, options: RequestInit = {}) => {
       const path = String(input);
+      if (processSettingsFixture && path === "/api/settings/project-effort") {
+        return response({ desired: null, changing: false,
+          stage1: { desired: null, actual: null, model: null, supported: [], status: "pending", error: null },
+          stage2: { desired: null, actual: null, model: null, supported: [], status: "pending", error: null } });
+      }
       if (path === "/api/development/preflight") {
         return gitFetcher ? gitFetcher() : response({ status: "ready", projectPath: "C:\\fixture-project",
           initialize: false, message: "Fixture Git working copy is ready." });
@@ -168,6 +174,19 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
   t?.after(dispose);
   return { presentationRequests, entryRequests, previewRequests,
     window, document, requests, errors, pngExports, store: mounted.store, get, click, input, fire, flush, dispose,
+    async openProcess() {
+      processSettingsFixture = true;
+      try {
+        await click("project-settings");
+        if (document.getElementById("acceptance-delivery")) await click("acceptance-delivery");
+        else {
+          const frame = get<HTMLIFrameElement>("project-conversation-frame");
+          window.dispatchEvent(new window.MessageEvent("message", { origin: "http://127.0.0.1:8765", source: frame.contentWindow,
+            data: { protocol: "tandem-project/v1", channel: "fixture-project", type: "process-open" } }));
+          await flush();
+        }
+      } finally { processSettingsFixture = false; }
+    },
     render(value: UiState, sequence?: number) {
       let changed = false;
       mounted.flushSync(() => { changed = mounted.store.accept(value, sequence); });

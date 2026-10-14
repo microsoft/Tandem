@@ -15,6 +15,10 @@ test("regular canvas retains its own logo, title and controls without standalone
     h.render(state());
     await h.flush();
     assert.equal(h.document.querySelector<HTMLDivElement>(".topbar")!.hidden, false);
+    const identity = h.document.querySelector<HTMLElement>(".project-folder")!;
+    assert.equal(identity.hidden, false);
+    assert.equal(identity.textContent, "fixture-project");
+    assert.equal(identity.title, "C:\\fixture-project");
     assert.equal(h.document.querySelector(".brand h1")!.textContent, "Tandem");
     const artwork = h.document.querySelector<HTMLImageElement>(".brand .brand-artwork")!;
     assert.ok(artwork);
@@ -36,14 +40,22 @@ test("standalone handshake requires its exact parent, origin and channel before 
     await h.sendHeaderMessage({ type: "tandem:header:connect" }, host.origin, {});
     await h.sendHeaderMessage({ type: "tandem:header:connect", channel: "stale" });
     assert.equal(h.document.querySelector<HTMLDivElement>(".topbar")!.hidden, false);
+    assert.equal(h.document.querySelector<HTMLElement>(".project-folder")!.hidden, false);
     await h.sendHeaderMessage({ type: "tandem:header:connect" });
     assert.equal(h.document.querySelector<HTMLDivElement>(".topbar")!.hidden, true);
+    assert.equal(h.document.querySelector<HTMLElement>(".project-folder")!.hidden, true);
+    assert.equal(h.document.querySelector<HTMLElement>(".context-pane-heading")!.dataset.hosted, "true");
+    assert.equal(h.get("toggle-context-pane").getAttribute("aria-label"), "Collapse project context");
+    assert.equal(h.get("project-settings").textContent, "Project settings");
     const value = header(h.headerMessages);
     assert.match(value.lifecycle, /Requirements/);
     assert.equal(value.controls.reload, null);
     assert.equal(value.controls.reset, null);
     await h.sendHeaderMessage({ type: "tandem:header:disconnect" });
     assert.equal(h.document.querySelector<HTMLDivElement>(".topbar")!.hidden, false);
+    assert.equal(h.document.querySelector<HTMLElement>(".project-folder")!.hidden, false);
+    assert.equal(h.document.querySelector<HTMLElement>(".project-folder")!.title, "C:\\fixture-project");
+    assert.equal(h.document.querySelector<HTMLElement>(".context-pane-heading")!.dataset.hosted, undefined);
     assert.equal(h.requests.length, 0);
 });
 

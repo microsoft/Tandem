@@ -66,7 +66,7 @@ export function useProviderReload(blocked: boolean) {
 }
 export type ProviderReload = ReturnType<typeof useProviderReload>;
 
-export function DiscoveryProjectSettings({ close, providerReload }: { close(): void; providerReload: ProviderReload }) {
+export function DiscoveryProjectSettings({ close, providerReload, openProcess }: { close(): void; providerReload: ProviderReload; openProcess(): void }) {
     const { pending, state, setBusy } = useUi();
     const [value, setValue] = useState<ProjectEffort | null>(null);
     const [choice, setChoice] = useState("");
@@ -105,6 +105,10 @@ export function DiscoveryProjectSettings({ close, providerReload }: { close(): v
         <div role="status">{value && [value.stage1, value.stage2].map((stage, index) =>
           <p key={index}>Stage {index + 1}: {stage.status}. Actual: {stage.actual || "not yet available"}. {stage.model ? `Model: ${stage.model}.` : ""} {stage.error}</p>)}</div>
         {error && <p role="alert">{error}</p>}
+        <section className="root-maintenance">
+          <button id="acceptance-delivery" type="button" className="plan-button secondary" onClick={openProcess}>Advanced handoffs &amp; history</button>
+          <p>Review saved snapshots, record acceptance, and manage delivery integrations. Not needed for everyday project work.</p>
+        </section>
         {(providerReload.view.supported || providerReload.view.message) && <details className="root-maintenance" id="root-maintenance">
           <summary>Advanced project diagnostics</summary>
           <p>{providerReload.view.title}</p>
