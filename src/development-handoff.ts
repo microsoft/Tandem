@@ -46,6 +46,23 @@ export interface HandoffAdmission {
     message: string;
 }
 
+export interface HandoffReview {
+    binding: string;
+    generation: string;
+    snapshotPath: string;
+    snapshotHash: string;
+    snapshotRevision: number;
+    completedAt: string;
+    workspaceRoot: string;
+    goal: string;
+    prototype: string;
+    specification: string;
+    confirmed: string[];
+    assumed: string[];
+    deferred: string[];
+    decisions: string[];
+}
+
 function safePath(root: string, path: string): string {
     if (isAbsolute(path) || path.includes("\0") || path.split(/[\\/]/).some((part) => !part || part === "." || part === ".." || part.includes(":"))) {
         return fail("Handoff file path is unsafe; no input was copied.");
@@ -97,7 +114,47 @@ export class DevelopmentHandoffs {
         }
         return value as DevelopmentHandoff;
     }
-    async prepare(state: TandemState): Promise<DevelopmentHandoff> {
+    /** Reads saved evidence only: no receipt, admission, setup or native work. */
+    async review(state: TandemState): Promise<HandoffReview> {
+        assertLegacyCutover(state);
+        const output = state.lifecycle.outputs.find(entry => entry.stageId === "prototype");
+        if (!output || !state.lifecycle.completedStages.includes("prototype")) return fail("Complete Prototype before reviewing its handoff.");
+        if (!/^\.tandem[\\/]efforts[\\/][a-z0-9._-]+[\\/]stages[\\/]prototype(?:-r[1-9][0-9]*)?\.json$/.test(output.path)) {
+            return fail("The original Prototype snapshot path is invalid.");
+        }
+        const bytes = await readRetainedFile(safePath(this.sharedRoot, output.path), MAX_SNAPSHOT);
+        const snapshot: unknown = JSON.parse(bytes.toString("utf8"));
+        if (!object(snapshot) || snapshot.version !== 1 || snapshot.prototypeId !== state.prototypeId
+            || snapshot.stageId !== "prototype" || !Number.isSafeInteger(snapshot.revision) || !object(snapshot.result)) {
+            return fail("The completed Prototype snapshot is invalid.");
+        }
+        const source = snapshot.result;
+        const specification = Array.isArray(source.artifacts) && source.artifacts.find(artifact =>
+            artifact.id === "draft-feature-spec" && artifact.stage === "prototype" && artifact.reviewStatus !== "stale");
+        if (!specification || typeof specification.content !== "string") return fail("The saved Prototype has no readable current feature specification.");
+        const strings = (value: unknown): string[] => {
+            if (!Array.isArray(value) || !value.every(item => typeof item === "string")) return fail("Saved decision evidence is unreadable. Review Prototype before continuing.");
+            return value;
+        };
+        if (typeof source.goal !== "string" || !["build", "validate-existing", "not-applicable"].includes(source.prototypeApproach?.mode)
+            || !Array.isArray(source.decisionGraph?.nodes)) return fail("The saved Prototype summary is incomplete. Review Prototype before continuing.");
+        const snapshotHash = sha256(bytes);
+        return {
+            binding: executionDigest({ snapshotHash, snapshotPath: output.path, effortId: state.prototypeId,
+                generation: state.generation, target: resolve(this.workspaceRoot), owner: this.mainSessionId,
+                acceptances: state.process.acceptances }),
+            generation: state.generation, snapshotPath: output.path, snapshotHash, snapshotRevision: snapshot.revision,
+            completedAt: String(snapshot.completedAt ?? output.completedAt), workspaceRoot: resolve(this.workspaceRoot),
+            goal: String(source.goal ?? ""), prototype: source.prototypeApproach?.mode === "not-applicable"
+                ? `No graphical Prototype: ${source.prototypeApproach.reason || "not applicable"}`
+                : "Saved displayed Prototype source and approved drawings (when used). Scripts will not run.",
+            specification: specification.content, confirmed: strings(source.confirmed), assumed: strings(source.assumed),
+            deferred: strings(source.deferred), decisions: Array.isArray(source.decisionGraph?.nodes)
+                ? source.decisionGraph.nodes.filter((node: unknown) => object(node) && typeof node.answer === "string" && node.answer)
+                    .map((node: Record<string, unknown>) => `${node.title || node.id}: ${node.answer}`) : [],
+        };
+    }
+    async prepare(state: TandemState, reviewBinding?: unknown): Promise<DevelopmentHandoff> {
         assertLegacyCutover(state);
         const output = state.lifecycle.outputs.find(entry => entry.stageId === "prototype");
         if (!output || !state.lifecycle.completedStages.includes("prototype")) return fail("Complete Prototype before continuing Design.");
@@ -105,7 +162,12 @@ export class DevelopmentHandoffs {
             return fail("The original Prototype snapshot path is invalid.");
         }
         return this.locked(async () => {
+            const review = reviewBinding === undefined ? null : await this.review(state);
+            if (review && review.binding !== reviewBinding) {
+                return fail("The saved Prototype or target changed. Review the handoff again; nothing was submitted.");
+            }
             const snapshotBytes = await readRetainedFile(safePath(this.sharedRoot, output.path), MAX_SNAPSHOT);
+            if (review && sha256(snapshotBytes) !== review.snapshotHash) return fail("The saved Prototype changed during confirmation. Review it again.");
             const snapshot: unknown = JSON.parse(snapshotBytes.toString("utf8"));
             if (!object(snapshot) || snapshot.version !== 1 || snapshot.prototypeId !== state.prototypeId || snapshot.stageId !== "prototype"
                 || !Number.isSafeInteger(snapshot.revision) || !object(snapshot.result)) return fail("The completed Prototype snapshot is invalid.");

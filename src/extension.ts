@@ -307,10 +307,11 @@ async function continueDevelopmentLocked(prototypeId, extensionId, input: Record
             throw new CanvasError("stale_handoff", "The displayed Prototype or effort changed. Review it before continuing Design.");
         }
         if (state.lifecycle.currentStage !== "development" || !output) throw new CanvasError("prototype_incomplete", "Complete Prototype first.");
-        const receipt = await handoffs.prepare(state);
+        const receipt = await handoffs.prepare(state, input.reviewBinding);
         if (state.development?.handoffId !== receipt.id) {
             await persistState({ ...state, development: { handoffId: receipt.id, requestId: receipt.request.id, snapshotPath: output.path },
                 status: "Prototype retained. Starting the owned Development runtime for Design continuation." });
+            publishState(prototypeId);
         }
         return receipt;
     });
@@ -6399,7 +6400,7 @@ async function handleRequest(entry, req, res) {
         if (!entry.canSubmitAnswers || !await isPreferredAnswerProvider(entry.extensionId)) throw new CanvasError("read_only_provider", "Use the owning writable provider to choose the starting path.");
         const input = await readRequestBody(req);
         if (!isObject(input) || Object.keys(input).some(key => key !== "startingPath")) throw new Error("Supply only the starting path.");
-        if (input.startingPath === "development") await developmentGit.requireReady();
+        await developmentGit.requireReady();
         sendJson(res, 200, await chooseProjectEntry(WORKSPACE_ROOT, input.startingPath)); return;
     }
     if (requestUrl.pathname === "/api/project-entry/open" && req.method === "POST") {
@@ -6407,7 +6408,8 @@ async function handleRequest(entry, req, res) {
         if (!metadata.startingPath) throw new CanvasError("project_entry_required", "Choose a starting path for this project folder first.");
         if (!entry.canSubmitAnswers || !await isPreferredAnswerProvider(entry.extensionId)) throw new CanvasError("read_only_provider", "Use the owning writable provider to open this project.");
         const state = await loadState(entry.prototypeId);
-        const prepareDevelopment = metadata.startingPath === "development" || state.lifecycle.currentStage === "development";
+        const prepareDevelopment = metadata.startingPath === "development"
+            || state.lifecycle.currentStage === "development" && Boolean(state.development);
         const firstOpen = !entry.projectEntryOpened;
         if (firstOpen) {
             entry.projectEntryOpening ??= (async () => {
@@ -6463,6 +6465,10 @@ async function handleRequest(entry, req, res) {
                 handoffId: state.development?.handoffId ?? null, admission: await handoffs.admissionFor(state) });
             return;
         }
+        if (req.method === "GET" && requestUrl.pathname === "/api/development/handoff-review") {
+            sendJson(res, 200, await handoffs.review(await loadState(entry.prototypeId)));
+            return;
+        }
         if (req.method === "GET" && requestUrl.pathname === "/api/development/status") {
             sendJson(res, 200, { ...await development.status(), mainSessionModel: await session.rpc.model.getCurrent() });
             return;
@@ -6489,7 +6495,11 @@ async function handleRequest(entry, req, res) {
             return;
         }
         if (req.method === "POST" && requestUrl.pathname === "/api/development/continue") {
-            const state = await continueDevelopment(entry.prototypeId, entry.extensionId, await readRequestBody(req));
+            const input = await readRequestBody(req);
+            if (typeof input.reviewBinding !== "string" || !/^[a-f0-9]{64}$/.test(input.reviewBinding)) {
+                throw new CanvasError("handoff_review_required", "Review the saved Prototype handoff before confirming Design.");
+            }
+            const state = await continueDevelopment(entry.prototypeId, entry.extensionId, input);
             entry.developmentContext = true;
             sendJson(res, 200, publicState(entry, state));
             return;
@@ -7866,16 +7876,23 @@ session = await joinSession({
                     },
                 },
                 {
+                    name: "review_prototype_handoff",
+                    description: "Read the exact saved Prototype handoff summary without creating a receipt or starting work. Present it for explicit confirmation.",
+                    handler: async ctx => handoffs.review(await loadState(await resolvePrototypeId(ctx.instanceId, undefined))),
+                },
+                {
                     name: "continue_design",
-                    description: "Explicitly admit the exact completed Prototype snapshot to the native Designer, not implementation.",
+                    description: "After explicit confirmation of review_prototype_handoff, admit that exact snapshot to Designer, not implementation.",
                     inputSchema: { type: "object", additionalProperties: false,
-                        properties: { generation: { type: "string" }, snapshotPath: { type: "string" }, expectedRevision: { type: "integer" } },
-                        required: ["generation", "snapshotPath", "expectedRevision"] },
+                        properties: { generation: { type: "string" }, snapshotPath: { type: "string" }, expectedRevision: { type: "integer" },
+                            reviewBinding: { type: "string", pattern: "^[a-f0-9]{64}$" } },
+                        required: ["generation", "snapshotPath", "expectedRevision", "reviewBinding"] },
                     handler: async ctx => {
                         if (!isObject(ctx.input)) throw new CanvasError("invalid_handoff", "Supply the exact displayed snapshot identity.");
                         return continueDevelopment(await resolvePrototypeId(ctx.instanceId, undefined), ctx.extensionId, {
                             generation: ctx.input["generation"], snapshotPath: ctx.input["snapshotPath"],
                             expectedRevision: ctx.input["expectedRevision"],
+                            reviewBinding: ctx.input["reviewBinding"],
                         });
                     },
                 },

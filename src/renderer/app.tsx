@@ -11,6 +11,7 @@ import { SketchPanel, SketchCompletionContext, isSketchRevisionApproved } from "
 import { PrototypePanel, prototypeCompletionBlocked } from "./prototype-panel.js";
 import { ArtifactList, ArtifactsPanel, DevelopmentArtifactList } from "./artifacts-panel.js";
 import { DevelopmentPanel } from "./development-panel.js";
+import { HandoffReviewProvider } from "./handoff-review.js";
 import { WorkflowActivity } from "./workflow-activity.js";
 import { ProjectConversation, ProjectConversationProvider, useProjectView } from "./project-conversation.js";
 import { DiscoveryRecovery } from "./discovery-recovery.js";
@@ -146,9 +147,9 @@ function EffortApp({ state, store, version, connectionError, confirm }: {
       viewedStage={stageTabs.find(tab => tab.value === activeTab)?.stage
         ?? stageTabs.find(tab => tab.stage === state.artifacts.find(item => item.id === selectedArtifact)?.stage)?.stage ?? state.lifecycle.currentStage}
       onEntry={(path, firstChoice) => { if (path === "development") setActiveTab("development"); else if (firstChoice) setActiveTab("preparation"); }}
-      showDesign={() => setActiveTab("development")}><Workspace version={version} connectionError={connectionError} store={store} activeTab={activeTab} onTabChange={setActiveTab}
+      showDesign={() => setActiveTab("development")}><HandoffReviewProvider><Workspace version={version} connectionError={connectionError} store={store} activeTab={activeTab} onTabChange={setActiveTab}
       selectedArtifact={selectedArtifact} contextOpen={contextOpen} setContextOpen={setContextOpen}
-      sketchBlocked={sketchBlocked} onSketchBlocked={setSketchBlocked} effortBusy={busy.has("effort")} /></ProjectConversationProvider>
+      sketchBlocked={sketchBlocked} onSketchBlocked={setSketchBlocked} effortBusy={busy.has("effort")} /></HandoffReviewProvider></ProjectConversationProvider>
   </SpeechProvider></UiContext.Provider>;
 }
 
@@ -337,7 +338,7 @@ function Workspace(props: WorkspaceProps) {
       prototype: [["apply-prototype-update", "Show the prepared prototype version"], ["extend-prototype-budget", "Review an additional prototype work window"],
         ["retry-prototype-checkpoint", "Retry incomplete prototype work"], ["start-prototype", "Start the prototype build"],
         ["submit-clarification", "Answer the prototype clarification"], ["complete-stage", "Finish prototype iteration"]],
-      development: state.development ? [] : [["continue-design", "Continue Design from the completed Prototype"]],
+      development: state.development ? [] : [["continue-design", "Review the saved Prototype handoff"]],
     }[current] as [string, string, string?][];
     const update = () => {
       const candidate = candidates.find(([id, , revealId]) => {

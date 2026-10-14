@@ -4,6 +4,7 @@ import { RadioGroup } from "radix-ui";
 import type { DecisionQuestion } from "../workflow.js";
 import { hasActiveJobs, hasStageData, skippedStage, useAction, useDraft, useUi, type UiState } from "./ui-context.js";
 import { SpeechTextarea } from "./speech-textarea.js";
+import { HandoffControls } from "./handoff-review.js";
 
 const milestones = [
   { id: "structure", label: "Structure" }, { id: "interaction", label: "Interaction" }, { id: "visual", label: "Visual direction" },
@@ -357,9 +358,9 @@ export function PrototypePanel({ active: visible, connected }: { active: boolean
   return <>
     <div className="preview-surface">
       {savedOnly && state.lifecycle.outputs.some(output => output.stageId === "prototype") && !finalizing && <section className="prototype-progress" aria-label="Saved Prototype next step">
-        <p>Prototype saved. Continue in Development when you're ready.</p>
-        <button className="plan-button secondary" type="button" onClick={() => ui.browseStage("development")}>Go to Development</button>
-        <details><summary>Returning later</summary><p>You can also close and return later. The saved Prototype remains available through Continue Design from Prototype in Development; no manual file import is needed.</p></details>
+        <HandoffControls prototype />
+        <button className="plan-button secondary" type="button" onClick={() => ui.browseStage("development")}>Open Development</button>
+        <details><summary>Returning later</summary><p>The saved Prototype remains available for review in Development. Opening Development does not submit it; confirm the handoff when ready.</p></details>
       </section>}
       <div id="preview-tools" className="preview-tools">
         <span id="preview-status">{unavailable ? "not applicable" : finalizing ? "Finishing prototype..."

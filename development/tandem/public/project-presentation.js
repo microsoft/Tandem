@@ -201,6 +201,8 @@ export function installProjectPresentation({ document, window, changed, settings
     unavailable(reason) {
       currentSnapshot = null;
       send({ type: "outputs", status: "unverified", reason: `Development connection unavailable. Last observed outputs are retained: ${reason}`, items: [] });
+      send({ type: "status", status: "unavailable", active: false, handoffActivity: null,
+        reason: `Development activity could not be verified: ${reason}` });
     },
     appearance: preferences => send({ type: "appearance", theme: preferences.theme, fontSize: preferences.fontSize }),
     resized: width => send({ type: "conversation-resize", width }),
@@ -233,6 +235,7 @@ export function installProjectPresentation({ document, window, changed, settings
         installationStatus: snapshot.installation?.status,
         canRetry: snapshot.installation?.canRetry === true, canReopen: snapshot.installation?.canReopen === true,
         active: snapshot.installation?.status === "ready",
+        handoffActivity: snapshot.workflow?.handoffActivity ?? null,
         role: snapshot.workflow?.activeRole ?? null, reason: snapshot.workflow?.reason ?? snapshot.installation?.reason ?? null,
         designRevision: snapshot.design?.binding?.revisionId ?? null,
         questions: snapshot.workflow?.questionCounts?.unanswered ?? 0, permissions: snapshot.accessRequests?.length ?? 0,

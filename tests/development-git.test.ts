@@ -173,11 +173,13 @@ test("returning Preparation can cancel Development setup and still browse its re
     h.setGitPreflight(async () => response({ status: "setup", initialize: false, token: "bound",
         projectPath: "C:\\fixture-project", message: "Add the missing ignore rule." }));
     h.render(state("development")); await h.flush();
+    assert.equal(h.document.querySelector("#cancel-git-setup"), null, "Completed discovery alone does not activate Development.");
+    await h.click("enter-development");
     await h.click("cancel-git-setup");
     assert.equal(h.document.querySelector('[role="alertdialog"]'), null);
     assert.equal(h.get("studio-workspace").hasAttribute("inert"), false);
     assert.equal(h.presentationRequests.length, 0);
-    assert.equal(h.entryRequests.filter(path => path === "/api/project-entry/open").length, 0);
+    assert.equal(h.entryRequests.filter(path => path === "/api/project-entry/open").length, 1);
 });
 
 test("missing Git is an explicit blocked result, not setup eligibility", async t => {
@@ -206,7 +208,7 @@ test("partial ignore-write failure retains initialized Git and offers an explici
     assert.equal(await readFile(path, "utf8"), "# preserve\n.tandem/\n");
 });
 
-test("public entry checks before saving; setup does not start; original entry starts once without a model request", async t => {
+for (const startingPath of ["preparation", "development"]) test(`public ${startingPath} entry checks before saving; setup does not start; chosen entry opens once`, async t => {
     const root = await folder(t);
     const h = await extensionHarness({}, undefined, "", root, true);
     t.after(() => h.close());
@@ -217,21 +219,21 @@ test("public entry checks before saving; setup does not start; original entry st
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     });
     let starts = 0; h.setBeforeDevelopmentStart(async () => { starts++; });
-    assert.equal((await post("api/project-entry", { startingPath: "development" })).status, 409);
+    assert.equal((await post("api/project-entry", { startingPath })).status, 409);
     await assert.rejects(lstat(join(root, ".tandem", "project-entry.json")), { code: "ENOENT" });
     const check = await (await fetch(new URL("api/development/preflight", server.url))).json();
     assert.equal(check.status, "setup");
     assert.equal((await post("api/development/setup", { token: check.token })).status, 200);
     assert.equal(starts, 0); assert.equal(h.requests.length, 0);
     await assert.rejects(lstat(join(root, ".tandem", "project-entry.json")), { code: "ENOENT" });
-    assert.equal((await post("api/project-entry", { startingPath: "development" })).status, 200);
+    assert.equal((await post("api/project-entry", { startingPath })).status, 200);
     await Promise.all([post("api/project-entry/open"), post("api/project-entry/open")]);
     await post("api/project-entry/open");
-    assert.equal(starts, 1);
+    assert.equal(starts, startingPath === "development" ? 1 : 0);
     assert.equal(h.requests.length, 0); assert.equal(h.developmentRequests.length, 0);
 });
 
-test("initial Development consent can cancel without saving choice, then resumes exactly once", async t => {
+for (const startingPath of ["preparation", "development"]) test(`initial ${startingPath} consent cancels without saving choice, then resumes once`, async t => {
     const h = await reactHarness(t, undefined, null);
     let ready = false, setups = 0;
     h.setGitPreflight(async () => response({ status: ready ? "ready" : "setup", initialize: true, projectPath: "C:\\fixture-project",
@@ -241,18 +243,19 @@ test("initial Development consent can cancel without saving choice, then resumes
         setups++; ready = true; return response({ status: "ready" });
     });
     h.render(state("prepare")); await h.flush();
-    await h.click("entry-development");
+    await h.click(`entry-${startingPath}`);
     assert.ok(h.get("confirm-git-setup"));
     assert.equal(h.entryRequests.filter(path => path.endsWith(":POST")).length, 0);
     await h.click("cancel-git-setup");
     assert.ok(h.get("entry-preparation")); assert.equal(setups, 0);
     assert.equal(h.presentationRequests.length, 0);
-    await h.click("entry-development");
+    await h.click(`entry-${startingPath}`);
     await h.click("confirm-git-setup"); await h.flush();
     assert.equal(setups, 1);
     assert.equal(h.entryRequests.filter(path => path.endsWith(":POST")).length, 1);
     assert.equal(h.entryRequests.filter(path => path === "/api/project-entry/open").length, 1);
     assert.equal(h.document.querySelector("#activate-development"), null);
+    if (startingPath === "preparation") assert.equal(h.presentationRequests.length, 0, "Project setup cannot open private Development.");
 });
 
 test("Preparation stays independent; later Development cancel and partial-failure retry retain the original action", async t => {

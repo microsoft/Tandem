@@ -430,6 +430,9 @@ function render() {
     return row;
   }));
   const designVerified = snapshot.conversationStatus !== 'unverified' && ['ready', 'closed'].includes(installed?.status);
+  const prototypeActivity = designVerified ? snapshot.workflow?.handoffActivity?.at(-1) : null;
+  $('prototype-handoff-activity').hidden = !prototypeActivity;
+  $('prototype-handoff-activity').textContent = prototypeActivity?.label ?? '';
   if (designVerified) lastVerifiedDesign = snapshot.design;
   const displayedDesign = designVerified ? snapshot.design : lastVerifiedDesign;
   const hasDesign = Boolean(displayedDesign?.content);
@@ -439,7 +442,8 @@ function render() {
   $('backbone-state').textContent = !designVerified ? 'Design unverified' : hasDesign ? 'Current Design' : 'No Design yet';
   $('assessment-card').querySelector('strong').textContent = designVerified ? 'No Design has been published' : 'Design is not yet verified';
   $('assessment-card').querySelector('p').textContent = designVerified
-    ? 'Discuss your idea in the conversation. The current Design will appear here when it is ready.'
+    ? prototypeActivity ? 'The saved Prototype request is shown above. Its Design will appear here when published; do not resubmit while it is pending.'
+      : 'Discuss your idea in the conversation. The current Design will appear here when it is ready.'
     : 'Restore the Development connection to verify saved Design. Unavailable does not mean empty.';
   if (hasDesign) {
     const raw = JSON.stringify(displayedDesign.content, null, 2);

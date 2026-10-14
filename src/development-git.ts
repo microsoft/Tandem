@@ -120,7 +120,7 @@ async function inspect(folder: string) {
         if (ignored) await requireIgnoredApplicationState({ repositoryRoot: projectPath, targetWorktreePath: projectPath, policy: DEFAULT_POLICY });
     }
     const view: DevelopmentGitPreflight = { status: ignored ? "ready" : "setup", projectPath, initialize,
-        message: ignored ? "This Git working copy is ready for Development."
+        message: ignored ? "This Git working copy is ready for Tandem."
             : initialize ? "This folder is not in a Git repository. Set up this folder to create local Git metadata and add .tandem/ to .gitignore."
                 : "This Git working copy needs a .tandem/ exclusion. Setup will preserve existing rules and add it to .gitignore." };
     const scope = digest({ folderIdentity, entry });
@@ -154,7 +154,7 @@ export class DevelopmentGit {
             return { ...observed.view, token };
         } catch (error) {
             return { status: "blocked", projectPath: resolve(this.folder), initialize: false,
-                message: `Development could not verify this folder. ${missing(error) ? "The selected folder or its metadata is unavailable. Check the folder before continuing." : error instanceof Error ? error.message : String(error)} This check changed no files.` };
+                message: `Project setup could not verify this folder. ${missing(error) ? "The selected folder or its metadata is unavailable. Check the folder before continuing." : error instanceof Error ? error.message : String(error)} This check changed no files.` };
         }
     }
     async requireReady() {

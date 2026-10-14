@@ -7,6 +7,9 @@
 Open the project folder you want to work on. Its first Preparation/Development
 choice is saved there; it is not a mode switch on every visit.
 Preparation can progress into Development, and existing files are preserved.
+Both first-time choices check project Git setup before being saved. Review any
+local initialization/ignore-rule consent; Cancel leaves the choice unsaved.
+Existing repositories are reused, and Preparation never starts private Development.
 
 | Area | Your work | Output |
 | --- | --- | --- |
@@ -88,8 +91,17 @@ milestones are not feedback you submitted.
 Use **Feedback** to **Send revision** or **Queue revision**, then inspect its
 status and clarifications. Finish requires the necessary milestones, current
 drawing approval and resolved submitted feedback. **Finish Prototype and save
-outputs** retains evidence; it does not approve implementation.
+outputs** retains evidence; it starts neither Design nor implementation.
 Non-GUI work can retain a reason/specification without fabricating screens.
+
+**Continue to Development** opens a handoff summary, not a model request.
+Check its saved specification, decisions, assumptions, deferred work and target
+folder, then confirm **Create Design from Prototype** (or **Refine Design from
+Prototype**). Cancel changes nothing. **Open Development** is navigation only.
+After confirmation, status distinguishes submission, Designer work and published
+Design/questions. If activity is unavailable, it says unverified rather than
+claiming completion. Scripts do not run and implementation remains separately
+confirmed.
 
 Saved source and a running preview are separate. Use
 [preview recovery](troubleshooting.md#the-preview-is-unavailable) to restart a
