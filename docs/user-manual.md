@@ -164,8 +164,10 @@ choice can be pending before it opens; this does not start it.
 application is not success and needs explicit resolution.
 
 In Development, **Private Canvas model > Apply model** changes only that model;
-the main/discovery model belongs to the launching host. The browser CLI has no
-`--model` flag. Resolve pending model intent using the offered retry or
+the main/discovery model belongs to the launching host. The browser CLI accepts
+`--model <id>` and optional `--reasoning-effort <level>` for that main session;
+see the [quick start](quick-start.md). These options do not choose Development's
+private model. Resolve pending private model intent using the offered retry or
 **Accept actual model** only if you want the reported model.
 
 Development settings include **Theme**, **Text size**, **Save appearance** and

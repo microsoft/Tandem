@@ -10,7 +10,7 @@ import { consumeLines, type BackendOptions } from "../src/browser/backend.js";
 import type { BackendCommand } from "../src/browser/contracts.js";
 import { parseBackendEvent } from "../src/browser/contracts.js";
 import { HostDiagnostics, redactDiagnostic, WorkspacePreferences } from "../src/browser/local-state.js";
-import { createBrowserHost } from "../src/browser/server.js";
+import { createBrowserHost, type BrowserHostOptions } from "../src/browser/server.js";
 
 async function until(predicate: () => boolean, timeout = 3000): Promise<void> {
     const deadline = Date.now() + timeout;
@@ -20,7 +20,7 @@ async function until(predicate: () => boolean, timeout = 3000): Promise<void> {
     }
 }
 
-async function fixture(t: TestContext, startupTimeoutMs?: number) {
+async function fixture(t: TestContext, startupTimeoutMs?: number, modelSelection?: BrowserHostOptions["modelSelection"]) {
     const root = await mkdtemp(join(tmpdir(), "tandem-browser-host-"));
     const workspace = join(root, "workspace");
     const other = join(root, "other");
@@ -30,6 +30,7 @@ async function fixture(t: TestContext, startupTimeoutMs?: number) {
         version: "test", runtimeDirectory: root, initialDirectory: root,
         workspace, preferencesPath: join(root, "preferences"), page: "<html>Tandem fixture</html>", scriptHash: "sha256-fixture",
         startupTimeoutMs,
+        ...(modelSelection ? { modelSelection } : {}),
         backendFactory: async (options) => {
             const record: typeof backends[number] = { options, commands: [], stops: 0, failStop: false };
             backends.push(record);
@@ -65,6 +66,24 @@ async function fixture(t: TestContext, startupTimeoutMs?: number) {
 
 const permission = (id = "request-one", canAllowAllForSession = true): Extract<DesktopEvent, { type: "permission" }> =>
     ({ type: "permission", id, title: "Allow action?", details: '{"kind":"extension-management"}', canAllowAllForSession });
+
+test("browser host preserves explicit main model selection across workspace switches without granting permissions", async (t) => {
+    const selection = { model: "gpt-6-astra", reasoningEffort: "low" } as const;
+    const f = await fixture(t, undefined, selection);
+    assert.deepEqual(f.backends[0].options.modelSelection, selection);
+    f.ready();
+    assert.equal((await f.command({ type: "open-workspace", workspace: f.other })).status, 202);
+    await until(() => f.backends.length === 2);
+    assert.deepEqual(f.backends[1].options.modelSelection, selection);
+    assert.equal(f.backends[0].stops, 1);
+    assert.equal(f.host.snapshot().permissionMode, "ask");
+    assert.deepEqual(f.backends[1].commands, []);
+});
+
+test("browser host leaves native model defaults untouched when no selection was supplied", async (t) => {
+    const f = await fixture(t);
+    assert.equal(Object.hasOwn(f.backends[0].options, "modelSelection"), false);
+});
 
 test("browser host API requires a launch capability, same origin and bounded JSON", async (t) => {
     const f = await fixture(t);

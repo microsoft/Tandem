@@ -2,6 +2,7 @@ import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { canvasRequestAllowed, readJsonRequest, sendJsonResponse } from "../canvas-transport.js";
 import { validateDesktopUrl, type DesktopEvent } from "../desktop/protocol.js";
+import type { DesktopModelSelection } from "../desktop/runtime.js";
 import { startBackend, type Backend, type BackendFactory } from "./backend.js";
 import type { BackendCommand, HostSnapshot } from "./contracts.js";
 import {
@@ -39,6 +40,7 @@ export interface BrowserHostOptions {
     preferencesPath?: string;
     backendFactory?: BackendFactory;
     startupTimeoutMs?: number;
+    modelSelection?: DesktopModelSelection;
 }
 
 export async function createBrowserHost(options: BrowserHostOptions) {
@@ -193,6 +195,7 @@ export async function createBrowserHost(options: BrowserHostOptions) {
             armStartupTimer();
             backend = await (options.backendFactory || startBackend)({
                 workspace, runtimeDirectory: options.runtimeDirectory,
+                ...(options.modelSelection ? { modelSelection: options.modelSelection } : {}),
                 event: (event) => receive(event, generation),
                 diagnostic: (message) => diagnostics.write(message),
                 exited: (code, error) => {

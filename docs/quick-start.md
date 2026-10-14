@@ -39,6 +39,20 @@ node .\dist\browser\cli.mjs --workspace C:\projects\counter
 `login` signs in to Copilot, not optional Azure voice input. Review startup
 permissions and keep this terminal open.
 
+To choose the main/Preparation model and effort explicitly, add launch options:
+
+```powershell
+node .\dist\browser\cli.mjs --workspace C:\projects\counter --model gpt-6-astra --reasoning-effort low
+```
+
+Use a model available to your account. The launcher checks the native catalog and
+actual readback before opening Tandem; it does not silently substitute a model.
+Omitting both options preserves native defaults and saved selection. If Stage 1
+effort remains pending with no actual model, stop the host and reopen the same
+folder with an explicit model. Development's private model is separate: select it
+in **Project settings > Private Canvas model**, then apply the shared effort and
+check both stage results before submitting work.
+
 **You should see:** your project folder and **Choose where to start**.
 Returning projects use their saved choice and progress. If startup fails, use
 [troubleshooting](troubleshooting.md#startup-and-connection-problems).

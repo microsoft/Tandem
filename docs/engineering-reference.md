@@ -170,7 +170,10 @@ Programmatic browser hosts can explicitly pass
 `startBackend({ ..., modelSelection: { model, reasoningEffort } })`; the packaged
 native host accepts the corresponding `--model` and `--reasoning-effort` options.
 They are validated against the native model catalog and forwarded to SDK
-creation/resume, with actual readback checked before opening the canvas.
+creation/resume, with actual readback checked before opening the canvas. The
+standalone browser CLI also accepts these options and passes them to that same
+native host, including after a folder switch. `--reasoning-effort` requires
+`--model`; `login` accepts neither option.
 Omitting them preserves native defaults and saved main-session selection.
 This does not configure or overwrite the separate private Development session.
 If native main-session resume reports no model, an explicit saved project effort

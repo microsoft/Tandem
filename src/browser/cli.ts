@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { desktopRuntimeEnvironment } from "../desktop/environment.js";
+import { parseDesktopModelSelection } from "../desktop/runtime.js";
 import { page, scriptHash } from "./assets.js";
 import { createBrowserHost } from "./server.js";
 import { errorMessage, redactDiagnostic } from "./local-state.js";
@@ -35,17 +36,19 @@ async function main(): Promise<void> {
     }
     const { values, positionals } = parseArgs({
         options: { workspace: { type: "string" }, "no-open": { type: "boolean" },
+            model: { type: "string" }, "reasoning-effort": { type: "string" },
             help: { type: "boolean", short: "h" }, version: { type: "boolean", short: "v" } },
         strict: true, allowPositionals: true,
     });
     if (values.help) {
-        console.info("Tandem standalone\n\nUsage: tandem [--workspace <folder>] [--no-open]\n       tandem login\n\nUses the current directory when --workspace is omitted.\nClosing a tab keeps the backend running. Use Stop or Ctrl+C to exit.\nThe private launch URL grants host access; do not share it.");
+        console.info("Tandem standalone\n\nUsage: tandem [--workspace <folder>] [--no-open] [--model <id> [--reasoning-effort <level>]]\n       tandem login\n\nUses the current directory when --workspace is omitted.\nModel and effort select the main/Preparation session, not private Development.\nEffort requires an explicit model; supported levels are checked against the native model catalog.\nOmitting both preserves native defaults and saved selection.\nClosing a tab keeps the backend running. Use Stop or Ctrl+C to exit.\nThe private launch URL grants host access; do not share it.");
         return;
     }
     if (values.version) { console.info(__TANDEM_VERSION__); return; }
     if (positionals.length) {
-        if (positionals.length !== 1 || positionals[0] !== "login" || values.workspace || values["no-open"]) {
-            throw new Error("Usage: tandem [--workspace <folder>] [--no-open], or tandem login.");
+        if (positionals.length !== 1 || positionals[0] !== "login" || values.workspace || values["no-open"]
+            || values.model !== undefined || values["reasoning-effort"] !== undefined) {
+            throw new Error("Usage: tandem [--workspace <folder>] [--no-open] [--model <id> [--reasoning-effort <level>]], or tandem login.");
         }
         const cli = createRequire(import.meta.url).resolve("@github/copilot/npm-loader.js");
         await new Promise<void>((resolve, reject) => {
@@ -55,9 +58,11 @@ async function main(): Promise<void> {
         });
         return;
     }
+    const modelSelection = parseDesktopModelSelection(values.model, values["reasoning-effort"]);
     const host = await createBrowserHost({
         runtimeDirectory: dirname(fileURLToPath(import.meta.url)), version: __TANDEM_VERSION__,
         workspace: resolve(values.workspace || process.cwd()), initialDirectory: process.cwd(), page, scriptHash,
+        ...(modelSelection ? { modelSelection } : {}),
     });
     const stop = () => { void host.close().catch((error: unknown) => {
         process.exitCode = 1;
