@@ -14,10 +14,10 @@ export function installPanelSplitter({ layout, design, separator, resized }) {
     }
     const { width, min, max } = bounds();
     if (width <= 0) return;
-    if (projectLayout) {
+    if (projectLayout && Number.isFinite(projectLayout.conversationWidth)) {
       const size = Math.max(min, Math.min(max, width - projectLayout.conversationWidth));
       layout.style.setProperty('--panel-columns', `${size}px minmax(0, 1fr)`);
-    } else if (preferredRatio !== null) {
+    } else if (!projectLayout && preferredRatio !== null) {
       const size = Math.max(min, Math.min(max, preferredRatio * width));
       layout.style.setProperty('--panel-columns', `${size}px minmax(0, 1fr)`);
     } else {
@@ -47,7 +47,7 @@ export function installPanelSplitter({ layout, design, separator, resized }) {
     if (separator.hasPointerCapture(previous.id)) separator.releasePointerCapture(previous.id);
     if (cancelled) {
       preferredRatio = previous.ratio;
-      if (projectLayout && Number.isFinite(previous.conversationWidth)) {
+      if (projectLayout) {
         projectLayout = { ...projectLayout, conversationWidth: previous.conversationWidth };
         resized?.(projectLayout.conversationWidth);
       }

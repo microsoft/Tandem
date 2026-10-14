@@ -36,6 +36,11 @@ change, [refine Design](#point-to-a-design-change) instead.
 implementation approval. If the server stopped, [restart that saved preview](troubleshooting.md#the-preview-is-unavailable),
 not model generation.
 
+Keep an observation separate from a confirmed change. For example: "I looked for
+Undo after deletion. Clarify whether recovery needs a visible Undo action and a
+deadline before revising the prototype." Then answer the clarification and inspect
+the revision; the agent should not infer a requirement solely from what you tried.
+
 ## Continue from a saved Prototype
 
 **Use when:** finished discovery should inform Development's Design.
@@ -110,6 +115,30 @@ produce an error and keep the draft. There is no `@planner` or **Send to** selec
 **Result:** only explicit decisions authorize changes. Cancel preserves Design
 without a model turn. After approval, use [Stop controls](troubleshooting.md#stop-close-and-returning-later)
 to interrupt work; the earlier confirmation is not undo.
+
+## Inspect a result and request the right follow-up
+
+**Use when:** implementation or Review has finished, but you need to judge what
+works and whether more work is needed.
+
+1. Open the corresponding Design, Implementation and Review outputs from
+   **Artifacts**. Match the result to the agreed user goal and Design revision.
+2. Read the reported journey checks, outcomes and limitations. Compare the
+   starting action, visible result and important boundaries; do not substitute
+   a screenshot or a test count for missing evidence.
+3. Separate a mismatch from a new expectation. "Recovery rejects users after
+   seven days, but Design says thirty" is a correction against existing Design.
+   "I now want a visible Undo action" changes the agreement first.
+4. Answer issued questions through **Questions**. Otherwise, send the appropriate
+   request: "Correct recovery against the unchanged Design," or "Update Design
+   to include Undo; do not implement yet."
+5. Inspect the resulting proposal. Choose **Plan and implement** only when you
+   want that implementation cycle, then inspect its new results.
+
+**Result:** a deliberate follow-up, not automatic acceptance or another fix loop.
+If evidence is partial, ask what remains unverified instead of treating it as a
+pass. Recovery checks do not settle purge rules or an unconfirmed interface.
+You may leave those decisions open and retain an explicitly limited outcome.
 
 ## Locate and export saved outputs
 

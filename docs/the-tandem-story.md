@@ -1,6 +1,6 @@
 # The Tandem story: make intent visible
 
-[Try Tandem](quick-start.md) | [All guides](README.md) | [Opening slides](../development/docs/tandem-opening-slides-v2.html#1)
+[Try Tandem](quick-start.md) | [All guides](README.md) | [User manual](user-manual.md)
 
 You ask an agent to add account deletion. Soon there is a button, code, and tests.
 Then you ask, "How do I recover an account I deleted by mistake?"
@@ -14,24 +14,41 @@ without moving toward different outcomes?**
 
 ## From a working result to a shared understanding
 
-The [opening presentation](../development/docs/tandem-opening-slides-v2.html#1) begins
-with two familiar approaches. In "Describe before building," expectations come
-first, but users must imagine an experience from documents.
-In ["Build before agreement"](../development/docs/tandem-opening-slides-v2.html#2),
-the first app arrives quickly, but important assumptions may already be code
-before the user notices them.
+There are two familiar starting points. Describe before building, and expectations
+come first, but users must imagine an experience from documents. Build before
+agreement, and the first app arrives quickly, but important assumptions may already
+be code before the user notices them. Tandem embraces the fast start without
+treating whatever the agent built as what the user wanted.
 
 Neither approach is inherently wrong. The risk is the
-["intent gap"](../development/docs/tandem-opening-slides-v2.html#3): the user's and
+**intent gap**: the user's and
 agent's assumptions overlap, but one difference matters enormously.
 Tests written for permanent deletion cannot establish that the user wanted it.
-As [slide 4](../development/docs/tandem-opening-slides-v2.html#4) puts it, more output
-is not understanding.
+Visible activity is not visible agreement: logs show what the agent did, not
+whether it chose the behavior you expected.
 
 Tandem's vision is the shared whiteboard: a person and Copilot discussing a
 journey, pointing to an unclear step, and deciding what should happen before
 committing to implementation. Drawings and interactive previews make the
 discussion concrete; a visible Design keeps the agreement available afterward.
+
+## What a short request leaves unsaid
+
+Not every missing expectation is a question the user already knows to ask.
+Consider four situations from the user's perspective:
+
+| What the user knows | Account-deletion example | Useful next step |
+| --- | --- | --- |
+| Explicit intent | "Let people recover an accidental deletion." | Record the goal. |
+| A recognized open question | "I have not chosen the recovery period." | Ask and confirm the boundary. |
+| An unstated expectation | "I assumed I would see an Undo action." | Let the user inspect an experience and clarify what they meant. |
+| An unconsidered issue | "I had not thought about files shared with teammates." | Surface the consequence and make it an explicit decision. |
+
+These are often called known knowns, known unknowns, unknown knowns and unknown
+unknowns. They describe what this user knows at this point, not four kinds of
+software feature. Prototyping and review can expose missing expectations; neither
+guarantees finding them all. The agent can raise a question, but only the user's
+answer establishes the intended behavior.
 
 ## Discover the experience, not just the requirements
 
@@ -43,11 +60,16 @@ when access stops, how recovery works and what remains undecided. Drawings give
 the journey a shape. A prototype lets you try it and notice that "within 30 days"
 still leaves the exact deadline ambiguous.
 
-That is the loop in
-[slide 5, "Prototype to a spec"](../development/docs/tandem-opening-slides-v2.html#5):
-statements, targeted questions, an experience to inspect, and optional feedback.
-Its historical Model Y image illustrates the idea; it is not a live demo of this
-account-management example.
+The loop is statements, targeted questions, an experience to inspect, and optional
+feedback. Resolve the consequential choices needed for a useful prototype rather
+than requiring an exhaustive document first. Then return to clarification when
+trying the experience reveals more.
+
+Suppose the user looks for a deadline and Undo while trying recovery. That is an
+observation worth discussing, not yet a requirement to implement either control.
+Ask whether those controls are wanted, confirm their behavior, then incorporate
+the answer. A recovery policy can be agreed while the interface and permanent
+purge rules remain open.
 
 The outcome is confirmed intent with explicit assumptions and open questions,
 not documentation of whatever the prototype happened to do. A mock service is
@@ -60,9 +82,11 @@ A rough idea can start there too; an agreed specification is not an entry ticket
 
 ## Keep the agreement beside the work
 
-[Slide 6, "Build against the agreement"](../development/docs/tandem-opening-slides-v2.html#6)
-shows three views of the account-deletion example: a journey, a recovery timeline,
-and unresolved purge decisions.
+By "specification," we mean an understandable agreement about requirements and
+design, not necessarily one long document. In Development, **canonical Design**
+is that current agreement. A journey, recovery timeline and unresolved-decision
+map can express different parts of it; they must not silently invent different
+policies.
 
 Normal access stops immediately. Recovery is allowed before 30 days, but rejected
 at or after the deadline. Legal retention and shared assets remain separate
@@ -82,6 +106,30 @@ If the code uses seven days where Design says thirty, silently changing Design
 to excuse the mismatch is not the answer. You decide whether to correct the code
 or change the intended behavior. Review does not authorize a new coding cycle.
 
+## Judge outcomes, not just activity
+
+A result should help you answer four questions: **What is agreed? What changed?
+What evidence supports it? What still needs my decision?**
+
+For the deletion example, evidence that access stops immediately and recovery
+works before the deadline supports that scope only. It does not show that the
+deadline or Undo interface was wanted or tested, or that permanent purge is safe.
+Unit tests remain useful, but code and tests can share the same wrong assumption.
+Check the agreed journey across components and read what could not be exercised.
+
+The same distinction applies beyond account management. For a tank game, decide
+whether it is solo, shared-device or online play before authorizing the affected
+work: each changes controls, rules and infrastructure. Later, a working arena can
+still leave difficulty and scoring expectations unresolved. A screenshot shows
+an appearance; an "implemented" state reports progress; neither proves those
+rules match the agreement.
+
+When an issue appears, distinguish an implementation mismatch from a change in
+intent. Correct the code against the existing Design when the agreement still
+stands. If the user wants different behavior, revise Design first. In either
+case, a new implementation cycle requires fresh approval; an empty question
+queue or completed Review is not permission to continue coding.
+
 ## Independent stages, deliberate decisions
 
 Discovery keeps its goal, question, drawing and prototype controls. Development
@@ -93,18 +141,48 @@ This is not a promise that AI always gets the answer right. It is a way to keep
 assumptions inspectable, consequential choices with the user, and implementation
 anchored to what was actually decided.
 
-## Reading the slides with today's source
+## Why add a workspace when an agent can already do this?
 
-Open the HTML locally to use `#1` through `#6` and **Script / N** for speaker
-notes. The slides explain the vision; the [quick start](quick-start.md) and
-[manual](user-manual.md) describe current operation.
+An ordinary code agent can prototype, write a specification and review code.
+Tandem's proposed value is keeping those activities connected to decisions the
+user can inspect and reuse, rather than asking them to reconstruct the agreement
+from chat and tool logs. Direct agent use remains a valid choice.
+
+Questions and review add interaction. The hypothesis is that they prevent more
+re-explanation and rework than they cost, not that more artifacts automatically
+mean better software. Time and user effort to an accepted outcome, missed
+expectations and later rework are more useful measures than code or test counts.
+A speed advantage has not been established. Adaptive views for different project
+types and a broader AI-native IDE remain directions to explore, not promises of
+complete current functionality.
+
+## Optional background and historical illustrations
+
+The [six-slide overview](../development/docs/tandem-opening-slides-v2.html#1) and
+[extended background deck](../development/docs/tandem-opening-slides-light.html#1)
+are optional illustrations of this story. The extended deck adds the unknowns
+framework, observation/confirmation example, scoped-evidence workspace, captured
+tank-game walkthrough, Q&A and related-work discussion. Open the checked-out HTML
+locally; use arrow controls, **Script / N** for notes, and numbered image controls
+in the walkthrough. The overview supports `#1` through `#6`; the extended deck
+supports `#1` through `#15`.
 
 | Historical material | Current distinction |
 | --- | --- |
-| Slide 5's screenshot has a **Design** tab. | Discovery uses Preparation, Requirements, Drawings and Prototype. Formal Design belongs to Development. |
+| The Model Y screenshot has a **Design** tab. | Discovery uses Preparation, Requirements, Drawings and Prototype. Formal Design belongs to Development. |
 | The slides mention direct entry with an agreed spec. | Development also accepts existing files or a rough idea and can establish the agreement there. |
+| The extended tank-game captures use **Teleos Living Canvas**, **Attention** and older implementation/review controls. | They illustrate a historical workflow, not today's UI or validation results. Use Questions and the separate **Plan and implement** confirmation described in the manual. Reviewer reports Design conformance and over-engineering; it does not edit code or approve another cycle. |
 | The older [workflow diagram](../development/docs/workflow-redesign.html?view=ownership) has no human technical-plan approval or Apply-to-project step. | **Plan and implement** is still required before planning/code changes. You do not approve each internal task. Prototype's Show/Apply control is a different action. |
 | The diagram includes observed main-chat history. | Development shows its own messages and attributable events, not copied parent/discovery chat. |
 
 None of these illustrations establishes release availability, test coverage,
-or a measured speed advantage.
+or a measured speed advantage. The [quick start](quick-start.md) and
+[manual](user-manual.md) describe current operation without requiring the decks.
+
+The background's references are Thariq Shihipar's
+[Finding your unknowns](https://claude.com/blog/a-field-guide-to-claude-fable-finding-your-unknowns)
+and Anthropic's [AI-native SDLC playbook](https://claude.com/blog/the-ai-native-sdlc-playbook).
+The shared direction is durable agreements and human judgment across agent work;
+Tandem emphasizes discovering expectations through experience and making the
+agreement and evidence understandable. This is not a claim of unique agent
+capabilities or full lifecycle coverage.

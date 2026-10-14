@@ -47,6 +47,25 @@ test("standalone handshake requires its exact parent, origin and channel before 
     assert.equal(h.requests.length, 0);
 });
 
+test("saved Prototype does not project a legacy building phase into Development", async (t) => {
+    const h = await reactHarness(t, host);
+    const saved = state("development");
+    saved.phase = "building";
+    saved.lifecycle.outputs = [{ stageId: "prototype", path: ".tandem/efforts/fixture/stages/prototype-r1.json", completedAt: saved.updatedAt }];
+    h.render(saved);
+    await h.flush();
+    await h.sendHeaderMessage({ type: "tandem:header:connect" });
+    assert.equal(header(h.headerMessages).lifecycle, "5. Development");
+    assert.equal(h.get("phase").hidden, true);
+    assert.equal(saved.phase, "building", "Presentation must not rewrite retained discovery state.");
+
+    h.render({ ...state("prototype", 2), phase: "building" });
+    await h.flush();
+    assert.equal(header(h.headerMessages).lifecycle, "4. Prototype | building");
+    assert.equal(h.get("phase").hidden, false);
+    assert.equal(h.get("phase").textContent, "building");
+});
+
 test("hosted maintenance messages cannot revive removed primary actions; Preparation keeps confirmation", async (t) => {
     const h = await reactHarness(t, host);
     const initial = state();

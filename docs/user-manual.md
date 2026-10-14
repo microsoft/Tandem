@@ -14,7 +14,10 @@ Preparation can progress into Development, and existing files are preserved.
 | Development | Refine Design, answer questions, approve implementation and inspect results. | Canonical Design, project code, plans and Review outcomes. |
 
 **Canonical Design** is the current agreement used for implementation and Review.
-It is distinct from discovery evidence.
+It is distinct from discovery evidence. It can use linked journeys, screens,
+diagrams or concrete input/output examples, not just prose. Those views describe
+one agreement: check that the same behavior and boundaries appear consistently.
+Confirmed behavior, assumptions and unanswered questions are not interchangeable.
 
 Use the left navigation to browse, **Current work** to find ongoing work/attention,
 and **Project settings** to configure the project. Browsing does not authorize
@@ -53,6 +56,8 @@ recommendations, including downstream choices. Recommendations and suggestions
 are not already accepted answers. **Update answer and dependents** can invalidate
 dependent decisions while retaining independent answers.
 
+Finishing Requirements opens Drawings and generates the initial screens
+automatically; generation controls are disabled while that work is running.
 Drawings retains the Sketch editor: generate screens, edit shapes/transitions,
 use Undo/Redo, or send a revision instruction. **Save drawings** saves edits;
 **Approve drawings and continue** explicitly approves that revision.
@@ -94,6 +99,12 @@ You can establish Design from existing code without editing it, refine an idea,
 or ask for an explanation. [Optional role hints](use-cases.md#suggest-designer-or-agent)
 and [visual annotations](use-cases.md#point-to-a-design-change) help express intent.
 
+Before requesting implementation, trace a user goal through the proposed behavior:
+what starts it, what outcome the user sees, and which limits or failure cases
+matter. For a service or CLI, use a request sequence or command/output example
+instead of requiring a screen. Describe what should happen, not a technology
+choice you do not feel equipped to judge.
+
 Open **Questions** to see the original context, options, implications and answers.
 Use that form to answer; ordinary chat is not guessed to be an answer to it.
 
@@ -121,6 +132,31 @@ and material over-engineering without editing or starting a fix loop. Inspect
 verification limits; "done" or Review completion is not a test pass.
 For interruptions, see [queued work and Stop](troubleshooting.md).
 
+## Read an outcome and decide what comes next
+
+Inspect Design, Implementation and Review together, rather than judging the
+number of activity messages or passed tests.
+
+| Check | What to look for |
+| --- | --- |
+| Agreement | Which user goal, behavior and Design revision governed the work? |
+| Change | What was implemented or revised, and what was left out? |
+| Evidence | Which journeys and boundaries were actually exercised, with what results and limitations? |
+| Decision | Is there drift to correct, a change in intent to confirm, or an unanswered question? |
+
+For example, checks that account recovery works before 30 days and fails at the
+deadline do not validate permanent purge or an unconfirmed Undo interface.
+A screenshot is not an exercised journey, and a mock backend is not evidence
+that a real integration works. A partial or unavailable check remains a limit,
+not an inferred pass.
+
+If code disagrees with unchanged Design, request a correction against that
+agreement. If the intended behavior has changed, request a Design update first.
+Use the original Questions form for issued questions; request implementation
+separately when ready. Review reports and an empty question queue never authorize
+another code-changing cycle. Follow the [outcome recipe](use-cases.md#inspect-a-result-and-request-the-right-follow-up)
+before accepting or exporting work.
+
 ## Settings and saved state
 
 In **Project settings**, choose **Reasoning effort for both stages** and **Apply
@@ -130,8 +166,10 @@ choice can be pending before it opens; this does not start it.
 application is not success and needs explicit resolution.
 
 In Development, **Private Canvas model > Apply model** changes only that model;
-the main/discovery model belongs to the launching host. The browser CLI has no
-`--model` flag. Resolve pending model intent using the offered retry or
+the main/discovery model belongs to the launching host. The browser CLI accepts
+`--model <id>` and optional `--reasoning-effort <level>` for that main session;
+see the [quick start](quick-start.md). These options do not choose Development's
+private model. Resolve pending private model intent using the offered retry or
 **Accept actual model** only if you want the reported model.
 
 Development settings include **Theme**, **Text size**, **Save appearance** and
@@ -143,6 +181,9 @@ panel exposes shared effort without starting the Development UI.
 Conversation, images, Design or results. Unsent drafts are different: copy
 important text before page/extension reload or changing browser windows.
 
-Operational data is under ignored `.tandem`; do not edit it to force readiness
-or assume Git backs it up. Optional [acceptance and export](use-cases.md#locate-and-export-saved-outputs)
+Operational data is under `.tandem`. Before Development, guided setup can add a
+preserving `.tandem/` ignore rule with your explicit consent; the
+[quick start](quick-start.md) also shows a manual alternative. Keep this data out
+of commits. Do not edit it to force readiness or assume Git backs it up.
+Optional [acceptance and export](use-cases.md#locate-and-export-saved-outputs)
 writes reviewed output to `tandem-records`; export is not Git publication.

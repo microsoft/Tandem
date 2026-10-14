@@ -68,7 +68,7 @@ test("persisted Development entry opens one view automatically without another s
 });
 
 test("public folder entry requires selection and deduplicates initialization across UI reloads", async () => {
-    const h = await extensionHarness({}, undefined, "", undefined, true);
+    const h = await extensionHarness({}, undefined, "", undefined, true, true);
     const value = h.api.createState("entry");
     await h.api.persistState(value);
     const server = await h.api.startServer("entry", "entry", "project:tandem", true);

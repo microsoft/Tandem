@@ -59,6 +59,7 @@ export function DevelopmentPanel({ active }: { active: boolean }) {
             {snapshot && canContinue && <button id="continue-design" type="button" className={`plan-button${admission?.status === "uncertain" ? " secondary" : ""}`}
                 disabled={blocked || checking}
                 onClick={() => void action.run(async () => {
+                    if (!await project.requireDevelopmentGit()) return;
                     project.prepareDevelopmentView();
                     try {
                         await post("/api/development/continue", { generation: state.generation,

@@ -9,6 +9,8 @@ import type { TandemState } from "../../src/types.js";
 import type { PreparationToken } from "../../src/agent-runner.js";
 import { assertFactoryRequestEnvelope, type FactoryLaunchRequest } from "../../src/agent-runner.js";
 import { chooseProjectEntry } from "../../src/project-entry.js";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 interface CanvasContext {
     instanceId: string;
@@ -111,11 +113,16 @@ async function compile(): Promise<string> {
     return result.outputFiles[0].text + "\nmodule.exports.assertDevelopmentAvailable = assertDevelopmentAvailable; module.exports.resumeEffortRun = resumeEffortRun; module.exports.waitForSuggestion = id => activeSuggestionRuns.get(id);";
 }
 
-export async function extensionHarness(speechEnvironment: Record<string, string> = {}, sharedRoot?: string, rendererHtml = "", workspaceRoot?: string, unselectedEntry = false) {
+export async function extensionHarness(speechEnvironment: Record<string, string> = {}, sharedRoot?: string, rendererHtml = "", workspaceRoot?: string, unselectedEntry = false, gitReady = false) {
     const root = sharedRoot || resolve("node_modules", "tandem-test-fixtures", randomUUID());
     await mkdir(root, { recursive: true });
     const workspace = workspaceRoot ?? root;
     await mkdir(workspace, { recursive: true });
+    if (gitReady) {
+        await promisify(execFile)("git", ["-C", workspace, "init", "--quiet", "--template="]);
+        try { await fs.writeFile(join(workspace, ".gitignore"), ".tandem/\n", { flag: "wx" }); }
+        catch (error) { if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error; }
+    }
     if (!unselectedEntry) await chooseProjectEntry(workspace, "preparation");
     const requests: unknown[] = [];
     const developmentRequests: Array<Record<string, unknown>> = [];

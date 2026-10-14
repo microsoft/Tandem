@@ -449,7 +449,7 @@ test("native state appearing after inspection invalidates one-time setup confirm
 });
 
 test("Reconcile preserves the failed-start diagnosis and cannot silently retry or dispatch its handoff", async () => {
-    const h = await extensionHarness();
+    const h = await extensionHarness({}, undefined, "", undefined, false, true);
     try {
         const state = h.api.createState("failed-start", "A command-line tool");
         state.stage = state.lifecycle.currentStage = "requirements";
@@ -857,7 +857,7 @@ test("mixed composer/handoff gate ordering cannot deadlock the native admission 
 });
 
 test("a stale generation cannot create a new handoff or submit work", async () => {
-    const h = await extensionHarness();
+    const h = await extensionHarness({}, undefined, "", undefined, false, true);
     try {
         const state = h.api.createState("stale");
         state.lifecycle.currentStage = state.stage = "development";
@@ -872,7 +872,7 @@ test("a stale generation cannot create a new handoff or submit work", async () =
 });
 
 for (const stage of ["prepare", "requirements"] as const) test(`direct Development HTTP open preserves ${stage} without handoff or model work`, async () => {
-    const h = await extensionHarness();
+    const h = await extensionHarness({}, undefined, "", undefined, false, true);
     const state = h.api.createState("direct", stage === "prepare" ? "" : "An existing project");
     state.stage = state.lifecycle.currentStage = stage;
     state.lifecycle.completedStages = stage === "prepare" ? [] : ["prepare"];
@@ -920,7 +920,7 @@ for (const stage of ["prepare", "requirements"] as const) test(`direct Developme
 
 test("synthetic fresh provider opens Development from finished Stage1 files without retaining the Stage1 connection", async () => {
     const root = await mkdtemp(join(tmpdir(), "tandem-stage-independence-"));
-    const first = await extensionHarness({}, root);
+    const first = await extensionHarness({}, root, "", undefined, false, true);
     let fresh: Awaited<ReturnType<typeof extensionHarness>> | undefined;
     let entry: Awaited<ReturnType<typeof first.api.startServer>> | undefined;
     try {
@@ -941,7 +941,7 @@ test("synthetic fresh provider opens Development from finished Stage1 files with
         await assert.rejects(access(join(root, ".tandem", "living-canvas")), { code: "ENOENT" });
         await first.close();
 
-        fresh = await extensionHarness({}, root);
+        fresh = await extensionHarness({}, root, "", undefined, false, true);
         fresh.api.setSession({ ...fresh.session, sessionId: "fresh-provider-fixture" });
         const loaded = await fresh.api.loadState(state.prototypeId);
         assert.equal(loaded.generation, completed.generation);
@@ -971,7 +971,7 @@ test("synthetic fresh provider opens Development from finished Stage1 files with
 });
 
 test("direct Development HTTP open still excludes active upstream work and a read-only provider", async () => {
-    const h = await extensionHarness();
+    const h = await extensionHarness({}, undefined, "", undefined, false, true);
     const state = h.api.createState("active");
     state.preparation.status = "running";
     await h.api.persistState(state);
@@ -1019,7 +1019,7 @@ test("shared upstream storage does not make another worktree's active work a loc
 });
 
 test("Reset racing a prepared handoff waits for admission and cannot erase admitted inputs", async () => {
-    const h = await extensionHarness();
+    const h = await extensionHarness({}, undefined, "", undefined, false, true);
     try {
         const state = h.api.createState("race", "A command-line tool");
         state.stage = state.lifecycle.currentStage = "requirements";

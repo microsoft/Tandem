@@ -74,9 +74,12 @@ saved metadata. Inspect uncertain attempts before launching again.
 
 | Symptom | Next step |
 | --- | --- |
-| Runtime requirement error | Use actual Node 24+ and the [source quick start](quick-start.md). |
+| Runtime requirement error / npm `EBADENGINE` | For source builds, use actual Node 24.15+ (24.x LTS) or Node 26+ and rerun the [source quick start](quick-start.md). A successful install with an engine warning does not establish support. |
 | Browser did not open | Use the private URL from the launch terminal; never share it. `--no-open` prints it without opening a browser. |
-| Folder is not a Git root | Open the actual repository/worktree root, or deliberately initialize a new project yourself. |
+| Folder is not a Git root | For a new folder, review **Set up this folder and continue** before Development. For a subfolder, explicitly open the repository/worktree root named in the prompt; Tandem never silently switches or nests a repository. |
+| Git setup could not finish | Read what was attempted. Git metadata and ignore content are retained, not rolled back. Resolve the reported permission or file problem, then **Check again** and review fresh consent. |
+| Application state must be ignored by Git | Review the offered setup to add `.tandem/`, or use the [manual alternative](quick-start.md). Check `git status` before committing. |
+| Git tracks `.tandem/` state | An ignore rule does not untrack existing files. Deliberately untrack that state yourself after reviewing it, without deleting local session data. Tandem never automatically untracks or deletes files. |
 | Older installation conflicts | Review its version and arrange an explicit stopped-host update with the complete package. Building source does not update it. |
 | Composer disabled / no Ready | Inspect setup, model and permission status. Unverified history is not empty state. |
 | Model/effort pending, busy or unavailable | Read both stage results in Settings, wait for idle and explicitly apply/reconcile a supported selection. |

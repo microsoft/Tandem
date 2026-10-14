@@ -15,6 +15,7 @@ import {
 } from "@github/copilot-sdk/extension";
 import { renderTandemHtml } from "./renderer.js";
 import { chooseProjectEntry, readProjectEntry } from "./project-entry.js";
+import { DevelopmentGit } from "./development-git.js";
 import { PreviewLaunches, type PreviewTarget } from "./preview-launch.js";
 import { isPreferredTandemProvider } from "./provider-identity.js";
 import { resolveSharedProjectRoot } from "./workspace-root.js";
@@ -202,6 +203,7 @@ function ownedPreviewLaunches() {
 }
 let handoffs: DevelopmentHandoffs;
 const developmentTransition = new DevelopmentTransition(WORKSPACE_ROOT);
+const developmentGit = new DevelopmentGit(WORKSPACE_ROOT);
 const nodePermissionOwner = process.env.TANDEM_NODE_MAIN_SESSION_ID;
 const workflowActivity = new NativeWorkflowActivity();
 const mainEffort = new MainSessionEffort(WORKSPACE_ROOT, () => session);
@@ -215,6 +217,7 @@ const development = createHumanLoopController({
     ...(process.env.TANDEM_NODE_EXECUTABLE ? { nodePath: process.env.TANDEM_NODE_EXECUTABLE } : {}),
     beforeStart: async () => {
         if (projectEffortChanging) throw new Error("Wait for the project effort choice before opening Development.");
+        await developmentGit.requireReady();
         await assertDevelopmentAvailable();
     },
     contextProvider: () => handoffs.context(),
@@ -286,6 +289,7 @@ async function assertDevelopmentAvailable() {
 }
 
 async function continueDevelopment(prototypeId, extensionId, input?: Record<string, unknown>) {
+    await developmentGit.requireReady();
     const origin = await loadState(prototypeId);
     const identity = input ?? { generation: origin.generation, expectedRevision: origin.revision,
         snapshotPath: origin.lifecycle.outputs.find(output => output.stageId === "prototype")?.path };
@@ -6395,6 +6399,7 @@ async function handleRequest(entry, req, res) {
         if (!entry.canSubmitAnswers || !await isPreferredAnswerProvider(entry.extensionId)) throw new CanvasError("read_only_provider", "Use the owning writable provider to choose the starting path.");
         const input = await readRequestBody(req);
         if (!isObject(input) || Object.keys(input).some(key => key !== "startingPath")) throw new Error("Supply only the starting path.");
+        if (input.startingPath === "development") await developmentGit.requireReady();
         sendJson(res, 200, await chooseProjectEntry(WORKSPACE_ROOT, input.startingPath)); return;
     }
     if (requestUrl.pathname === "/api/project-entry/open" && req.method === "POST") {
@@ -6407,6 +6412,7 @@ async function handleRequest(entry, req, res) {
         if (firstOpen) {
             entry.projectEntryOpening ??= (async () => {
                 if (prepareDevelopment) {
+                    await developmentGit.requireReady();
                     assertLegacyCutover(state);
                     if (hasActiveWork(state)) throw new CanvasError("upstream_active", "Finish upstream work before entering Development.");
                     await assertDevelopmentAvailable();
@@ -6440,6 +6446,16 @@ async function handleRequest(entry, req, res) {
     }
     if (requestUrl.pathname.startsWith("/api/development/")) {
         if (!(await isPreferredAnswerProvider(entry.extensionId))) throw new CanvasError("read_only_provider", "Open the writable provider for Development.");
+        if (req.method === "GET" && requestUrl.pathname === "/api/development/preflight") {
+            sendJson(res, 200, await developmentGit.preflight()); return;
+        }
+        if (req.method === "POST" && requestUrl.pathname === "/api/development/setup") {
+            if (!entry.canSubmitAnswers) throw new CanvasError("read_only_provider", "Use the owning writable provider to set up this folder.");
+            const input = await readRequestBody(req);
+            if (!isObject(input) || Object.keys(input).some(key => key !== "token")) throw new Error("Supply only the displayed Git setup consent.");
+            await assertDevelopmentAvailable();
+            sendJson(res, 200, await developmentGit.setup(input.token)); return;
+        }
         if (req.method === "GET" && requestUrl.pathname === "/api/development/handoff") {
             const state = await loadState(entry.prototypeId);
             sendJson(res, 200, { generation: state.generation,
@@ -6460,6 +6476,7 @@ async function handleRequest(entry, req, res) {
             return;
         }
         if (req.method === "POST" && requestUrl.pathname === "/api/development/open") {
+            await developmentGit.requireReady();
             const state = await loadState(entry.prototypeId);
             assertLegacyCutover(state);
             if (hasActiveWork(state)) throw new CanvasError("upstream_active", "Finish upstream work before starting Development in this workspace.");
