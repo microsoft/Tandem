@@ -97,6 +97,34 @@ export function projectHumanLoopView(state, readiness) {
     compaction: readiness.compaction,
     canResetApprovals: readiness.canResetApprovals === true,
     activeRequestId: state.activeRequestId, activeRole: state.activeTask?.binding.role ?? null,
+    handoffActivity: state.requests.filter(request => /^handoff-[a-f0-9]{64}$/.test(request.id)).slice(-100).map(request => {
+      const handoff = state.handoffs.findLast(item => item.requestIds.includes(request.id));
+      const openQuestions = questions.filter(question => question.source.requestIds.includes(request.id) && question.state === "open");
+      const active = state.activeRequestId === request.id || state.activeBatchRequestIds.includes(request.id);
+      const designReady = handoff?.presented && ["designer-changed", "designer-unchanged"].includes(handoff.result.outcome.kind);
+      const task = active ? state.activeTask : null;
+      const role = task?.binding.role === "designer" ? "Designer" : task?.binding.role;
+      const workLabel = !task ? null : task.condition === "waiting-permission" ? `${role} is waiting for native permission. Answer in the owning session.`
+        : task.condition === "queued" ? `${role} dispatch is pending for the saved Prototype request.`
+          : task.condition === "running" ? role === "Designer"
+            ? "Designer is reading and refining Design from the saved Prototype. This can take several minutes. Implementation is not authorized."
+            : `${role} is handling the saved Prototype request. Implementation still requires separate confirmation.`
+          : task.condition === "ended" ? `${role} work ended. Waiting for the verified result presentation.`
+            : `${role} execution is ${task.condition || "unverified"}. Inspect Development before taking another action.`;
+      const label = ["retired", "stopped", "discarded", "cancelled", "rejected"].includes(request.status)
+        ? `Saved Prototype request is ${request.status}. It will not be replayed. Use a new explicit Development message to continue.`
+        : active && ["execution-unknown", "stopping", "closed"].includes(readiness.status)
+          ? `Development needs attention: ${readiness.reason || readiness.status}. The saved request is preserved.`
+          : workLabel ? workLabel
+            : designReady ? `${handoff.result.outcome.kind === "designer-changed" ? "Design ready from the saved Prototype"
+              : state.design.revisionId ? "Design reviewed (unchanged)" : "Designer response ready"}.${openQuestions.length
+              ? ` Questions: ${openQuestions.length}, including ${openQuestions.filter(q => q.effectiveBlocking).length} blocking. Answer in Development.`
+              : " Review it in Development."} Implementation has not been authorized by this handoff.`
+              : request.status === "completed" ? "Saved Prototype request completed. Read its result in Development; no implementation was authorized by this handoff."
+                : request.status === "handoff-pending" ? "Request result is saved; Development is preparing its presentation."
+                  : "Prototype handoff admitted and queued. Waiting for Development to process this exact request.";
+      return { requestId: request.id, label };
+    }),
     stop: state.stop ? { id: state.stop.id, mode: state.stop.mode ?? "immediate", taskId: state.stop.taskId } : null,
     lastStop: lastStop ? { id: lastStop.id, mode: lastStop.mode ?? "immediate", taskId: lastStop.taskId,
       invalidatedQuestions: state.questions.filter((question) => question.invalidation?.stopId === lastStop.id).map((question) => ({

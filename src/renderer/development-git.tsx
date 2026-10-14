@@ -59,7 +59,7 @@ export function useDevelopmentGit() {
     }
     const dialog = <AlertDialog.Root open={view !== null}>
         <AlertDialog.Portal><AlertDialog.Overlay className="dialog-overlay" /><AlertDialog.Content className="dialog-content project-entry">
-            <AlertDialog.Title>Prepare this folder for Development</AlertDialog.Title>
+            <AlertDialog.Title>Set up this project folder</AlertDialog.Title>
             <AlertDialog.Description>
                 <span className="project-entry-path">{view?.result?.projectPath}</span>
                 {view?.result?.message}

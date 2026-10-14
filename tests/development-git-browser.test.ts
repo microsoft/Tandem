@@ -9,21 +9,27 @@ import { runInNewContext } from "node:vm";
 import { extensionHarness } from "./helpers/extension-harness.js";
 import { browserAvailable, openFixtureBrowser } from "../development/tandem/test/helpers/browser-fixture.mjs";
 
-test("packaged guided Git entry uses actual folder APIs and the original startup boundary",
+async function packagedHtml() {
+    const packaged = await readFile(process.env.TANDEM_PACKAGED_EXTENSION!, "utf8");
+    function asset(marker: string, name: string) {
+        const start = packaged.indexOf(`// ${marker}\n`), end = packaged.indexOf("\n// ", start + 3);
+        assert.ok(start >= 0 && end > start, `Locate packaged ${marker}, without executing registration.`);
+        return runInNewContext(`${packaged.slice(start, end)}\n${name}`, {}, { timeout: 1000 }) as string;
+    }
+    return (await readFile(new URL("../src/renderer/index.html", import.meta.url), "utf8"))
+        .replace("__TANDEM_CLIENT__", () => asset("tandem-client:main.tsx", "main_default"))
+        .replace("__TANDEM_STYLES__", () => asset("tandem-styles:styles.css", "styles_default")).replace("__TANDEM_VERSION__", "packaged-handoff-check");
+}
+
+for (const startingPath of ["preparation", "development"]) test(`packaged guided Git ${startingPath} entry uses actual folder APIs and the original startup boundary`,
     { skip: !browserAvailable || !process.env.TANDEM_PACKAGED_EXTENSION, timeout: 180_000 }, async t => {
-        const packaged = await readFile(process.env.TANDEM_PACKAGED_EXTENSION!, "utf8");
-        function asset(marker: string, name: string) {
-            const start = packaged.indexOf(`// ${marker}\n`), end = packaged.indexOf("\n// ", start + 3);
-            assert.ok(start >= 0 && end > start, `Locate packaged ${marker}, without executing registration.`);
-            return runInNewContext(`${packaged.slice(start, end)}\n${name}`, {}, { timeout: 1000 }) as string;
-        }
-        const client = asset("tandem-client:main.tsx", "main_default"), styles = asset("tandem-styles:styles.css", "styles_default");
-        const html = (await readFile(new URL("../src/renderer/index.html", import.meta.url), "utf8"))
-            .replace("__TANDEM_CLIENT__", () => client).replace("__TANDEM_STYLES__", () => styles).replace("__TANDEM_VERSION__", "packaged-git-check");
+        const html = await packagedHtml();
         const browser = await openFixtureBrowser(t);
         const waitForEntry = async () => {
             for (let attempt = 0; attempt < 150; attempt++) {
-                if (await browser.evaluate('Boolean(document.querySelector("#project-conversation-frame"))')) return;
+                if (await browser.evaluate(startingPath === "development"
+                    ? 'Boolean(document.querySelector("#project-conversation-frame"))'
+                    : 'Boolean(document.querySelector("#start-goal")) && !document.querySelector("#studio-workspace").hasAttribute("inert")')) return;
                 await new Promise(done => setTimeout(done, 100));
             }
             assert.fail(`Development entry did not settle: ${await browser.evaluate("document.body.textContent")}`);
@@ -62,7 +68,7 @@ test("packaged guided Git entry uses actual folder APIs and the original startup
                     const before = await readdir(workspace);
                     await browser.call("Page.navigate", { url: server.url });
                     await browser.waitFor('Boolean(document.querySelector("#entry-development"))');
-                    await browser.evaluate('document.querySelector("#entry-development").click()');
+                    await browser.evaluate(`document.querySelector("#entry-${startingPath}").click()`);
                     const needsSetup = !["ready", "worktree"].includes(scenario);
                     if (needsSetup) {
                         await browser.waitFor('Boolean(document.querySelector("#cancel-git-setup"))');
@@ -72,7 +78,7 @@ test("packaged guided Git entry uses actual folder APIs and the original startup
                         await browser.waitFor('Boolean(document.querySelector("#entry-development"))');
                         assert.deepEqual(await readdir(workspace), before);
                         await assert.rejects(lstat(join(workspace, ".tandem", "project-entry.json")), { code: "ENOENT" });
-                        await browser.evaluate('document.querySelector("#entry-development").click()');
+                        await browser.evaluate(`document.querySelector("#entry-${startingPath}").click()`);
                         await browser.waitFor('Boolean(document.querySelector("#cancel-git-setup"))');
                         if (["parent", "tracked"].includes(scenario)) {
                             assert.equal(await browser.evaluate('Boolean(document.querySelector("#confirm-git-setup"))'), false);
@@ -94,12 +100,12 @@ test("packaged guided Git entry uses actual folder APIs and the original startup
                         }
                     }
                     await waitForEntry();
-                    assert.equal(starts, 1);
+                    assert.equal(starts, startingPath === "development" ? 1 : 0);
                     assert.equal(h.requests.length, 0); assert.equal(h.developmentRequests.length, 0);
-                    assert.equal(JSON.parse(await readFile(join(workspace, ".tandem", "project-entry.json"), "utf8")).startingPath, "development");
+                    assert.equal(JSON.parse(await readFile(join(workspace, ".tandem", "project-entry.json"), "utf8")).startingPath, startingPath);
                     await browser.call("Page.reload");
                     await waitForEntry();
-                    assert.equal(starts, 1, "Refresh does not duplicate native startup.");
+                    assert.equal(starts, startingPath === "development" ? 1 : 0, "Refresh does not duplicate native startup.");
                     assert.equal(await git(workspace, "remote"), "");
                     if (scenario !== "worktree") await assert.rejects(git(workspace, "rev-parse", "--verify", "HEAD"));
                     if (["populated", "write-failure"].includes(scenario)) {
@@ -117,5 +123,60 @@ test("packaged guided Git entry uses actual folder APIs and the original startup
                     await rm(parent, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
                 }
             });
+        }
+    });
+
+test("packaged handoff review cancels without startup and confirms the exact real saved input once",
+    { skip: !browserAvailable || !process.env.TANDEM_PACKAGED_EXTENSION, timeout: 90_000 }, async t => {
+        const h = await extensionHarness({}, undefined, await packagedHtml(), undefined, false, true);
+        const state = h.api.createState("packaged-handoff", "Synthetic command-line counter");
+        state.stage = state.lifecycle.currentStage = "requirements";
+        state.lifecycle.completedStages = ["prepare"]; state.preparation.status = "ready";
+        state.requirements = { substage: "dag", usageItems: ["Increment a counter"], suggestions: [] };
+        state.decisionGraph.nodes = [{ id: "counter", title: "Counter", dependencies: [], question: null, answer: "Local data only", status: "answered" }];
+        state.prototypeApproach = { mode: "not-applicable", reason: "CLI only" };
+        state.assumed = ["In-memory count"]; state.deferred = ["Synchronization"];
+        await h.api.persistState(state);
+        await h.api.completeLifecycleStage(state.prototypeId, "requirements", "project:tandem");
+        let starts = 0;
+        const gate = Promise.withResolvers<void>(), started = Promise.withResolvers<void>();
+        h.setBeforeDevelopmentStart(async () => { starts++; started.resolve(); await gate.promise; });
+        const server = await h.api.startServer("packaged-handoff", state.prototypeId, "project:tandem", true);
+        const browser = await openFixtureBrowser(t);
+        try {
+            await browser.call("Emulation.setDeviceMetricsOverride", { width: 640, height: 520, deviceScaleFactor: 1, mobile: false });
+            await browser.call("Page.navigate", { url: server.url });
+            await browser.waitFor('Boolean(document.querySelector("#development-tab")) && !document.querySelector("#studio-workspace").hasAttribute("inert")');
+            await browser.evaluate('document.querySelector("#development-tab").dispatchEvent(new MouseEvent("mousedown", {bubbles:true,button:0})); document.querySelector("#development-tab").click()');
+            await browser.waitFor('Boolean(document.querySelector("#continue-design"))');
+            assert.equal(starts, 0);
+            await browser.evaluate('document.querySelector("#continue-design").focus(); document.querySelector("#continue-design").click()');
+            await browser.waitFor('Boolean(document.querySelector("#confirm-design-handoff"))');
+            assert.match(await browser.evaluate('document.querySelector(".handoff-review-dialog").textContent'), /In-memory count.*Synchronization/s);
+            await browser.evaluate('document.querySelector("#cancel-design-handoff").click()');
+            await browser.waitFor('!document.querySelector(".handoff-review-dialog")');
+            assert.equal(starts, 0); assert.equal(h.developmentRequests.length, 0);
+            await assert.rejects(lstat(join(h.root, ".tandem", "living-canvas", "handoffs")), { code: "ENOENT" });
+            await browser.evaluate('document.querySelector("#continue-design").click()');
+            await browser.waitFor('document.querySelector("#confirm-design-handoff")?.disabled === false');
+            await browser.evaluate('document.querySelector("#confirm-design-handoff").click(); document.querySelector("#confirm-design-handoff")?.click()');
+            await browser.waitFor('document.querySelector("#development-panel").textContent.includes("Preparing the saved handoff")');
+            await started.promise;
+            assert.equal(starts, 1); assert.equal(h.developmentRequests.length, 0);
+            gate.resolve();
+            await browser.waitFor('document.querySelector("#development-panel").textContent.includes("handoff admitted")');
+            assert.equal(h.developmentRequests.length, 1);
+            assert.equal(await browser.evaluate('document.querySelector("#continue-design") === null'), true);
+            const current = await h.api.loadState(state.prototypeId);
+            assert.equal(current.development?.requestId, h.developmentRequests[0].id);
+            assert.equal(h.requests.length, 0);
+            assert.equal(JSON.parse(await readFile(join(h.root, ".tandem", "project-entry.json"), "utf8")).startingPath, "preparation");
+            t.diagnostic("Production packaged root UI, real snapshot/receipt/Git APIs, deterministic native-start gate; no models.");
+        } finally {
+            gate.resolve();
+            await browser.call("Page.navigate", { url: "about:blank" });
+            clearInterval(server.heartbeat); server.live.close(); server.server.closeAllConnections();
+            await new Promise<void>(done => server.server.close(() => done()));
+            await h.close();
         }
     });

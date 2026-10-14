@@ -21,8 +21,8 @@ trial, use a test project or worktree. To create a new project instead:
 New-Item -ItemType Directory -Path C:\projects\counter
 ```
 
-An initial commit is not required. Tandem offers consented local Git setup before
-Development; manual setup is an alternative, not a prerequisite.
+An initial commit is not required. Tandem offers consented local Git setup for
+either starting path; manual setup is an alternative, not a prerequisite.
 From your **Tandem source checkout**, separate from that target project:
 
 ```powershell
@@ -75,6 +75,13 @@ Do not ignore `tandem-records` merely because operational state is private.
 The choice is saved in this folder's `.tandem` metadata, not asked every visit.
 These are recommendations, not rules about how many files a project contains.
 
+For either path, Tandem checks the selected folder before saving your choice.
+Existing repositories/worktrees are reused. If prompted, review **Set up this
+folder and continue**: it initializes local Git only when needed and adds
+`.tandem/` to `.gitignore`, preserving files and rules. No commit, remote or push
+is created. **Cancel** performs no setup and leaves the starting choice unsaved.
+Choosing Preparation does not open Development.
+
 ### Start with Preparation
 
 Use this path to clarify requirements and UX.
@@ -92,8 +99,11 @@ Use this path to clarify requirements and UX.
    Structure and Interaction are automatic milestones. Try the current preview;
    use **Show Interaction prototype** when you want to display that ready version.
    Feedback is optional.
-5. **Finish Prototype and save outputs**, then **Go to Development**.
-   Select **Continue Design from Prototype** to use the saved evidence for Design.
+5. **Finish Prototype and save outputs** saves only; it does not request Design.
+   Select **Continue to Development**, review the saved specification, decisions,
+   assumptions, deferred work and target folder, then **Create Design from
+   Prototype** (or **Refine Design from Prototype**). **Cancel** starts nothing.
+   **Open Development** only opens the workspace without submitting the handoff.
 
 **Result:** saved discovery evidence and a Design to refine. A prototype can
 use mocks; finishing it does not prove a production app works or approve coding.
@@ -104,21 +114,17 @@ prototyping with a recorded reason and **Finish Requirements and save outputs**.
 
 Use this path for existing code, an initial implementation, or a rough idea.
 
-1. If prompted, review the selected folder and choose **Set up this folder and
-   continue**. This creates local Git metadata only when needed and adds
-   `.tandem/` to `.gitignore`, preserving files and existing rules. It does not
-   create a commit, remote or push. **Cancel** leaves setup and the starting
-   choice unchanged. Existing repositories/worktrees are reused; a subfolder
-   prompt identifies the root to open rather than silently switching folders.
-2. Wait for **Ready**. Opening Development does not submit a model request or
-   approve implementation. The same Git check applies when entering from Preparation.
-3. Choose **Quick requests > Understand existing project**, review the inserted
+1. Complete project setup above, then wait for **Ready**. Opening Development
+   does not submit a model request or approve implementation.
+2. Choose **Quick requests > Understand existing project**, review the inserted
    text and send it. Or use **Design something new** for an idea without code.
-4. Inspect the Design beside Conversation and answer its questions.
+3. Inspect the Design beside Conversation and answer its questions.
    Existing behavior is evidence, not automatic agreement to keep it.
 
 **Result:** a Design established directly from your project or idea. Quick
 requests insert editable text; they do not send automatically.
+Older projects or changed Git/ignore rules can require project setup again at
+the point of need; Tandem never silently initializes or switches folders.
 
 ## 3. Decide when to implement
 

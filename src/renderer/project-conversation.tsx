@@ -60,6 +60,8 @@ interface ProjectView {
     url: string | null; channel: string; error: string; active: boolean; starting: boolean; developmentEntered: boolean;
     status: string; detail: string; designRevision: string | null; designChanged: boolean; attention: number;
     maintenanceError: string;
+    handoffActivity: Array<{ requestId: string; label: string }> | null;
+    permissions: number;
     processError: string;
     activate(retry?: boolean): Promise<void>; command(command: string): void;
     outputs: ProjectOutput[]; outputStatus: string; outputReason: string; outputError: string; selectedOutput: string | null;
@@ -84,6 +86,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
     const { state, post, pending, setBusy, browseStage } = useUi();
     const [view, setView] = useState({ url: null as string | null, channel: "", error: "", active: false, starting: false, developmentEntered: false,
         status: "Not activated", detail: "", designRevision: null as string | null, designChanged: false, attention: 0,
+        handoffActivity: null as Array<{ requestId: string; label: string }> | null, permissions: 0,
         outputs: [] as ProjectOutput[], outputStatus: "unverified", outputReason: "Development outputs have not been verified.",
         outputError: "", selectedOutput: null as string | null });
     const frame = useRef<HTMLIFrameElement>(null);
@@ -107,7 +110,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
         choosing.current = true;
         setEntry(v => ({ ...v, busy: true, error: "" }));
         try {
-            if (choice === "development" && !await git.requireReady()) {
+            if (choice && !await git.requireReady()) {
                 setEntry(v => ({ ...v, loading: false, busy: false }));
                 return;
             }
@@ -118,7 +121,8 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
             if (typeof value.projectPath !== "string" || ![null, "preparation", "development"].includes(value.startingPath)) throw new Error("Invalid project entry metadata.");
             let starting = false, developmentEntered = false;
             if (value.startingPath && latest.current.state.provider?.canSubmitAnswers !== false) {
-                if (choice !== "development" && (value.startingPath === "development" || latest.current.state.lifecycle.currentStage === "development")
+                if (choice !== "development" && (value.startingPath === "development"
+                    || latest.current.state.lifecycle.currentStage === "development" && Boolean(latest.current.state.development))
                     && !await git.requireReady()) {
                     setEntry({ loading: false, busy: false, projectPath: value.projectPath, startingPath: value.startingPath,
                         error: "", ready: value.startingPath === "preparation" });
@@ -312,6 +316,10 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
                 const settled = message.active === true || retryable;
                 if (retryable) startRequested.current = false;
                 setView(v => ({ ...v, status: message.status.slice(0, 80), detail: typeof message.reason === "string" ? message.reason.slice(0, 2000) : "",
+                    handoffActivity: Array.isArray(message.handoffActivity) && message.handoffActivity.length <= 100
+                        && message.handoffActivity.every((item: { requestId?: unknown; label?: unknown } | null) => typeof item?.requestId === "string" && /^handoff-[a-f0-9]{64}$/.test(item.requestId)
+                            && typeof item.label === "string" && item.label.length <= 2000) ? message.handoffActivity : null,
+                    permissions: Number.isSafeInteger(message.permissions) && message.permissions > 0 ? message.permissions : 0,
                     active: message.active === true,
                     starting: settled ? false : v.starting,
                     designRevision: typeof message.designRevision === "string" ? message.designRevision : null,
