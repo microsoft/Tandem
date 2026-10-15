@@ -1087,6 +1087,42 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await waitInside('document.querySelector("#clipboard-caption").textContent.includes("Ready to send")');
       const attachment = await inside('document.querySelector("#clipboard-image").src');
       const beforeBrowse = mutations.length;
+      await click("#preparation-tab");
+      for (const width of [1360, 920, 390]) {
+        await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 1000, deviceScaleFactor: 1, mobile: false });
+        assert.deepEqual(await browser.evaluate('Array.from(document.querySelectorAll("#stage-workspace-tabs [role=tab]"), tab => tab.textContent)'),
+          ["Preparation", "Requirements", "Drawings", "Prototype"]);
+        for (const tab of ["#preparation-workspace-tab", "#design-tree-workspace-tab", "#sketch-workspace-tab", "#live-preview-workspace-tab"]) {
+          await click(tab);
+          const layout = await browser.evaluate(`(() => {
+            const tab=document.querySelector(${JSON.stringify(tab)}), panel=document.getElementById(tab.getAttribute("aria-controls")),
+              bar=document.querySelector("#stage-workspace-tabs").getBoundingClientRect(),
+              preview=document.querySelector("#preview-pane").getBoundingClientRect(), t=tab.getBoundingClientRect(), p=panel.getBoundingClientRect();
+            return {bar:{left:bar.left,right:bar.right,top:bar.top,bottom:bar.bottom}, tab:{left:t.left,right:t.right},
+              preview:{left:preview.left,right:preview.right}, panelTop:p.top, panelHeight:p.height,
+              labelledBy:panel.getAttribute("aria-labelledby"), selected:tab.getAttribute("aria-selected"),
+              pageFits:document.documentElement.scrollWidth<=innerWidth+1};
+          })()`);
+          assert.equal(layout.selected, "true");
+          assert.equal(layout.labelledBy, tab.slice(1));
+          assert.ok(layout.bar.left >= layout.preview.left && layout.bar.right <= layout.preview.right + 1
+            && layout.tab.left >= layout.bar.left - 1 && layout.tab.right <= layout.bar.right + 1
+            && layout.panelTop >= layout.bar.bottom && layout.panelHeight > 0 && layout.pageFits,
+          `Stage tabs fit and scroll without covering ${tab} at ${width}: ${JSON.stringify(layout)}`);
+        }
+        await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Home", windowsVirtualKeyCode: 36 });
+        await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Home", windowsVirtualKeyCode: 36 });
+        await browser.waitFor('document.activeElement.id==="preparation-workspace-tab"');
+        await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "End", windowsVirtualKeyCode: 35 });
+        await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "End", windowsVirtualKeyCode: 35 });
+        await browser.waitFor('document.activeElement.id==="live-preview-workspace-tab"');
+        assert.equal(await inside('document.querySelector("#message").value'), "As a user, I keep my draft while viewing Design.");
+        assert.equal(await inside('document.querySelector("#clipboard-image").src'), attachment);
+        if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `stage-tabs-${width}.png`), await browser.screenshot());
+      }
+      await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 1000, deviceScaleFactor: 1, mobile: false });
+      await click("#development-tab");
+      assert.equal(await browser.evaluate('document.querySelector("#stage-workspace-tabs")'), null);
       for (const tab of ["#preparation-tab", "#design-tree-tab", "#sketch-tab", "#live-preview-tab"]) {
         await click(tab);
         await browser.waitFor('document.querySelector("#project-conversation-frame").hidden');

@@ -295,6 +295,11 @@ Settings trigger); it does not save, apply, discard, stop work or close the runt
 The main framework is one project workspace: project navigation and Settings
 on the left and the selected phase's own workspace and history.
 Requirements, drawings and Prototype retain their specialized inputs and controls.
+Discovery views also expose horizontal Preparation, Requirements, Drawings and
+Prototype tabs above the workspace. They share the sidebar's selection and
+availability guards, keep the existing panels mounted, and scroll horizontally
+on narrow screens. The tab bar is absent from goal entry, Saved artifacts and
+Development; it does not change stage completion, reopening or data updates.
 The **Development** navigation entry contains formal Design, planning,
 implementation and Review; it is not an additional Stage1 Design phase.
 **Saved artifacts** is the cross-project library entry in the separate

@@ -1383,8 +1383,9 @@ h1 {
   overscroll-behavior: contain;
   padding: var(--studio-space);
 }
-.prototype-view .prototype-review-heading { margin-bottom: 5px; font-size: var(--text-body-small, 12px); }
+.prototype-view .prototype-review-heading { margin-bottom: 0; font-size: var(--text-body-small, 12px); }
 .prototype-view .prototype-review-heading > span { display: none; }
+.prototype-view #prototype-feedback-help { margin: 0 0 var(--studio-control-gap); }
 .prototype-view #revision-form { gap: var(--studio-control-gap); }
 @container output (max-width: 900px) {
   .preview-status { display: none; }
@@ -3569,6 +3570,7 @@ textarea {
 .phase-actions .stage-message { margin: 0; }
 .project-workspace #sketch-panel { flex-direction: column; }
 .project-workspace > .preview { grid-template-rows: minmax(0, 1fr); }
+.project-workspace > .preview[data-stage-tabs="true"] { grid-template-rows: auto minmax(0, 1fr); }
 .project-workspace #live-preview-panel { display: flex; flex-direction: column; }
 .project-workspace #live-preview-panel > .preview-surface { flex: 1 0 auto; }
 .project-workspace #live-preview-panel > .phase-actions,

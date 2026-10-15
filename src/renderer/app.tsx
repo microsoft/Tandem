@@ -276,6 +276,7 @@ function Workspace(props: WorkspaceProps) {
   const [nextAction, setNextAction] = useState<{ id: string; label: string; revealId: string | null } | null>(null);
   const atStart = isGoalEntry(state);
   const developmentView = activeTab === "development";
+  const showStageTabs = !atStart && !developmentView && activeTab !== "content";
   const contextHelp = useStatusHelp(`${activeTab}:${contextOpen}:${contextCollapsed}:${atStart}:${projectView.entry.ready}`);
   const previousAtStart = useRef(atStart);
   useEffect(() => { if (state.effortReset) onTabChange("preparation"); }, [state.effortReset?.requestId]);
@@ -498,9 +499,25 @@ function Workspace(props: WorkspaceProps) {
           onPointerUp={(event) => { if (dragging === event.pointerId) { setDragging(null); if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); } }}
           onPointerCancel={() => setDragging(null)} onLostPointerCapture={() => setDragging(null)}
           onKeyDown={(event) => { if (["ArrowLeft", "ArrowRight"].includes(event.key)) { resize(width + (event.key === "ArrowLeft" ? -1 : 1) * (event.shiftKey ? 48 : 24)); event.preventDefault(); } }} />
-        <section id="preview-pane" className="preview" aria-label="Stage workspace">
+        <section id="preview-pane" className="preview" aria-label="Stage workspace" data-stage-tabs={showStageTabs}>
+          {showStageTabs && <div className="previewbar">
+            <Tabs.List id="stage-workspace-tabs" className="preview-tabs" aria-label="Pre-development stages">
+              {stageTabs.filter(tab => tab.stage !== "development").map(tab => {
+                const skipped = skippedStage(state, tab.stage);
+                const label = tab.stage === "sketch" ? "Drawings" : tab.stage === "prototype" ? "Prototype" : tab.label;
+                return <Tabs.Trigger key={tab.value} value={tab.value} id={tab.id + "-workspace-tab"}
+                  className="preview-tab" disabled={!canBrowseStage(state, tab.stage)}
+                  title={skipped?.reason || label} aria-label={skipped ? `${label}, not applicable. ${skipped.reason}` : label}
+                  aria-controls={tab.id + "-panel"}
+                  onFocus={event => event.currentTarget.scrollIntoView?.({ block: "nearest", inline: "nearest" })}>
+                  <tab.icon size={15} aria-hidden="true" /><span>{label}</span>
+                </Tabs.Trigger>;
+              })}
+            </Tabs.List>
+          </div>}
           {stageTabs.map((tab) => <Tabs.Content key={tab.value} value={tab.value} forceMount hidden={activeTab !== tab.value}
-            id={tab.id + "-panel"} className={tab.className} aria-labelledby={tab.id + "-tab"} tabIndex={0}>
+            id={tab.id + "-panel"} className={tab.className}
+            aria-labelledby={tab.id + (showStageTabs && tab.stage !== "development" ? "-workspace-tab" : "-tab")} tabIndex={0}>
             {activeTab === tab.value && tab.stage !== "development" && !atStart && phaseActions}
             <UiContext.Provider value={tab.stage === "development" ? ui : { ...ui, canEdit: (stage, allowCompleted) => !projectView.developmentEntered && ui.canEdit(stage, allowCompleted) }}>
             {tab.stage === "prepare" && <PreparationRestart store={props.store} effortBusy={props.effortBusy} />}

@@ -134,7 +134,9 @@ test("React panels have unique IDs and Radix navigation includes direct Developm
     for (const tab of h.document.querySelectorAll('[role="tab"]')) {
         const panel = h.document.getElementById(tab.getAttribute("aria-controls")!);
         assert.ok(panel, "Each tab controls an existing panel");
-        assert.equal(panel!.getAttribute("aria-labelledby"), tab.id);
+        const label = h.document.getElementById(panel!.getAttribute("aria-labelledby")!);
+        assert.equal(label?.getAttribute("role"), "tab");
+        assert.equal(label?.getAttribute("aria-controls"), panel!.id, "Each panel is labelled by one of its navigation tabs");
     }
     h.get("live-preview-tab").focus();
     await h.fire(h.get("live-preview-tab"), "keydown", { key: "ArrowRight" });
@@ -154,6 +156,74 @@ test("React panels have unique IDs and Radix navigation includes direct Developm
     assert.equal(h.document.activeElement?.id, "preparation-tab");
     assert.equal(h.get("preparation-panel").hidden, false);
     assert.deepEqual(h.requests, [], "Navigation does not activate Development or submit work.");
+});
+
+test("horizontal stage tabs retain drafts and current-stage identity without submitting work", async t => {
+    const value = state(), h = await setup(t, value);
+    const tabs = h.get("stage-workspace-tabs");
+    assert.deepEqual(Array.from(tabs.querySelectorAll('[role="tab"]'), tab => tab.textContent),
+        ["Preparation", "Requirements", "Drawings", "Prototype"]);
+    assert.equal(tabs.getAttribute("aria-label"), "Pre-development stages");
+    assert.equal(h.document.querySelector("#development-workspace-tab"), null);
+    assert.equal(disabled(h, "sketch-workspace-tab"), true);
+    assert.equal(disabled(h, "live-preview-workspace-tab"), true);
+    assert.equal(h.get("design-tree-workspace-tab").getAttribute("aria-selected"), "true");
+    const panel = h.get("design-tree-panel"), input = field(h, "usage-input");
+    await h.input("usage-input", "Keep this unsent usage while I browse.");
+    await h.fire(h.get("preparation-workspace-tab"), "mousedown", { button: 0 });
+    assert.equal(hidden(h, "preparation-panel"), false);
+    assert.equal(h.get("preparation-tab").getAttribute("aria-selected"), "true");
+    assert.equal(h.get("design-tree-tab").getAttribute("aria-current"), "step");
+    assert.match(text(h, "stage-browsing"), /read only/);
+    h.render({ ...value, revision: 2 }); await h.flush();
+    await h.fire(h.get("design-tree-workspace-tab"), "mousedown", { button: 0 });
+    assert.equal(h.get("design-tree-panel"), panel);
+    assert.equal(field(h, "usage-input"), input);
+    assert.equal(input.value, "Keep this unsent usage while I browse.");
+    assert.equal(panel.getAttribute("aria-labelledby"), "design-tree-workspace-tab");
+    assert.deepEqual(current(h).lifecycle, value.lifecycle);
+    assert.deepEqual(h.requests, []);
+});
+
+test("horizontal keyboard navigation skips unavailable stages and stays separate from Development", async t => {
+    const value = state("prototype");
+    value.lifecycle.skippedStages = [{ stageId: "sketch", reason: "Existing drawings were supplied." }];
+    const h = await setup(t, value);
+    assert.equal(disabled(h, "sketch-workspace-tab"), true);
+    assert.match(h.get("sketch-workspace-tab").getAttribute("aria-label")!, /not applicable.*Existing drawings/);
+    h.get("preparation-workspace-tab").focus();
+    await h.fire(h.document.activeElement!, "keydown", { key: "End" });
+    assert.equal(h.document.activeElement?.id, "live-preview-workspace-tab");
+    await h.fire(h.document.activeElement!, "keydown", { key: "ArrowLeft" });
+    assert.equal(h.document.activeElement?.id, "design-tree-workspace-tab");
+    await h.fire(h.document.activeElement!, "keydown", { key: "Home" });
+    assert.equal(h.document.activeElement?.id, "preparation-workspace-tab");
+    await h.fire(h.document.activeElement!, "keydown", { key: "ArrowLeft" });
+    assert.equal(h.document.activeElement?.id, "live-preview-workspace-tab");
+    assert.equal(hidden(h, "live-preview-panel"), false);
+    assert.equal(h.get("live-preview-tab").getAttribute("aria-selected"), "true");
+    await browse(h, "development");
+    assert.equal(h.document.querySelector("#stage-workspace-tabs"), null);
+    assert.equal(h.get("preview-pane").dataset.stageTabs, "false");
+    assert.equal(h.get("development-panel").getAttribute("aria-labelledby"), "development-tab");
+    await browse(h, "requirements");
+    assert.equal(h.get("design-tree-workspace-tab").getAttribute("aria-selected"), "true");
+    assert.equal(current(h).lifecycle.currentStage, "prototype");
+    assert.deepEqual(h.requests, []);
+});
+
+test("horizontal stage tabs do not change goal entry or the saved artifact library", async t => {
+    const h = await setup(t, blankEffort());
+    assert.equal(h.document.querySelector("#stage-workspace-tabs"), null);
+    h.render(state("requirements", 2)); await h.flush();
+    assert.ok(h.get("stage-workspace-tabs"));
+    await h.fire(h.get("content-tab"), "mousedown", { button: 0 });
+    assert.equal(h.document.querySelector("#stage-workspace-tabs"), null);
+    assert.equal(hidden(h, "content-panel"), false);
+    assert.equal(h.get("content-panel").getAttribute("aria-labelledby"), "content-tab");
+    await browse(h, "requirements");
+    assert.equal(h.get("preview-pane").dataset.stageTabs, "true");
+    assert.deepEqual(h.requests, []);
 });
 
 test("Radix confirmation has a safe initial focus and restores its invoker on Escape", async (t) => {

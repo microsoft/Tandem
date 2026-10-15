@@ -24,8 +24,12 @@ it does not mean an AI model is running. Empty requirement ledger sections stay 
 Hosted windows keep the folder identity in the host header rather than repeating
 it in the sidebar; an unhosted canvas retains the sidebar name and full-path tooltip.
 Use the left navigation to browse, **Current work** to find ongoing work/attention,
-and **Project settings** to configure the project. Browsing does not authorize
-work. Development Conversation appears only in Development; its draft and
+and **Project settings** to configure the project. Before Development, the
+workspace also has **Preparation**, **Requirements**, **Drawings** and
+**Prototype** tabs. Use them to revisit available stages without changing the
+current phase or losing drafts; unavailable stages stay disabled. Development
+remains a separate left-navigation entry. Browsing does not authorize work.
+Development Conversation appears only in Development; its draft and
 attachments stay hidden when you browse other phases, not moved to their inputs.
 Parent Copilot chat is not a Development submission.
 
