@@ -511,16 +511,16 @@ function createQuestionNavigation(state) {
   const make = (tag, text, css) => element(state.document, tag, text, css);
   const node = make('nav', undefined, 'question-navigation');
   node.setAttribute('aria-label', 'Choose a question');
-  const label = make('label', 'Open questions');
-  const picker = make('select');
-  picker.dataset.questionPicker = 'open';
-  label.append(picker);
+  const openSection = make('section', undefined, 'question-open');
+  const openList = make('ul', undefined, 'question-list question-open-list');
+  openSection.setAttribute('aria-label', 'Open questions');
+  openSection.append(make('h3', 'Open questions'), openList);
   const history = make('details', undefined, 'question-history');
   const summary = make('summary', 'Answered history');
-  const historyList = make('ul', undefined, 'question-history-list');
+  const historyList = make('ul', undefined, 'question-list question-history-list');
   history.append(summary, historyList);
   const empty = make('p', 'Select a question to read its context and options.', 'human-loop-muted');
-  node.append(label, history, empty);
+  node.append(openSection, history, empty);
   const select = key => {
     state.selectedQuestion = key;
     updateQuestionNavigation(state);
@@ -531,8 +531,49 @@ function createQuestionNavigation(state) {
       selected.fieldset.scrollIntoView({ block: 'start' });
     }
   };
-  picker.addEventListener('change', () => select(picker.value));
-  return { node, label, picker, history, historyList, historyRows: new Map(), summary, empty, select };
+  return { node, openSection, openList, openRows: new Map(), history, historyList, historyRows: new Map(), summary, empty, select };
+}
+
+function updateQuestionList(state, list, rows, entries, selected, history) {
+  const nodes = entries.map(entry => {
+    let item = rows.get(entry.key);
+    if (!item) {
+      const make = (tag, text, css) => element(state.document, tag, text, css);
+      const node = make('li');
+      const button = make('button');
+      button.type = 'button';
+      button.dataset[history ? 'questionHistoryKey' : 'questionOpenKey'] = entry.key;
+      const title = make('strong', '', history ? 'question-history-title' : 'question-open-title');
+      const status = make('span', '', 'question-list-source human-loop-muted');
+      const answer = make('span', '', history ? 'question-history-answer' : 'question-open-status');
+      const action = make('span', '', 'question-list-inspect');
+      button.append(title, status, answer, action);
+      button.addEventListener('click', () => state.navigation.select(entry.key));
+      node.append(button);
+      item = { node, button, title, status, answer, action };
+      rows.set(entry.key, item);
+    }
+    const draft = selectedAnswer(entry.row, entry.question, entry.group.form.resultId);
+    for (const [node, text] of [[item.title, entry.question.question],
+      [item.status, `${entry.provenance}${history ? ` · ${questionStatus(entry.question)}` : ''}`],
+      [item.answer, history ? recordedAnswerText(state, entry.question, entry.group.form.resultId)
+        : questionMeaning(entry.question).label + (draft ? entry.group.form.pending ? ' · Sending answer' : ' · Draft answer selected' : '')],
+      [item.action, `${entry === selected ? 'Selected · ' : ''}Inspect full context`]]) {
+      if (node.textContent !== text) node.textContent = text;
+    }
+    item.button.setAttribute('aria-label', `Inspect full context: ${entry.question.question} (${entry.provenance})${history ? '' : `. ${item.answer.textContent}`}`);
+    item.button.setAttribute('aria-current', String(entry === selected));
+    return item.node;
+  });
+  const keys = new Set(entries.map(entry => entry.key));
+  for (const key of rows.keys()) if (!keys.has(key)) rows.delete(key);
+  const previousNodes = [...list.children];
+  if (previousNodes.length !== nodes.length || previousNodes.some((node, index) => node !== nodes[index])) {
+    const focused = state.document.activeElement;
+    const restore = nodes.some(node => node.contains?.(focused));
+    list.replaceChildren(...nodes);
+    if (restore) focused.focus({ preventScroll: true });
+  }
 }
 
 function updateQuestionNavigation(state) {
@@ -541,8 +582,7 @@ function updateQuestionNavigation(state) {
   const entries = [...state.forms.values()].flatMap((group, sourceIndex) => group.form.rows.map((row, index) => {
     const interaction = group.view.questionInteraction, question = interaction.questions[index];
     return { group, row, question, key: JSON.stringify([interaction.resultId, question.id]),
-      provenance: `${interaction.source.role} (source ${sourceIndex + 1}) / question ${index + 1}`,
-      label: `${interaction.source.role} (source ${sourceIndex + 1}) / ${index + 1}. ${question.question} - ${questionMeaning(question).label}` };
+      provenance: `${interaction.source.role} (source ${sourceIndex + 1}) / question ${index + 1}` };
   }));
   if (state.selectedQuestion === undefined && entries.length) {
     state.selectedQuestion = entries.find(entry => entry.question.state === 'open')?.key ?? '';
@@ -550,54 +590,10 @@ function updateQuestionNavigation(state) {
   const selected = entries.find(entry => entry.key === state.selectedQuestion);
   const open = entries.filter(entry => entry.question.state === 'open');
   const history = entries.filter(entry => entry.question.state !== 'open');
-  const options = [['', 'Choose an open question'], ...open.map(entry => [entry.key,
-    entry.label + (selectedAnswer(entry.row, entry.question, entry.group.form.resultId) ? ' (draft)' : '')])];
-  const signature = JSON.stringify(options);
-  if (nav.picker.dataset.options !== signature) {
-    nav.picker.replaceChildren(...options.map(([value, label]) => {
-      const option = element(state.document, 'option', label); option.value = value; return option;
-    }));
-    nav.picker.dataset.options = signature;
-  }
-  nav.picker.value = open.includes(selected) ? selected.key : '';
-  nav.picker.disabled = !open.length;
-  nav.label.hidden = !open.length;
+  nav.openSection.hidden = !open.length;
   nav.history.hidden = !history.length;
-  const historyNodes = history.map(entry => {
-    let item = nav.historyRows.get(entry.key);
-    if (!item) {
-      const make = (tag, text, css) => element(state.document, tag, text, css);
-      const node = make('li');
-      const button = make('button');
-      button.type = 'button';
-      button.dataset.questionHistoryKey = entry.key;
-      const title = make('strong', '', 'question-history-title');
-      const status = make('span', '', 'human-loop-muted');
-      const answer = make('span', '', 'question-history-answer');
-      button.append(title, status, answer, make('span', 'Inspect full context', 'question-history-inspect'));
-      button.addEventListener('click', () => nav.select(entry.key));
-      node.append(button);
-      item = { node, button, title, status, answer };
-      nav.historyRows.set(entry.key, item);
-    }
-    for (const [node, text] of [[item.title, entry.question.question],
-      [item.status, `${entry.provenance} · ${questionStatus(entry.question)}`],
-      [item.answer, recordedAnswerText(state, entry.question, entry.group.form.resultId)]]) {
-      if (node.textContent !== text) node.textContent = text;
-    }
-    item.button.setAttribute('aria-label', `Inspect full context: ${entry.question.question} (${entry.provenance})`);
-    item.button.setAttribute('aria-current', String(entry === selected));
-    return item.node;
-  });
-  const historyKeys = new Set(history.map(entry => entry.key));
-  for (const key of nav.historyRows.keys()) if (!historyKeys.has(key)) nav.historyRows.delete(key);
-  const previousNodes = [...nav.historyList.children];
-  if (previousNodes.length !== historyNodes.length || previousNodes.some((node, index) => node !== historyNodes[index])) {
-    const focused = state.document.activeElement;
-    const restore = historyNodes.some(node => node.contains?.(focused));
-    nav.historyList.replaceChildren(...historyNodes);
-    if (restore) focused.focus({ preventScroll: true });
-  }
+  updateQuestionList(state, nav.openList, nav.openRows, open, selected, false);
+  updateQuestionList(state, nav.historyList, nav.historyRows, history, selected, true);
   nav.summary.textContent = `${history.every(entry => entry.question.state === 'answered') ? 'Answered' : 'Question'} history (${history.length})`;
   nav.empty.hidden = Boolean(selected) || (!state.selectedQuestion && !open.length && history.length > 0);
   nav.empty.textContent = !entries.length ? 'No saved questions are available in this view.'

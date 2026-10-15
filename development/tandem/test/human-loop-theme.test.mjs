@@ -268,8 +268,7 @@ test('question titles and quiet metadata stay inside individually named cards', 
     for (const index of titles.keys()) {
       await browser.evaluate(`(() => {
         if(document.querySelector('#question-panel').hidden) document.querySelector('#show-questions').click();
-        const picker=document.querySelector('[data-question-picker="open"]');
-        if(picker) { picker.value=picker.options[${index + 1}].value; picker.dispatchEvent(new Event('change',{bubbles:true})); }
+        document.querySelectorAll('.question-open-list button')[${index}]?.click();
       })()`);
       const card = await browser.evaluate(`(() => {
       const field=document.querySelectorAll('.human-loop-questions fieldset')[${index}];

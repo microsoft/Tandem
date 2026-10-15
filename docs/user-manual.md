@@ -122,8 +122,9 @@ instead of requiring a screen. Describe what should happen, not a technology
 choice you do not feel equipped to judge.
 
 Select **Questions** beside Conversation to use the left workspace while keeping
-Conversation available on the right. Choose one question to read its context,
-options and consequences. On narrow screens, Questions and Conversation stack
+Conversation available on the right. Select a question from the visible list to
+read its context, options and consequences. List selection only navigates; it
+does not answer or submit anything. On narrow screens, Questions and Conversation stack
 in one column; **Go to Conversation** moves to the composer.
 **Back to Design** restores the retained Design view. Inspecting a Design
 reference offers **Back to Questions** without discarding your answer drafts.
@@ -132,8 +133,9 @@ New questions and answers do not switch views.
 **Send selected answers** sends the displayed selection list from that source as
 one batch, including drafts for its other questions; drafts from other sources
 are not sent. Unselected questions remain unanswered. Drafts survive navigation;
-answers are recorded only after acknowledgment. The open-question picker appears
-only when there are open questions. Expand **Answered history** (or **Question
+answers are recorded only after acknowledgment. The open-question list shows
+blocking/advisory and draft states, and is hidden when empty.
+Expand **Answered history** (or **Question
 history** when it includes other statuses) to read the saved-question list and
 recorded answers. **Inspect full context** opens one entry's complete text and
 source references. Ordinary chat is not guessed to be a question answer.

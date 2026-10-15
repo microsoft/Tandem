@@ -607,21 +607,21 @@
 .human-app #questions-content { flex: 1; min-height: 0; overflow: auto; scrollbar-gutter: stable; }
 .human-app #questions-content > .human-loop { border: 0; border-radius: 0; padding: 12px 18px 24px; background: var(--surface); }
 .human-app .question-navigation { display: grid; gap: 8px; padding-bottom: 12px; }
-.human-app .question-navigation label { margin: 0; font-weight: 600; }
-.human-app .question-navigation select { min-height: 44px; }
+.human-app .question-open > h3 { margin: 0 0 4px; font-size: var(--shell-font-size); }
 .human-app .question-history { padding: 0; border: 0; }
 .human-app .question-history > summary { padding-block: 8px; }
-.human-app .question-history-list { list-style: none; margin: 0; padding: 0; }
-.human-app .question-history-list > li + li { border-top: 1px solid var(--border); }
-.human-app .question-history-list button {
+.human-app .question-list { list-style: none; margin: 0; padding: 0; }
+.human-app .question-list > li + li { border-top: 1px solid var(--border); }
+.human-app .question-list button {
   display: grid; gap: 3px; width: 100%; min-width: 0; padding: 8px;
   border-color: transparent; background: transparent; text-align: start; white-space: normal; font-weight: 400;
 }
-.human-app .question-history-list button[aria-current="true"] { border-color: var(--border); background: var(--surface-muted); }
+.human-app .question-list button[aria-current="true"] { border-color: var(--border); background: var(--surface-muted); }
+.human-app .question-list-source { font-size: calc(var(--shell-font-size) - 1px); }
 .human-app :is(.question-history-title, .question-history-answer) {
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
 }
-.human-app .question-history-inspect { font-size: calc(var(--shell-font-size) - 1px); text-decoration: underline; }
+.human-app .question-list-inspect { font-size: calc(var(--shell-font-size) - 1px); text-decoration: underline; }
 .human-app #question-panel .human-loop-question-group { padding: 0; border: 0; }
 .human-app #question-panel .human-loop-questions { margin: 0; }
 .human-app #question-panel .human-loop-questions > h3 { display: none; }

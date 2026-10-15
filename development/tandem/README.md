@@ -246,11 +246,13 @@ remain limited to HTTP(S) without embedded credentials; raw HTML stays inert and
 Markdown images do not load remote resources. User messages and Host statuses
 remain plain text, and stored conversation originals are unchanged.
 **Questions** explicitly opens a left-workspace view beside Conversation, with
-one selected question and compact navigation. **Back to Design** restores the
+one selected question and compact selectable lists, not question dropdowns.
+Open questions show their titles, blocking/advisory states and selected drafts;
+selecting a row only navigates to its full context. **Back to Design** restores the
 retained artifact view; Design references offer **Back to Questions**.
 Polling never changes this view or takes focus. Drafts survive navigation, and
 the visible selection list preserves source-bound **Send selected answers**
-batch semantics. The open-question picker is hidden when empty. **Answered
+batch semantics. The open-question list is hidden when empty. **Answered
 history** starts collapsed; expand it for a compact saved-question list with
 recorded answers and **Inspect full context** actions. It is labeled **Question
 history** when it includes other statuses, without inferring answers or completion.
