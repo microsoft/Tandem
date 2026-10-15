@@ -357,6 +357,8 @@
   outline: 2px solid var(--shell-focus);
   outline-offset: 2px;
 }
+.human-app #message { box-sizing: border-box; padding: 4px 6px; }
+.human-app #message:focus-visible { outline-offset: -2px; }
 .human-app :is(.artifact-navigation-row button, .perspective-toolbar button,
   [data-artifact-zoom], .canvas-settings button, .settings-fields select, .access-request-picker select,
   .diagram-annotation-tools button, #compaction-approval button,

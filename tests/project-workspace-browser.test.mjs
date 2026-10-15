@@ -1259,6 +1259,39 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await waitInside('[...document.querySelectorAll(".conversation-assistant .conversation-role")].some(node => node.textContent === "agent")');
       assert.match(await inside('[...document.querySelectorAll(".conversation-user .conversation-role")].at(-1).textContent'), /Preference: @designer/);
       if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "role-hint-integrated.png"), await browser.screenshot());
+      const longDraft = "UnbrokenComposerDraft".repeat(35) + "\nA short second line";
+      for (const [width, height] of [[1360, 1000], [920, 620], [390, 620], [1360, 480]]) for (const theme of ["light", "dark"]) {
+        await browser.call("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+        await browser.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+        const frameWidth = await browser.evaluate('document.querySelector("#project-conversation-frame").clientWidth');
+        await waitInside(`innerWidth===${frameWidth} && document.body.dataset.projectStacked==="${frameWidth <= 660}"`);
+        await inside('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+        await browser.evaluate(`document.documentElement.dataset.projectTheme=${JSON.stringify(theme)}`);
+        await inside(`document.body.dataset.theme=${JSON.stringify(theme)};
+          document.querySelector("#message").value=${JSON.stringify(longDraft)};
+          document.querySelector("#message").dispatchEvent(new Event("input",{bubbles:true}))`);
+        await click("#message", true);
+        await inside('document.querySelector("#message").setSelectionRange(3,9);document.querySelector("#message").scrollTop=0');
+        const focus = await inside(`(() => {
+          const input=document.querySelector("#message"),r=input.getBoundingClientRect(),send=document.querySelector("#send").getBoundingClientRect(),
+            style=getComputedStyle(input),outline=parseFloat(style.outlineWidth),offset=parseFloat(style.outlineOffset);
+          return {outline,offset,color:style.outlineColor,right:r.right+outline+offset,sendLeft:send.left,
+            padding:parseFloat(style.paddingLeft),horizontalOverflow:input.scrollWidth>input.clientWidth+1,
+            start:input.selectionStart,end:input.selectionEnd,text:input.value,focused:document.activeElement===input};
+        })()`);
+        assert.ok(focus.outline >= 2 && focus.offset <= -focus.outline && focus.padding >= 4, JSON.stringify({ width, height, theme, ...focus }));
+        assert.ok(focus.right <= focus.sendLeft + 1 && !focus.horizontalOverflow, JSON.stringify({ width, height, theme, ...focus }));
+        assert.deepEqual([focus.start, focus.end, focus.text, focus.focused], [3, 9, longDraft, true]);
+        if (process.env.TANDEM_UI_EVIDENCE) {
+          await inside('document.querySelector("#composer").scrollIntoView({block:"end"})');
+          await browser.evaluate('document.querySelector("#project-conversation-frame").scrollIntoView({block:"end"})');
+          await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `composer-focus-${width}x${height}-${theme}.png`), await browser.screenshot());
+          await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `composer-focus-${width}x${height}-${theme}.json`), JSON.stringify(focus, null, 2));
+        }
+      }
+      assert.equal(nativeRequests.length, 1, "Focus and long-text editing do not send or duplicate a request.");
+      await inside('document.querySelector("#message").value="";document.querySelector("#message").dispatchEvent(new Event("input",{bubbles:true}))');
+      await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 1000, deviceScaleFactor: 1, mobile: false });
       const queuedInputs = [
         { id: "queued-one", message: "@agent Rerun the game after update.", receivedAt: new Date().toISOString(),
           answers: null, roleHint: { schemaVersion: "human-role-hint/v1", role: "agent" } },
