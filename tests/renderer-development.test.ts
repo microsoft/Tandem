@@ -802,7 +802,7 @@ test("real React Development keeps handoff controls in view across long-status h
         }
         await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
         await browser.waitFor('!document.querySelector(\'[role="dialog"]\')');
-        assert.equal(await browser.evaluate("document.activeElement.id"), "continue-design");
+        await browser.waitFor('document.activeElement.id === "continue-design"');
         await browser.call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
         await click("#continue-design");
         await browser.waitFor('document.querySelector("#confirm-design-handoff")?.disabled === false');
