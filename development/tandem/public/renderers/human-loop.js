@@ -67,11 +67,11 @@ function validSource(interaction) {
   });
 }
 
-function currentQuestions(interaction) {
+function currentQuestions(interaction, includeHistory = false) {
   if (!interaction || !validSource(interaction)) return interaction;
   // Retain open blockers regardless of the active role/request. Only an exact,
   // validated source binding and explicit invalidation make a question historical.
-  const questions = interaction.questions.filter(question => question.state !== 'invalidated');
+  const questions = interaction.questions.filter(question => includeHistory || question.state !== 'invalidated');
   return questions.length ? { ...interaction, questions } : null;
 }
 
@@ -102,6 +102,16 @@ function canAnswer(state, form) {
     && typeof state.actions.submitAnswers === 'function';
 }
 
+function recordedAnswerText(state, question, resultId) {
+  const submitted = state.answerDetails.findLast(answer => answer.questionId === question.id
+    && answer.sourceResultId === resultId
+    && (!question.answerRequestId || answer.answerRequestId === question.answerRequestId));
+  if (submitted) return `Submitted answer: ${submitted.answer}${question.invalidation?.reason ? `\n${question.invalidation.reason}` : ''}`;
+  return question.state === 'answered'
+    ? 'Answered. The submitted answer is retained in Conversation.'
+    : question.invalidation?.reason ?? `This question is ${question.state}; no answer is inferred.`;
+}
+
 function updateForm(state) {
   const form = state.form;
   if (!form) return;
@@ -116,12 +126,7 @@ function updateForm(state) {
     const closed = question.state !== 'open';
     row.controls.hidden = closed;
     row.answer.hidden = !closed;
-    const submitted = state.answerDetails.findLast(answer => answer.questionId === question.id
-      && answer.sourceResultId === state.view.questionInteraction.resultId
-      && (!question.answerRequestId || answer.answerRequestId === question.answerRequestId));
-    row.answer.textContent = question.state === 'answered'
-      ? submitted ? `Submitted answer: ${submitted.answer}` : 'Answered. The submitted answer is retained in Conversation.'
-      : question.invalidation?.reason ?? `This question is ${question.state}; no answer is inferred.`;
+    row.answer.textContent = recordedAnswerText(state, question, state.view.questionInteraction.resultId);
     if (row.closed !== closed && (!state.workspace || row.closed === undefined)) row.context.open = !closed;
     row.closed = closed;
   });
@@ -464,7 +469,7 @@ function renderQuestions(state, interactions) {
   const nodes = [];
   const retained = new Set();
   for (const raw of interactions) {
-    const interaction = currentQuestions(raw);
+    const interaction = currentQuestions(raw, state.questionWorkspace);
     if (!interaction) continue;
     retained.add(interaction.resultId);
     let group = state.forms.get(interaction.resultId);
@@ -506,19 +511,16 @@ function createQuestionNavigation(state) {
   const make = (tag, text, css) => element(state.document, tag, text, css);
   const node = make('nav', undefined, 'question-navigation');
   node.setAttribute('aria-label', 'Choose a question');
-  const label = make('label', 'Open questions');
-  const picker = make('select');
-  picker.dataset.questionPicker = 'open';
-  label.append(picker);
+  const openSection = make('section', undefined, 'question-open');
+  const openList = make('ul', undefined, 'question-list question-open-list');
+  openSection.setAttribute('aria-label', 'Open questions');
+  openSection.append(make('h3', 'Open questions'), openList);
   const history = make('details', undefined, 'question-history');
   const summary = make('summary', 'Answered history');
-  const historyLabel = make('label', 'Saved questions and answers');
-  const historyPicker = make('select');
-  historyPicker.dataset.questionPicker = 'history';
-  historyLabel.append(historyPicker);
-  history.append(summary, historyLabel);
+  const historyList = make('ul', undefined, 'question-list question-history-list');
+  history.append(summary, historyList);
   const empty = make('p', 'Select a question to read its context and options.', 'human-loop-muted');
-  node.append(label, history, empty);
+  node.append(openSection, history, empty);
   const select = key => {
     state.selectedQuestion = key;
     updateQuestionNavigation(state);
@@ -529,9 +531,49 @@ function createQuestionNavigation(state) {
       selected.fieldset.scrollIntoView({ block: 'start' });
     }
   };
-  picker.addEventListener('change', () => select(picker.value));
-  historyPicker.addEventListener('change', () => select(historyPicker.value));
-  return { node, picker, history, historyPicker, summary, empty, select };
+  return { node, openSection, openList, openRows: new Map(), history, historyList, historyRows: new Map(), summary, empty, select };
+}
+
+function updateQuestionList(state, list, rows, entries, selected, history) {
+  const nodes = entries.map(entry => {
+    let item = rows.get(entry.key);
+    if (!item) {
+      const make = (tag, text, css) => element(state.document, tag, text, css);
+      const node = make('li');
+      const button = make('button');
+      button.type = 'button';
+      button.dataset[history ? 'questionHistoryKey' : 'questionOpenKey'] = entry.key;
+      const title = make('strong', '', history ? 'question-history-title' : 'question-open-title');
+      const status = make('span', '', 'question-list-source human-loop-muted');
+      const answer = make('span', '', history ? 'question-history-answer' : 'question-open-status');
+      const action = make('span', '', 'question-list-inspect');
+      button.append(title, status, answer, action);
+      button.addEventListener('click', () => state.navigation.select(entry.key));
+      node.append(button);
+      item = { node, button, title, status, answer, action };
+      rows.set(entry.key, item);
+    }
+    const draft = selectedAnswer(entry.row, entry.question, entry.group.form.resultId);
+    for (const [node, text] of [[item.title, entry.question.question],
+      [item.status, `${entry.provenance}${history ? ` · ${questionStatus(entry.question)}` : ''}`],
+      [item.answer, history ? recordedAnswerText(state, entry.question, entry.group.form.resultId)
+        : questionMeaning(entry.question).label + (draft ? entry.group.form.pending ? ' · Sending answer' : ' · Draft answer selected' : '')],
+      [item.action, `${entry === selected ? 'Selected · ' : ''}Inspect full context`]]) {
+      if (node.textContent !== text) node.textContent = text;
+    }
+    item.button.setAttribute('aria-label', `Inspect full context: ${entry.question.question} (${entry.provenance})${history ? '' : `. ${item.answer.textContent}`}`);
+    item.button.setAttribute('aria-current', String(entry === selected));
+    return item.node;
+  });
+  const keys = new Set(entries.map(entry => entry.key));
+  for (const key of rows.keys()) if (!keys.has(key)) rows.delete(key);
+  const previousNodes = [...list.children];
+  if (previousNodes.length !== nodes.length || previousNodes.some((node, index) => node !== nodes[index])) {
+    const focused = state.document.activeElement;
+    const restore = nodes.some(node => node.contains?.(focused));
+    list.replaceChildren(...nodes);
+    if (restore) focused.focus({ preventScroll: true });
+  }
 }
 
 function updateQuestionNavigation(state) {
@@ -540,7 +582,7 @@ function updateQuestionNavigation(state) {
   const entries = [...state.forms.values()].flatMap((group, sourceIndex) => group.form.rows.map((row, index) => {
     const interaction = group.view.questionInteraction, question = interaction.questions[index];
     return { group, row, question, key: JSON.stringify([interaction.resultId, question.id]),
-      label: `${interaction.source.role} (source ${sourceIndex + 1}) / ${index + 1}. ${question.question} - ${questionMeaning(question).label}` };
+      provenance: `${interaction.source.role} (source ${sourceIndex + 1}) / question ${index + 1}` };
   }));
   if (state.selectedQuestion === undefined && entries.length) {
     state.selectedQuestion = entries.find(entry => entry.question.state === 'open')?.key ?? '';
@@ -548,26 +590,15 @@ function updateQuestionNavigation(state) {
   const selected = entries.find(entry => entry.key === state.selectedQuestion);
   const open = entries.filter(entry => entry.question.state === 'open');
   const history = entries.filter(entry => entry.question.state !== 'open');
-  for (const [picker, items, placeholder] of [[nav.picker, open, 'Choose an open question'],
-    [nav.historyPicker, history, 'Choose a saved question']]) {
-    const options = [['', placeholder], ...items.map(entry => [entry.key,
-      entry.label + (selectedAnswer(entry.row, entry.question, entry.group.form.resultId) ? ' (draft)' : '')])];
-    const signature = JSON.stringify(options);
-    if (picker.dataset.options !== signature) {
-      picker.replaceChildren(...options.map(([value, label]) => {
-        const option = element(state.document, 'option', label); option.value = value; return option;
-      }));
-      picker.dataset.options = signature;
-    }
-    picker.value = items.some(entry => entry === selected) ? selected.key : '';
-    picker.disabled = !items.length;
-  }
-  nav.summary.textContent = `Answered history (${history.length})`;
-  nav.empty.hidden = Boolean(selected);
+  nav.openSection.hidden = !open.length;
+  nav.history.hidden = !history.length;
+  updateQuestionList(state, nav.openList, nav.openRows, open, selected, false);
+  updateQuestionList(state, nav.historyList, nav.historyRows, history, selected, true);
+  nav.summary.textContent = `${history.every(entry => entry.question.state === 'answered') ? 'Answered' : 'Question'} history (${history.length})`;
+  nav.empty.hidden = Boolean(selected) || (!state.selectedQuestion && !open.length && history.length > 0);
   nav.empty.textContent = !entries.length ? 'No saved questions are available in this view.'
     : state.selectedQuestion ? 'The selected question is no longer available at its original source. Choose another question.'
-      : open.length ? 'Choose a question to read its context and options.'
-        : 'No open questions. Expand Answered history to inspect saved answers.';
+      : 'Choose a question to read its context and options.';
   for (const group of state.forms.values()) {
     const form = group.form;
     form.groupNode.hidden = selected?.group !== group;

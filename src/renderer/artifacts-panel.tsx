@@ -66,7 +66,6 @@ export function DevelopmentArtifactList({ active }: { active: boolean }) {
     {view.outputStatus !== "verified" && <p role="status" className="artifact-availability">
       {view.outputStatus === "not-started" ? "Development has not been activated." : view.outputReason || "Development outputs are unverified, not deleted. Verify the saved runtime explicitly in Development."}
     </p>}
-    {view.outputStatus === "verified" && !view.outputs.length && <p>No published Development outputs yet.</p>}
     {view.outputReason && view.outputStatus === "verified" && <p role="status">{view.outputReason}</p>}
     {view.outputError && <p role="alert">{view.outputError}</p>}
     {(["Design", "Plan", "Implementation", "Review"] as const).map(group => {

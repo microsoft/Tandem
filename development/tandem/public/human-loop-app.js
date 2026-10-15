@@ -197,8 +197,9 @@ function showQuestions() {
   $('question-panel').hidden = false;
   $('show-questions').setAttribute('aria-expanded', 'true');
   const target = questionFocus?.isConnected && questionFocus.getClientRects().length && !questionFocus.disabled
-    ? questionFocus : questionArtifact.querySelector('[data-question-picker="open"]:not([disabled])')
-      ?? questionArtifact.querySelector('.question-history > summary') ?? $('questions-back');
+    ? questionFocus : questionArtifact.querySelector('.question-open-list button[aria-current="true"]')
+      ?? questionArtifact.querySelector('.question-open-list button')
+      ?? questionArtifact.querySelector('.question-history:not([hidden]) > summary') ?? $('questions-back');
   target.focus({ preventScroll: true });
   if (matchMedia('(max-width: 660px)').matches || document.body.dataset.projectStacked === 'true') {
     $('question-panel').scrollIntoView({ block: 'start' });
@@ -334,12 +335,14 @@ function renderComposer() {
 }
 function renderRoleHint() {
   const help = $('role-hint-help');
-  help.hidden = Boolean(projectPresentation?.discovery());
   const parsed = pending ? { roleHint: pending.roleHint, error: null } : parseRoleMention($('message').value);
   const text = parsed.error ?? (parsed.roleHint
     ? `Preference: @${parsed.roleHint.role} for this message. Router decides who responds.`
-    : 'Start with @designer or @agent to suggest a role. Router decides.');
+    : '');
+  help.hidden = Boolean(projectPresentation?.discovery()) || !text;
   if (help.textContent !== text) help.textContent = text;
+  if (help.hidden) $('message').removeAttribute('aria-describedby');
+  else $('message').setAttribute('aria-describedby', help.id);
   $('message').setAttribute('aria-invalid', String(!help.hidden && Boolean(parsed.error)));
 }
 $('message').addEventListener('input', renderRoleHint);

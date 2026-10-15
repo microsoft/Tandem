@@ -28,6 +28,13 @@ test("Discovery and Development artifact groups keep separate disclosure keys th
             data: { protocol: "tandem-project/v1", channel: "fixture-project", type: "outputs", status: "verified", reason: "", items, selected } }));
         await h.flush();
     };
+    await publish([]);
+    assert.equal(h.get("development-artifact-list").textContent, "Development");
+    h.window.dispatchEvent(new h.window.MessageEvent("message", { origin: "http://127.0.0.1:8765", source: frame.contentWindow,
+        data: { protocol: "tandem-project/v1", channel: "fixture-project", type: "outputs", status: "unverified",
+            reason: "Connection unavailable; saved outputs are not verified.", items: [] } }));
+    await h.flush();
+    assert.match(h.get("development-artifact-list").textContent!, /Connection unavailable; saved outputs are not verified/);
     await publish([item]);
     const discovery = h.get("artifact-group-discovery-design"), development = h.get("artifact-group-development-design");
     assert.equal(discovery.getAttribute("aria-expanded"), "false");
@@ -459,6 +466,7 @@ test("Development mounts one isolated full workspace and navigation keeps its or
     const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
     assert.equal(frame.src, "http://127.0.0.1:8765/?panel=workspace");
     assert.equal(h.get("studio-workspace").dataset.development, "true");
+    assert.doesNotMatch(h.get("studio-workspace").textContent!, /Development: Design, planning/);
     assert.equal(h.document.querySelector('[data-stage-id="design"]'), null);
     assert.ok(h.get("project-artifact-library").contains(h.get("content-tab")));
     assert.equal(h.get("project-contents").querySelector("#content-tab"), null);

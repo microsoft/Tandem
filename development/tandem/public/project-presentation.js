@@ -102,8 +102,9 @@ export function installProjectPresentation({ document, window, changed, settings
     if (!hasDraft() && !pending && !nativePending) draftContext = null;
     captureDraft();
     label.textContent = current()?.label ?? "Project conversation";
+    label.hidden = current()?.stage === "development";
     help.textContent = conflicted() ? `This draft belongs to ${draftContext.label}. Return there, or explicitly use it in ${liveContext().label}.`
-      : current()?.stage === "development" ? context?.starting ? "Starting Development..." : "Discuss Design or request work. Implementation requires separate confirmation."
+      : current()?.stage === "development" ? context?.starting ? "Starting Development..." : ""
         : context?.discovery?.help ?? "Waiting for the project workspace.";
     returnToDraft.hidden = !conflicted();
     returnToDraft.textContent = `Return to ${draftContext?.label ?? "draft"}`;
@@ -113,6 +114,8 @@ export function installProjectPresentation({ document, window, changed, settings
     useHere.disabled = Boolean(pending) || nativePending;
     check.hidden = !pending;
     if (pending) help.textContent = "Awaiting the exact discovery action result. Check submission reads that same result; it never sends another action.";
+    help.hidden = !help.textContent;
+    controls.hidden = label.hidden && help.hidden && returnToDraft.hidden && useHere.hidden && check.hidden;
   };
   document.querySelector("#message").addEventListener("input", () => { captureDraft(); update(); changed(); });
   window.addEventListener("message", event => {
