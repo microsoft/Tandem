@@ -86,10 +86,15 @@ saved metadata. Inspect uncertain attempts before launching again.
 | Contextual **Retry runtime** / **Retry Development** | Inspect the failure and retry there; this does not authorize replacement history or replay. |
 | Wrong owner, live writer or corrupt state | Return to the original project/session and retain the error. Do not bypass ownership. |
 | Quiet work | Inspect activity, last-update age and permissions; silence is not proof of failure or success. |
-| Microphone failed | Continue with text. Use voice sign-in only for its identified credential error. |
+| Microphone failed | Continue with text. **Dismiss** clears the standalone host's failed-operation notification only; it does not configure Azure, sign in, retry or restart work. Details remain in host **Diagnostics** and `.tandem/desktop/browser.log`. A new failure appears again. Use voice sign-in only for its identified credential error. |
 
 For a report, include version, phase, action and visible error. Remove private
 URLs, credentials, personal paths and sensitive project content first.
+
+Startup/runtime blockers, lost connections and pending permission prompts cannot
+be dismissed this way. Embedded recovery messages keep their existing actions.
+Browser-local action failures remain in **Diagnostics** for the current tab and
+workspace; dismissing them sends no command to the runtime.
 
 ## Advanced recovery
 

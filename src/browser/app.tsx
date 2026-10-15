@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Dialog } from "radix-ui";
 import { ArrowUp, FolderOpen, Info, LoaderCircle, RefreshCw, ScrollText, ShieldAlert, ShieldCheck, Square, X } from "lucide-react";
 import { BrowserStore } from "./client.js";
@@ -132,17 +132,53 @@ function RequestDialog({ request, remaining, disabled, reply }: {
     </Modal>;
 }
 
+function NoticeBanner({ message, dismiss }: { message: string; dismiss?: () => Promise<void> | void }) {
+    const [pending, setPending] = useState(false);
+    const button = useRef<HTMLButtonElement>(null);
+    const restoreFocus = useRef(false);
+    const dismissible = Boolean(dismiss);
+    useLayoutEffect(() => {
+        const control = button.current;
+        return () => {
+            if (control && (document.activeElement === control || restoreFocus.current && document.activeElement === document.body)) {
+                document.querySelector<HTMLElement>(".host-main")?.focus({ preventScroll: true });
+            }
+        };
+    }, [dismissible]);
+    useLayoutEffect(() => {
+        if (!pending && restoreFocus.current && document.activeElement === document.body) button.current?.focus({ preventScroll: true });
+    }, [pending]);
+    return <div className="host-banner host-error host-notification">
+        <span role="alert" tabIndex={0}>{message}</span>
+        {dismiss && <button ref={button} type="button" disabled={pending} title="Dismiss this notification. Its details remain in Diagnostics."
+            onClick={async () => {
+                restoreFocus.current = document.activeElement === button.current;
+                setPending(true);
+                try { await dismiss(); } finally { setPending(false); }
+            }}>Dismiss<span className="visually-hidden"> notification</span></button>}
+    </div>;
+}
+
+interface LocalError { id: string; message: string; generation: string; dismissible: boolean }
+
 export function BrowserApp({ store, connect = true }: { store: BrowserStore; connect?: boolean }) {
     const { host, connected, error: connectionError } = useSyncExternalStore(store.subscribe, store.getSnapshot);
     const [dialog, setDialog] = useState<"workspace" | "diagnostics" | "about" | null>(null);
     const [confirmation, setConfirmation] = useState<{ title: string; detail: string; command: HostCommand } | null>(null);
     const [diagnostics, setDiagnostics] = useState("");
-    const [error, setError] = useState("");
+    const [localError, setLocalError] = useState<LocalError | null>(null);
     const [busy, setBusy] = useState(false);
     const [reload, setReload] = useState(0);
-    const application = useEmbeddedHeader(host?.canvasUrl, host?.generation, reload, setError);
+    const generation = host?.generation;
+    const reportError = useCallback((message: string, dismissible = true) => {
+        if (!generation || store.getSnapshot().host?.generation !== generation) return;
+        store.recordError(generation, message);
+        setLocalError({ id: crypto.randomUUID(), message, generation, dismissible });
+    }, [store, generation]);
+    const error = localError?.generation === generation ? localError : null;
+    const application = useEmbeddedHeader(host?.canvasUrl, generation, reload, reportError);
     useEffect(() => connect ? store.connect() : undefined, [store, connect]);
-    useEffect(() => { setError(""); setConfirmation(null); setDialog(null); }, [host?.generation]);
+    useEffect(() => { setLocalError(null); setConfirmation(null); setDialog(null); }, [generation]);
     useEffect(() => {
         if (dialog !== "diagnostics" || !connected) return;
         let active = true;
@@ -151,22 +187,28 @@ export function BrowserApp({ store, connect = true }: { store: BrowserStore; con
             if (pending) return;
             pending = true;
             void store.diagnostics().then((text) => { if (active) setDiagnostics(text); },
-                (error: unknown) => { if (active) setError(error instanceof Error ? error.message : String(error)); })
+                (error: unknown) => { if (active) reportError(error instanceof Error ? error.message : String(error)); })
                 .finally(() => { pending = false; });
         }, 2000);
         return () => { active = false; clearInterval(timer); };
-    }, [dialog, connected, store]);
+    }, [dialog, connected, store, reportError]);
     const active = connected && host && !["stopping", "stopped"].includes(host.phase);
     const run = async (command: HostCommand) => {
-        setBusy(true); setError("");
-        try { await store.command(command); setConfirmation(null); }
-        catch (error) { setError(error instanceof Error ? error.message : String(error)); }
+        setBusy(true);
+        try { await store.command(command); if (store.getSnapshot().host?.generation === generation) setConfirmation(null); }
+        catch (error) { reportError(error instanceof Error ? error.message : String(error)); }
         finally { setBusy(false); }
     };
     const showDiagnostics = async () => {
-        setDialog("diagnostics"); setDiagnostics("Loading diagnostics..."); setError("");
-        try { setDiagnostics(await store.diagnostics()); }
-        catch (error) { setDiagnostics(""); setError(error instanceof Error ? error.message : String(error)); }
+        setDialog("diagnostics"); setDiagnostics("Loading diagnostics...");
+        try {
+            const text = await store.diagnostics();
+            if (store.getSnapshot().host?.generation === generation) setDiagnostics(text);
+        }
+        catch (error) {
+            if (store.getSnapshot().host?.generation === generation) setDiagnostics("");
+            reportError(error instanceof Error ? error.message : String(error));
+        }
     };
     const open = (path: string) => {
         if (!host) return;
@@ -183,6 +225,7 @@ export function BrowserApp({ store, connect = true }: { store: BrowserStore; con
     const permissionsTitle = privateDevelopment ? "Development permissions are controlled inside its private session."
         : `Upstream tool permissions: ${host?.permissionMode === "allow-all" ? "Allow all for this session" : "Ask each time"}`;
     const displayedVersion = application.header?.version || host?.version;
+    const notice = host?.notice;
     return <div className="host-shell">
         <header className="host-header">
             <div className="host-brand"><Brand /></div>
@@ -219,7 +262,15 @@ export function BrowserApp({ store, connect = true }: { store: BrowserStore; con
                     }}><Square size={14} aria-hidden="true" /></button>
             </nav>
         </header>
-        {(connectionError || error || host?.error) && <div className="host-banner host-error" role="alert">{connectionError || error || host?.error}</div>}
+        {connectionError && <div className="host-banner host-error" role="alert">{connectionError}</div>}
+        {host?.error && <div className="host-banner host-error" role="alert">{host.error}</div>}
+        {error && <NoticeBanner key={error.id} message={error.message}
+            dismiss={error.dismissible ? () => setLocalError(current => current?.id === error.id && current.generation === error.generation ? null : current) : undefined} />}
+        {host && notice && <NoticeBanner key={`${host.generation}:${notice.id}`} message={notice.message}
+            dismiss={connected && host.phase === "ready" ? async () => {
+                try { await store.command({ type: "dismiss-notice", id: notice.id, generation: host.generation }); }
+                catch (error) { reportError(error instanceof Error ? error.message : String(error)); }
+            } : undefined} />}
         {application.header?.messages.map((message) => <div key={message.id} className={`host-banner${message.error ? " host-error" : ""}`}
             role={message.error ? "alert" : "status"}>{message.text}</div>)}
         {host?.warning && <div className="host-banner host-warning" role="status">{host.warning}</div>}
@@ -245,7 +296,7 @@ export function BrowserApp({ store, connect = true }: { store: BrowserStore; con
         {dialog === "workspace" && host && <WorkspacePicker store={store} host={host} close={() => setDialog(null)} open={open} />}
         {dialog === "diagnostics" && <Modal title="Diagnostics" description="Redacted host and backend messages. Workspace logs are in .tandem\desktop\browser.log." close={() => setDialog(null)} wide>
             <pre className="host-log" tabIndex={0}>{diagnostics || "No diagnostic messages."}</pre>
-            {error && <p className="host-error" role="alert">{error}</p>}
+            {error && <p className="host-error" role="alert">{error.message}</p>}
             <div className="dialog-actions"><button type="button" disabled={!connected} onClick={() => void showDiagnostics()}>Refresh</button><button type="button" onClick={() => setDialog(null)}>Close</button></div>
         </Modal>}
         {dialog === "about" && <Modal title={`Tandem ${host?.version || ""}`} description="Standalone Node.js browser host" close={() => setDialog(null)}>
@@ -257,7 +308,7 @@ export function BrowserApp({ store, connect = true }: { store: BrowserStore; con
         {confirmation && <Modal title={confirmation.title} description={confirmation.detail} close={() => { if (!busy) setConfirmation(null); }}>
             <div className="dialog-actions"><button type="button" disabled={busy} onClick={() => setConfirmation(null)} autoFocus>Cancel</button>
                 <button type="button" className="host-primary" disabled={busy || !connected} onClick={() => void run(confirmation.command)}>Confirm</button></div>
-            {error && <p className="host-error" role="alert">{error}</p>}
+            {error && <p className="host-error" role="alert">{error.message}</p>}
         </Modal>}
         {showRequest && host && <RequestDialog key={`${host.generation}:${request.id}`} request={request} remaining={host.requests.length}
             disabled={!connected} reply={(command) => store.command({ ...command, generation: host.generation })} />}

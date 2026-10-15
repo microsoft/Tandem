@@ -76,6 +76,22 @@ function protocolFixture() {
         reply(value: Record<string, unknown>) { input.write(`${JSON.stringify(value)}\n`); } };
 }
 
+test("native session errors retain notification identity without reclassifying runtime blockers by text", () => {
+    const f = protocolFixture();
+    try {
+        const message = "Configure TANDEM_Speech__ResourceId and TANDEM_Speech__Region";
+        f.protocol.reportSessionError({ id: "one", data: { errorType: "notification", message } });
+        f.protocol.reportSessionError({ id: "two", data: { errorType: "notification", message } });
+        for (const errorType of ["authentication", "query", "unknown"]) {
+            f.protocol.reportSessionError({ id: errorType, data: { errorType, message } });
+        }
+        assert.deepEqual(f.events, [
+            { type: "error", message, notificationId: "one" },
+            { type: "error", message, notificationId: "two" },
+            ...Array.from({ length: 3 }, () => ({ type: "error", message })),
+        ]);
+    } finally { f.protocol.close(); }
+});
 test("native host forwards only explicit model/effort choices and leaves ordinary resume settings unset", () => {
     const f = protocolFixture();
     try {

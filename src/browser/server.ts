@@ -49,7 +49,7 @@ export async function createBrowserHost(options: BrowserHostOptions) {
     const state: HostSnapshot = {
         revision: 0, generation: randomUUID(), version: options.version, phase: "idle",
         workspace: null, sessionId: null, canvasUrl: null, status: "Open a workspace to begin.",
-        error: null, warning: null, permissionMode: "ask", requests: [], recentWorkspaces: [],
+        error: null, notice: null, warning: null, permissionMode: "ask", requests: [], recentWorkspaces: [],
     };
     let backend: Backend | undefined;
     let transition: Promise<void> | undefined;
@@ -57,6 +57,7 @@ export async function createBrowserHost(options: BrowserHostOptions) {
     let closed = false;
     let startupTimer: ReturnType<typeof setTimeout> | undefined;
     let modeReported = false;
+    const acknowledgedNotices = new Set<string>();
     const replying = new Set<string>();
     const snapshot = (): HostSnapshot => structuredClone(state);
     const publish = () => {
@@ -120,7 +121,10 @@ export async function createBrowserHost(options: BrowserHostOptions) {
             case "status": state.status = redactDiagnostic(event.message); break;
             case "error":
                 if (state.phase !== "ready") { fail(event.message); return; }
-                state.error = redactDiagnostic(event.message);
+                if (event.notificationId) {
+                    if (acknowledgedNotices.has(event.notificationId) || event.notificationId === state.notice?.id) return;
+                    state.notice = { id: event.notificationId, message: redactDiagnostic(event.message) };
+                } else state.error = redactDiagnostic(event.message);
                 diagnostics.write(event.message);
                 break;
             case "permission-mode":
@@ -183,9 +187,10 @@ export async function createBrowserHost(options: BrowserHostOptions) {
             backend = undefined;
             if (closing) return;
             state.generation = randomUUID();
+            acknowledgedNotices.clear();
             const generation = state.generation;
             Object.assign(state, { workspace, phase: "starting", sessionId: null, permissionMode: "ask",
-                status: "Starting the independent Copilot runtime...", error: null });
+                status: "Starting the independent Copilot runtime...", error: null, notice: null });
             modeReported = false;
             await diagnostics.setWorkspace(workspace);
             diagnostics.write(`Starting Tandem browser host ${options.version}.`);
@@ -208,8 +213,10 @@ export async function createBrowserHost(options: BrowserHostOptions) {
         transition = work().catch((error: unknown) => {
             if (stoppingPrevious) fail(errorMessage(error));
             else {
-                state.error = redactDiagnostic(`Cannot open that workspace: ${errorMessage(error)}`);
-                diagnostics.write(state.error);
+                const message = redactDiagnostic(`Cannot open that workspace: ${errorMessage(error)}`);
+                if (state.phase === "ready") state.notice = { id: randomUUID(), message };
+                else state.error = message;
+                diagnostics.write(message);
                 publish();
             }
         }).finally(() => { transition = undefined; });
@@ -217,6 +224,16 @@ export async function createBrowserHost(options: BrowserHostOptions) {
 
     const command = async (input: Record<string, unknown>) => {
         if (input.generation !== state.generation) throw new HostError(409, "This command belongs to an earlier workspace. Reload the host state.");
+        if (input.type === "dismiss-notice") {
+            if (typeof input.id !== "string" || !input.id || input.id.length > 512) throw new HostError(400, "A notification ID is required.");
+            // A stale acknowledgment is harmless and must not clear a newer occurrence or a blocker.
+            if (state.phase === "ready" && state.notice?.id === input.id) {
+                acknowledgedNotices.add(input.id);
+                state.notice = null;
+                publish();
+            }
+            return;
+        }
         if (input.type === "stop") return "stop";
         if (input.type === "open-workspace") {
             if (typeof input.workspace !== "string" || input.workspace.length > 32768) throw new HostError(400, "Enter a workspace folder path.");
