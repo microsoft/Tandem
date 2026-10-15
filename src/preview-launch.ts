@@ -7,8 +7,9 @@ import { fingerprintWorkspace } from "./execution.js";
 import { readJsonFile, writeJsonAtomically } from "./project-store.js";
 import { ensureMaterializedDirectories, readRetainedFile } from "./accepted-artifacts.js";
 import type { TandemState } from "./types.js";
+import { prototypePreviewCheckpointId, type PrototypePreviewTarget } from "./prototype-flow.js";
 
-export type PreviewTarget = "current" | "pending";
+export type PreviewTarget = PrototypePreviewTarget;
 export interface PreviewLaunchBinding {
     prototypeId: string;
     generation: string;
@@ -86,9 +87,9 @@ export class PreviewLaunches {
         guard(): Promise<void>;
     }) {}
     async binding(state: TandemState, target: PreviewTarget): Promise<PreviewLaunchBinding> {
-        if (!["current", "pending"].includes(target)) throw new Error("Choose the current or pending saved version.");
+        if (!["current", "pending", "exploration"].includes(target)) throw new Error("Choose the current, pending or visual exploration saved version.");
         const flow = state.prototypeFlow;
-        const id = target === "current" ? flow?.displayedCheckpointId : flow?.pendingCheckpointId;
+        const id = prototypePreviewCheckpointId(flow, target);
         const checkpoint = flow?.checkpoints.find(item => item.id === id);
         if (!checkpoint || checkpoint.status !== "ready" || !checkpoint.previewUrl || !checkpoint.sourceFingerprint
             || checkpoint.generation !== state.generation) throw new Error("This saved version lacks a verified checkpoint/source identity. It cannot be restarted.");

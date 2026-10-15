@@ -146,6 +146,21 @@ queue and explicit **Apply update** controls. New work has no product-imposed
 execution-time cap; silence is not failure or permission to retry. Retain
 the working displayed checkpoint if a later attempt fails.
 
+**Visual exploration** is optional design exploration, not a palette-only polish
+pass. Build two or three distinct working layout/style directions in the same
+app, preserving the primary journey and mock contracts. Use the production
+checkpoint prompt and validated `tandem-visual-directions.json` contract; do not
+maintain a separate prompt or theme protocol here. Explain layout departures
+from the approved drawings without changing navigation or adding features.
+
+Comparison and per-direction appearance settings are not acceptance. Scoped
+feedback refines one alternative while retaining the others and the current
+prototype. **Prepare this direction** creates source with the exact chosen
+defaults; **Apply chosen visual direction** explicitly promotes it. Keeping the
+current prototype retains alternatives and puts outstanding visual feedback
+aside, not into accepted requirements. Preserve chosen defaults in subsequent
+revisions and distinguish unchosen alternatives in the draft feature specification.
+
 For `validate-existing`, work from the same existing GUI's copied source; do not
 replace it with a parallel demo. For `build`, create the minimum complete primary
 journey with typed UI models and a clear mock boundary. Preserve keyboard access,

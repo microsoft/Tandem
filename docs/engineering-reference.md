@@ -390,12 +390,48 @@ Successful preview checks and verbose version summaries stay collapsed in Detail
 unavailable versions and their targeted Restart actions remain prominent. The
 normal current-plus-pending view preserves a useful preview and initially reachable
 Feedback at 920x620, including an expanded feedback draft.
-Neither preview link nor iframe switches to a pending version without the explicit
+Neither current-preview link nor current iframe switches to a pending version without the explicit
 checkpoint-promotion action; its existing validation and Finish gates are unchanged.
+
+Optional **Visual exploration** uses one isolated application checkpoint with
+two or three working directions, not parallel replacement applications.
+`src/planning-prompts.ts` owns the generation/refinement instructions.
+`src/visual-directions.ts` validates the bounded manifest, exact setting enums
+and stable direction identities. Each direction describes layout, typography,
+palette, effects and departures from approved drawings; palette-only duplicates
+are rejected at the contract level. Descriptions are not proof of visual quality:
+workers must exercise the actual alternatives and report observations separately.
+
+The checkpoint retains `tandem-visual-directions.json` in its source root and
+serves an identical copy beside its preview page. The host checks both copies,
+the exact preview identities, opt-in HTML marker and unmodified preview bridge
+before recording readiness. The bridge applies source defaults on standalone
+startup, or bounded `tandem-*` selection parameters for an explicitly shared
+direction link. Trusted parent messages switch root attributes and CSS variables
+in place; acknowledgments bind the prototype, checkpoint, request and settings.
+No wildcard origins, browser-storage preferences or executable CSS inputs are
+accepted. Reduced motion overrides requested motion effects.
+
+Comparison state lives in `prototypeFlow.visualExploration`, independently of
+`displayedCheckpointId`. Viewing or adjusting alternatives never promotes them
+or starts model work. Scoped refinement uses the existing durable feedback
+queue and latest exploration source, retaining the submitted direction/settings
+and original feedback base. Unrelated current-prototype feedback waits during
+unresolved exploration. **Keep current prototype** explicitly marks outstanding
+visual feedback `dismissed`; it does not delete the alternatives or source.
+
+**Prepare this direction** freezes a choice into a new checkpoint whose source
+manifest's `defaultSelection` must match exactly. Only **Apply chosen visual
+direction** promotes that checkpoint. Later ordinary revisions retain those
+defaults; handoff captures the same source and snapshot rather than a URL-only
+theme preference. Previous single-theme checkpoints remain readable, and new
+exploration is an explicit action. Structure, Interaction and private
+Development ownership are unchanged.
 
 If a saved preview server has stopped, **Restart preview** targets only the
 displayed checkpoint; **Restart pending preview** targets only the waiting version.
-Neither action generates code, applies an update, changes feedback or opens
+**Restart visual exploration** targets the retained alternative bundle.
+None of these actions generates code, applies an update, changes feedback or opens
 Development. A previously reviewed live server is reused rather than duplicated.
 For legacy checkpoints without a launch record, the UI asks you to review an
 existing Node entrypoint (and any arguments), then confirm the exact executable,

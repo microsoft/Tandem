@@ -8,6 +8,7 @@ import { PreviewLaunches } from "../src/preview-launch.js";
 import { fingerprintPrototypeWorkspace } from "../src/prototype-runtime.js";
 import { writeJsonAtomically } from "../src/project-store.js";
 import { state, checkpoint } from "./renderer-fixtures.test.js";
+import { visualManifest } from "./helpers/visual-fixture.js";
 
 async function freePort() {
     const server = createServer();
@@ -82,6 +83,26 @@ test("cancel and already-live preview never launch duplicate servers", async t =
     const result = await f.launches.decide(proposal.confirmationId!, true);
     assert.equal((result as { alreadyRunning: boolean }).alreadyRunning, true);
     assert.equal(f.operations.length, 0);
+});
+test("visual exploration restart binds only its source and preserves the current choice and comparison settings", async t => {
+    const f = await fixture(t);
+    const manifest = visualManifest();
+    f.value.prototypeFlow.pendingCheckpointId = null;
+    const exploration = f.value.prototypeFlow.checkpoints[1];
+    exploration.milestone = "visual";
+    exploration.visual = { operation: "explore", explorationCheckpointId: null, selection: null, manifest };
+    f.value.prototypeFlow.visualExploration = { checkpointId: exploration.id, activeDirectionId: "canvas", appliedCheckpointId: null,
+        selections: manifest.directions.map(direction => ({ directionId: direction.id, settings: direction.defaults })) };
+    const before = structuredClone(f.value);
+    const proposal = await f.launches.inspect(f.value, "exploration", "server.mjs");
+    assert.equal(proposal.checkpointId, exploration.id);
+    assert.equal(proposal.url, exploration.previewUrl);
+    assert.equal(proposal.target, "exploration");
+    assert.equal(f.operations.length, 0);
+    await f.launches.decide(proposal.confirmationId!, true);
+    assert.deepEqual(f.value, before);
+    assert.equal(f.operations.filter(item => item.name === "powershell").length, 1);
+    await f.launches.close();
 });
 for (const failure of ["source", "owner", "permission", "identity", "during-launch-owner"]) test(`saved preview refuses ${failure} changes and preserves checkpoints`, async t => {
     const f = await fixture(t), before = structuredClone(f.value);

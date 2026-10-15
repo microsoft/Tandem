@@ -39,11 +39,14 @@ export function discoveryEntries(state: UiState): Entry[] {
         push(`drawing-request:${request.requestId}`, request.kind === "revise" ? "user" : "status", request.instruction, request.requestedAt);
     }
     for (const checkpoint of state.prototypeFlow?.checkpoints ?? []) {
-        push(`checkpoint:${checkpoint.id}`, "status", `${checkpoint.milestone}: ${checkpoint.status}. ${checkpoint.summary || ""}`,
+        const scope = checkpoint.visual?.operation === "explore" || checkpoint.visual?.operation === "refine"
+            ? "Visual alternatives (not accepted)" : checkpoint.visual?.operation === "choose" ? "Chosen visual direction" : checkpoint.milestone;
+        push(`checkpoint:${checkpoint.id}`, "status", `${scope}: ${checkpoint.status}${checkpoint.visualDismissedAt ? " (put aside)" : ""}. ${checkpoint.summary || ""}`,
             checkpoint.completedAt || checkpoint.requestedAt);
     }
     for (const revision of state.prototypeReview?.revisions ?? []) {
-        push(`revision:${revision.id}`, "user", revision.suggestion);
+        push(`revision:${revision.id}`, "user", revision.visualSelection
+            ? `Visual feedback for ${revision.visualSelection.directionId} (${revision.status}): ${revision.suggestion}` : revision.suggestion);
     }
     for (const output of state.lifecycle.outputs) push(`saved:${output.path}`, "status", `Saved ${output.stageId}: ${output.path}`, output.completedAt);
     for (const receipt of state.factoryRuns ?? []) if (receipt.recovery) {

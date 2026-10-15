@@ -1,3 +1,6 @@
+#empty-setup-approval { width: min(580px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto; box-sizing: border-box; background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+#empty-setup-identity { white-space: pre-wrap; overflow-wrap: anywhere; }
+#empty-setup-approval button { margin-block-start: 12px; }
 .human-app {
   --background: var(--background-color-default, light-dark(#e2e8f0, #0f172a));
   --surface: var(--background-color-default, light-dark(#f8fafc, #1e293b));
@@ -54,6 +57,7 @@
 .human-app #compaction-status { flex: none; max-height: 8em; overflow: auto; margin: 0 12px 8px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-raised); color: var(--text); }
 .human-app .canvas-settings[open] { position: fixed; z-index: 30; top: 8px; right: 12px; width: min(680px, calc(100% - 24px)); max-height: 70dvh; overflow: auto; padding: 16px; border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); }
 .human-app .canvas-settings summary { cursor: pointer; width: fit-content; font-weight: 600; }
+.human-app #close-settings { position: absolute; top: 12px; right: 16px; }
 .human-app .settings-fields { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-top: 12px; }
 .human-app .settings-fields label { display: grid; gap: 4px; min-width: 0; }
 .human-app .settings-fields :is(select, button) { max-width: 100%; padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; }
@@ -117,7 +121,7 @@
 .human-app .conversation-state-column { display: flex; flex-direction: column; overflow: hidden; flex-shrink: 0; }
 .human-app #state-history { flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 0 3px; list-style: none; scrollbar-width: thin; }
 .human-app .state-history-return { flex: none; align-self: flex-end; max-width: calc(100% - 8px); font-size: 10px; padding: 5px; margin: 0 4px 6px; color: var(--text); background: var(--surface); border: 1px solid var(--border); }
-.human-app #newer { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); padding: 5px 12px; border: 1px solid var(--border); border-radius: 20px; color: var(--text); background: var(--surface-raised); z-index: 5; }
+.human-app #newer { position: static; flex: none; align-self: center; margin: 6px; padding: 5px 12px; border: 1px solid var(--border); border-radius: 20px; color: var(--text); background: var(--surface-raised); }
 .human-app #notice { flex: none; max-height: 100px; overflow: auto; margin: 6px 17px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--surface-raised); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
 .human-app .state-history-step[data-selected="true"] > button { text-decoration: underline; text-underline-offset: 3px; }
 .human-app #advanced-workflow-controls:not([open]) { display: none; }
@@ -134,23 +138,28 @@
   --permission-height: min(52vh, 380px);
   display: flex;
   flex-direction: column;
+  align-items: stretch;
+  min-width: 0;
+  overflow-wrap: anywhere;
   max-height: var(--permission-height);
   overflow: hidden;
 }
-.human-app #access-requests { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.human-app #access-requests { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .human-app #access-requests > .access-card {
-  display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0;
+  display: block;
   margin: 0; padding: 0; border: 0;
 }
 .human-app #access-requests > .access-card[hidden] { display: none; }
-.human-app .access-request-picker { display: flex; align-items: center; gap: 8px; flex: none; margin: 0 0 8px; font-size: 12px; }
-.human-app .access-request-picker select { min-width: 0; flex: 1; font: inherit; }
-.human-app .access-request-context { overflow: auto; min-height: 0; overscroll-behavior: contain; padding-right: 6px; }
+.human-app .access-request-picker { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; font-size: 12px; }
+.human-app .access-request-picker select { min-width: 0; max-width: 100%; flex: 1 1 140px; font: inherit; }
+.human-app .access-request-context { overflow: auto; max-height: min(24vh, 180px); overscroll-behavior: contain; padding-right: 6px; }
 .human-app .access-request-details { margin-block: 6px; }
 .human-app .access-request-details pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
 .human-app .access-request-decisions { flex: none; border-top: 1px solid var(--border); padding-top: 6px; background: var(--surface); }
+.human-app .access-request-decisions > h3 { margin: 6px 0; font-size: inherit; }
 .human-app .access-card .access-approval-scope { font-size: 12px; line-height: 1.4; color: var(--muted); }
 .human-app .access-decision-buttons { display: flex; flex-wrap: wrap; gap: 6px; padding-bottom: 4px; }
+.human-app #access-approval button { box-sizing: border-box; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .human-app .access-card .access-decision-buttons button { margin: 0; }
 .human-app .human-loop-submitted-answer { white-space: pre-wrap; }
 .human-app .human-loop-question-context { margin-top: 12px; }
@@ -198,6 +207,14 @@
 .human-app .conversation-state-strip { background: var(--blue-soft); }
 .human-app .human-loop { background: var(--surface-raised); }
 .human-app .command-bar { background: var(--surface-raised); }
+.human-app #role-hint-help { margin: 4px 0 0; color: var(--muted); font-size: calc(var(--shell-font-size) - 2px); }
+.human-app #queued-requests { flex: none; min-height: 0; max-height: min(24vh, 180px); overflow: auto; overscroll-behavior: contain; padding: 6px 12px; border-top: 1px solid var(--border); background: var(--surface-raised); }
+.human-app #queued-requests > details > summary { padding: 3px 0; font-weight: 600; }
+.human-app #queued-requests ol { margin: 4px 0; padding-left: 20px; }
+.human-app #queued-requests li > details > summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 4px 0; }
+.human-app #queued-requests .conversation-entry { margin: 0; padding: 6px 0; }
+.human-app #queued-requests .conversation-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.human-app #queued-requests .conversation-diagram-image { max-width: 100%; max-height: 100px; object-fit: contain; }
 .human-app :is(button, select, textarea, input, summary):focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
 .human-app #message:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
 .human-app :is(.artifact-navigation-row button[aria-selected="true"], .state-history-step.is-current button) { color: var(--blue); background: var(--blue-soft); }
@@ -591,3 +608,19 @@
   padding: 0.5rem 0;
   font-weight: 600;
 }
+.human-app[data-project-panel] .brand,
+.human-app[data-project-panel] .header-project,
+.human-app[data-project-panel] #browser-session-guidance,
+.human-app[data-project-panel] .canvas-settings:not([open]) { display: none; }
+.human-app[data-project-panel] .human-header { min-height: 0; height: 0; padding: 0; border: 0; }
+.human-app[data-project-panel]:not([data-project-design="true"]) .human-layout { grid-template-columns: minmax(0, 1fr); padding: 0; gap: 0; }
+.human-app[data-project-panel]:not([data-project-design="true"]) #workspace-divider,
+.human-app[data-project-panel]:not([data-project-design="true"]) #design-panel { display: none; }
+.human-app[data-project-panel] #project-connection-help { display: block; padding: 4px 12px; font-size: 12px; }
+.human-app[data-project-panel] .human-conversation,
+.human-app[data-project-panel] .human-design { border: 0; border-radius: 0; min-width: 0; }
+.human-app[data-project-panel] .command-bar { flex-wrap: wrap; }
+#project-message-context { flex: 0 0 100%; grid-column: 1 / -1; min-width: 0; }
+#project-message-context label { display: flex; gap: 8px; align-items: center; }
+#project-message-context select { display: block; min-width: 0; max-width: 100%; }
+#project-message-context p { margin: 4px 0; font-size: 12px; color: var(--muted); }

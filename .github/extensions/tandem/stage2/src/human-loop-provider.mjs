@@ -5,7 +5,8 @@ import { resolve, relative, isAbsolute, extname, sep } from "node:path";
 import { InMemoryEventStore, SqliteEventStore } from "../runtime-src/event-store.ts";
 import { AnnotationAttachmentStore } from "../runtime-src/domain/workflow/annotation-attachment.ts";
 import { ImageAttachmentStore, isImageAttachment, parseRequestAttachments, readRequestAttachment } from "../runtime-src/domain/workflow/image-attachment.ts";
-import { humanExecutionQueue, isPriorityAnswer, hasQuestionBlockers, currentImplementationConfirmation, implementationDecisionMessage } from "../runtime-src/domain/human-loop/model.ts";
+import { humanExecutionQueue, isPriorityAnswer, hasQuestionBlockers, questionBlocksNewWork, currentImplementationConfirmation, implementationDecisionMessage } from "../runtime-src/domain/human-loop/model.ts";
+import { advisoryContinuationIssue, parseRequest } from "../runtime-src/domain/human-loop/contracts.ts";
 import { requireCondition, object, text } from "../runtime-src/domain/workflow/validation.ts";
 import { policyHash } from "../runtime-src/domain/workflow/policy.ts";
 import { getHostStateWal } from "../runtime-src/domain/host-state-wal.ts";
@@ -44,6 +45,21 @@ export class HumanLoopEvents {
   close() { this.#events.close?.(); }
 }
 
+export function projectHumanCycle(cycle) {
+  return {
+    id: cycle.id, originRequestId: cycle.originRequestId, design: cycle.design, phase: cycle.phase,
+    completed: cycle.tasks.filter(({ status }) => status === "completed").length, total: cycle.plan?.tasks.length ?? 0,
+    plan: cycle.plan ? { id: cycle.plan.id, version: cycle.plan.version, digest: cycle.plan.digest, design: cycle.plan.design,
+      goal: cycle.plan.goal, tasks: cycle.plan.tasks } : null,
+    implementation: cycle.implementationResult?.outcome.kind === "implementation-result" ? {
+      resultId: cycle.implementationResult.resultId, summary: cycle.implementationResult.outcome.summary,
+      evidenceRefs: cycle.implementationResult.outcome.evidenceRefs, snapshot: cycle.current,
+    } : null,
+    tasks: cycle.tasks.map(task => ({ id: task.id, status: task.status,
+      title: cycle.plan?.tasks.find(({ id }) => id === task.id)?.title ?? task.id })),
+  };
+}
+
 export function projectHumanLoopView(state, readiness) {
   const latest = state.handoffs.at(-1);
   const published = new Set(state.handoffs.filter(h => h.presented).map(h => h.result.resultId));
@@ -51,6 +67,8 @@ export function projectHumanLoopView(state, readiness) {
     id: q.id, context: q.context, question: q.question, whyItMatters: q.whyItMatters, importance: q.importance,
     options: q.options.map((option) => ({ ...option })), allowFreeform: q.allowFreeform,
     state: q.state, answerRequestId: q.answerRequestId, blockingActive: q.blockingActive,
+    ...(q.unanswered ? { unanswered: q.unanswered } : {}),
+    continuationIssue: advisoryContinuationIssue(q, state.design), effectiveBlocking: questionBlocksNewWork(state, q),
     processingState: q.answerRequestId ? state.requests.find(r => r.id === q.answerRequestId)?.status ?? null : null,
     ...(q.invalidation ? { invalidation: q.invalidation } : {}),
     designRefs: q.designRefs ?? [],
@@ -68,8 +86,8 @@ export function projectHumanLoopView(state, readiness) {
     group.canAnswer ||= permitted && question.state === "open";
     groups.set(group.resultId, group);
   }
-  const questionInteractions = [...groups.values()].sort((a, b) => Number(b.questions.some(q => q.state === "open" && q.blockingActive))
-    - Number(a.questions.some(q => q.state === "open" && q.blockingActive)));
+  const questionInteractions = [...groups.values()].sort((a, b) => Number(b.questions.some(q => q.effectiveBlocking))
+    - Number(a.questions.some(q => q.effectiveBlocking)));
   const queue = humanExecutionQueue(state);
   const sourceTask = latest && state.executions.find(({ result }) => result?.resultId === latest.result.resultId);
   const sourceRole = sourceTask?.binding.role;
@@ -92,17 +110,10 @@ export function projectHumanLoopView(state, readiness) {
         canDecide: permitted && !state.stop && !state.uncertainty && !readiness.modelBlocked
           && currentImplementationConfirmation(state)?.id === confirmation.id && confirmation.status === "pending" };
     }),
-    currentCycle: cycle ? {
-      id: cycle.id, originRequestId: cycle.originRequestId, design: cycle.design, phase: cycle.phase, completed: cycle.tasks.filter(({ status }) => status === "completed").length,
-      total: cycle.plan?.tasks.length ?? 0,
-      plan: cycle.plan ? { id: cycle.plan.id, version: cycle.plan.version, design: cycle.plan.design,
-        goal: cycle.plan.goal, tasks: cycle.plan.tasks } : null,
-      tasks: cycle.tasks.map((task) => ({ id: task.id, status: task.status,
-        title: cycle.plan?.tasks.find(({ id }) => id === task.id)?.title ?? task.id })),
-    } : null,
+    currentCycle: cycle ? projectHumanCycle(cycle) : null,
     questionInteractions,
     questionCounts: { unanswered: questions.filter(q => q.state === "open").length,
-      blockers: questions.filter(q => q.state === "open" && q.blockingActive).length,
+      blockers: questions.filter(q => q.effectiveBlocking).length,
       processing: state.requests.filter(r => isPriorityAnswer(r) && ["waiting", "active", "handoff-pending"].includes(r.status)).length },
     queue: queue.map((request) => ({
       id: request.id, message: request.message, status: request.status, kind: request.answers ? "answer" : "ordinary",
@@ -122,6 +133,13 @@ export function projectHumanLoopView(state, readiness) {
   };
 }
 
+export function queuedRequestStatus(request) {
+  if (request.status === "waiting") return "queued";
+  if (request.queueAdmitted || request.route) return null;
+  return { discarded: "cancelled-before-start", stopped: "stopped-before-start",
+    retired: "retired-before-start", rejected: "rejected-before-start" }[request.status] ?? null;
+}
+
 export function projectHumanConversation(state, originals) {
   const historicalQuestions = new Map();
   for (const question of state.questions) {
@@ -130,14 +148,19 @@ export function projectHumanConversation(state, originals) {
       question: question.question, context: question.context, whyItMatters: question.whyItMatters,
       importance: question.importance, options: question.options, design: question.source.design,
       state: question.state, blockingActive: question.blockingActive,
+      ...(question.unanswered ? { unanswered: question.unanswered } : {}),
+      continuationIssue: advisoryContinuationIssue(question, state.design), effectiveBlocking: questionBlocksNewWork(state, question),
       processingState: question.answerRequestId ? state.requests.find(r => r.id === question.answerRequestId)?.status ?? null : null,
       designRefs: question.designRefs ?? [] });
     historicalQuestions.set(question.source.resultId, group);
   }
+
   const handoffs = new Map(state.handoffs.map((handoff) => [handoff.id, handoff.result.resultId]));
-  const requests = state.requests.map((request) => ({
+  const requests = state.requests.map((request, index) => ({
     id: `request:${request.id}`, kind: "user", requestId: request.id, text: request.message,
     timestamp: request.receivedAt, queueState: request.status, stopId: request.stopId,
+    ...(queuedRequestStatus(request) ? { queuedStatus: queuedRequestStatus(request), queuedOrder: index } : {}),
+    ...(request.roleHint ? { roleHint: request.roleHint } : {}),
     ...(request.attachments ? { attachments: request.attachments } : {}),
     ...(request.answers ? { answerDetails: request.answers.answers.map((answer) => {
       const question = state.questions.find((q) => q.id === answer.questionId && q.source.resultId === answer.sourceResultId);
@@ -151,7 +174,8 @@ export function projectHumanConversation(state, originals) {
           ...(answer.selectedOption.resolutionTarget ? { resolutionTarget: answer.selectedOption.resolutionTarget } : {}) } : {}) };
     }) } : {}),
   }));
-  const messages = originals.filter(({ role }) => role !== "host-user").map((entry) => ({
+  const messages = originals.filter(entry => !["host-user", "host-assistant", "Discovery evidence"].includes(entry.role)
+    && !entry.id.startsWith("main:") && !entry.id.startsWith("discovery:") && entry.savedEvidenceProjection !== true).map((entry) => ({
     id: entry.id, kind: entry.kind, role: entry.role, requestId: entry.requestId, text: entry.content, timestamp: entry.timestamp,
     ...(historicalQuestions.has(handoffs.get(entry.id)) ? { questionHistory: historicalQuestions.get(handoffs.get(entry.id)) } : {}),
   }));
@@ -165,6 +189,15 @@ export function projectHumanConversation(state, originals) {
       text: "Retained questions from interrupted work. Recovery did not resume this work.", questionHistory });
   }
   return [...requests, ...messages].sort((a, b) => a.timestamp.localeCompare(b.timestamp) || a.id.localeCompare(b.id));
+}
+
+export function projectPrivateEvents(items, privateSessionId) {
+  return items.filter(event => {
+    const identity = event.data?.sessionId ?? event.data?.activity?.sessionId ?? event.data?.nativeInvocation?.sessionId;
+    if (identity && identity !== privateSessionId) return false;
+    if (event.type.startsWith("permission.")) return Boolean(privateSessionId) && identity === privateSessionId;
+    return event.type.startsWith("human.") && !["human.permission-sync-failed", "human.audit-failed"].includes(event.type);
+  });
 }
 
 const json = (response, status, value) => {
@@ -181,9 +214,11 @@ async function body(request) {
   return JSON.parse((await bytes(request, 65536)).toString("utf8"));
 }
 
-export async function createHumanLoopProvider({ repositoryRoot, publicDirectory, getInstallation, events, permissions, start, openBrowser,
-  openProjectFolder: revealProject = openProjectFolder, surface = "canvas" }) {
+export async function createHumanLoopProvider({ repositoryRoot, publicDirectory, getInstallation, events, permissions, start, finishEmptyRepair, openBrowser,
+  openProjectFolder: revealProject = openProjectFolder, surface = "canvas", projectHost = null }) {
   requireCondition(["canvas", "browser"].includes(surface), "Unsupported Tandem delivery surface.");
+  if (projectHost) requireCondition(/^http:\/\/127\.0\.0\.1:\d+$/.test(projectHost.origin)
+    && /^[a-zA-Z0-9-]{1,100}$/.test(projectHost.channel), "Invalid project presentation binding.");
   const root = resolve(repositoryRoot), publicRoot = resolve(publicDirectory), streams = new Set();
   let url;
   const runtime = () => getInstallation()?.runtime ?? null;
@@ -198,15 +233,18 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
     const installation = getInstallation();
     const running = runtime();
     const installed = installation ? await installation.read() : { status: "attaching", reason: "Attaching the current main session." };
+    const privateId = running?.sessionId ?? installation?.configuration?.owner.privateSessionId;
+    const privateEvents = projectPrivateEvents(events.list(), privateId);
     if (!running || !["ready", "closed"].includes(installed.status)) return { schemaVersion: "human-loop-snapshot-view/v1", streamId: events.streamId,
       installation: installed,
-      workflow: null, design: null, messages: [], events: events.list(), accessRequests: permissions.list(), processes: { apps: [], commands: [] } };
+      conversationStatus: "unverified", workflow: null, design: null, messages: [], events: privateEvents,
+      accessRequests: privateId ? permissions.list(privateId) : [], processes: { apps: [], commands: [] } };
     const [state, readiness, originals, design, processes] = await Promise.all([
       running.state(), running.readiness(), running.conversation(), running.currentDesign(), running.commands.read(),
     ]);
     return { schemaVersion: "human-loop-snapshot-view/v1", streamId: events.streamId,
       installation: installed, workflow: projectHumanLoopView(state, readiness),
-      design, messages: projectHumanConversation(state, originals), events: events.list(),
+      conversationStatus: "verified", design, cycles: state.cycles.map(projectHumanCycle), messages: projectHumanConversation(state, originals), events: privateEvents,
       historyRequests: state.requests.slice(-500).map(({ id, receivedAt }) => ({ id, receivedAt })),
       recoveries: (state.recoveries ?? []).map(({ id, recoveredAt }) => ({ id, recoveredAt })),
       accessRequests: permissions.list(running.sessionId), rememberedApprovals: permissions.remembered?.(running.sessionId) ?? { all: false, tools: [] }, processes };
@@ -227,12 +265,19 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
         return json(response, 200, await settings());
       }
       if (request.method === "POST" && path === "/api/settings/model") {
-        const data = object(await body(request), ["action", "model"]);
+        const input = await body(request);
+        const data = object(input, ["action", "model", ...(Object.hasOwn(input ?? {}, "reasoningEffort") ? ["reasoningEffort"] : [])]);
         requireCondition(["select", "accept-actual"].includes(data.action), "Unknown model setting action.");
         requireCondition(data.action === "accept-actual" ? data.model === null
           : typeof data.model === "string" && data.model.trim() === data.model && data.model.length > 0 && data.model.length <= 200, "Invalid model selection.");
         requireCondition((await getInstallation().read()).status === "ready", "Private runtime must be Ready for model settings.");
-        await requireRuntime().changeModel({ model: data.model, acceptActual: data.action === "accept-actual" });
+        requireCondition(data.reasoningEffort === undefined || data.reasoningEffort === null
+          || typeof data.reasoningEffort === "string" && data.reasoningEffort.trim() === data.reasoningEffort
+            && data.reasoningEffort.length > 0 && data.reasoningEffort.length <= 40, "Invalid reasoning effort selection.");
+        requireCondition(data.action !== "accept-actual" || data.reasoningEffort == null,
+          "Accept actual reads native reasoning effort; it cannot override it.");
+        await requireRuntime().changeModel({ model: data.model, reasoningEffort: data.reasoningEffort ?? null,
+          acceptActual: data.action === "accept-actual" });
         return json(response, 200, await settings());
       }
       if (request.method === "GET" && path === "/api/host-state") {
@@ -269,6 +314,23 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
         if (result.recovered) await start();
         return json(response, 200, result);
       }
+      if (request.method === "POST" && path === "/api/runtime/empty-setup/inspect") {
+        object(await body(request), []);
+        const installation = getInstallation();
+        requireCondition(typeof installation?.requestEmptySetupRepair === "function", "Empty Development setup repair is unavailable.");
+        return json(response, 200, await installation.requestEmptySetupRepair());
+      }
+      if (request.method === "POST" && path === "/api/runtime/empty-setup/decision") {
+        const input = object(await body(request), ["confirmationId", "approve"]);
+        requireCondition(typeof input.confirmationId === "string" && typeof input.approve === "boolean", "An explicit repair decision is required.");
+        const installation = getInstallation();
+        requireCondition(typeof installation?.decideEmptySetupRepair === "function" && typeof finishEmptyRepair === "function",
+          "Empty setup repair or native readback is unavailable.");
+        const result = await installation.decideEmptySetupRepair(input);
+        const readback = result.repaired ? await finishEmptyRepair() : null;
+        events.touch();
+        return json(response, 200, { ...result, readback });
+      }
       if (request.method === "POST" && path === "/api/navigation/open") {
         const data = object(await body(request), ["url", "focus"]);
         const address = normalizeNavigationUrl(data.url);
@@ -280,9 +342,11 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
       }
       if (request.method === "POST" && ["/api/requests", "/api/answers"].includes(path)) {
         const data = await body(request), keys = ["id", "message", "receivedAt", ...(path === "/api/answers" ? ["answers"] : []),
+          ...(path === "/api/requests" && Object.hasOwn(data, "roleHint") ? ["roleHint"] : []),
           ...(Object.hasOwn(data, "attachments") ? ["attachments"] : [])];
         object(data, keys);
         admission = { id: data.id, message: data.message, receivedAt: data.receivedAt,
+          ...(Object.hasOwn(data, "roleHint") ? { roleHint: data.roleHint } : {}),
           answers: path === "/api/answers" ? data.answers : null, attachments: data.attachments ?? [] };
         requireCondition((await getInstallation().read()).status === "ready",
           "The runtime is not ready for admission; closing or reopening does not accept new requests.");
@@ -299,8 +363,9 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
           if (!state.requests.some(({ id }) => id === data.id)) validateArtifactAnnotationSource(attachment.source, state.design, design.content);
         }
         requireCondition(typeof data.message === "string" && (data.message.trim() || ref.length), "A request needs text or an image.");
-        const input = { id: text(data.id), message: data.message, receivedAt: text(data.receivedAt),
-          answers: path === "/api/answers" ? data.answers : null, ...(ref.length ? { attachments: ref } : {}) };
+        const input = parseRequest({ id: text(data.id), message: data.message, receivedAt: text(data.receivedAt),
+          answers: path === "/api/answers" ? data.answers : null, ...(ref.length ? { attachments: ref } : {}),
+          ...(Object.hasOwn(data, "roleHint") ? { roleHint: data.roleHint } : {}) });
         await instance.send(input);
         return json(response, 202, { requestId: input.id });
       }
@@ -420,6 +485,12 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
         requireCondition(html.includes('data-tandem-surface="canvas"'), "Renderer lacks an explicit Tandem surface binding.");
         content = Buffer.from(html.replace('data-tandem-surface="canvas"', 'data-tandem-surface="browser"'));
       }
+      if (file === resolve(publicRoot, "human-loop.html") && projectHost) {
+        const panel = new URL(request.url, url).searchParams.get("panel") ?? "workspace";
+        requireCondition(panel === "workspace", "Unknown project presentation panel.");
+        content = Buffer.from(content.toString("utf8").replace('class="human-app"',
+          `class="human-app" data-project-panel="${panel}" data-project-origin="${projectHost.origin}" data-project-channel="${projectHost.channel}"`));
+      }
       response.writeHead(200, { "content-type": types[extname(file)] ?? "application/octet-stream", "cache-control": "no-store",
         "x-content-type-options": "nosniff" });
       response.end(content);
@@ -431,6 +502,7 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
           const saved = state?.requests.find(({ id }) => id === admission.id);
           if (saved) {
             const original = { id: saved.id, message: saved.message, receivedAt: saved.receivedAt,
+              ...(saved.roleHint ? { roleHint: saved.roleHint } : {}),
               answers: saved.answers, attachments: saved.attachments ?? [] };
             if (policyHash(original) === policyHash(admission)) outcome.accepted = true;
             else outcome.notAccepted = true;

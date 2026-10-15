@@ -76,7 +76,7 @@ instead of restarting discovery. See [revision recipes](use-cases.md#revise-requ
 ## Prototype versions
 
 **Structure** and **Interaction** are automatic milestones after prototype work
-starts. Feedback and **Explore visual direction (optional)** are optional.
+starts. Feedback and **Explore visual directions (optional)** are optional.
 Existing GUI validation uses copied source; a new mock UI is not proof of real
 services, persistence or integrations.
 
@@ -90,6 +90,34 @@ status and clarifications. Finish requires the necessary milestones, current
 drawing approval and resolved submitted feedback. **Finish Prototype and save
 outputs** retains evidence; it does not approve implementation.
 Non-GUI work can retain a reason/specification without fabricating screens.
+
+### Explore visual directions
+
+After applying Interaction, choose **Explore visual directions (optional)**.
+The agent builds two or three working alternatives with different layouts,
+typography, colors and restrained effects. They keep the same primary workflow
+and mock data. **What differs** explains each direction, including layout
+departures from the approved drawings; visual exploration does not authorize
+new navigation or features.
+
+1. **Preview direction** to switch alternatives. **Show current prototype**
+   returns to your existing version. Neither action accepts a design.
+2. Expand **Adjust appearance** for light/dark, accent, density, text size and
+   effects. Settings are saved per direction and switch in place without an
+   agent run. Reduced-motion preferences always turn motion off.
+3. Use **Refine direction** to request a change to that alternative only.
+   Ordinary **Feedback** still targets the current prototype and waits until
+   exploration is applied or put aside.
+4. **Prepare this direction** saves your choice and settings as application
+   defaults in a new checkpoint. Inspect **Open prepared direction**, then
+   **Apply chosen visual direction**. **Back to alternatives** puts that
+   prepared choice aside without losing it.
+
+**Keep current prototype** leaves your existing version unchanged and puts
+aside outstanding visual feedback. Alternatives, settings and history remain
+available through **Reopen visual exploration**. If the current prototype has
+since changed, new directions are built from it instead of applying stale work.
+Before finishing, apply your choice or keep the current prototype.
 
 Saved source and a running preview are separate. Use
 [preview recovery](troubleshooting.md#the-preview-is-unavailable) to restart a

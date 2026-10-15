@@ -51,9 +51,11 @@ saved state before submitting again.
 A saved Prototype and its preview server are different. A stopped server does
 not erase saved source or feedback.
 
-1. Use **Check again** for the current preview or **Check pending preview** for
-   the waiting version. Checks start no server/model work.
-2. Choose **Restart preview** or **Restart pending preview** for that exact version.
+1. Use **Check again** for the current preview, **Check pending preview** for
+   the waiting version, or **Check visual preview** for design alternatives.
+   Checks start no server/model work.
+2. Choose **Restart preview**, **Restart pending preview**, or **Restart visual
+   exploration** for that exact saved version.
 3. Review the executable, folder, URL and version. Older output may ask for an
    existing **Saved Node entrypoint** and **Additional arguments** (a JSON array
    of strings); select **Review launch**.
@@ -63,6 +65,10 @@ not erase saved source or feedback.
 **Result:** the saved server is running, not regenerated or promoted.
 Restarting pending output does not display it; use its Show action separately.
 An already-verified live server is reused.
+Restarting visual exploration retains its per-direction settings and does not
+apply any alternative. If a running preview cannot confirm visual controls,
+check it again and inspect the error; do not substitute another checkpoint or
+claim that an adjustment was applied.
 
 This adapter supports Windows Node entrypoints only. It does not guess npm
 scripts, install dependencies or substitute another server. Changed source/owner,

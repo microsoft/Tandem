@@ -43,7 +43,7 @@ test("progressive Prototype reports honest milestones and keeps its iframe while
     first.prototypeFlow.displayedCheckpointId = null; first.prototypeFlow.activeCheckpointId = "first";
     const h = await setup(t, first);
     assert.equal(hidden(h, "prototype-progress"), false);
-    assert.match(text(h, "prototype-milestones"), /StructureBuildingInteractionWaitingVisual directionOptional/);
+    assert.match(text(h, "prototype-milestones"), /StructureBuildingInteractionWaitingVisual explorationOptional/);
     assert.match(text(h, "prototype-progress-message"), /No preview is available yet/);
     assert.equal(frame(h).hidden, true);
     assert.equal(disabled(h, "revision-input"), false);
@@ -378,7 +378,7 @@ test("failed optional visual work can be skipped without losing history, preview
     assert.equal(h.document.querySelector("#extend-prototype-budget"), null);
     assert.equal(disabled(h, "request-prototype-visual"), false);
     assert.equal(disabled(h, "complete-stage"), false);
-    assert.match(text(h, "prototype-milestones"), /Visual directionSkipped \(optional\)/);
+    assert.match(text(h, "prototype-milestones"), /Visual explorationSkipped \(optional\)/);
     assert.doesNotMatch(text(h, "prototype-progress-message"), /latest update failed/);
     assert.equal(current(h).prototypeFlow.checkpoints.at(-1).status, "failed");
     assert.equal(field(h, "revision-input").value, "Keep future feedback");

@@ -25,6 +25,8 @@ import { HumanLoopStore } from "../development/tandem/src/human-loop-store.mjs";
 import { createDurablePrivateSession } from "../development/tandem/src/human-loop-controller.mjs";
 import { createHumanTask, humanTaskPrompt } from "../development/tandem/src/human-loop-task.mjs";
 import { waitFor } from "../development/tandem/test/helpers/native-session-fixture.mjs";
+import { visualManifest } from "./helpers/visual-fixture.js";
+import { visualManifestName } from "../src/visual-directions.js";
 
 async function fixture(mode: "build" | "validate-existing" | "not-applicable") {
     const root = await mkdtemp(join(tmpdir(), "tandem-handoff-"));
@@ -87,6 +89,28 @@ async function retainedFiles(root: string): Promise<Record<string, Buffer>> {
     await visit(root);
     return result;
 }
+
+test("handoff retains the chosen visual defaults and alternative source without running the prototype", async t => {
+    const f = await fixture("build");
+    t.after(f.cleanup);
+    const manifest = visualManifest();
+    manifest.defaultSelection = { directionId: "canvas", settings: { ...manifest.directions[1].defaults, textSize: "large" } };
+    const bytes = JSON.stringify(manifest);
+    await writeFile(join(f.source, visualManifestName), bytes);
+    const checkpoint = { ...f.result.prototypeFlow!.checkpoints[0], sourceFingerprint: await fingerprintPrototypeWorkspace(f.source),
+        visual: { operation: "choose", explorationCheckpointId: "retained-alternatives",
+            selection: manifest.defaultSelection, manifest } };
+    const result = { ...f.result, prototypeFlow: { ...f.result.prototypeFlow, checkpoints: [checkpoint] } };
+    await writeJsonAtomically(f.path, { version: 1, prototypeId: "fixture", stageId: "prototype", revision: 4,
+        completedAt: f.state.lifecycle.outputs[0].completedAt, result });
+    const receipt = await f.store.prepare(f.state);
+    assert.equal(receipt.prototype.sourceFingerprint, checkpoint.sourceFingerprint);
+    assert.equal(await readFile(join(f.store.root, receipt.id, "source", visualManifestName), "utf8"), bytes);
+    const retained = JSON.parse(await readFile(join(f.store.root, receipt.id, "snapshot.json"), "utf8"));
+    assert.deepEqual(retained.result.prototypeFlow.checkpoints[0].visual.selection, manifest.defaultSelection);
+    assert.equal(retained.result.prototypeFlow.checkpoints[0].visual.manifest.directions.length, 3);
+    assert.match(await readFile(join(f.store.root, receipt.id, "source", "package.json"), "utf8"), /DO NOT RUN/);
+});
 
 test("handoff status inspection is exact, read-only and never admits work", async t => {
     const f = await fixture("build");

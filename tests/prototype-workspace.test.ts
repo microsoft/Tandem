@@ -582,8 +582,9 @@ test("checkpoint production prompt differentiates milestone scope and binds isol
     assert.match(interaction, /deterministic mock/);
     assert.ok(!interaction.includes("STRUCTURE: deliver"));
     const visual = buildPrototypeCheckpointPrompt({ ...args, checkpoint: { ...args.checkpoint, milestone: "visual" } });
-    assert.match(visual, /VISUAL DIRECTION \(optional\)/);
-    assert.match(visual, /Do not create a new design system/);
+    assert.match(visual, /VISUAL EXPLORATION \(optional\)/);
+    assert.match(visual, /not a new framework/);
+    assert.match(visual, /Do not offer palette swaps/);
     const existing = buildPrototypeCheckpointPrompt({ ...args, approach: "validate-existing" });
     assert.match(existing, /SAME existing GUI/);
     assert.match(existing, /never create a parallel reimplementation/);

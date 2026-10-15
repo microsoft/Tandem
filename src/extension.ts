@@ -64,9 +64,11 @@ import { fingerprintPrototypeWorkspace, PROTOTYPE_FINGERPRINT_PREFIX } from "./p
 import {
     newPrototypeFlow, nextPrototypeMilestone, prototypeCheckpoint, prototypeFlowCompletionError, prototypeRetrySource,
     prototypeMilestoneLabels, promotePrototypeCheckpoint, readPrototypeFlow,
-    reservePrototypeCheckpoint, settlePrototypeCheckpoint,
+    reservePrototypeCheckpoint, settlePrototypeCheckpoint, awaitingVisualChoice, updateVisualSelection, visualExplorationIsCurrent, prototypePreviewCheckpointId,
     type PrototypeCheckpoint, type PrototypeFlow, type PrototypeMilestone,
 } from "./prototype-flow.js";
+import { isVisualExploration, readVisualSelection, visualSelectionSchema, type VisualCheckpoint } from "./visual-directions.js";
+import { verifyVisualDirectionSource } from "./visual-direction-source.js";
 import { createProcessAdapters } from "./process-adapters.js";
 import { assertDeliveryCurrent, prepareDeliveryDraft } from "./delivery.js";
 import { createHumanLoopController } from "../development/tandem/src/human-loop-controller.mjs";
@@ -187,7 +189,8 @@ function ownedPreviewLaunches() {
         root: WORKSPACE_ROOT, storageRoot: STATE_DIRECTORY, mainSessionId: () => session.sessionId,
         executable: process.env.TANDEM_NODE_EXECUTABLE || process.execPath,
         launcher: join(dirname(fileURLToPath(import.meta.url)), "preview-launcher.mjs"),
-        tools: { execute: input => session.rpc.tools.execute(input) }, verifyIdentity: verifyPreviewIdentity,
+        tools: { execute: input => session.rpc.tools.execute(input) },
+        verifyIdentity: async (url, prototypeId, checkpointId) => { await verifyPreviewIdentity(url, prototypeId, checkpointId); },
         readState: loadState,
         guard: async () => {
             if (process.platform !== "win32") throw new Error("Saved preview restart currently requires the native Windows PowerShell launch adapter.");
@@ -915,6 +918,7 @@ function normalizePrototypeReview(value) {
                       "clarifying",
                       "ready",
                       "applied",
+                      "dismissed",
                       "failed",
                   ].includes(revision.status)
                       ? revision.status
@@ -951,6 +955,7 @@ function normalizePrototypeReview(value) {
                       baseCheckpointId: typeof revision.baseCheckpointId === "string" ? revision.baseCheckpointId : null,
                       checkpointId: typeof revision.checkpointId === "string" ? revision.checkpointId : null,
                       clientRequestId: typeof revision.clientRequestId === "string" ? revision.clientRequestId : null,
+                      ...(revision.visualSelection !== undefined ? { visualSelection: readVisualSelection(revision.visualSelection) } : {}),
                   };
               })
               .filter(Boolean)
@@ -1478,6 +1483,7 @@ async function verifyPreviewIdentity(url, prototypeId, checkpointId: string | nu
                 "The preview does not identify this checkpoint. The working preview has been preserved.");
         }
     }
+    return html;
 }
 
 async function loadState(prototypeId) {
@@ -3584,7 +3590,8 @@ async function assertPrototypeCheckpointSources(checkpoint: PrototypeCheckpoint 
 }
 
 async function dispatchPrototypeCheckpoint(prototypeId: string, extensionId: string,
-    options: { retry?: boolean; checkpointId?: string; clarification?: { question: any; answer: string } } = {}) {
+    options: { retry?: boolean; checkpointId?: string; clarification?: { question: any; answer: string };
+        exploreVisual?: boolean; visualChoice?: { checkpointId: string; selection: unknown; expectedRevision?: number } } = {}) {
     if (!(await isPreferredAnswerProvider(extensionId))) {
         throw new CanvasError("read_only_provider", "Start the prototype through the active Tandem provider.");
     }
@@ -3599,6 +3606,15 @@ async function dispatchPrototypeCheckpoint(prototypeId: string, extensionId: str
         const sketchInput = await approvedSketchInput(state);
         let flow = prototypeFlowForState(state);
         if (flow.pendingCheckpointId) throw new CanvasError("prototype_update_pending", "Apply the prepared update before building another checkpoint.");
+        if (options.visualChoice) {
+            if (options.visualChoice.expectedRevision !== undefined && options.visualChoice.expectedRevision !== state.revision) {
+                throw new CanvasError("visual_choice_stale", "The prototype changed. Review the chosen direction before preparing it.");
+            }
+            if (!flow.visualRequested || !visualExplorationIsCurrent(flow)) {
+                throw new CanvasError("visual_source_stale", "Explore the current prototype before choosing a visual direction.");
+            }
+            flow = updateVisualSelection(flow, options.visualChoice.checkpointId, options.visualChoice.selection);
+        }
         if (state.prototypeReview.question && !options.clarification) {
             throw new CanvasError("prototype_clarification_pending", "Answer the open clarification. Additional feedback can still be queued.");
         }
@@ -3607,26 +3623,55 @@ async function dispatchPrototypeCheckpoint(prototypeId: string, extensionId: str
             throw new CanvasError("prototype_clarification_stale", "This prototype clarification is no longer active.");
         }
         const last = flow.checkpoints.at(-1);
-        const failed = last?.status === "failed" &&
-            !(last.milestone === "visual" && !last.revisionId && !flow.visualRequested) ? last : null;
+        const failed = last?.status === "failed" && !last.visualDismissedAt &&
+            !state.prototypeReview.revisions.some(item => item.id === last.revisionId && item.status === "dismissed") &&
+            !(last.milestone === "visual" && !flow.visualRequested &&
+                (!last.revisionId || last.visual?.operation === "refine")) ? last : null;
         if (options.checkpointId && options.checkpointId !== failed?.id) {
             throw new CanvasError("prototype_checkpoint_stale", "This failed checkpoint is no longer current.");
         }
-        if (failed && !options.retry) return state;
-        if (!options.retry && state.prototypeReview.revisions.some((item) => item.status === "failed")) return state;
-        const revision = options.clarification
+        if (failed && options.visualChoice) throw new CanvasError("visual_update_failed", "Retry the failed visual update or keep the current prototype before choosing again.");
+        if (failed && !options.retry && !options.exploreVisual) return state;
+        if (!options.retry && state.prototypeReview.revisions.some((item) => item.status === "failed")) {
+            if (options.visualChoice) throw new CanvasError("prototype_feedback_failed", "Resolve failed feedback before preparing a visual choice.");
+            return state;
+        }
+        const eligibleRevision = (item) => !awaitingVisualChoice(flow) || Boolean(item.visualSelection);
+        const revision = options.visualChoice || options.exploreVisual ? null : options.clarification
             ? state.prototypeReview.revisions.find((item) => item.id === state.prototypeReview.activeRevisionId)
             : failed?.revisionId && options.retry
                 ? state.prototypeReview.revisions.find((item) => item.id === failed.revisionId)
-                : (options.retry && state.prototypeReview.revisions.find((item) => item.status === "failed")) ||
-                    state.prototypeReview.revisions.find((item) => item.status === "queued");
+                : (options.retry && state.prototypeReview.revisions.find((item) => item.status === "failed" && eligibleRevision(item))) ||
+                    state.prototypeReview.revisions.find((item) => item.status === "queued" && eligibleRevision(item));
         const base = prototypeCheckpoint(flow, flow.displayedCheckpointId);
-        const milestone: PrototypeMilestone | null = failed && options.retry ? failed.milestone
+        const retrying = Boolean(failed && options.retry && !options.exploreVisual);
+        const milestone: PrototypeMilestone | null = options.visualChoice || options.exploreVisual || revision?.visualSelection ? "visual"
+            : retrying ? failed.milestone
             : revision && base ? base.milestone : nextPrototypeMilestone(flow);
         if (!milestone) return state;
+        let visual: VisualCheckpoint | undefined;
+        const exploration = flow.visualExploration && prototypeCheckpoint(flow, flow.visualExploration.checkpointId);
+        if (retrying && failed.visual) visual = { ...failed.visual, manifest: null };
+        else if (options.visualChoice || revision?.visualSelection) {
+            if (!flow.visualRequested || !exploration || !visualExplorationIsCurrent(flow)) {
+                throw new CanvasError("visual_source_stale", "These directions no longer match the current prototype. Explore it again before refining or choosing.");
+            }
+            const selection = readVisualSelection(options.visualChoice?.selection ?? revision.visualSelection);
+            if (!exploration.visual?.manifest?.directions.some(item => item.id === selection.directionId)) {
+                throw new CanvasError("visual_direction_missing", "The selected direction is not in the latest exploration.");
+            }
+            visual = { operation: options.visualChoice ? "choose" : "refine",
+                explorationCheckpointId: exploration.id, selection, manifest: null };
+        } else if (milestone === "visual" && !revision) {
+            visual = { operation: "explore", explorationCheckpointId: null, selection: null, manifest: null };
+        } else if (base?.visual?.manifest && base.visual.explorationCheckpointId) {
+            visual = { operation: "preserve", explorationCheckpointId: base.visual.explorationCheckpointId,
+                selection: base.visual.manifest.defaultSelection, manifest: null };
+        }
         const now = new Date().toISOString();
         const requestId = randomUUID();
-        const source = failed && options.retry ? prototypeRetrySource(flow, failed) : base;
+        const source = retrying ? prototypeRetrySource(flow, failed)
+            : visual && ["refine", "choose"].includes(visual.operation) ? exploration : base;
         flow = reservePrototypeCheckpoint(flow, {
             id: requestId, requestId, generation: state.generation, milestone,
             revisionId: revision?.id || null, baseCheckpointId: base?.id || null,
@@ -3635,6 +3680,7 @@ async function dispatchPrototypeCheckpoint(prototypeId: string, extensionId: str
             workspacePrepared: false, status: "running", previewUrl: null, summary: "", focus: "",
             sketchRevisionId: sketchInput?.revisionId || null, sketchInputHash: sketchApprovalHash(state),
             sketchImagesRead: [],
+            ...(visual ? { visual } : {}),
             requestedAt: now, completedAt: null,
         });
         const action = options.clarification ? "clarify-revision" : revision ? "submit-revision" : "build-prototype";
@@ -3680,11 +3726,15 @@ async function dispatchPrototypeCheckpoint(prototypeId: string, extensionId: str
 async function continuePrototypeWork(prototypeId: string) {
     const state = await loadState(prototypeId);
     const last = state.prototypeFlow?.checkpoints.at(-1);
-    const paused = last?.status === "failed" &&
-        !(last.milestone === "visual" && !last.revisionId && !state.prototypeFlow.visualRequested);
+    const paused = last?.status === "failed" && !last.visualDismissedAt &&
+        !state.prototypeReview.revisions.some(item => item.id === last.revisionId && item.status === "dismissed") &&
+        !(last.milestone === "visual" && !state.prototypeFlow.visualRequested &&
+            (!last.revisionId || last.visual?.operation === "refine"));
     if (state.lifecycle.currentStage !== "prototype" || !state.prototypeFlow || hasActiveWork(state) ||
         activeAnswerRuns.has(prototypeId) || state.prototypeReview.question ||
         state.prototypeFlow.pendingCheckpointId || paused) return;
+    if (awaitingVisualChoice(state.prototypeFlow) &&
+        !state.prototypeReview.revisions.some(item => item.status === "queued" && item.visualSelection)) return;
     if (!nextPrototypeMilestone(state.prototypeFlow) &&
         !state.prototypeReview.revisions.some((item) => item.status === "queued")) return;
     await dispatchPrototypeCheckpoint(prototypeId, PROVIDER_EXTENSION_ID);
@@ -3693,15 +3743,41 @@ async function continuePrototypeWork(prototypeId: string) {
 async function prototypeAction(prototypeId: string, extensionId: string, input: Record<string, any>) {
     if (!(await isPreferredAnswerProvider(extensionId))) throw new CanvasError("read_only_provider", "Use the active Tandem provider.");
     const action = input.action;
+    if (typeof action !== "string") throw new CanvasError("invalid_prototype_action", "Choose a supported prototype action.");
     if (action === "retry") return dispatchPrototypeCheckpoint(prototypeId, extensionId, { retry: true, checkpointId: input.checkpointId });
+    if (action === "choose-visual") return dispatchPrototypeCheckpoint(prototypeId, extensionId, {
+        visualChoice: { checkpointId: input.checkpointId, selection: input.selection, expectedRevision: input.expectedRevision },
+    });
+    if (action === "refine-visual") {
+        await queuePrototypeRevision(prototypeId, extensionId, { suggestion: input.suggestion,
+            baseCheckpointId: input.checkpointId, clientRequestId: input.clientRequestId,
+            visualSelection: readVisualSelection(input.selection) });
+        await continuePrototypeWork(prototypeId);
+        return loadState(prototypeId);
+    }
     const next = await withAnswerClaim(prototypeId, async () => {
         const state = await loadState(prototypeId);
         if (state.lifecycle.currentStage !== "prototype") throw new CanvasError("stage_not_active", "These controls require the Prototype stage.");
-        if (hasActiveWork(state)) throw new CanvasError("processing_in_progress", "Wait for the current checkpoint to finish.");
+        if (action.startsWith("visual-") && input.expectedRevision !== undefined && input.expectedRevision !== state.revision) {
+            throw new CanvasError("visual_state_stale", "The visual exploration changed. Review the latest state and retry.");
+        }
+        if (hasActiveWork(state) && action !== "visual-preview") throw new CanvasError("processing_in_progress", "Wait for the current checkpoint to finish.");
+        if (action === "visual-preview" && state.processing?.action === "generate-design-spec" && hasActiveWork(state)) {
+            throw new CanvasError("prototype_finalizing", "Wait for the frozen Prototype handoff before adjusting visual settings.");
+        }
         let flow = prototypeFlowForState(state);
         let previewUrl = state.previewUrl;
         let review = normalizePrototypeReview(state.prototypeReview);
-        if (action === "apply-update") {
+        if (action === "visual-preview") {
+            flow = updateVisualSelection(flow, input.checkpointId, input.selection);
+        } else if (action === "visual-back") {
+            const candidate = prototypeCheckpoint(flow, flow.pendingCheckpointId);
+            if (!candidate || candidate.visual?.operation !== "choose" || candidate.id !== input.checkpointId) {
+                throw new CanvasError("visual_choice_stale", "There is no prepared visual choice to put aside.");
+            }
+            flow = { ...flow, pendingCheckpointId: null, checkpoints: flow.checkpoints.map(item =>
+                item.id === candidate.id ? { ...item, visualDismissedAt: new Date().toISOString() } : item) };
+        } else if (action === "apply-update") {
             const checkpoint = prototypeCheckpoint(flow, input.checkpointId);
             if (!checkpoint || checkpoint.id !== flow.pendingCheckpointId) throw new CanvasError("prototype_update_stale", "This update is no longer pending.");
             const sketchInput = await approvedSketchInput(state);
@@ -3718,24 +3794,43 @@ async function prototypeAction(prototypeId: string, extensionId: string, input: 
                     ? { ...item, status: "applied", completedAt: new Date().toISOString() } : item);
             }
         } else if (action === "visual") {
-            if (flow.pendingCheckpointId || !flow.checkpoints.some((item) => item.milestone === "interaction" && item.status === "ready")) {
+            const displayed = prototypeCheckpoint(flow, flow.displayedCheckpointId);
+            if (flow.pendingCheckpointId || !displayed || displayed.milestone === "structure" ||
+                !flow.checkpoints.some((item) => item.milestone === "interaction" && item.status === "ready")) {
                 throw new CanvasError("prototype_interaction_required", "Apply the Interaction checkpoint before choosing Visual direction.");
             }
             flow = { ...flow, visualRequested: true };
         } else if (action === "skip-visual") {
             const last = flow.checkpoints.at(-1);
-            if (flow.pendingCheckpointId || last?.milestone !== "visual" || last.status !== "failed" || last.revisionId) {
+            const candidate = prototypeCheckpoint(flow, flow.pendingCheckpointId);
+            if (flow.pendingCheckpointId && candidate?.visual?.operation !== "choose" ||
+                !flow.visualExploration && (last?.milestone !== "visual" || last.status !== "failed" || last.revisionId)) {
                 throw new CanvasError("prototype_visual_active", "Only an unsuccessful optional visual refinement can be skipped.");
             }
-            flow = { ...flow, visualRequested: false };
+            const dismissedAt = new Date().toISOString();
+            flow = { ...flow, visualRequested: false, pendingCheckpointId: candidate?.visual?.operation === "choose" ? null : flow.pendingCheckpointId,
+                checkpoints: flow.checkpoints.map(item => item.milestone === "visual" &&
+                    (isVisualExploration(item) || item.visual?.operation === "choose" || !item.visual && !item.revisionId) &&
+                    (item.id === candidate?.id || item.id === last?.id && item.status === "failed")
+                    ? { ...item, visualDismissedAt: item.visualDismissedAt || dismissedAt } : item) };
+            const dismissed = new Set<string>();
+            review.revisions = review.revisions.map(item => {
+                if (!item.visualSelection || ["applied", "dismissed"].includes(item.status)) return item;
+                dismissed.add(item.id);
+                return { ...item, status: "dismissed", summary: "The user kept the current prototype without applying this visual feedback.",
+                    completedAt: new Date().toISOString() };
+            });
+            if (dismissed.has(review.activeRevisionId)) { review.activeRevisionId = null; review.question = null; }
         } else if (action === "extend-budget") {
             throw new CanvasError("prototype_budget_retired", "Prototype work no longer has an automatic time limit. Use Retry or Continue explicitly; historical budgets are unchanged.");
         } else throw new CanvasError("invalid_prototype_action", "Choose a supported prototype action.");
-        review.designSpecArtifactId = null;
+        if (action !== "visual-preview") review.designSpecArtifactId = null;
         const updated = { ...state, prototypeFlow: flow, prototypeReview: review, previewUrl,
             previewStatus: previewUrl ? "ready" : state.previewStatus,
             status: action === "apply-update" ? "Prototype updated. Continue the same workflow and send feedback at any time."
-                : action === "skip-visual" ? "Visual direction skipped. The interactive prototype is preserved."
+                : action === "visual-preview" ? "Comparison settings saved. The current prototype is unchanged."
+                : action === "visual-back" ? "Prepared choice put aside. Explore the saved alternatives; the current prototype is unchanged."
+                : action === "skip-visual" ? "Current prototype kept. Visual alternatives and feedback history are preserved."
                 : "Prototype work requested.", updatedAt: new Date().toISOString() };
         await persistState(updated);
         publishState(prototypeId);
@@ -3743,9 +3838,10 @@ async function prototypeAction(prototypeId: string, extensionId: string, input: 
     });
     if (action === "visual" &&
         !next.prototypeReview.question && !next.prototypeFlow.pendingCheckpointId) {
-        return dispatchPrototypeCheckpoint(prototypeId, extensionId, { retry: true });
+        if (next.prototypeFlow.visualExploration && visualExplorationIsCurrent(next.prototypeFlow)) return next;
+        return dispatchPrototypeCheckpoint(prototypeId, extensionId, { retry: true, exploreVisual: true });
     }
-    if (action === "apply-update") await continuePrototypeWork(prototypeId);
+    if (action === "apply-update" || action === "skip-visual") await continuePrototypeWork(prototypeId);
     return loadState(prototypeId);
 }
 
@@ -3848,6 +3944,8 @@ function answerFactoryPrompt(args) {
         const base = prototypeCheckpoint(flow, checkpoint.baseCheckpointId);
         const revision = args.state.prototypeReview.revisions.find((item) => item.id === checkpoint.revisionId);
         const feedbackBase = revision && prototypeCheckpoint(flow, revision.baseCheckpointId);
+        const visualBase = checkpoint.visual?.operation === "preserve" ? base
+            : checkpoint.visual?.explorationCheckpointId ? prototypeCheckpoint(flow, checkpoint.visual.explorationCheckpointId) : null;
         return buildPrototypeCheckpointPrompt({
             prototypeId: args.prototypeId, projectRoot: args.projectRoot, checkpoint,
             goal: args.state.goal, approach: args.state.prototypeApproach.mode,
@@ -3859,6 +3957,7 @@ function answerFactoryPrompt(args) {
             baseSummary: base?.summary, baseFocus: base?.focus,
             artifacts: args.state.artifacts.filter((item) => ["requirements", "sketch", "prototype"].includes(item.stage)),
             sketch: args.sketchInput || null,
+            visualBase: visualBase?.visual?.manifest || null,
         });
     }
     if (args.action === "apply-defaults") {
@@ -3969,6 +4068,11 @@ function answerFactoryPrompt(args) {
             "Mermaid source. Its content must cover goals, users, workflows, screens,",
             "interaction states, UI contracts, accepted revisions, accessibility,",
             "evidence, unresolved constraints, labeled mocks/shortcuts and a clear read-only handoff to the native Designer.",
+            "If visual alternatives exist, distinguish exploration/refinement from",
+            "the displayed checkpoint's explicitly chosen direction and saved default",
+            "settings. Describe that layout and its recorded departures from drawings.",
+            "Unchosen alternatives and dismissed visual feedback are history, not",
+            "accepted requirements or permission to replace the selected design.",
             "This feature specification does not authorize implementation or claim that mocked behavior was verified.",
             "Set prototypeReview.designSpecArtifactId to draft-feature-spec and clear its",
             "question.",
@@ -4493,6 +4597,7 @@ async function applyPrototypeCheckpointResult(current: TandemState, run) {
     const questionError = revisionQuestionError(question);
     if (questionError) throw new Error(questionError);
     const previewUrl = normalizePreviewUrl(result.previewUrl);
+    let visual = checkpoint.visual;
     if (question && previewUrl) throw new Error("A clarification cannot also publish an unapproved prototype revision.");
     if (!question) {
         const sketchInput = await approvedSketchInput(current);
@@ -4512,7 +4617,23 @@ async function applyPrototypeCheckpointResult(current: TandemState, run) {
             item.previewUrl && serverPort(item.previewUrl) === serverPort(previewUrl))) {
             throw new Error("A new checkpoint must use a separate preview server. The working preview cannot be overwritten.");
         }
-        await verifyPreviewIdentity(previewUrl, current.prototypeId, checkpoint.id);
+        const html = await verifyPreviewIdentity(previewUrl, current.prototypeId, checkpoint.id);
+        if (visual) {
+            const marker = (html.match(/<meta\b[^>]*>/gi) || []).some(tag =>
+                readHtmlAttribute(tag, "name") === "tandem-visual-exploration" && readHtmlAttribute(tag, "content") === "1");
+            const bridgeUrl = new URL("tandem-preview-bridge.js", previewUrl).href;
+            const bridge = (html.match(/<script\b[^>]*>/gi) || []).some(tag => {
+                const source = readHtmlAttribute(tag, "src"), type = readHtmlAttribute(tag, "type");
+                return source && new URL(source, previewUrl).href === bridgeUrl && !/\bnomodule\b/i.test(tag) &&
+                    [null, "", "module", "text/javascript", "application/javascript"].includes(type);
+            });
+            if (!marker || !bridge) throw new Error("Visual exploration must load the host preview bridge and declare its visual-exploration marker.");
+            const visualBase = prototypeCheckpoint(flow, visual.operation === "preserve" ? checkpoint.baseCheckpointId : visual.explorationCheckpointId);
+            const manifest = await verifyVisualDirectionSource({ workspacePath: checkpoint.workspacePath, previewUrl,
+                request: visual, baseManifest: visualBase?.visual?.manifest || null });
+            await assertPrototypeCheckpointSources(visualBase);
+            visual = { ...visual, manifest };
+        }
     }
     if (result.artifactChanges.upsert.some((item) => !isObject(item) || item.stage !== "prototype" ||
         current.artifacts.some((existing) => existing.id === item.id && existing.stage !== "prototype")) ||
@@ -4524,6 +4645,7 @@ async function applyPrototypeCheckpointResult(current: TandemState, run) {
     const updatedFlow = settlePrototypeCheckpoint(flow, checkpoint.id, {
         status: question ? "clarifying" : "ready", previewUrl,
         summary: result.summary.trim().slice(0, 4000), focus: result.focus.trim().slice(0, 1000),
+        ...(visual ? { visual } : {}),
     }, completedAt);
     if (!question) {
         prototypeCheckpoint(updatedFlow, checkpoint.id).sourceFingerprint = await fingerprintPrototypeWorkspace(checkpoint.workspacePath);
@@ -4532,7 +4654,7 @@ async function applyPrototypeCheckpointResult(current: TandemState, run) {
     if (checkpoint.revisionId) {
         const revision = review.revisions.find((item) => item.id === checkpoint.revisionId);
         if (!revision) throw new Error("The checkpoint's queued feedback is missing.");
-        revision.status = question ? "clarifying" : updatedFlow.pendingCheckpointId ? "ready" : "applied";
+        revision.status = question ? "clarifying" : isVisualExploration(checkpoint) ? "applied" : updatedFlow.pendingCheckpointId ? "ready" : "applied";
         revision.summary = result.summary.trim().slice(0, 4000);
         revision.completedAt = question ? null : completedAt;
         revision.checkpointId = checkpoint.id;
@@ -4556,6 +4678,8 @@ async function applyPrototypeCheckpointResult(current: TandemState, run) {
         previewStatus: displayed ? "ready" : current.previewStatus, phase: "iterating",
         artifacts: applyArtifactChanges(current.artifacts, result.artifactChanges),
         status: question ? "A clarification is ready. You can keep queuing feedback."
+            : isVisualExploration(checkpoint) ? "Visual alternatives are ready to compare. Switching and adjusting them does not change the current prototype."
+            : checkpoint.visual?.operation === "choose" ? "Chosen visual direction prepared with saved defaults. Review and apply it explicitly."
             : updatedFlow.pendingCheckpointId ? `${prototypeMilestoneLabels[checkpoint.milestone]} update ready. Apply it when you reach a natural pause.`
             : `${prototypeMilestoneLabels[checkpoint.milestone]} is ready. ${result.focus}`,
         processing: { ...current.processing, status: "success", completedAt, question: null, answer: null,
@@ -5634,6 +5758,7 @@ async function submitPrototypeRevision(entry, req, res) {
 
     const queued = await queuePrototypeRevision(entry.prototypeId, entry.extensionId, {
         suggestion, baseCheckpointId: body.baseCheckpointId, clientRequestId: body.clientRequestId,
+        ...(body.visualSelection !== undefined ? { visualSelection: body.visualSelection } : {}),
     });
     sendJson(res, 202, { accepted: true, revisionId: queued.revisionId, status: "queued" });
     await continuePrototypeWork(entry.prototypeId);
@@ -5644,19 +5769,23 @@ async function queuePrototypeRevision(prototypeId: string, extensionId: string, 
     const suggestion = String(input.suggestion || "").trim();
     if (!suggestion || suggestion.length > 4000) throw new AnswerRequestError(400, "Enter a prototype suggestion of up to 4,000 characters.");
     const clientRequestId = typeof input.clientRequestId === "string" ? input.clientRequestId : null;
+    const visualSelection = input.visualSelection === undefined ? undefined : readVisualSelection(input.visualSelection);
     if (clientRequestId && !/^[A-Za-z0-9._-]{1,120}$/.test(clientRequestId)) throw new AnswerRequestError(400, "Invalid feedback request identity.");
     return withAnswerClaim(prototypeId, async () => {
         const state = await loadState(prototypeId);
         if (state.lifecycle.currentStage !== "prototype") throw new AnswerRequestError(409, "Prototype feedback is available during Prototype.");
         const previous = clientRequestId && state.prototypeReview.revisions.find((item) => item.clientRequestId === clientRequestId);
         if (previous) {
-            if (previous.suggestion !== suggestion) throw new AnswerRequestError(409, "This feedback request already contains another suggestion.");
+            if (previous.suggestion !== suggestion || JSON.stringify(previous.visualSelection) !== JSON.stringify(visualSelection) ||
+                visualSelection && previous.baseCheckpointId !== input.baseCheckpointId) {
+                throw new AnswerRequestError(409, "This feedback request already contains another suggestion or visual target.");
+            }
             return { revisionId: previous.id };
         }
         if (state.processing?.status === "running" && state.processing.action === "generate-design-spec") {
             throw new AnswerRequestError(409, "The prototype handoff is being finalized. Keep your draft; reopen Prototype to submit more feedback.");
         }
-        if (state.prototypeReview.revisions.filter((item) => item.status !== "applied").length >= 50) {
+        if (state.prototypeReview.revisions.filter((item) => !["applied", "dismissed"].includes(item.status)).length >= 50) {
             throw new AnswerRequestError(409, "The feedback queue is full. Apply or retry saved revisions before submitting more. Your draft has not been discarded.");
         }
         const flow = prototypeFlowForState(state);
@@ -5664,6 +5793,18 @@ async function queuePrototypeRevision(prototypeId: string, extensionId: string, 
         if (baseCheckpointId !== null && (typeof baseCheckpointId !== "string" ||
             prototypeCheckpoint(flow, baseCheckpointId)?.status !== "ready")) {
             throw new AnswerRequestError(409, "The feedback refers to an unknown preview. Refresh the current preview and retry.");
+        }
+        if (visualSelection) {
+            if (!flow.visualRequested || !visualExplorationIsCurrent(flow) || baseCheckpointId !== flow.visualExploration?.checkpointId) {
+                throw new AnswerRequestError(409, "Refine a direction from the current visual exploration, not an older or applied prototype.");
+            }
+            const active = prototypeCheckpoint(flow, flow.activeCheckpointId);
+            if (flow.pendingCheckpointId || active && active.visual?.operation !== "refine" ||
+                !awaitingVisualChoice(flow) && state.prototypeReview.revisions.some(item =>
+                    !item.visualSelection && !["applied", "dismissed"].includes(item.status))) {
+                throw new AnswerRequestError(409, "Resolve current-prototype work or the prepared choice before refining alternatives. Refinements can queue behind other visual refinements.");
+            }
+            updateVisualSelection(flow, baseCheckpointId, visualSelection);
         }
         const now = new Date().toISOString();
         const revisionId = randomUUID();
@@ -5673,8 +5814,10 @@ async function queuePrototypeRevision(prototypeId: string, extensionId: string, 
                 revisions: [...state.prototypeReview.revisions, {
                     id: revisionId, suggestion, status: "queued", summary: "", clarifications: [],
                     submittedAt: now, completedAt: null, baseCheckpointId, checkpointId: null, clientRequestId,
+                    ...(visualSelection ? { visualSelection } : {}),
                 }] },
-            status: "Feedback saved. It will be reconciled with the current prototype at the next safe checkpoint.",
+            status: visualSelection ? "Visual feedback saved for the selected direction. The current prototype is unchanged."
+                : "Feedback saved. It will be reconciled with the current prototype at the next safe checkpoint.",
             updatedAt: now,
         });
         publishState(prototypeId);
@@ -6523,8 +6666,8 @@ async function handleRequest(entry, req, res) {
     if (req.method === "GET" && requestUrl.pathname === "/api/prototype/preview-status") {
         const state = await loadState(entry.prototypeId);
         const target = requestUrl.searchParams.get("target") ?? "current";
-        if (!["current", "pending"].includes(target)) throw new Error("Choose the current or pending preview.");
-        const selectedId = target === "current" ? state.prototypeFlow?.displayedCheckpointId : state.prototypeFlow?.pendingCheckpointId;
+        if (!["current", "pending", "exploration"].includes(target)) throw new Error("Choose the current, pending or visual exploration preview.");
+        const selectedId = prototypePreviewCheckpointId(state.prototypeFlow, target as PreviewTarget);
         const checkpoint = state.prototypeFlow?.checkpoints.find(item => item.id === selectedId);
         const url = checkpoint?.previewUrl || (target === "current" ? state.previewUrl : null);
         const binding = { generation: state.generation, url: url || null, checkpointId: checkpoint?.id ?? null,
@@ -6546,10 +6689,10 @@ async function handleRequest(entry, req, res) {
             const state = await loadState(entry.prototypeId);
             if (hasActiveWork(state)) throw new Error("Wait for current phase work before restarting a saved preview.");
             if (requestUrl.pathname.endsWith("/inspect")) {
-                if (!isObject(input) || !["current", "pending"].includes(input.target)
+                if (!isObject(input) || !["current", "pending", "exploration"].includes(input.target)
                     || Object.keys(input).some(key => !["target", "generation", "checkpointId", "entrypoint", "args"].includes(key))
                     || input.generation !== state.generation
-                    || input.checkpointId !== (input.target === "current" ? state.prototypeFlow?.displayedCheckpointId : state.prototypeFlow?.pendingCheckpointId)
+                    || input.checkpointId !== prototypePreviewCheckpointId(state.prototypeFlow, input.target)
                     || input.entrypoint !== undefined && typeof input.entrypoint !== "string"
                     || input.args !== undefined && (!Array.isArray(input.args) || input.args.some(arg => typeof arg !== "string"))) {
                     throw new Error("Supply the explicit saved-version target and an optional reviewed Node entrypoint/argument list.");
@@ -7108,7 +7251,7 @@ const revisionSchema = {
         suggestion: { type: "string", minLength: 1 },
         status: {
             type: "string",
-            enum: ["queued", "processing", "clarifying", "ready", "applied", "failed"],
+            enum: ["queued", "processing", "clarifying", "ready", "applied", "dismissed", "failed"],
         },
         summary: { type: "string" },
         clarifications: {
@@ -7129,6 +7272,7 @@ const revisionSchema = {
         baseCheckpointId: { type: ["string", "null"] },
         checkpointId: { type: ["string", "null"] },
         clientRequestId: { type: ["string", "null"] },
+        visualSelection: visualSelectionSchema,
     },
     required: [
         "id",
@@ -8022,13 +8166,16 @@ session = await joinSession({
                 },
                 {
                     name: "prototype_action",
-                    description: "Apply a prepared prototype checkpoint, retry incomplete work, request optional visual direction, skip failed visual refinement, or explicitly extend the work budget.",
+                    description: "Explore visual alternatives, save comparison settings without applying them, prepare a chosen direction, apply a saved checkpoint, keep the current prototype, or retry failed work.",
                     inputSchema: {
                         type: "object", additionalProperties: false,
                         properties: {
-                            action: { type: "string", enum: ["apply-update", "retry", "visual", "skip-visual", "extend-budget"] },
+                            action: { type: "string", enum: ["apply-update", "retry", "visual", "visual-preview", "refine-visual", "choose-visual", "visual-back", "skip-visual", "extend-budget"] },
                             checkpointId: { type: "string" },
                             expectedRevision: { type: "integer" },
+                            selection: visualSelectionSchema,
+                            suggestion: { type: "string", minLength: 1, maxLength: 4000 },
+                            clientRequestId: { type: "string", pattern: "^[A-Za-z0-9._-]{1,120}$" },
                         },
                         required: ["action"],
                     },

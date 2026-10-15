@@ -45,6 +45,10 @@ async function compile() {
   return result.outputFiles[0].text;
 }
 
+export function rendererFixtureScript(): Promise<string> {
+  return compiled ??= compile();
+}
+
 export interface Request { path: string; body: any; options: RequestInit }
 export function response(body: unknown, status = 200): Response {
   return { ok: status < 400, status, json: async () => body } as Response;
@@ -116,11 +120,12 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
       }
       if (path.startsWith("/api/prototype/preview-status")) {
         previewRequests.push(options);
-        const target = path.includes("target=pending") ? "pending" : "current";
+        const target = path.includes("target=pending") ? "pending" : path.includes("target=exploration") ? "exploration" : "current";
         if (previewFetcher && target === "current") return previewFetcher();
         const current = mounted.store.getSnapshot().state;
         const checkpoint = current.prototypeFlow?.checkpoints.find((item: { id: string }) =>
-          item.id === (target === "current" ? current.prototypeFlow.displayedCheckpointId : current.prototypeFlow.pendingCheckpointId));
+          item.id === (target === "current" ? current.prototypeFlow.displayedCheckpointId
+            : target === "pending" ? current.prototypeFlow.pendingCheckpointId : current.prototypeFlow.visualExploration?.checkpointId));
         return response({ generation: current.generation, checkpointId: checkpoint?.id ?? null,
           pendingCheckpointId: current.prototypeFlow?.pendingCheckpointId ?? null,
           url: checkpoint?.previewUrl || current.previewUrl, available: true, reason: "" });
@@ -138,7 +143,7 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
   window.Node.prototype[Symbol.for("nodejs.util.inspect.custom")] = function() {
     return this.nodeType === 1 ? `<${this.nodeName.toLowerCase()}${this.id ? "#" + this.id : ""}>` : this.nodeName;
   };
-  window.eval(await (compiled ??= compile()));
+  window.eval(await rendererFixtureScript());
   const mounted = window.TandemTest.mount();
   const flush = async () => {
     for (let count = 0; count < 4; count++) {
