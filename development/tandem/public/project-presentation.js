@@ -1,4 +1,5 @@
 import { projectOutputs } from "./project-outputs.js";
+import { validHandoffDesign } from "./handoff-presentation.js";
 
 // Presentation messages never become native conversation input or runtime authority.
 export function installProjectPresentation({ document, window, changed, settings, currentWork, effortChanged, layoutChanged, openOutput, outputSelection, hasAttachments = () => false }) {
@@ -214,6 +215,8 @@ export function installProjectPresentation({ document, window, changed, settings
     discovery: () => current()?.stage !== "development",
     developmentEnabled: () => context?.developmentEnabled === true && !context?.starting,
     workingDevelopment: () => context?.developmentEntered === true,
+    handoffStatusOwner: () => typeof context?.handoffStatusOwner === "string"
+      && /^handoff-[a-f0-9]{64}$/.test(context.handoffStatusOwner) ? context.handoffStatusOwner : null,
     placeholder: () => conflicted() ? `Draft for ${draftContext.label}`
       : current()?.stage === "development" ? "Ask about the Design, or describe the work you want."
         : ({ goal: "Describe your project goal.", usage: "Describe a requirement usage.", sketch: "Describe a drawing revision.", prototype: "Describe prototype feedback." }[context?.discovery?.action] ?? "Use this phase's controls to continue."),
@@ -241,6 +244,8 @@ export function installProjectPresentation({ document, window, changed, settings
         handoffActivity: snapshot.workflow?.handoffActivity ?? null,
         role: snapshot.workflow?.activeRole ?? null, reason: snapshot.workflow?.reason ?? snapshot.installation?.reason ?? null,
         designRevision: snapshot.design?.binding?.revisionId ?? null,
+        designBinding: snapshot.conversationStatus === "verified" && ["ready", "closed"].includes(snapshot.installation?.status)
+          && snapshot.design?.content && validHandoffDesign(snapshot.design.binding) ? snapshot.design.binding : null,
         questions: snapshot.workflow?.questionCounts?.unanswered ?? 0, permissions: snapshot.accessRequests?.length ?? 0,
         confirmations: snapshot.workflow?.implementationConfirmations?.filter(item => item.status === "pending").length ?? 0 });
     },

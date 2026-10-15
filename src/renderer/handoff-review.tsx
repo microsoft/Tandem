@@ -3,10 +3,11 @@ import { Dialog } from "radix-ui";
 import type { HandoffAdmission, HandoffReview } from "../development-handoff.js";
 import { canOpenDevelopment, useAction, useUi } from "./ui-context.js";
 import { useProjectView } from "./project-conversation.js";
+import { quietHandoff } from "../../development/tandem/public/handoff-presentation.js";
 
 interface HandoffView {
     review(): void; check(): void; busy: boolean; checking: boolean; canReview: boolean;
-    admission: HandoffAdmission | null; error: string; status: string;
+    admission: HandoffAdmission | null; error: string; status: string; requestId: string | null;
 }
 const Context = createContext<HandoffView | null>(null);
 
@@ -32,7 +33,6 @@ export function HandoffReviewProvider({ children }: { children: ReactNode }) {
         if (!sameSource) return;
         let cancelled = false;
         const controller = new AbortController();
-        setReceipt(null);
         void (async () => {
             try {
                 const response = await fetch("/api/development/handoff", { cache: "no-store", signal: controller.signal });
@@ -90,9 +90,10 @@ export function HandoffReviewProvider({ children }: { children: ReactNode }) {
         });
     }
     const activity = project.handoffActivity?.find(item => item.requestId === admission?.requestId);
+    const quiet = quietHandoff(activity, project.visible ? project.designBinding : null, project.permissions);
     const status = phase || (checking ? "Checking saved handoff..."
         : admission?.status === "admitted"
-            ? activity ? `${activity.label}${project.permissions ? " Native permission is waiting for your answer." : ""}`
+            ? activity ? quiet ? "" : `${activity.label}${project.permissions ? " Native permission is waiting for your answer." : ""}`
                 : "Prototype handoff admitted. Waiting for verified Development activity; no duplicate request will be sent."
             : admission?.status === "sending" ? "Prototype handoff submission is pending. Check its status; do not submit again."
                 : admission?.status === "uncertain" ? "Admission is uncertain. Review reconciliation of the exact saved request; it may submit only if not admitted. Retired work is never replayed."
@@ -101,7 +102,8 @@ export function HandoffReviewProvider({ children }: { children: ReactNode }) {
     return <Context.Provider value={{ review: () => void inspect(), check: () => void action.run(async () => {
         await refresh(); setCheck(value => value + 1);
     }),
-        busy: action.busy, checking, canReview, admission, error: action.error || receiptError, status }}>
+        busy: action.busy, checking, canReview, admission, error: action.error || receiptError, status,
+        requestId: sameSource ? reference?.requestId ?? null : null }}>
         {children}
         <Dialog.Root open={open} onOpenChange={setOpen}>
             <Dialog.Portal><Dialog.Overlay className="dialog-overlay" />
@@ -142,12 +144,19 @@ export function HandoffReviewProvider({ children }: { children: ReactNode }) {
     </Context.Provider>;
 }
 
-export function HandoffControls({ prototype = false }: { prototype?: boolean }) {
+export function HandoffControls({ prototype = false, active = true }: { prototype?: boolean; active?: boolean }) {
     const view = useContext(Context);
     const { pending, state } = useUi();
-    if (!view || !state.lifecycle.outputs.some(output => output.stageId === "prototype")) return null;
+    const { setHandoffStatusOwner } = useProjectView();
+    const hasSnapshot = state.lifecycle.outputs.some(output => output.stageId === "prototype");
+    useEffect(() => {
+        if (!active || !hasSnapshot || !view) return;
+        setHandoffStatusOwner(view.requestId);
+        return () => setHandoffStatusOwner(null);
+    }, [active, hasSnapshot, view?.requestId, setHandoffStatusOwner]);
+    if (!view || !hasSnapshot || !view.status && !view.canReview && !view.error) return null;
     return <section className="development-handoff-status" aria-label="Prototype handoff">
-        <p role="status">{view.status}</p>
+        {view.status && <p role="status">{view.status}</p>}
         {view.canReview && <button id={prototype ? "review-prototype-handoff" : "continue-design"} type="button" className="plan-button"
             disabled={pending || view.busy} onClick={view.review}>
             {prototype ? "Continue to Development" : view.admission?.status === "uncertain" ? "Review handoff recovery"

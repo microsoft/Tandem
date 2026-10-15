@@ -42,6 +42,7 @@ import "./agent-evals.test.js";
 import "./execution-proof.test.js";
 import "./delivery.test.js";
 import "./development-handoff.test.js";
+import "./handoff-presentation.test.mjs";
 import "./payload.test.js";
 import "./renderer-development.test.js";
 import "./project-workspace-browser.test.mjs";

@@ -194,6 +194,70 @@ test("failed handoff startup surfaces the exact error without a blank view or au
     assert.ok(h.get("check-design-handoff"));
 });
 
+test("verified handoff Design removes the root banner without hiding active, stale, permission or failed readback", async t => {
+    const h = await reactHarness(t, undefined, "development");
+    let value = state("development");
+    const id = `handoff-${"a".repeat(64)}`, other = `handoff-${"b".repeat(64)}`;
+    const binding = { revisionId: "current", digest: "c".repeat(64) };
+    const snapshotPath = ".tandem/efforts/fixture/stages/prototype-r7.json";
+    value.lifecycle.outputs = [{ stageId: "prototype", path: snapshotPath, completedAt: value.updatedAt }];
+    value.development = { handoffId: id, requestId: id, snapshotPath };
+    let held: Promise<Response> | null = null;
+    const receipt = () => response({ generation: value.generation, snapshotPath, handoffId: id,
+        admission: { status: "admitted", handoffId: id, requestId: id } });
+    h.setFetch(async path => {
+        if (path === "/api/development/handoff") return held ?? receipt();
+        if (path === "/api/state") return response(value);
+        throw new Error(`Unexpected ${path}`);
+    });
+    h.render(value); await h.flush();
+    const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
+    const messages: any[] = [];
+    frame.contentWindow!.postMessage = message => { messages.push(message); };
+    const send = async (activity: object, extra = {}) => {
+        h.window.dispatchEvent(new h.window.MessageEvent("message", { origin: "http://127.0.0.1:8765", source: frame.contentWindow,
+            data: { protocol: "tandem-project/v1", channel: "fixture-project", type: "status", status: "ready", active: true,
+                designBinding: binding, designRevision: binding.revisionId, handoffActivity: [activity], ...extra } }));
+        await h.flush();
+    };
+    const completed = { requestId: id, label: "Design ready from the saved Prototype.", active: false, quietDesign: binding };
+    await send(completed);
+    assert.equal(h.document.querySelector(".development-handoff-status"), null, "No empty padded section.");
+    assert.match(h.document.querySelector(".development-provenance")!.textContent!, new RegExp(id));
+    const pending = Promise.withResolvers<Response>(); held = pending.promise;
+    value = { ...value, revision: value.revision + 1 }; h.render(value); await h.flush();
+    assert.equal(h.document.querySelector(".development-handoff-status"), null, "Unchanged polling keeps verified receipt presentation.");
+    pending.resolve(receipt()); held = null; await h.flush();
+    assert.equal(h.document.querySelector(".development-handoff-status"), null);
+    assert.ok(messages.some(message => message.type === "context" && message.handoffStatusOwner === id));
+    for (const [activity, extra, label] of [
+        [{ ...completed, active: true, quietDesign: null, label: "Designer is reading updated Prototype." }, {}, "Designer is reading"],
+        [{ ...completed, quietDesign: null, label: "Questions: 2, including 1 blocking." }, {}, "Questions: 2"],
+        [{ ...completed, quietDesign: null, label: "Saved request failed. Inspect Development." }, {}, "failed"],
+        [completed, { permissions: 1 }, "Native permission"],
+        [completed, { designBinding: { ...binding, digest: "d".repeat(64) } }, "Design ready"],
+        [{ ...completed, requestId: other }, {}, "Waiting for verified Development activity"],
+        [completed, { designBinding: null }, "Design ready"],
+    ] as const) {
+        await send(activity, extra);
+        assert.match(h.document.querySelector(".development-handoff-status")!.textContent!, new RegExp(label));
+        assert.equal(h.document.querySelectorAll("#development-panel .development-handoff-status [role=status]").length, 1);
+    }
+    await send(completed);
+    held = Promise.resolve(response({ error: "Receipt cannot be verified." }, 409));
+    value = { ...value, revision: value.revision + 1 }; h.render(value); await h.flush();
+    assert.match(h.document.querySelector(".development-handoff-status [role=alert]")!.textContent!, /cannot be verified/);
+    assert.ok(h.get("check-design-handoff"));
+    held = null;
+    value = { ...value, revision: value.revision + 1, lifecycle: { ...value.lifecycle,
+        outputs: [{ ...value.lifecycle.outputs[0], path: ".tandem/efforts/fixture/stages/prototype-r8.json" }] } };
+    h.render(value); await h.flush();
+    assert.match(h.get("continue-design").textContent!, /updated Prototype/);
+    assert.equal(h.get("project-conversation-frame"), frame);
+    assert.equal(h.requests.some(request => request.options.method === "POST"), false);
+    assert.deepEqual(h.errors, []);
+});
+
 test("direct Development remains the current phase through startup, failure, ready and historical browsing", async t => {
     const h = await reactHarness(t, undefined, "development");
     h.render(state("prepare")); await h.flush();

@@ -53,6 +53,13 @@ test("presentation binding preserves drafts, exact pending receipts and standalo
   receive(context, parent, "http://127.0.0.1:5000"); assert.equal(api.canSend(), false);
   receive({ ...context, channel: "foreign" }); assert.equal(api.canSend(), false);
   receive(context); assert.equal(api.canSend(), true);
+  assert.equal(api.handoffStatusOwner(), null);
+  const handoffStatusOwner = `handoff-${"a".repeat(64)}`;
+  receive({ ...context, handoffStatusOwner }, null); assert.equal(api.handoffStatusOwner(), null);
+  receive({ ...context, handoffStatusOwner }, parent, "http://127.0.0.1:5000"); assert.equal(api.handoffStatusOwner(), null);
+  receive({ ...context, handoffStatusOwner, channel: "foreign" }); assert.equal(api.handoffStatusOwner(), null);
+  receive({ ...context, handoffStatusOwner }); assert.equal(api.handoffStatusOwner(), handoffStatusOwner);
+  receive({ ...context, handoffStatusOwner: "invalid" }); assert.equal(api.handoffStatusOwner(), null);
   dom.window.document.querySelector("#message").value = "Preserve my discovery draft.";
   receive({ type: "command", command: "development-target" });
   assert.equal(api.discovery(), true, "Activation cannot silently retarget an existing draft.");

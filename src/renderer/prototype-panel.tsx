@@ -358,7 +358,7 @@ export function PrototypePanel({ active: visible, connected }: { active: boolean
   return <>
     <div className="preview-surface">
       {savedOnly && state.lifecycle.outputs.some(output => output.stageId === "prototype") && !finalizing && <section className="prototype-progress" aria-label="Saved Prototype next step">
-        <HandoffControls prototype />
+        <HandoffControls prototype active={visible} />
         <button className="plan-button secondary" type="button" onClick={() => ui.browseStage("development")}>Open Development</button>
         <details><summary>Returning later</summary><p>The saved Prototype remains available for review in Development. Opening Development does not submit it; confirm the handoff when ready.</p></details>
       </section>}

@@ -14,6 +14,7 @@ import { validateArtifactAnnotationSource } from "../public/sketch/design-contra
 import { normalizeNavigationUrl } from "../public/link-navigation.js";
 import { HumanLoopPreferences } from "./human-loop-preferences.mjs";
 import { openProjectFolder } from "./open-project-folder.mjs";
+import { validHandoffDesign } from "../public/handoff-presentation.js";
 
 export function projectHumanProgress(event) {
   return { type: `human.${event.kind}`, source: "system",
@@ -60,7 +61,7 @@ export function projectHumanCycle(cycle) {
   };
 }
 
-export function projectHumanLoopView(state, readiness) {
+export function projectHumanLoopView(state, readiness, design = null) {
   const latest = state.handoffs.at(-1);
   const published = new Set(state.handoffs.filter(h => h.presented).map(h => h.result.resultId));
   const questions = state.questions.filter(q => published.has(q.source.resultId)).map((q) => ({
@@ -102,6 +103,18 @@ export function projectHumanLoopView(state, readiness) {
       const openQuestions = questions.filter(question => question.source.requestIds.includes(request.id) && question.state === "open");
       const active = state.activeRequestId === request.id || state.activeBatchRequestIds.includes(request.id);
       const designReady = handoff?.presented && ["designer-changed", "designer-unchanged"].includes(handoff.result.outcome.kind);
+      const execution = handoff && state.executions.find(item => item.result?.resultId === handoff.result.resultId);
+      const sameDesign = (a, b) => validHandoffDesign(a) && validHandoffDesign(b)
+        && a.revisionId === b.revisionId && a.digest === b.digest;
+      const relevantDesign = designReady && execution?.binding.role === "designer"
+        && handoff.requestIds.includes(execution.binding.requestId) && design?.content && sameDesign(state.design, design.binding)
+        && (handoff.result.outcome.kind === "designer-unchanged" ? sameDesign(execution.binding.design, design.binding)
+          : state.handoffs.findLast(item => item.result.outcome.kind === "designer-changed") === handoff
+            && design.publication?.requestId === execution.binding.requestId
+            && policyHash(design.publication.previous) === policyHash(execution.binding.design)
+            && design.binding.revisionId !== execution.binding.design.revisionId);
+      const quietDesign = request.status === "completed" && !active && !state.stop && !state.uncertainty
+        && ["ready", "closed"].includes(readiness.status) && !openQuestions.length && relevantDesign ? design.binding : null;
       const task = active ? state.activeTask : null;
       const role = task?.binding.role === "designer" ? "Designer" : task?.binding.role;
       const workLabel = !task ? null : task.condition === "waiting-permission" ? `${role} is waiting for native permission. Answer in the owning session.`
@@ -116,6 +129,8 @@ export function projectHumanLoopView(state, readiness) {
         : active && ["execution-unknown", "stopping", "closed"].includes(readiness.status)
           ? `Development needs attention: ${readiness.reason || readiness.status}. The saved request is preserved.`
           : workLabel ? workLabel
+            : handoff?.presented && handoff.result.outcome.kind === "execution-failure"
+              ? `Saved Prototype request failed: ${handoff.result.outcome.summary}. Inspect its result in Development before continuing.`
             : designReady ? `${handoff.result.outcome.kind === "designer-changed" ? "Design ready from the saved Prototype"
               : state.design.revisionId ? "Design reviewed (unchanged)" : "Designer response ready"}.${openQuestions.length
               ? ` Questions: ${openQuestions.length}, including ${openQuestions.filter(q => q.effectiveBlocking).length} blocking. Answer in Development.`
@@ -123,7 +138,7 @@ export function projectHumanLoopView(state, readiness) {
               : request.status === "completed" ? "Saved Prototype request completed. Read its result in Development; no implementation was authorized by this handoff."
                 : request.status === "handoff-pending" ? "Request result is saved; Development is preparing its presentation."
                   : "Prototype handoff admitted and queued. Waiting for Development to process this exact request.";
-      return { requestId: request.id, label };
+      return { requestId: request.id, label, active, quietDesign };
     }),
     stop: state.stop ? { id: state.stop.id, mode: state.stop.mode ?? "immediate", taskId: state.stop.taskId } : null,
     lastStop: lastStop ? { id: lastStop.id, mode: lastStop.mode ?? "immediate", taskId: lastStop.taskId,
@@ -271,7 +286,7 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
       running.state(), running.readiness(), running.conversation(), running.currentDesign(), running.commands.read(),
     ]);
     return { schemaVersion: "human-loop-snapshot-view/v1", streamId: events.streamId,
-      installation: installed, workflow: projectHumanLoopView(state, readiness),
+      installation: installed, workflow: projectHumanLoopView(state, readiness, design),
       conversationStatus: "verified", design, cycles: state.cycles.map(projectHumanCycle), messages: projectHumanConversation(state, originals), events: privateEvents,
       historyRequests: state.requests.slice(-500).map(({ id, receivedAt }) => ({ id, receivedAt })),
       recoveries: (state.recoveries ?? []).map(({ id, recoveredAt }) => ({ id, recoveredAt })),
