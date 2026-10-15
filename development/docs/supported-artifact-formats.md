@@ -106,7 +106,7 @@ Content-specific authoring defaults favor reviewable visuals:
 
 | Content | Recommended artifact |
 | --- | --- |
-| User story | HTML storyboard: ordered user actions, system responses/outcomes, relevant failure/retry |
+| User story | HTML storyboard for user-visible screen/step journeys; Mermaid sequence interaction timeline when actor exchanges and their order are central. Show actions, responses/outcomes and relevant failure/retry |
 | UI | HTML mockup: actual screen layouts and interaction states, not boxes describing screens |
 | Workflows | Mermaid flowchart/state/sequence for steps, lifecycle or interactions |
 | Behavioral contracts/rules | Mermaid sequence for exchanges; HTML decision tables for conditions/rules/outcomes |
@@ -120,6 +120,22 @@ HTML/SVG alternatives are allowed where clearer. Do not invent HTTP APIs or
 persistence to use a format. Select relevant complementary views without
 unnecessary duplication. The primary artifact must stand on its own; essential
 approval decisions cannot be hidden in notes.
+
+For newly authored or revised visuals, **make the visual carry the information**,
+including in HTML. Show relationships with named connectors, cardinality and typed
+fields; interactions with lifelines/messages or ordered action-response states;
+rules with compact decision tables; UI with actual layouts/states; and systems
+with boundaries and dependencies. Use short meaningful labels/captions and only
+essential callouts, not paragraph grids, repeated introductions, list-heavy
+specifications or decorative cards that still require reading paragraphs.
+For example, connect Order to LineItem with cardinality and typed fields rather
+than explaining the relationship in two text cards.
+
+Keep necessary constraints, invariants, errors, decisions, failure paths and
+evidence visible. Do not achieve brevity through arbitrary word caps, tiny fonts,
+clipping or hiding essential detail. Recompose instead. Brief deeper rationale
+can use existing optional notes/details; the primary artifact stays self-contained.
+This authoring guidance does not automatically rewrite saved artifacts.
 
 Existing Markdown contracts remain accepted and unchanged; no mandatory
 companion is introduced. They retain portable source behind a source disclosure; an
@@ -176,10 +192,10 @@ the user's system, then chooses a format independently for each view:
 
 | Purpose | Typical format |
 | --- | --- |
-| User-facing journeys and interaction steps | Static HTML/CSS screen/card storyboard |
+| User-facing journeys and interaction steps | Static HTML/CSS storyboard; Mermaid sequence timeline when actor exchanges/order are central |
 | Relationships, workflows, states, user/UI/service message sequences | Supported Mermaid syntax |
 | UX screens and wireframes | Static HTML and CSS |
-| Data/API contracts with actual fields, types, constraints and errors | HTML tables and text |
+| Data/API contracts with actual fields, types, constraints and errors | Mermaid ER/class; precise JSON Schema/OpenAPI when needed; HTML/SVG where clearer |
 | Context, components, responsibilities and integrations | Mermaid flowchart or SVG |
 | Precise spatial or geometric composition | SVG |
 
