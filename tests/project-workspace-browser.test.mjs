@@ -1027,14 +1027,17 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
           assert.ok((values[0] + .05) / (values[1] + .05) >= 4.5, `${item.selector} needs readable contrast.`);
           assert.ok(item.height >= 30, `${item.selector} uses the actual shared control geometry.`);
         }
-        await browser.waitFor('Boolean(document.querySelector("#development-tab .project-availability"))');
+        await browser.waitFor('Boolean(document.querySelector("#development-tab .current-phase"))');
         const marker = await browser.evaluate(`(() => {const row=document.querySelector("#development-tab"),
-          dot=row.querySelector(".project-availability");return {color:getComputedStyle(dot).backgroundColor,
-            background:getComputedStyle(row).backgroundColor,title:dot.title,name:row.getAttribute("aria-label")};})()`);
+          dot=row.querySelector(".current-phase");return {color:getComputedStyle(dot).color,
+            background:getComputedStyle(row).backgroundColor,title:dot.title,name:row.getAttribute("aria-label"),
+            current:row.getAttribute("aria-current"),passive:row.querySelectorAll(".project-availability").length};})()`);
         for (const color of [marker.color, marker.background]) assert.match(color, /^(rgb\(|color\(srgb )/);
         const values = [luminance(marker.color), luminance(marker.background)].sort((a, b) => b - a);
-        assert.ok((values[0] + .05) / (values[1] + .05) >= 3, `Availability marker contrast: ${JSON.stringify(marker)}`);
-        assert.equal(marker.title, "Design available");
+        assert.ok((values[0] + .05) / (values[1] + .05) >= 3, `Current-phase marker contrast: ${JSON.stringify(marker)}`);
+        assert.equal(marker.title, "Current phase");
+        assert.equal(marker.current, "step");
+        assert.equal(marker.passive, 0, "Current Development uses one marker while retaining Design availability in its accessible name.");
         assert.equal(marker.name, "Development, Current phase, Design available");
       };
       const checkEffortLayout = async () => {
@@ -1478,22 +1481,25 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
           }
           const fit = await browser.evaluate(`(() => {
             const row=document.querySelector("#development-tab"), list=document.querySelector("#project-contents");
-            const badge=row.querySelector(".project-availability, .artifact-count"), label=row.querySelector(".project-tab-label");
+            const badge=row.querySelector(".artifact-count") ?? row.querySelector(".current-phase"), label=row.querySelector(".project-tab-label");
             const r=row.getBoundingClientRect(), b=badge.getBoundingClientRect(), l=label.getBoundingClientRect();
             return {sidebar:document.querySelector("#requirements-pane").getBoundingClientRect().width,
               rowFits:row.scrollWidth<=row.clientWidth+1,listFits:list.scrollWidth<=list.clientWidth+1,
               labelFits:l.left>=r.left&&l.right<=r.right,label:label.textContent,
               badgeFits:b.left>=r.left&&b.right<=r.right,badge:badge.textContent,title:badge.title,
               sameRow:Math.abs((b.top+b.bottom)/2-(l.top+l.bottom)/2)<1,
-              name:row.getAttribute("aria-label"),selected:row.getAttribute("aria-selected")};
+              name:row.getAttribute("aria-label"),selected:row.getAttribute("aria-selected"),
+              current:row.getAttribute("aria-current"),passive:row.querySelectorAll(".project-availability").length};
           })()`);
           assert.equal(fit.label, "Development");
           assert.equal(fit.badge, mode === "available" ? "" : "New output");
           assert.equal(fit.selected, mode === "available" ? "true" : "false");
           assert.equal(fit.name, `Development, Current phase, ${mode === "available" ? "Design available" : "New Design output"}`);
+          assert.equal(fit.current, "step");
+          assert.equal(fit.passive, 0);
           if (mode === "available") {
-            assert.equal(fit.title, "Design available");
-            assert.equal(fit.sameRow, true, "The passive marker stays beside Development, not on a second row.");
+            assert.equal(fit.title, "Current phase");
+            assert.equal(fit.sameRow, true, "The current-phase marker stays beside Development, not on a second row.");
           }
           assert.ok(fit.rowFits && fit.listFits && fit.labelFits && fit.badgeFits,
             `Navigation keeps full labels and ${mode} without horizontal scrolling at ${width}: ${JSON.stringify(fit)}`);
@@ -1501,7 +1507,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
           if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `design-marker-${mode}-${width}.png`), await browser.screenshot());
         }
         await click("#development-tab");
-        await browser.waitFor('Boolean(document.querySelector("#development-tab .project-availability"))');
+        await browser.waitFor('Boolean(document.querySelector("#development-tab .current-phase")) && !document.querySelector("#development-tab .artifact-count")');
         assert.equal(await browser.evaluate('document.activeElement.id'), "development-tab");
         if (width < 800) {
           assert.equal(await inside('document.querySelector("#workspace-divider").hidden'), true);
