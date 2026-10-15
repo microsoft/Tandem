@@ -498,10 +498,14 @@ request referencing the retained handoff, for example:
 `Continue Design from retained handoff <id> and its source. Preserve confirmed
 decisions and identify mocks. Do not implement.`
 
-An exactly admitted handoff shows request-bound status, not a repeated
-primary submission button. The existing public Development projection supplies
+An exactly admitted handoff does not repeat the primary submission button.
+The public Development projection supplies request-bound
 queued, Designer, published Design/questions and retired states; connection loss
 makes activity unverified. Polling is not progress evidence.
+Verified successful completion is quiet only when its matching Design is visible
+and no questions or permissions need attention. The authenticated presentation
+bridge gives the visible root control ownership of that exact request's notice;
+standalone Development retains its own status.
 Uncertain admission offers review before **Reconcile saved handoff**;
 pending submission offers a read-only status check. Reconciliation remains
 idempotent and cannot revive a retired request. A newly saved Prototype offers a

@@ -729,7 +729,7 @@ test("real React Development keeps handoff controls in view across long-status h
         await browser.evaluate(`window.developmentFixture.accept(${JSON.stringify(snapshot)})`);
         await settle();
         const shortHelp = await measure("1280-pointer-over-iframe");
-        await move(".development-toolbar > span", true);
+        await move(".development-provenance", true);
         await browser.waitFor(`document.querySelector("#next-action-guide")?.textContent === ${JSON.stringify(longStatus)}`);
         const longHelp = await measure("1280-pointer-over-toolbar");
         await move("#project-conversation-frame", true);
@@ -763,7 +763,7 @@ test("real React Development keeps handoff controls in view across long-status h
             assertBounded(await measure(`${width}-iframe-hover`));
             await move("#continue-design");
             assertBounded(await measure(`${width}-button-hover`));
-            await move(".development-toolbar > span", true);
+            await move(".development-provenance", true);
             await browser.evaluate('document.querySelector("#development-panel").focus()');
             await tab();
             const focused = await measure(`${width}-keyboard-button`);

@@ -16,6 +16,7 @@ import { createHumanLoopProvider, HumanLoopEvents } from "../development/tandem/
 import { getHostStateWal } from "../development/tandem/runtime-src/domain/host-state-wal.ts";
 import { sharedDesignExampleV3 } from "../development/tandem/test/helpers/shared-design-fixture.mjs";
 import { browserAvailable, openFixtureBrowser } from "../development/tandem/test/helpers/browser-fixture.mjs";
+import { exerciseLatestNavigation } from "./helpers/latest-navigation-browser.mjs";
 
 const requestId = `handoff-${"a".repeat(64)}`;
 const nextRequestId = `handoff-${"b".repeat(64)}`;
@@ -82,6 +83,8 @@ test("handoff completion is quiet only for its verified published or unchanged c
     { skip: !browserAvailable, timeout: 90_000 }, async t => {
       const root = await mkdtemp(join(tmpdir(), "handoff-presentation-"));
       const f = handoffFixture(), events = new HumanLoopEvents(), rootEvents = new Set(), mutations = [], cleanups = [];
+      const extraEntries = [];
+      let accessRequests = [];
       f.state.owner.workspacePath = root;
       f.design.content = sharedDesignExampleV3();
       let installationStatus = "ready";
@@ -92,7 +95,7 @@ test("handoff completion is quiet only for its verified published or unchanged c
       const runtime = { sessionId: "private", state: async () => structuredClone(f.state), readiness: async () => f.readiness,
         currentDesign: async () => f.design, commands: { read: async () => ({ apps: [], commands: [] }) },
         conversation: async () => [{ id: "handoff:design-result", kind: "assistant", role: "designer", requestId,
-          content: f.result.outcome.summary, timestamp: "2026-10-15T00:00:01Z" }],
+          content: f.result.outcome.summary, timestamp: "2026-10-15T00:00:01Z" }, ...extraEntries],
         transport: { attachmentCapabilities: async () => ({ supported: false, limits: { maxBytes: 0, maxImages: 0 } }) },
         modelSettings: async () => ({ models: [], actual: null, canChange: false }),
       };
@@ -144,7 +147,7 @@ test("handoff completion is quiet only for its verified published or unchanged c
       const url = `http://127.0.0.1:${server.address().port}/`;
       const options = { repositoryRoot: root, publicDirectory, surface: "browser", events,
         getInstallation: () => ({ runtime, read: async () => ({ status: installationStatus, reason: null }) }),
-        permissions: { list: () => [] } };
+        permissions: { list: () => accessRequests } };
       try {
         composed = await providerFactory({ ...options, projectHost: { origin: new URL(url).origin, channel: "handoff-fixture" } });
         standalone = await providerFactory(options);
@@ -165,7 +168,10 @@ test("handoff completion is quiet only for its verified published or unchanged c
             if (await evaluatePrivate(expression)) return;
             await new Promise(done => setTimeout(done, 30));
           }
-          assert.fail(`Private UI did not settle: ${expression}`);
+          assert.fail(`Private UI did not settle: ${expression}\n${JSON.stringify(await evaluatePrivate(`({
+            scroll:["messages","state-history"].map(id=>{const e=document.getElementById(id);return {id,top:e.scrollTop,height:e.scrollHeight,viewport:e.clientHeight}}),
+            focus:document.activeElement?.outerHTML.slice(0,200),latest:document.querySelector("#newer").outerHTML
+          })`))}`);
         };
         const push = async () => {
           value.revision++;
@@ -229,6 +235,30 @@ test("handoff completion is quiet only for its verified published or unchanged c
         await browser.waitFor('!!document.querySelector("#project-conversation-frame")');
         await waitPrivate('document.querySelector("#backbone-state").textContent==="Current Design"');
         await browser.waitFor(`${visibleRootStatuses}.length===0`);
+        const populate = count => {
+          for (let index = 0; index < count; index++) {
+            const id = `synthetic-history-${extraEntries.length}`, timestamp = new Date(Date.parse("2026-10-15T00:01:00Z") + extraEntries.length * 1000).toISOString();
+            extraEntries.push({ id, kind: "assistant", role: "designer", requestId, timestamp,
+              content: `Synthetic retained reply ${id}.\n\n` + "This is fixture conversation content, not model work. ".repeat(8) });
+            events.append({ type: "human.role", source: "system", timestamp, summary: `Synthetic role ${id}`,
+              data: { role: "designer", requestId } });
+          }
+          events.touch();
+          return `[data-entry-id="${extraEntries.at(-1).id}"]`;
+        };
+        const attention = async enabled => {
+          f.state.questions = enabled ? [{ id: "navigation-question", context: "Synthetic context", question: "Keep the Design?",
+            whyItMatters: "Scope", importance: "blocking", options: [], allowFreeform: true, state: "open", answerRequestId: null, blockingActive: true,
+            source: { role: "designer", resultId: f.result.resultId, requestId, requestIds: [requestId], cycleId: null,
+              design: binding, planDigest: null } }] : [];
+          accessRequests = enabled ? [{ id: "synthetic-permission", title: "Synthetic permission, not native work",
+            scopes: ["Inspect fixture file only"], canApproveAll: false, canApproveTool: false }] : [];
+          events.touch();
+        };
+        populate(30);
+        await browser.call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
+        await exerciseLatestNavigation({ browser, evaluate: evaluatePrivate, waitFor: waitPrivate, attention,
+          grow: async () => { const selector = populate(1); await waitPrivate(`!!document.querySelector(${JSON.stringify(selector)})`); } });
         // A standalone private surface must not rely on the root's ownership.
         await browser.call("Page.navigate", { url: standalone.url });
         await browser.waitFor('document.querySelector("#backbone-state")?.textContent==="Current Design"');
@@ -241,6 +271,11 @@ test("handoff completion is quiet only for its verified published or unchanged c
         f.state.activeTask.condition = "waiting-permission"; events.touch();
         await browser.waitFor('document.querySelector("#prototype-handoff-activity").textContent.includes("waiting for native permission")');
         assert.equal(await browser.evaluate("document.documentElement.scrollWidth<=innerWidth+1"), true);
+        f.state.activeRequestId = null; f.state.activeBatchRequestIds = []; f.state.activeTask = null;
+        f.request.status = "completed"; f.readiness.status = "ready"; events.touch();
+        await browser.call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
+        await exerciseLatestNavigation({ browser, evaluate: browser.evaluate, waitFor: browser.waitFor, attention,
+          grow: async () => { const selector = populate(1); await browser.waitFor(`!!document.querySelector(${JSON.stringify(selector)})`); } });
         assert.deepEqual(mutations, []);
         assert.deepEqual(browser.exceptions, []);
         t.diagnostic(`${(await browser.call("Browser.getVersion")).product}; completed 0 / active 1, 1280x800 and 390x520, polling/reopen and standalone verified.`);

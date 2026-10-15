@@ -218,6 +218,9 @@ function closeQuestions({ focus = false } = {}) {
 }
 const conversation = createConversationRenderer({ messages: $('messages'), history: $('state-history'),
   current: $('current-state'), currentDetail: $('current-detail'), newer: $('newer'),
+  canFollowMessages: () => !$('messages').contains(document.activeElement)
+    && !snapshot?.workflow?.questionInteractions.some(group => group.canAnswer
+      && group.questions.some(question => question.state === 'open' && question.blockingActive)),
   onSelectState: transition => { $('history-details')?.remove(); queuedRequests.focusRequest(transition.source?.requestId); } });
 const queuedRequests = createQueuedRequests($('queued-requests'));
 let annotation;
@@ -350,7 +353,6 @@ $('message').addEventListener('input', renderRoleHint);
 function render() {
   clipboard.refresh();
   if (!snapshot) return;
-  const followMessages = $('messages').scrollHeight - $('messages').scrollTop - $('messages').clientHeight < 60;
   const view = snapshot.workflow;
   const installed = snapshot.installation;
   const compaction = view?.compaction;
@@ -516,9 +518,7 @@ function render() {
       return row;
     }));
   }
-  const hasAnswerableBlockers = questionGroups.some(group => group.canAnswer
-    && group.questions.some(question => question.state === 'open' && question.blockingActive));
-  if (followMessages && !hasAnswerableBlockers && !$('messages').contains(document.activeElement)) $('messages').scrollTop = $('messages').scrollHeight;
+  conversation.refreshLayout();
   projectPresentation?.publish(snapshot);
   focusProjectOutput();
   const outputView = $('project-output-view');
