@@ -121,8 +121,19 @@ matter. For a service or CLI, use a request sequence or command/output example
 instead of requiring a screen. Describe what should happen, not a technology
 choice you do not feel equipped to judge.
 
-Open **Questions** to see the original context, options, implications and answers.
-Use that form to answer; ordinary chat is not guessed to be an answer to it.
+Select **Questions** beside Conversation to use the left workspace while keeping
+Conversation available on the right. Choose one question to read its context,
+options and consequences. On narrow screens, Questions and Conversation stack
+in one column; **Go to Conversation** moves to the composer.
+**Back to Design** restores the retained Design view. Inspecting a Design
+reference offers **Back to Questions** without discarding your answer drafts.
+New questions and answers do not switch views.
+
+**Send selected answers** sends the displayed selection list from that source as
+one batch, including drafts for its other questions; drafts from other sources
+are not sent. Unselected questions remain unanswered. Drafts survive navigation;
+answers are recorded only after acknowledgment. Expand **Answered history** to
+inspect saved answers. Ordinary chat is not guessed to be a question answer.
 
 | Question | If you leave it unanswered |
 | --- | --- |

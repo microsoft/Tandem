@@ -454,6 +454,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await browser.evaluate(`document.querySelector("#hosted-app").contentWindow.postMessage({
         type:"tandem:header:disconnect",channel:"11111111-1111-4111-8111-111111111111"},location.origin)`);
       await browser.waitFor('document.querySelector("#hosted-app").contentDocument.querySelector(".project-folder").checkVisibility()');
+      await browser.waitFor(`document.querySelector("#hosted-app").contentDocument.querySelector(".project-folder").title===${JSON.stringify(root)}`);
       assert.equal(await browser.evaluate('document.querySelector("#hosted-app").contentDocument.querySelector(".project-folder").title'), root);
       await browser.call("Page.navigate", { url });
       const reloadRoot = async () => {
@@ -910,6 +911,27 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
           }
           assert.equal(fit.separatorHidden, fit.stacked);
           assert.ok(fit.messages.height >= 60, `Conversation retains a readable scrolling region: ${JSON.stringify(fit)}`);
+          if (label.startsWith("active-question")) {
+            const question = await inside(`(() => {
+              const panel=document.querySelector("#question-panel"), content=document.querySelector("#questions-content"),
+                row=document.querySelector("#question-panel fieldset:not([hidden])"), rect=panel.getBoundingClientRect();
+              return {left:rect.left,right:rect.right,top:rect.top,bottom:rect.bottom,height:rect.height,
+                scroll:getComputedStyle(content).overflowY,rows:document.querySelectorAll("#question-panel fieldset:not([hidden])").length,
+                overflow:content.scrollWidth>content.clientWidth+1,disabled:row.querySelector("textarea").disabled,
+                draft:row.querySelector("textarea").value,theme:document.body.dataset.theme};
+            })()`);
+            assert.equal(question.rows, 1); assert.equal(question.overflow, false); assert.equal(question.disabled, false);
+            assert.equal(question.draft, "Keep the current approved scope.");
+            if (fit.stacked) {
+              assert.equal(question.scroll, "visible");
+              assert.ok(question.bottom <= fit.conversation.top + 1);
+            } else {
+              assert.ok(question.right <= fit.conversation.left + 1);
+              assert.ok(question.height >= fit.design.height - 2);
+            }
+            if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `${label}-${width}x${height}.json`),
+              JSON.stringify({ synthetic: true, width, height, question, ...fit }, null, 2));
+          }
           for (const selector of ["#message", "#send"]) {
             const geometry = await inside(`(() => { const e=document.querySelector("${selector}"); e.scrollIntoView({block:"nearest"});
               const r=e.getBoundingClientRect(), hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);
@@ -918,6 +940,8 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
             assert.ok(geometry.reachable, `Composer control is reachable at ${label} ${width}x${height}: ${JSON.stringify(geometry)}`);
           }
           t.diagnostic(`${label} ${width}x${height}: Design ${Math.round(fit.design.width)}px, Conversation ${Math.round(fit.conversation.width)}px, stacked=${fit.stacked}`);
+          if (label.startsWith("active-question")) await inside(`document.querySelector("#questions-content").scrollTop=0;
+            document.querySelector(".human-layout").scrollTop=0`);
           if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `${label}-${width}x${height}.png`), await browser.screenshot());
         }
         await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 1000, deviceScaleFactor: 1, mobile: false });
@@ -1264,21 +1288,29 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       const requestId = nativeRequests[0].id;
       nativeState.handoffs.push({ id: "handoff:question-result", presented: true,
         result: { resultId: "question-result", outcome: { kind: "designer-questions", summary: "Confirm scope." } } });
-      nativeState.questions.push({ id: "scope-question", question: "Which scope should we retain?", context: "Saved project scope",
-        whyItMatters: "Avoid unintended changes", importance: "blocking", options: [], allowFreeform: true,
+      nativeState.questions.push({ id: "scope-question", question: "Which scope should we retain?",
+        context: "Saved project scope: the reader must understand the consequences before choosing a change. ".repeat(8),
+        whyItMatters: "Avoid unintended changes", importance: "blocking",
+        options: Array.from({ length: 8 }, (_, i) => ({ id: `scope-${i}`, label: `Scope ${i + 1}`,
+          implication: `Scope ${i + 1} keeps the agreed behavior and makes this navigation choice explicit.` })), allowFreeform: true,
         state: "open", blockingActive: true, source: { role: "designer", resultId: "question-result",
           requestId, requestIds: [requestId], cycleId: null, design: designBinding, planDigest: null } });
       events.touch();
       await waitInside('!document.querySelector("#show-questions").disabled');
-      if (await inside('document.querySelector("#question-panel").hidden')) await click("#show-questions", true);
-      await click("#question-panel select", true);
+      assert.equal(await inside('document.querySelector("#question-panel").hidden'), true, "New questions cannot switch the workspace.");
+      await click("#show-questions", true);
+      await click("#question-panel fieldset select", true);
       for (const [key, windowsVirtualKeyCode] of [["End", 35], ["Enter", 13]]) {
         await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key, windowsVirtualKeyCode });
         await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key, windowsVirtualKeyCode });
       }
       await click('#question-panel textarea', true);
       await browser.call("Input.insertText", { text: "Keep the current approved scope." });
-      await checkDevelopmentLayout("active-question");
+      for (const theme of ["light", "dark"]) {
+        await inside(`document.body.dataset.theme=${JSON.stringify(theme)}`);
+        await browser.evaluate(`document.documentElement.dataset.projectTheme=${JSON.stringify(theme)}`);
+        await checkDevelopmentLayout(`active-question-${theme}`);
+      }
       await click('[data-human-loop-action="submitAnswers"]', true);
       await waitInside('document.querySelector("#question-panel").textContent.includes("Submitted answer:")');
       assert.equal(nativeRequests.length, 2);

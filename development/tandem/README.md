@@ -245,8 +245,13 @@ Design documents, including tables, lists and code blocks. Conversation links
 remain limited to HTTP(S) without embedded credentials; raw HTML stays inert and
 Markdown images do not load remote resources. User messages and Host statuses
 remain plain text, and stored conversation originals are unchanged.
-Open questions reveal their answer controls without moving keyboard focus.
-Answered questions retain exact submitted answers and source references.
+**Questions** explicitly opens a left-workspace view beside Conversation, with
+one selected question and compact navigation. **Back to Design** restores the
+retained artifact view; Design references offer **Back to Questions**.
+Polling never changes this view or takes focus. Drafts survive navigation, and
+the visible selection list preserves source-bound **Send selected answers**
+batch semantics. **Answered history** starts collapsed and retains exact
+submitted answers and source references.
 Permissions have an explicit request selector and independent per-request
 reading/decision state; presentation never grants access.
 

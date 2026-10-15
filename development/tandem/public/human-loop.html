@@ -91,7 +91,7 @@
 </dialog>
 <main class="workspace-shell human-layout">
   <section id="design-panel" class="panel canvas-panel human-design">
-    <div class="panel-heading"><div><p class="eyebrow">Your design</p><h2 id="design-pane-title">Canvas</h2></div><span id="backbone-state" class="empty-badge">No Design yet</span></div>
+    <div class="panel-heading"><div><p class="eyebrow">Your design</p><h2 id="design-pane-title">Canvas</h2></div><button id="return-to-questions" type="button" hidden>Back to Questions</button><span id="backbone-state" class="empty-badge">No Design yet</span></div>
     <div id="canvas-scroll" class="canvas-scroll">
       <p id="prototype-handoff-activity" role="status" hidden></p>
       <div id="assessment-card" class="empty-state design-assessment"><strong>No Design has been published</strong><p>Discuss your idea in the conversation. The current Design will appear here when it is ready.</p></div>
@@ -106,6 +106,10 @@
     </div>
     <section id="project-output-view" class="canvas-scroll project-output-view" aria-label="Development output" tabindex="-1" hidden></section>
     <div id="annotation-parking" hidden><div id="annotation-tools" class="diagram-annotation-tools" hidden><button id="annotation-reset" type="button">Reset sketch</button><button id="annotation-capture" type="button">Snapshot to composer</button><span id="annotation-status" role="status"></span></div></div>
+    <section id="question-panel" aria-labelledby="questions-title" hidden>
+      <div class="questions-heading"><h2 id="questions-title">Questions</h2><button id="questions-conversation" type="button">Go to Conversation</button><button id="questions-back" type="button">Back to Design</button></div>
+      <div id="questions-content"></div>
+    </section>
   </section>
   <div id="workspace-divider" role="separator" tabindex="0" aria-orientation="vertical"
     aria-controls="design-panel conversation-panel" aria-label="Resize Design and Conversation"
@@ -132,7 +136,6 @@
     <p id="notice" role="status" hidden></p>
     <p id="private-history-status" role="status" hidden>Private session history has not been verified. No other session's history is substituted.</p>
     <p id="compaction-status" role="status" aria-live="polite" hidden></p>
-    <section id="question-panel" aria-label="Saved questions" hidden></section>
     <div class="conversation-layout">
       <div class="conversation-thread">
         <div id="messages" class="conversation-messages" role="log" aria-label="Conversation" aria-live="polite" aria-relevant="additions"></div>
