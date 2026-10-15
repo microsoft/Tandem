@@ -36,7 +36,8 @@ function snapshot() {
     processes: { apps: [], commands: [] },
   };
 }
-async function fixture(t, { onPost, onSnapshot, onAsset, requestStatus = 202, rendererRoot = publicRoot, sandbox = false,
+async function fixture(t, { onPost, onSnapshot, onAsset, requestStatus = 202,
+  rendererRoot = process.env.QUESTIONS_PACKAGE_PUBLIC ? resolve(process.env.QUESTIONS_PACKAGE_PUBLIC) : publicRoot, sandbox = false,
   modelSettings = { models: [{ id: "fixture", name: "Fixture private model" }], actual: "fixture", canChange: true } } = {}) {
   const current = snapshot(), streams = new Set(), posts = [], requests = [];
   const preferences = { theme: "system", fontSize: "normal" };
@@ -124,7 +125,7 @@ test("Rendering debugger opens inside Settings without popup navigation and pres
     const f = await fixture(t, { rendererRoot: process.env.DEBUGGER_PACKAGE_PUBLIC ? resolve(process.env.DEBUGGER_PACKAGE_PUBLIC) : publicRoot, sandbox: true });
     const { browser } = f;
     await browser.call("Page.navigate", { url: f.url });
-    await browser.waitFor("document.querySelector('#send').disabled === false");
+    await browser.waitFor("document.querySelector('#send')?.disabled === false");
     await browser.evaluate("document.querySelector('#message').value='Keep my unsent request'");
     for (const width of [1280, 320]) for (const theme of ["light", "dark"]) {
       await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 700, deviceScaleFactor: 1, mobile: false });
@@ -183,6 +184,170 @@ async function capture(browser, name, geometry) {
   await writeFile(join(process.env.HUMAN_SHELL_EVIDENCE, `${name}.png`), Buffer.from(image.data, "base64"));
   await writeFile(join(process.env.HUMAN_SHELL_EVIDENCE, `${name}.json`), JSON.stringify(geometry, null, 2));
 }
+
+test("Questions workspace keeps one readable question, explicit navigation and source-bound batches",
+  { skip: !browserAvailable, timeout: 120_000 }, async t => {
+    let answerMode = "hold", release;
+    const f = await fixture(t, { onPost: async ({ path, data, current }) => {
+      if (path !== "/api/answers") return;
+      if (answerMode === "hold") await new Promise(resolve => { release = resolve; });
+      if (answerMode !== "accept") throw new Error("Synthetic uncertain answer receipt");
+      for (const answer of data.answers.answers) {
+        const question = current.workflow.questionInteractions.find(group => group.resultId === answer.sourceResultId)
+          .questions.find(question => question.id === answer.questionId);
+        question.state = "answered"; question.answerRequestId = data.id; question.blockingActive = false;
+      }
+      current.messages.push({ id: "acknowledged-answer", requestId: data.id, kind: "user", text: "Question form submission.",
+        timestamp: "2026-09-15T00:00:02Z", answerDetails: data.answers.answers.map(answer => ({
+          questionId: answer.questionId, sourceResultId: answer.sourceResultId, answer: answer.value,
+        })) });
+    } });
+    t.after(() => release?.());
+    const { browser } = f;
+    const original = f.current.workflow.questionInteraction;
+    const first = original.questions[0];
+    first.context = "A reader opens a long local document and follows its links. ".repeat(12);
+    first.options = Array.from({ length: 12 }, (_, index) => ({ id: `choice-${index}`, label: `Choice ${index + 1}`,
+      implication: `Consequence ${index + 1}: preserve readable source and make the intended navigation explicit.` }));
+    first.designRefs = ["interaction#deliver"];
+    const advisory = { ...structuredClone(first), id: "optional", question: "Should optional navigation change?",
+      importance: "advisory", blockingActive: false,
+      unanswered: { action: "keep-current-design", explanation: "Keep the existing link behavior." } };
+    original.questions.push(advisory, { ...structuredClone(first), id: "past", question: "Previously answered question",
+      state: "answered", blockingActive: false, answerRequestId: "old-answer" });
+    const secondSource = { ...source, role: "planner", resultId: "second-source", requestId: "second-request", requestIds: ["second-request"] };
+    const other = { resultId: secondSource.resultId, source: secondSource, canAnswer: true,
+      questions: [{ ...structuredClone(advisory), id: "other", source: secondSource }] };
+    f.current.workflow.questionInteractions = [original, other];
+    f.current.messages.push({ id: "second-message", kind: "user", requestId: "second-request",
+      text: "An independent original request.", timestamp: "2026-09-15T00:00:01Z" });
+    await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 900, deviceScaleFactor: 1, mobile: false });
+    await browser.call("Page.navigate", { url: f.url });
+    await browser.waitFor("document.querySelector('[data-question-picker]')");
+    assert.equal(await browser.evaluate("document.querySelector('#question-panel').hidden"), true);
+    await browser.evaluate(`document.querySelector('#message').value='Keep composer draft';
+      document.querySelector('#message').focus();document.querySelector('#message').setSelectionRange(2,6);
+      globalThis.retainedComposer=document.querySelector('#message');
+      globalThis.retainedArtifact=document.querySelector('#design-artifacts').firstElementChild;
+      document.querySelector('#canvas-scroll').scrollTop=120;
+      globalThis.designTop=document.querySelector('#canvas-scroll').scrollTop`);
+    f.update();
+    await browser.waitFor("document.querySelector('#show-questions').textContent === 'Questions (3, 1 blockers)'");
+    assert.deepEqual(await browser.evaluate(`({closed:document.querySelector('#question-panel').hidden,
+      focus:document.activeElement.id,caret:retainedComposer.selectionStart})`), { closed: true, focus: "message", caret: 2 });
+    await click(browser, "#show-questions");
+    const choose = async (result, id, history = false) => {
+      if (history) await browser.evaluate("document.querySelector('.question-history').open=true");
+      await browser.evaluate(`(() => { const picker=document.querySelector('[data-question-picker="${history ? "history" : "open"}"]');
+        picker.value=${JSON.stringify(JSON.stringify([result, id]))}; picker.dispatchEvent(new Event('change',{bubbles:true})); })()`);
+    };
+    const draft = async text => browser.evaluate(`(() => {const input=document.querySelector('fieldset:not([hidden]) textarea');
+      input.value=${JSON.stringify(text)};input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+    assert.equal(await browser.evaluate("document.querySelector('.question-history').open"), false);
+    assert.equal(await browser.evaluate("document.querySelectorAll('fieldset:not([hidden])').length"), 1);
+    assert.equal(await browser.evaluate("document.querySelector('fieldset:not([hidden]) select').value"), "");
+    await draft("First exact draft");
+    await choose("result", "optional"); await draft("Second selected draft");
+    assert.match(await browser.evaluate("document.querySelector('fieldset:not([hidden])').textContent"), /Advisory \/ optional.*If unanswered:.*not a user answer or approval/s);
+    assert.match(await browser.evaluate("document.querySelector('.human-loop-question-group:not([hidden]) .question-batch').textContent"), /source \(2\).*First exact draft.*Second selected draft/s);
+    await choose("second-source", "other"); await draft("Separate source draft");
+    await choose("result", "past", true);
+    assert.match(await browser.evaluate("document.querySelector('fieldset:not([hidden])').textContent"), /Answered. The submitted answer is retained/);
+    f.update();
+    await browser.evaluate("new Promise(resolve=>setTimeout(resolve,100))");
+    assert.equal(await browser.evaluate("document.querySelector('.question-history').open"), true);
+    assert.equal(await browser.evaluate("document.querySelector('fieldset:not([hidden])').dataset.questionId"), "past");
+    await choose("result", "scope");
+    await browser.evaluate(`document.querySelector('.question-history').open=false;
+      globalThis.retainedAnswer=document.querySelector('fieldset:not([hidden]) textarea');
+      retainedAnswer.focus();retainedAnswer.setSelectionRange(2,7)`);
+    await click(browser, "#questions-back");
+    assert.deepEqual(await browser.evaluate(`({same:document.querySelector('#design-artifacts').firstElementChild===retainedArtifact,
+      scroll:document.querySelector('#canvas-scroll').scrollTop===designTop, composer:retainedComposer.value,caret:retainedComposer.selectionStart})`),
+    { same: true, scroll: true, composer: "Keep composer draft", caret: 2 });
+    await click(browser, "#show-questions");
+    assert.deepEqual(await browser.evaluate("({focus:document.activeElement===retainedAnswer,start:retainedAnswer.selectionStart,end:retainedAnswer.selectionEnd})"),
+      { focus: true, start: 2, end: 7 });
+    await browser.evaluate("document.querySelector('fieldset:not([hidden]) .design-reference').closest('details').open=true");
+    await click(browser, "fieldset:not([hidden]) .design-reference");
+    assert.equal(await browser.evaluate("document.querySelector('#question-panel').hidden"), true);
+    await click(browser, "#return-to-questions");
+    assert.equal(await browser.evaluate("document.querySelector('fieldset:not([hidden]) textarea').value"), "First exact draft");
+    await choose("second-source", "other");
+    await click(browser, '.human-loop-question-group:not([hidden]) button:not([data-human-loop-action])');
+    await browser.waitFor("document.querySelector('[data-entry-id=second-message]').classList.contains('state-focused')");
+    assert.equal(await browser.evaluate("document.querySelector('#question-panel').hidden"), false);
+    await choose("result", "scope");
+    for (const [width, height] of [[1893, 1000], [1360, 900], [980, 620], [920, 620], [390, 620], [1360, 480], [390, 480]]) {
+      for (const theme of ["light", "dark"]) {
+        await browser.call("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+        await browser.evaluate(`document.body.dataset.theme=${JSON.stringify(theme)};
+          document.querySelector('#questions-content').scrollTop=0;window.scrollTo(0,0)`);
+        await browser.evaluate("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+        const geometry = await browser.evaluate(`(() => {
+          const rect=selector=>document.querySelector(selector).getBoundingClientRect().toJSON();
+          return {question:rect('#question-panel'),conversation:rect('#conversation-panel'),content:rect('#questions-content'),
+            questionOverflow:document.querySelector('#questions-content').scrollWidth>document.querySelector('#questions-content').clientWidth+1,
+            pageOverflow:document.documentElement.scrollWidth>innerWidth+1,rows:document.querySelectorAll('fieldset:not([hidden])').length,
+            contextOverflow:getComputedStyle(document.querySelector('.human-loop-question-context')).overflowY,
+            questionScroll:getComputedStyle(document.querySelector('#questions-content')).overflowY,
+            permission:document.querySelector('#access-approval').checkVisibility(),body:document.body.innerText.includes('1 blockers')};
+        })()`);
+        assert.equal(geometry.pageOverflow || geometry.questionOverflow, false, JSON.stringify(geometry));
+        assert.equal(geometry.rows, 1);
+        assert.equal(geometry.contextOverflow, "visible");
+        assert.equal(geometry.permission && geometry.body, true);
+        if (width > 660) {
+          assert.ok(geometry.question.right <= geometry.conversation.left + 1);
+          assert.ok(geometry.question.height > height * .7, JSON.stringify(geometry));
+        } else {
+          assert.equal(geometry.questionScroll, "visible");
+          assert.ok(geometry.question.bottom <= geometry.conversation.top + 1);
+        }
+        await capture(browser, `questions-workspace-${width}x${height}-${theme}`, geometry);
+      }
+    }
+    await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 900, deviceScaleFactor: 1, mobile: false });
+    await click(browser, "#questions-conversation");
+    assert.equal(await browser.evaluate("document.activeElement.id"), "message");
+    await click(browser, ".human-loop-question-group:not([hidden]) button[type=submit]");
+    await browser.waitFor("document.querySelector('.human-loop-question-group:not([hidden]) button[type=submit]').disabled");
+    await browser.evaluate("document.querySelector('.human-loop-question-group:not([hidden]) form').requestSubmit()");
+    assert.equal(f.posts.filter(post => post.path === "/api/answers").length, 1);
+    assert.equal(first.state, "open");
+    release();
+    await browser.waitFor("document.querySelector('.human-loop-question-group:not([hidden]) form').textContent.includes('Synthetic uncertain answer receipt')");
+    assert.equal(await browser.evaluate("document.querySelector('fieldset:not([hidden]) textarea').value"), "First exact draft");
+    answerMode = "accept";
+    await click(browser, ".human-loop-question-group:not([hidden]) button[type=submit]");
+    await browser.waitFor("document.querySelector('fieldset:not([hidden])').dataset.questionState==='answered'");
+    const posts = f.posts.filter(post => post.path === "/api/answers");
+    assert.equal(posts.length, 2); assert.deepEqual(posts[0].data, posts[1].data);
+    assert.deepEqual(posts[0].data.answers.answers.map(answer => [answer.sourceResultId, answer.questionId, answer.value]),
+      [["result", "scope", "First exact draft"], ["result", "optional", "Second selected draft"]]);
+    assert.equal(await browser.evaluate("document.querySelector('fieldset:not([hidden])').dataset.questionId"), "scope");
+    assert.equal(await browser.evaluate("document.querySelector('.question-history').open"), false);
+    await choose("second-source", "other");
+    assert.equal(await browser.evaluate("document.querySelector('fieldset:not([hidden]) textarea').value"), "Separate source draft");
+    other.questions[0].source = { ...secondSource, resultId: "stale-source" };
+    f.update();
+    await browser.waitFor("!document.querySelector('.human-loop-question-group:not([hidden]) .human-loop-error').hidden");
+    await browser.evaluate("document.querySelector('.human-loop-question-group:not([hidden]) form').requestSubmit()");
+    assert.equal(f.posts.filter(post => post.path === "/api/answers").length, 2);
+    await browser.evaluate("document.querySelector('#questions-back').focus()");
+    await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+    assert.equal(await browser.evaluate("document.querySelector('#question-panel').hidden"), true);
+    assert.equal(await browser.evaluate("document.activeElement.id"), "show-questions");
+    other.questions[0].source = secondSource; other.questions[0].state = "answered";
+    await browser.call("Page.reload");
+    await browser.waitFor("document.querySelector('#show-questions')?.textContent==='Questions (0, 0 blockers)'");
+    await click(browser, "#show-questions");
+    assert.equal(await browser.evaluate("document.activeElement===document.querySelector('.question-history > summary')"), true);
+    assert.equal(await browser.evaluate("document.querySelector('.question-history').open"), false);
+    await choose("result", "scope", true);
+    assert.match(await browser.evaluate("document.querySelector('fieldset:not([hidden]) .human-loop-submitted-answer').textContent"), /First exact draft/);
+    assert.deepEqual(browser.exceptions, []);
+  });
 
 test("implementation confirmation keeps focus and drafts, retries exact uncertain decisions, and collapses durable history",
   { skip: !browserAvailable, timeout: 90_000 }, async t => {
@@ -1088,6 +1253,7 @@ test("expanded artifact preserves annotation dialogs, raw view and live updates 
     await click(browser, '#canvas-settings summary');
     assert.equal(await browser.evaluate("document.querySelector('#canvas-settings').open"), true);
     await click(browser, '#canvas-settings summary');
+    if (!await browser.evaluate("document.querySelector('#question-panel').hidden")) await click(browser, '#questions-back');
     await click(browser, '[data-artifact-expand]');
     await click(browser, '[data-artifact-note="note"]');
     await browser.waitFor("document.querySelector('[data-note-primary]')");
@@ -1262,6 +1428,7 @@ test("a delayed Designer answer failure stays beside its source form after activ
     ? new Promise((resolve, reject) => { rejectAnswer = reject; }) : undefined }), { browser } = f;
   await browser.call("Page.navigate", { url: f.url });
   await browser.waitFor("document.querySelector('.human-loop-questions textarea')");
+  await click(browser, "#show-questions");
   await browser.evaluate(`(() => {
     const input = document.querySelector('.human-loop-questions textarea');
     input.value = 'Keep this Designer answer';
@@ -1308,6 +1475,7 @@ test("active implementation questions preserve focus, drafts and exact retries b
     text: "Implement the experience.", timestamp: "2026-09-15T00:01:00Z", queueState: "active" });
   await browser.call("Page.navigate", { url: f.url });
   await browser.waitFor("document.querySelector('.human-loop-questions textarea')");
+  await click(browser, "#show-questions");
   await browser.evaluate(`(() => {
     const input = document.querySelector('.human-loop-questions textarea');
     input.value = 'Use the existing behavior';
@@ -1472,11 +1640,12 @@ test("Ready advisory forms retain independent source drafts, focus and retry env
   await browser.waitFor("document.querySelector('#show-questions').textContent === 'Questions (2, 0 blockers)'");
   assert.equal(await browser.evaluate("document.querySelector('#question-panel').hidden"), true);
   await click(browser, "#show-questions");
-  for (const id of ["result", "second"]) {
-    if (!await browser.evaluate(`document.querySelector('form[data-source-result-id="${id}"]').closest('details').open`)) {
-      await click(browser, `.human-loop-question-group:has([data-source-result-id="${id}"]) > summary`);
-    }
-  }
+  const selectSource = id => browser.evaluate(`(() => {
+    const picker=document.querySelector('[data-question-picker="open"]');
+    picker.value=${JSON.stringify(JSON.stringify([id, "scope"]))};
+    picker.dispatchEvent(new Event('change',{bubbles:true}));
+  })()`);
+  await selectSource("second");
   await browser.evaluate(`(() => {
     for(const id of ['result','second']) {
       const input=document.querySelector('form[data-source-result-id="'+id+'"] textarea');
@@ -1492,6 +1661,7 @@ test("Ready advisory forms retain independent source drafts, focus and retry env
   assert.deepEqual(await browser.evaluate("[secondDraft.value,secondDraft.selectionStart,secondDraft.selectionEnd]"), ["second draft", 1, 4]);
   await click(browser, 'form[data-source-result-id="second"] button[type="submit"]');
   await browser.waitFor("document.querySelector('form[data-source-result-id=\"second\"] textarea').value===''");
+  await selectSource("result");
   await click(browser, 'form[data-source-result-id="result"] button[type="submit"]');
   await browser.waitFor("document.querySelector('form[data-source-result-id=\"result\"] textarea').value===''");
   const posts = f.posts.filter(post => post.path === "/api/answers");
@@ -2212,11 +2382,12 @@ test("Background Stop preserves real keyboard focus through pending and complete
     assert.deepEqual(browser.exceptions, []);
   });
 
-test("inline questions preserve drafts and independent history browsing across repeated snapshots", { skip: !browserAvailable, timeout: 60_000 }, async (t) => {
+test("workspace questions preserve drafts and independent history browsing across repeated snapshots", { skip: !browserAvailable, timeout: 60_000 }, async (t) => {
   const f = await fixture(t), { browser } = f;
   await browser.call("Emulation.setDeviceMetricsOverride", { width: 1450, height: 1000, deviceScaleFactor: 1, mobile: false });
   await browser.call("Page.navigate", { url: f.url });
   await browser.waitFor("document.querySelector('.human-loop textarea')");
+  await click(browser, "#show-questions");
   await browser.waitFor("(()=>{const n=document.querySelector('#state-history');return n.scrollTop>0 && n.scrollHeight-n.scrollTop-n.clientHeight<2})()");
   await browser.evaluate(`(() => {
     window.originalDraft=document.querySelector('.human-loop textarea');
@@ -2233,6 +2404,10 @@ test("inline questions preserve drafts and independent history browsing across r
     { same: true, focused: true, text: "Keep my exact product answer.", start: 5, end: 12 });
     assert.equal(await browser.evaluate("document.querySelector('.human-loop-questions').dataset.sourceRequestId"), "request");
   }
+  f.current.messages.push({ id: "history-scroll-room", kind: "assistant", role: "designer", requestId: "request",
+    text: "Earlier retained conversation content. ".repeat(100), timestamp: "2026-09-15T00:00:02Z" });
+  f.update();
+  await browser.waitFor("document.querySelector('[data-entry-id=history-scroll-room]')");
   await browser.evaluate("originalDraft.blur(); document.querySelector('#messages').scrollTop=0; document.querySelector('#state-history').scrollTop=0");
   await browser.waitFor("!document.querySelector('.state-history-return').hidden");
   for (let i = 0; i < 3; i++) {
@@ -2294,6 +2469,7 @@ test("history tooltips show original local event timestamps on hover and keyboar
   const original = structuredClone(f.current.events);
   await browser.call("Page.navigate", { url: f.url });
   await browser.waitFor("document.querySelectorAll('#state-history li').length === 2");
+  await browser.evaluate("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
   const first = await browser.evaluate(`(() => {
     const button=document.querySelector('#state-history li:first-child button');
     button.scrollIntoView({block:'nearest'});

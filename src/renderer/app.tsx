@@ -443,7 +443,7 @@ function Workspace(props: WorkspaceProps) {
                 aria-current={currentPhase ? "step" : undefined}
                 aria-label={`${label}${currentPhase ? ", Current phase" : ""}${skipped ? `, not applicable. ${skipped.reason}` : ""}${designStatus ? `, ${designStatus}` : ""}`}
                 aria-controls={tab.id + "-panel"}><tab.icon size={15} aria-hidden="true" />
-                <span className="project-tab-label"><span className="project-tab-name">{label}</span>{designStatus === "Design available"
+                <span className="project-tab-label"><span className="project-tab-name">{label}</span>{designStatus === "Design available" && !currentPhase
                   && <span className="project-availability" title="Design available" aria-hidden="true" />}</span>
                 {currentPhase && <span className="current-phase" title="Current phase" aria-hidden="true"><CircleDot size={13} /></span>}
                 {designStatus === "New Design output" && <span className="artifact-count">New output</span>}

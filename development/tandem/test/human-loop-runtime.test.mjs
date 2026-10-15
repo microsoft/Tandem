@@ -1650,13 +1650,14 @@ test("shared canonical Design flows through actual Canvas answers, complete inte
   assert.equal(response.status, 202);
   assert.equal((await f.runtime.whenIdle()).status, "waiting-answer", f.errors.map((e) => e.stack).join("\n"));
   events.touch();
-  await browser.waitFor("document.querySelectorAll('[data-artifact-tab]').length === 3 && document.querySelector('.human-loop select')");
+  await browser.waitFor("document.querySelectorAll('[data-artifact-tab]').length === 3 && document.querySelector('.human-loop-questions select')");
   assert.equal(await browser.evaluate("document.querySelectorAll('[data-design-perspective]').length"), 0);
   const produced = await f.runtime.currentDesign();
   assert.equal(produced.content.schemaVersion, "sketch-design/v3");
   assert.deepEqual(await browser.evaluate("JSON.parse(document.querySelector('#design-raw').textContent)"), produced.content);
   await browser.evaluate(`(() => {
-    const select=document.querySelector('.human-loop select'); select.value='option:build'; select.dispatchEvent(new Event('change',{bubbles:true}));
+    document.querySelector('#show-questions').click();
+    const select=document.querySelector('.human-loop-questions select'); select.value='option:build'; select.dispatchEvent(new Event('change',{bubbles:true}));
     document.querySelector('[data-human-loop-action="submitAnswers"]').click();
   })()`);
   await waitFor(async () => (await f.runtime.state()).requests.length === 2, "source-bound Canvas answer admission");

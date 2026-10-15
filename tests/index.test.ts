@@ -54,6 +54,7 @@ import "./effort-recovery.test.js";
 import "./desktop.test.js";
 import "./terminal-sdk.test.js";
 import "./browser-host.test.js";
+import "./browser-notice-browser.test.js";
 import "./browser-process.test.js";
 import "./standalone-header.test.js";
 import "./permission-broker.test.js";

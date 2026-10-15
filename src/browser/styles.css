@@ -39,6 +39,10 @@ html, body, #root { height: 100%; margin: 0; padding: 0; overflow: hidden; }
 .host-banner { padding: 8px 12px; border-bottom: 1px solid var(--studio-border); max-height: 20vh; overflow: auto; overflow-wrap: anywhere; white-space: pre-wrap; }
 .host-error { color: var(--studio-danger); white-space: pre-wrap; overflow-wrap: anywhere; }
 .host-banner.host-error { background: var(--studio-danger-soft); }
+.host-notification { display: flex; align-items: flex-start; gap: 12px; max-height: none; overflow: visible; }
+.host-notification > span { flex: 1; min-width: 0; max-height: 20vh; overflow: auto; }
+.host-notification > button { flex: none; white-space: nowrap; }
+.host-notification > button:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
 .host-warning { color: var(--studio-warning); background: var(--studio-warning-soft); }
 .host-shell .host-pending { margin: 4px 10px; border-color: var(--studio-warning); color: var(--studio-warning); }
 .host-dialog { box-sizing: border-box; max-height: calc(100dvh - 32px); overflow: auto; }

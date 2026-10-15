@@ -10,6 +10,7 @@ import { generationContract } from "../public/sketch/contract.js";
 import { artifactRules } from "../public/artifacts/contract.js";
 import { designGenerationContract, designReferenceCatalog } from "../public/sketch/design-contract.js";
 import { HumanLoopTransport } from "../src/human-loop-transport.mjs";
+import { createHumanTask } from "../src/human-loop-task.mjs";
 import { DEFAULT_POLICY } from "../runtime-src/domain/workflow/policy.ts";
 import { evaluateWrapper, promptCases, contextHarness } from "./helpers/human-loop-prompt-fixture.mjs";
 import { browserAvailable, openFixtureBrowser } from "./helpers/browser-fixture.mjs";
@@ -261,6 +262,112 @@ test("Designer and shared authoring guidance recommend content-specific visuals 
   assert.match(role, /content-specific recommended artifact mapping in designGeneration.rules/);
   assert.match(role, /Markdown is for brief optional supporting notes, not the recommended primary artifact/);
   assert.doesNotMatch(role, /markdown for behavior\/business contracts/);
+});
+
+// Deterministic delivery/contract checks, not generated-output quality evaluations.
+const visualAuthoringCases = [
+  {
+    name: "typed order relationships",
+    request: "Show an Order with one or more LineItems, typed fields and quantity constraints.",
+    patterns: [/Data contracts: Mermaid ER\/class diagrams/, /relationships through named connectors, cardinality and typed fields\/members/,
+      /Order and LineItem with typed fields and a one-to-many relationship/],
+  },
+  {
+    name: "checkout interaction timeline",
+    request: "Show who acts when at checkout, including payment decline, retained bag and retry.",
+    patterns: [/prefer an interaction timeline using supported Mermaid sequenceDiagram lifelines\/messages/,
+      /not a replacement of every story with a sequence diagram/, /accepted versus declined alternatives, retained bag and retry/],
+  },
+  {
+    name: "visual HTML journey and screen states",
+    request: "Use HTML to show the screen-by-screen checkout journey and its error state, not a written specification.",
+    patterns: [/retain visual storyboards for user-visible screen\/step journeys/,
+      /UI: HTML mockup showing actual screen layouts and interaction states, not boxes describing screens/,
+      /HTML is a format, not permission for generic grids of paragraphs or list-heavy specification pages/,
+      /short meaningful labels\/captions and minimal essential callouts/,
+      /Avoid repeated introductory prose, duplicated descriptions in every card/],
+  },
+  {
+    name: "compact approval rules",
+    request: "Show the approval conditions and denied outcomes as an HTML decision table.",
+    patterns: [/Behavioral contracts\/rules: Mermaid sequence for exchanges; HTML decision tables/,
+      /rules through compact decision tables with conditions and outcomes/,
+      /condition -> outcome rows, not a paragraph per rule/,
+      /never the only place for approval-critical information/],
+  },
+  {
+    name: "system and workflow boundaries",
+    request: "Show component responsibilities, dependencies and the failed-job recovery workflow.",
+    patterns: [/Workflows: Mermaid flowchart\/state\/sequence/, /system responsibilities through boundaries and labeled dependencies/,
+      /System: Mermaid grouped architecture with meaningful boundaries\/layers\/components\/dependencies/,
+      /Use the applicable structures, not all of them in every artifact/],
+  },
+  {
+    name: "precise contracts without invented infrastructure",
+    request: "Clarify the in-memory data contract for a command-line calculator; no UI, HTTP API or saved data is needed.",
+    patterns: [/JSON Schema\/OpenAPI when precise machine\/API specs are needed/,
+      /Non-GUI and no-persistence projects must justify inapplicable coverage instead of inventing screens, storage or APIs/,
+      /not required tabs.*arbitrary counts/, /HTML\/SVG alternatives remain allowed where clearer/],
+  },
+];
+
+function assertNoAuthoringOverreach(text) {
+  for (const pattern of [
+    /\b(?:always|must) use (?:only )?Mermaid\b/i,
+    /\b(?:never use|do not use|ban) HTML\b/i,
+    /\b(?:generate|create|require) (?:all (?:seven|7) artifacts|exactly \d+ artifacts)\b/i,
+    /\b(?:replace|convert) every (?:user )?story (?:with|to) (?:a )?sequence diagram\b/i,
+    /\b(?:every|all) projects? (?:must|requires?) (?:have )?(?:persistence|an? HTTP API)\b/i,
+    /\b(?:limit|cap) (?:each|every) artifact to \d+ words\b/i,
+  ]) assert.doesNotMatch(text, pattern);
+}
+
+for (const fixture of visualAuthoringCases) test(`production Designer visual-first contract: ${fixture.name}`, async () => {
+  const Harness = contextHarness(runtime, { designReferenceCatalog, designGenerationContract, humanLoopPrompts });
+  for (const seed of cases.filter(({ name }) => ["designer:bound", "designer:unbound"].includes(name))) {
+    const request = { id: "current", message: fixture.request, answers: null, status: "active", blockingAnswerRefs: [] };
+    const state = { requests: [request], activeBatchRequestIds: [request.id], questions: [], cycles: [], handoffs: [] };
+    const design = structuredClone(seed.packet.context.design);
+    const retained = structuredClone(design);
+    const { inputDigest, ...identity } = seed.packet.binding;
+    const context = await new Harness({}).context("designer", request, null, null, identity.before, design, state);
+    const packet = createHumanTask({ ...identity, cycleId: null }, context);
+    const prompt = evaluateWrapper(transport, packet, humanLoopPrompts);
+    const delivered = JSON.parse(prompt.split("\n").at(-1));
+    const guidance = [...delivered.context.instructions, ...delivered.context.designGeneration.rules].join("\n");
+    assert.deepEqual(delivered, packet);
+    assert.deepEqual(delivered.context.design, retained);
+    assert.deepEqual(delivered.context.designGeneration, designGenerationContract);
+    assert.equal(delivered.context.request.message, fixture.request);
+    assert.notEqual(packet.binding.inputDigest, inputDigest);
+    for (const pattern of [
+      ...fixture.patterns,
+      /apply the visual-first, low-prose guidance in designGeneration.rules/,
+      /every supported format, including HTML, Mermaid and SVG/,
+      /Make layout, connections and states carry the information/,
+      /Keep necessary fields, types, constraints, invariants, errors, decisions, important failure\/retry paths and relevant evidence visible in the primary artifact/,
+      /no arbitrary word caps, tiny fonts, fixed clipping of essential content, hidden essential detail or oversimplified decorative diagrams/,
+      /Optional deeper rationale may use existing supported note\/details fields or note relationships; keep it brief and secondary/,
+      /primary artifact must remain self-contained; do not invent expandable controls or new schema fields/,
+      /do not rewrite unrelated retained artifacts merely to apply this guidance/,
+    ]) assert.match(guidance, pattern, `${fixture.name}: ${seed.name}`);
+    assertNoAuthoringOverreach(guidance);
+  }
+});
+
+test("visual-first prompt regression checks catch overreaching policy additions", () => {
+  const guidance = [...humanLoopPrompts.roles.designer, ...designGenerationContract.rules].join("\n");
+  assertNoAuthoringOverreach(guidance);
+  for (const override of [
+    "Always use only Mermaid.",
+    "Never use HTML.",
+    "Generate all seven artifacts.",
+    "Create exactly 5 artifacts.",
+    "Replace every user story with a sequence diagram.",
+    "Every project must have persistence.",
+    "Every project requires an HTTP API.",
+    "Limit each artifact to 50 words.",
+  ]) assert.throws(() => assertNoAuthoringOverreach(`${guidance}\n${override}`), assert.AssertionError, override);
 });
 
 test("Designer assigns optional schema metadata explicitly by purpose without rewriting history", () => {

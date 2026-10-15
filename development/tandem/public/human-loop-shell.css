@@ -357,6 +357,8 @@
   outline: 2px solid var(--shell-focus);
   outline-offset: 2px;
 }
+.human-app #message { box-sizing: border-box; padding: 4px 6px; }
+.human-app #message:focus-visible { outline-offset: -2px; }
 .human-app :is(.artifact-navigation-row button, .perspective-toolbar button,
   [data-artifact-zoom], .canvas-settings button, .settings-fields select, .access-request-picker select,
   .diagram-annotation-tools button, #compaction-approval button,
@@ -592,21 +594,46 @@
   .human-app .annotation-editor-toolbar { gap: 6px; }
   .human-app .annotation-editor-toolbar [data-annotation-action="attach"] { margin-inline-start: 0; }
 }
-#question-panel {
-  max-height: min(45vh, 28rem);
-  overflow: auto;
-  flex: 2 1 0;
-  min-height: 0;
-  border-bottom: 1px solid var(--border-color-default, #d1d9e0);
-  padding: 0.5rem;
+.human-app .human-design { position: relative; }
+.human-app #design-panel[data-workspace-view="questions"] > :not(#question-panel) { visibility: hidden; }
+.human-app #question-panel {
+  position: absolute; inset: 0; z-index: 5;
+  display: flex; flex-direction: column;
+  min-width: 0; min-height: 0; background: var(--surface);
 }
-.human-app .human-conversation:has(#question-panel:not([hidden])) .conversation-layout { min-height: 80px; }
-.human-app .human-conversation:has(#question-panel:not([hidden])) #access-approval { --permission-height: min(28vh, 220px); }
+.human-app .questions-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.human-app .questions-heading h2 { flex: 1; margin: 0; font-size: calc(var(--shell-font-size) + 2px); }
+.human-app :is(.questions-heading, .panel-heading) button { max-width: 100%; white-space: normal; }
+.human-app #questions-content { flex: 1; min-height: 0; overflow: auto; scrollbar-gutter: stable; }
+.human-app #questions-content > .human-loop { border: 0; border-radius: 0; padding: 12px 18px 24px; background: var(--surface); }
+.human-app .question-navigation { display: grid; gap: 8px; padding-bottom: 12px; }
+.human-app .question-navigation label { margin: 0; font-weight: 600; }
+.human-app .question-navigation select { min-height: 44px; }
+.human-app .question-history { padding: 0; border: 0; }
+.human-app .question-history > summary { padding-block: 8px; }
+.human-app #question-panel .human-loop-question-group { padding: 0; border: 0; }
+.human-app #question-panel .human-loop-questions { margin: 0; }
+.human-app #question-panel .human-loop-questions > h3 { display: none; }
+.human-app #question-panel .human-loop-questions fieldset { margin: 12px 0; }
+.human-app #question-panel .human-loop-question-context { border: 0; margin: 8px 0; padding: 0; }
+.human-app .question-batch { padding: 10px 12px; margin-block: 12px; border: 1px solid var(--border); border-radius: 6px; }
+.human-app .question-batch ul { padding-inline-start: 18px; }
+.human-app .question-batch button { text-align: start; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.human-app #question-panel :is(p, li, h4, button) { overflow-wrap: anywhere; }
+.human-app .human-conversation:has(#show-questions:not(:disabled)) { overflow: auto; }
+.human-app .human-conversation:has(#show-questions:not(:disabled)) .conversation-layout { min-height: 80px; }
+.human-app .human-conversation:has(#show-questions:not(:disabled)) #access-approval { --permission-height: min(28vh, 220px); }
 #question-panel[hidden] { display: none; }
 .human-loop-question-group > summary {
   cursor: pointer;
   padding: 0.5rem 0;
   font-weight: 600;
+}
+@media (max-width: 660px) {
+  .human-app #design-panel[data-workspace-view="questions"] { height: auto; min-height: 0; overflow: visible; }
+  .human-app #design-panel[data-workspace-view="questions"] > :not(#question-panel) { display: none; }
+  .human-app #design-panel[data-workspace-view="questions"] #question-panel { position: relative; }
+  .human-app #design-panel[data-workspace-view="questions"] #questions-content { overflow: visible; }
 }
 .human-app[data-project-panel] .brand,
 .human-app[data-project-panel] .header-project,

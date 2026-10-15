@@ -1,4 +1,5 @@
 import { isRecord, parseBackendEvent, type HostCommand, type HostPhase, type HostSnapshot, type WorkspaceListing } from "./contracts.js";
+import { redactDiagnostic } from "./diagnostics.js";
 
 interface ClientSnapshot {
     host: HostSnapshot | null;
@@ -10,6 +11,13 @@ function nullableText(value: unknown): string | null {
     if (value === null) return null;
     if (typeof value === "string") return value;
     throw new Error("The host returned an invalid text field.");
+}
+
+function parseNotice(value: unknown): HostSnapshot["notice"] {
+    if (value == null) return null;
+    if (!isRecord(value) || typeof value.id !== "string" || !value.id || value.id.length > 512
+        || typeof value.message !== "string" || value.message.length > 8192) throw new Error("The host returned an invalid notification.");
+    return { id: value.id, message: value.message };
 }
 
 function parseDirectories(value: unknown): WorkspaceListing {
@@ -59,12 +67,14 @@ export function parseHostSnapshot(value: unknown): HostSnapshot {
     return { revision: value.revision, generation: value.generation, version: value.version, phase: value.phase,
         permissionMode: value.permissionMode, status: value.status, requests, recentWorkspaces: value.recentWorkspaces,
         workspace: nullableText(value.workspace), sessionId: nullableText(value.sessionId), canvasUrl: nullableText(value.canvasUrl),
-        error: nullableText(value.error), warning: nullableText(value.warning) };
+        error: nullableText(value.error), warning: nullableText(value.warning),
+        notice: parseNotice(value.notice) };
 }
 
 export class BrowserStore {
     private state: ClientSnapshot = { host: null, connected: false, error: null };
     private readonly listeners = new Set<() => void>();
+    private readonly diagnosticsByGeneration = new Map<string, string[]>();
     constructor(private readonly token: string, private readonly fetcher: typeof fetch = (input, init) => fetch(input, init)) {}
     getSnapshot = (): ClientSnapshot => this.state;
     subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
@@ -107,10 +117,19 @@ export class BrowserStore {
         return parseDirectories(await response.json());
     }
     async diagnostics(): Promise<string> {
+        const generation = this.state.host?.generation || "";
         const response = await this.request("/host/diagnostics", { signal: AbortSignal.timeout(15_000) });
         const value: unknown = await response.json();
         if (!isRecord(value) || typeof value.text !== "string") throw new Error("The host returned invalid diagnostics.");
-        return value.text;
+        const local = this.diagnosticsByGeneration.get(generation) || [];
+        return [value.text, ...local].filter(Boolean).join("\n");
+    }
+    recordError(generation: string, message: string): void {
+        message = redactDiagnostic(message);
+        console.error("Tandem browser action failed:", message);
+        const lines = this.diagnosticsByGeneration.get(generation) || [];
+        this.diagnosticsByGeneration.set(generation, [...lines.slice(-19), `${new Date().toISOString()} Browser: ${message}`]);
+        for (const key of this.diagnosticsByGeneration.keys()) if (key !== generation) this.diagnosticsByGeneration.delete(key);
     }
     connect(): () => void {
         const controller = new AbortController();

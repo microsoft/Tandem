@@ -220,7 +220,7 @@ export async function runDesktopRuntime(options: {
             }
         };
         session.on("session.canvas.opened", (event) => showCanvas(event.data));
-        session.on("session.error", (event) => protocol.send({ type: "error", message: event.data.message }));
+        session.on("session.error", (event) => protocol.reportSessionError(event));
         // Reopen from durable state without resetting the goal, artifacts, or receipts.
         const canvas = await session.rpc.canvas.open({ canvasId: "tandem", extensionId, instanceId: "desktop-main" });
         developmentInstance = "desktop-main";

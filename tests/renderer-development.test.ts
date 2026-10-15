@@ -335,7 +335,7 @@ test("composed reload is root-owned and rejects foreign, stale, active and unkno
     assert.equal(h.document.querySelector(".topbar #reload-extension"), null);
 });
 
-test("Design availability uses a named dot without hiding new output or attention", async t => {
+test("Design availability defers to the current phase marker without hiding new output or attention", async t => {
     const h = await reactHarness(t, undefined, "development");
     h.render(state("development")); await h.flush();
     const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
@@ -352,21 +352,44 @@ test("Design availability uses a named dot without hiding new output or attentio
     await send("first");
     assert.equal(h.get("development-tab").querySelector(".project-tab-name")?.textContent, "Development");
     assert.equal(h.get("development-tab").getAttribute("aria-label"), "Development, Current phase, Design available");
-    assert.equal(h.document.querySelector(".project-availability")?.getAttribute("title"), "Design available");
-    assert.equal(h.document.querySelector(".project-availability")?.getAttribute("aria-hidden"), "true");
+    assert.match(h.get("development-tab").getAttribute("title")!, /Design available/);
+    assert.equal(h.get("development-tab").getAttribute("aria-current"), "step");
+    assert.equal(h.get("development-tab").querySelectorAll(".current-phase").length, 1);
+    assert.equal(h.get("development-tab").querySelector(".current-phase")?.getAttribute("title"), "Current phase");
+    assert.equal(h.get("development-tab").querySelectorAll(".project-availability").length, 0);
     await send("first");
     assert.equal(h.document.activeElement?.id, "development-tab", "Polling does not move focus to the passive marker.");
     await h.fire(h.get("preparation-tab"), "mousedown", { button: 0 });
+    assert.equal(h.get("preparation-tab").getAttribute("aria-selected"), "true");
+    assert.equal(h.get("development-tab").getAttribute("aria-current"), "step");
+    assert.equal(h.get("development-tab").querySelectorAll(".current-phase").length, 1);
+    assert.equal(h.get("development-tab").querySelector(".project-availability"), null);
     await send("second");
     assert.equal(h.get("development-tab").querySelector(".project-availability"), null);
+    assert.equal(h.get("development-tab").querySelectorAll(".current-phase").length, 1);
     assert.equal(h.get("development-tab").querySelector(".artifact-count")?.textContent, "New output");
     assert.equal(h.get("development-tab").getAttribute("aria-label"), "Development, Current phase, New Design output");
     assert.match(h.get("project-current-work").textContent!, /4 needs attention/);
     await h.fire(h.get("development-tab"), "mousedown", { button: 0 });
-    assert.ok(h.get("development-tab").querySelector(".project-availability"));
+    assert.equal(h.get("development-tab").querySelector(".project-availability"), null);
+    assert.equal(h.get("development-tab").querySelectorAll(".current-phase").length, 1);
+    assert.equal(h.get("development-tab").getAttribute("aria-label"), "Development, Current phase, Design available");
     assert.equal(h.get("development-tab").querySelector(".artifact-count"), null);
     assert.equal(h.get("project-conversation-frame"), frame);
     assert.equal(h.requests.length, 0, "The marker never starts work, answers a question or grants approval.");
+    h.setFetch(async path => {
+        assert.equal(path, "/api/stage/reopen");
+        return response(state("prepare", 2));
+    });
+    await h.fire(h.get("preparation-tab"), "mousedown", { button: 0 });
+    await h.click("reopen-stage"); await h.confirm();
+    assert.equal(h.get("preparation-tab").getAttribute("aria-current"), "step");
+    assert.equal(h.get("development-tab").getAttribute("aria-current"), null);
+    assert.equal(h.get("development-tab").querySelector(".current-phase"), null);
+    assert.equal(h.get("development-tab").querySelectorAll(".project-availability").length, 1);
+    assert.equal(h.get("development-tab").querySelector(".project-availability")?.getAttribute("title"), "Design available");
+    assert.equal(h.get("development-tab").querySelector(".project-availability")?.getAttribute("aria-hidden"), "true");
+    assert.equal(h.get("development-tab").getAttribute("aria-label"), "Development, Design available");
 });
 
 test("idle unfinished Stage1 can browse Development but active work and read-only ownership cannot open it", async t => {

@@ -11,7 +11,8 @@ type UserInputResponse = Awaited<ReturnType<UserInputHandler>>;
 export type DesktopPermissionMode = "ask" | "allow-all";
 
 export type DesktopEvent =
-    | { type: "status" | "error"; message: string }
+    | { type: "status"; message: string }
+    | { type: "error"; message: string; notificationId?: string }
     | { type: "ready"; url: string; workspace: string; sessionId: string }
     | { type: "permission"; id: string; title: string; details: string; canAllowAllForSession: boolean }
     | { type: "permission-mode"; mode: DesktopPermissionMode }
@@ -56,6 +57,11 @@ export class DesktopProtocol {
 
     observeNativeEvent(sessionId: string, event: { type: string; agentId?: string; data: unknown }): void {
         this.permissionLifetimes.observe(sessionId, event);
+    }
+
+    reportSessionError(event: { id: string; data: { errorType: string; message: string } }): void {
+        this.send({ type: "error", message: event.data.message,
+            ...(event.data.errorType === "notification" ? { notificationId: event.id } : {}) });
     }
 
     private expirePermissionScope(scope: NativePermissionScope): void {

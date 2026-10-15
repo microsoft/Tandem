@@ -1233,6 +1233,7 @@ test("actual browser entrypoint renders dynamic shared artifacts, answers and or
     await browser.call("Input.dispatchMouseEvent", { type: "mousePressed", button: "left", clickCount: 1, ...point });
     await browser.call("Input.dispatchMouseEvent", { type: "mouseReleased", button: "left", clickCount: 1, ...point });
   };
+  await click("#show-questions");
   await click(".human-loop-questions select");
   await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "ArrowDown", code: "ArrowDown", windowsVirtualKeyCode: 40 });
   await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "ArrowDown", code: "ArrowDown", windowsVirtualKeyCode: 40 });
@@ -1248,6 +1249,7 @@ test("actual browser entrypoint renders dynamic shared artifacts, answers and or
   await click("#send");
   await browser.waitFor("document.querySelector('#message').value === ''");
   assert.equal(f.received.at(-1).answers, null);
+  await click("#questions-back");
   for (const artifact of sharedDesignExample().artifacts) {
     await click(`[data-artifact-tab="${artifact.id}"]`);
     assert.equal(await browser.evaluate("document.querySelector('[data-sketch-id]').dataset.sketchId"), artifact.id);

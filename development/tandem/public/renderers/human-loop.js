@@ -1,5 +1,5 @@
 import { decisionSections, technicalFindings, reviewCoverageText, emptyReviewSection } from '../review-decisions.js';
-import { renderQuestionMeaning, questionStatus } from '../question-presentation.js';
+import { renderQuestionMeaning, questionMeaning, questionStatus } from '../question-presentation.js';
 
 const instances = new WeakMap();
 let questionTitleSequence = 0;
@@ -108,7 +108,8 @@ function updateForm(state) {
   const enabled = canAnswer(state, form);
   form.rows.forEach((row, index) => {
     const question = state.view.questionInteraction.questions[index];
-    row.fieldset.disabled = !enabled || question.state !== 'open';
+    row.fieldset.disabled = !state.workspace && (!enabled || question.state !== 'open');
+    row.select.disabled = row.textarea.disabled = !enabled || question.state !== 'open';
     row.fieldset.dataset.questionState = question.state;
     renderQuestionMeaning(row.meaning, question);
     row.status.textContent = questionStatus(question);
@@ -121,7 +122,7 @@ function updateForm(state) {
     row.answer.textContent = question.state === 'answered'
       ? submitted ? `Submitted answer: ${submitted.answer}` : 'Answered. The submitted answer is retained in Conversation.'
       : question.invalidation?.reason ?? `This question is ${question.state}; no answer is inferred.`;
-    if (row.closed !== closed) row.context.open = !closed;
+    if (row.closed !== closed && (!state.workspace || row.closed === undefined)) row.context.open = !closed;
     row.closed = closed;
   });
   const completed = state.view.questionInteraction.questions.every(question => question.state !== 'open');
@@ -136,6 +137,7 @@ function updateForm(state) {
   form.sourceError.hidden = validSource(state.view.questionInteraction);
   form.errorNode.hidden = !form.error;
   form.errorNode.textContent = form.error ?? '';
+  state.refreshWorkspace?.();
 }
 
 function retireForm(form) {
@@ -190,7 +192,7 @@ function createForm(state, interaction, previous) {
       make('p', question.context, 'human-loop-question-help'),
       make('p', `Why it matters: ${question.whyItMatters}`, 'human-loop-question-help'));
     appendDesignReferences(state, context, question.designRefs, question.source.design);
-    fieldset.append(title, meaning, status, answer, controls, context);
+    fieldset.append(title, meaning, status, answer, ...(state.workspace ? [context, controls] : [controls, context]));
     const selectLabel = make('label', 'Answer choice');
     const select = make('select');
     select.setAttribute('aria-label', `Answer choice: ${question.question}`);
@@ -228,7 +230,7 @@ function createForm(state, interaction, previous) {
       select.value = prior.select.value;
       textarea.value = prior.textarea.value;
     }
-    const row = { key, fieldset, meaning, status, select, textarea, controls, context, answer };
+    const row = { key, fieldset, meaning, status, select, textarea, controls, context, answer, title };
     form.rows.push(row);
     select.addEventListener('change', () => {
       if (state.form === form) updateForm(state);
@@ -246,7 +248,10 @@ function createForm(state, interaction, previous) {
   form.submit.dataset.humanLoopAction = 'submitAnswers';
   form.errorNode = make('p', '', 'human-loop-error');
   form.errorNode.setAttribute('role', 'alert');
-  form.node.append(form.errorNode, form.submit);
+  form.batch = make('section', undefined, 'question-batch');
+  form.batch.hidden = true;
+  if (state.workspace) form.node.append(form.help);
+  form.node.append(form.errorNode, form.batch, form.submit);
   form.node.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (!canAnswer(state, form)) return;
@@ -468,7 +473,7 @@ function renderQuestions(state, interactions) {
       state.forms.set(interaction.resultId, group);
     }
     Object.assign(group, { view: { ...state.view, questionInteraction: interaction }, actions: state.actions,
-      busy: state.busy, answerDetails: state.answerDetails });
+      busy: state.busy, answerDetails: state.answerDetails, workspace: state.questionWorkspace });
     const key = interactionKey(interaction);
     if (group.form?.key !== key) {
       const previous = group.form;
@@ -481,6 +486,12 @@ function renderQuestions(state, interactions) {
   for (const [id, group] of state.forms) if (!retained.has(id)) {
     retireForm(group.form); group.form = null; group.view = null; state.forms.delete(id);
   }
+  if (state.questionWorkspace) {
+    if (!state.navigation) state.navigation = createQuestionNavigation(state);
+    nodes.unshift(state.navigation.node);
+    for (const group of state.forms.values()) group.refreshWorkspace = () => updateQuestionNavigation(state);
+    updateQuestionNavigation(state);
+  }
   const current = [...state.questions.children];
   if (current.length !== nodes.length || current.some((node, index) => node !== nodes[index])) {
     const focused = state.document.activeElement;
@@ -491,9 +502,103 @@ function renderQuestions(state, interactions) {
   state.questions.hidden = nodes.length === 0;
 }
 
+function createQuestionNavigation(state) {
+  const make = (tag, text, css) => element(state.document, tag, text, css);
+  const node = make('nav', undefined, 'question-navigation');
+  node.setAttribute('aria-label', 'Choose a question');
+  const label = make('label', 'Open questions');
+  const picker = make('select');
+  picker.dataset.questionPicker = 'open';
+  label.append(picker);
+  const history = make('details', undefined, 'question-history');
+  const summary = make('summary', 'Answered history');
+  const historyLabel = make('label', 'Saved questions and answers');
+  const historyPicker = make('select');
+  historyPicker.dataset.questionPicker = 'history';
+  historyLabel.append(historyPicker);
+  history.append(summary, historyLabel);
+  const empty = make('p', 'Select a question to read its context and options.', 'human-loop-muted');
+  node.append(label, history, empty);
+  const select = key => {
+    state.selectedQuestion = key;
+    updateQuestionNavigation(state);
+    const selected = [...state.forms.values()].flatMap(group => group.form.rows).find(row => !row.fieldset.hidden);
+    if (selected) {
+      selected.title.tabIndex = -1;
+      selected.title.focus({ preventScroll: true });
+      selected.fieldset.scrollIntoView({ block: 'start' });
+    }
+  };
+  picker.addEventListener('change', () => select(picker.value));
+  historyPicker.addEventListener('change', () => select(historyPicker.value));
+  return { node, picker, history, historyPicker, summary, empty, select };
+}
+
+function updateQuestionNavigation(state) {
+  if (!state.navigation) return;
+  const nav = state.navigation;
+  const entries = [...state.forms.values()].flatMap((group, sourceIndex) => group.form.rows.map((row, index) => {
+    const interaction = group.view.questionInteraction, question = interaction.questions[index];
+    return { group, row, question, key: JSON.stringify([interaction.resultId, question.id]),
+      label: `${interaction.source.role} (source ${sourceIndex + 1}) / ${index + 1}. ${question.question} - ${questionMeaning(question).label}` };
+  }));
+  if (state.selectedQuestion === undefined && entries.length) {
+    state.selectedQuestion = entries.find(entry => entry.question.state === 'open')?.key ?? '';
+  }
+  const selected = entries.find(entry => entry.key === state.selectedQuestion);
+  const open = entries.filter(entry => entry.question.state === 'open');
+  const history = entries.filter(entry => entry.question.state !== 'open');
+  for (const [picker, items, placeholder] of [[nav.picker, open, 'Choose an open question'],
+    [nav.historyPicker, history, 'Choose a saved question']]) {
+    const options = [['', placeholder], ...items.map(entry => [entry.key,
+      entry.label + (selectedAnswer(entry.row, entry.question, entry.group.form.resultId) ? ' (draft)' : '')])];
+    const signature = JSON.stringify(options);
+    if (picker.dataset.options !== signature) {
+      picker.replaceChildren(...options.map(([value, label]) => {
+        const option = element(state.document, 'option', label); option.value = value; return option;
+      }));
+      picker.dataset.options = signature;
+    }
+    picker.value = items.some(entry => entry === selected) ? selected.key : '';
+    picker.disabled = !items.length;
+  }
+  nav.summary.textContent = `Answered history (${history.length})`;
+  nav.empty.hidden = Boolean(selected);
+  nav.empty.textContent = !entries.length ? 'No saved questions are available in this view.'
+    : state.selectedQuestion ? 'The selected question is no longer available at its original source. Choose another question.'
+      : open.length ? 'Choose a question to read its context and options.'
+        : 'No open questions. Expand Answered history to inspect saved answers.';
+  for (const group of state.forms.values()) {
+    const form = group.form;
+    form.groupNode.hidden = selected?.group !== group;
+    form.groupNode.open = true;
+    form.groupSummary.hidden = true;
+    for (const row of form.rows) row.fieldset.hidden = selected?.row !== row;
+    const answers = answersFor(group, form);
+    const signature = JSON.stringify(answers);
+    if (form.batchSignature !== signature) {
+      form.batchSignature = signature;
+      const make = (tag, text) => element(state.document, tag, text);
+      const list = make('ul');
+      for (const answer of answers) {
+        const entry = entries.find(entry => entry.group === group && entry.question.id === answer.questionId);
+        const item = make('li');
+        const edit = make('button', entry.question.question);
+        edit.type = 'button';
+        edit.addEventListener('click', () => nav.select(entry.key));
+        const value = answer.kind === 'option' ? entry.question.options.find(option => option.id === answer.value).label : answer.value;
+        item.append(edit, make('p', value)); list.append(item);
+      }
+      form.batch.replaceChildren(make('h4', `Selected answers from this source (${answers.length})`), list,
+        make('p', 'Send selected answers sends this entire list as one batch. Drafts from other sources are not sent.'));
+    }
+    form.batch.hidden = !answers.length;
+  }
+}
+
 /** Renders projected state only; an optional stable questionsContainer separates question provenance without recreating forms. */
 export function renderHumanLoop(container, { view, busy = false, error = null, questionsContainer = null, cycleContainer = null,
-  summaryInConversation = false, answerDetails = [], showQueue = true }, actions) {
+  questionWorkspace = false, summaryInConversation = false, answerDetails = [], showQueue = true }, actions) {
   let state = instances.get(container);
   if (!state) {
     state = createState(container);
@@ -509,6 +614,7 @@ export function renderHumanLoop(container, { view, busy = false, error = null, q
   state.actions = actions ?? {};
   state.summaryInConversation = summaryInConversation;
   state.answerDetails = answerDetails;
+  state.questionWorkspace = questionWorkspace;
   container.hidden = !view;
   if (!view) {
     renderQuestions(state, []);

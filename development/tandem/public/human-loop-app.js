@@ -45,7 +45,6 @@ let initialCreationInspecting = false;
 let emptySetupConfirmation = null, emptySetupBusy = false;
 let installationNotice = null;
 const answerPending = new Map();
-let revealedQuestionKey = null;
 const notice = (text) => { $('notice').textContent = text ?? ''; $('notice').hidden = !text; };
 const stopControl = createWorkflowStopControl({
   container: $('workflow-stop-control'), primary: $('stop-current-flow'), toggle: $('stop-options'),
@@ -178,7 +177,43 @@ cycleArtifact.className = 'human-loop';
 cycleArtifact.setAttribute('aria-label', 'Implementation cycle progress');
 questionArtifact.className = 'human-loop';
 questionArtifact.setAttribute('aria-label', 'Workflow questions');
-$('question-panel').append(questionArtifact);
+$('questions-content').append(questionArtifact);
+let questionFocus = null, designFocus = null, designScroll = [], designInert = [];
+const designChildren = [...$('design-panel').children].filter(node => node !== $('question-panel'));
+document.addEventListener('focusin', event => {
+  if ($('questions-content').contains(event.target)) questionFocus = event.target;
+  else if ($('design-panel').contains(event.target) && !$('question-panel').contains(event.target)
+    && event.target !== $('return-to-questions')) designFocus = event.target;
+});
+function showQuestions() {
+  projectPresentation?.showDesign();
+  if ($('question-panel').hidden) {
+    designInert = designChildren.map(node => [node, node.inert]);
+    designScroll = designChildren.flatMap(node => [node, ...node.querySelectorAll('*')])
+      .filter(node => node.scrollTop || node.scrollLeft).map(node => [node, node.scrollTop, node.scrollLeft]);
+  }
+  $('design-panel').dataset.workspaceView = 'questions';
+  for (const node of designChildren) node.inert = true;
+  $('question-panel').hidden = false;
+  $('show-questions').setAttribute('aria-expanded', 'true');
+  const target = questionFocus?.isConnected && questionFocus.getClientRects().length && !questionFocus.disabled
+    ? questionFocus : questionArtifact.querySelector('[data-question-picker="open"]:not([disabled])')
+      ?? questionArtifact.querySelector('.question-history > summary') ?? $('questions-back');
+  target.focus({ preventScroll: true });
+  if (matchMedia('(max-width: 660px)').matches || document.body.dataset.projectStacked === 'true') {
+    $('question-panel').scrollIntoView({ block: 'start' });
+  }
+}
+function closeQuestions({ focus = false } = {}) {
+  const wasOpen = !$('question-panel').hidden;
+  delete $('design-panel').dataset.workspaceView;
+  if (wasOpen) for (const [node, inert] of designInert) node.inert = inert;
+  $('question-panel').hidden = true;
+  $('show-questions').setAttribute('aria-expanded', 'false');
+  $('return-to-questions').hidden = true;
+  if (wasOpen) for (const [node, top, left] of designScroll) { node.scrollTop = top; node.scrollLeft = left; }
+  if (focus) (designFocus?.isConnected && designFocus.getClientRects().length ? designFocus : $('show-questions')).focus({ preventScroll: true });
+}
 const conversation = createConversationRenderer({ messages: $('messages'), history: $('state-history'),
   current: $('current-state'), currentDetail: $('current-detail'), newer: $('newer'),
   onSelectState: transition => { $('history-details')?.remove(); queuedRequests.focusRequest(transition.source?.requestId); } });
@@ -204,6 +239,7 @@ function inspectReference(binding, reference) {
   catch (error) { notice(error.message); }
 }
 function showOriginalDesign() {
+  closeQuestions();
   selectedOutput = null;
   pendingOutputFocus = null;
   $('project-output-view').hidden = true;
@@ -212,6 +248,7 @@ function showOriginalDesign() {
   if (snapshot) projectPresentation?.publish(snapshot);
 }
 function openOutput(item, source) {
+  closeQuestions();
   if (item.target.kind === 'design') {
     showOriginalDesign();
     designView.selectArtifact(item.target.artifactId);
@@ -350,7 +387,7 @@ function render() {
   const handoffText = handoffEntry?.text ?? handoffEntry?.content;
   const summaryInConversation = typeof handoffText === 'string' && Boolean(presentedView?.lastHandoff?.summary)
     && handoffText.includes(presentedView.lastHandoff.summary);
-  renderHumanLoop($('human-workflow'), { view: presentedView, busy: false, questionsContainer: questionArtifact, cycleContainer: cycleArtifact,
+  renderHumanLoop($('human-workflow'), { view: presentedView, busy: false, questionsContainer: questionArtifact, questionWorkspace: true, cycleContainer: cycleArtifact,
     summaryInConversation, showQueue: false, answerDetails: snapshot.messages.flatMap(entry => (entry.answerDetails ?? [])
       .map(answer => ({ ...answer, answerRequestId: entry.requestId }))) }, {
     submitAnswers: async (batch) => {
@@ -373,11 +410,15 @@ function render() {
     },
     stop: () => requestStopAfterStep(),
     refresh: () => refresh(), discuss: () => $('message').focus(),
-    inspectReference,
-    inspectQuestionSource: (_resultId, requestId) => {
-      $('question-panel').hidden = true;
-      $('show-questions').setAttribute('aria-expanded', 'false');
-      if (!queuedRequests.focusRequest(requestId)) conversation.focusRequest(requestId);
+    inspectReference: (binding, reference) => {
+      const fromQuestion = !$('question-panel').hidden;
+      inspectReference(binding, reference);
+      if (fromQuestion) $('return-to-questions').hidden = false;
+    },
+    inspectQuestionSource: (resultId, requestId) => {
+      const entry = snapshot.messages.find(entry => entry.resultId === resultId || entry.id === resultId || entry.id === `handoff:${resultId}`);
+      if (entry) conversation.focusEntry(entry.id);
+      else if (!queuedRequests.focusRequest(requestId)) conversation.focusRequest(requestId);
     },
   });
   $('private-history-status').hidden = snapshot.conversationStatus !== 'unverified';
@@ -468,12 +509,9 @@ function render() {
       return row;
     }));
   }
-  const blockers = questionGroups.filter(group => group.canAnswer).flatMap(group => group.questions
-    .filter(q => q.state === 'open' && q.blockingActive).map(q => [group.resultId, q.id]));
-  const nextQuestionKey = blockers.length ? JSON.stringify(blockers) : null;
-  if (nextQuestionKey && nextQuestionKey !== revealedQuestionKey) revealCurrentQuestion();
-  else if (followMessages && !nextQuestionKey && !$('messages').contains(document.activeElement)) $('messages').scrollTop = $('messages').scrollHeight;
-  revealedQuestionKey = nextQuestionKey;
+  const hasAnswerableBlockers = questionGroups.some(group => group.canAnswer
+    && group.questions.some(question => question.state === 'open' && question.blockingActive));
+  if (followMessages && !hasAnswerableBlockers && !$('messages').contains(document.activeElement)) $('messages').scrollTop = $('messages').scrollHeight;
   projectPresentation?.publish(snapshot);
   focusProjectOutput();
   const outputView = $('project-output-view');
@@ -704,24 +742,21 @@ $('advanced-workflow-controls').addEventListener('keydown', (event) => {
   }
 });
 function revealCurrentQuestion() {
-  const target = questionArtifact.querySelector('fieldset[data-question-state="open"]:not([disabled])');
+  const target = questionArtifact.querySelector('fieldset[data-question-state="open"] select:not([disabled])');
   if (!target) return false;
-  $('question-panel').hidden = false;
-  $('show-questions').setAttribute('aria-expanded', 'true');
-  target.closest('.human-loop-question-group').open = true;
-  target.scrollIntoView({ block: 'nearest' });
+  showQuestions();
   return true;
 }
 $('show-questions').onclick = () => {
-  const panel = $('question-panel');
-  panel.hidden = !panel.hidden;
-  $('show-questions').setAttribute('aria-expanded', String(!panel.hidden));
-  if (!panel.hidden) revealCurrentQuestion();
+  if ($('question-panel').hidden) showQuestions();
+  else closeQuestions({ focus: true });
 };
+$('questions-back').onclick = () => closeQuestions({ focus: true });
+$('return-to-questions').onclick = showQuestions;
+$('questions-conversation').onclick = () => $('message').focus();
 $('question-panel').addEventListener('keydown', event => {
-  if (event.key !== 'Escape') return;
-  event.preventDefault(); $('question-panel').hidden = true;
-  $('show-questions').setAttribute('aria-expanded', 'false');
+  if (event.key !== 'Escape' || event.defaultPrevented) return;
+  event.preventDefault(); closeQuestions();
   $('show-questions').focus();
 });
 $('focus-current-message').onclick = () => {

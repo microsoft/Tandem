@@ -454,6 +454,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await browser.evaluate(`document.querySelector("#hosted-app").contentWindow.postMessage({
         type:"tandem:header:disconnect",channel:"11111111-1111-4111-8111-111111111111"},location.origin)`);
       await browser.waitFor('document.querySelector("#hosted-app").contentDocument.querySelector(".project-folder").checkVisibility()');
+      await browser.waitFor(`document.querySelector("#hosted-app").contentDocument.querySelector(".project-folder").title===${JSON.stringify(root)}`);
       assert.equal(await browser.evaluate('document.querySelector("#hosted-app").contentDocument.querySelector(".project-folder").title'), root);
       await browser.call("Page.navigate", { url });
       const reloadRoot = async () => {
@@ -910,6 +911,27 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
           }
           assert.equal(fit.separatorHidden, fit.stacked);
           assert.ok(fit.messages.height >= 60, `Conversation retains a readable scrolling region: ${JSON.stringify(fit)}`);
+          if (label.startsWith("active-question")) {
+            const question = await inside(`(() => {
+              const panel=document.querySelector("#question-panel"), content=document.querySelector("#questions-content"),
+                row=document.querySelector("#question-panel fieldset:not([hidden])"), rect=panel.getBoundingClientRect();
+              return {left:rect.left,right:rect.right,top:rect.top,bottom:rect.bottom,height:rect.height,
+                scroll:getComputedStyle(content).overflowY,rows:document.querySelectorAll("#question-panel fieldset:not([hidden])").length,
+                overflow:content.scrollWidth>content.clientWidth+1,disabled:row.querySelector("textarea").disabled,
+                draft:row.querySelector("textarea").value,theme:document.body.dataset.theme};
+            })()`);
+            assert.equal(question.rows, 1); assert.equal(question.overflow, false); assert.equal(question.disabled, false);
+            assert.equal(question.draft, "Keep the current approved scope.");
+            if (fit.stacked) {
+              assert.equal(question.scroll, "visible");
+              assert.ok(question.bottom <= fit.conversation.top + 1);
+            } else {
+              assert.ok(question.right <= fit.conversation.left + 1);
+              assert.ok(question.height >= fit.design.height - 2);
+            }
+            if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `${label}-${width}x${height}.json`),
+              JSON.stringify({ synthetic: true, width, height, question, ...fit }, null, 2));
+          }
           for (const selector of ["#message", "#send"]) {
             const geometry = await inside(`(() => { const e=document.querySelector("${selector}"); e.scrollIntoView({block:"nearest"});
               const r=e.getBoundingClientRect(), hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);
@@ -918,6 +940,8 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
             assert.ok(geometry.reachable, `Composer control is reachable at ${label} ${width}x${height}: ${JSON.stringify(geometry)}`);
           }
           t.diagnostic(`${label} ${width}x${height}: Design ${Math.round(fit.design.width)}px, Conversation ${Math.round(fit.conversation.width)}px, stacked=${fit.stacked}`);
+          if (label.startsWith("active-question")) await inside(`document.querySelector("#questions-content").scrollTop=0;
+            document.querySelector(".human-layout").scrollTop=0`);
           if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `${label}-${width}x${height}.png`), await browser.screenshot());
         }
         await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 1000, deviceScaleFactor: 1, mobile: false });
@@ -1003,14 +1027,17 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
           assert.ok((values[0] + .05) / (values[1] + .05) >= 4.5, `${item.selector} needs readable contrast.`);
           assert.ok(item.height >= 30, `${item.selector} uses the actual shared control geometry.`);
         }
-        await browser.waitFor('Boolean(document.querySelector("#development-tab .project-availability"))');
+        await browser.waitFor('Boolean(document.querySelector("#development-tab .current-phase"))');
         const marker = await browser.evaluate(`(() => {const row=document.querySelector("#development-tab"),
-          dot=row.querySelector(".project-availability");return {color:getComputedStyle(dot).backgroundColor,
-            background:getComputedStyle(row).backgroundColor,title:dot.title,name:row.getAttribute("aria-label")};})()`);
+          dot=row.querySelector(".current-phase");return {color:getComputedStyle(dot).color,
+            background:getComputedStyle(row).backgroundColor,title:dot.title,name:row.getAttribute("aria-label"),
+            current:row.getAttribute("aria-current"),passive:row.querySelectorAll(".project-availability").length};})()`);
         for (const color of [marker.color, marker.background]) assert.match(color, /^(rgb\(|color\(srgb )/);
         const values = [luminance(marker.color), luminance(marker.background)].sort((a, b) => b - a);
-        assert.ok((values[0] + .05) / (values[1] + .05) >= 3, `Availability marker contrast: ${JSON.stringify(marker)}`);
-        assert.equal(marker.title, "Design available");
+        assert.ok((values[0] + .05) / (values[1] + .05) >= 3, `Current-phase marker contrast: ${JSON.stringify(marker)}`);
+        assert.equal(marker.title, "Current phase");
+        assert.equal(marker.current, "step");
+        assert.equal(marker.passive, 0, "Current Development uses one marker while retaining Design availability in its accessible name.");
         assert.equal(marker.name, "Development, Current phase, Design available");
       };
       const checkEffortLayout = async () => {
@@ -1235,6 +1262,39 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await waitInside('[...document.querySelectorAll(".conversation-assistant .conversation-role")].some(node => node.textContent === "agent")');
       assert.match(await inside('[...document.querySelectorAll(".conversation-user .conversation-role")].at(-1).textContent'), /Preference: @designer/);
       if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "role-hint-integrated.png"), await browser.screenshot());
+      const longDraft = "UnbrokenComposerDraft".repeat(35) + "\nA short second line";
+      for (const [width, height] of [[1360, 1000], [920, 620], [390, 620], [1360, 480]]) for (const theme of ["light", "dark"]) {
+        await browser.call("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+        await browser.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+        const frameWidth = await browser.evaluate('document.querySelector("#project-conversation-frame").clientWidth');
+        await waitInside(`innerWidth===${frameWidth} && document.body.dataset.projectStacked==="${frameWidth <= 660}"`);
+        await inside('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+        await browser.evaluate(`document.documentElement.dataset.projectTheme=${JSON.stringify(theme)}`);
+        await inside(`document.body.dataset.theme=${JSON.stringify(theme)};
+          document.querySelector("#message").value=${JSON.stringify(longDraft)};
+          document.querySelector("#message").dispatchEvent(new Event("input",{bubbles:true}))`);
+        await click("#message", true);
+        await inside('document.querySelector("#message").setSelectionRange(3,9);document.querySelector("#message").scrollTop=0');
+        const focus = await inside(`(() => {
+          const input=document.querySelector("#message"),r=input.getBoundingClientRect(),send=document.querySelector("#send").getBoundingClientRect(),
+            style=getComputedStyle(input),outline=parseFloat(style.outlineWidth),offset=parseFloat(style.outlineOffset);
+          return {outline,offset,color:style.outlineColor,right:r.right+outline+offset,sendLeft:send.left,
+            padding:parseFloat(style.paddingLeft),horizontalOverflow:input.scrollWidth>input.clientWidth+1,
+            start:input.selectionStart,end:input.selectionEnd,text:input.value,focused:document.activeElement===input};
+        })()`);
+        assert.ok(focus.outline >= 2 && focus.offset <= -focus.outline && focus.padding >= 4, JSON.stringify({ width, height, theme, ...focus }));
+        assert.ok(focus.right <= focus.sendLeft + 1 && !focus.horizontalOverflow, JSON.stringify({ width, height, theme, ...focus }));
+        assert.deepEqual([focus.start, focus.end, focus.text, focus.focused], [3, 9, longDraft, true]);
+        if (process.env.TANDEM_UI_EVIDENCE) {
+          await inside('document.querySelector("#composer").scrollIntoView({block:"end"})');
+          await browser.evaluate('document.querySelector("#project-conversation-frame").scrollIntoView({block:"end"})');
+          await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `composer-focus-${width}x${height}-${theme}.png`), await browser.screenshot());
+          await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `composer-focus-${width}x${height}-${theme}.json`), JSON.stringify(focus, null, 2));
+        }
+      }
+      assert.equal(nativeRequests.length, 1, "Focus and long-text editing do not send or duplicate a request.");
+      await inside('document.querySelector("#message").value="";document.querySelector("#message").dispatchEvent(new Event("input",{bubbles:true}))');
+      await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 1000, deviceScaleFactor: 1, mobile: false });
       const queuedInputs = [
         { id: "queued-one", message: "@agent Rerun the game after update.", receivedAt: new Date().toISOString(),
           answers: null, roleHint: { schemaVersion: "human-role-hint/v1", role: "agent" } },
@@ -1264,21 +1324,29 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       const requestId = nativeRequests[0].id;
       nativeState.handoffs.push({ id: "handoff:question-result", presented: true,
         result: { resultId: "question-result", outcome: { kind: "designer-questions", summary: "Confirm scope." } } });
-      nativeState.questions.push({ id: "scope-question", question: "Which scope should we retain?", context: "Saved project scope",
-        whyItMatters: "Avoid unintended changes", importance: "blocking", options: [], allowFreeform: true,
+      nativeState.questions.push({ id: "scope-question", question: "Which scope should we retain?",
+        context: "Saved project scope: the reader must understand the consequences before choosing a change. ".repeat(8),
+        whyItMatters: "Avoid unintended changes", importance: "blocking",
+        options: Array.from({ length: 8 }, (_, i) => ({ id: `scope-${i}`, label: `Scope ${i + 1}`,
+          implication: `Scope ${i + 1} keeps the agreed behavior and makes this navigation choice explicit.` })), allowFreeform: true,
         state: "open", blockingActive: true, source: { role: "designer", resultId: "question-result",
           requestId, requestIds: [requestId], cycleId: null, design: designBinding, planDigest: null } });
       events.touch();
       await waitInside('!document.querySelector("#show-questions").disabled');
-      if (await inside('document.querySelector("#question-panel").hidden')) await click("#show-questions", true);
-      await click("#question-panel select", true);
+      assert.equal(await inside('document.querySelector("#question-panel").hidden'), true, "New questions cannot switch the workspace.");
+      await click("#show-questions", true);
+      await click("#question-panel fieldset select", true);
       for (const [key, windowsVirtualKeyCode] of [["End", 35], ["Enter", 13]]) {
         await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key, windowsVirtualKeyCode });
         await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key, windowsVirtualKeyCode });
       }
       await click('#question-panel textarea', true);
       await browser.call("Input.insertText", { text: "Keep the current approved scope." });
-      await checkDevelopmentLayout("active-question");
+      for (const theme of ["light", "dark"]) {
+        await inside(`document.body.dataset.theme=${JSON.stringify(theme)}`);
+        await browser.evaluate(`document.documentElement.dataset.projectTheme=${JSON.stringify(theme)}`);
+        await checkDevelopmentLayout(`active-question-${theme}`);
+      }
       await click('[data-human-loop-action="submitAnswers"]', true);
       await waitInside('document.querySelector("#question-panel").textContent.includes("Submitted answer:")');
       assert.equal(nativeRequests.length, 2);
@@ -1413,22 +1481,25 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
           }
           const fit = await browser.evaluate(`(() => {
             const row=document.querySelector("#development-tab"), list=document.querySelector("#project-contents");
-            const badge=row.querySelector(".project-availability, .artifact-count"), label=row.querySelector(".project-tab-label");
+            const badge=row.querySelector(".artifact-count") ?? row.querySelector(".current-phase"), label=row.querySelector(".project-tab-label");
             const r=row.getBoundingClientRect(), b=badge.getBoundingClientRect(), l=label.getBoundingClientRect();
             return {sidebar:document.querySelector("#requirements-pane").getBoundingClientRect().width,
               rowFits:row.scrollWidth<=row.clientWidth+1,listFits:list.scrollWidth<=list.clientWidth+1,
               labelFits:l.left>=r.left&&l.right<=r.right,label:label.textContent,
               badgeFits:b.left>=r.left&&b.right<=r.right,badge:badge.textContent,title:badge.title,
               sameRow:Math.abs((b.top+b.bottom)/2-(l.top+l.bottom)/2)<1,
-              name:row.getAttribute("aria-label"),selected:row.getAttribute("aria-selected")};
+              name:row.getAttribute("aria-label"),selected:row.getAttribute("aria-selected"),
+              current:row.getAttribute("aria-current"),passive:row.querySelectorAll(".project-availability").length};
           })()`);
           assert.equal(fit.label, "Development");
           assert.equal(fit.badge, mode === "available" ? "" : "New output");
           assert.equal(fit.selected, mode === "available" ? "true" : "false");
           assert.equal(fit.name, `Development, Current phase, ${mode === "available" ? "Design available" : "New Design output"}`);
+          assert.equal(fit.current, "step");
+          assert.equal(fit.passive, 0);
           if (mode === "available") {
-            assert.equal(fit.title, "Design available");
-            assert.equal(fit.sameRow, true, "The passive marker stays beside Development, not on a second row.");
+            assert.equal(fit.title, "Current phase");
+            assert.equal(fit.sameRow, true, "The current-phase marker stays beside Development, not on a second row.");
           }
           assert.ok(fit.rowFits && fit.listFits && fit.labelFits && fit.badgeFits,
             `Navigation keeps full labels and ${mode} without horizontal scrolling at ${width}: ${JSON.stringify(fit)}`);
@@ -1436,7 +1507,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
           if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `design-marker-${mode}-${width}.png`), await browser.screenshot());
         }
         await click("#development-tab");
-        await browser.waitFor('Boolean(document.querySelector("#development-tab .project-availability"))');
+        await browser.waitFor('Boolean(document.querySelector("#development-tab .current-phase")) && !document.querySelector("#development-tab .artifact-count")');
         assert.equal(await browser.evaluate('document.activeElement.id'), "development-tab");
         if (width < 800) {
           assert.equal(await inside('document.querySelector("#workspace-divider").hidden'), true);
