@@ -12,6 +12,7 @@ import { createWorkflowStopControl } from './workflow-stop-control.js';
 import { installPanelSplitter } from './panel-splitter.js';
 import { createImplementationConfirmations } from './implementation-confirmation.js';
 import { installProjectPresentation } from './project-presentation.js';
+import { currentHandoffActivity, quietHandoff } from './handoff-presentation.js';
 import { projectOutputs } from './project-outputs.js';
 import { parseRoleMention } from './role-hint.js';
 import { createQueuedRequests } from './queued-requests.js';
@@ -217,6 +218,9 @@ function closeQuestions({ focus = false } = {}) {
 }
 const conversation = createConversationRenderer({ messages: $('messages'), history: $('state-history'),
   current: $('current-state'), currentDetail: $('current-detail'), newer: $('newer'),
+  canFollowMessages: () => !$('messages').contains(document.activeElement)
+    && !snapshot?.workflow?.questionInteractions.some(group => group.canAnswer
+      && group.questions.some(question => question.state === 'open' && question.blockingActive)),
   onSelectState: transition => { $('history-details')?.remove(); queuedRequests.focusRequest(transition.source?.requestId); } });
 const queuedRequests = createQueuedRequests($('queued-requests'));
 let annotation;
@@ -349,7 +353,6 @@ $('message').addEventListener('input', renderRoleHint);
 function render() {
   clipboard.refresh();
   if (!snapshot) return;
-  const followMessages = $('messages').scrollHeight - $('messages').scrollTop - $('messages').clientHeight < 60;
   const view = snapshot.workflow;
   const installed = snapshot.installation;
   const compaction = view?.compaction;
@@ -474,9 +477,12 @@ function render() {
     return row;
   }));
   const designVerified = snapshot.conversationStatus !== 'unverified' && ['ready', 'closed'].includes(installed?.status);
-  const prototypeActivity = designVerified ? snapshot.workflow?.handoffActivity?.at(-1) : null;
-  $('prototype-handoff-activity').hidden = !prototypeActivity;
-  $('prototype-handoff-activity').textContent = prototypeActivity?.label ?? '';
+  const statusOwner = projectPresentation?.handoffStatusOwner();
+  const prototypeActivity = designVerified ? currentHandoffActivity(snapshot.workflow?.handoffActivity, statusOwner) : null;
+  const showPrototypeActivity = prototypeActivity && prototypeActivity.requestId !== statusOwner
+    && !quietHandoff(prototypeActivity, snapshot.design?.content ? snapshot.design.binding : null, snapshot.accessRequests?.length ?? 0);
+  $('prototype-handoff-activity').hidden = !showPrototypeActivity;
+  $('prototype-handoff-activity').textContent = showPrototypeActivity ? prototypeActivity.label : '';
   if (designVerified) lastVerifiedDesign = snapshot.design;
   const displayedDesign = designVerified ? snapshot.design : lastVerifiedDesign;
   const hasDesign = Boolean(displayedDesign?.content);
@@ -486,7 +492,7 @@ function render() {
   $('backbone-state').textContent = !designVerified ? 'Design unverified' : hasDesign ? 'Current Design' : 'No Design yet';
   $('assessment-card').querySelector('strong').textContent = designVerified ? 'No Design has been published' : 'Design is not yet verified';
   $('assessment-card').querySelector('p').textContent = designVerified
-    ? prototypeActivity ? 'The saved Prototype request is shown above. Its Design will appear here when published; do not resubmit while it is pending.'
+    ? prototypeActivity ? 'The saved Prototype request is tracked in Conversation. Design will appear here when published.'
       : 'Discuss your idea in the conversation. The current Design will appear here when it is ready.'
     : 'Restore the Development connection to verify saved Design. Unavailable does not mean empty.';
   if (hasDesign) {
@@ -512,9 +518,7 @@ function render() {
       return row;
     }));
   }
-  const hasAnswerableBlockers = questionGroups.some(group => group.canAnswer
-    && group.questions.some(question => question.state === 'open' && question.blockingActive));
-  if (followMessages && !hasAnswerableBlockers && !$('messages').contains(document.activeElement)) $('messages').scrollTop = $('messages').scrollHeight;
+  conversation.refreshLayout();
   projectPresentation?.publish(snapshot);
   focusProjectOutput();
   const outputView = $('project-output-view');

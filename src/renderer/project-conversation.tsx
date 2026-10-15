@@ -6,6 +6,7 @@ import type { LifecycleStageId } from "../types.js";
 import type { StartingPath } from "../project-entry.js";
 import { useDevelopmentGit } from "./development-git.js";
 import { ProcessPanel } from "./process-panel.js";
+import { validHandoffActivity, validHandoffDesign, type HandoffActivity, type HandoffDesign } from "../../development/tandem/public/handoff-presentation.js";
 
 type Entry = { id: string; kind: "user" | "status"; role: string; text: string; timestamp: string };
 export function projectDiscovery(state: UiState, busy: boolean, viewedStage: LifecycleStageId = state.lifecycle.currentStage) {
@@ -60,7 +61,8 @@ interface ProjectView {
     url: string | null; channel: string; error: string; active: boolean; starting: boolean; developmentEntered: boolean;
     status: string; detail: string; designRevision: string | null; designChanged: boolean; attention: number;
     maintenanceError: string;
-    handoffActivity: Array<{ requestId: string; label: string }> | null;
+    handoffActivity: HandoffActivity[] | null; designBinding: HandoffDesign | null;
+    setHandoffStatusOwner(requestId: string | null): void;
     permissions: number;
     processError: string;
     activate(retry?: boolean): Promise<void>; command(command: string): void;
@@ -86,10 +88,11 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
     const { state, post, pending, setBusy, browseStage } = useUi();
     const [view, setView] = useState({ url: null as string | null, channel: "", error: "", active: false, starting: false, developmentEntered: false,
         status: "Not activated", detail: "", designRevision: null as string | null, designChanged: false, attention: 0,
-        handoffActivity: null as Array<{ requestId: string; label: string }> | null, permissions: 0,
+        handoffActivity: null as HandoffActivity[] | null, designBinding: null as HandoffDesign | null, permissions: 0,
         outputs: [] as ProjectOutput[], outputStatus: "unverified", outputReason: "Development outputs have not been verified.",
         outputError: "", selectedOutput: null as string | null });
     const frame = useRef<HTMLIFrameElement>(null);
+    const [handoffStatusOwner, setHandoffStatusOwner] = useState<string | null>(null);
     const providerReload = useProviderReload(view.active || view.starting || view.status === "unknown" || effortBusy);
     const [entry, setEntry] = useState({ loading: true, busy: false, projectPath: state.projectPath ?? "", startingPath: null as StartingPath | null, error: "", ready: false });
     const choosing = useRef(false);
@@ -101,7 +104,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
     const [viewRequested, setViewRequested] = useState(false);
     const pendingCommand = useRef<string | null>(null);
     const entryCallback = useRef(onEntry); entryCallback.current = onEntry;
-    const latest = useRef({ state, post, pending, view, designVisible, viewedStage, showDesign, setBusy, browseStage, providerReload }); latest.current = { state, post, pending, view, designVisible, viewedStage, showDesign, setBusy, browseStage, providerReload };
+    const latest = useRef({ state, post, pending, view, designVisible, viewedStage, showDesign, setBusy, browseStage, providerReload, handoffStatusOwner }); latest.current = { state, post, pending, view, designVisible, viewedStage, showDesign, setBusy, browseStage, providerReload, handoffStatusOwner };
     const opening = useRef(false), submissions = useRef(new Map<string, { key: string; text: string; work: Promise<void> }>());
     const startRequested = useRef(false);
     const effortApplying = useRef(false);
@@ -157,6 +160,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
         const viewLabel = { prepare: "Preparation", requirements: "Requirements", sketch: "Drawings", prototype: "Prototype", development: "Development" }[workingStage];
         send({ type: "context", entries: [], discovery: projectDiscovery(state, pending, workingStage), viewedStage: workingStage, viewLabel,
             developmentEntered: view.developmentEntered,
+            handoffStatusOwner: latest.current.handoffStatusOwner,
             canActivate: canOpenDevelopment(state), developmentActive: view.active, designVisible,
             developmentEnabled: canOpenDevelopment(state), starting: view.starting,
             canChangeEffort: state.provider?.canSubmitAnswers !== false && !pending,
@@ -219,7 +223,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
         })();
         return () => { disposed = true; };
     }, [entry.ready, viewRequested, state.provider?.canSubmitAnswers]);
-    useEffect(() => { sync(); }, [state, pending, view.url, view.active, view.starting, view.developmentEntered, designVisible, viewedStage, JSON.stringify(providerReload.view)]);
+    useEffect(() => { sync(); }, [state, pending, view.url, view.active, view.starting, view.developmentEntered, designVisible, viewedStage, handoffStatusOwner, JSON.stringify(providerReload.view)]);
     useEffect(() => {
         const observer = new ResizeObserver(syncLayout);
         const workspace = document.getElementById("studio-workspace");
@@ -317,8 +321,8 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
                 if (retryable) startRequested.current = false;
                 setView(v => ({ ...v, status: message.status.slice(0, 80), detail: typeof message.reason === "string" ? message.reason.slice(0, 2000) : "",
                     handoffActivity: Array.isArray(message.handoffActivity) && message.handoffActivity.length <= 100
-                        && message.handoffActivity.every((item: { requestId?: unknown; label?: unknown } | null) => typeof item?.requestId === "string" && /^handoff-[a-f0-9]{64}$/.test(item.requestId)
-                            && typeof item.label === "string" && item.label.length <= 2000) ? message.handoffActivity : null,
+                        && message.handoffActivity.every(validHandoffActivity) ? message.handoffActivity : null,
+                    designBinding: validHandoffDesign(message.designBinding) ? message.designBinding : null,
                     permissions: Number.isSafeInteger(message.permissions) && message.permissions > 0 ? message.permissions : 0,
                     active: message.active === true,
                     starting: settled ? false : v.starting,
@@ -363,7 +367,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
     return <Context.Provider value={{ ...view, processError, maintenanceError: providerReload.view.error ? providerReload.view.message : "",
         visible: designVisible, entry, chooseEntry: path => loadEntry(true, path), reloadEntry: () => loadEntry(),
         gitSetupVisible: git.visible, requireDevelopmentGit: git.requireReady,
-        frame, sync, activate,
+        frame, sync, activate, setHandoffStatusOwner,
         prepareDevelopmentView: () => { setViewRequested(true); setView(v => ({ ...v, developmentEntered: true })); },
         resumeDiscovery: () => setView(v => ({ ...v, developmentEntered: false })),
         command: command => {

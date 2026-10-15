@@ -164,7 +164,7 @@ test("Designer answers retain Router intent authority without automatically admi
 
 test("initial staging validates a generic collection without publishing or changing product files", async (t) => {
   const f = await fixture(t);
-  assert.deepEqual(await f.adapter.read(), { binding: none, content: null, references: [] });
+  assert.deepEqual(await f.adapter.read(), { binding: none, content: null, publication: null, references: [] });
   const [tool] = f.adapter.tools();
   assert.equal(tool.name, "stage_human_design");
   assert.deepEqual(tool.roles, ["designer"]);
@@ -174,7 +174,7 @@ test("initial staging validates a generic collection without publishing or chang
   assert.match(staged.artifactRef, /^human-design:[a-f0-9]{64}$/);
   assert.deepEqual(await f.stage(), staged);
   assert.equal(await f.artifacts.inspectCurrent(), null);
-  assert.deepEqual(await f.adapter.read(), { binding: none, content: null, references: [] });
+  assert.deepEqual(await f.adapter.read(), { binding: none, content: null, publication: null, references: [] });
   assert.equal(await readFile(resolve(f.root, "app.js"), "utf8"), "export const retainedDirtyCode = 2;\n");
   assert.equal(await readFile(resolve(f.root, "TANDEM.md"), "utf8"), "Existing implementation index.\n");
   assert.deepEqual((await readdir(f.root)).sort(), [".tandem", "TANDEM.md", "app.js"]);
@@ -283,6 +283,7 @@ test("revision retains immutable history and resolves exact artifact, box and co
   assert.deepEqual(publication.previous, f.design.binding);
   assert.notEqual(publication.current.revisionId, f.design.binding.revisionId);
   const current = await f.adapter.read();
+  assert.deepEqual(current.publication, { requestId: f.packet.binding.requestId, previous: publication.previous });
   assert.deepEqual(current.content, validateDesign(output));
   assert.equal(current.content.schemaVersion, "sketch-design/v3");
   assert.equal(publication.current.digest, policyHash(output));
@@ -612,7 +613,7 @@ test("Designer layout and reference rejection is actionable and correctable on t
   assert.equal(state.activeTask.stagedResult, null);
   assert.equal(state.activeTask.result, null);
   assert.equal(state.activeTask.end, null);
-  assert.deepEqual(await f.adapter.read(), { binding: none, content: null, references: [] });
+  assert.deepEqual(await f.adapter.read(), { binding: none, content: null, publication: null, references: [] });
 });
 
 test("publication failure rolls back head and revision while preserving the prepared receipt for exact retry", async (t) => {

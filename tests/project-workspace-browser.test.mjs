@@ -19,6 +19,74 @@ import { createConversationRenderer } from "../development/tandem/public/rendere
 import { sharedDesignExampleV3 } from "../development/tandem/test/helpers/shared-design-fixture.mjs";
 import { exerciseRoleHintDraft } from "../development/tandem/test/helpers/role-hint-browser.mjs";
 
+test("one latest control tracks both viewports, manual scrollback and delayed growth without stealing follow intent", t => {
+  const dom = new JSDOM('<div><div id="history"></div></div><div id="messages"></div><div id="current"></div><div id="detail"></div><button id="newer"></button>');
+  t.after(() => dom.window.close());
+  const frames = [], observers = [];
+  dom.window.requestAnimationFrame = callback => { frames.push(callback); return frames.length; };
+  dom.window.ResizeObserver = class {
+    constructor(callback) { observers.push(callback); }
+    observe() {} unobserve() {} disconnect() {}
+  };
+  const get = id => dom.window.document.getElementById(id);
+  const geometry = id => {
+    const value = { height: 1000, viewport: 100, top: 0 }, element = get(id);
+    Object.defineProperties(element, {
+      scrollHeight: { get: () => value.height }, clientHeight: { get: () => value.viewport },
+      scrollTop: { get: () => value.top, set: top => { value.top = Math.max(0, Math.min(top, value.height - value.viewport)); } },
+    });
+    return value;
+  };
+  const messages = geometry("messages"), history = geometry("history");
+  let allowed = true;
+  const renderer = createConversationRenderer({ messages: get("messages"), history: get("history"),
+    current: get("current"), currentDetail: get("detail"), newer: get("newer"), canFollowMessages: () => allowed });
+  const flush = () => { while (frames.length) frames.shift()(); };
+  const resize = () => { for (const observe of observers) observe(); flush(); };
+  const scroll = (id, top) => { get(id).scrollTop = top; get(id).dispatchEvent(new dom.window.Event("scroll")); };
+  renderer.refreshLayout(); flush();
+  assert.deepEqual([messages.top, history.top, get("newer").hidden], [900, 900, true]);
+  assert.equal(get("newer").getAttribute("aria-controls"), "messages history");
+  assert.equal(dom.window.document.querySelector(".state-history-return"), null);
+  for (const targets of [["messages"], ["history"], ["messages", "history"]]) {
+    for (const target of targets) scroll(target, 100);
+    assert.equal(get("newer").hidden, false, "Manual scrollback alone reveals the control.");
+    renderer.refreshLayout(); flush();
+    for (const target of targets) assert.equal(get(target).scrollTop, 100);
+    get("newer").click(); flush();
+    assert.deepEqual([messages.top, history.top, get("newer").hidden], [900, 900, true]);
+  }
+  // A delayed event for our latest click arrives after content grows.
+  messages.height += 200; history.height += 200;
+  get("messages").dispatchEvent(new dom.window.Event("scroll"));
+  get("history").dispatchEvent(new dom.window.Event("scroll"));
+  resize();
+  assert.deepEqual([messages.top, history.top], [1100, 1100]);
+  renderer.refreshLayout();
+  get("messages").scrollTop = 100; get("history").scrollTop = 100;
+  flush();
+  assert.deepEqual([messages.top, history.top], [100, 100], "Scroll before the next frame wins even before its event.");
+  messages.height += 200; history.height += 200; resize();
+  assert.deepEqual([messages.top, history.top, get("newer").hidden], [100, 100, false]);
+  get("newer").click(); flush();
+  get("messages").dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: -100 }));
+  get("messages").scrollTop = 1200; messages.height += 200;
+  resize();
+  assert.equal(messages.top, 1200, "User scrolling wins even when content grows before its scroll event.");
+  get("newer").click(); flush();
+  allowed = false; messages.height += 200; history.height += 200; resize();
+  assert.deepEqual([messages.top, history.top], [1500, 1500], "Existing question/focus policy still gates automatic message following.");
+  get("newer").click(); flush();
+  assert.equal(messages.top, 1700, "Explicit latest remains available with blockers.");
+  allowed = true;
+  get("messages").dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: 100 }));
+  messages.height += 100; resize();
+  assert.equal(messages.top, 1800, "Scrolling down at the bottom without movement does not disable follow.");
+  messages.height = history.height = 50; messages.viewport = history.viewport = 100;
+  get("messages").scrollTop = get("history").scrollTop = 0; resize();
+  assert.equal(get("newer").hidden, true, "Nonoverflowing viewports reserve no latest-control row.");
+});
+
 test("saved evidence updates without rewriting immutable native conversation", t => {
   const dom = new JSDOM('<div><div id="history"></div></div><div id="messages"></div><div id="current"></div><div id="detail"></div><button id="newer"></button>', { pretendToBeVisual: true });
   t.after(() => dom.window.close());
@@ -53,6 +121,13 @@ test("presentation binding preserves drafts, exact pending receipts and standalo
   receive(context, parent, "http://127.0.0.1:5000"); assert.equal(api.canSend(), false);
   receive({ ...context, channel: "foreign" }); assert.equal(api.canSend(), false);
   receive(context); assert.equal(api.canSend(), true);
+  assert.equal(api.handoffStatusOwner(), null);
+  const handoffStatusOwner = `handoff-${"a".repeat(64)}`;
+  receive({ ...context, handoffStatusOwner }, null); assert.equal(api.handoffStatusOwner(), null);
+  receive({ ...context, handoffStatusOwner }, parent, "http://127.0.0.1:5000"); assert.equal(api.handoffStatusOwner(), null);
+  receive({ ...context, handoffStatusOwner, channel: "foreign" }); assert.equal(api.handoffStatusOwner(), null);
+  receive({ ...context, handoffStatusOwner }); assert.equal(api.handoffStatusOwner(), handoffStatusOwner);
+  receive({ ...context, handoffStatusOwner: "invalid" }); assert.equal(api.handoffStatusOwner(), null);
   dom.window.document.querySelector("#message").value = "Preserve my discovery draft.";
   receive({ type: "command", command: "development-target" });
   assert.equal(api.discovery(), true, "Activation cannot silently retarget an existing draft.");

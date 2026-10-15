@@ -342,7 +342,7 @@ test("packaged private UI shows Prototype work instead of an unexplained empty D
     await browser.call("Emulation.setDeviceMetricsOverride", { width: 390, height: 520, deviceScaleFactor: 1, mobile: false });
     await browser.call("Page.navigate", { url: f.provider.url });
     await browser.waitFor('document.querySelector("#prototype-handoff-activity")?.textContent.includes("Designer is reading")');
-    assert.match(await browser.evaluate('document.querySelector("#assessment-card").textContent'), /saved Prototype request is shown above/);
+    assert.match(await browser.evaluate('document.querySelector("#assessment-card").textContent'), /saved Prototype request is tracked in Conversation/);
     await browser.evaluate('document.querySelector("#prototype-handoff-activity").scrollIntoView({block:"nearest"})');
     assert.equal(await browser.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'), true);
     f.setInstallationStatus("unknown");

@@ -101,7 +101,8 @@ Prototype**). Cancel changes nothing. **Open Development** is navigation only.
 After confirmation, status distinguishes submission, Designer work and published
 Design/questions. If activity is unavailable, it says unverified rather than
 claiming completion. Scripts do not run and implementation remains separately
-confirmed.
+confirmed. Once the matching Design is verified and visible, the completed
+handoff notice disappears; its result and saved source details remain available.
 
 Saved source and a running preview are separate. Use
 [preview recovery](troubleshooting.md#the-preview-is-unavailable) to restart a
@@ -129,6 +130,11 @@ in one column; **Go to Conversation** moves to the composer.
 **Back to Design** restores the retained Design view. Inspecting a Design
 reference offers **Back to Questions** without discarding your answer drafts.
 New questions and answers do not switch views.
+
+**Go to latest** (down arrow) appears when you scroll back in Conversation or
+status history, even without new messages. It returns both to the latest content
+without sending anything or clearing drafts. Incoming updates do not move you
+away from older content you are reading.
 
 **Send selected answers** sends the displayed selection list from that source as
 one batch, including drafts for its other questions; drafts from other sources

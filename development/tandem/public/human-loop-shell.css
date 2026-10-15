@@ -120,8 +120,7 @@
 .human-app #messages { flex: 1; min-height: 0; overflow: auto; padding: 18px 20px 24px; scrollbar-width: thin; }
 .human-app .conversation-state-column { display: flex; flex-direction: column; overflow: hidden; flex-shrink: 0; }
 .human-app #state-history { flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 0 3px; list-style: none; scrollbar-width: thin; }
-.human-app .state-history-return { flex: none; align-self: flex-end; max-width: calc(100% - 8px); font-size: 10px; padding: 5px; margin: 0 4px 6px; color: var(--text); background: var(--surface); border: 1px solid var(--border); }
-.human-app #newer { position: static; flex: none; align-self: center; margin: 6px; padding: 5px 12px; border: 1px solid var(--border); border-radius: 20px; color: var(--text); background: var(--surface-raised); }
+.human-app #newer { position: static; flex: none; align-self: flex-end; max-width: calc(100% - 8px); margin: 4px; padding: 5px 12px; border: 1px solid var(--border); border-radius: 20px; color: var(--text); background: var(--surface-raised); }
 .human-app #notice { flex: none; max-height: 100px; overflow: auto; margin: 6px 17px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--surface-raised); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
 .human-app .state-history-step[data-selected="true"] > button { text-decoration: underline; text-underline-offset: 3px; }
 .human-app #advanced-workflow-controls:not([open]) { display: none; }
@@ -192,7 +191,7 @@
   .conversation-state-strip button, .state-history-step button, .conversation-state-history h3,
   .conversation-state-history > p, .conversation-current strong, .conversation-current > span,
   .conversation-entry header, .conversation-entry header strong, .conversation-entry time,
-  .conversation-role, .conversation-queue-state, .state-history-return, .connection, .canvas-footer,
+  .conversation-role, .conversation-queue-state, .connection, .canvas-footer,
   .human-loop, .human-loop p:not(.human-loop-question-status), .human-loop li, .human-loop details, .human-loop button,
   .human-loop h4:not(.human-loop-question-title), .access-card, .access-card h3, #message, #notice, #advanced-workflow-controls) { font-size: var(--shell-font-size); }
 .human-app .human-loop h3 { font-size: calc(var(--shell-font-size) + 4px); }
