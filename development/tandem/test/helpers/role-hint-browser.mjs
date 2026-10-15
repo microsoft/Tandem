@@ -4,6 +4,13 @@ import assert from "node:assert/strict";
 export async function exerciseRoleHintDraft({ browser, evaluate, click }) {
   const value = () => evaluate('document.querySelector("#message").value');
   const help = () => evaluate('document.querySelector("#role-hint-help").textContent');
+  const quiet = async () => {
+    assert.equal(await help(), "");
+    assert.equal(await evaluate('document.querySelector("#role-hint-help").getBoundingClientRect().height'), 0);
+    assert.equal(await evaluate('document.querySelector("#message").hasAttribute("aria-describedby")'), false);
+    assert.equal(await evaluate('document.querySelector("#message").getAttribute("aria-invalid")'), "false");
+  };
+  await quiet();
   const key = async (key, windowsVirtualKeyCode, modifiers = 0) => {
     for (const type of ["keyDown", "keyUp"]) await browser.call("Input.dispatchKeyEvent",
       { type, key, windowsVirtualKeyCode, modifiers,
@@ -16,6 +23,8 @@ export async function exerciseRoleHintDraft({ browser, evaluate, click }) {
   };
   await replace("@designer");
   assert.match(await help(), /Add a message/);
+  assert.equal(await evaluate('document.querySelector("#role-hint-help").checkVisibility()'), true);
+  assert.equal(await evaluate('document.querySelector("#message").getAttribute("aria-invalid")'), "true");
   assert.equal(await evaluate('document.querySelector("#message").getAttribute("aria-describedby")'), "role-hint-help");
   await key("Escape", 27);
   assert.equal(await value(), "@designer", "Escape does not discard a draft.");
@@ -30,6 +39,8 @@ export async function exerciseRoleHintDraft({ browser, evaluate, click }) {
   assert.equal(await value(), "@designer @agent Explain.");
   await replace("@designer Explain the current Design.");
   assert.match(await help(), /Preference: @designer.*Router decides/);
+  assert.equal(await evaluate('document.querySelector("#role-hint-help").checkVisibility()'), true);
+  assert.equal(await evaluate('document.querySelector("#message").getAttribute("aria-invalid")'), "false");
   await evaluate(`window.roleHintAnnouncements = 0; new MutationObserver(() => window.roleHintAnnouncements++)
     .observe(document.querySelector("#role-hint-help"), {childList:true,subtree:true,characterData:true})`);
   await key("End", 35, 2);
@@ -45,10 +56,12 @@ export async function exerciseRoleHintDraft({ browser, evaluate, click }) {
   await key("Backspace", 8);
   assert.equal(await value(), "Explain the current Design.");
   assert.doesNotMatch(await help(), /Preference:/);
+  await quiet();
 
   for (const text of ["@planner Explain.", "mail@agent.example", "`@designer example`", "Explain @agent literally."]) {
     await replace(text);
     assert.doesNotMatch(await help(), /Preference:|Use only one|Add a message/);
+    await quiet();
   }
   await replace("@agent Explain.");
   await key("End", 35, 2);
@@ -71,4 +84,5 @@ export async function exerciseRoleHintDraft({ browser, evaluate, click }) {
   await key("Backspace", 8);
   assert.equal(await value(), "");
   assert.doesNotMatch(await help(), /Preference:/);
+  await quiet();
 }

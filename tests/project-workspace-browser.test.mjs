@@ -111,6 +111,55 @@ test("attachment-only drafts and pending native submissions cannot be silently m
   assert.equal(sent.some(item => ["activate", "discovery-send"].includes(item.type)), false);
 });
 
+test("composer context omits idle instructions but retains startup, conflict and uncertain-submission states", async t => {
+  const dom = new JSDOM('<body data-project-panel="workspace" data-project-origin="http://127.0.0.1:4000" data-project-channel="quiet"><form id="composer"><textarea id="message"></textarea></form>');
+  t.after(() => dom.window.close());
+  const sent = [], parent = { postMessage: data => sent.push(data) };
+  Object.defineProperty(dom.window, "parent", { value: parent });
+  const api = installProjectPresentation({ document: dom.window.document, window: dom.window, changed() {} });
+  const receive = data => dom.window.dispatchEvent(new dom.window.MessageEvent("message", { source: parent, origin: "http://127.0.0.1:4000",
+    data: { protocol: "tandem-project/v1", channel: "quiet", ...data } }));
+  const help = dom.window.document.querySelector("#project-message-context p");
+  assert.equal(help.hidden, false);
+  assert.equal(help.textContent, "Waiting for the project workspace.");
+  const context = { type: "context", entries: [], viewedStage: "development", viewLabel: "Development",
+    developmentEntered: true, developmentEnabled: true,
+    discovery: { key: "usage", label: "Requirements", help: "Waiting for project ownership.", enabled: false } };
+  receive({ ...context, starting: true });
+  assert.equal(help.hidden, false); assert.equal(help.textContent, "Starting Development...");
+  assert.equal(dom.window.document.querySelector("#project-message-context").hidden, false);
+  assert.equal(api.developmentEnabled(), false);
+  receive(context);
+  assert.equal(help.hidden, true); assert.equal(help.textContent, "");
+  assert.equal(dom.window.document.querySelector("#project-message-context").hidden, true);
+  assert.equal(dom.window.document.querySelector("#project-message-context strong").hidden, true);
+  assert.match(api.placeholder(), /Ask about the Design/);
+  const input = dom.window.document.querySelector("#message");
+  input.value = "Retain this draft."; input.dispatchEvent(new dom.window.Event("input"));
+  input.focus(); input.setSelectionRange(2, 7);
+  api.nativePending(true); receive(context);
+  assert.equal(help.hidden, true);
+  assert.deepEqual([input.value, input.selectionStart, input.selectionEnd, dom.window.document.activeElement === input],
+    ["Retain this draft.", 2, 7, true]);
+  api.nativePending(false);
+  receive({ ...context, viewedStage: "requirements", viewLabel: "Requirements" });
+  assert.equal(help.hidden, false); assert.match(help.textContent, /draft belongs to Development/);
+  assert.equal(dom.window.document.querySelector("#project-message-context").hidden, false);
+  assert.equal(api.canSend(), false);
+  input.value = ""; input.dispatchEvent(new dom.window.Event("input"));
+  assert.equal(help.hidden, false); assert.equal(help.textContent, "Waiting for project ownership.");
+  receive({ ...context, viewedStage: "requirements", viewLabel: "Requirements",
+    discovery: { ...context.discovery, enabled: true } });
+  const request = api.submit("Exact request");
+  const envelope = sent.find(item => item.type === "discovery-send");
+  assert.equal(help.hidden, false); assert.match(help.textContent, /Awaiting the exact discovery action result/);
+  receive({ type: "discovery-unknown", id: envelope.id });
+  assert.equal(help.hidden, false); assert.match(help.textContent, /cannot confirm the submission/);
+  receive({ type: "discovery-result", id: envelope.id, ok: false, error: "Explicit failure" });
+  await assert.rejects(request, /Explicit failure/);
+  assert.equal(sent.filter(item => item.type === "discovery-send").length, 1);
+});
+
 test("project layout accepts responsive defaults without treating invalid widths as defaults", t => {
   const dom = new JSDOM('<body data-project-panel="workspace" data-project-origin="http://127.0.0.1:4000" data-project-channel="layout"><form id="composer"><textarea id="message"></textarea></form>');
   t.after(() => dom.window.close());
@@ -526,8 +575,10 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await push();
       await clickRoot("#preparation-tab");
       await browser.waitFor('Boolean(document.querySelector("#start-goal"))');
+      assert.doesNotMatch(await browser.evaluate('document.querySelector("#start-panel").innerText'), /Describe the project here|Implementation remains a separate/);
       await assertCleanSidebar();
       await clickRoot("#project-settings");
+      assert.doesNotMatch(await browser.evaluate('document.querySelector("[role=alertdialog]").innerText'), /Not needed for everyday project work/);
       await clickRoot("#acceptance-delivery");
       await browser.waitFor('!!document.querySelector(".process-dialog")');
       assert.equal(await browser.evaluate('document.querySelector("#handoff-approver, #export-handoff")'), null);
@@ -1144,6 +1195,9 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await waitInside(`Math.abs(document.querySelector("#conversation-panel").getBoundingClientRect().width-${initialWidth + 10})<2`);
       assert.equal(await inside('document.querySelector("#message").value'), "As a user, I keep my draft while viewing Design.");
       assert.equal(await inside('document.querySelector("#project-message-context strong").textContent'), "Development");
+      assert.equal(await inside('document.querySelector("#project-message-context p").hidden'), true);
+      assert.equal(await inside('document.querySelector("#project-message-context p").textContent'), "");
+      assert.equal(await inside('document.querySelector("#project-message-context").checkVisibility()'), false);
       await click("#design-tree-tab");
       await waitInside('document.body.dataset.projectDesign==="false"');
       assert.equal(await browser.evaluate('document.querySelector("#project-conversation-frame").hidden'), true);
@@ -1280,11 +1334,16 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
             style=getComputedStyle(input),outline=parseFloat(style.outlineWidth),offset=parseFloat(style.outlineOffset);
           return {outline,offset,color:style.outlineColor,right:r.right+outline+offset,sendLeft:send.left,
             padding:parseFloat(style.paddingLeft),horizontalOverflow:input.scrollWidth>input.clientWidth+1,
+            idleContextHeight:document.querySelector("#project-message-context p").getBoundingClientRect().height,
+            contextHeight:document.querySelector("#project-message-context").getBoundingClientRect().height,
+            roleHelpHeight:document.querySelector("#role-hint-help").getBoundingClientRect().height,
+            describedBy:input.getAttribute("aria-describedby"),
             start:input.selectionStart,end:input.selectionEnd,text:input.value,focused:document.activeElement===input};
         })()`);
         assert.ok(focus.outline >= 2 && focus.offset <= -focus.outline && focus.padding >= 4, JSON.stringify({ width, height, theme, ...focus }));
         assert.ok(focus.right <= focus.sendLeft + 1 && !focus.horizontalOverflow, JSON.stringify({ width, height, theme, ...focus }));
         assert.deepEqual([focus.start, focus.end, focus.text, focus.focused], [3, 9, longDraft, true]);
+        assert.deepEqual([focus.contextHeight, focus.idleContextHeight, focus.roleHelpHeight, focus.describedBy], [0, 0, 0, null]);
         if (process.env.TANDEM_UI_EVIDENCE) {
           await inside('document.querySelector("#composer").scrollIntoView({block:"end"})');
           await browser.evaluate('document.querySelector("#project-conversation-frame").scrollIntoView({block:"end"})');

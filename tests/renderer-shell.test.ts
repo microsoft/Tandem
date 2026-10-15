@@ -187,6 +187,9 @@ test("goal entry waits for an explicit valid start and retains drafts, focus and
     await h.click("show-next-action");
     assert.equal(h.requests.length, 0);
     assert.equal(disabled(h, "start-effort"), true);
+    assert.doesNotMatch(text(h, "start-panel"), /Describe the project here|Implementation remains a separate/);
+    assert.match(field(h, "start-goal").getAttribute("aria-describedby")!, /^start-help start-message(?: |$)/);
+    assert.match(field(h, "start-goal").placeholder, /Build an app/);
     await h.input("start-goal", "   "); await submit(h, "start-form");
     assert.match(text(h, "start-message"), /Enter a project goal/);
     assert.equal(field(h, "start-goal").getAttribute("aria-invalid"), "true");

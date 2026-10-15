@@ -72,7 +72,6 @@
   </section>
   <section id="project-process-settings" class="settings-section" hidden>
     <button id="acceptance-delivery" type="button" aria-haspopup="dialog">Advanced handoffs &amp; history</button>
-    <p>Review saved snapshots, record acceptance, and manage delivery integrations. Not needed for everyday project work.</p>
   </section>
 </details>
 </header>
@@ -158,8 +157,8 @@
       <div class="command-composer">
         <figure id="clipboard-preview" class="annotation-preview" hidden><img id="clipboard-image" alt="Unsent pasted image"><figcaption id="clipboard-caption" role="status"></figcaption><button type="button" id="clipboard-remove">Remove pasted image</button></figure>
         <figure id="annotation-preview" class="annotation-preview" hidden><img id="annotation-image" alt="Unsent diagram snapshot"><figcaption id="annotation-caption"></figcaption><button type="button" id="annotation-remove">Remove snapshot</button></figure>
-        <textarea id="message" rows="2" aria-describedby="role-hint-help" placeholder="Ask about the Design, or describe what you want to change..."></textarea>
-        <p id="role-hint-help" role="status">Start with @designer or @agent to suggest a role. Router decides.</p>
+        <textarea id="message" rows="2" placeholder="Ask about the Design, or describe what you want to change..."></textarea>
+        <p id="role-hint-help" role="status" hidden></p>
       </div>
       <button id="send" type="submit" aria-label="Send message" title="Send message" disabled>↑</button>
       <div class="composer-actions">

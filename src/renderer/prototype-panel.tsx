@@ -448,7 +448,6 @@ export function PrototypePanel({ active: visible, connected }: { active: boolean
     </div>
     <section id="prototype-review" className="prototype-review" hidden={!hasStageData(state, "prototype") || Boolean(unavailable)}>
       <div className="prototype-review-heading"><strong>Feedback</strong></div>
-      <p id="prototype-feedback-help" className="muted">Feedback is optional. Try the displayed prototype, then describe a change if you want one.</p>
       <form id="revision-form" className="revision-form inline-composer" aria-describedby="revision-status" onSubmit={(event) => {
         event.preventDefault();
         if (pending || !canEdit("prototype") || finalizing) return;

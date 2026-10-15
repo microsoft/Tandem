@@ -107,7 +107,6 @@ export function DiscoveryProjectSettings({ close, providerReload, openProcess }:
         {error && <p role="alert">{error}</p>}
         <section className="root-maintenance">
           <button id="acceptance-delivery" type="button" className="plan-button secondary" onClick={openProcess}>Advanced handoffs &amp; history</button>
-          <p>Review saved snapshots, record acceptance, and manage delivery integrations. Not needed for everyday project work.</p>
         </section>
         {(providerReload.view.supported || providerReload.view.message) && <details className="root-maintenance" id="root-maintenance">
           <summary>Advanced project diagnostics</summary>

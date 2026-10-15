@@ -179,7 +179,6 @@ function GoalEntry() {
             data-status-help="Starting runs AI preparation: Tandem inspects the workspace and relevant sources, then opens Requirements. Implementation comes later."><Play size={16} aria-hidden="true" />{action.busy ? "Starting..." : "Start project"}</button></div>
         <p id="start-message" className="start-message" role="status" data-status={action.error ? "error" : "idle"}>{action.error || (!writable ? "Open the writable Tandem provider to start this project." : "")}</p>
       </form>
-      <p className="muted">Describe the project here to begin Preparation. Implementation remains a separate, confirmed step.</p>
     </div>
   </section>;
 }

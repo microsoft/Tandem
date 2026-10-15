@@ -12,12 +12,11 @@ export function DevelopmentPanel({ active }: { active: boolean }) {
             : "Finish upstream work or its pending reset before opening Development.")}</div>;
     const snapshot = state.lifecycle.outputs.some(output => output.stageId === "prototype");
     return <div className="development-workspace">
-        <div className="development-toolbar">
-            <span>Development: Design, planning, implementation and Review.</span>
+        {(project.starting || !project.developmentEntered && !snapshot) && <div className="development-toolbar">
             {project.starting && <span role="status">Opening Development. Complete any native permission request in the owning session.</span>}
             {!project.developmentEntered && !snapshot && <button id="enter-development" type="button" className="plan-button"
                 onClick={() => void project.activate()}>Open Development</button>}
-        </div>
+        </div>}
         <HandoffControls />
         {!project.developmentEntered && snapshot && <p>Review the Prototype above to request Design, or <button id="enter-development"
             type="button" className="plan-button secondary" onClick={() => void project.activate()}>Open Development</button> without submitting it.</p>}

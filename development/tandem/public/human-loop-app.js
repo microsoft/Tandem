@@ -335,12 +335,14 @@ function renderComposer() {
 }
 function renderRoleHint() {
   const help = $('role-hint-help');
-  help.hidden = Boolean(projectPresentation?.discovery());
   const parsed = pending ? { roleHint: pending.roleHint, error: null } : parseRoleMention($('message').value);
   const text = parsed.error ?? (parsed.roleHint
     ? `Preference: @${parsed.roleHint.role} for this message. Router decides who responds.`
-    : 'Start with @designer or @agent to suggest a role. Router decides.');
+    : '');
+  help.hidden = Boolean(projectPresentation?.discovery()) || !text;
   if (help.textContent !== text) help.textContent = text;
+  if (help.hidden) $('message').removeAttribute('aria-describedby');
+  else $('message').setAttribute('aria-describedby', help.id);
   $('message').setAttribute('aria-invalid', String(!help.hidden && Boolean(parsed.error)));
 }
 $('message').addEventListener('input', renderRoleHint);

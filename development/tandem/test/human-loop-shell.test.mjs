@@ -6,6 +6,7 @@ import test from "node:test";
 import { browserAvailable, openFixtureBrowser } from "./helpers/browser-fixture.mjs";
 import { sharedDesignExample, sharedDesignExampleV2 } from "./helpers/shared-design-fixture.mjs";
 import { policyHash } from "../runtime-src/domain/workflow/policy.ts";
+import { exerciseRoleHintDraft } from "./helpers/role-hint-browser.mjs";
 
 const publicRoot = resolve(import.meta.dirname, "../public");
 const source = { role: "designer", resultId: "result", requestId: "request", requestIds: ["request"],
@@ -184,6 +185,50 @@ async function capture(browser, name, geometry) {
   await writeFile(join(process.env.HUMAN_SHELL_EVIDENCE, `${name}.png`), Buffer.from(image.data, "base64"));
   await writeFile(join(process.env.HUMAN_SHELL_EVIDENCE, `${name}.json`), JSON.stringify(geometry, null, 2));
 }
+
+test("composer hides generic tutorials without losing contextual hints, errors or accessible editing",
+  { skip: !browserAvailable, timeout: 60_000 }, async t => {
+    const f = await fixture(t), { browser } = f;
+    await browser.call("Page.navigate", { url: f.url });
+    await browser.waitFor("!document.querySelector('#send').disabled");
+    for (const [width, height] of [[1360, 900], [390, 620], [1360, 480]]) for (const theme of ["light", "dark"]) {
+      await browser.call("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+      await browser.evaluate(`document.body.dataset.theme=${JSON.stringify(theme)};
+        document.querySelector("#message").value="Keep this ordinary draft";
+        document.querySelector("#message").dispatchEvent(new Event("input",{bubbles:true}));
+        document.querySelector("#message").focus();document.querySelector("#message").setSelectionRange(2,7);
+        document.querySelector("#composer").scrollIntoView({block:"end"})`);
+      const quiet = await browser.evaluate(`(() => {
+        const input=document.querySelector("#message"),help=document.querySelector("#role-hint-help");
+        return {helpHeight:help.getBoundingClientRect().height,description:input.getAttribute("aria-describedby"),
+          label:document.querySelector('label[for="message"]').textContent,placeholder:input.placeholder,
+          overflow:document.documentElement.scrollWidth>innerWidth+1,caret:[input.selectionStart,input.selectionEnd],
+          sendDisabled:document.querySelector("#send").disabled};
+      })()`);
+      assert.equal(quiet.helpHeight, 0); assert.equal(quiet.description, null);
+      assert.ok(quiet.label && quiet.placeholder); assert.equal(quiet.overflow, false);
+      assert.deepEqual(quiet.caret, [2, 7]); assert.equal(quiet.sendDisabled, false);
+      await capture(browser, `quiet-private-composer-${width}x${height}-${theme}`, quiet);
+      await browser.evaluate(`document.querySelector("#message").value="@agent Explain.";
+        document.querySelector("#message").dispatchEvent(new Event("input",{bubbles:true}))`);
+      assert.equal(await browser.evaluate('document.querySelector("#role-hint-help").checkVisibility()'), true);
+      assert.equal(await browser.evaluate('document.querySelector("#message").getAttribute("aria-describedby")'), "role-hint-help");
+    }
+    await browser.evaluate('document.querySelector("#message").value="";document.querySelector("#message").dispatchEvent(new Event("input",{bubbles:true}))');
+    await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 900, deviceScaleFactor: 1, mobile: false });
+    await exerciseRoleHintDraft({ browser, evaluate: browser.evaluate, click: selector => click(browser, selector) });
+    await browser.evaluate(`document.querySelector("#message").value="@agent Explain.";
+      document.querySelector("#message").dispatchEvent(new Event("input",{bubbles:true}))`);
+    f.current.workflow.canSend = false;
+    f.current.workflow.status = "execution-unknown";
+    f.current.workflow.reason = "Execution could not be verified. Check the saved runtime.";
+    f.update();
+    await browser.waitFor("document.querySelector('#send').disabled");
+    assert.equal(await browser.evaluate('document.querySelector("#role-hint-help").checkVisibility()'), true);
+    assert.match(await browser.evaluate('document.querySelector("#human-workflow").textContent'), /Execution could not be verified/);
+    assert.equal(await browser.evaluate('document.querySelector("#message").value'), "@agent Explain.");
+    assert.deepEqual(f.posts, []); assert.deepEqual(browser.exceptions, []);
+  });
 
 test("Questions workspace keeps one readable question, explicit navigation and source-bound batches",
   { skip: !browserAvailable, timeout: 120_000 }, async t => {
