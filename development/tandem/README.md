@@ -250,8 +250,11 @@ one selected question and compact navigation. **Back to Design** restores the
 retained artifact view; Design references offer **Back to Questions**.
 Polling never changes this view or takes focus. Drafts survive navigation, and
 the visible selection list preserves source-bound **Send selected answers**
-batch semantics. **Answered history** starts collapsed and retains exact
-submitted answers and source references.
+batch semantics. The open-question picker is hidden when empty. **Answered
+history** starts collapsed; expand it for a compact saved-question list with
+recorded answers and **Inspect full context** actions. It is labeled **Question
+history** when it includes other statuses, without inferring answers or completion.
+Full details retain exact submitted answers and source references.
 Permissions have an explicit request selector and independent per-request
 reading/decision state; presentation never grants access.
 

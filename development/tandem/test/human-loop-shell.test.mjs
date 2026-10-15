@@ -237,8 +237,12 @@ test("Questions workspace keeps one readable question, explicit navigation and s
       focus:document.activeElement.id,caret:retainedComposer.selectionStart})`), { closed: true, focus: "message", caret: 2 });
     await click(browser, "#show-questions");
     const choose = async (result, id, history = false) => {
-      if (history) await browser.evaluate("document.querySelector('.question-history').open=true");
-      await browser.evaluate(`(() => { const picker=document.querySelector('[data-question-picker="${history ? "history" : "open"}"]');
+      if (history) {
+        await browser.evaluate("document.querySelector('.question-history').open=true");
+        await click(browser, `[data-question-history-key='${JSON.stringify([result, id])}']`);
+        return;
+      }
+      await browser.evaluate(`(() => { const picker=document.querySelector('[data-question-picker="open"]');
         picker.value=${JSON.stringify(JSON.stringify([result, id]))}; picker.dispatchEvent(new Event('change',{bubbles:true})); })()`);
     };
     const draft = async text => browser.evaluate(`(() => {const input=document.querySelector('fieldset:not([hidden]) textarea');
@@ -347,6 +351,179 @@ test("Questions workspace keeps one readable question, explicit navigation and s
     await choose("result", "scope", true);
     assert.match(await browser.evaluate("document.querySelector('fieldset:not([hidden]) .human-loop-submitted-answer').textContent"), /First exact draft/);
     assert.deepEqual(browser.exceptions, []);
+  });
+
+test("Questions saved history is readable without an empty picker, preserves exact sources and fits compact viewports",
+  { skip: !browserAvailable, timeout: 90_000 }, async t => {
+    const f = await fixture(t), { browser } = f;
+    const first = f.current.workflow.questionInteraction;
+    const question = first.questions[0];
+    question.state = "answered"; question.blockingActive = false; question.answerRequestId = "answer-one";
+    question.question = "A long identical question about keeping the original document and navigation. ".repeat(8);
+    question.designRefs = ["interaction#deliver"];
+    const second = structuredClone(first);
+    second.resultId = "second-result";
+    second.source = { ...source, resultId: second.resultId, requestId: "second-request", requestIds: ["second-request"] };
+    second.questions[0].source = second.source;
+    second.questions[0].answerRequestId = "answer-two";
+    f.current.workflow.questionInteractions = [first, second];
+    const answer = "Retain the full answer, with its exact source and intent. ".repeat(20) + "UNBROKEN".repeat(30);
+    f.current.messages.push(
+      { id: "answer-one", kind: "user", requestId: "answer-one", text: "Question form submission.",
+        timestamp: "2026-09-15T00:00:02Z", answerDetails: [{ questionId: question.id, sourceResultId: first.resultId, answer }] },
+      { id: "answer-two", kind: "user", requestId: "answer-two", text: "Question form submission.",
+        timestamp: "2026-09-15T00:00:03Z", answerDetails: [{ questionId: question.id, sourceResultId: second.resultId, answer: "Second source answer." }] },
+      { id: "second-message", kind: "user", requestId: "second-request", text: "The other original request.",
+        timestamp: "2026-09-15T00:00:01Z" });
+    await browser.call("Page.navigate", { url: f.url });
+    await browser.waitFor("document.querySelector('#show-questions')?.textContent==='Questions (0, 0 blockers)'");
+    await click(browser, "#show-questions");
+    assert.deepEqual(await browser.evaluate(`({
+      openPicker:document.querySelector('[data-question-picker="open"]').closest('label').checkVisibility(),
+      historyPicker:!!document.querySelector('[data-question-picker="history"]'),
+      summary:document.querySelector('.question-history > summary').textContent,
+      expanded:document.querySelector('.question-history').open,
+      details:document.querySelectorAll('fieldset:not([hidden])').length,
+      focus:document.activeElement===document.querySelector('.question-history > summary')
+    })`), { openPicker: false, historyPicker: false, summary: "Answered history (2)", expanded: false, details: 0, focus: true });
+    await click(browser, ".question-history > summary");
+    const items = await browser.evaluate(`Array.from(document.querySelectorAll('.question-history-list button'), b => ({
+      text:b.textContent,name:b.getAttribute('aria-label'),key:b.dataset.questionHistoryKey,visible:b.checkVisibility()
+    }))`);
+    assert.equal(items.length, 2);
+    assert.ok(items.every(item => item.visible && item.text.includes(question.question) && item.text.includes("Inspect full context")));
+    assert.match(items[0].text, /source 1.*answered.*Submitted answer: Retain/s);
+    assert.match(items[1].text, /source 2.*answered.*Submitted answer: Second source answer/s);
+    assert.notEqual(items[0].name, items[1].name);
+    assert.deepEqual(items.map(item => JSON.parse(item.key)), [[first.resultId, question.id], [second.resultId, question.id]]);
+    assert.equal(await browser.evaluate("document.querySelector('.question-navigation > p').checkVisibility()"), false);
+    assert.doesNotMatch(await browser.evaluate("document.querySelector('.question-navigation').textContent"), /Expand Answered history|Choose a saved question/);
+    for (const [width, height] of [[1360, 900], [920, 620], [390, 620], [320, 480], [1360, 480]]) {
+      await browser.call("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+      await browser.evaluate("document.querySelector('#questions-content').scrollTop=0;window.scrollTo(0,0)");
+      const geometry = await browser.evaluate(`(() => {
+        const content=document.querySelector('#questions-content'),list=document.querySelector('.question-history-list');
+        return {pageOverflow:document.documentElement.scrollWidth>innerWidth+1,
+          questionOverflow:content.scrollWidth>content.clientWidth+1,
+          rows:[...list.children].map(li=>li.getBoundingClientRect().height),
+          titleClamp:getComputedStyle(list.querySelector('.question-history-title')).webkitLineClamp,
+          answerClamp:getComputedStyle(list.querySelector('.question-history-answer')).webkitLineClamp,
+          pickerHeight:document.querySelector('[data-question-picker="open"]').closest('label').getBoundingClientRect().height};
+      })()`);
+      assert.equal(geometry.pageOverflow || geometry.questionOverflow, false, JSON.stringify(geometry));
+      assert.equal(geometry.pickerHeight, 0);
+      assert.equal(geometry.titleClamp, "2"); assert.equal(geometry.answerClamp, "2");
+      assert.ok(geometry.rows.every(height => height < 210), JSON.stringify(geometry));
+      await capture(browser, `questions-saved-list-${width}x${height}`, geometry);
+      await click(browser, ".question-history-list button");
+      assert.equal(await browser.evaluate("document.querySelectorAll('fieldset:not([hidden])').length"), 1);
+      assert.equal(await browser.evaluate("document.querySelector('fieldset:not([hidden]) h4').textContent"), question.question);
+      assert.equal(await browser.evaluate("document.querySelector('fieldset:not([hidden]) .human-loop-submitted-answer').textContent"), `Submitted answer: ${answer}`);
+      assert.equal(await browser.evaluate("document.activeElement===document.querySelector('fieldset:not([hidden]) h4')"), true);
+      assert.equal(await browser.evaluate("document.querySelector('fieldset:not([hidden]) h4').getBoundingClientRect().top >= 0"), true);
+    }
+    await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 900, deviceScaleFactor: 1, mobile: false });
+    await click(browser, ".question-history-list li:nth-child(2) button");
+    assert.equal(await browser.evaluate("document.querySelector('.human-loop-question-group:not([hidden]) form').dataset.sourceResultId"), "second-result");
+    assert.match(await browser.evaluate("document.querySelector('fieldset:not([hidden]) .human-loop-submitted-answer').textContent"), /Second source answer/);
+    await click(browser, '.human-loop-question-group:not([hidden]) button:not([data-human-loop-action])');
+    await browser.waitFor("document.querySelector('[data-entry-id=second-message]').classList.contains('state-focused')");
+    await browser.evaluate(`globalThis.historyButton=document.querySelector('.question-history-list button');
+      historyButton.focus();document.querySelector('#message').value='Unsent conversation draft'`);
+    second.questions[0].processingState = "retired";
+    f.update();
+    await browser.waitFor("document.querySelector('.question-history-list li:nth-child(2)').textContent.includes('Not resumed')");
+    assert.equal(await browser.evaluate("document.activeElement===historyButton"), true);
+    assert.equal(await browser.evaluate("document.querySelector('fieldset:not([hidden])').closest('form').dataset.sourceResultId"), "second-result");
+    assert.equal(await browser.evaluate("document.querySelector('.question-history').open"), true);
+    assert.equal(await browser.evaluate("document.querySelector('#message').value"), "Unsent conversation draft");
+    first.questions.push({ ...structuredClone(question), id: "later-saved" });
+    f.update();
+    await browser.waitFor("document.querySelectorAll('.question-history-list button').length===3");
+    assert.equal(await browser.evaluate("document.activeElement===historyButton"), true, "Adding history retains an existing focused list action.");
+    await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r", unmodifiedText: "\r" });
+    await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+    assert.equal(await browser.evaluate("document.querySelector('fieldset:not([hidden])').closest('form').dataset.sourceResultId"), first.resultId);
+    assert.equal(await browser.evaluate("document.activeElement===document.querySelector('fieldset:not([hidden]) h4')"), true);
+    assert.deepEqual(f.posts, []); assert.deepEqual(browser.exceptions, []);
+  });
+
+test("Questions history uses truthful statuses and retains selection and drafts through lifecycle updates and empty states",
+  { skip: !browserAvailable, timeout: 60_000 }, async t => {
+    const f = await fixture(t), { browser } = f;
+    const group = f.current.workflow.questionInteraction, question = group.questions[0];
+    await browser.call("Page.navigate", { url: f.url });
+    await browser.waitFor("document.querySelector('[data-question-picker=open]')");
+    await click(browser, "#show-questions");
+    assert.equal(await browser.evaluate("document.querySelector('.question-history').checkVisibility()"), false);
+    await browser.evaluate(`globalThis.draft=document.querySelector('fieldset:not([hidden]) textarea');
+      draft.value='Keep exact unsent answer';draft.dispatchEvent(new Event('input',{bubbles:true}));
+      draft.focus();draft.setSelectionRange(3,8)`);
+    const saved = { ...structuredClone(question), id: "saved", state: "answered", blockingActive: false, answerRequestId: "saved-answer" };
+    group.questions.push(saved);
+    f.update();
+    await browser.waitFor("document.querySelector('.question-history-list button')");
+    assert.equal(await browser.evaluate("document.querySelector('fieldset:not([hidden]) textarea').value"), "Keep exact unsent answer");
+    await click(browser, ".question-history > summary");
+    await click(browser, ".question-history-list button");
+    assert.match(await browser.evaluate("document.querySelector('.question-history-list').textContent"), /Answered. The submitted answer is retained in Conversation/);
+    saved.processingState = "rejected";
+    f.current.messages.push({ id: "wrong-answer", kind: "user", requestId: "wrong-request", text: "Unrelated answer.",
+      timestamp: "2026-09-15T00:00:02Z", answerDetails: [
+        { questionId: "saved", sourceResultId: group.resultId, answer: "Wrong request answer" },
+        { questionId: "saved", sourceResultId: "other-source", answer: "Wrong source answer" },
+        { questionId: "other-question", sourceResultId: group.resultId, answer: "Wrong question answer" }] });
+    f.update();
+    await browser.waitFor("document.querySelector('.question-history-list').textContent.includes('Rejected')");
+    assert.doesNotMatch(await browser.evaluate("document.querySelector('.question-history-list').textContent"), /Wrong .* answer/);
+    saved.state = "invalidated"; saved.invalidation = { reason: "Superseded by an explicit Design change." };
+    f.update();
+    await browser.waitFor("document.querySelector('.question-history > summary').textContent==='Question history (1)'");
+    assert.equal(await browser.evaluate("document.querySelector('fieldset:not([hidden])').dataset.questionId"), "saved");
+    assert.match(await browser.evaluate("document.querySelector('.question-history-list').textContent"), /invalidated.*Rejected.*Superseded/s);
+    assert.doesNotMatch(await browser.evaluate("document.querySelector('.question-history-list').textContent"), /Submitted answer:|Completed/);
+    f.current.messages.push({ id: "saved-answer", kind: "user", requestId: "saved-answer", text: "Question form submission.",
+      timestamp: "2026-09-15T00:00:03Z", answerDetails: [
+        { questionId: "saved", sourceResultId: group.resultId, answer: "An exact answer retained before invalidation." }] });
+    f.update();
+    await browser.waitFor("document.querySelector('.question-history-list').textContent.includes('Submitted answer: An exact answer retained before invalidation.')");
+    assert.match(await browser.evaluate("document.querySelector('.question-history-list').textContent"), /invalidated.*Rejected/s);
+    assert.match(await browser.evaluate("document.querySelector('fieldset:not([hidden]) .human-loop-submitted-answer').textContent"), /An exact answer retained before invalidation/);
+    assert.match(await browser.evaluate("document.querySelector('fieldset:not([hidden]) .human-loop-submitted-answer').textContent"), /Superseded by an explicit Design change/);
+    await browser.evaluate(`const picker=document.querySelector('[data-question-picker=open]');
+      picker.value=${JSON.stringify(JSON.stringify([group.resultId, question.id]))};picker.dispatchEvent(new Event('change',{bubbles:true}));
+      globalThis.retainedDraft=document.querySelector('fieldset:not([hidden]) textarea');
+      retainedDraft.focus();retainedDraft.setSelectionRange(3,8)`);
+    assert.equal(await browser.evaluate("retainedDraft.value"), "Keep exact unsent answer");
+    saved.processingState = "retired";
+    f.update();
+    await browser.waitFor("document.querySelector('.question-history-list').textContent.includes('Not resumed')");
+    assert.deepEqual(await browser.evaluate("({same:document.activeElement===retainedDraft,start:retainedDraft.selectionStart,end:retainedDraft.selectionEnd})"),
+      { same: true, start: 3, end: 8 });
+    question.state = "answered"; question.answerRequestId = "pending"; question.processingState = "waiting"; question.blockingActive = false;
+    f.update();
+    await browser.waitFor("document.querySelector('fieldset:not([hidden])').dataset.questionState==='answered'");
+    assert.equal(await browser.evaluate("document.querySelector('fieldset:not([hidden])').dataset.questionId"), question.id);
+    assert.match(await browser.evaluate("document.querySelector('.question-history-list').textContent"), /answered.*Queued/s);
+    assert.equal(await browser.evaluate("document.querySelector('[data-question-picker=open]').closest('label').checkVisibility()"), false);
+    question.state = "open"; question.answerRequestId = null; delete question.processingState;
+    f.update();
+    await browser.waitFor("document.querySelector('fieldset:not([hidden])').dataset.questionState==='open'");
+    assert.equal(await browser.evaluate("document.querySelector('fieldset:not([hidden]) textarea').value"), "Keep exact unsent answer");
+    group.questions = [];
+    f.update();
+    await browser.waitFor("document.querySelector('.question-navigation > p').textContent==='No saved questions are available in this view.'");
+    assert.deepEqual(await browser.evaluate(`({
+      picker:document.querySelector('[data-question-picker=open]').closest('label').checkVisibility(),
+      history:document.querySelector('.question-history').checkVisibility(),
+      message:document.querySelector('.question-navigation > p').checkVisibility(),
+      details:document.querySelectorAll('fieldset:not([hidden])').length})`),
+    { picker: false, history: false, message: true, details: 0 });
+    group.questions = [{ ...structuredClone(question), id: "replacement" }];
+    f.update();
+    await browser.waitFor("document.querySelector('.question-navigation > p').textContent.includes('no longer available')");
+    assert.equal(await browser.evaluate("document.querySelectorAll('fieldset:not([hidden])').length"), 0, "New snapshots must not silently select a replacement.");
+    assert.deepEqual(f.posts, []); assert.deepEqual(browser.exceptions, []);
   });
 
 test("implementation confirmation keeps focus and drafts, retries exact uncertain decisions, and collapses durable history",

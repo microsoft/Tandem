@@ -198,7 +198,7 @@ function showQuestions() {
   $('show-questions').setAttribute('aria-expanded', 'true');
   const target = questionFocus?.isConnected && questionFocus.getClientRects().length && !questionFocus.disabled
     ? questionFocus : questionArtifact.querySelector('[data-question-picker="open"]:not([disabled])')
-      ?? questionArtifact.querySelector('.question-history > summary') ?? $('questions-back');
+      ?? questionArtifact.querySelector('.question-history:not([hidden]) > summary') ?? $('questions-back');
   target.focus({ preventScroll: true });
   if (matchMedia('(max-width: 660px)').matches || document.body.dataset.projectStacked === 'true') {
     $('question-panel').scrollIntoView({ block: 'start' });
