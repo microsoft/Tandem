@@ -2,7 +2,7 @@ import { projectOutputs } from "./project-outputs.js";
 import { validHandoffDesign } from "./handoff-presentation.js";
 
 // Presentation messages never become native conversation input or runtime authority.
-export function installProjectPresentation({ document, window, changed, settings, currentWork, effortChanged, layoutChanged, openOutput, outputSelection, hasAttachments = () => false }) {
+export function installProjectPresentation({ document, window, changed, settings, currentWork, effortChanged, layoutChanged, openOutput, outputSelection, statusPresentation, scopeChanged, hasAttachments = () => false }) {
   const { projectPanel: panel, projectOrigin: origin, projectChannel: channel } = document.body.dataset;
   if (!panel) return null;
   let context = null, draftContext = null, pending = null, nativePending = false;
@@ -105,7 +105,7 @@ export function installProjectPresentation({ document, window, changed, settings
     label.textContent = current()?.label ?? "Project conversation";
     label.hidden = current()?.stage === "development";
     help.textContent = conflicted() ? `This draft belongs to ${draftContext.label}. Return there, or explicitly use it in ${liveContext().label}.`
-      : current()?.stage === "development" ? context?.starting ? "Starting Development..." : ""
+      : current()?.stage === "development" ? ""
         : context?.discovery?.help ?? "Waiting for the project workspace.";
     returnToDraft.hidden = !conflicted();
     returnToDraft.textContent = `Return to ${draftContext?.label ?? "draft"}`;
@@ -132,7 +132,9 @@ export function installProjectPresentation({ document, window, changed, settings
       && typeof message.discovery?.help === "string" && message.discovery.help.length <= 2000
       && typeof message.discovery.enabled === "boolean") {
       captureDraft();
+      if (context?.statusScope !== message.statusScope) scopeChanged?.();
       context = message;
+      document.body.dataset.rootStatusOwner = String(message.statusBarOwner === true);
       document.body.dataset.projectDesign = String(message.designVisible === true);
       document.body.dataset.projectWorking = message.developmentEntered === true ? "development" : "discovery";
       renderEffort();
@@ -202,10 +204,12 @@ export function installProjectPresentation({ document, window, changed, settings
     activate: retry => send({ type: "activate", retry: retry === true }),
     showDesign: () => send({ type: "show-design" }),
     settingsClosed: () => send({ type: "settings-closed" }),
-    unavailable(reason) {
+    unavailable(reason, reconnecting = false) {
       currentSnapshot = null;
       send({ type: "outputs", status: "unverified", reason: `Development connection unavailable. Last observed outputs are retained: ${reason}`, items: [] });
       send({ type: "status", status: "unavailable", active: false, handoffActivity: null,
+        statusScope: context?.statusScope ?? null,
+        presentation: { kind: "attention", text: reconnecting ? "Reconnecting to Development..." : "Development connection unavailable", requestId: null },
         reason: `Development activity could not be verified: ${reason}` });
     },
     appearance: preferences => send({ type: "appearance", theme: preferences.theme, fontSize: preferences.fontSize }),
@@ -215,6 +219,7 @@ export function installProjectPresentation({ document, window, changed, settings
     discovery: () => current()?.stage !== "development",
     developmentEnabled: () => context?.developmentEnabled === true && !context?.starting,
     workingDevelopment: () => context?.developmentEntered === true,
+    statusScope: () => context?.statusScope ?? null,
     handoffStatusOwner: () => typeof context?.handoffStatusOwner === "string"
       && /^handoff-[a-f0-9]{64}$/.test(context.handoffStatusOwner) ? context.handoffStatusOwner : null,
     placeholder: () => conflicted() ? `Draft for ${draftContext.label}`
@@ -238,9 +243,12 @@ export function installProjectPresentation({ document, window, changed, settings
         items: catalog.items.map(({ target, ...item }) => item),
         selected: catalog.items.find(item => item.id === selection?.id && item.binding === selection?.binding)?.id ?? null });
       send({ type: "status", status: snapshot.workflow?.status ?? snapshot.installation?.status ?? "unavailable",
+        presentation: statusPresentation?.() ?? null, statusScope: context?.statusScope ?? null,
         installationStatus: snapshot.installation?.status,
         canRetry: snapshot.installation?.canRetry === true, canReopen: snapshot.installation?.canReopen === true,
         active: snapshot.installation?.status === "ready",
+        activeRequestId: snapshot.workflow?.activeRequestId ?? null,
+        compacting: snapshot.workflow?.compaction?.active === true || snapshot.workflow?.compaction?.requested === true,
         handoffActivity: snapshot.workflow?.handoffActivity ?? null,
         role: snapshot.workflow?.activeRole ?? null, reason: snapshot.workflow?.reason ?? snapshot.installation?.reason ?? null,
         designRevision: snapshot.design?.binding?.revisionId ?? null,

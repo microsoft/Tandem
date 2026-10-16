@@ -3,11 +3,11 @@ import { Dialog } from "radix-ui";
 import type { HandoffAdmission, HandoffReview } from "../development-handoff.js";
 import { canOpenDevelopment, useAction, useUi } from "./ui-context.js";
 import { useProjectView } from "./project-conversation.js";
-import { quietHandoff } from "../../development/tandem/public/handoff-presentation.js";
+import { handoffProgress } from "../../development/tandem/public/handoff-presentation.js";
 
 interface HandoffView {
     review(): void; check(): void; busy: boolean; checking: boolean; canReview: boolean;
-    admission: HandoffAdmission | null; error: string; status: string; requestId: string | null;
+    admission: HandoffAdmission | null; error: string; status: string; progress: string; requestId: string | null;
 }
 const Context = createContext<HandoffView | null>(null);
 
@@ -80,7 +80,7 @@ export function HandoffReviewProvider({ children }: { children: ReactNode }) {
                 if (!await project.requireDevelopmentGit()) return;
                 if (latest.current.key !== key) throw new Error("The Prototype changed during project setup. Review it again.");
                 project.prepareDevelopmentView(); browseStage("development");
-                setPhase("Preparing the saved handoff and opening Development. Native permission may need your answer in the owning session.");
+                setPhase("Opening Development...");
                 await post("/api/development/continue", { generation: review.generation,
                     expectedRevision: latest.current.state.revision, snapshotPath: review.snapshotPath, reviewBinding: review.binding }, 120000);
                 await refresh();
@@ -90,19 +90,19 @@ export function HandoffReviewProvider({ children }: { children: ReactNode }) {
         });
     }
     const activity = project.handoffActivity?.find(item => item.requestId === admission?.requestId);
-    const quiet = quietHandoff(activity, project.visible ? project.designBinding : null, project.permissions);
-    const status = phase || (checking ? "Checking saved handoff..."
-        : admission?.status === "admitted"
-            ? activity ? quiet ? "" : `${activity.label}${project.permissions ? " Native permission is waiting for your answer." : ""}`
-                : "Prototype handoff admitted. Waiting for verified Development activity; no duplicate request will be sent."
-            : admission?.status === "sending" ? "Prototype handoff submission is pending. Check its status; do not submit again."
+    const unrelated = Boolean(project.activeRequestId && project.activeRequestId !== reference?.requestId);
+    const progress = phase || (unrelated || project.attention || project.detail || project.compacting ? "" : checking ? "Checking saved handoff..."
+        : admission?.status === "admitted" ? activity ? handoffProgress(activity, project.designBinding, project.permissions)
+            : "Waiting for verified Development activity..."
+          : "");
+    const status = admission?.status === "sending" ? "Prototype handoff submission is pending. Check its status; do not submit again."
                 : admission?.status === "uncertain" ? "Admission is uncertain. Review reconciliation of the exact saved request; it may submit only if not admitted. Retired work is never replayed."
                     : admission?.status === "prepared" ? "Saved Prototype handoff has not been submitted. Review it to continue."
-                        : receiptError ? "Saved handoff status is unverified." : "Prototype saved. Review its handoff before requesting Design.");
+                        : receiptError ? "Saved handoff status is unverified." : canReview ? "Prototype saved. Review its handoff before requesting Design." : "";
     return <Context.Provider value={{ review: () => void inspect(), check: () => void action.run(async () => {
         await refresh(); setCheck(value => value + 1);
     }),
-        busy: action.busy, checking, canReview, admission, error: action.error || receiptError, status,
+        busy: action.busy, checking, canReview, admission, error: action.error || receiptError, status, progress,
         requestId: sameSource ? reference?.requestId ?? null : null }}>
         {children}
         <Dialog.Root open={open} onOpenChange={setOpen}>
@@ -144,17 +144,28 @@ export function HandoffReviewProvider({ children }: { children: ReactNode }) {
     </Context.Provider>;
 }
 
+export function useHandoffStatus(active: boolean) {
+    const view = useContext(Context);
+    const { state } = useUi();
+    const { setHandoffStatusOwner } = useProjectView();
+    const requestId = active ? view?.requestId ?? null : null;
+    useEffect(() => {
+        setHandoffStatusOwner(requestId);
+        return () => setHandoffStatusOwner(null);
+    }, [requestId, setHandoffStatusOwner]);
+    // Compare with this exact receipt, never infer a status category from English prose.
+    const receiptOwnsStatus = view?.admission?.status === "admitted" && typeof view.admission.message === "string"
+        && view.admission.message === state.status;
+    return { text: active ? view?.progress || "" : "", busy: active && view?.busy === true,
+        error: active ? view?.error || "" : "",
+        rootStatus: active && receiptOwnsStatus ? "" : state.status };
+}
+
 export function HandoffControls({ prototype = false, active = true }: { prototype?: boolean; active?: boolean }) {
     const view = useContext(Context);
     const { pending, state } = useUi();
-    const { setHandoffStatusOwner } = useProjectView();
     const hasSnapshot = state.lifecycle.outputs.some(output => output.stageId === "prototype");
-    useEffect(() => {
-        if (!active || !hasSnapshot || !view) return;
-        setHandoffStatusOwner(view.requestId);
-        return () => setHandoffStatusOwner(null);
-    }, [active, hasSnapshot, view?.requestId, setHandoffStatusOwner]);
-    if (!view || !hasSnapshot || !view.status && !view.canReview && !view.error) return null;
+    if (!active || !view || !hasSnapshot || !view.status && !view.canReview && !view.error) return null;
     return <section className="development-handoff-status" aria-label="Prototype handoff">
         {view.status && <p role="status">{view.status}</p>}
         {view.canReview && <button id={prototype ? "review-prototype-handoff" : "continue-design"} type="button" className="plan-button"

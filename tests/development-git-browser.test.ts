@@ -160,11 +160,11 @@ test("packaged handoff review cancels without startup and confirms the exact rea
             await browser.evaluate('document.querySelector("#continue-design").click()');
             await browser.waitFor('document.querySelector("#confirm-design-handoff")?.disabled === false');
             await browser.evaluate('document.querySelector("#confirm-design-handoff").click(); document.querySelector("#confirm-design-handoff")?.click()');
-            await browser.waitFor('document.querySelector("#development-panel").textContent.includes("Preparing the saved handoff")');
+            await browser.waitFor('document.querySelector("#next-action-guide").textContent==="Opening Development..."');
             await started.promise;
             assert.equal(starts, 1); assert.equal(h.developmentRequests.length, 0);
             gate.resolve();
-            await browser.waitFor('document.querySelector("#development-panel").textContent.includes("handoff admitted")');
+            await browser.waitFor('document.querySelector("#next-action-guide").textContent==="Waiting for verified Development activity..."');
             assert.equal(h.developmentRequests.length, 1);
             assert.equal(await browser.evaluate('document.querySelector("#continue-design") === null'), true);
             const current = await h.api.loadState(state.prototypeId);

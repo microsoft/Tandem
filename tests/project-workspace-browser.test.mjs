@@ -186,7 +186,7 @@ test("attachment-only drafts and pending native submissions cannot be silently m
   assert.equal(sent.some(item => ["activate", "discovery-send"].includes(item.type)), false);
 });
 
-test("composer context omits idle instructions but retains startup, conflict and uncertain-submission states", async t => {
+test("composer context omits routine startup and idle instructions but retains conflict and uncertain-submission states", async t => {
   const dom = new JSDOM('<body data-project-panel="workspace" data-project-origin="http://127.0.0.1:4000" data-project-channel="quiet"><form id="composer"><textarea id="message"></textarea></form>');
   t.after(() => dom.window.close());
   const sent = [], parent = { postMessage: data => sent.push(data) };
@@ -201,8 +201,8 @@ test("composer context omits idle instructions but retains startup, conflict and
     developmentEntered: true, developmentEnabled: true,
     discovery: { key: "usage", label: "Requirements", help: "Waiting for project ownership.", enabled: false } };
   receive({ ...context, starting: true });
-  assert.equal(help.hidden, false); assert.equal(help.textContent, "Starting Development...");
-  assert.equal(dom.window.document.querySelector("#project-message-context").hidden, false);
+  assert.equal(help.hidden, true); assert.equal(help.textContent, "");
+  assert.equal(dom.window.document.querySelector("#project-message-context").hidden, true);
   assert.equal(api.developmentEnabled(), false);
   receive(context);
   assert.equal(help.hidden, true); assert.equal(help.textContent, "");

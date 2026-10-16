@@ -16,6 +16,40 @@ function reviewFixture(value: ReturnType<typeof state>) {
         deferred: ["Synchronization"], decisions: ["Reset: preserve keyboard focus"] };
 }
 
+test("consolidated status is Development-only and rejects previous-generation presentation", async t => {
+    const h = await reactHarness(t, undefined, "development");
+    let value = state("development");
+    h.render(value); await h.flush();
+    let frame = h.get<HTMLIFrameElement>("project-conversation-frame");
+    const send = async (text: string, scope = JSON.stringify([value.prototypeId, value.generation])) => {
+        h.window.dispatchEvent(new h.window.MessageEvent("message", { origin: "http://127.0.0.1:8765", source: frame.contentWindow,
+            data: { protocol: "tandem-project/v1", channel: "fixture-project", type: "status", status: "working", active: true,
+                activeRequestId: "current-request", statusScope: scope, presentation: { kind: "active", text, requestId: "current-request" } } }));
+        await h.flush();
+    };
+    await send("Designer working...");
+    assert.equal(h.get("next-action-guide").textContent, "Designer working...");
+    for (const tab of ["preparation-tab", "design-tree-tab", "sketch-tab", "live-preview-tab"]) {
+        await h.fire(h.get(tab), "mousedown", { button: 0 });
+        const before = h.get("next-action-guide").textContent;
+        await send("Implementer working...");
+        assert.equal(h.get("next-action-guide").textContent, before, `${tab} retains its own status, not private activity.`);
+        assert.notEqual(before, "Designer working...");
+        assert.notEqual(before, "Implementer working...");
+    }
+    await h.fire(h.get("development-tab"), "mousedown", { button: 0 });
+    const previousScope = JSON.stringify([value.prototypeId, value.generation]);
+    value = { ...value, generation: "new-generation", revision: value.revision + 1 };
+    h.render(value); await h.flush();
+    assert.notEqual(h.get("next-action-guide").textContent, "Implementer working...");
+    frame = h.get<HTMLIFrameElement>("project-conversation-frame");
+    await send("Stale role must not show", previousScope);
+    assert.notEqual(h.get("next-action-guide").textContent, "Stale role must not show");
+    await send("Reviewer working...");
+    assert.equal(h.get("next-action-guide").textContent, "Reviewer working...");
+    assert.deepEqual(h.errors, []);
+});
+
 test("Discovery and Development artifact groups keep separate disclosure keys through live index updates", async t => {
     const h = await reactHarness(t, undefined, "development"), value = state("development");
     value.artifacts = [{ id: "old", title: "Original discovery Design", stage: "design", kind: "markdown",
@@ -79,7 +113,8 @@ test("handoff presentation distinguishes exact admission, pending, uncertainty a
         data: { protocol: "tandem-project/v1", channel: "fixture-project", type: "status", status: "ready", active: true } }));
     await h.flush();
     assert.equal(h.document.querySelector("#continue-design"), null);
-    assert.match(h.document.querySelector(".development-handoff-status")!.textContent!, /handoff admitted/);
+    assert.equal(h.document.querySelector(".development-handoff-status"), null);
+    assert.equal(h.get("next-action-guide").textContent, "Waiting for verified Development activity...");
     const mutations = () => h.requests.filter(request => request.options?.method === "POST");
     assert.equal(mutations().length, 0);
     admissionStatus = "sending";
@@ -157,23 +192,23 @@ test("Prototype review cancel/Escape is read-only, changed input blocks confirma
     await h.click(confirm); await h.click(confirm);
     assert.equal(posts().length, 1);
     assert.equal(h.get("development-panel").hidden, false);
-    assert.match(h.get("development-panel").textContent!, /Preparing the saved handoff/);
+    assert.equal(h.get("next-action-guide").textContent, "Opening Development...");
     value = { ...value, revision: value.revision + 1, development: {
         handoffId: `handoff-${"a".repeat(64)}`, requestId: `handoff-${"a".repeat(64)}`, snapshotPath: value.lifecycle.outputs[0].path } };
     sent.resolve(response(value)); await h.flush();
     assert.equal(h.document.querySelector("#continue-design"), null);
-    assert.match(h.get("development-panel").textContent!, /Waiting for verified Development activity/);
+    assert.equal(h.get("next-action-guide").textContent, "Waiting for verified Development activity...");
     const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
     const send = async (label: string, permissions = 0) => {
         h.window.dispatchEvent(new h.window.MessageEvent("message", { origin: "http://127.0.0.1:8765", source: frame.contentWindow,
             data: { protocol: "tandem-project/v1", channel: "fixture-project", type: "status", status: "working", active: true,
-                permissions, handoffActivity: [{ requestId: value.development!.requestId, label }] } }));
+                permissions, handoffActivity: [{ requestId: value.development!.requestId, label, statusKind: "attention", statusText: label }] } }));
         await h.flush();
     };
     await send("Designer is reading and refining Design from the saved Prototype.", 1);
-    assert.match(h.get("development-panel").textContent!, /Designer is reading.*Native permission is waiting/s);
+    assert.equal(h.document.querySelector(".development-handoff-status"), null, "Native permission remains with the private owning controls.");
     await send("Design ready from the saved Prototype. Questions: 2, including 1 blocking.");
-    assert.match(h.get("development-panel").textContent!, /Design ready.*Questions: 2, including 1 blocking/s);
+    assert.equal(h.document.querySelector(".development-handoff-status"), null, "Questions remain with the private owning controls.");
     assert.equal(posts().length, 1);
     assert.deepEqual(h.errors, []);
 });
@@ -220,7 +255,7 @@ test("verified handoff Design removes the root banner without hiding active, sta
                 designBinding: binding, designRevision: binding.revisionId, handoffActivity: [activity], ...extra } }));
         await h.flush();
     };
-    const completed = { requestId: id, label: "Design ready from the saved Prototype.", active: false, quietDesign: binding };
+    const completed = { requestId: id, label: "Design ready from the saved Prototype.", active: false, quietDesign: binding, statusKind: "settled", statusText: "" };
     await send(completed);
     assert.equal(h.document.querySelector(".development-handoff-status"), null, "No empty padded section.");
     assert.equal(h.document.querySelector(".development-provenance"), null, "Saved details belong to advanced history, not normal chrome.");
@@ -231,17 +266,17 @@ test("verified handoff Design removes the root banner without hiding active, sta
     assert.equal(h.document.querySelector(".development-handoff-status"), null);
     assert.ok(messages.some(message => message.type === "context" && message.handoffStatusOwner === id));
     for (const [activity, extra, label] of [
-        [{ ...completed, active: true, quietDesign: null, label: "Designer is reading updated Prototype." }, {}, "Designer is reading"],
-        [{ ...completed, quietDesign: null, label: "Questions: 2, including 1 blocking." }, {}, "Questions: 2"],
-        [{ ...completed, quietDesign: null, label: "Saved request failed. Inspect Development." }, {}, "failed"],
-        [completed, { permissions: 1 }, "Native permission"],
-        [completed, { designBinding: { ...binding, digest: "d".repeat(64) } }, "Design ready"],
-        [{ ...completed, requestId: other }, {}, "Waiting for verified Development activity"],
-        [completed, { designBinding: null }, "Design ready"],
+        [{ ...completed, active: true, quietDesign: null, statusKind: "progress", statusText: "Designer working..." }, {}, "Designer working..."],
+        [{ ...completed, quietDesign: null, statusKind: "attention", statusText: "Questions: 2", label: "Questions: 2, including 1 blocking." }, {}, "Development"],
+        [{ ...completed, quietDesign: null, statusKind: "attention", statusText: "Failed", label: "Saved request failed. Inspect Development." }, {}, "Development"],
+        [completed, { permissions: 1 }, "Development"],
+        [completed, { designBinding: { ...binding, digest: "d".repeat(64) } }, "Current Design evidence is unverified."],
+        [{ ...completed, requestId: other }, {}, "Waiting for verified Development activity..."],
+        [completed, { designBinding: null }, "Current Design evidence is unverified."],
     ] as const) {
         await send(activity, extra);
-        assert.match(h.document.querySelector(".development-handoff-status")!.textContent!, new RegExp(label));
-        assert.equal(h.document.querySelectorAll("#development-panel .development-handoff-status [role=status]").length, 1);
+        assert.equal(h.get("next-action-guide").textContent, label);
+        assert.equal(h.document.querySelectorAll("#development-panel .development-handoff-status [role=status]").length, 0);
     }
     await send(completed);
     held = Promise.resolve(response({ error: "Receipt cannot be verified." }, 409));
