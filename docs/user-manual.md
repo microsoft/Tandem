@@ -102,11 +102,15 @@ After confirmation, status distinguishes submission, Designer work and published
 Design/questions. If activity is unavailable, it says unverified rather than
 claiming completion. Scripts do not run and implementation remains separately
 confirmed. Once the matching Design is verified and visible, the completed
-handoff notice disappears and stays out of the workspace after later Design
+handoff status clears and stays out of the workspace after later Design
 revisions. Results remain in Conversation; saved request/source details are under
 **Project settings > Advanced handoffs & history > Acceptance & process history**.
 New handoffs, unanswered questions and unverified or failed work still show their
-current status.
+current status. Routine checking, setup and Designer progress use the existing
+bottom status bar without adding a header or moving the workspace. Review and
+recovery controls stay beside the handoff; questions, permissions and actionable
+errors stay in their owning Development controls. The standalone Development
+view uses its conversation status strip.
 
 UI Design should preserve the accepted displayed Prototype's appearance and
 interactions, not redesign it from prose. Missing evidence or necessary UX changes

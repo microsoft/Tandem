@@ -64,6 +64,8 @@ interface ProjectView {
     handoffActivity: HandoffActivity[] | null; designBinding: HandoffDesign | null;
     setHandoffStatusOwner(requestId: string | null): void;
     permissions: number;
+    activeRequestId: string | null;
+    compacting: boolean;
     processError: string;
     activate(retry?: boolean): Promise<void>; command(command: string): void;
     outputs: ProjectOutput[]; outputStatus: string; outputReason: string; outputError: string; selectedOutput: string | null;
@@ -88,7 +90,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
     const { state, post, pending, setBusy, browseStage } = useUi();
     const [view, setView] = useState({ url: null as string | null, channel: "", error: "", active: false, starting: false, developmentEntered: false,
         status: "Not activated", detail: "", designRevision: null as string | null, designChanged: false, attention: 0,
-        handoffActivity: null as HandoffActivity[] | null, designBinding: null as HandoffDesign | null, permissions: 0,
+        handoffActivity: null as HandoffActivity[] | null, designBinding: null as HandoffDesign | null, permissions: 0, activeRequestId: null as string | null, compacting: false,
         outputs: [] as ProjectOutput[], outputStatus: "unverified", outputReason: "Development outputs have not been verified.",
         outputError: "", selectedOutput: null as string | null });
     const frame = useRef<HTMLIFrameElement>(null);
@@ -324,6 +326,8 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
                         && message.handoffActivity.every(validHandoffActivity) ? message.handoffActivity : null,
                     designBinding: validHandoffDesign(message.designBinding) ? message.designBinding : null,
                     permissions: Number.isSafeInteger(message.permissions) && message.permissions > 0 ? message.permissions : 0,
+                    activeRequestId: typeof message.activeRequestId === "string" ? message.activeRequestId.slice(0, 200) : null,
+                    compacting: message.compacting === true,
                     active: message.active === true,
                     starting: settled ? false : v.starting,
                     designRevision: typeof message.designRevision === "string" ? message.designRevision : null,

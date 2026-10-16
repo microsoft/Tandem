@@ -11,7 +11,7 @@ import { SketchPanel, SketchCompletionContext, isSketchRevisionApproved } from "
 import { PrototypePanel, prototypeCompletionBlocked } from "./prototype-panel.js";
 import { ArtifactList, ArtifactsPanel, DevelopmentArtifactList } from "./artifacts-panel.js";
 import { DevelopmentPanel } from "./development-panel.js";
-import { HandoffReviewProvider } from "./handoff-review.js";
+import { HandoffReviewProvider, useHandoffStatus } from "./handoff-review.js";
 import { WorkflowActivity } from "./workflow-activity.js";
 import { ProjectConversation, ProjectConversationProvider, useProjectView } from "./project-conversation.js";
 import { DiscoveryRecovery } from "./discovery-recovery.js";
@@ -305,12 +305,20 @@ function Workspace(props: WorkspaceProps) {
   const completionHelp = contextCollapsed && !allComplete && !stageAction.busy && !["prepare", "development"].includes(current)
     ? "Next stage: " + completionLabel : completionLabel;
   const selectedLabel = viewed === "sketch" ? "Drawings" : lifecycleStages.find((stage) => stage.id === viewed)?.label || viewed;
-  const statusBarError = props.connectionError || stageAction.error || projectView.maintenanceError || state.effortReset?.error;
+  const handoffStatus = useHandoffStatus(activeTab === "development" || activeTab === "preview");
+  const statusBarError = props.connectionError || stageAction.error || projectView.maintenanceError || state.effortReset?.error
+    || (activeTab === "development" ? projectView.error || state.developmentBlocker : "") || handoffStatus.error;
+  const developmentStatus = activeTab === "development" ? projectView.detail
+    || (projectView.starting ? "Opening Development..." : projectView.developmentEntered && !projectView.url
+      ? "Connecting to Development..." : "") : "";
   const savedPrototype = state.lifecycle.currentStage === "development" && state.lifecycle.outputs.some(output => output.stageId === "prototype")
     && state.status === "Prototype outputs saved. Stage 1 is complete. You can close now and open Development later with these files as input.";
   const statusBarText = statusBarError || contextHelp || (nextAction ? "Next action: " + nextAction.label
-    : savedPrototype ? "Prototype saved. Continue in Development when you're ready."
-    : state.status || (atStart ? "Ready to start a project." : "Ready."));
+    : (handoffStatus.busy ? handoffStatus.text : "") || developmentStatus
+    || (pending || hasActiveJobs(state) ? state.status : "") || (!savedPrototype ? handoffStatus.rootStatus : "") || handoffStatus.text
+    || (activeTab === "development" && projectView.developmentEntered ? "Development" : "")
+    || (savedPrototype ? "Prototype saved. Continue in Development when you're ready."
+    : handoffStatus.rootStatus || (atStart ? "Ready to start a project." : "Ready.")));
   const narrow = () => window.matchMedia("(max-width: 760px)").matches;
   // Keep both artifact and conversation minimum widths, including the two dividers.
   const maximumContextWidth = () => Math.max(minimumContextWidth,

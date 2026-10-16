@@ -105,7 +105,7 @@ export function installProjectPresentation({ document, window, changed, settings
     label.textContent = current()?.label ?? "Project conversation";
     label.hidden = current()?.stage === "development";
     help.textContent = conflicted() ? `This draft belongs to ${draftContext.label}. Return there, or explicitly use it in ${liveContext().label}.`
-      : current()?.stage === "development" ? context?.starting ? "Starting Development..." : ""
+      : current()?.stage === "development" ? ""
         : context?.discovery?.help ?? "Waiting for the project workspace.";
     returnToDraft.hidden = !conflicted();
     returnToDraft.textContent = `Return to ${draftContext?.label ?? "draft"}`;
@@ -241,6 +241,8 @@ export function installProjectPresentation({ document, window, changed, settings
         installationStatus: snapshot.installation?.status,
         canRetry: snapshot.installation?.canRetry === true, canReopen: snapshot.installation?.canReopen === true,
         active: snapshot.installation?.status === "ready",
+        activeRequestId: snapshot.workflow?.activeRequestId ?? null,
+        compacting: snapshot.workflow?.compaction?.active === true || snapshot.workflow?.compaction?.requested === true,
         handoffActivity: snapshot.workflow?.handoffActivity ?? null,
         role: snapshot.workflow?.activeRole ?? null, reason: snapshot.workflow?.reason ?? snapshot.installation?.reason ?? null,
         designRevision: snapshot.design?.binding?.revisionId ?? null,

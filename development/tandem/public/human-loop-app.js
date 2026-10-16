@@ -12,7 +12,7 @@ import { createWorkflowStopControl } from './workflow-stop-control.js';
 import { installPanelSplitter } from './panel-splitter.js';
 import { createImplementationConfirmations } from './implementation-confirmation.js';
 import { installProjectPresentation } from './project-presentation.js';
-import { currentHandoffActivity, quietHandoff } from './handoff-presentation.js';
+import { currentHandoffActivity, handoffProgress, quietHandoff } from './handoff-presentation.js';
 import { projectOutputs } from './project-outputs.js';
 import { parseRoleMention } from './role-hint.js';
 import { installRoleSuggestions } from './role-suggestions.js';
@@ -442,10 +442,17 @@ function render() {
     }
   }
   renderImplementationConfirmations();
+  const designVerified = snapshot.conversationStatus !== 'unverified' && ['ready', 'closed'].includes(installed?.status);
+  const statusOwner = projectPresentation?.handoffStatusOwner();
+  const prototypeActivity = designVerified ? currentHandoffActivity(snapshot.workflow?.handoffActivity, statusOwner) : null;
+  const unrelatedActivity = view?.activeRequestId && view.activeRequestId !== prototypeActivity?.requestId;
+  const prototypeProgress = !unrelatedActivity && prototypeActivity?.requestId !== statusOwner
+    && !view?.reason && !installed?.reason && !counts.unanswered
+    ? handoffProgress(prototypeActivity, snapshot.design?.content ? snapshot.design.binding : null, snapshot.accessRequests?.length ?? 0) : '';
   conversation.current({ kind: view?.status ?? 'host', label: compaction?.active ? `Compacting · ${humanLoopStatusLabel(view.status)}`
     : compaction?.requested ? 'Compaction requested'
-      : view ? humanLoopStatusLabel(view.status) : projectPresentation && installed?.status === 'new'
-        ? 'Development not activated' : installed ? humanLoopStatusLabel(installed.status) : 'Connecting',
+      : prototypeProgress || (view ? humanLoopStatusLabel(view.status) : projectPresentation && installed?.status === 'new'
+        ? 'Development not activated' : installed ? humanLoopStatusLabel(installed.status) : 'Connecting'),
     detail: view?.reason ?? installed?.reason ?? '' });
   if (view?.currentCycle) {
     conversation.placeArtifact('human-cycle-progress', cycleArtifact, { requestId: view.currentCycle.originRequestId,
@@ -478,10 +485,8 @@ function render() {
     if (app.canStop) { const stop = make('button', 'Stop preview'); stop.onclick = () => post('/api/apps/stop', { id: app.id }).then(refresh).catch((error) => notice(error.message)); row.append(stop); }
     return row;
   }));
-  const designVerified = snapshot.conversationStatus !== 'unverified' && ['ready', 'closed'].includes(installed?.status);
-  const statusOwner = projectPresentation?.handoffStatusOwner();
-  const prototypeActivity = designVerified ? currentHandoffActivity(snapshot.workflow?.handoffActivity, statusOwner) : null;
-  const showPrototypeActivity = prototypeActivity && prototypeActivity.requestId !== statusOwner
+  const showPrototypeActivity = prototypeActivity && !unrelatedActivity
+    && !["progress", "settled"].includes(prototypeActivity.statusKind)
     && !quietHandoff(prototypeActivity, snapshot.design?.content ? snapshot.design.binding : null, snapshot.accessRequests?.length ?? 0);
   $('prototype-handoff-activity').hidden = !showPrototypeActivity;
   $('prototype-handoff-activity').textContent = showPrototypeActivity ? prototypeActivity.label : '';

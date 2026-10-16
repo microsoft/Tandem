@@ -3,7 +3,7 @@ import test from "node:test";
 import { projectHumanLoopView } from "../development/tandem/src/human-loop-provider.mjs";
 import { createHumanLoop } from "../development/tandem/runtime-src/domain/human-loop/model.ts";
 import { DEFAULT_POLICY } from "../development/tandem/runtime-src/domain/workflow/policy.ts";
-import { currentHandoffActivity, quietHandoff, validHandoffActivity } from "../development/tandem/public/handoff-presentation.js";
+import { currentHandoffActivity, handoffProgress, quietHandoff, validHandoffActivity } from "../development/tandem/public/handoff-presentation.js";
 import { createServer } from "node:http";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -140,11 +140,16 @@ test("completed changed and unchanged handoffs remain quiet after a later verifi
         category: "ui", format: "html", width: 640, height: 360, description: "Synthetic checkout screen.",
         source: '<div style="padding:24px;background:#f5f8ff"><h2>Checkout</h2><p>Your bag</p><button>Continue</button></div>' });
       let installationStatus = "ready";
+      let releaseReceipt, receiptGate = new Promise(resolve => { releaseReceipt = resolve; });
+      let releasePrivate;
+      const privateGate = new Promise(resolve => { releasePrivate = resolve; });
+      const receiptMessage = "Synthetic exact admission message";
+      let receiptFailure = false;
       const value = rootState("development");
       const snapshotPath = ".tandem/efforts/fixture/stages/prototype-r7.json";
       value.lifecycle.outputs = [{ stageId: "prototype", path: snapshotPath, completedAt: value.updatedAt }];
       value.development = { handoffId: requestId, requestId, snapshotPath };
-      const runtime = { sessionId: "private", state: async () => structuredClone(f.state), readiness: async () => f.readiness,
+      const runtime = { sessionId: "private", state: async () => { await privateGate; return structuredClone(f.state); }, readiness: async () => f.readiness,
         currentDesign: async () => f.design, commands: { read: async () => ({ apps: [], commands: [] }) },
         conversation: async () => [{ id: "handoff:design-result", kind: "assistant", role: "designer", requestId,
           content: f.result.outcome.summary, timestamp: "2026-10-15T00:00:01Z" }, ...extraEntries],
@@ -192,9 +197,13 @@ test("completed changed and unchanged handoffs remain quiet after a later verifi
           stage2: { desired: null, actual: null, model: null, supported: [], status: "pending", error: null } });
         else if (path === "/api/development/preflight") json({ status: "ready", projectPath: root, initialize: false, message: "Synthetic Git preflight" });
         else if (path === "/api/development/view") json({ url: composed.url, channel: "handoff-fixture" });
-        else if (path === "/api/development/handoff") json({ generation: value.generation,
+        else if (path === "/api/development/handoff") {
+          await receiptGate;
+          if (receiptFailure) { response.writeHead(503, { "Content-Type": "application/json" }); response.end(JSON.stringify({ error: "Synthetic receipt unavailable" })); return; }
+          json({ generation: value.generation,
           snapshotPath: value.development.snapshotPath, handoffId: value.development.handoffId,
-          admission: { status: "admitted", handoffId: value.development.handoffId, requestId: value.development.requestId } });
+          admission: { status: "admitted", handoffId: value.development.handoffId, requestId: value.development.requestId, message: receiptMessage } });
+        }
         else if (path === "/api/sketch") json({ sketch: value.sketch, document: null });
         else { mutations.push({ path, method: request.method }); response.writeHead(404); response.end(); }
       });
@@ -208,15 +217,30 @@ test("completed changed and unchanged handoffs remain quiet after a later verifi
         standalone = await providerFactory(options);
         const browser = await openFixtureBrowser({ after: cleanup => cleanups.push(cleanup) });
         const contexts = new Map();
+        const navigating = error => ["Inspected target navigated or closed", "Cannot find context with specified id"].includes(error.message);
+        const waitReload = async expression => {
+          for (let attempt = 0; attempt < 150; attempt++) {
+            try { if (await browser.evaluate(expression)) return; }
+            catch (error) { if (!navigating(error)) throw error; }
+            await new Promise(done => setTimeout(done, 30));
+          }
+          assert.fail(`Reload did not settle: ${expression}`);
+        };
         const evaluatePrivate = async expression => {
           const tree = await browser.call("Page.getFrameTree");
           const frame = tree.frameTree.childFrames?.find(item => item.frame.url.startsWith(composed.url))?.frame;
           if (!frame) return null;
-          if (!contexts.has(frame.id)) contexts.set(frame.id, (await browser.call("Page.createIsolatedWorld",
-            { frameId: frame.id, worldName: "handoff-regression" })).executionContextId);
-          const result = await browser.call("Runtime.evaluate", { contextId: contexts.get(frame.id), expression, returnByValue: true });
-          if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
-          return result.result.value;
+          try {
+            if (!contexts.has(frame.id)) contexts.set(frame.id, (await browser.call("Page.createIsolatedWorld",
+              { frameId: frame.id, worldName: "handoff-regression" })).executionContextId);
+            const result = await browser.call("Runtime.evaluate", { contextId: contexts.get(frame.id), expression, returnByValue: true });
+            if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
+            return result.result.value;
+          } catch (error) {
+            if (!navigating(error)) throw error;
+            contexts.delete(frame.id);
+            return null;
+          }
         };
         const waitPrivate = async expression => {
           for (let attempt = 0; attempt < 150; attempt++) {
@@ -235,8 +259,21 @@ test("completed changed and unchanged handoffs remain quiet after a later verifi
           await browser.evaluate("new Promise(resolve => setTimeout(resolve, 150))");
         };
         const visibleRootStatuses = '[...document.querySelectorAll(".development-handoff-status [role=status]")].filter(e=>e.checkVisibility())';
+        const bottom = 'document.querySelector("#next-action-guide")?.textContent';
+        const geometry = `["project-conversation-frame","studio-workspace"].map(id=>{const r=document.getElementById(id).getBoundingClientRect();return {id,top:r.top,height:r.height}})`;
+        const privateGeometry = `["design-panel","conversation-panel","canvas-scroll","backbone-proposal","messages"].map(id=>{const r=document.getElementById(id).getBoundingClientRect();return {id,top:r.top,height:r.height}})`;
         await browser.call("Page.navigate", { url });
         await browser.waitFor('!!document.querySelector("#project-conversation-frame")');
+        await browser.waitFor(`${bottom}==="Checking saved handoff..."`);
+        await waitPrivate('!!document.querySelector("#design-panel")');
+        const cold = await browser.evaluate(geometry);
+        releaseReceipt();
+        await browser.waitFor(`${bottom}==="Waiting for verified Development activity..."`);
+        assert.deepEqual(await browser.evaluate(geometry), cold, "Waiting for private status cannot move the workspace.");
+        releasePrivate();
+        await waitPrivate('document.querySelector("#backbone-state").textContent==="Current Design"');
+        await browser.waitFor(`${bottom}==="Development"`);
+        assert.deepEqual(await browser.evaluate(geometry), cold, "Delayed receipt cannot move the workspace.");
         await browser.waitFor(`${visibleRootStatuses}.length===0`);
         await waitPrivate('document.querySelector("#backbone-state").textContent==="Current Design"');
         assert.equal(await evaluatePrivate('document.querySelector("#prototype-handoff-activity").getBoundingClientRect().height'), 0);
@@ -278,8 +315,8 @@ test("completed changed and unchanged handoffs remain quiet after a later verifi
           source: { role: "designer", resultId: f.result.resultId, requestId, requestIds: [requestId], cycleId: null,
             design: binding, planDigest: null } });
         await push();
-        await browser.waitFor(`${visibleRootStatuses}.some(e=>e.textContent.includes("Questions: 1"))`);
-        assert.equal(await evaluatePrivate('document.querySelector("#prototype-handoff-activity").hidden'), true);
+        await waitPrivate('document.querySelector("#prototype-handoff-activity").textContent.includes("Questions: 1")');
+        assert.equal(await browser.evaluate(`${visibleRootStatuses}.length`), 0);
         assert.equal(await evaluatePrivate('document.querySelector("#show-questions").disabled'), false);
         f.state.questions = [];
         const next = { ...f.request, id: nextRequestId, status: "active" };
@@ -289,26 +326,38 @@ test("completed changed and unchanged handoffs remain quiet after a later verifi
         value.lifecycle.outputs[0].path = ".tandem/efforts/fixture/stages/prototype-r8.json";
         value.development = { handoffId: nextRequestId, requestId: nextRequestId, snapshotPath: value.lifecycle.outputs[0].path };
         await push();
-        await browser.waitFor(`${visibleRootStatuses}.some(e=>e.textContent.includes("Designer is reading"))`);
+        await browser.waitFor(`${bottom}==="Designer working..."`);
+        value.status = receiptMessage; await push();
+        assert.equal(await browser.evaluate(bottom), "Designer working...", "Only the exact receipt-owned root message yields to current progress.");
+        value.status = "Synthetic unrelated operation needs attention"; await push();
+        assert.equal(await browser.evaluate(bottom), value.status, "Unknown current operation text must not be classified or overwritten.");
+        value.status = receiptMessage; await push();
+        f.readiness.compaction = { active: true };
+        await push();
+        await waitPrivate('document.querySelector("#current-state-title").textContent.includes("Compacting")');
+        assert.equal(await browser.evaluate(bottom), "Development", "Private compaction has priority over routine handoff progress.");
+        f.readiness.compaction = undefined; await push();
+        await browser.waitFor(`${bottom}==="Designer working..."`);
         await waitPrivate('document.querySelector("#prototype-handoff-activity").hidden');
         for (const [width, height] of [[1280, 800], [390, 520]]) {
           await browser.call("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
-          assert.equal(await browser.evaluate(`${visibleRootStatuses}.length`), 1);
+          assert.equal(await browser.evaluate(`${visibleRootStatuses}.length`), 0);
+          assert.equal(await browser.evaluate(bottom), "Designer working...");
           assert.equal(await evaluatePrivate('document.querySelector("#prototype-handoff-activity").getBoundingClientRect().height'), 0);
           assert.equal(await browser.evaluate("document.documentElement.scrollWidth<=innerWidth+1"), true);
           assert.equal(await evaluatePrivate('document.querySelector("#message").value'), "Retained unsent draft");
           assert.equal(await evaluatePrivate('document.querySelector("#backbone-proposal")===window.retainedDesign'), true);
         }
         f.state.activeTask.condition = "waiting-permission"; await push();
-        await browser.waitFor(`${visibleRootStatuses}.some(e=>e.textContent.includes("waiting for native permission"))`);
-        assert.equal(await evaluatePrivate('document.querySelector("#prototype-handoff-activity").hidden'), true);
+        await waitPrivate('document.querySelector("#prototype-handoff-activity").textContent.includes("waiting for native permission")');
+        assert.notEqual(await browser.evaluate(bottom), "Designer working...");
         f.readiness.status = "execution-unknown"; f.readiness.reason = "Synthetic execution uncertain"; await push();
-        await browser.waitFor(`${visibleRootStatuses}.some(e=>e.textContent.includes("Synthetic execution uncertain"))`);
+        await browser.waitFor(`${bottom}==="Synthetic execution uncertain"`);
         next.status = "rejected"; f.state.activeRequestId = null; f.state.activeBatchRequestIds = []; f.state.activeTask = null;
         f.readiness.status = "ready"; f.readiness.reason = null; await push();
-        await browser.waitFor(`${visibleRootStatuses}.some(e=>e.textContent.includes("rejected"))`);
+        await waitPrivate('document.querySelector("#prototype-handoff-activity").textContent.includes("rejected")');
         installationStatus = "unknown"; await push();
-        await browser.waitFor(`${visibleRootStatuses}.some(e=>e.textContent.includes("Waiting for verified Development activity"))`);
+        await browser.waitFor(`${bottom}==="Waiting for verified Development activity..."`);
         await waitPrivate('document.querySelector("#backbone-state").textContent==="Design unverified"');
         installationStatus = "ready";
         // Reopen the successful exact source; the newer rejected request cannot lend completion evidence.
@@ -316,8 +365,50 @@ test("completed changed and unchanged handoffs remain quiet after a later verifi
         value.development = { handoffId: requestId, requestId, snapshotPath }; await push();
         await browser.waitFor(`${visibleRootStatuses}.length===0`);
         await checkEmptyChrome();
+        for (const [width, height] of [[1360, 800], [920, 800], [390, 800], [1360, 480]]) {
+          await browser.call("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+          receiptGate = new Promise(resolve => { releaseReceipt = resolve; });
+          await browser.call("Page.reload"); contexts.clear();
+          await waitReload(`${bottom}===${JSON.stringify(receiptMessage)}`);
+          await waitPrivate('document.querySelector("#backbone-state").textContent==="Current Design"');
+          const before = await browser.evaluate(geometry), privateBefore = await evaluatePrivate(privateGeometry);
+          await browser.evaluate("new Promise(resolve=>setTimeout(resolve,200))");
+          assert.deepEqual(await browser.evaluate(geometry), before);
+          f.state.activeRequestId = requestId; f.state.activeBatchRequestIds = [requestId]; f.request.status = "active";
+          f.state.activeTask = { binding: { requestId, role: "designer" }, condition: "running" }; f.readiness.status = "working";
+          releaseReceipt(); events.touch();
+          await browser.waitFor(`${bottom}==="Designer working..."`);
+          assert.deepEqual(await browser.evaluate(geometry), before);
+          assert.deepEqual(await evaluatePrivate(privateGeometry), privateBefore);
+          assert.equal(await evaluatePrivate('document.querySelector("#prototype-handoff-activity").hidden'), true);
+          assert.notEqual(await evaluatePrivate('document.querySelector("#current-state-title").textContent'), "Designer working...");
+          for (let poll = 0; poll < 2; poll++) await push();
+          assert.equal(await browser.evaluate(bottom), "Designer working...");
+          f.state.activeRequestId = null; f.state.activeBatchRequestIds = []; f.state.activeTask = null;
+          f.request.status = "completed"; f.readiness.status = "ready"; events.touch();
+          await browser.waitFor(`${bottom}==="Development"`);
+          assert.deepEqual(await browser.evaluate(geometry), before);
+          assert.deepEqual(await evaluatePrivate(privateGeometry), privateBefore);
+          assert.equal(await browser.evaluate('document.querySelector("#next-action-guide").getAttribute("role")'), "status");
+          f.state.activeRequestId = "unrelated-current-work"; f.state.activeBatchRequestIds = [f.state.activeRequestId];
+          f.state.activeTask = { binding: { requestId: f.state.activeRequestId, role: "implementer" }, condition: "running" };
+          f.readiness.status = "working"; events.touch();
+          await waitPrivate('document.querySelector("#current-state-title").textContent==="Working"');
+          assert.equal(await browser.evaluate(bottom), "Development", "Historical handoff must not compete with unrelated ongoing work.");
+          assert.deepEqual(await browser.evaluate(geometry), before);
+          f.state.activeRequestId = null; f.state.activeBatchRequestIds = []; f.state.activeTask = null;
+          f.readiness.status = "ready"; events.touch();
+          t.diagnostic(`Stable receipt/working/polling/completed geometry ${width}x${height}: ${JSON.stringify(before)} / ${JSON.stringify(privateBefore)}`);
+        }
+        receiptFailure = true; await push();
+        await browser.waitFor('!!document.querySelector("#check-design-handoff")');
+        assert.match(await browser.evaluate('document.querySelector(".development-handoff-status [role=alert]").textContent'), /Synthetic receipt unavailable/);
+        assert.equal(await browser.evaluate(bottom), "Synthetic receipt unavailable", "Actionable receipt errors outrank progress and status help.");
+        receiptFailure = false;
+        await browser.evaluate('document.querySelector("#check-design-handoff").focus(); document.querySelector("#check-design-handoff").click()');
+        await browser.waitFor('!document.querySelector("#check-design-handoff")');
         await browser.call("Page.reload"); contexts.clear();
-        await browser.waitFor('!!document.querySelector("#project-conversation-frame")');
+        await waitReload('!!document.querySelector("#project-conversation-frame")');
         await waitPrivate('document.querySelector("#backbone-state").textContent==="Current Design"');
         await browser.waitFor(`${visibleRootStatuses}.length===0`);
         const populate = count => {
@@ -356,11 +447,13 @@ test("completed changed and unchanged handoffs remain quiet after a later verifi
         }
         await browser.call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
         await browser.evaluate("new Promise(resolve=>setTimeout(resolve,150))");
+        const standaloneBefore = await browser.evaluate(privateGeometry);
         f.state.activeRequestId = requestId; f.state.activeBatchRequestIds = [requestId]; f.request.status = "active";
         f.state.activeTask = { binding: { requestId, role: "designer" }, condition: "running" }; f.readiness.status = "working";
         events.touch();
-        await browser.waitFor('document.querySelector("#prototype-handoff-activity").checkVisibility()');
-        assert.match(await browser.evaluate('document.querySelector("#prototype-handoff-activity").textContent'), /Designer is reading/);
+        await browser.waitFor('document.querySelector("#current-state-title").textContent==="Designer working..."');
+        assert.equal(await browser.evaluate('document.querySelector("#prototype-handoff-activity").hidden'), true);
+        assert.deepEqual(await browser.evaluate(privateGeometry), standaloneBefore, "Standalone routine status does not move artifact or conversation.");
         f.state.activeTask.condition = "waiting-permission"; events.touch();
         await browser.waitFor('document.querySelector("#prototype-handoff-activity").textContent.includes("waiting for native permission")');
         assert.equal(await browser.evaluate("document.documentElement.scrollWidth<=innerWidth+1"), true);
@@ -375,6 +468,7 @@ test("completed changed and unchanged handoffs remain quiet after a later verifi
         assert.deepEqual(browser.exceptions, []);
         t.diagnostic(`${(await browser.call("Browser.getVersion")).product}; completed 0 / active 1, 1280x800 and 390x520, polling/reopen and standalone verified.`);
       } finally {
+        releaseReceipt(); releasePrivate();
         for (const cleanup of cleanups) await cleanup();
         for (const response of rootEvents) response.end();
         server.closeAllConnections(); await new Promise(done => server.close(done));
@@ -408,4 +502,29 @@ test("open questions stay actionable and updated Prototype progress wins over un
   assert.equal(validHandoffActivity({ requestId, label: "Legacy activity" }), true);
   assert.equal(quietHandoff({ requestId, label: "Design ready from the saved Prototype." }, binding), false, "English text is never completion evidence.");
   assert.equal(validHandoffActivity({ requestId, label: "Invalid", quietDesign: { revisionId: binding.revisionId } }), false);
+});
+
+test("routine progress is structured, exact and quiet only with matching Design evidence", () => {
+  const f = handoffFixture();
+  const read = () => projectHumanLoopView(f.state, f.readiness, f.design).handoffActivity[0];
+  assert.equal(read().statusKind, "settled");
+  assert.equal(handoffProgress(read(), binding), "");
+  assert.equal(handoffProgress(read(), previous), "Current Design evidence is unverified.");
+  assert.equal(handoffProgress({ requestId, label: "Designer working..." }, binding), "", "No classification of legacy English.");
+  assert.equal(validHandoffActivity({ requestId, label: "Legacy" }), true);
+  assert.equal(validHandoffActivity({ requestId, label: "Bad", statusKind: "progress" }), false);
+  assert.equal(validHandoffActivity({ requestId, label: "Bad", statusKind: "invented", statusText: "Ready" }), false);
+  f.state.activeRequestId = requestId; f.state.activeBatchRequestIds = [requestId]; f.request.status = "active";
+  f.state.activeTask = { binding: { requestId, role: "designer" }, condition: "running" }; f.readiness.status = "working";
+  assert.equal(handoffProgress(read(), previous), "Designer working...", "An existing older Design does not hide the new request.");
+  assert.equal(handoffProgress(read(), previous, 1), "");
+  for (const condition of ["waiting-permission", "unknown", "failed"]) {
+    f.state.activeTask.condition = condition;
+    assert.equal(read().statusKind, "attention");
+    assert.equal(handoffProgress(read(), binding), "");
+  }
+  f.state.activeTask = null; f.state.activeRequestId = null; f.state.activeBatchRequestIds = [];
+  f.request.status = "completed"; f.readiness.status = "ready";
+  f.result.outcome.kind = "agent-answer";
+  assert.equal(handoffProgress(read(), binding), "", "No idle completion prose for historical non-Design responses.");
 });

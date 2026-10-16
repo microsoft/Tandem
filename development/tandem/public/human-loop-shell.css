@@ -270,6 +270,7 @@
 .human-app .workflow-stop-control[hidden] { display: none; }
 .human-app .workflow-stop-control #stop-current-flow { border-radius: 6px 0 0 6px; }
 .human-app #stop-options { margin: 0; padding: 5px 8px; border: 1px solid var(--border); border-left: 0; border-radius: 0 6px 6px 0; background: transparent; color: var(--muted); box-shadow: none; }
+.human-app .composer-actions :is(.quick-requests > summary, #stop-current-flow, #stop-options, #focus-current-message) { box-sizing: border-box; min-height: 30px; font-size: calc(var(--shell-font-size) - 2px); line-height: 1.5; }
 .human-app .stop-options-menu { position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 20; min-width: 100%; padding: 4px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); }
 .human-app .stop-options-menu button { width: 100%; margin: 0; white-space: nowrap; text-align: left; }
 @media (max-width: 660px) {

@@ -147,7 +147,19 @@ export function projectHumanLoopView(state, readiness, design = null) {
               : request.status === "completed" ? "Saved Prototype request completed. Read its result in Development."
                 : request.status === "handoff-pending" ? "Request result is saved; Development is preparing its presentation."
                   : "Prototype handoff admitted and queued. Waiting for Development to process this exact request.";
-      return { requestId: request.id, label, active, quietDesign };
+      const attention = ["retired", "stopped", "discarded", "cancelled", "rejected"].includes(request.status)
+        || Boolean(state.uncertainty || state.stop || openQuestions.length)
+        || ["execution-unknown", "stopping", "failed"].includes(readiness.status)
+        || active && readiness.status === "closed" || task && !["running", "queued", "ended"].includes(task.condition)
+        || handoff?.presented && handoff.result.outcome.kind === "execution-failure"
+        || designReady && !relevantDesign;
+      const statusKind = attention ? "attention" : quietDesign ? "settled" : "progress";
+      const statusText = attention ? label : quietDesign ? "" : task?.condition === "running" ? `${role} working...`
+        : task?.condition === "queued" ? `${role} dispatch pending...`
+          : designReady ? "Design ready" : request.status === "completed" ? ""
+            : request.status === "handoff-pending" || task?.condition === "ended" ? "Preparing handoff result..."
+              : "Prototype handoff queued...";
+      return { requestId: request.id, label, active, quietDesign, statusKind, statusText };
     }),
     stop: state.stop ? { id: state.stop.id, mode: state.stop.mode ?? "immediate", taskId: state.stop.taskId } : null,
     lastStop: lastStop ? { id: lastStop.id, mode: lastStop.mode ?? "immediate", taskId: lastStop.taskId,
