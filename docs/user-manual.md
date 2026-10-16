@@ -102,7 +102,11 @@ After confirmation, status distinguishes submission, Designer work and published
 Design/questions. If activity is unavailable, it says unverified rather than
 claiming completion. Scripts do not run and implementation remains separately
 confirmed. Once the matching Design is verified and visible, the completed
-handoff notice disappears; its result and saved source details remain available.
+handoff notice disappears and stays out of the workspace after later Design
+revisions. Results remain in Conversation; saved request/source details are under
+**Project settings > Advanced handoffs & history > Acceptance & process history**.
+New handoffs, unanswered questions and unverified or failed work still show their
+current status.
 
 UI Design should preserve the accepted displayed Prototype's appearance and
 interactions, not redesign it from prose. Missing evidence or necessary UX changes

@@ -29,12 +29,24 @@ export function handoffFixture(kind = "designer-changed") {
   const request = { id: requestId, message: "Saved Prototype", status: "completed", answers: null, receivedAt: "2026-10-15T00:00:00Z",
     blockingAnswerRefs: [], questionGatesReleased: false, route: null, stopId: null };
   const result = { resultId: "design-result", outcome: { kind, summary: "Synthetic published Design", questions: [] } };
-  const execution = { binding: { requestId, role: "designer", design: kind === "designer-changed" ? previous : binding }, result };
+  const execution = { binding: { requestId, role: "designer", design: kind === "designer-changed" ? previous : binding },
+    completion: "result-submission", result };
   state.requests.push(request); state.executions.push(execution);
   state.handoffs.push({ id: "handoff:design-result", requestId, requestIds: [requestId], result, presented: true });
   const design = { binding, content: { summary: "Synthetic Design" }, publication: { requestId, previous } };
   const readiness = { status: "ready", reason: null };
   return { state, request, result, execution, design, readiness };
+}
+
+function reviseDesign(f) {
+  const requestId = "later-design-request";
+  const before = f.design.binding;
+  const result = { resultId: "later-design-result", outcome: { kind: "designer-changed", summary: "Later requested refinement", questions: [] } };
+  f.state.requests.push({ ...f.request, id: requestId });
+  f.state.executions.push({ binding: { requestId, role: "designer", design: before }, completion: "result-submission", result });
+  f.state.handoffs.push({ id: "handoff:later-design-result", requestId, requestIds: [requestId], result, presented: true });
+  f.state.design = { revisionId: "later-design", digest: "e".repeat(64) };
+  f.design = { ...f.design, binding: f.state.design, publication: { requestId, previous: before } };
 }
 
 test("handoff completion is quiet only for its verified published or unchanged current Design", () => {
@@ -55,6 +67,8 @@ test("handoff completion is quiet only for its verified published or unchanged c
       f => { f.design.binding = previous; },
       f => { f.state.design = previous; },
       f => { f.state.executions = []; },
+      f => { delete f.execution.completion; },
+      f => { f.execution.result = { ...f.result, resultId: "foreign-result" }; },
       f => { f.execution.binding.requestId = nextRequestId; },
       f => { f.state.handoffs[0].presented = false; },
       f => { f.state.activeRequestId = requestId; f.state.activeBatchRequestIds = [requestId]; },
@@ -76,6 +90,34 @@ test("handoff completion is quiet only for its verified published or unchanged c
   ]) {
     const f = handoffFixture(); change(f);
     assert.equal(projectHumanLoopView(f.state, f.readiness, f.design).handoffActivity[0].quietDesign, null);
+  }
+});
+
+test("completed changed and unchanged handoffs remain quiet after a later verified Design and reopen", () => {
+  for (const kind of ["designer-changed", "designer-unchanged"]) {
+    const f = handoffFixture(kind);
+    assert.equal(quietHandoff(projectHumanLoopView(f.state, f.readiness, f.design).handoffActivity[0], binding), true);
+    reviseDesign(f);
+    const retained = structuredClone(f);
+    for (const status of ["ready", "closed"]) {
+      const activity = projectHumanLoopView(structuredClone(f.state), { status }, f.design).handoffActivity[0];
+      assert.deepEqual(activity.quietDesign, f.design.binding);
+      assert.equal(quietHandoff(activity, f.design.binding), true);
+      assert.doesNotMatch(activity.label, /Implementation has not been authorized/);
+      assert.equal(quietHandoff(activity, binding), false, "A stale displayed snapshot is still unverified.");
+      assert.equal(quietHandoff(activity, f.design.binding, 1), false);
+    }
+    assert.deepEqual(f, retained, "No stored request, publication or completion state is changed.");
+    for (const change of [
+      f => { f.state.handoffs.at(-1).presented = false; },
+      f => { f.design.publication.requestId = "unrelated"; },
+      f => { delete f.state.executions.at(-1).completion; },
+      f => { delete f.execution.completion; },
+      f => { f.state.uncertainty = { reason: "Unknown", evidenceRef: "fixture" }; },
+    ]) {
+      const changed = structuredClone(f); change(changed);
+      assert.equal(projectHumanLoopView(changed.state, changed.readiness, changed.design).handoffActivity[0].quietDesign, null);
+    }
   }
 });
 
@@ -135,6 +177,9 @@ test("handoff completion is quiet only for its verified published or unchanged c
           request.on("close", () => rootEvents.delete(response));
         } else if (path === "/api/project-entry") json({ projectPath: root, startingPath: "development" });
         else if (path === "/api/project-entry/open") json({ developmentContext: true, developmentStarted: false });
+        else if (path === "/api/settings/project-effort") json({ desired: null, changing: false,
+          stage1: { desired: null, actual: null, model: null, supported: [], status: "pending", error: null },
+          stage2: { desired: null, actual: null, model: null, supported: [], status: "pending", error: null } });
         else if (path === "/api/development/preflight") json({ status: "ready", projectPath: root, initialize: false, message: "Synthetic Git preflight" });
         else if (path === "/api/development/view") json({ url: composed.url, channel: "handoff-fixture" });
         else if (path === "/api/development/handoff") json({ generation: value.generation,
@@ -186,9 +231,33 @@ test("handoff completion is quiet only for its verified published or unchanged c
         await waitPrivate('document.querySelector("#backbone-state").textContent==="Current Design"');
         assert.equal(await evaluatePrivate('document.querySelector("#prototype-handoff-activity").getBoundingClientRect().height'), 0);
         assert.equal(await browser.evaluate('document.querySelector("#development-panel .development-handoff-status")'), null);
+        const checkEmptyChrome = async () => {
+          for (const [width, height] of [[1280, 800], [1280, 520], [390, 520]]) {
+            await browser.call("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+            assert.equal(await browser.evaluate('document.querySelector(".development-workspace").getBoundingClientRect().height'), 0);
+            assert.equal(await browser.evaluate('document.querySelector("#development-panel").getBoundingClientRect().height'), 0);
+            assert.equal(await browser.evaluate('document.querySelector(".development-provenance")'), null);
+            assert.equal(await evaluatePrivate('document.querySelector("#prototype-handoff-activity").getBoundingClientRect().height'), 0);
+            assert.equal(await browser.evaluate("document.documentElement.scrollWidth<=innerWidth+1"), true);
+          }
+        };
+        await checkEmptyChrome();
         await evaluatePrivate('window.retainedDesign=document.querySelector("#backbone-proposal"); document.querySelector("#message").value="Retained unsent draft"; document.querySelector("#message").dispatchEvent(new Event("input",{bubbles:true}))');
         for (let poll = 0; poll < 3; poll++) await push();
         assert.equal(await browser.evaluate(`${visibleRootStatuses}.length`), 0);
+        reviseDesign(f); await push();
+        await waitPrivate('document.querySelector("#backbone-state").textContent==="Current Design"');
+        await browser.waitFor(`${visibleRootStatuses}.length===0`);
+        await checkEmptyChrome();
+        await browser.evaluate('document.querySelector("#project-settings").click()');
+        await waitPrivate('document.querySelector("#canvas-settings").open');
+        await evaluatePrivate('document.querySelector("#acceptance-delivery").click()');
+        await browser.waitFor('!!document.querySelector(".process-dialog")');
+        await browser.evaluate('[...document.querySelectorAll(".process-dialog details")].forEach(e=>e.open=true)');
+        assert.equal(await browser.evaluate(`document.querySelector(".process-dialog").textContent.includes(${JSON.stringify(requestId)})`), true);
+        assert.equal(await browser.evaluate(`document.querySelector(".process-dialog").textContent.includes(${JSON.stringify(snapshotPath)})`), true);
+        await browser.evaluate('document.querySelector("#close-acceptance-delivery").click()');
+        await checkEmptyChrome();
         f.state.questions.push({ id: "choice", context: "Synthetic behavior", question: "Keep the count?", whyItMatters: "Scope",
           importance: "blocking", options: [], allowFreeform: true, state: "open", answerRequestId: null, blockingActive: true,
           source: { role: "designer", resultId: f.result.resultId, requestId, requestIds: [requestId], cycleId: null,
@@ -228,9 +297,10 @@ test("handoff completion is quiet only for its verified published or unchanged c
         await waitPrivate('document.querySelector("#backbone-state").textContent==="Design unverified"');
         installationStatus = "ready";
         // Reopen the successful exact source; the newer rejected request cannot lend completion evidence.
-        f.state.requests = [f.request]; value.lifecycle.outputs[0].path = snapshotPath;
+        f.state.requests = f.state.requests.filter(request => request.id !== nextRequestId); value.lifecycle.outputs[0].path = snapshotPath;
         value.development = { handoffId: requestId, requestId, snapshotPath }; await push();
         await browser.waitFor(`${visibleRootStatuses}.length===0`);
+        await checkEmptyChrome();
         await browser.call("Page.reload"); contexts.clear();
         await browser.waitFor('!!document.querySelector("#project-conversation-frame")');
         await waitPrivate('document.querySelector("#backbone-state").textContent==="Current Design"');
@@ -263,6 +333,12 @@ test("handoff completion is quiet only for its verified published or unchanged c
         await browser.call("Page.navigate", { url: standalone.url });
         await browser.waitFor('document.querySelector("#backbone-state")?.textContent==="Current Design"');
         assert.equal(await browser.evaluate('document.querySelector("#prototype-handoff-activity").getBoundingClientRect().height'), 0);
+        for (const [width, height] of [[1280, 800], [1280, 520], [390, 520]]) {
+          await browser.call("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+          assert.equal(await browser.evaluate('document.querySelector("#prototype-handoff-activity").getBoundingClientRect().height'), 0);
+        }
+        await browser.call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
+        await browser.evaluate("new Promise(resolve=>setTimeout(resolve,150))");
         f.state.activeRequestId = requestId; f.state.activeBatchRequestIds = [requestId]; f.request.status = "active";
         f.state.activeTask = { binding: { requestId, role: "designer" }, condition: "running" }; f.readiness.status = "working";
         events.touch();
@@ -274,6 +350,8 @@ test("handoff completion is quiet only for its verified published or unchanged c
         f.state.activeRequestId = null; f.state.activeBatchRequestIds = []; f.state.activeTask = null;
         f.request.status = "completed"; f.readiness.status = "ready"; events.touch();
         await browser.call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
+        await browser.evaluate("new Promise(resolve=>setTimeout(resolve,150))");
+        await browser.evaluate('if (document.querySelector("#newer").checkVisibility()) document.querySelector("#newer").click()');
         await exerciseLatestNavigation({ browser, evaluate: browser.evaluate, waitFor: browser.waitFor, attention,
           grow: async () => { const selector = populate(1); await browser.waitFor(`!!document.querySelector(${JSON.stringify(selector)})`); } });
         assert.deepEqual(mutations, []);

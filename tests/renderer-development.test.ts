@@ -223,7 +223,7 @@ test("verified handoff Design removes the root banner without hiding active, sta
     const completed = { requestId: id, label: "Design ready from the saved Prototype.", active: false, quietDesign: binding };
     await send(completed);
     assert.equal(h.document.querySelector(".development-handoff-status"), null, "No empty padded section.");
-    assert.match(h.document.querySelector(".development-provenance")!.textContent!, new RegExp(id));
+    assert.equal(h.document.querySelector(".development-provenance"), null, "Saved details belong to advanced history, not normal chrome.");
     const pending = Promise.withResolvers<Response>(); held = pending.promise;
     value = { ...value, revision: value.revision + 1 }; h.render(value); await h.flush();
     assert.equal(h.document.querySelector(".development-handoff-status"), null, "Unchanged polling keeps verified receipt presentation.");
@@ -729,7 +729,7 @@ test("real React Development keeps handoff controls in view across long-status h
         await browser.evaluate(`window.developmentFixture.accept(${JSON.stringify(snapshot)})`);
         await settle();
         const shortHelp = await measure("1280-pointer-over-iframe");
-        await move(".development-provenance", true);
+        await move(".development-handoff-status", true);
         await browser.waitFor(`document.querySelector("#next-action-guide")?.textContent === ${JSON.stringify(longStatus)}`);
         const longHelp = await measure("1280-pointer-over-toolbar");
         await move("#project-conversation-frame", true);
@@ -763,7 +763,7 @@ test("real React Development keeps handoff controls in view across long-status h
             assertBounded(await measure(`${width}-iframe-hover`));
             await move("#continue-design");
             assertBounded(await measure(`${width}-button-hover`));
-            await move(".development-provenance", true);
+            await move(".development-handoff-status", true);
             await browser.evaluate('document.querySelector("#development-panel").focus()');
             await tab();
             const focused = await measure(`${width}-keyboard-button`);
