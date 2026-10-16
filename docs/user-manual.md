@@ -128,6 +128,9 @@ selector is disabled while ownership is unverified.
 You can establish Design from existing code without editing it, refine an idea,
 or ask for an explanation. [Optional role hints](use-cases.md#suggest-designer-or-agent)
 and [visual annotations](use-cases.md#point-to-a-design-change) help express intent.
+Artifact actions share the artifact heading instead of a separate toolbar row.
+Questions, Current Design and connection status remain visible without redundant
+Canvas or Conversation titles.
 
 Before requesting implementation, trace a user goal through the proposed behavior:
 what starts it, what outcome the user sees, and which limits or failure cases

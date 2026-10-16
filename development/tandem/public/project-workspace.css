@@ -45,10 +45,10 @@
 .human-app[data-project-panel][data-font-size="largest"] { --shell-font-size: 17px; }
 .human-app[data-project-panel] .panel-heading {
   flex: none;
-  min-height: var(--studio-header-height);
+  min-height: 0;
   box-sizing: border-box;
-  padding: var(--studio-heading-padding);
-  gap: var(--studio-gap);
+  padding: 4px 12px;
+  gap: 6px;
   flex-wrap: wrap;
   border-bottom: 1px solid var(--border);
   background: var(--surface);

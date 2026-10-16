@@ -119,8 +119,10 @@ export function projectHumanLoopView(state, readiness, design = null) {
             && policyHash(design.publication.previous) === policyHash(publicationExecution.binding.design)
             && design.binding.revisionId !== publicationExecution.binding.design.revisionId
           : handoff.result.outcome.kind === "designer-unchanged" && sameDesign(execution.binding.design, design.binding));
+      const verifiedReadiness = ["ready", "closed"].includes(readiness.status)
+        || ["working", "waiting-answer"].includes(readiness.status) && state.activeRequestId && !active;
       const quietDesign = request.status === "completed" && !active && !state.stop && !state.uncertainty
-        && ["ready", "closed"].includes(readiness.status) && !openQuestions.length && relevantDesign ? design.binding : null;
+        && verifiedReadiness && !openQuestions.length && relevantDesign ? design.binding : null;
       const task = active ? state.activeTask : null;
       const role = task?.binding.role === "designer" ? "Designer" : task?.binding.role;
       const workLabel = !task ? null : task.condition === "waiting-permission" ? `${role} is waiting for native permission. Answer in the owning session.`

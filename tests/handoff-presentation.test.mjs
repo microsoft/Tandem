@@ -18,6 +18,7 @@ import { sharedDesignExampleV3 } from "../development/tandem/test/helpers/shared
 import { browserAvailable, openFixtureBrowser } from "../development/tandem/test/helpers/browser-fixture.mjs";
 import { exerciseLatestNavigation } from "./helpers/latest-navigation-browser.mjs";
 import { exerciseRoleHintDraft } from "../development/tandem/test/helpers/role-hint-browser.mjs";
+import { exerciseDevelopmentChrome } from "./helpers/development-chrome-browser.mjs";
 
 const requestId = `handoff-${"a".repeat(64)}`;
 const nextRequestId = `handoff-${"b".repeat(64)}`;
@@ -109,6 +110,11 @@ test("completed changed and unchanged handoffs remain quiet after a later verifi
       assert.equal(quietHandoff(activity, f.design.binding, 1), false);
     }
     assert.deepEqual(f, retained, "No stored request, publication or completion state is changed.");
+    const working = structuredClone(f);
+    working.state.activeRequestId = "later-implementation-request";
+    working.state.activeBatchRequestIds = [working.state.activeRequestId];
+    assert.equal(quietHandoff(projectHumanLoopView(working.state, { status: "working" }, working.design).handoffActivity[0], working.design.binding), true,
+      "Later active work must not revive the old successful handoff strip.");
     for (const change of [
       f => { f.state.handoffs.at(-1).presented = false; },
       f => { f.design.publication.requestId = "unrelated"; },
@@ -130,6 +136,9 @@ test("completed changed and unchanged handoffs remain quiet after a later verifi
       let accessRequests = [];
       f.state.owner.workspacePath = root;
       f.design.content = sharedDesignExampleV3();
+      f.design.content.artifacts.unshift({ schemaVersion: "artifact/v1", id: "checkout-ui", title: "Checkout",
+        category: "ui", format: "html", width: 640, height: 360, description: "Synthetic checkout screen.",
+        source: '<div style="padding:24px;background:#f5f8ff"><h2>Checkout</h2><p>Your bag</p><button>Continue</button></div>' });
       let installationStatus = "ready";
       const value = rootState("development");
       const snapshotPath = ".tandem/efforts/fixture/stages/prototype-r7.json";
@@ -243,6 +252,9 @@ test("completed changed and unchanged handoffs remain quiet after a later verifi
           }
         };
         await checkEmptyChrome();
+        await exerciseDevelopmentChrome({ browser, evaluate: evaluatePrivate, waitFor: waitPrivate, diagnostic: text => t.diagnostic(text),
+          baselineCss: process.env.TANDEM_BASELINE_SHELL_CSS ? await readFile(process.env.TANDEM_BASELINE_SHELL_CSS, "utf8") : null,
+          baselineProjectCss: process.env.TANDEM_BASELINE_PROJECT_CSS ? await readFile(process.env.TANDEM_BASELINE_PROJECT_CSS, "utf8") : null });
         await exerciseRoleHintDraft({ browser, evaluate: evaluatePrivate,
           click: selector => evaluatePrivate(`{const e=document.querySelector(${JSON.stringify(selector)});if(e.matches("textarea")) e.focus();e.click()}`) });
         await evaluatePrivate('window.retainedDesign=document.querySelector("#backbone-proposal"); document.querySelector("#message").value="Retained unsent draft"; document.querySelector("#message").dispatchEvent(new Event("input",{bubbles:true}))');
