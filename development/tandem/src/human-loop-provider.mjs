@@ -98,6 +98,7 @@ export function projectHumanLoopView(state, readiness, design = null) {
     compaction: readiness.compaction,
     canResetApprovals: readiness.canResetApprovals === true,
     activeRequestId: state.activeRequestId, activeRole: state.activeTask?.binding.role ?? null,
+    activeCondition: state.activeTask?.condition ?? null,
     handoffActivity: state.requests.filter(request => /^handoff-[a-f0-9]{64}$/.test(request.id)).slice(-100).map(request => {
       const handoff = state.handoffs.findLast(item => item.requestIds.includes(request.id));
       const openQuestions = questions.filter(question => question.source.requestIds.includes(request.id) && question.state === "open");

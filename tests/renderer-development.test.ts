@@ -16,6 +16,40 @@ function reviewFixture(value: ReturnType<typeof state>) {
         deferred: ["Synchronization"], decisions: ["Reset: preserve keyboard focus"] };
 }
 
+test("consolidated status is Development-only and rejects previous-generation presentation", async t => {
+    const h = await reactHarness(t, undefined, "development");
+    let value = state("development");
+    h.render(value); await h.flush();
+    let frame = h.get<HTMLIFrameElement>("project-conversation-frame");
+    const send = async (text: string, scope = JSON.stringify([value.prototypeId, value.generation])) => {
+        h.window.dispatchEvent(new h.window.MessageEvent("message", { origin: "http://127.0.0.1:8765", source: frame.contentWindow,
+            data: { protocol: "tandem-project/v1", channel: "fixture-project", type: "status", status: "working", active: true,
+                activeRequestId: "current-request", statusScope: scope, presentation: { kind: "active", text, requestId: "current-request" } } }));
+        await h.flush();
+    };
+    await send("Designer working...");
+    assert.equal(h.get("next-action-guide").textContent, "Designer working...");
+    for (const tab of ["preparation-tab", "design-tree-tab", "sketch-tab", "live-preview-tab"]) {
+        await h.fire(h.get(tab), "mousedown", { button: 0 });
+        const before = h.get("next-action-guide").textContent;
+        await send("Implementer working...");
+        assert.equal(h.get("next-action-guide").textContent, before, `${tab} retains its own status, not private activity.`);
+        assert.notEqual(before, "Designer working...");
+        assert.notEqual(before, "Implementer working...");
+    }
+    await h.fire(h.get("development-tab"), "mousedown", { button: 0 });
+    const previousScope = JSON.stringify([value.prototypeId, value.generation]);
+    value = { ...value, generation: "new-generation", revision: value.revision + 1 };
+    h.render(value); await h.flush();
+    assert.notEqual(h.get("next-action-guide").textContent, "Implementer working...");
+    frame = h.get<HTMLIFrameElement>("project-conversation-frame");
+    await send("Stale role must not show", previousScope);
+    assert.notEqual(h.get("next-action-guide").textContent, "Stale role must not show");
+    await send("Reviewer working...");
+    assert.equal(h.get("next-action-guide").textContent, "Reviewer working...");
+    assert.deepEqual(h.errors, []);
+});
+
 test("Discovery and Development artifact groups keep separate disclosure keys through live index updates", async t => {
     const h = await reactHarness(t, undefined, "development"), value = state("development");
     value.artifacts = [{ id: "old", title: "Original discovery Design", stage: "design", kind: "markdown",

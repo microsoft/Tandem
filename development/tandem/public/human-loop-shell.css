@@ -251,9 +251,12 @@
 .human-app .quick-request-options p { margin: 4px 6px 8px; color: var(--muted); font-size: calc(var(--shell-font-size) - 2px); }
 .human-app .quick-request-options button { display: block; width: 100%; padding: 8px; border: 0; border-radius: 4px; background: transparent; color: var(--text); box-shadow: none; text-align: left; white-space: normal; font: inherit; }
 .human-app .quick-request-options button:hover { background: var(--blue-soft); }
-.human-app .conversation-current { flex: 0 1 auto; min-width: 0; max-width: 100%; margin: 0 0 0 auto; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; overflow-wrap: anywhere; font-size: calc(var(--shell-font-size) - 2px); }
+.human-app .conversation-current { flex: 1 1 0; min-width: 0; max-width: 100%; margin: 0 0 0 auto; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; overflow-wrap: anywhere; font-size: calc(var(--shell-font-size) - 2px); }
+.human-app #focus-current-message strong { min-width: 0; }
+.human-app #current-state-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .human-app #focus-current-message strong { font-size: inherit; font-weight: 400; }
 .human-app .conversation-current.conversation-state-strip { display: block; }
+.human-app[data-root-status-owner="true"] .conversation-current { display: none; }
 .human-app .conversation-current::before { display: none; }
 .human-app .conversation-current .current-state-icon { position: relative; flex: none; }
 .human-app .conversation-current[data-current-label="Ready"] .current-state-icon { width: 14px; height: 14px; border: 1px solid var(--blue); border-radius: 50%; background: var(--blue-soft); }

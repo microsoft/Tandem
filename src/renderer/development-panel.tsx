@@ -19,7 +19,6 @@ export function DevelopmentPanel({ active }: { active: boolean }) {
         <HandoffControls />
         {!project.developmentEntered && snapshot && <p>Review the Prototype above to request Design, or <button id="enter-development"
             type="button" className="plan-button secondary" onClick={() => void project.activate()}>Open Development</button> without submitting it.</p>}
-        {project.detail && <p role="status">{project.detail}</p>}
         {(project.error || state.developmentBlocker) && <div role="alert" className="development-error">
             {project.error || state.developmentBlocker}
             {project.error && !project.active && !project.starting

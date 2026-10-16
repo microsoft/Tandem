@@ -305,7 +305,7 @@ function Workspace(props: WorkspaceProps) {
   const completionHelp = contextCollapsed && !allComplete && !stageAction.busy && !["prepare", "development"].includes(current)
     ? "Next stage: " + completionLabel : completionLabel;
   const selectedLabel = viewed === "sketch" ? "Drawings" : lifecycleStages.find((stage) => stage.id === viewed)?.label || viewed;
-  const handoffStatus = useHandoffStatus(activeTab === "development" || activeTab === "preview");
+  const handoffStatus = useHandoffStatus(activeTab === "development");
   const statusBarError = props.connectionError || stageAction.error || projectView.maintenanceError || state.effortReset?.error
     || (activeTab === "development" ? projectView.error || state.developmentBlocker : "") || handoffStatus.error;
   const developmentStatus = activeTab === "development" ? projectView.detail
@@ -313,9 +313,14 @@ function Workspace(props: WorkspaceProps) {
       ? "Connecting to Development..." : "") : "";
   const savedPrototype = state.lifecycle.currentStage === "development" && state.lifecycle.outputs.some(output => output.stageId === "prototype")
     && state.status === "Prototype outputs saved. Stage 1 is complete. You can close now and open Development later with these files as input.";
-  const statusBarText = statusBarError || contextHelp || (nextAction ? "Next action: " + nextAction.label
+  const privateStatus = activeTab === "development" ? projectView.presentation : null;
+  const authoritativeActivity = privateStatus?.kind === "active" && !handoffStatus.busy && !pending
+    && !hasActiveJobs(state) && (!handoffStatus.rootStatus || savedPrototype) ? privateStatus.text : "";
+  const statusBarText = statusBarError || (privateStatus?.kind === "attention" ? privateStatus.text : "")
+    || authoritativeActivity || contextHelp || (nextAction ? "Next action: " + nextAction.label
     : (handoffStatus.busy ? handoffStatus.text : "") || developmentStatus
-    || (pending || hasActiveJobs(state) ? state.status : "") || (!savedPrototype ? handoffStatus.rootStatus : "") || handoffStatus.text
+    || (pending || hasActiveJobs(state) ? state.status : "") || (!savedPrototype ? handoffStatus.rootStatus : "")
+    || (privateStatus?.kind === "active" ? privateStatus.text : "") || handoffStatus.text || privateStatus?.text
     || (activeTab === "development" && projectView.developmentEntered ? "Development" : "")
     || (savedPrototype ? "Prototype saved. Continue in Development when you're ready."
     : handoffStatus.rootStatus || (atStart ? "Ready to start a project." : "Ready.")));

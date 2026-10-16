@@ -112,6 +112,15 @@ recovery controls stay beside the handoff; questions, permissions and actionable
 errors stay in their owning Development controls. The standalone Development
 view uses its conversation status strip.
 
+In **Development only**, that bar shows one current message: required attention,
+then verified role activity or compaction, then a request/draft/permission
+acknowledgment, then Ready. “Request received” confirms receipt, not execution.
+Acknowledgments clear on the next interaction or relevant workflow change;
+editing a draft, switching project generation, or reconnecting cannot revive an
+old acknowledgment. Detailed errors, consent, questions, implementation decisions,
+attachment validation and Settings feedback remain with their owning controls.
+Preparation, Requirements, Drawings and Prototype keep their existing status UX.
+
 UI Design should preserve the accepted displayed Prototype's appearance and
 interactions, not redesign it from prose. Missing evidence or necessary UX changes
 are raised in the Designer summary and Questions; later approved Design revisions
