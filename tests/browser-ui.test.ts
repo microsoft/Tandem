@@ -13,6 +13,7 @@ import { reactHarness, state as workspaceState } from "./helpers/react-harness.j
 
 const applicationHeader: ApplicationHeader = {
     scope: "effort-generation", version: "1.1.15", lifecycle: "2. Requirements | discovery",
+    permissionScope: "main",
     controls: {
         reload: { label: "Reload", title: "Reload the extension", disabled: false, busy: false },
         reset: { label: "Reset", title: "Reset effort", disabled: false, busy: false },
@@ -133,6 +134,7 @@ async function fixture(t: TestContext) {
 
 test("browser shell preserves the application origin, microphone delegation and host controls", async (t) => {
     const h = await fixture(t);
+    await h.fromApplication({ type: "tandem:header:state", header: applicationHeader });
     const frame = h.document.querySelector<HTMLIFrameElement>("#tandem-application")!;
     assert.equal(new URL(frame.src).origin, "http://127.0.0.1:5000");
     assert.equal(new URL(frame.src).pathname, "/");
@@ -359,6 +361,7 @@ test("permission dialog approves only the displayed ID and does not offer policy
 
 test("allow-all and Stop require confirmation while workspace selection remains usable", async (t) => {
     const h = await fixture(t);
+    await h.fromApplication({ type: "tandem:header:state", header: applicationHeader });
     await h.select('select[aria-label="Tool permissions"]', "allow-all");
     assert.match(h.document.querySelector('[role="dialog"]')!.textContent!, /without further tool confirmation/);
     await h.click("Cancel");
@@ -384,6 +387,46 @@ test("allow-all and Stop require confirmation while workspace selection remains 
     assert.match(h.document.querySelector(".host-notice h1")!.textContent!, /Tandem stopped/);
     assert.deepEqual(h.errors, []);
 });
+
+for (const permissionMode of ["ask", "allow-all"] as const) {
+    test(`private Development hides only the host mode control; ${permissionMode} fallback stays fail-closed`, async (t) => {
+        const h = await fixture(t);
+        await h.accept(state({ revision: 2, permissionMode }));
+        const selector = () => h.document.querySelector<HTMLSelectElement>('select[aria-label="Tool permissions"]');
+        assert.equal(selector()!.disabled, true, "No handshake is not evidence of main-session ownership.");
+        await h.fromApplication({ type: "tandem:header:state", header: applicationHeader });
+        assert.equal(selector()!.disabled, false);
+        assert.equal(selector()!.value, permissionMode);
+        const privateHeader = { ...applicationHeader, permissionScope: "development" };
+        await h.fromApplication({ type: "tandem:header:state", header: privateHeader }, "https://untrusted.example");
+        assert.ok(selector(), "A foreign origin cannot hide controls.");
+        await h.fromApplication({ type: "tandem:header:state", header: privateHeader });
+        assert.equal(selector(), null);
+        assert.equal(h.document.querySelector(".host-permissions"), null, "No label, icon, focus target or layout spacer remains.");
+        assert.ok(h.button("Reload page"));
+        await h.accept(state({ revision: 3, permissionMode, requests: [
+            { type: "permission", id: "native", title: "Native consent", details: "Still requires approval.", canAllowAllForSession: false },
+        ] }));
+        assert.ok(h.button("Allow once"));
+        assert.ok(h.button("Deny"));
+        assert.equal(selector(), null, "Actual prompts are independent of the hidden mode selector.");
+        assert.deepEqual(h.requests, [], "Hiding the control never sends consent or changes the mode.");
+        await h.accept(state({ revision: 4, permissionMode }));
+        await h.fromApplication({ type: "tandem:header:unavailable" });
+        assert.equal(selector()!.disabled, true);
+        assert.equal(selector()!.value, permissionMode, "Losing ownership evidence does not reset remembered mode.");
+        await h.fromApplication({ type: "tandem:header:state", header: { ...applicationHeader, permissionScope: undefined } });
+        assert.equal(selector()!.disabled, true, "Legacy headers cannot infer ownership.");
+        await h.fromApplication({ type: "tandem:header:state", header: { ...applicationHeader, permissionScope: "unknown" } });
+        assert.equal(selector()!.disabled, true, "Invalid headers fail closed.");
+        await h.fromApplication({ type: "tandem:header:state", header: applicationHeader });
+        assert.equal(selector()!.disabled, false);
+        await h.disconnect();
+        assert.equal(selector()!.disabled, true);
+        assert.equal(selector()!.value, permissionMode);
+        assert.ok(h.requests.every(request => request.body?.type !== "set-permission-mode" && request.body?.type !== "permission-response"));
+    });
+}
 
 test("header icon controls retain their disabled states while the backend is unavailable", async (t) => {
     const h = await fixture(t);
