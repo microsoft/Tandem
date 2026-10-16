@@ -207,6 +207,9 @@
 .human-app .human-loop { background: var(--surface-raised); }
 .human-app .command-bar { background: var(--surface-raised); }
 .human-app #role-hint-help { margin: 4px 0 0; color: var(--muted); font-size: calc(var(--shell-font-size) - 2px); }
+.human-app .role-suggestions { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; padding: 4px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); }
+.human-app .role-suggestions button { padding: 6px 10px; min-height: 32px; font: inherit; }
+.human-app .role-suggestions [aria-selected="true"] { color: var(--blue); background: var(--blue-soft); }
 .human-app #queued-requests { flex: none; min-height: 0; max-height: min(24vh, 180px); overflow: auto; overscroll-behavior: contain; padding: 6px 12px; border-top: 1px solid var(--border); background: var(--surface-raised); }
 .human-app #queued-requests > details > summary { padding: 3px 0; font-weight: 600; }
 .human-app #queued-requests ol { margin: 4px 0; padding-left: 20px; }
@@ -450,6 +453,14 @@
   background: transparent;
 }
 .human-app .perspective-toolbar .annotation-view-toggle { margin: 0; }
+.human-app :is(.canvas-panel, .activity-panel) > .panel-heading { padding: 6px 12px; gap: 8px; min-height: 0; flex-wrap: wrap; }
+.human-app .panel-heading:not(:has(> :not(.visually-hidden):not([hidden]))) { display: none; }
+.human-app .artifact-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 0 0 6px; min-width: 0; }
+.human-app .artifact-heading-title { flex: 1 1 12rem; min-width: 0; overflow-wrap: anywhere; }
+.human-app .artifact-heading > .perspective-toolbar { position: static; flex: 0 1 auto; padding: 0; margin: 0; }
+.human-app .artifact-heading > .artifact-about { margin: 0; min-width: 0; }
+.human-app .artifact-heading > .artifact-about[open] { flex-basis: 100%; }
+.human-app .artifact-heading .artifact-description { margin-block: 6px; }
 .human-app .perspective-toolbar :is([aria-pressed="true"], [aria-expanded="true"]) {
   background: var(--shell-accent-soft);
   border-color: var(--shell-accent);
@@ -502,7 +513,7 @@
   overflow: auto;
   background: var(--surface);
 }
-.human-app [data-artifact-expanded] > .perspective-toolbar {
+.human-app [data-artifact-expanded] .perspective-toolbar {
   position: static;
   flex: none;
   max-height: 25dvh;
@@ -517,7 +528,7 @@
 .human-app [data-artifact-expanded] > figure { flex: 1; min-height: 0; overflow: auto; }
 .human-app [data-artifact-expanded] > .source-artifact:not(.artifact-document) { display: flex; flex-direction: column; overflow: hidden; }
 .human-app [data-artifact-expanded] > .source-artifact > :not([data-artifact-viewport]) { flex: none; }
-.human-app [data-artifact-expanded] > .source-artifact > figcaption { max-height: 20dvh; overflow: auto; }
+.human-app [data-artifact-expanded] > figure > figcaption { max-height: 40dvh; overflow: auto; }
 .human-app [data-artifact-expanded] [data-artifact-viewport] { flex: 1; min-height: 0; max-height: none !important; }
 .human-app :is(.artifact-description, .design-metadata, .artifact-element-details) {
   font-size: var(--shell-font-size);

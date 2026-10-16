@@ -89,8 +89,8 @@
   <iframe id="rendering-debugger-frame" title="Design JSON rendering debugger" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer"></iframe>
 </dialog>
 <main class="workspace-shell human-layout">
-  <section id="design-panel" class="panel canvas-panel human-design">
-    <div class="panel-heading"><div><p class="eyebrow">Your design</p><h2 id="design-pane-title">Canvas</h2></div><button id="return-to-questions" type="button" hidden>Back to Questions</button><span id="backbone-state" class="empty-badge">No Design yet</span></div>
+  <section id="design-panel" class="panel canvas-panel human-design" aria-labelledby="design-pane-title">
+    <div class="panel-heading"><h2 id="design-pane-title" class="visually-hidden">Canvas</h2><button id="return-to-questions" type="button" hidden>Back to Questions</button><span id="backbone-state" class="empty-badge">No Design yet</span></div>
     <div id="canvas-scroll" class="canvas-scroll">
       <p id="prototype-handoff-activity" role="status" hidden></p>
       <div id="assessment-card" class="empty-state design-assessment"><strong>No Design has been published</strong><p>Discuss your idea in the conversation. The current Design will appear here when it is ready.</p></div>
@@ -113,8 +113,8 @@
   <div id="workspace-divider" role="separator" tabindex="0" aria-orientation="vertical"
     aria-controls="design-panel conversation-panel" aria-label="Resize Design and Conversation"
     title="Drag to resize panels, or use Left and Right arrow keys"></div>
-  <section id="conversation-panel" class="panel activity-panel human-conversation">
-    <div class="panel-heading"><h2>Conversation</h2><button id="show-questions" type="button" aria-controls="question-panel" aria-expanded="false">Questions (0)</button><span class="connection"><i class="status-dot"></i><span id="connection-status">Connecting</span></span></div>
+  <section id="conversation-panel" class="panel activity-panel human-conversation" aria-labelledby="conversation-pane-title">
+    <div class="panel-heading"><h2 id="conversation-pane-title" class="visually-hidden">Conversation</h2><button id="show-questions" type="button" aria-controls="question-panel" aria-expanded="false">Questions (0)</button><span class="connection"><i class="status-dot"></i><span id="connection-status">Connecting</span></span></div>
     <button id="initialize" type="button" hidden>Initialize runtime</button>
     <button id="inspect-initial-creation" type="button" hidden>Inspect unused setup recovery</button>
     <button id="repair-empty-setup" type="button" hidden>Repair Development setup</button>
@@ -157,6 +157,7 @@
       <div class="command-composer">
         <figure id="clipboard-preview" class="annotation-preview" hidden><img id="clipboard-image" alt="Unsent pasted image"><figcaption id="clipboard-caption" role="status"></figcaption><button type="button" id="clipboard-remove">Remove pasted image</button></figure>
         <figure id="annotation-preview" class="annotation-preview" hidden><img id="annotation-image" alt="Unsent diagram snapshot"><figcaption id="annotation-caption"></figcaption><button type="button" id="annotation-remove">Remove snapshot</button></figure>
+        <div id="role-suggestions" class="role-suggestions" role="listbox" aria-label="Role suggestions" hidden></div>
         <textarea id="message" rows="2" placeholder="Ask about the Design, or describe what you want to change..."></textarea>
         <p id="role-hint-help" role="status" hidden></p>
       </div>

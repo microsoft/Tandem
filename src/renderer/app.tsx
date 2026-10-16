@@ -183,17 +183,22 @@ function GoalEntry() {
   </section>;
 }
 
-function Header({ version, connectionError, developmentView, onHostedChange }: {
-  version: string; connectionError: string; developmentView: boolean; onHostedChange(hosted: boolean): void;
+function Header({ version, connectionError, onHostedChange }: {
+  version: string; connectionError: string; onHostedChange(hosted: boolean): void;
 }) {
   const { state } = useUi();
-  const { maintenanceError } = useProjectView();
+  const projectView = useProjectView();
+  const { maintenanceError } = projectView;
+  const ownershipUnknown = Boolean(connectionError || projectView.error || projectView.entry.error)
+    || projectView.entry.loading || projectView.entry.busy;
+  const permissionScope = ownershipUnknown ? undefined : projectView.active ? "development"
+    : projectView.starting || projectView.developmentEntered || ["unknown", "unavailable"].includes(projectView.status) ? undefined : "main";
   const stageIndex = Math.max(0, lifecycleStages.findIndex((stage) => stage.id === state.lifecycle.currentStage));
   const phase = state.lifecycle.currentStage === "development" ? "" : state.phase || "discovery";
   const hosted = useStandaloneHeader({
     scope: JSON.stringify([state.prototypeId, state.generation, state.provider?.extensionId]),
     version, lifecycle: isGoalEntry(state) ? "" : `${stageIndex + 1}. ${lifecycleStages[stageIndex].label}${phase ? ` | ${phase}` : ""}`,
-    permissionScope: developmentView ? "development" : "main",
+    ...(permissionScope ? { permissionScope } : {}),
     controls: {
       reload: null,
       reset: null,
@@ -424,7 +429,7 @@ function Workspace(props: WorkspaceProps) {
         <aside id="requirements-pane" className="requirements" aria-label="Project context" onKeyDown={(event) => {
           if (event.key === "Escape" && contextOpen) { setContextOpen(false); document.getElementById("context-toggle")?.focus(); event.preventDefault(); }
         }}>
-          <Header version={props.version} connectionError={props.connectionError} developmentView={projectView.active} onHostedChange={setHeaderHosted} />
+          <Header version={props.version} connectionError={props.connectionError} onHostedChange={setHeaderHosted} />
           <nav className="project-navigation" aria-label="Project navigation">
             <button id="project-settings" type="button" className="plan-button" onClick={() => projectView.command("settings")}>Project settings</button>
             <Tabs.List id="project-contents" className="preview-tabs project-tabs" aria-label="Project contents">

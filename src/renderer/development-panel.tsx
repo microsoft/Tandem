@@ -27,8 +27,5 @@ export function DevelopmentPanel({ active }: { active: boolean }) {
             {project.error && !project.active && !project.starting
                 && <button id="retry-development" className="plan-button" onClick={() => void project.activate(true)}>Retry Development setup</button>}
         </div>}
-        {state.development && <details className="development-provenance"><summary>Saved handoff details</summary>
-            <p>Retained request: {state.development.requestId}. Used or retired work is never replayed.
-                Implementation still requires its separate confirmation.</p></details>}
     </div>;
 }

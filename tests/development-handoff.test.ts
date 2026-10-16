@@ -840,6 +840,16 @@ for (const mode of ["build", "validate-existing", "not-applicable"] as const) {
             assert.deepEqual(await readFile(join(directory, "snapshot.json")), await readFile(f.path));
             assert.match(receipt.request.message, /Do not implement, run prototype scripts/);
             assert.match(receipt.request.message, /stage_human_design and submit_designer_outcome/);
+            assert.match(receipt.request.message, /accepted displayed saved Prototype.*visual baseline/);
+            assert.match(receipt.request.message, /target, snapshot hash and displayed checkpoint\/source fingerprint/);
+            assert.match(receipt.request.message, /pending or unapproved milestone is not the accepted baseline/);
+            assert.match(receipt.request.message, /layouts, hierarchy, spacing, typography, colors, labels, controls, interaction states and flows/);
+            assert.match(receipt.request.message, /Incomplete mock behavior is not confirmed intent/);
+            assert.match(receipt.request.message, /later explicitly approved Design revisions with an obsolete Prototype/);
+            assert.match(receipt.request.message, /existing Designer summary and Questions path.*user approval before consequential UX changes/);
+            assert.match(receipt.request.message, /not permission to auto-copy or overwrite production files/);
+            assert.match(receipt.request.message, /separate implementation request.*native human confirmation/);
+            assert.match(receipt.request.message, /keep User story and UI separate when both apply/);
             assert.equal(receipt.prototype.disposition, mode);
             assert.equal(receipt.files.some(file => file.path === "source/src/app.tsx"), mode !== "not-applicable");
             assert.equal(receipt.files.some(file => /node_modules|browser-profile|vite-checkpoint|\.env/.test(file.path)), false);

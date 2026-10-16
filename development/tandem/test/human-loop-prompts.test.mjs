@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
+import ts from "typescript";
 import { humanLoopPrompts, validateHumanLoopPrompts } from "../public/prompts/human-loop.js";
 import { generationContract } from "../public/sketch/contract.js";
 import { artifactRules } from "../public/artifacts/contract.js";
@@ -12,7 +13,7 @@ import { designGenerationContract, designReferenceCatalog } from "../public/sket
 import { HumanLoopTransport } from "../src/human-loop-transport.mjs";
 import { createHumanTask } from "../src/human-loop-task.mjs";
 import { DEFAULT_POLICY } from "../runtime-src/domain/workflow/policy.ts";
-import { evaluateWrapper, promptCases, contextHarness } from "./helpers/human-loop-prompt-fixture.mjs";
+import { evaluateWrapper, promptCases, contextHarness, sourceTree, findNode } from "./helpers/human-loop-prompt-fixture.mjs";
 import { browserAvailable, openFixtureBrowser } from "./helpers/browser-fixture.mjs";
 
 const baseline = JSON.parse(await readFile(new URL("./fixtures/human-loop-prompts.before.json", import.meta.url), "utf8"));
@@ -303,6 +304,18 @@ const visualAuthoringCases = [
       /Use the applicable structures, not all of them in every artifact/],
   },
   {
+    name: "focused story, UI, rules and system artifacts",
+    request: "Refine checkout and account management: show user stories, approved screens, payment rules and service responsibilities.",
+    patterns: [/different review purposes individually selectable under distinct stable artifact IDs and purpose categories/,
+      /Keep User story and UI separate when both apply/,
+      /Combine only genuinely inseparable content serving the same review purpose, not to reduce file count/,
+      /do not merge the entire Design into one huge HTML artifact, hide distinct views behind internal HTML tabs/,
+      /Split many unrelated journeys or screens into coherent manageable artifacts/,
+      /not one giant page or a mandatory file per widget/,
+      /preserve unchanged artifacts, history and references without automatic migration/,
+      /not required categories, counts or formats/],
+  },
+  {
     name: "precise contracts without invented infrastructure",
     request: "Clarify the in-memory data contract for a command-line calculator; no UI, HTTP API or saved data is needed.",
     patterns: [/JSON Schema\/OpenAPI when precise machine\/API specs are needed/,
@@ -319,6 +332,12 @@ function assertNoAuthoringOverreach(text) {
     /\b(?:replace|convert) every (?:user )?story (?:with|to) (?:a )?sequence diagram\b/i,
     /\b(?:every|all) projects? (?:must|requires?) (?:have )?(?:persistence|an? HTTP API)\b/i,
     /\b(?:limit|cap) (?:each|every) artifact to \d+ words\b/i,
+    /\b(?:always|must) use (?:only )?HTML\b/i,
+    /(?:^|[.!?]\s+)(?:merge|combine|collapse) (?:the entire|all) Design (?:content )?into (?:one|a single) (?:huge )?HTML (?:page|artifact)\b/im,
+    /(?:^|[.!?]\s+)(?:hide|put) distinct views behind internal HTML tabs\b/im,
+    /\b(?:require|generate) (?:all categories|one artifact per widget)\b/i,
+    /\bPrototype approval (?:replaces|bypasses) (?:Design review|implementation confirmation)\b/i,
+    /\b(?:automatically|blindly) restore (?:the )?Prototype over (?:later )?approved Design\b/i,
   ]) assert.doesNotMatch(text, pattern);
 }
 
@@ -367,7 +386,65 @@ test("visual-first prompt regression checks catch overreaching policy additions"
     "Every project must have persistence.",
     "Every project requires an HTTP API.",
     "Limit each artifact to 50 words.",
+    "Always use only HTML.",
+    "Merge all Design content into one huge HTML page.",
+    "Put distinct views behind internal HTML tabs.",
+    "Require all categories.",
+    "Generate one artifact per widget.",
+    "Prototype approval bypasses implementation confirmation.",
+    "Blindly restore the Prototype over later approved Design.",
   ]) assert.throws(() => assertNoAuthoringOverreach(`${guidance}\n${override}`), assert.AssertionError, override);
+});
+
+test("production handoff guidance reaches Designer without replacing bound evidence or canonical Design", async () => {
+  const source = await readFile(new URL("../../../src/planning-prompts.ts", import.meta.url), "utf8");
+  const handoff = findNode(sourceTree(source), node => ts.isFunctionDeclaration(node) && node.name?.getText() === "buildDevelopmentHandoffPrompt");
+  const compiled = ts.transpileModule(handoff.getText(), { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText;
+  const exports = {};
+  new Function("exports", compiled)(exports);
+  const Harness = contextHarness(runtime, { designReferenceCatalog, designGenerationContract, humanLoopPrompts });
+  for (const disposition of ["build", "validate-existing", "not-applicable"]) {
+    const input = { handoffId: "retained-handoff", receiptPath: "retained/receipt.json",
+      snapshotPath: "retained/snapshot.json", sourcePath: disposition === "not-applicable" ? null : "retained/source",
+      disposition, goal: disposition === "not-applicable" ? "CLI-only calculation" : "Preserve approved checkout" };
+    const evidence = { target: { workspaceRoot: "target-worktree" }, snapshotHash: "a".repeat(64),
+      checkpointId: disposition === "not-applicable" ? null : "displayed-checkpoint" };
+    for (const seed of cases.filter(({ name }) => ["designer:bound", "designer:unbound"].includes(name))) {
+      const request = { id: input.handoffId, message: exports.buildDevelopmentHandoffPrompt(input), answers: null,
+        status: "active", blockingAnswerRefs: [] };
+      const state = { requests: [request], activeBatchRequestIds: [request.id], questions: [], cycles: [], handoffs: [] };
+      const design = structuredClone(seed.packet.context.design), retained = structuredClone(design);
+      const { inputDigest, ...identity } = seed.packet.binding;
+      const context = await new Harness({}, async () => [evidence]).context("designer", request, null, null, identity.before, design, state);
+      const packet = createHumanTask({ ...identity, requestId: request.id, cycleId: null }, context);
+      const delivered = JSON.parse(evaluateWrapper(transport, packet, humanLoopPrompts).split("\n").at(-1));
+      assert.deepEqual(delivered, packet);
+      assert.deepEqual(delivered.context.sourceHandoffs, [evidence]);
+      assert.deepEqual(delivered.context.design, retained);
+      assert.equal(delivered.context.request.message, request.message);
+      assert.notEqual(packet.binding.inputDigest, inputDigest);
+      assert.deepEqual(delivered.context.designGeneration, designGenerationContract);
+      const guidance = [...delivered.context.instructions, ...delivered.context.designGeneration.rules].join("\n");
+      for (const pattern of [
+        /accepted displayed saved Prototype is the visual baseline/,
+        /target, exact snapshot hash and displayed checkpoint\/source fingerprint/,
+        /layouts, hierarchy, spacing, typography, colors, labels, controls, states, flows and interaction semantics/,
+        /Pending or unapproved milestones and incomplete mock behavior are not confirmed intent/,
+        /Production internals and mocks may differ, but that is not permission for visual drift/,
+        /Preserve later explicitly approved canonical Design revisions/,
+        /user approval before consequential UX changes/,
+        /not a shadow contract or extra approval gate/,
+        /Do not auto-copy source, run scripts, install dependencies, overwrite production files/,
+        /Design review and separate implementation confirmation still apply/,
+        /Keep User story and UI separate when both apply/,
+        /do not merge the entire Design into one huge HTML artifact/,
+        /Non-GUI and no-persistence projects.*instead of inventing screens, storage or APIs/,
+      ]) assert.match(guidance, pattern, `${disposition}: ${seed.name}`);
+      assertNoAuthoringOverreach(guidance);
+      assert.match(request.message, disposition === "not-applicable"
+        ? /No graphical prototype applies/ : /Retained multi-file source: retained\/source/);
+    }
+  }
 });
 
 test("Designer assigns optional schema metadata explicitly by purpose without rewriting history", () => {
@@ -421,7 +498,8 @@ test("Designer requires applicable candidate coverage and concise optional secon
   }
   assert.match(role, /ordered user actions, system responses and observable outcomes/);
   assert.match(role, /screen gallery or prose specification is not a substitute/);
-  assert.match(role, /Combine artifacts when they genuinely cover multiple purposes/);
+  assert.match(role, /Combine only genuinely inseparable content serving the same review purpose/);
+  assert.doesNotMatch(role, /Combine artifacts when they genuinely cover multiple purposes/);
   assert.match(rules, /responsive variants or prose alone do not constitute a journey/);
   assert.match(role, /optional supporting Markdown note.*primary.*secondary, never mandatory/);
   for (const text of [role, designGenerationContract.rules.join("\n")]) {

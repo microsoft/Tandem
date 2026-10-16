@@ -13,7 +13,7 @@ export function validHandoffActivity(value) {
     && (value.quietDesign == null || validHandoffDesign(value.quietDesign));
 }
 
-/** Only a verified, relevant published Design replaces a successful handoff notice. */
+/** A verified current Design replaces a completed, presented handoff, including after later Design revisions. */
 export function quietHandoff(activity, displayedDesign, permissions = 0) {
   return Boolean(permissions === 0 && activity?.active !== true && validHandoffDesign(activity?.quietDesign)
     && validHandoffDesign(displayedDesign) && activity.quietDesign.revisionId === displayedDesign.revisionId

@@ -100,7 +100,10 @@ no prefix.
 ```
 
 Start with exactly one lowercase `@designer` or `@agent`, then whitespace and
-your message. Check the composer's **Preference** help and send.
+your message. Typing `@` or a partial role at the start offers compact suggestions:
+use Up/Down and Enter/Tab, or click one, to insert it without sending. Escape
+dismisses suggestions and keeps your draft. Check the composer's **Preference**
+help and send when ready.
 Router still decides; hints do not grant permissions or force a role.
 
 Leading spaces, `@Designer`, `@designer:`, quoted mentions and mentions inside

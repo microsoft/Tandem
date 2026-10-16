@@ -15,6 +15,7 @@ import { installProjectPresentation } from './project-presentation.js';
 import { currentHandoffActivity, quietHandoff } from './handoff-presentation.js';
 import { projectOutputs } from './project-outputs.js';
 import { parseRoleMention } from './role-hint.js';
+import { installRoleSuggestions } from './role-suggestions.js';
 import { createQueuedRequests } from './queued-requests.js';
 
 const $ = (id) => document.getElementById(id);
@@ -336,6 +337,7 @@ function renderComposer() {
   $('send').setAttribute('aria-label', pendingSubmitted && !sending ? 'Retry exact request' : 'Send message');
   $('send').title = pendingSubmitted && !sending ? 'Retry exact request' : 'Send message';
   renderRoleHint();
+  roleSuggestions.refresh();
 }
 function renderRoleHint() {
   const help = $('role-hint-help');
@@ -630,6 +632,9 @@ const clipboard = installComposerImage({
     return value.attachment;
   },
 });
+const roleSuggestions = installRoleSuggestions($('message'), $('role-suggestions'), () =>
+  !sending && !pending && controlsConnected && snapshot?.installation?.status === 'ready' && snapshot?.workflow?.canSend
+    && !developmentUnavailable() && projectPresentation?.discovery() !== true);
 installComposerEnter($('message'), $('composer'), () => !sending && !$('send').disabled);
 $('quick-requests').querySelector('summary').addEventListener('click', event => {
   if (sending || pending) event.preventDefault();

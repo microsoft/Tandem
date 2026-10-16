@@ -21,6 +21,28 @@ export async function exerciseRoleHintDraft({ browser, evaluate, click }) {
     await key("a", 65, 2);
     await browser.call("Input.insertText", { text });
   };
+  await replace("@");
+  assert.deepEqual(await evaluate('[...document.querySelector("#role-suggestions").children].map(e=>e.textContent)'), ["@designer", "@agent"]);
+  await key("ArrowDown", 40); await key("Enter", 13);
+  assert.equal(await value(), "@agent ");
+  assert.equal(await evaluate('document.querySelector("#role-suggestions").hidden'), true);
+  await replace("@des");
+  await key("Tab", 9);
+  assert.equal(await value(), "@designer ");
+  await replace("@ag");
+  await click("#role-suggestions-agent");
+  assert.equal(await value(), "@agent ");
+  assert.equal(await evaluate('document.activeElement.id'), "message");
+  await replace("@");
+  const geometry = await evaluate(`(() => {
+    const list=document.querySelector("#role-suggestions").getBoundingClientRect(), send=document.querySelector("#send").getBoundingClientRect();
+    return { visible:list.width>0 && list.height>0, bounded:list.left>=0 && list.right<=innerWidth && list.top>=0 && list.bottom<=innerHeight,
+      overlap:list.left<send.right && list.right>send.left && list.top<send.bottom && list.bottom>send.top };
+  })()`);
+  assert.deepEqual(geometry, { visible: true, bounded: true, overlap: false });
+  await key("Escape", 27);
+  await evaluate('document.querySelector("#refresh").click()');
+  assert.equal(await evaluate('document.querySelector("#role-suggestions").hidden'), true);
   await replace("@designer");
   assert.match(await help(), /Add a message/);
   assert.equal(await evaluate('document.querySelector("#role-hint-help").checkVisibility()'), true);

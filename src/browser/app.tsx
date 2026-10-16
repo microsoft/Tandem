@@ -221,8 +221,8 @@ export function BrowserApp({ store, connect = true }: { store: BrowserStore; con
     const request = host?.requests[0];
     const showRequest = request && !dialog && !confirmation;
     const privateDevelopment = application.header?.permissionScope === "development";
-    const permissionsDisabled = privateDevelopment || !active || busy || !host?.workspace || host.phase === "error";
-    const permissionsTitle = privateDevelopment ? "Development permissions are controlled inside its private session."
+    const permissionsDisabled = application.header?.permissionScope !== "main" || !active || busy || !host?.workspace || host.phase === "error";
+    const permissionsTitle = application.header?.permissionScope !== "main" ? "Tool permission controls are unavailable until application ownership is verified."
         : `Upstream tool permissions: ${host?.permissionMode === "allow-all" ? "Allow all for this session" : "Ask each time"}`;
     const displayedVersion = application.header?.version || host?.version;
     const notice = host?.notice;
@@ -237,7 +237,7 @@ export function BrowserApp({ store, connect = true }: { store: BrowserStore; con
                     disabled={!active || busy} onClick={() => setDialog("workspace")}><FolderOpen size={16} aria-hidden="true" /></button>
                 <button type="button" className="host-icon-button" aria-label="Reload page" title="Reload page"
                     disabled={!host?.canvasUrl} onClick={() => setReload((value) => value + 1)}><RefreshCw size={16} aria-hidden="true" /></button>
-                <label className="host-permissions" title={permissionsTitle} data-mode={host?.permissionMode || "ask"} data-disabled={permissionsDisabled}>
+                {!privateDevelopment && <label className="host-permissions" title={permissionsTitle} data-mode={host?.permissionMode || "ask"} data-disabled={permissionsDisabled}>
                     {host?.permissionMode === "allow-all" ? <ShieldAlert size={16} aria-hidden="true" /> : <ShieldCheck size={16} aria-hidden="true" />}
                     <select aria-label="Tool permissions" title={permissionsTitle} value={host?.permissionMode || "ask"}
                         disabled={permissionsDisabled}
@@ -250,7 +250,7 @@ export function BrowserApp({ store, connect = true }: { store: BrowserStore; con
                         }}>
                         <option value="ask">Ask each time</option><option value="allow-all">Allow all for this session</option>
                     </select>
-                </label>
+                </label>}
                 <button type="button" className="host-icon-button" aria-label="Diagnostics" title="Diagnostics"
                     disabled={!connected} onClick={() => void showDiagnostics()}><ScrollText size={16} aria-hidden="true" /></button>
                 <button type="button" className="host-icon-button" aria-label="About" title="About"

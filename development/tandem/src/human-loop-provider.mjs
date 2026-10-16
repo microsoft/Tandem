@@ -106,15 +106,23 @@ export function projectHumanLoopView(state, readiness, design = null) {
       const execution = handoff && state.executions.find(item => item.result?.resultId === handoff.result.resultId);
       const sameDesign = (a, b) => validHandoffDesign(a) && validHandoffDesign(b)
         && a.revisionId === b.revisionId && a.digest === b.digest;
+      const completedDesigner = (entry, task) => entry?.presented && task?.binding.role === "designer"
+        && entry.requestIds.includes(task.binding.requestId) && (task.completion === "result-submission" || task.end)
+        && policyHash(entry.result) === policyHash(task.result);
+      const latestPublication = state.handoffs.findLast(item => item.result.outcome.kind === "designer-changed");
+      const publicationExecution = latestPublication && state.executions.find(item => item.result?.resultId === latestPublication.result.resultId);
       const relevantDesign = designReady && execution?.binding.role === "designer"
         && handoff.requestIds.includes(execution.binding.requestId) && design?.content && sameDesign(state.design, design.binding)
-        && (handoff.result.outcome.kind === "designer-unchanged" ? sameDesign(execution.binding.design, design.binding)
-          : state.handoffs.findLast(item => item.result.outcome.kind === "designer-changed") === handoff
-            && design.publication?.requestId === execution.binding.requestId
-            && policyHash(design.publication.previous) === policyHash(execution.binding.design)
-            && design.binding.revisionId !== execution.binding.design.revisionId);
+        && completedDesigner(handoff, execution)
+        && (latestPublication ? completedDesigner(latestPublication, publicationExecution)
+            && design.publication?.requestId === publicationExecution.binding.requestId
+            && policyHash(design.publication.previous) === policyHash(publicationExecution.binding.design)
+            && design.binding.revisionId !== publicationExecution.binding.design.revisionId
+          : handoff.result.outcome.kind === "designer-unchanged" && sameDesign(execution.binding.design, design.binding));
+      const verifiedReadiness = ["ready", "closed"].includes(readiness.status)
+        || ["working", "waiting-answer"].includes(readiness.status) && state.activeRequestId && !active;
       const quietDesign = request.status === "completed" && !active && !state.stop && !state.uncertainty
-        && ["ready", "closed"].includes(readiness.status) && !openQuestions.length && relevantDesign ? design.binding : null;
+        && verifiedReadiness && !openQuestions.length && relevantDesign ? design.binding : null;
       const task = active ? state.activeTask : null;
       const role = task?.binding.role === "designer" ? "Designer" : task?.binding.role;
       const workLabel = !task ? null : task.condition === "waiting-permission" ? `${role} is waiting for native permission. Answer in the owning session.`
@@ -126,7 +134,8 @@ export function projectHumanLoopView(state, readiness, design = null) {
             : `${role} execution is ${task.condition || "unverified"}. Inspect Development before taking another action.`;
       const label = ["retired", "stopped", "discarded", "cancelled", "rejected"].includes(request.status)
         ? `Saved Prototype request is ${request.status}. It will not be replayed. Use a new explicit Development message to continue.`
-        : active && ["execution-unknown", "stopping", "closed"].includes(readiness.status)
+        : state.uncertainty || state.stop || ["execution-unknown", "stopping", "failed"].includes(readiness.status)
+            || active && readiness.status === "closed"
           ? `Development needs attention: ${readiness.reason || readiness.status}. The saved request is preserved.`
           : workLabel ? workLabel
             : handoff?.presented && handoff.result.outcome.kind === "execution-failure"
@@ -134,8 +143,8 @@ export function projectHumanLoopView(state, readiness, design = null) {
             : designReady ? `${handoff.result.outcome.kind === "designer-changed" ? "Design ready from the saved Prototype"
               : state.design.revisionId ? "Design reviewed (unchanged)" : "Designer response ready"}.${openQuestions.length
               ? ` Questions: ${openQuestions.length}, including ${openQuestions.filter(q => q.effectiveBlocking).length} blocking. Answer in Development.`
-              : " Review it in Development."} Implementation has not been authorized by this handoff.`
-              : request.status === "completed" ? "Saved Prototype request completed. Read its result in Development; no implementation was authorized by this handoff."
+              : relevantDesign ? " Review it in Development." : " Current Design evidence is unverified. Inspect Development before continuing."}`
+              : request.status === "completed" ? "Saved Prototype request completed. Read its result in Development."
                 : request.status === "handoff-pending" ? "Request result is saved; Development is preparing its presentation."
                   : "Prototype handoff admitted and queued. Waiting for Development to process this exact request.";
       return { requestId: request.id, label, active, quietDesign };
