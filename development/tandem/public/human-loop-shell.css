@@ -207,6 +207,9 @@
 .human-app .human-loop { background: var(--surface-raised); }
 .human-app .command-bar { background: var(--surface-raised); }
 .human-app #role-hint-help { margin: 4px 0 0; color: var(--muted); font-size: calc(var(--shell-font-size) - 2px); }
+.human-app .role-suggestions { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; padding: 4px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); }
+.human-app .role-suggestions button { padding: 6px 10px; min-height: 32px; font: inherit; }
+.human-app .role-suggestions [aria-selected="true"] { color: var(--blue); background: var(--blue-soft); }
 .human-app #queued-requests { flex: none; min-height: 0; max-height: min(24vh, 180px); overflow: auto; overscroll-behavior: contain; padding: 6px 12px; border-top: 1px solid var(--border); background: var(--surface-raised); }
 .human-app #queued-requests > details > summary { padding: 3px 0; font-weight: 600; }
 .human-app #queued-requests ol { margin: 4px 0; padding-left: 20px; }

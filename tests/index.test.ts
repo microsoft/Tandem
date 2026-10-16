@@ -58,4 +58,5 @@ import "./browser-host.test.js";
 import "./browser-notice-browser.test.js";
 import "./browser-process.test.js";
 import "./standalone-header.test.js";
+import "./role-suggestions.test.mjs";
 import "./permission-broker.test.js";

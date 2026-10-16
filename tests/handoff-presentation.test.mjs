@@ -17,6 +17,7 @@ import { getHostStateWal } from "../development/tandem/runtime-src/domain/host-s
 import { sharedDesignExampleV3 } from "../development/tandem/test/helpers/shared-design-fixture.mjs";
 import { browserAvailable, openFixtureBrowser } from "../development/tandem/test/helpers/browser-fixture.mjs";
 import { exerciseLatestNavigation } from "./helpers/latest-navigation-browser.mjs";
+import { exerciseRoleHintDraft } from "../development/tandem/test/helpers/role-hint-browser.mjs";
 
 const requestId = `handoff-${"a".repeat(64)}`;
 const nextRequestId = `handoff-${"b".repeat(64)}`;
@@ -242,6 +243,8 @@ test("completed changed and unchanged handoffs remain quiet after a later verifi
           }
         };
         await checkEmptyChrome();
+        await exerciseRoleHintDraft({ browser, evaluate: evaluatePrivate,
+          click: selector => evaluatePrivate(`{const e=document.querySelector(${JSON.stringify(selector)});if(e.matches("textarea")) e.focus();e.click()}`) });
         await evaluatePrivate('window.retainedDesign=document.querySelector("#backbone-proposal"); document.querySelector("#message").value="Retained unsent draft"; document.querySelector("#message").dispatchEvent(new Event("input",{bubbles:true}))');
         for (let poll = 0; poll < 3; poll++) await push();
         assert.equal(await browser.evaluate(`${visibleRootStatuses}.length`), 0);
@@ -332,6 +335,8 @@ test("completed changed and unchanged handoffs remain quiet after a later verifi
         // A standalone private surface must not rely on the root's ownership.
         await browser.call("Page.navigate", { url: standalone.url });
         await browser.waitFor('document.querySelector("#backbone-state")?.textContent==="Current Design"');
+        await exerciseRoleHintDraft({ browser, evaluate: browser.evaluate,
+          click: selector => browser.evaluate(`{const e=document.querySelector(${JSON.stringify(selector)});if(e.matches("textarea")) e.focus();e.click()}`) });
         assert.equal(await browser.evaluate('document.querySelector("#prototype-handoff-activity").getBoundingClientRect().height'), 0);
         for (const [width, height] of [[1280, 800], [1280, 520], [390, 520]]) {
           await browser.call("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
