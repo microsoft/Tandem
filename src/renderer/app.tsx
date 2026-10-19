@@ -2,6 +2,7 @@ import { Component, useCallback, useEffect, useLayoutEffect, useRef, useState, u
 import { AlertDialog, Tabs, Tooltip } from "radix-ui";
 import { ArrowRight, Check, ChevronDown, CircleDot, ClipboardList, Code, FileText, FolderOpen, GitBranch, Layers, ListChecks, Monitor, PanelLeft, PanelLeftClose, PanelLeftOpen, PencilRuler, Play, RotateCcw, Sparkles, X } from "lucide-react";
 import { lifecycleStages } from "../workflow.js";
+import { awaitingVisualChoice } from "../visual-directions.js";
 import type { LifecycleStageId } from "../types.js";
 import { StudioStore } from "./state-store.js";
 import { canBrowseStage, canOpenDevelopment, DraftProvider, hasActiveJobs, skippedStage, UiContext, useAction, useDraft, useStatusHelp, useUi, type UiContextValue, type UiState } from "./ui-context.js";
@@ -367,12 +368,33 @@ function Workspace(props: WorkspaceProps) {
     onTabChange(tab as TabId);
     setContextOpen(false);
   }
-  const phaseActions = <section className="phase-actions" aria-label={`${selectedLabel} actions`} aria-describedby="stage-browsing stage-message">
+  const phaseActions = (previewActions?: ReactNode) => <section className="phase-actions" aria-label={`${selectedLabel} actions`} aria-describedby="stage-browsing stage-message">
     <button id="complete-stage" className="complete-stage" type="button" hidden={projectView.developmentEntered || current === "prepare" || current === "development" || viewed !== current || Boolean(skippedStage(state, current))} aria-describedby="stage-message"
       aria-label={completionHelp} title={completionHelp} data-status-help={completionHelp}
-      disabled={!complete} onClick={() => { if (complete) void stageAction.run(() => post("/api/stage/complete", { stageId: current })); }}>
+      disabled={!complete} onClick={() => {
+        if (!complete) return;
+        void stageAction.run(async () => {
+          if (current === "prototype") {
+            const identity = props.store.getSnapshot().state;
+            if (!identity || identity.generation !== state.generation || identity.lifecycle.currentStage !== "prototype"
+              || !canCompleteStage(identity)) throw new Error("The prototype changed. Review its applied version before finishing.");
+            if (identity.prototypeFlow && awaitingVisualChoice(identity.prototypeFlow)) {
+              await post("/api/prototype/action", { action: "skip-visual", expectedRevision: identity.revision });
+            }
+            const latest = props.store.getSnapshot().state;
+            if (!latest || latest.prototypeId !== identity.prototypeId || latest.generation !== identity.generation
+              || latest.lifecycle.currentStage !== "prototype"
+              || latest.prototypeFlow?.displayedCheckpointId !== identity.prototypeFlow?.displayedCheckpointId
+              || latest.previewUrl !== identity.previewUrl || !canCompleteStage(latest)) {
+              throw new Error("The applied prototype changed. Review its current version before finishing.");
+            }
+          }
+          await post("/api/stage/complete", { stageId: current });
+        });
+      }}>
       <Check size={16} aria-hidden="true" /><span className="complete-stage-label">{completionLabel}</span>
     </button>
+    {previewActions}
     <p id="stage-browsing" className="visually-hidden">{readOnly ? `Viewing ${selectedLabel} · read only. Reopen explicitly to change its scope.` : ""}</p>
     <button id="reopen-stage" className="complete-stage" type="button" aria-describedby="stage-browsing"
       hidden={viewed === "development" || !lifecycleStages.some(stage => stage.id === viewed) || !readOnly || Boolean(skippedStage(state, viewed)) || lifecycleStages.findIndex((stage) => stage.id === viewed) > lifecycleStages.findIndex((stage) => stage.id === current)}
@@ -521,7 +543,7 @@ function Workspace(props: WorkspaceProps) {
           {stageTabs.map((tab) => <Tabs.Content key={tab.value} value={tab.value} forceMount hidden={activeTab !== tab.value}
             id={tab.id + "-panel"} className={tab.className}
             aria-labelledby={tab.id + (showStageTabs && tab.stage !== "development" ? "-workspace-tab" : "-tab")} tabIndex={0}>
-            {activeTab === tab.value && tab.stage !== "development" && !atStart && phaseActions}
+            {activeTab === tab.value && tab.stage !== "development" && tab.stage !== "prototype" && !atStart && phaseActions()}
             <UiContext.Provider value={tab.stage === "development" ? ui : { ...ui, canEdit: (stage, allowCompleted) => !projectView.developmentEntered && ui.canEdit(stage, allowCompleted) }}>
             {tab.stage === "prepare" && <PreparationRestart store={props.store} effortBusy={props.effortBusy} />}
             {tab.stage === "prepare" ? atStart ? projectView.developmentEntered
@@ -529,7 +551,7 @@ function Workspace(props: WorkspaceProps) {
               : <GoalEntry /> : <PreparationPanel /> : tab.stage === "requirements" ? <RequirementsPanel />
               : tab.stage === "sketch" ? <SketchCompletionContext.Provider value={props.onSketchBlocked}><SketchPanel /></SketchCompletionContext.Provider>
               : tab.stage === "prototype" ? <PrototypePanel active={activeTab === "preview" && projectView.entry.ready}
-                connected={!props.connectionError} /> : <DevelopmentPanel active={developmentView} />}
+                connected={!props.connectionError} renderActions={activeTab === "preview" && !atStart ? phaseActions : undefined} /> : <DevelopmentPanel active={developmentView} />}
             </UiContext.Provider>
           </Tabs.Content>)}
           <Tabs.Content value="content" forceMount hidden={activeTab !== "content"} id="content-panel" className="content-panel" aria-labelledby="content-tab" tabIndex={0}><ArtifactsPanel selectedArtifactId={selectedArtifact} /></Tabs.Content>

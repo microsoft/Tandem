@@ -3,13 +3,16 @@ import type { PrototypeFlow } from "./prototype-flow.js";
 export const visualManifestName = "tandem-visual-directions.json";
 export const visualSettingsValues = {
     colorMode: ["light", "dark"],
-    accent: ["blue", "teal", "violet", "amber"],
+    accent: ["neutral", "blue", "teal", "violet", "amber"],
     density: ["comfortable", "compact"],
     textSize: ["standard", "large"],
     effects: ["none", "subtle"],
 } as const;
 
 export type VisualSettings = { [K in keyof typeof visualSettingsValues]: (typeof visualSettingsValues)[K][number] };
+export const defaultWireframeSettings = {
+    colorMode: "light", accent: "neutral", density: "comfortable", textSize: "standard", effects: "none",
+} as const satisfies VisualSettings;
 export interface VisualSelection { directionId: string; settings: VisualSettings }
 export interface VisualDirection {
     id: string;

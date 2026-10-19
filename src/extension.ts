@@ -4043,10 +4043,10 @@ async function dispatchPrototypeCheckpoint(prototypeId: string, extensionId: str
             if (options.visualChoice.expectedRevision !== undefined && options.visualChoice.expectedRevision !== state.revision) {
                 throw new CanvasError("visual_choice_stale", "The prototype changed. Review the chosen direction before preparing it.");
             }
-            if (!flow.visualRequested || !visualExplorationIsCurrent(flow)) {
+            if (!visualExplorationIsCurrent(flow)) {
                 throw new CanvasError("visual_source_stale", "Explore the current prototype before choosing a visual direction.");
             }
-            flow = updateVisualSelection(flow, options.visualChoice.checkpointId, options.visualChoice.selection);
+            flow = updateVisualSelection({ ...flow, visualRequested: true }, options.visualChoice.checkpointId, options.visualChoice.selection);
         }
         if (state.prototypeReview.question && !options.clarification) {
             throw new CanvasError("prototype_clarification_pending", "Answer the open clarification. Additional feedback can still be queued.");
@@ -4212,6 +4212,7 @@ async function prototypeAction(prototypeId: string, extensionId: string, input: 
         let review = normalizePrototypeReview(state.prototypeReview);
         if (action === "visual-preview") {
             flow = updateVisualSelection(flow, input.checkpointId, input.selection);
+            if (visualExplorationIsCurrent(flow)) flow = { ...flow, visualRequested: true };
         } else if (action === "visual-back") {
             const candidate = prototypeCheckpoint(flow, flow.pendingCheckpointId);
             if (!candidate || candidate.visual?.operation !== "choose" || candidate.id !== input.checkpointId) {

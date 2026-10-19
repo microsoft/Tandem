@@ -1,5 +1,49 @@
 import { visualManifestName, visualSettingsValues } from "./visual-directions.js";
 
+const wireframeStyles = String.raw`
+html[data-tandem-accent="neutral"] {
+    --tandem-wireframe-surface: #ffffff;
+    --tandem-wireframe-muted: #f5f5f5;
+    --tandem-wireframe-text: #262626;
+    --tandem-wireframe-border: #a3a3a3;
+}
+html[data-tandem-accent="neutral"][data-tandem-color-mode="dark"] {
+    --tandem-wireframe-surface: #171717;
+    --tandem-wireframe-muted: #262626;
+    --tandem-wireframe-text: #e5e5e5;
+    --tandem-wireframe-border: #737373;
+}
+html[data-tandem-accent="neutral"] body {
+    background: var(--tandem-wireframe-surface) !important;
+    color: var(--tandem-wireframe-text) !important;
+    font-family: system-ui, sans-serif !important;
+}
+html[data-tandem-accent="neutral"] :is(header, nav, aside, main, section, article, fieldset, [role="dialog"]) {
+    background-color: var(--tandem-wireframe-surface) !important;
+    border-color: var(--tandem-wireframe-border) !important;
+}
+html[data-tandem-accent="neutral"] :is(h1, h2, h3, h4, h5, h6, button, input, textarea, select, label, p, a) {
+    color: var(--tandem-wireframe-text) !important;
+    font-family: system-ui, sans-serif !important;
+}
+html[data-tandem-accent="neutral"] :is(button, input, textarea, select, [role="button"], [role="tab"]) {
+    background: var(--tandem-wireframe-surface) !important;
+    color: var(--tandem-wireframe-text) !important;
+    border: 1px solid var(--tandem-wireframe-border) !important;
+    border-radius: 2px !important;
+}
+html[data-tandem-accent="neutral"] :is([aria-current]:not([aria-current="false"]), [aria-selected="true"], [aria-pressed="true"]) {
+    background-color: var(--tandem-wireframe-muted) !important;
+}
+html[data-tandem-accent="neutral"] :is(img, svg, canvas, video) { filter: grayscale(1); }
+html[data-tandem-accent="neutral"][data-tandem-effects="none"] *,
+html[data-tandem-accent="neutral"][data-tandem-effects="none"] *::before,
+html[data-tandem-accent="neutral"][data-tandem-effects="none"] *::after {
+    box-shadow: none !important;
+    text-shadow: none !important;
+}
+`;
+
 export const visualPreviewBridgeSource = String.raw`(() => {
     "use strict";
     if (!document.querySelector('meta[name="tandem-visual-exploration"][content="1"]')) return;
@@ -42,12 +86,13 @@ export const visualPreviewBridgeSource = String.raw`(() => {
         const effectiveEffects = reducedMotion.matches ? "none" : settings.effects;
         root.setAttribute("data-tandem-direction", selection.directionId);
         root.setAttribute("data-tandem-color-mode", settings.colorMode);
+        root.setAttribute("data-tandem-accent", settings.accent);
         root.setAttribute("data-tandem-density", settings.density);
         root.setAttribute("data-tandem-text-size", settings.textSize);
         root.setAttribute("data-tandem-effects", effectiveEffects);
         const accents = settings.colorMode === "dark"
-            ? { blue: "#93c5fd", teal: "#5eead4", violet: "#c4b5fd", amber: "#fcd34d" }
-            : { blue: "#1d4ed8", teal: "#0f766e", violet: "#6d28d9", amber: "#92400e" };
+            ? { neutral: "#d4d4d4", blue: "#93c5fd", teal: "#5eead4", violet: "#c4b5fd", amber: "#fcd34d" }
+            : { neutral: "#525252", blue: "#1d4ed8", teal: "#0f766e", violet: "#6d28d9", amber: "#92400e" };
         root.style.setProperty("--tandem-accent", accents[settings.accent]);
         root.style.setProperty("--tandem-accent-contrast", settings.colorMode === "dark" ? "#111827" : "#ffffff");
         root.style.setProperty("--tandem-spacing-scale", settings.density === "compact" ? "0.82" : "1");
@@ -85,7 +130,7 @@ export const visualPreviewBridgeSource = String.raw`(() => {
         if (selection) { try { apply(selection); } catch (reason) { error(reason); } }
     });
     const style = document.createElement("style");
-    style.textContent = 'html[data-tandem-effects="none"] *, html[data-tandem-effects="none"] *::before, html[data-tandem-effects="none"] *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }';
+    style.textContent = ${JSON.stringify(wireframeStyles)} + 'html[data-tandem-effects="none"] *, html[data-tandem-effects="none"] *::before, html[data-tandem-effects="none"] *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }';
     document.head.append(style);
     void (async () => {
         try {

@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, RotateCw } from "lucide-react";
+import { Tooltip } from "radix-ui";
 import type { PrototypePreviewTarget } from "../prototype-flow.js";
 import type { PreviewStartChoice } from "../preview-start.js";
 import { hasActiveJobs, useUi } from "./ui-context.js";
@@ -11,7 +12,9 @@ interface PreviewRestartInspection {
   environment?: { PORT: string };
 }
 
-export function PreviewRestart({ target, unavailable, changed }: { target: PrototypePreviewTarget; unavailable: boolean; changed(): void }) {
+export function PreviewRestart({ target, unavailable, changed, iconOnly = false }: {
+  target: PrototypePreviewTarget; unavailable: boolean; changed(): void; iconOnly?: boolean;
+}) {
   const { state, pending } = useUi();
   const [inspection, setInspection] = useState<PreviewRestartInspection | null>(null);
   const [entrypoint, setEntrypoint] = useState(""), [argumentsText, setArgumentsText] = useState("");
@@ -26,6 +29,11 @@ export function PreviewRestart({ target, unavailable, changed }: { target: Proto
   const stale = Boolean(inspection && (inspection.checkpointId !== checkpointId ||
     inspection.generation && inspection.generation !== state.generation));
   const choices = inspection?.choices ?? [];
+  const restartLabel = target === "current" ? "Restart current preview"
+    : target === "pending" ? "Restart pending preview" : "Restart visual exploration";
+  const buttonLabel = busy === "inspect" ? "Finding start instructions..."
+    : busy === "start" ? "Starting preview..." : target === "current" ? "Restart preview" : restartLabel;
+  const RestartIcon = iconOnly ? RotateCw : RefreshCw;
   async function request(action: string, body: object): Promise<PreviewRestartInspection & { started?: boolean; alreadyRunning?: boolean }> {
     const response = await fetch(`/api/prototype/preview-restart/${action}`, { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body), signal: AbortSignal.timeout(120_000) });
@@ -65,13 +73,24 @@ export function PreviewRestart({ target, unavailable, changed }: { target: Proto
       setStatus("");
     } finally { inFlight.current = false; setBusy(null); }
   }
-  return <div className="preview-restart">
-    {unavailable && <button id={`restart-${target}-preview`} className="plan-button secondary" type="button" disabled={blocked || Boolean(busy)}
-      onClick={() => void inspect()}><RefreshCw size={14} aria-hidden="true" />{busy === "inspect" ? "Finding start instructions..."
-        : busy === "start" ? "Starting preview..." : target === "current" ? "Restart preview"
-          : target === "pending" ? "Restart pending preview" : "Restart visual exploration"}</button>}
-    {status && <p role="status">{status}</p>}
-    {error && !dialog.current?.open && <p role="alert">{error}</p>}
+  const trigger = <button id={`restart-${target}-preview`}
+    className={"plan-button secondary" + (iconOnly ? " preview-recovery-action" : "")} type="button"
+    aria-label={restartLabel} aria-busy={Boolean(busy)} data-error={unavailable || Boolean(error)}
+    disabled={blocked || Boolean(busy)} onClick={() => void inspect()}>
+    <RestartIcon size={iconOnly ? 16 : 14} className={iconOnly && busy ? "spin" : undefined} aria-hidden="true" />
+    {!iconOnly && buttonLabel}
+  </button>;
+  return <div className={"preview-restart" + (iconOnly ? " preview-restart-compact" : "")}>
+    {(unavailable || iconOnly && Boolean(error)) && (iconOnly
+      ? <Tooltip.Root><Tooltip.Trigger asChild>{trigger}</Tooltip.Trigger><Tooltip.Portal>
+        <Tooltip.Content className="preview-recovery-tooltip" sideOffset={6}>
+          <strong>{restartLabel}</strong>
+          <p>{error || status || "The saved preview is unavailable."}</p>
+          <p>Review the saved server's start instructions before restarting. No rebuild or AI generation.</p>
+        </Tooltip.Content>
+      </Tooltip.Portal></Tooltip.Root> : trigger)}
+    {status && <p className={iconOnly ? "visually-hidden" : undefined} role="status">{status}</p>}
+    {error && !dialog.current?.open && <p className={iconOnly ? "visually-hidden" : undefined} role="alert">{error}</p>}
     <dialog ref={dialog} className="preview-restart-dialog" aria-labelledby={`restart-${target}-title`}
       aria-describedby={`restart-${target}-help`} onCancel={event => { event.preventDefault(); if (!busy) void decide(false); }}>
       <h2 id={`restart-${target}-title`}>Restart {label}</h2>
