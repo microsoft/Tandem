@@ -21,6 +21,9 @@ test("standalone archive contains every manifest file with matching hashes",
         assert.equal(metadata.version, manifest.version);
         assert.ok(manifest.files.some(file => file.path === "preview-launcher.mjs"));
         for (const name of ["cli.mjs", "host.mjs"]) assert.ok((await stat(join(directory, name))).isFile());
+        for (const name of ["LICENSE.txt", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "SECURITY.md", "SUPPORT.md"]) {
+            assert.deepEqual(await readFile(join(directory, name)), await readFile(new URL(`../${name}`, import.meta.url)));
+        }
     } finally { await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 });
 

@@ -26,11 +26,13 @@ if (operation === "run") {
     await writeFile(join(output, "package.json"), `${JSON.stringify({
         name: "@tandem/standalone", version: metadata.version, description: "Tandem standalone local browser app",
         type: "module", license: "MIT", engines: { node: ">=24.0.0" }, bin: { tandem: "cli.mjs" },
-        files: ["cli.mjs", "host.mjs", "extension.mjs", "preview-launcher.mjs", "payload.json", "stage2", "skills", "README.md", "LICENSE"],
+        files: ["cli.mjs", "host.mjs", "extension.mjs", "preview-launcher.mjs", "payload.json", "stage2", "skills",
+            "README.md", "LICENSE.txt", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "SECURITY.md", "SUPPORT.md"],
         dependencies: metadata.dependencies,
     }, null, 2)}\n`);
-    await copyFile(join(root, "README.md"), join(output, "README.md"));
-    await copyFile(join(root, "LICENSE"), join(output, "LICENSE"));
+    for (const file of ["README.md", "LICENSE.txt", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "SECURITY.md", "SUPPORT.md"]) {
+        await copyFile(join(root, file), join(output, file));
+    }
     await run(process.execPath, [npm, "pack", "--ignore-scripts", "--pack-destination", join(root, "dist")], output);
     console.info(`Launch locally:\nnpx --yes --package "${join(root, "dist", `tandem-standalone-${metadata.version}.tgz`)}" tandem --workspace "<workspace-folder>"`);
 } else {

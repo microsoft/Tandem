@@ -93,6 +93,10 @@ screenshots are not evidence of current capabilities or test results.
 
 ## Development and contributions
 
+Contributions are subject to the Microsoft Contributor License Agreement; see
+[CONTRIBUTING.md](CONTRIBUTING.md) for the CLA process and submission guidance.
+Please follow our [Code of Conduct](CODE_OF_CONDUCT.md).
+
 Work from source in `src` and `development\tandem`; do not hand-edit the generated
 extension under `.github\extensions\tandem`. From the repository root:
 
@@ -110,7 +114,56 @@ For a bug report or proposed change, describe the expected behavior, what happen
 and the source/package version. Keep private launch URLs, credentials and
 sensitive project content out of reports. Report security vulnerabilities through
 the process in [SECURITY.md](SECURITY.md), not a public issue.
+See [SUPPORT.md](SUPPORT.md) for help and support channels.
+
+## Data and privacy
+
+Tandem uses GitHub Copilot CLI and SDK for AI work. Prompts, selected project
+context and tool results are processed by the configured AI services; this is
+not an offline application. Optional voice input sends audio to your configured
+Azure Speech resource; live voice uses your configured Azure OpenAI endpoint.
+Do not enable voice or grant microphone access if you do not want audio sent.
+Speech SDK diagnostic telemetry is disabled by Tandem. Local workflow records
+and diagnostic logs remain necessary for history, troubleshooting and recovery.
+
+Tandem does not configure an analytics exporter. In the pinned Copilot CLI
+1.0.94 / SDK 1.0.18 runtime, optional OpenTelemetry tracing is off by default,
+but inherited environment settings can enable it. To keep it disabled, run
+the following in the PowerShell terminal **before launching Tandem or its host**:
+
+```powershell
+Remove-Item Env:COPILOT_OTEL_ENABLED -ErrorAction SilentlyContinue
+Remove-Item Env:OTEL_EXPORTER_OTLP_ENDPOINT -ErrorAction SilentlyContinue
+Remove-Item Env:COPILOT_OTEL_FILE_EXPORTER_PATH -ErrorAction SilentlyContinue
+```
+
+These controls disable optional OpenTelemetry export, not required service
+processing, local logs, or other runtime usage collection. They are not a
+verified opt-out for all Copilot runtime collection; that dependency's
+collection and opt-out coverage still need confirmation before a release can
+claim no telemetry. See the [GitHub privacy statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement)
+and [Microsoft privacy statement](https://privacy.microsoft.com/privacystatement)
+for service data handling.
 
 ## License
 
-[MIT](LICENSE). Bundled third-party components retain their own licenses.
+[MIT](LICENSE.txt). Bundled third-party components retain their own licenses.
+
+### Third-party code
+
+The repository includes offline renderer bundles built from Mermaid, marked,
+Ajv, parse5, css-tree and jpeg-js, with their transitive components, in
+`development/tandem/public/artifacts/vendor`. Their notices are recorded in
+[LICENSES.json](development/tandem/public/artifacts/vendor/LICENSES.json);
+the generated extension carries copies under
+`.github/extensions/tandem/stage2/public/artifacts/vendor`.
+Builds also bundle npm dependencies for the UI and host, including React,
+Radix UI, Lucide, Azure Identity, Azure Speech and ws, preserving notices in the
+generated JavaScript. The manifests and lockfiles describe installed
+dependencies separately from these checked-in bundles. Standalone distributions
+install the Copilot CLI/SDK and other runtime dependencies under their own
+licenses; the desktop distribution also includes Node.js and its license.
+
+## Trademarks
+
+This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft trademarks or logos is subject to and must follow [Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks/usage/general). Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship. Any use of third-party trademarks or logos are subject to those third-party's policies.

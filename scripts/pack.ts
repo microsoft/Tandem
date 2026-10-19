@@ -56,6 +56,11 @@ for (const fileName of [
     });
 }
 archive.file(join(repositoryRoot, "README.md"), { name: "README.md" });
+for (const file of ["LICENSE.txt", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "SECURITY.md", "SUPPORT.md"]) {
+    for (const prefix of ["", "source/", "extensions/tandem/"]) {
+        archive.file(join(repositoryRoot, file), { name: `${prefix}${file}` });
+    }
+}
 await archive.finalize();
 await completed;
 
