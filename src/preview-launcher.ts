@@ -14,24 +14,38 @@ async function main() {
     }
     const receipt = join(dirname(path), "process.json"), recipe = manifest.recipe;
     let child: ReturnType<typeof spawn> | undefined, timer: ReturnType<typeof setInterval> | undefined;
-    let checking = false, stopped = false;
+    let checking = false, stopped = false, stderr = "", failure: string | null = null;
     const startedAt = new Date().toISOString();
     const record = (status: string, error?: string) => writeJsonAtomically(receipt, {
         version: 1, launchId: manifest.launchId, status, wrapperPid: process.pid, pid: child?.pid ?? null,
-        startedAt, executable: recipe.executable, args: recipe.args, cwd: recipe.cwd, url: recipe.url, ...(error ? { error } : {}),
+        startedAt, executable: recipe.executable, args: recipe.args, cwd: recipe.workingDirectory ?? recipe.cwd,
+        sourceRoot: recipe.cwd, url: recipe.url, environment: { PORT: new URL(recipe.url).port }, ...(error ? { error } : {}),
     });
     try {
         if (process.platform !== "win32") throw new Error("This restart adapter requires native Windows PowerShell process/listener ownership checks.");
         await verifyLaunchRecipe(recipe);
         await requireFreePreviewPort(recipe.url);
-        child = spawn(recipe.executable, recipe.args, { cwd: recipe.cwd, shell: false, windowsHide: true, stdio: "inherit" });
+        child = spawn(recipe.executable, recipe.args, {
+            cwd: recipe.workingDirectory ?? recipe.cwd,
+            env: { ...process.env, PORT: new URL(recipe.url).port },
+            shell: false, windowsHide: true, stdio: ["inherit", "inherit", "pipe"],
+        });
+        child.stderr!.setEncoding("utf8");
+        child.stderr!.on("data", (text: string) => {
+            stderr = (stderr + text).slice(-4000);
+            process.stderr.write(text);
+        });
         await new Promise<void>((resolve, reject) => { child!.once("spawn", resolve); child!.once("error", reject); });
-        await record("starting");
+        const starting = record("starting");
         child.once("exit", (code, signal) => {
             stopped = true;
             if (timer) clearInterval(timer);
-            void record("exited", `Exit ${code ?? signal}`).then(() => { process.exitCode = code === 0 ? 0 : 1; });
+            void starting.then(() => record(failure ? "failed" : "exited", failure ?? `Exit ${code ?? signal}${stderr.trim() ? `: ${stderr.trim()}` : ""}`))
+                .then(() => { process.exitCode = failure || code !== 0 ? 1 : 0; })
+                .catch(error => { console.error(error); process.exitCode = 1; });
         });
+        await starting;
+        if (stopped) return;
         timer = setInterval(() => { void (async () => {
             if (checking || stopped) return;
             checking = true;
@@ -47,8 +61,9 @@ async function main() {
                 else if (ownership !== "waiting") throw new Error("Preview listener ownership could not be determined.");
             } catch (error) {
                 stopped = true; clearInterval(timer);
+                failure = error instanceof Error ? error.message : String(error);
                 child!.kill();
-                await record("failed", error instanceof Error ? error.message : String(error));
+                await record("failed", failure);
             } finally { checking = false; }
         })(); }, 500);
         for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => {
@@ -56,7 +71,8 @@ async function main() {
         });
     } catch (error) {
         stopped = true; if (timer) clearInterval(timer); child?.kill();
-        await record("failed", error instanceof Error ? error.message : String(error));
+        failure = error instanceof Error ? error.message : String(error);
+        await record("failed", failure);
         throw error;
     }
 }

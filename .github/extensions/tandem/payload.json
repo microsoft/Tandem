@@ -4,18 +4,18 @@
   "files": [
     {
       "path": "extension.mjs",
-      "bytes": 4402769,
-      "sha256": "03128b97754191fe848fbcb366c2122b443a83198d0fec171cb4ca8b241a22eb"
+      "bytes": 4489637,
+      "sha256": "86853f2cb1ec10c9270fcd6c1297d1487180176994ad710c3ba513726038168b"
     },
     {
       "path": "preview-launcher.mjs",
-      "bytes": 66777,
-      "sha256": "7dd17c5420627223d59b8c215aa73d6975929c6f320fae519d49d58ad92cebf2"
+      "bytes": 68086,
+      "sha256": "5edb49444f2b2b863e372c506198e3db918d6a6ac0e936b24d92ebed4eb84031"
     },
     {
       "path": "skills/tandem/SKILL.md",
-      "bytes": 16378,
-      "sha256": "a7362e2c3171516ebcdf4c3e414c6cc256ccc9eabe66ee6019599e1c1a741efb"
+      "bytes": 18389,
+      "sha256": "4765476172e186a81e17c3c8d386db076f2fe08dc1930270de686a85e54b2f89"
     },
     {
       "path": "stage2/INSTALL.md",
@@ -30,7 +30,7 @@
     {
       "path": "stage2/manifest.json",
       "bytes": 24615,
-      "sha256": "cfba0c235ad40f1f6f267fc7a70013b00036e8054ec58609374fd73599e620bd"
+      "sha256": "59aa66355749ee0af5ac924a9ddf6df70b864cb6fec77bbeb2ae7f653747da34"
     },
     {
       "path": "stage2/package.json",
@@ -234,8 +234,8 @@
     },
     {
       "path": "stage2/public/prompts/human-loop.json",
-      "bytes": 47029,
-      "sha256": "d8b5e8196aa7d05015cf82ffe62ba0d54e92c26e7974786e20b8beb8f12173aa"
+      "bytes": 47840,
+      "sha256": "3eaad3a437421320b943f8fdd0e623885905bb74a47fc38b255032379c09d266"
     },
     {
       "path": "stage2/public/question-presentation.js",
@@ -414,8 +414,8 @@
     },
     {
       "path": "stage2/runtime-src/domain/human-loop/contracts.ts",
-      "bytes": 32079,
-      "sha256": "ee72dcbff72694665f27c5c920b79731af85d92e9f52bf8bd237ffef826060b7"
+      "bytes": 32754,
+      "sha256": "3230912aaab3e0705e98233fd74fd641c5c165502e46d4cca5d23e961888cc72"
     },
     {
       "path": "stage2/runtime-src/domain/human-loop/ledger.ts",
@@ -429,8 +429,8 @@
     },
     {
       "path": "stage2/runtime-src/domain/human-loop/tool-contracts.ts",
-      "bytes": 7982,
-      "sha256": "e1299227d484fc4e3accd2ca46dc020447f71e3198b441f1d07325465be53932"
+      "bytes": 8262,
+      "sha256": "8beb149e54437456aec9acc5afea086f837df9b42d8681808e7e10d1670e4f06"
     },
     {
       "path": "stage2/runtime-src/domain/implementation-review.ts",
@@ -624,8 +624,8 @@
     },
     {
       "path": "stage2/src/human-loop-controller.mjs",
-      "bytes": 13680,
-      "sha256": "1daaeeee59155931d9b426055aed3062bb08febd3dfa6c1f5e9ae6fd26c314ba"
+      "bytes": 13733,
+      "sha256": "6167a003716acbf3a2fe62a9f2543533b785830ca769b998d3483a5a98a97dbd"
     },
     {
       "path": "stage2/src/human-loop-design-store.mjs",
@@ -684,8 +684,8 @@
     },
     {
       "path": "stage2/src/human-loop-runtime.mjs",
-      "bytes": 73438,
-      "sha256": "7a08aea5b67b46be956cd90a0ba5299b21c4a7d5768ea2898e3788eb97bdef6d"
+      "bytes": 74927,
+      "sha256": "b337497926a4340c423cf8a83de20dd3e9873bfb2608580736518ed668123a87"
     },
     {
       "path": "stage2/src/human-loop-startup.mjs",
@@ -753,5 +753,5 @@
       "sha256": "92b92e76eb4ac3bee96c6bbdde06ed1f7d9c0088576a51db1276c567dbb207f8"
     }
   ],
-  "digest": "26991cc665c55f56fb0ab6d8d4b05c9337fc1c41182dc72b4939e2c6c299b3cf"
+  "digest": "f8e57e5aa089361e2f22a73c18cdd0d67060193802e5b6ec2ef0694ab7680fe8"
 }

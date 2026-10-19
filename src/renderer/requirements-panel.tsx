@@ -361,6 +361,7 @@ export function RequirementsPanel() {
                     questionId: node.question!.id,
                     answer,
                     action: node.status === "answered" ? "change-answer" : "answer-decision",
+                    ...(snapshot.lifecycle.changeRequestId ? { expectedRequirementsDigest: snapshot.requirementsDigest } : {}),
                 });
                 if (!stillCurrent(snapshot, sequence)) return;
                 setAnswerDrafts((all) => {

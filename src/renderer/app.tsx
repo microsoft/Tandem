@@ -14,6 +14,7 @@ import { DevelopmentPanel } from "./development-panel.js";
 import { WorkflowActivity } from "./workflow-activity.js";
 import { ProjectConversation, ProjectConversationProvider, useProjectView } from "./project-conversation.js";
 import { DiscoveryRecovery } from "./discovery-recovery.js";
+import { ChangeRequestsPanel } from "./change-requests-panel.js";
 import { SpeechProvider, SpeechTextarea } from "./speech-textarea.js";
 import { Brand } from "./brand.js";
 import { useStandaloneHeader } from "./standalone-header.js";
@@ -32,6 +33,7 @@ export const isGoalEntry = (state: UiState) => !state.goal?.trim() && state.life
 
 export function canCompleteStage(state: UiState): boolean {
   const stage = state.lifecycle.currentStage;
+  if (state.changeRequests?.some(request => !["active", "completed", "cancelled"].includes(request.status))) return false;
   if (state.effortReset || state.provider?.canSubmitAnswers === false || skippedStage(state, stage)
     || state.lifecycle.completedStages.includes(stage) || hasActiveJobs(state)) return false;
   switch (stage) {
@@ -40,7 +42,7 @@ export function canCompleteStage(state: UiState): boolean {
       && state.requirements?.substage === "dag" && Boolean(state.decisionGraph?.nodes?.length)
       && state.decisionGraph.nodes.every((node) => Boolean(node.answer));
     case "sketch": return isSketchRevisionApproved(state.sketch);
-    case "prototype": return state.previewStatus === "ready" && state.prototypeApproach?.mode !== "undecided" && !prototypeCompletionBlocked(state);
+    case "prototype": return state.previewStatus === "ready" && !state.prototypeNeedsUpdate && state.prototypeApproach?.mode !== "undecided" && !prototypeCompletionBlocked(state);
     case "development": return false;
   }
 }
@@ -500,6 +502,7 @@ function Workspace(props: WorkspaceProps) {
           onPointerCancel={() => setDragging(null)} onLostPointerCapture={() => setDragging(null)}
           onKeyDown={(event) => { if (["ArrowLeft", "ArrowRight"].includes(event.key)) { resize(width + (event.key === "ArrowLeft" ? -1 : 1) * (event.shiftKey ? 48 : 24)); event.preventDefault(); } }} />
         <section id="preview-pane" className="preview" aria-label="Stage workspace" data-stage-tabs={showStageTabs}>
+          <ChangeRequestsPanel />
           {showStageTabs && <div className="previewbar">
             <Tabs.List id="stage-workspace-tabs" className="preview-tabs" aria-label="Pre-development stages">
               {stageTabs.filter(tab => tab.stage !== "development").map(tab => {

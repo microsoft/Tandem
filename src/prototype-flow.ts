@@ -1,4 +1,5 @@
 import { ProjectStoreError } from "./project-store.js";
+import { readPreviewStart, type PreviewStart } from "./preview-start.js";
 import {
     isVisualExploration, readVisualCheckpoint, readVisualSelection, awaitingVisualChoice,
     type VisualCheckpoint, type VisualExploration, type VisualSelection,
@@ -24,6 +25,8 @@ export interface PrototypeCheckpoint {
     completedAt: string | null;
     timeoutSeconds: number | null;
     sourceFingerprint?: string | null;
+    requirementsDigest?: string;
+    previewStart?: PreviewStart;
     sketchRevisionId?: string | null;
     sketchInputHash?: string | null;
     sketchImagesRead?: string[];
@@ -85,6 +88,7 @@ export function readPrototypeFlow(value: unknown): PrototypeFlow | null {
             typeof entry.requestedAt !== "string" || !nullableString(entry.completedAt) ||
             !historicalSeconds(entry.timeoutSeconds) ||
             (entry.sourceFingerprint !== undefined && !nullableString(entry.sourceFingerprint)) ||
+            (entry.requirementsDigest !== undefined && (typeof entry.requirementsDigest !== "string" || !/^[a-f0-9]{64}$/.test(entry.requirementsDigest))) ||
             (entry.sketchRevisionId !== undefined && !nullableString(entry.sketchRevisionId)) ||
             (entry.sketchInputHash !== undefined && !nullableString(entry.sketchInputHash)) ||
             Boolean(entry.sketchRevisionId) !== Boolean(entry.sketchInputHash) ||
@@ -110,6 +114,8 @@ export function readPrototypeFlow(value: unknown): PrototypeFlow | null {
             ...(entry.sourceFingerprint !== undefined ? {
                 sourceFingerprint: typeof entry.sourceFingerprint === "string" ? entry.sourceFingerprint : null,
             } : {}),
+            ...(typeof entry.requirementsDigest === "string" ? { requirementsDigest: entry.requirementsDigest } : {}),
+            ...(entry.previewStart !== undefined ? { previewStart: readPreviewStart(entry.previewStart) } : {}),
             ...(entry.sketchRevisionId !== undefined ? {
                 sketchRevisionId: typeof entry.sketchRevisionId === "string" ? entry.sketchRevisionId : null,
             } : {}),

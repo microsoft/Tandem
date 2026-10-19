@@ -1534,12 +1534,12 @@ var require_adapter = __commonJS({
       return newFs;
     }
     function toPromise(method) {
-      return (...args) => new Promise((resolve3, reject) => {
+      return (...args) => new Promise((resolve4, reject) => {
         args.push((err, result) => {
           if (err) {
             reject(err);
           } else {
-            resolve3(result);
+            resolve4(result);
           }
         });
         method(...args);
@@ -1615,13 +1615,13 @@ var require_proper_lockfile = __commonJS({
 // src/preview-launcher.ts
 import { spawn, execFile } from "node:child_process";
 import { readFile as readFile3 } from "node:fs/promises";
-import { dirname as dirname4, join as join5 } from "node:path";
+import { dirname as dirname4, join as join6 } from "node:path";
 import { promisify } from "node:util";
 
 // src/preview-launch.ts
 import { createHash as createHash2, randomUUID as randomUUID3 } from "node:crypto";
-import { lstat as lstat3, readFile as readFile2, realpath, readdir as readdir4 } from "node:fs/promises";
-import { basename as basename2, dirname as dirname3, isAbsolute, join as join4, relative, resolve as resolve2, sep } from "node:path";
+import { lstat as lstat4, readFile as readFile2 } from "node:fs/promises";
+import { basename as basename2, dirname as dirname3, isAbsolute as isAbsolute2, join as join5, resolve as resolve3 } from "node:path";
 import { createServer } from "node:net";
 
 // src/prototype-runtime.ts
@@ -1769,6 +1769,19 @@ var ARTIFACT_ASSET_LIMITS = {
 var MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024;
 var MAX_MANIFEST_BYTES = 512 * 1024;
 
+// src/preview-start.ts
+import { lstat as lstat3, realpath, readdir as readdir4 } from "node:fs/promises";
+import { isAbsolute, join as join4, relative, resolve as resolve2, sep } from "node:path";
+var samePreviewPath = (a, b) => process.platform === "win32" ? resolve2(a).toLowerCase() === resolve2(b).toLowerCase() : resolve2(a) === resolve2(b);
+var insidePreviewPath = (root, path) => {
+  const part = relative(root, path);
+  return part !== "" && !isAbsolute(part) && part !== ".." && !part.startsWith(`..${sep}`);
+};
+async function materialized(path, kind) {
+  const stat = await lstat3(path);
+  if (stat.isSymbolicLink() || !(kind === "file" ? stat.isFile() && stat.nlink === 1 : stat.isDirectory()) || !samePreviewPath(await realpath(path), path)) throw new Error(`Preview launch ${kind} is missing, aliased or unsafe: ${path}`);
+}
+
 // src/visual-directions.ts
 var visualSettingsValues = {
   colorMode: ["light", "dark"],
@@ -1794,22 +1807,14 @@ var visualSelectionSchema = {
 
 // src/preview-launch.ts
 var launchDigest = (value) => createHash2("sha256").update(JSON.stringify(value)).digest("hex");
-var samePath = (a, b) => process.platform === "win32" ? resolve2(a).toLowerCase() === resolve2(b).toLowerCase() : resolve2(a) === resolve2(b);
-var contained = (root, path) => {
-  const part = relative(root, path);
-  return part !== "" && !isAbsolute(part) && part !== ".." && !part.startsWith(`..${sep}`);
-};
-async function materialized(path, kind) {
-  const stat = await lstat3(path);
-  if (stat.isSymbolicLink() || !(kind === "file" ? stat.isFile() && stat.nlink === 1 : stat.isDirectory()) || !samePath(await realpath(path), path)) throw new Error(`Preview launch ${kind} is missing, aliased or unsafe: ${path}`);
-}
 async function verifyLaunchRecipe(recipe) {
-  if (!recipe || ["prototypeId", "generation", "checkpointId", "mainSessionId", "url", "cwd", "sourceFingerprint", "executable", "executableHash"].some((key) => typeof Reflect.get(recipe, key) !== "string" || !Reflect.get(recipe, key)) || Buffer.byteLength(JSON.stringify(recipe), "utf8") > 32768 || recipe.version !== 1 || !isAbsolute(recipe.cwd) || !isAbsolute(recipe.executable) || !/^node(?:\.exe)?$/i.test(basename2(recipe.executable)) || !Array.isArray(recipe.args) || recipe.args.length < 1 || recipe.args.length > 32 || recipe.args.some((arg) => typeof arg !== "string" || arg.length > 4e3 || arg.includes("\0")) || !contained(recipe.cwd, recipe.args[0]) || !/\.(?:mjs|cjs|js)$/i.test(recipe.args[0])) {
+  if (!recipe || ["prototypeId", "generation", "checkpointId", "mainSessionId", "url", "cwd", "sourceFingerprint", "executable", "executableHash"].some((key) => typeof Reflect.get(recipe, key) !== "string" || !Reflect.get(recipe, key)) || Buffer.byteLength(JSON.stringify(recipe), "utf8") > 32768 || recipe.version !== 1 || !isAbsolute2(recipe.cwd) || !isAbsolute2(recipe.executable) || !/^node(?:\.exe)?$/i.test(basename2(recipe.executable)) || !Array.isArray(recipe.args) || recipe.args.length < 1 || recipe.args.length > 32 || recipe.args.some((arg) => typeof arg !== "string" || arg.length > 4e3 || arg.includes("\0")) || !isAbsolute2(recipe.args[0]) || !insidePreviewPath(recipe.cwd, recipe.args[0]) || !/\.(?:mjs|cjs|js)$/i.test(recipe.args[0]) || recipe.workingDirectory !== void 0 && (typeof recipe.workingDirectory !== "string" || !isAbsolute2(recipe.workingDirectory) || !samePreviewPath(recipe.cwd, recipe.workingDirectory) && !insidePreviewPath(recipe.cwd, recipe.workingDirectory))) {
     throw new Error("A reviewed Node entrypoint and explicit argument list inside this checkpoint are required.");
   }
   await materialized(recipe.cwd, "directory");
   await materialized(recipe.executable, "file");
   await materialized(recipe.args[0], "file");
+  if (recipe.workingDirectory) await materialized(recipe.workingDirectory, "directory");
   if (createHash2("sha256").update(await readFile2(recipe.executable)).digest("hex") !== recipe.executableHash) {
     throw new Error("The reviewed executable changed. Review a new launch recipe before restarting.");
   }
@@ -1841,9 +1846,9 @@ async function main() {
   if (manifest.version !== 1 || launchDigest(manifest) !== digest || !/^[a-f0-9-]{36}$/.test(manifest.launchId)) {
     throw new Error("Preview launch manifest changed after native permission was requested.");
   }
-  const receipt = join5(dirname4(path), "process.json"), recipe = manifest.recipe;
+  const receipt = join6(dirname4(path), "process.json"), recipe = manifest.recipe;
   let child, timer;
-  let checking = false, stopped = false;
+  let checking = false, stopped = false, stderr = "", failure = null;
   const startedAt = (/* @__PURE__ */ new Date()).toISOString();
   const record = (status, error) => writeJsonAtomically(receipt, {
     version: 1,
@@ -1854,27 +1859,45 @@ async function main() {
     startedAt,
     executable: recipe.executable,
     args: recipe.args,
-    cwd: recipe.cwd,
+    cwd: recipe.workingDirectory ?? recipe.cwd,
+    sourceRoot: recipe.cwd,
     url: recipe.url,
+    environment: { PORT: new URL(recipe.url).port },
     ...error ? { error } : {}
   });
   try {
     if (process.platform !== "win32") throw new Error("This restart adapter requires native Windows PowerShell process/listener ownership checks.");
     await verifyLaunchRecipe(recipe);
     await requireFreePreviewPort(recipe.url);
-    child = spawn(recipe.executable, recipe.args, { cwd: recipe.cwd, shell: false, windowsHide: true, stdio: "inherit" });
-    await new Promise((resolve3, reject) => {
-      child.once("spawn", resolve3);
+    child = spawn(recipe.executable, recipe.args, {
+      cwd: recipe.workingDirectory ?? recipe.cwd,
+      env: { ...process.env, PORT: new URL(recipe.url).port },
+      shell: false,
+      windowsHide: true,
+      stdio: ["inherit", "inherit", "pipe"]
+    });
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (text) => {
+      stderr = (stderr + text).slice(-4e3);
+      process.stderr.write(text);
+    });
+    await new Promise((resolve4, reject) => {
+      child.once("spawn", resolve4);
       child.once("error", reject);
     });
-    await record("starting");
+    const starting = record("starting");
     child.once("exit", (code, signal) => {
       stopped = true;
       if (timer) clearInterval(timer);
-      void record("exited", `Exit ${code ?? signal}`).then(() => {
-        process.exitCode = code === 0 ? 0 : 1;
+      void starting.then(() => record(failure ? "failed" : "exited", failure ?? `Exit ${code ?? signal}${stderr.trim() ? `: ${stderr.trim()}` : ""}`)).then(() => {
+        process.exitCode = failure || code !== 0 ? 1 : 0;
+      }).catch((error) => {
+        console.error(error);
+        process.exitCode = 1;
       });
     });
+    await starting;
+    if (stopped) return;
     timer = setInterval(() => {
       void (async () => {
         if (checking || stopped) return;
@@ -1895,8 +1918,9 @@ async function main() {
         } catch (error) {
           stopped = true;
           clearInterval(timer);
+          failure = error instanceof Error ? error.message : String(error);
           child.kill();
-          await record("failed", error instanceof Error ? error.message : String(error));
+          await record("failed", failure);
         } finally {
           checking = false;
         }
@@ -1911,7 +1935,8 @@ async function main() {
     stopped = true;
     if (timer) clearInterval(timer);
     child?.kill();
-    await record("failed", error instanceof Error ? error.message : String(error));
+    failure = error instanceof Error ? error.message : String(error);
+    await record("failed", failure);
     throw error;
   }
 }

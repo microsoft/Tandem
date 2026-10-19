@@ -115,6 +115,8 @@ function Clarification({ question }: { question: DecisionQuestion }) {
 export function PrototypePanel({ active: visible, connected }: { active: boolean; connected: boolean }) {
   const ui = useUi();
   const { state, pending, post, canEdit, guidance } = ui;
+  const canRequestChange = state.provider?.canSubmitAnswers !== false && !state.effortReset
+    && (canEdit("prototype") || state.lifecycle.completedStages.includes("prototype"));
   const latest = useRef(state);
   latest.current = state;
   const latestUi = useRef(ui);
@@ -286,9 +288,7 @@ export function PrototypePanel({ active: visible, connected }: { active: boolean
     : flow && awaitingVisualChoice(flow) ? "Compare visual directions, refine one, then prepare and apply your choice. Or keep the current prototype."
     : milestonesReady ? "Structure and Interaction are ready. Finish Prototype, or optionally explore visual direction."
     : "Start with Structure, then test one complete Interaction. Visual direction is optional.";
-  const revisionMessage = revisionAction.error || (state.lifecycle.currentStage !== "prototype"
-    ? "Prototype history is read only. You can keep a draft; reopen the stage to submit it."
-    : !canEdit("prototype") ? guidance("submit revisions")
+  const revisionMessage = revisionAction.error || (!canRequestChange ? guidance("submit changes")
     : finalizing ? "The final feature specification is being generated from frozen input. Keep drafting; sending is paused for this handoff."
     : unresolved.length >= 50 ? "The feedback queue is full. Apply or resolve existing updates before sending more; your draft is kept."
     : !readyUrl ? "You can queue feedback before the first preview is ready."
@@ -308,6 +308,8 @@ export function PrototypePanel({ active: visible, connected }: { active: boolean
       </section>}
       <div id="preview-tools" className="preview-tools">
         <span id="preview-status">{unavailable ? "not applicable" : finalizing ? "Finishing prototype..."
+          : readyUrl && state.prototypeNeedsUpdate
+            ? "Saved prototype - requested update pending"
           : readyUrl && !showLivePreview ? previewCheck.binding !== previewBinding || previewCheck.busy ? "Checking saved preview..." : "Saved prototype · preview unavailable"
           : savedOnly ? "Saved prototype · live preview verified" : candidate ? candidateLabel
           : inspectingVisual ? "Exploring visual directions · current prototype unchanged"
@@ -410,7 +412,7 @@ export function PrototypePanel({ active: visible, connected }: { active: boolean
         : "Feedback is optional. Try the displayed prototype, then describe a change if you want one."}</p>
       <form id="revision-form" className="revision-form inline-composer" aria-describedby="revision-status" onSubmit={(event) => {
         event.preventDefault();
-        if (pending || !canEdit("prototype") || finalizing) return;
+        if (pending || !canRequestChange || finalizing) return;
         const suggestion = draft.value.trim();
         if (!suggestion || suggestion.length > 4000 || unresolved.length >= 50) {
           revisionAction.setError(unresolved.length >= 50 ? "The feedback queue is full (50 unresolved revisions). Apply or resolve existing updates, then send this draft."
@@ -430,7 +432,7 @@ export function PrototypePanel({ active: visible, connected }: { active: boolean
       }}>
         <SpeechTextarea id="revision-input" value={draft.value} onValueChange={(value) => setDraft((current) => ({ value, version: current.version + 1 }))}
           rows={1} maxLength={4000} disabled={Boolean(state.effortReset)} placeholder="Describe one change you want to see in the prototype." aria-label="Prototype revision suggestion" aria-describedby="revision-status" />
-        <button id="submit-revision" type="submit" aria-describedby="revision-status" disabled={pending || !canEdit("prototype") || finalizing || unresolved.length >= 50}><Send size={16} />{revisionAction.busy ? "Sending..." : hasActiveJobs(state) || question || candidate || !readyUrl ? "Queue revision" : "Send revision"}</button>
+        <button id="submit-revision" type="submit" aria-describedby="revision-status" disabled={pending || !canRequestChange || finalizing || unresolved.length >= 50}><Send size={16} />{revisionAction.busy ? "Sending..." : hasActiveJobs(state) || question || candidate || !readyUrl ? "Queue change" : "Send change"}</button>
       </form>
       {question && <Clarification key={JSON.stringify(question)} question={question} />}
       <details id="revision-history-details" className="revision-history-details" hidden={!revisions.length}>

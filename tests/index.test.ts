@@ -24,6 +24,8 @@ import "./artifact-assets.test.js";
 import "./prototype-workspace.test.js";
 import "./requirements-dag.test.js";
 import "./requirements-defaults.test.js";
+import "./change-requests.test.js";
+import "./change-requests-ui.test.js";
 import "./design-review.test.js";
 import "./preparation.test.js";
 import "./worker-interaction.test.js";

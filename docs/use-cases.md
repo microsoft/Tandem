@@ -9,8 +9,26 @@ The recipes below cover the next tasks.
 
 **Use when:** a behavior or screen needs to change.
 
+1. Describe the change in Prototype Feedback, the drawing revision input, or
+   the Development conversation. Tandem assesses the affected stages against
+   retained decisions and work before changing earlier stages.
+2. Review **Project changes**: where the change starts, what needs an update,
+   and what stays unchanged. Clarify or refine the request if necessary.
+3. Approve the impact proposal. Answer only new or affected Requirements
+   questions, then review the affected drawings and prototype update.
+4. Use **Apply update** for the prepared prototype. If Development is affected,
+   use **Continue change in Development**; implementation still needs its own
+   confirmation.
+
+**Result:** the new request proceeds from the earliest affected stage without
+repeating completed decisions or replacing the previous working prototype.
+Prior answers remain visible when a decision needs review. A changed project
+requires **Check impact again** before approving an older proposal.
+
+For direct edits rather than a chat request:
+
 1. Open the owning phase. If completed/read-only, use **Reopen** and review its
-   warning; settle/close Development first if required.
+   broader warning; settle/close Development first if required.
 2. In Requirements, choose the answered question and **Update answer and
    dependents**. Review affected decisions.
 3. In Drawings, edit and **Save drawings**, or send a precise change. Inspect
@@ -29,7 +47,7 @@ change, [refine Design](#point-to-a-design-change) instead.
 2. Choose the displayed **Show Interaction prototype**, **Show requested revision**
    or **Show saved version** action.
 3. Try it inline or use **Open current preview**. If you want a change, describe
-   it in Feedback and **Send revision** or **Queue revision**.
+   it in Feedback and **Send change** or **Queue change**.
 4. Inspect clarifications/outcomes, then explicitly show the resulting version.
 
 **Result:** you control which version you evaluate. Viewing is not Finish or

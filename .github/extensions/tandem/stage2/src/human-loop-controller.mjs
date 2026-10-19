@@ -64,6 +64,7 @@ export function createHumanLoopController(options) {
       resetPermissions: sessionId => permissions.resetSession(sessionId),
       createRuntime: async runtimeOptions => new HumanLoopRuntime({
         ...runtimeOptions, contextProvider: options.contextProvider, withRequestAdmission: options.withRequestAdmission,
+        onHandoffSettled: options.onHandoffSettled,
         projectEffortControl: options.projectEffortControl === true,
         createPrivateSession: configuration => createDurablePrivateSession(runtimeOptions.client, configuration, runtimeOptions.afterNativeCreate),
         onHandoff: async handoff => {

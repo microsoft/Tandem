@@ -163,6 +163,33 @@ without fabricating a graphical prototype.
 
 ### Finish Stage 1; open Development when ready
 
+Chat changes use the additive `changeRequests` ledger and the production
+`buildChangeAssessmentPrompt`, not the broad stage-reopen/reset path. HTTP and
+canvas entry points share assessment and decision handlers; the original stage
+engines remain independently usable. Assessment is context-only and preserves
+accepted state. Approval binds the exact analysis ID and semantic baseline digest,
+including current Development Design/code when available. It saves a complete
+baseline snapshot before applying a sparse Requirements patch and marking only
+the affected stage outputs for review. Stable decision IDs, independent answers,
+unaffected screens, source checkpoints and receipt history remain intact.
+
+Scoped lifecycle records add `changeRequestId` to the existing version-3 format
+so completed stages need not be a contiguous prefix. Earlier version-3 records
+retain their original normalization. Updated prototype checkpoints also bind the
+Requirements digest; a retained old preview is not current evidence for changed
+requirements. Request, analysis, native delivery and artifact identities remain
+separate. Errors and uncertain delivery are retained, not converted into approval.
+
+The optional native `discovery-change` terminal result requires an exact
+host-supplied discovery baseline. It finishes at a visible handoff, not Planner.
+Only after native settlement does the composed host retain the original request
+batch, answers and attachment references for impact assessment. Upstream mutation
+still requires the existing quiet/admission boundary. A follow-up failure does not
+revoke or gate the native role's durable result. Direct Development without that
+host context keeps ordinary routing. Explicit continuation persists an immutable
+outbound request before sending; duplicate delivery reconciles that identity, and
+recovery never authorizes replay.
+
 Stage 1 workers honor the owning native session's explicitly selected reasoning
 effort. If unset, they keep their existing per-worker low/medium defaults.
 Failure to read that selection is an error, not permission to substitute a default.
@@ -438,19 +465,42 @@ displayed checkpoint; **Restart pending preview** targets only the waiting versi
 **Restart visual exploration** targets the retained alternative bundle.
 None of these actions generates code, applies an update, changes feedback or opens
 Development. A previously reviewed live server is reused rather than duplicated.
-For legacy checkpoints without a launch record, the UI asks you to review an
-existing Node entrypoint (and any arguments), then confirm the exact executable,
-checkpoint directory and saved URL. It never guesses an npm script or substitutes
-a static server. The current restart adapter supports the Windows Node host;
-unsupported stacks/platforms fail explicitly.
+New Node-based checkpoints may retain `previewStart` with the actual source-owned
+server entrypoint, working directory and argument vector supplied by the worker.
+Paths are checkpoint-relative, validated against materialized source, and kept
+with that checkpoint's source fingerprint. They are launch instructions, not
+tool-backed proof of a previous command invocation. They are never inherited from
+another checkpoint or treated as approval to start a process.
+
+Restart reuses a reviewed launch record or the checkpoint's saved instructions.
+Older checkpoints show labelled choices from source-owned server files and direct
+`node` start scripts in bounded, nested `package.json` discovery. Detection does
+not evaluate shell syntax, runtime flags, environment assignments or npm hooks.
+Other JavaScript files remain in **Advanced setup**, with one argument per line
+instead of JSON. The normal confirmation hides paths/arguments under technical
+details and describes the selected saved preview. It never substitutes a static
+server or guesses a missing npm command. The restart adapter still supports only
+the Windows Node host; unsupported stacks/platforms fail explicitly.
 
 Launch records bind the original main owner and accepted source fingerprint.
+An optional materialized working directory stays within the fingerprinted
+checkpoint root; execution never silently changes the source root or saved port.
+The launcher explicitly sets `PORT` from the reviewed saved URL, including for
+older recipes whose package script only says `node server.mjs`. Technical details
+and process receipts show that value. Other environment variables are not inferred
+from old worker text; explicit argument vectors remain unchanged.
 The native shell permission prompt remains authoritative. After approval, the
 packaged launcher rechecks source/executable identity and port availability,
 starts an attached session-owned process, and records its exact launch/PID.
 Ready requires both owned listener evidence and matching prototype/checkpoint
 markers. Changed source, foreign listeners, rejected consent and startup failure
-remain visible. Closing the owning host stops its own launches; no unrelated
+remain visible. Foreground-idle checks govern admission before native dispatch,
+not the launch's readiness loop: a shell completion can trigger native background
+processing, including after a startup failure. Readiness continues to verify
+source/owner/selection and the exact process receipt without mistaking that
+notification for competing work. Failed launches retain bounded stderr with
+their exit status; cleanup failures do not erase the original startup error.
+Closing the owning host stops its own launches; no unrelated
 server is terminated. A failed or uncertain attempt can be inspected/reconciled,
 not silently replaced with another command.
 Saved-evidence rows refresh when their source changes; native conversation records

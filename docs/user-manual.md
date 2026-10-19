@@ -72,10 +72,21 @@ use Undo/Redo, or send a revision instruction. **Save drawings** saves edits;
 Already-approved, unchanged drawings may show **Finish Drawings and continue**
 instead. A saved/streamed revision alone is not approval.
 
-To change a completed phase, review its **Reopen** warning: affected outputs
-become stale and may need completion/approval again. History is retained.
-For ordinary changes once Development is underway, use a new Design request
-instead of restarting discovery. See [revision recipes](use-cases.md#revise-requirements-or-drawings).
+For chat changes, **Project changes** shows the earliest affected stage, the
+proposed updates and the work that stays unchanged. Approve that proposal before
+earlier stages change. Requirements keeps independent answers and shows previous
+answers for decisions that need review. The saved prototype remains available
+while its update is prepared. **Check impact again** refreshes a stale proposal;
+it does not approve it.
+
+Cancel before approval leaves accepted work unchanged. Cancelling remaining
+work afterwards retains already saved changes rather than rolling them back.
+Development can propose an upstream change when a discovery baseline exists;
+direct Development continues to own its Design without mandatory discovery.
+Returning a change to Development never substitutes for implementation confirmation.
+
+**Reopen** remains a broader manual operation: affected outputs become stale and
+may need completion/approval again. See [revision recipes](use-cases.md#revise-requirements-or-drawings).
 
 ## Prototype versions
 
@@ -89,7 +100,7 @@ A waiting version changes that only when you choose its action, such as
 **Show Interaction prototype** or **Show requested revision**. Automatic
 milestones are not feedback you submitted.
 
-Use **Feedback** to **Send revision** or **Queue revision**, then inspect its
+Use **Feedback** to **Send change** or **Queue change**, then inspect its
 status and clarifications. Finish requires the necessary milestones, current
 drawing approval and resolved submitted feedback. **Finish Prototype and save
 outputs** retains evidence; it does not approve implementation.

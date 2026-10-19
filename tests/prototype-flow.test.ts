@@ -86,6 +86,16 @@ test("legacy states remain readable and corrupted checkpoint references fail vis
     assert.throws(() => readPrototypeFlow({ ...newPrototypeFlow(), budget: { limitSeconds: 900, usedSeconds: NaN } }), /invalid/);
 });
 
+test("checkpoint start instructions survive reload without reusing another checkpoint's command", () => {
+    const flow = reservePrototypeCheckpoint(newPrototypeFlow(), {
+        ...pending("server", "structure"),
+        previewStart: { entrypoint: "app\\server.mjs", workingDirectory: "app", args: ["--port", "4321"] },
+    });
+    assert.deepEqual(readPrototypeFlow(JSON.parse(JSON.stringify(flow))), flow);
+    const previous = { ...flow.checkpoints[0], previewStart: { entrypoint: "../other.mjs", workingDirectory: ".", args: [] } };
+    assert.throws(() => readPrototypeFlow({ ...flow, checkpoints: [previous] }), /saved preview/);
+});
+
 test("checkpoint sketch bindings and delivered-image receipts survive reload without partial identities", () => {
     const flow = reservePrototypeCheckpoint(newPrototypeFlow(), {
         ...pending("drawn", "structure"), sketchRevisionId: "approved-revision",

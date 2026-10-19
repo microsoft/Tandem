@@ -56,25 +56,42 @@ not erase saved source or feedback.
    Checks start no server/model work.
 2. Choose **Restart preview**, **Restart pending preview**, or **Restart visual
    exploration** for that exact saved version.
-3. Review the executable, folder, URL and version. Older output may ask for an
-   existing **Saved Node entrypoint** and **Additional arguments** (a JSON array
-   of strings); select **Review launch**.
-4. Confirm **Restart this saved version**, answer any owning-host permission,
+3. When start instructions were saved with the prototype, review the summary.
+   Older previews show detected **Start options** from existing server files or
+   supported package scripts. Choose one and select **Review restart**.
+   Raw paths and command arguments are available under **Advanced setup**, not
+   required for a saved launch.
+4. Confirm **Restart preview**, answer any owning-host permission,
    and wait for verification.
 
 **Result:** the saved server is running, not regenerated or promoted.
 Restarting pending output does not display it; use its Show action separately.
 An already-verified live server is reused.
+Restart supplies the saved URL's port as `PORT` for Node servers that read it;
+it does not choose a different port or replace an unrelated listener.
 Restarting visual exploration retains its per-direction settings and does not
 apply any alternative. If a running preview cannot confirm visual controls,
 check it again and inspect the error; do not substitute another checkpoint or
 claim that an adjustment was applied.
 
-This adapter supports Windows Node entrypoints only. It does not guess npm
-scripts, install dependencies or substitute another server. Changed source/owner,
+If no start option is found, **Advanced setup** lists existing JavaScript files
+inside the saved preview. Select the script that starts the server (for example,
+`app\server.mjs`), not `index.html`, `src\main.tsx` or a browser component. Set
+**Start in folder** to its working folder (`.` means the saved preview root),
+and enter each argument on a separate line. No JSON or shell quoting is needed.
+Use the original launch instructions rather than trying arbitrary files.
+
+This adapter supports Windows Node server scripts only. Detection reads direct
+`node` commands in `package.json`; it does not execute npm lifecycle hooks,
+shell commands, Vite CLI, or another stack. Unsupported start options are
+explained. It does not install dependencies or substitute another server. Changed source/owner,
 unsupported stacks, denied consent or foreign port listeners block it.
 Obtain the correct launch instructions rather than killing listeners or editing
 saved metadata. Inspect uncertain attempts before launching again.
+
+A foreground-busy message applies before starting a new server, not while
+checking one Tandem just launched. If startup fails, inspect the reported process
+error rather than clearing session state or retrying an unrelated task.
 
 ## Startup and connection problems
 

@@ -25,6 +25,8 @@ export interface RuntimeSnapshot {
 export interface UiState extends TandemState {
   projectPath?: string;
   developmentBlocker?: string | null;
+  prototypeNeedsUpdate?: boolean;
+  requirementsDigest?: string;
   provider?: {
     canSubmitAnswers?: boolean;
     canReload?: boolean;

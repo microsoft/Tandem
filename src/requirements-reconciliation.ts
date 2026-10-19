@@ -53,10 +53,10 @@ const defaultBatchSchema = object({
 });
 
 // The SDK's structured output is not a persistence trust boundary.
-function validate(value: unknown, schema: any, path = "reconciliation"): void {
+export function validateRequirementsValue(value: unknown, schema: any, path = "reconciliation"): void {
     if (schema.anyOf) {
         if (value === null && schema.anyOf.some((item: any) => item.type === "null")) return;
-        return validate(value, schema.anyOf.find((item: any) => item.type !== "null"), path);
+        return validateRequirementsValue(value, schema.anyOf.find((item: any) => item.type !== "null"), path);
     }
     if (schema.const !== undefined && value !== schema.const) throw new Error(`${path} has an invalid value.`);
     if (schema.enum && !schema.enum.includes(value)) throw new Error(`${path} has an invalid value.`);
@@ -65,13 +65,13 @@ function validate(value: unknown, schema: any, path = "reconciliation"): void {
         const record = value as Record<string, unknown>;
         if (Object.keys(record).some((key) => !Object.hasOwn(schema.properties, key)) ||
             schema.required.some((key: string) => !Object.hasOwn(record, key))) throw new Error(`${path} has missing or unexpected fields.`);
-        for (const [key, child] of Object.entries(schema.properties)) validate(record[key], child, `${path}.${key}`);
+        for (const [key, child] of Object.entries(schema.properties)) validateRequirementsValue(record[key], child, `${path}.${key}`);
     } else if (schema.type === "array") {
         if (!Array.isArray(value) || value.length > schema.maxItems || value.length < (schema.minItems || 0)) {
             throw new Error(`${path} has an invalid number of entries.`);
         }
         if (schema.uniqueItems && new Set(value).size !== value.length) throw new Error(`${path} must contain distinct entries.`);
-        value.forEach((item, index) => validate(item, schema.items, `${path}[${index}]`));
+        value.forEach((item, index) => validateRequirementsValue(item, schema.items, `${path}[${index}]`));
     } else if (schema.type === "string") {
         if (typeof value !== "string" || value.length < schema.minLength || value.length > schema.maxLength ||
             (schema.minLength && !value.trim())) throw new Error(`${path} must contain valid text.`);
@@ -81,7 +81,7 @@ function validate(value: unknown, schema: any, path = "reconciliation"): void {
 }
 
 export function readDefaultBatch(value: unknown): DefaultBatch {
-    validate(value, defaultBatchSchema, "default batch");
+    validateRequirementsValue(value, defaultBatchSchema, "default batch");
     const batch = value as DefaultBatch;
     if (new Set(batch.defaults.map((item) => item.nodeId)).size !== batch.defaults.length) {
         throw new Error("The default batch contains duplicate decisions.");
@@ -103,7 +103,7 @@ export function requirementsInputDigest(state: Parameters<typeof reconciliationI
 }
 
 export function validateChangeSet(value: unknown, graph: DecisionGraph): RequirementsChangeSet {
-    validate(value, requirementsChangeSetSchema);
+    validateRequirementsValue(value, requirementsChangeSetSchema);
     const result = value as RequirementsChangeSet;
     const ids = new Set(graph.nodes.map((node) => node.id));
     for (const entries of [result.conflicts, result.questions]) {
