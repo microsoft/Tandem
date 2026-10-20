@@ -1,7 +1,10 @@
-export const prototypePreviewBridgeSource: string = String.raw`(() => {
+import { visualPreviewBridgeSource } from "./visual-preview-bridge.js";
+
+export const prototypePreviewBridgeSource: string = visualPreviewBridgeSource + "\n" + String.raw`(() => {
     "use strict";
     const LIMIT = 65536;
     const FIELD_LIMIT = 128;
+    const VISUAL_PARAMETERS = new Set(["tandem-direction", "tandem-colorMode", "tandem-accent", "tandem-density", "tandem-textSize", "tandem-effects"]);
     const warn = (message, error) => console.warn("[Tandem preview] " + message, error || "");
     let parentOrigin;
     try {
@@ -60,7 +63,7 @@ export const prototypePreviewBridgeSource: string = String.raw`(() => {
         const url = new URL(value, window.location.origin);
         if (url.origin !== window.location.origin || !url.pathname.startsWith(basePath)) return null;
         for (const [key, value] of Array.from(url.searchParams.entries())) {
-            if (sensitive(key) || /^(?:code|key|auth|session|sid)$/i.test(key) || sensitiveValue(value)) url.searchParams.delete(key);
+            if (VISUAL_PARAMETERS.has(key) || sensitive(key) || /^(?:code|key|auth|session|sid)$/i.test(key) || sensitiveValue(value)) url.searchParams.delete(key);
         }
         if (sensitive(url.hash) || sensitiveValue(url.hash)) url.hash = "";
         return url.pathname + url.search + url.hash;
@@ -128,7 +131,10 @@ export const prototypePreviewBridgeSource: string = String.raw`(() => {
         if (nextRoute !== null) {
             const previousURL = window.location.href;
             const nextURL = new URL(nextRoute, window.location.origin);
-            window.history.replaceState(null, "", nextRoute);
+            for (const [key, value] of new URL(previousURL).searchParams) {
+                if (VISUAL_PARAMETERS.has(key)) nextURL.searchParams.set(key, value);
+            }
+            window.history.replaceState(null, "", nextURL.pathname + nextURL.search + nextURL.hash);
             window.dispatchEvent(new Event("popstate"));
             if (new URL(previousURL).hash !== nextURL.hash) {
                 window.dispatchEvent(typeof HashChangeEvent === "function" ?

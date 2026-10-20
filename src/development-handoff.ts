@@ -14,6 +14,7 @@ import { prototypeCheckpoint } from "./prototype-flow.js";
 import { fingerprintPrototypeWorkspace, PROTOTYPE_FINGERPRINT_PREFIX } from "./prototype-runtime.js";
 import { capturePrototypeSourceFiles } from "./prototype-workspace.js";
 import type { TandemState } from "./types.js";
+import { readChangeRequests } from "./change-requests.js";
 
 const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
 const MAX_SNAPSHOT = 64 * 1024 * 1024;
@@ -222,7 +223,8 @@ export class DevelopmentHandoffs {
             const request: HumanRequest = { id, receivedAt: new Date().toISOString(), answers: null,
                 message: buildDevelopmentHandoffPrompt({ handoffId: id, receiptPath: join(directory, "receipt.json"),
                     snapshotPath: join(directory, "snapshot.json"), sourcePath: checkpoint ? join(directory, "source") : null,
-                    disposition, goal: String(source.goal).slice(0, 4000) }) };
+                    disposition, goal: String(source.goal).slice(0, 4000),
+                    changeRequest: readChangeRequests(source.changeRequests).find(request => request.id === state.lifecycle.changeRequestId) ?? null }) };
             const content: Omit<DevelopmentHandoff, "digest"> = {
                 version: 1, id, effortId: state.prototypeId, generation: state.generation,
                 source: { sharedRoot: resolve(this.sharedRoot), snapshotPath: output.path,

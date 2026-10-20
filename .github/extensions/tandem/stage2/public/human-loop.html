@@ -2,13 +2,14 @@
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tandem</title><link rel="icon" type="image/jpeg" href="branding/tandem-original.jpg"><link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="experience.css"><link rel="stylesheet" href="human-loop-shell.css">
-<link rel="stylesheet" href="renderers/human-loop.css"></head>
+<link rel="stylesheet" href="renderers/human-loop.css"><link rel="stylesheet" href="project-workspace.css"></head>
 <body class="human-app" data-tandem-surface="canvas">
 <header class="topbar human-header">
   <div class="brand"><img class="brand-mark" src="branding/tandem-blue-light.png" alt="Tandem" width="1200" height="260"><p class="brand-slogan">two minds, one direction.</p></div>
   <span id="project-name" class="header-project" aria-label="Project">Your project</span>
 <details id="canvas-settings" class="canvas-settings">
   <summary>Settings</summary>
+  <button id="close-settings" type="button" aria-label="Close settings">Close</button>
   <p id="settings-error" role="alert" hidden></p>
   <section class="settings-section" aria-labelledby="appearance-settings-title">
     <h3 id="appearance-settings-title">Appearance</h3>
@@ -18,10 +19,24 @@
       <button id="save-appearance" type="button">Save appearance</button>
     </div>
   </section>
+  <section id="project-effort-settings" class="settings-section" aria-labelledby="project-effort-title" hidden>
+    <h3 id="project-effort-title">Project effort</h3>
+    <div class="settings-fields project-effort-fields">
+      <label>Reasoning effort for both stages<select id="project-effort" disabled><option value="">Loading project settings...</option></select></label>
+      <div class="project-effort-actions">
+      <button id="apply-project-effort" type="button" disabled>Apply to both stages</button>
+      <button id="refresh-project-effort" type="button">Refresh status</button>
+      </div>
+    </div>
+    <div id="project-effort-status" role="status"></div>
+    <p>Stages keep independent sessions and settings. Saving future private effort does not activate Development.</p>
+    <p id="project-effort-error" role="alert" hidden></p>
+  </section>
   <section class="settings-section" aria-labelledby="model-settings-title">
     <h3 id="model-settings-title">Model</h3>
     <div class="settings-fields">
       <label>Private Canvas model<select id="setting-model" aria-describedby="model-setting-status" disabled><option>Available when Ready</option></select></label>
+      <label id="private-effort-setting">Reasoning effort<select id="setting-effort" aria-describedby="model-setting-status" disabled><option value="">No explicit override</option></select></label>
       <button id="apply-model" type="button" disabled>Apply model</button>
       <button id="accept-actual-model" type="button" hidden>Accept actual model</button>
     </div>
@@ -41,6 +56,11 @@
   </section>
   <section class="settings-section" aria-labelledby="diagnostics-settings-title">
     <h3 id="diagnostics-settings-title">Diagnostics</h3>
+    <div id="project-provider-maintenance" class="settings-action" hidden>
+      <button id="project-reload-extension" class="quiet-button" type="button" disabled>Reload Tandem extension</button>
+      <p id="project-reload-purpose"></p>
+      <p id="project-reload-status" role="status"></p>
+    </div>
     <div class="settings-action">
       <button id="open-diagnostics" class="quiet-button" type="button" aria-controls="advanced-workflow-controls" aria-expanded="false" aria-describedby="diagnostics-purpose">Diagnostics</button>
       <p id="diagnostics-purpose">Troubleshoot runtime status and manage owned previews.</p>
@@ -50,9 +70,13 @@
       <p id="rendering-debugger-purpose">Preview and validate pasted Design JSON locally without starting work.</p>
     </div>
   </section>
+  <section id="project-process-settings" class="settings-section" hidden>
+    <button id="acceptance-delivery" type="button" aria-haspopup="dialog">Advanced handoffs &amp; history</button>
+  </section>
 </details>
 </header>
 <p id="browser-session-guidance">This browser is attached to your CLI session. Keep the CLI open. Closing a tab does not stop work; use Settings, Diagnostics, Close runtime before exiting the CLI. Resume the same CLI session for retained work.</p>
+<details id="project-connection-help" hidden><summary>Connection and runtime help</summary><p>The project host owns this connection. Browsing does not stop work. Use project Settings for model selection, permissions, Close and recovery. Saved history does not authorize replay.</p></details>
 <dialog id="compaction-approval" aria-labelledby="compaction-approval-title" aria-describedby="compaction-approval-detail">
   <h2 id="compaction-approval-title">Compact model context?</h2>
   <p id="compaction-approval-detail">Summarize older exchanges in the model's working context, retaining recent context, decisions, constraints and references. Your saved Conversation, images, results and Design remain unchanged. This does not resume previous work.</p>
@@ -65,27 +89,42 @@
   <iframe id="rendering-debugger-frame" title="Design JSON rendering debugger" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer"></iframe>
 </dialog>
 <main class="workspace-shell human-layout">
-  <section id="design-panel" class="panel canvas-panel human-design">
-    <div class="panel-heading"><div><p class="eyebrow">Your design</p><h2 id="design-pane-title">Canvas</h2></div><span id="backbone-state" class="empty-badge">No Design yet</span></div>
+  <section id="design-panel" class="panel canvas-panel human-design" aria-labelledby="design-pane-title">
+    <div class="panel-heading"><h2 id="design-pane-title" class="visually-hidden">Canvas</h2><button id="return-to-questions" type="button" hidden>Back to Questions</button><span id="backbone-state" class="empty-badge">No Design yet</span></div>
     <div id="canvas-scroll" class="canvas-scroll">
+      <p id="prototype-handoff-activity" role="status" hidden></p>
       <div id="assessment-card" class="empty-state design-assessment"><strong>No Design has been published</strong><p>Discuss your idea in the conversation. The current Design will appear here when it is ready.</p></div>
       <div id="backbone-proposal" class="backbone-proposal" hidden>
-        <p id="design-summary" class="proposal-summary"></p>
-        <details class="design-metadata"><summary>Goal and outcomes</summary><p id="design-goal"></p><ul id="design-outcomes"></ul></details>
+        <details id="design-overview" class="design-metadata" open><summary>About this Design</summary>
+          <p id="design-summary" class="proposal-summary"></p><p id="design-goal"></p><ul id="design-outcomes"></ul>
+        </details>
         <nav class="design-navigation" aria-label="Design artifacts"><div id="backbone-tabs" class="backbone-tabs"></div></nav>
         <div id="design-artifacts"></div>
         <details class="design-metadata"><summary>Full Design JSON</summary><pre id="design-raw" class="raw-block"></pre></details>
       </div>
     </div>
+    <section id="project-output-view" class="canvas-scroll project-output-view" aria-label="Development output" tabindex="-1" hidden></section>
     <div id="annotation-parking" hidden><div id="annotation-tools" class="diagram-annotation-tools" hidden><button id="annotation-reset" type="button">Reset sketch</button><button id="annotation-capture" type="button">Snapshot to composer</button><span id="annotation-status" role="status"></span></div></div>
+    <section id="question-panel" aria-labelledby="questions-title" hidden>
+      <div class="questions-heading"><h2 id="questions-title">Questions</h2><button id="questions-conversation" type="button">Go to Conversation</button><button id="questions-back" type="button">Back to Design</button></div>
+      <div id="questions-content"></div>
+    </section>
   </section>
   <div id="workspace-divider" role="separator" tabindex="0" aria-orientation="vertical"
     aria-controls="design-panel conversation-panel" aria-label="Resize Design and Conversation"
     title="Drag to resize panels, or use Left and Right arrow keys"></div>
-  <section id="conversation-panel" class="panel activity-panel human-conversation">
-    <div class="panel-heading"><h2>Conversation</h2><button id="show-questions" type="button" aria-controls="question-panel" aria-expanded="false">Questions (0)</button><span class="connection"><i class="status-dot"></i><span id="connection-status">Connecting</span></span></div>
+  <section id="conversation-panel" class="panel activity-panel human-conversation" aria-labelledby="conversation-pane-title">
+    <div class="panel-heading"><h2 id="conversation-pane-title" class="visually-hidden">Conversation</h2><button id="show-questions" type="button" aria-controls="question-panel" aria-expanded="false">Questions (0)</button><span class="connection"><i class="status-dot"></i><span id="connection-status">Connecting</span></span></div>
     <button id="initialize" type="button" hidden>Initialize runtime</button>
     <button id="inspect-initial-creation" type="button" hidden>Inspect unused setup recovery</button>
+    <button id="repair-empty-setup" type="button" hidden>Repair Development setup</button>
+    <dialog id="empty-setup-approval" aria-labelledby="empty-setup-title" aria-describedby="empty-setup-detail">
+      <h2 id="empty-setup-title">Repair this empty Development setup?</h2>
+      <p id="empty-setup-detail"></p>
+      <details><summary>Verified identity and audit details</summary><pre id="empty-setup-identity"></pre></details>
+      <button id="cancel-empty-setup" type="button" autofocus>Not now</button>
+      <button id="approve-empty-setup" type="button">Repair the same session</button>
+    </dialog>
     <dialog id="initial-creation-approval" aria-labelledby="initial-creation-title" aria-describedby="initial-creation-detail">
       <h2 id="initial-creation-title">Initialize this unused reserved session once?</h2>
       <p id="initial-creation-detail"></p>
@@ -94,12 +133,12 @@
       <button id="approve-initial-creation" type="button">Authorize one-time initialization</button>
     </dialog>
     <p id="notice" role="status" hidden></p>
+    <p id="private-history-status" role="status" hidden>Private session history has not been verified. No other session's history is substituted.</p>
     <p id="compaction-status" role="status" aria-live="polite" hidden></p>
-    <section id="question-panel" aria-label="Saved questions" hidden></section>
     <div class="conversation-layout">
       <div class="conversation-thread">
         <div id="messages" class="conversation-messages" role="log" aria-label="Conversation" aria-live="polite" aria-relevant="additions"></div>
-        <button id="newer" type="button" hidden>New messages</button>
+        <button id="newer" type="button" aria-controls="messages state-history" hidden>&#8595; Go to latest</button>
       </div>
       <aside class="conversation-state-history conversation-state-column" aria-label="State history">
         <h3 class="visually-hidden">State history</h3>
@@ -112,12 +151,15 @@
       <section><h3>Owned previews</h3><div id="apps"></div></section>
     </details>
     <section class="access-approval" id="access-approval" aria-label="Command permissions" hidden><div id="access-requests"></div></section>
+    <section id="queued-requests" aria-label="Queued Development requests" hidden></section>
     <form class="command-bar" id="composer">
       <label class="visually-hidden" for="message">Discuss or request new work</label>
       <div class="command-composer">
         <figure id="clipboard-preview" class="annotation-preview" hidden><img id="clipboard-image" alt="Unsent pasted image"><figcaption id="clipboard-caption" role="status"></figcaption><button type="button" id="clipboard-remove">Remove pasted image</button></figure>
         <figure id="annotation-preview" class="annotation-preview" hidden><img id="annotation-image" alt="Unsent diagram snapshot"><figcaption id="annotation-caption"></figcaption><button type="button" id="annotation-remove">Remove snapshot</button></figure>
+        <div id="role-suggestions" class="role-suggestions" role="listbox" aria-label="Role suggestions" hidden></div>
         <textarea id="message" rows="2" placeholder="Ask about the Design, or describe what you want to change..."></textarea>
+        <p id="role-hint-help" role="status" hidden></p>
       </div>
       <button id="send" type="submit" aria-label="Send message" title="Send message" disabled>↑</button>
       <div class="composer-actions">

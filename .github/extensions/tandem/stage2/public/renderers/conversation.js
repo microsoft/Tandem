@@ -135,7 +135,7 @@ export function renderStateMarker(document, transition, focusEntry, onSelectStat
   return item;
 }
 
-export function createConversationRenderer({ messages, history, current, currentDetail, newer, onSelectState }) {
+export function createConversationRenderer({ messages, history, current, currentDetail, newer, onSelectState, canFollowMessages = () => true }) {
   const document = messages.ownerDocument;
   const historyPopover = createHistoryPopover(history);
   const rendered = new Map();
@@ -178,63 +178,95 @@ export function createConversationRenderer({ messages, history, current, current
     for (const [id, marker] of markers) updateMarker(marker, markerContexts.get(id));
     onSelectState?.(transition);
   }
-  const returnToCurrent = document.createElement('button');
-  returnToCurrent.type = 'button';
-  returnToCurrent.className = 'state-history-return';
-  returnToCurrent.textContent = 'Return to current';
-  returnToCurrent.setAttribute('aria-controls', history.id);
-  returnToCurrent.hidden = true;
-  (history.closest('.human-app .conversation-layout') ?? history).after(returnToCurrent);
-  let followingHistory = true;
-  let historyFrame = null;
-  let lastHistoryTop = history.scrollTop;
-  const historyNearBottom = () => history.scrollHeight - history.scrollTop - history.clientHeight < 60;
-  function followHistory() {
-    if (!followingHistory || historyFrame !== null) return;
-    historyFrame = window.requestAnimationFrame(() => {
-      historyFrame = null;
-      if (!followingHistory) return;
-      history.scrollTop = history.scrollHeight;
-      lastHistoryTop = history.scrollTop;
+  newer.type = 'button';
+  newer.textContent = '\u2193 Go to latest';
+  newer.setAttribute('aria-label', 'Go to latest conversation and status history');
+  newer.setAttribute('title', 'Go to latest conversation and status history');
+  newer.setAttribute('aria-controls', `${messages.id} ${history.id}`);
+  (history.closest('.human-app .conversation-layout') ?? history).after(newer);
+  const nearBottom = element => element.scrollHeight - element.scrollTop - element.clientHeight <= 2;
+  const updateLatest = () => {
+    messageFollow.capture(); historyFollow.capture();
+    newer.hidden = (messageFollow.pinned() || nearBottom(messages)) && (historyFollow.pinned() || nearBottom(history));
+  };
+  function followViewport(element, allowed = () => true) {
+    let following = true, lastTop = element.scrollTop;
+    let lastHeight = element.scrollHeight, lastViewport = element.clientHeight;
+    let browsingInput = false;
+    const setFollowing = value => { following = value; element.style.overflowAnchor = value ? 'none' : ''; };
+    setFollowing(true);
+    const capture = () => {
+      // Reflow may clamp the old scroll offset before a delayed scroll event arrives.
+      const resized = lastHeight !== element.scrollHeight || lastViewport !== element.clientHeight;
+      if (element.scrollTop !== lastTop && (browsingInput || !following || !resized)) {
+        setFollowing(nearBottom(element));
+      }
+      if (element.scrollTop !== lastTop) browsingInput = false;
+      if (nearBottom(element)) setFollowing(true);
+      lastTop = element.scrollTop;
+      lastHeight = element.scrollHeight; lastViewport = element.clientHeight;
+    };
+    const setTop = top => {
+      element.scrollTop = top; lastTop = element.scrollTop;
+      lastHeight = element.scrollHeight; lastViewport = element.clientHeight;
+      browsingInput = false;
+    };
+    const browsing = () => { capture(); browsingInput = true; };
+    element.addEventListener('wheel', browsing, { passive: true });
+    element.addEventListener('pointerdown', browsing, { passive: true });
+    element.addEventListener('touchstart', browsing, { passive: true });
+    element.addEventListener('keydown', event => {
+      if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) browsing();
+    });
+    element.addEventListener('scroll', () => { capture(); updateLatest(); });
+    return {
+      capture, setTop, browse: browsing,
+      follow() {
+        capture();
+        if (nearBottom(element)) setFollowing(true);
+        if (following && allowed()) setTop(element.scrollHeight);
+      },
+      latest() { setFollowing(true); setTop(element.scrollHeight); },
+      reset() { setFollowing(true); lastTop = element.scrollTop; },
+      pinned: () => following && allowed(),
+    };
+  }
+  const messageFollow = followViewport(messages, canFollowMessages), historyFollow = followViewport(history);
+  let followFrame = null;
+  function refreshLayout() {
+    if (followFrame !== null) return;
+    followFrame = window.requestAnimationFrame(() => {
+      followFrame = null;
+      messageFollow.follow(); historyFollow.follow(); updateLatest();
     });
   }
-  history.addEventListener('scroll', () => {
-    // Our own delayed scroll events must not reinterpret later content growth as browsing.
-    if (history.scrollTop === lastHistoryTop) return;
-    lastHistoryTop = history.scrollTop;
-    followingHistory = historyNearBottom();
-    returnToCurrent.hidden = followingHistory;
-  });
-  returnToCurrent.addEventListener('click', () => {
-    followingHistory = true;
-    returnToCurrent.hidden = true;
-    followHistory();
+  newer.addEventListener('click', () => {
+    messageFollow.latest(); historyFollow.latest(); updateLatest();
+    refreshLayout();
   });
   // Observe the viewport and rows: initial hidden layout, wrapping and late font sizing
   // can change the bottom without a new conversation snapshot.
-  const historyResize = new window.ResizeObserver(followHistory);
-  historyResize.observe(history);
+  const contentResize = new window.ResizeObserver(refreshLayout);
+  contentResize.observe(history); contentResize.observe(messages);
   function focusEntry(id) {
     const entry = rendered.get(id);
     if (!entry) return;
     rendered.get(selected)?.classList.remove('state-focused');
     selected = id;
     entry.classList.add('state-focused');
+    messageFollow.browse();
     entry.scrollIntoView({ block: 'nearest' });
+    messageFollow.capture();
     entry.focus({ preventScroll: true });
     window.clearTimeout(highlightTimer);
     highlightTimer = window.setTimeout(() => entry.classList.remove('state-focused'), 2000);
   }
-  newer.addEventListener('click', () => {
-    messages.scrollTop = messages.scrollHeight;
-    newer.hidden = true;
-  });
-  messages.addEventListener('scroll', () => {
-    if (messages.scrollHeight - messages.scrollTop - messages.clientHeight < 60) newer.hidden = true;
-  });
+  updateLatest();
   return {
+    focusEntry, refreshLayout,
     render(entries, transitions, progress = new Map()) {
-      const pinned = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 60;
+      messageFollow.capture(); historyFollow.capture();
+      const pinned = messageFollow.pinned();
       const anchor = [...messages.children].find((node) =>
         node.getBoundingClientRect().bottom >= messages.getBoundingClientRect().top);
       const offset = anchor?.getBoundingClientRect().top;
@@ -243,6 +275,18 @@ export function createConversationRenderer({ messages, history, current, current
       let previous = null;
       for (const entry of entries) {
         let node = rendered.get(entry.id);
+        const previousEntry = entryData.get(entry.id);
+        // Saved-evidence projections may change; native conversation records remain immutable.
+        if (node && entry.savedEvidenceProjection === true && previousEntry?.savedEvidenceProjection === true
+          && entry.id.startsWith('discovery:') && entry.kind !== 'assistant'
+          && (entry.text !== previousEntry.text || entry.timestamp !== previousEntry.timestamp)) {
+          renderPlainResponse(node.querySelector('.conversation-text'), entry.text);
+          const time = node.querySelector('time');
+          time.dateTime = entry.timestamp;
+          time.textContent = new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          time.title = new Date(entry.timestamp).toLocaleString();
+          changed = true;
+        }
         if (node && entry.questionHistory?.length && !node.querySelector('[data-question-history]')) {
           node.append(renderQuestionHistory(document, entry.questionHistory));
           changed = true;
@@ -257,6 +301,7 @@ export function createConversationRenderer({ messages, history, current, current
         }
         if (node?.dataset.generated && !entry.generated) {
           const replacement = renderConversationEntry(document, entry);
+          contentResize.unobserve(node); contentResize.observe(replacement);
           node.replaceWith(replacement);
           rendered.set(entry.id, replacement);
           node = replacement;
@@ -264,6 +309,7 @@ export function createConversationRenderer({ messages, history, current, current
         }
         if (!node) {
           node = renderConversationEntry(document, entry);
+          contentResize.observe(node);
           rendered.set(entry.id, node);
           messages.insertBefore(node, previous ? previous.nextSibling : messages.firstChild);
           changed = true;
@@ -320,16 +366,14 @@ export function createConversationRenderer({ messages, history, current, current
         previous = node;
       }
       let priorMarker = null;
-      let historyChanged = false;
       const visibleMarkers = new Set(transitions.map(({ id }) => id));
       for (const [id, marker] of markers) {
         if (!visibleMarkers.has(id)) {
           historyPopover.forget(marker.querySelector('button'));
-          historyResize.unobserve(marker);
+          contentResize.unobserve(marker);
           marker.remove();
           markers.delete(id);
           markerContexts.delete(id);
-          historyChanged = true;
         }
       }
       for (const transition of transitions) {
@@ -342,18 +386,16 @@ export function createConversationRenderer({ messages, history, current, current
           historyPopover.bind(marker.querySelector('button'), context);
           markers.set(transition.id, marker);
           history.insertBefore(marker, priorMarker ? priorMarker.nextSibling : history.firstChild);
-          historyResize.observe(marker);
-          historyChanged = true;
+          contentResize.observe(marker);
         }
         updateMarker(marker, context);
         priorMarker = marker;
       }
-      if (historyChanged) followHistory();
       if (changed) {
-        if (pinned) messages.scrollTop = messages.scrollHeight;
-        else if (anchor) messages.scrollTop += anchor.getBoundingClientRect().top - offset;
-        newer.hidden = pinned;
+        if (pinned) messageFollow.setTop(messages.scrollHeight);
+        else if (anchor) messageFollow.setTop(messages.scrollTop + anchor.getBoundingClientRect().top - offset);
       }
+      refreshLayout();
     },
     current(value) {
       const currentLabel = document.getElementById?.('current-state-title');
@@ -373,7 +415,7 @@ export function createConversationRenderer({ messages, history, current, current
     focusRequest(requestId) {
       const target = [...entryData.values()].findLast((entry) => entry.requestId === requestId);
       if (target) focusEntry(target.id);
-      else messages.scrollTop = messages.scrollHeight;
+      else { messageFollow.latest(); updateLatest(); }
     },
     placeArtifact(key, node, { requestId, entryId, eventKind, title, unlinked = false }) {
       const focused = document.activeElement;
@@ -397,8 +439,8 @@ export function createConversationRenderer({ messages, history, current, current
           heading.append(name);
           owner.append(heading);
         }
-        if (!owner.isConnected) messages.append(owner);
-      } else if (previous?.fallback) previous.fallback.remove();
+        if (!owner.isConnected) { messages.append(owner); contentResize.observe(owner); }
+      } else if (previous?.fallback) { contentResize.unobserve(previous.fallback); previous.fallback.remove(); }
       let slot = owner.querySelector(':scope > .message-artifacts');
       if (!slot) {
         slot = document.createElement('div');
@@ -418,14 +460,17 @@ export function createConversationRenderer({ messages, history, current, current
     },
     parkArtifact(key, node, parking) {
       if (node.parentElement !== parking) parking.append(node);
-      contexts.get(key)?.fallback?.remove();
+      const fallback = contexts.get(key)?.fallback;
+      if (fallback) { contentResize.unobserve(fallback); fallback.remove(); }
       contexts.delete(key);
     },
     reset() {
+      for (const node of rendered.values()) contentResize.unobserve(node);
+      for (const context of contexts.values()) if (context.fallback) contentResize.unobserve(context.fallback);
       rendered.clear();
       for (const marker of markers.values()) {
         historyPopover.forget(marker.querySelector('button'));
-        historyResize.unobserve(marker);
+        contentResize.unobserve(marker);
       }
       markers.clear();
       markerContexts.clear();
@@ -434,10 +479,8 @@ export function createConversationRenderer({ messages, history, current, current
       messages.replaceChildren();
       history.replaceChildren();
       selected = null;
-      followingHistory = true;
-      lastHistoryTop = history.scrollTop;
-      returnToCurrent.hidden = true;
-      followHistory();
+      messageFollow.reset(); historyFollow.reset();
+      updateLatest(); refreshLayout();
     },
   };
 }

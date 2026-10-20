@@ -5,7 +5,7 @@ export function installComposerEnter(textarea, form, canSend) {
   textarea.addEventListener('keyup', (event) => { if (event.key === 'Enter') held = false; });
   textarea.addEventListener('blur', () => { held = false; composing = false; });
   textarea.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter' || event.shiftKey || event.isComposing || composing || event.keyCode === 229) return;
+    if (event.defaultPrevented || event.key !== 'Enter' || event.shiftKey || event.isComposing || composing || event.keyCode === 229) return;
     event.preventDefault();
     if (event.repeat || held) return;
     held = true;

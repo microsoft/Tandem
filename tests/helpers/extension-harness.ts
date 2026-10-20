@@ -19,6 +19,10 @@ interface CanvasContext {
 }
 
 interface HarnessApi {
+    submitChangeRequest(id: string, provider: string, input: Record<string, unknown>): Promise<{ requestId: string }>;
+    decideChangeRequest(id: string, provider: string, input: Record<string, unknown>): Promise<TandemState>;
+    continueChangeWork(id: string): Promise<void>;
+    sendChangeToDevelopment(id: string, provider: string, requestId: string): Promise<TandemState>;
     createState(id: string, goal?: string): TandemState;
     createLegacyState(id: string, goal?: string): TandemState;
     loadState(id: string): Promise<TandemState>;
@@ -110,7 +114,7 @@ async function compile(): Promise<string> {
         logLevel: "silent",
         define: { __TANDEM_VERSION__: JSON.stringify("test") },
     });
-    return result.outputFiles[0].text + "\nmodule.exports.assertDevelopmentAvailable = assertDevelopmentAvailable; module.exports.resumeEffortRun = resumeEffortRun; module.exports.waitForSuggestion = id => activeSuggestionRuns.get(id);";
+    return result.outputFiles[0].text + "\nObject.assign(module.exports, { submitChangeRequest, decideChangeRequest, continueChangeWork, sendChangeToDevelopment }); module.exports.assertDevelopmentAvailable = assertDevelopmentAvailable; module.exports.resumeEffortRun = resumeEffortRun; module.exports.waitForSuggestion = id => activeSuggestionRuns.get(id);";
 }
 
 export async function extensionHarness(speechEnvironment: Record<string, string> = {}, sharedRoot?: string, rendererHtml = "", workspaceRoot?: string, unselectedEntry = false, gitReady = false) {
@@ -126,6 +130,7 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
     if (!unselectedEntry) await chooseProjectEntry(workspace, "preparation");
     const requests: unknown[] = [];
     const developmentRequests: Array<Record<string, unknown>> = [];
+    let sendDevelopment = async (request: Record<string, unknown>) => { developmentRequests.push(request); return request; };
     const developmentOpens: string[] = [];
     let mainReasoningEffort: string | undefined;
     let developmentReasoningEffort: string | null = null, developmentEffortActive = false, developmentEffortError: string | null = null;
@@ -192,7 +197,7 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
                         owner: { mainSessionId: session.sessionId, privateSessionId: "fixture-private", workspacePath: workspace },
                         requests: developmentRequests.map(request => ({ ...request, status: "waiting" })), recoveries: [],
                     }) },
-                    send: async (request: Record<string, unknown>) => { developmentRequests.push(request); return request; },
+                    send: (request: Record<string, unknown>) => sendDevelopment(request),
                 }; },
             }),
             speechIdentity: {
@@ -257,6 +262,7 @@ export async function extensionHarness(speechEnvironment: Record<string, string>
             if (requests.length < count) throw new Error("The expected factory dispatch was not observed.");
         };
         return { api, root, requests, developmentRequests, developmentOpens, logs, session, waitForRequests,
+            setDevelopmentSend(handler: typeof sendDevelopment) { sendDevelopment = handler; },
             setDevelopmentEffortActive(value: boolean) { developmentEffortActive = value; },
             setDevelopmentEffortError(value: string | null) { developmentEffortError = value; },
             setBeforeDevelopmentStart(handler: () => Promise<void>) { beforeDevelopmentStart = handler; },

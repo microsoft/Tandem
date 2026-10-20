@@ -41,10 +41,11 @@ From your Tandem source checkout, run:
 
 ```powershell
 npm ci
-npm run build:browser
-node .\dist\browser\cli.mjs login
-node .\dist\browser\cli.mjs --workspace C:\projects\my-app
+npm run login:browser
+npm run browser -- --workspace C:\projects\my-app
 ```
+
+Both browser scripts build the app automatically. Pass launch options after `--`.
 
 Replace `C:\projects\my-app` with your project folder (the repository/worktree root
 for existing Git projects), not the Tandem source folder. Before Development,

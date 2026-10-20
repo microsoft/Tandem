@@ -43,7 +43,7 @@ test("progressive Prototype reports honest milestones and keeps its iframe while
     first.prototypeFlow.displayedCheckpointId = null; first.prototypeFlow.activeCheckpointId = "first";
     const h = await setup(t, first);
     assert.equal(hidden(h, "prototype-progress"), false);
-    assert.match(text(h, "prototype-milestones"), /StructureBuildingInteractionWaitingVisual directionOptional/);
+    assert.match(text(h, "prototype-milestones"), /StructureBuildingInteractionWaitingVisual explorationOptional/);
     assert.match(text(h, "prototype-progress-message"), /No preview is available yet/);
     assert.equal(frame(h).hidden, true);
     assert.equal(disabled(h, "revision-input"), false);
@@ -101,6 +101,27 @@ test("compact prototype layout retains expanded details, drafts and iframe acros
     assert.equal(frame(h), displayed);
 });
 
+test("prototype preview controls share the stage tab toolbar without remounting the preview", async t => {
+    const value = readyPrototype();
+    const h = await setup(t, value), displayed = frame(h);
+    const actions = h.document.querySelector(".previewbar > .phase-actions")!;
+    const open = h.get<HTMLAnchorElement>("open-preview");
+    assert.ok(actions.contains(h.get("complete-stage")));
+    assert.ok(actions.contains(open));
+    assert.equal(open.href, value.previewUrl);
+    assert.equal(h.get("live-preview-panel").querySelector(".prototype-preview-actions"), null);
+    h.render({ ...value, revision: 2, status: "Current preview stays available." });
+    await h.flush();
+    assert.equal(h.get("open-preview"), open);
+    assert.equal(frame(h), displayed);
+    await browse(h, "requirements");
+    assert.equal(actions.querySelector(".prototype-preview-actions"), null);
+    await browse(h, "prototype");
+    assert.ok(actions.contains(h.get("open-preview")));
+    assert.equal(frame(h), displayed);
+    assert.deepEqual(h.requests, []);
+});
+
 test("pending Prototype copy distinguishes automatic milestones from recorded feedback revisions", async t => {
     const value = readyPrototype(1, true);
     const h = await setup(t, value);
@@ -129,7 +150,7 @@ test("unavailable current preview reviews an explicit legacy recipe and native d
     h.window.HTMLDialogElement.prototype.close = function () { this.open = false; };
     h.setPreviewFetch(async () => response({ generation: value.generation, checkpointId: "structure", pendingCheckpointId: "interaction",
         url: value.previewUrl, available: false, reason: "Saved preview server is stopped." }));
-    await h.click("check-live-preview");
+    await h.click("retry-current-preview");
     const before = JSON.stringify(value.prototypeFlow);
     let inspected = 0;
     h.setFetch(async (path, options) => {
@@ -148,8 +169,12 @@ test("unavailable current preview reviews an explicit legacy recipe and native d
     });
     await h.click("restart-current-preview");
     assert.equal(h.document.querySelector("#confirm-current-restart"), null);
+    assert.equal(h.document.querySelector<HTMLDetailsElement>(".preview-restart-advanced")!.open, false);
+    await h.click(h.document.querySelector(".preview-restart-advanced > summary")!);
     await h.input("restart-current-entrypoint", "server.mjs");
+    await h.input("restart-current-arguments", "--port\n4321\nA name with spaces");
     await h.fire(h.document.querySelector(".preview-restart-dialog[open] form")!, "submit");
+    assert.deepEqual(h.requests.find(item => item.path.endsWith("/inspect") && item.body.entrypoint)?.body.args, ["--port", "4321", "A name with spaces"]);
     assert.ok(h.get("confirm-current-restart"));
     await h.click("confirm-current-restart");
     assert.match(h.document.querySelector(".preview-restart-dialog[open]")!.textContent!, /Native permission was denied/);
@@ -158,6 +183,69 @@ test("unavailable current preview reviews an explicit legacy recipe and native d
     assert.equal(h.document.querySelector(".preview-restart-dialog[open]"), null);
     assert.equal(JSON.stringify(current(h).prototypeFlow), before);
     assert.equal(h.requests.some(item => ["/api/prototype/action", "/api/prototype/start", "/api/development/open"].includes(item.path)), false);
+});
+
+test("detected preview startup is selectable without entering a path and saved launches hide technical details", async t => {
+    const value = readyPrototype(1, true), h = await setup(t, value);
+    h.window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
+    h.window.HTMLDialogElement.prototype.close = function () { this.open = false; };
+    h.setPreviewFetch(async () => response({ generation: value.generation, checkpointId: "structure", pendingCheckpointId: "interaction",
+        url: value.previewUrl, available: false, reason: "Stopped" }));
+    await h.click("retry-current-preview");
+    let attempts = 0;
+    h.setFetch(async (path, options) => {
+        const input = JSON.parse(String(options.body));
+        if (path.endsWith("/decision")) return response({ started: true });
+        attempts++;
+        return response({ needsRecipe: attempts === 1, target: "current", checkpointId: "structure", cwd: "fixture",
+            url: value.previewUrl, executable: "node.exe", args: ["app\\server.mjs", "--port", "4321"], workingDirectory: "fixture\\app",
+            environment: { PORT: "4321" },
+            choices: [{ id: "detected-option", label: "Development preview", entrypoint: "app\\server.mjs", workingDirectory: "app",
+                args: ["--port", "4321"], source: "package-script", detail: "From dev in app\\package.json." }],
+            entrypoints: ["app\\server.mjs"], message: "Your existing preview stays unchanged.",
+            ...(input.choiceId ? { confirmationId: "detected-confirmation" } : {}) });
+    });
+    await h.click("restart-current-preview");
+    assert.ok(h.document.querySelector<HTMLInputElement>(".preview-start-choice input")!.checked);
+    assert.equal(h.document.querySelector<HTMLDetailsElement>(".preview-restart-advanced")!.open, false);
+    await h.click("review-current-restart");
+    const sent = h.requests.filter(item => item.path.endsWith("/inspect")).at(-1)!;
+    assert.equal(sent.body.choiceId, "detected-option");
+    assert.equal(sent.body.entrypoint, undefined);
+    assert.equal(h.document.querySelector("#restart-current-entrypoint"), null, "normal confirmation requires no technical input");
+    assert.equal(h.document.querySelector<HTMLDetailsElement>(".preview-restart-advanced")!.open, false);
+    assert.match(h.document.querySelector(".preview-restart-dialog[open]")!.textContent!, /PORT=4321/);
+    await h.click("confirm-current-restart");
+    assert.equal(h.document.querySelector(".preview-restart-dialog[open]"), null);
+    assert.equal(h.requests.filter(item => item.path.endsWith("/decision")).length, 1);
+    assert.deepEqual(current(h).prototypeFlow, value.prototypeFlow);
+});
+
+test("multiple restart options require selection and a stale preview cannot consume an old confirmation", async t => {
+    const value = readyPrototype(1, true), h = await setup(t, value);
+    h.window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
+    h.window.HTMLDialogElement.prototype.close = function () { this.open = false; };
+    h.setPreviewFetch(async () => response({ generation: value.generation, checkpointId: "structure", pendingCheckpointId: "interaction",
+        url: value.previewUrl, available: false, reason: "Stopped" }));
+    await h.click("retry-current-preview");
+    h.setFetch(async (path, options) => {
+        const input = JSON.parse(String(options.body));
+        return response({ needsRecipe: !input.choiceId, generation: value.generation, target: "current", checkpointId: "structure",
+            cwd: "fixture", url: value.previewUrl, executable: "node.exe", message: "Choose a start option.",
+            choices: ["one", "two"].map(id => ({ id, label: "Preview server", entrypoint: `${id}\\server.mjs`,
+                workingDirectory: id, args: [], source: "server-file", detail: "Existing server file" })),
+            ...(input.choiceId ? { confirmationId: "selected" } : {}) });
+    });
+    await h.click("restart-current-preview");
+    assert.equal(disabled(h, "review-current-restart"), true);
+    await h.click(h.document.querySelectorAll<HTMLInputElement>(".preview-start-choice input")[1]!);
+    assert.equal(disabled(h, "review-current-restart"), false);
+    await h.click("review-current-restart");
+    h.render({ ...value, revision: 2, prototypeFlow: { ...value.prototypeFlow, displayedCheckpointId: "interaction", pendingCheckpointId: null } });
+    await h.flush();
+    assert.equal(disabled(h, "confirm-current-restart"), true);
+    assert.match(h.document.querySelector(".preview-restart-dialog[open]")!.textContent!, /saved version changed/);
+    assert.equal(h.requests.filter(item => item.path.endsWith("/decision")).length, 0);
 });
 
 test("compact prototype controls never hide pending candidates, failures or clarification", async (t) => {
@@ -380,7 +468,7 @@ test("failed optional visual work can be skipped without losing history, preview
     assert.equal(h.document.querySelector("#extend-prototype-budget"), null);
     assert.equal(disabled(h, "request-prototype-visual"), false);
     assert.equal(disabled(h, "complete-stage"), false);
-    assert.match(text(h, "prototype-milestones"), /Visual directionSkipped \(optional\)/);
+    assert.match(text(h, "prototype-milestones"), /Visual explorationSkipped \(optional\)/);
     assert.doesNotMatch(text(h, "prototype-progress-message"), /latest update failed/);
     assert.equal(current(h).prototypeFlow.checkpoints.at(-1).status, "failed");
     assert.equal(field(h, "revision-input").value, "Keep future feedback");

@@ -87,6 +87,7 @@ export interface SkippedLifecycleStage {
 
 export interface LifecycleState {
     version?: 3;
+    changeRequestId?: string;
     currentStage: LifecycleStageId;
     completedStages: LifecycleStageId[];
     outputs: LifecycleOutput[];
@@ -157,5 +158,6 @@ export interface TandemState {
     suggestionProcessing: any;
     reloadReceipt: any;
     development?: { handoffId: string; requestId: string; snapshotPath: string } | null;
+    changeRequests?: import("./change-requests.js").ChangeRequest[];
     updatedAt: string;
 }

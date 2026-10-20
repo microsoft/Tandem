@@ -25,6 +25,7 @@ test("regular canvas retains its own logo, title and controls without standalone
     assert.match(artwork.src, /^data:image\/png;base64,/);
     assert.equal(artwork.alt, "");
     assert.equal(artwork.getAttribute("aria-hidden"), "true", "The heading names Tandem without duplicating decorative artwork.");
+    assert.equal(h.get("next-action-bar").hidden, false);
     await h.sendHeaderMessage({ type: "tandem:header:connect", channel: host.channel });
     assert.equal(h.document.querySelector<HTMLDivElement>(".topbar")!.hidden, false);
     assert.equal(h.headerMessages.length, 0);
@@ -51,12 +52,47 @@ test("standalone handshake requires its exact parent, origin and channel before 
     assert.match(value.lifecycle, /Requirements/);
     assert.equal(value.controls.reload, null);
     assert.equal(value.controls.reset, null);
+    assert.equal(h.get("next-action-bar").hidden, false, "A header-only host cannot take ownership of workspace status.");
     await h.sendHeaderMessage({ type: "tandem:header:disconnect" });
     assert.equal(h.document.querySelector<HTMLDivElement>(".topbar")!.hidden, false);
     assert.equal(h.document.querySelector<HTMLElement>(".project-folder")!.hidden, false);
     assert.equal(h.document.querySelector<HTMLElement>(".project-folder")!.title, "C:\\fixture-project");
     assert.equal(h.document.querySelector<HTMLElement>(".context-pane-heading")!.dataset.hosted, undefined);
     assert.equal(h.requests.length, 0);
+});
+
+test("standalone status handoff preserves live help and scoped navigation, with an independent fallback", async (t) => {
+    const h = await reactHarness(t, host);
+    const initial = state();
+    h.render(initial);
+    await h.flush();
+    await h.sendHeaderMessage({ type: "tandem:header:connect", statusBar: true }, "https://untrusted.example");
+    assert.equal(h.get("next-action-bar").hidden, false);
+    await h.sendHeaderMessage({ type: "tandem:header:connect", statusBar: true });
+    assert.equal(h.get("next-action-bar").hidden, true);
+    const value = header(h.headerMessages);
+    assert.equal(value.status?.text, h.get("next-action-guide").textContent);
+    assert.equal(value.status?.error, false);
+    assert.equal(value.status?.action, "Add the first usage");
+    const focus = h.document.activeElement;
+    await h.sendHeaderMessage({ type: "tandem:status:action", scope: "old-effort" });
+    assert.equal(h.document.activeElement, focus);
+    assert.equal(h.headerMessages.at(-2)?.type, "tandem:header:error");
+    await h.sendHeaderMessage({ type: "tandem:status:action", scope: value.scope });
+    await new Promise<void>((resolve) => h.window.requestAnimationFrame(() => resolve()));
+    await h.flush();
+    assert.equal(h.document.activeElement?.id, "add-usage");
+    assert.equal(h.requests.length, 0, "The merged arrow navigates without submitting work.");
+    h.render({ ...initial, revision: 2, status: ".tandem\\efforts\\active\\stages\\requirements-r53.json",
+        provider: { ...initial.provider, canSubmitAnswers: false } });
+    await h.flush();
+    assert.equal(header(h.headerMessages).status?.action, null);
+    await h.sendHeaderMessage({ type: "tandem:status:action", scope: value.scope });
+    assert.equal(h.requests.length, 0);
+    await h.sendHeaderMessage({ type: "tandem:header:disconnect" });
+    assert.equal(h.get("next-action-bar").hidden, false);
+    assert.equal(h.document.querySelector<HTMLDivElement>(".topbar")!.hidden, false);
+    assert.deepEqual(h.errors, []);
 });
 
 test("saved Prototype does not project a legacy building phase into Development", async (t) => {
@@ -187,4 +223,12 @@ test("standalone header configuration cannot target arbitrary websites or carry 
         assert.equal(standaloneHeaderHost("#" + new URLSearchParams({ "tandem-host": origin, "header-channel": host.channel })), null);
     }
     assert.equal(isApplicationHeader({ scope: "effort", version: "test", lifecycle: "", controls: null, messages: [] }), false);
+    const value: ApplicationHeader = { scope: "effort", version: "test", lifecycle: "",
+        controls: { reload: null, reset: null, signIn: null, cancelSignIn: null }, messages: [] };
+    assert.equal(isApplicationHeader(value), true, "Older application headers remain compatible.");
+    assert.equal(isApplicationHeader({ ...value, status: { text: "Ready", error: false, action: null } }), true);
+    for (const status of [null, {}, { text: 123, error: false, action: null }, { text: "Ready", error: "false", action: null },
+        { text: "x".repeat(8193), error: false, action: null }, { text: "Ready", error: false, action: "x".repeat(257) }]) {
+        assert.equal(isApplicationHeader({ ...value, status }), false);
+    }
 });

@@ -146,6 +146,21 @@ queue and explicit **Apply update** controls. New work has no product-imposed
 execution-time cap; silence is not failure or permission to retry. Retain
 the working displayed checkpoint if a later attempt fails.
 
+**Visual exploration** is optional design exploration, not a palette-only polish
+pass. Build two or three distinct working layout/style directions in the same
+app, preserving the primary journey and mock contracts. Use the production
+checkpoint prompt and validated `tandem-visual-directions.json` contract; do not
+maintain a separate prompt or theme protocol here. Explain layout departures
+from the approved drawings without changing navigation or adding features.
+
+Comparison and per-direction appearance settings are not acceptance. Scoped
+feedback refines one alternative while retaining the others and the current
+prototype. **Prepare this direction** creates source with the exact chosen
+defaults; **Apply chosen visual direction** explicitly promotes it. Keeping the
+current prototype retains alternatives and puts outstanding visual feedback
+aside, not into accepted requirements. Preserve chosen defaults in subsequent
+revisions and distinguish unchosen alternatives in the draft feature specification.
+
 For `validate-existing`, work from the same existing GUI's copied source; do not
 replace it with a parallel demo. For `build`, create the minimum complete primary
 journey with typed UI models and a clear mock boundary. Preserve keyboard access,
@@ -163,6 +178,14 @@ A preview URL is convenient, not durable source evidence. The displayed
 checkpoint and actual multi-file source fingerprint must match. Do not reduce
 a React or multi-file prototype to an invented `index.html`.
 
+For a source-owned Node server, retain the actual `previewStart` instruction from
+the production checkpoint prompt: entrypoint and working folder relative to the
+checkpoint root, plus the exact arguments used. Do not guess a script or copy an
+older checkpoint's port. Unsupported launch methods remain explicit rather than
+silently becoming a different server. Restart reviews saved or detected startup
+choices; manual server paths and line-separated arguments belong under Advanced
+setup. Restart does not generate, promote or approve a prototype.
+
 **Finish Prototype and save outputs** retains `generate-design-spec`, which
 creates `draft-feature-spec` at Prototype. It is not the retired technical
 Design stage. Resolve outstanding feedback, pending checkpoints and applicable
@@ -175,6 +198,30 @@ Stage 1 and later explicitly open Development with the saved documents/source
 as ordinary file references. No Stage 1 connection has to remain alive.
 Files are evidence, not authority to replace an existing used Stage 2 owner,
 import canonical Design or replay an old request.
+
+## Scoped changes from later stages
+
+Use `request_change` for an explicit change that may affect earlier discovery
+stages. It assesses the original request against retained decisions and current
+work; it does not approve or apply an upstream change. Read the saved proposal
+and explain the earliest affected stage, the affected work and what is preserved.
+Use `decide_change` only with the displayed request, analysis and baseline
+identities and the user's actual decision. A stale proposal needs another impact
+assessment, not inferred approval.
+
+The original message, clarifications, independent answers, drawing revisions and
+displayed prototype remain retained. Ask only new or affected decisions. A
+Requirements change updates its graph incrementally; do not regenerate the whole
+interview or resubmit historical work as new tasks. Approval of changed drawings
+and application of a prepared prototype remain explicit. Cancellation after
+partial progress keeps saved changes; it is not rollback.
+
+Development can return a bound `discovery-change` handoff when the composed host
+supplies a discovery baseline. Direct Development without that baseline keeps its
+ordinary Design workflow. After accepted upstream updates, explicit
+`continue_change_development` sends the retained request to the same native
+Development owner. It is not implementation confirmation. Main-session chat
+still is not an implicit Tandem submission.
 
 ## Prototype handoff to Development
 

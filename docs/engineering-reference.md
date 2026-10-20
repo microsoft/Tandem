@@ -76,6 +76,10 @@ Reload failures remain visible in the root status bar and hosted error banners
 after Settings closes. An interrupted Preparation restart may use supported
 reload to reconnect, but reload does not clear that recovery barrier or resume work.
 
+Standalone hosts combine workspace status/help and **Go to action** with host
+status in one bottom bar. Independently opened canvases, and hosts without status
+bar support, retain the workspace's own bar.
+
 One composed public `tandem` provider owns both surfaces. The Node host retains
 user > project > session preference when those providers are present. It checks
 the selected provider's protocol, version and complete payload digest. An older
@@ -162,6 +166,33 @@ copied source; `not-applicable` preserves a reason and feature specification
 without fabricating a graphical prototype.
 
 ### Finish Stage 1; open Development when ready
+
+Chat changes use the additive `changeRequests` ledger and the production
+`buildChangeAssessmentPrompt`, not the broad stage-reopen/reset path. HTTP and
+canvas entry points share assessment and decision handlers; the original stage
+engines remain independently usable. Assessment is context-only and preserves
+accepted state. Approval binds the exact analysis ID and semantic baseline digest,
+including current Development Design/code when available. It saves a complete
+baseline snapshot before applying a sparse Requirements patch and marking only
+the affected stage outputs for review. Stable decision IDs, independent answers,
+unaffected screens, source checkpoints and receipt history remain intact.
+
+Scoped lifecycle records add `changeRequestId` to the existing version-3 format
+so completed stages need not be a contiguous prefix. Earlier version-3 records
+retain their original normalization. Updated prototype checkpoints also bind the
+Requirements digest; a retained old preview is not current evidence for changed
+requirements. Request, analysis, native delivery and artifact identities remain
+separate. Errors and uncertain delivery are retained, not converted into approval.
+
+The optional native `discovery-change` terminal result requires an exact
+host-supplied discovery baseline. It finishes at a visible handoff, not Planner.
+Only after native settlement does the composed host retain the original request
+batch, answers and attachment references for impact assessment. Upstream mutation
+still requires the existing quiet/admission boundary. A follow-up failure does not
+revoke or gate the native role's durable result. Direct Development without that
+host context keeps ordinary routing. Explicit continuation persists an immutable
+outbound request before sending; duplicate delivery reconciles that identity, and
+recovery never authorizes replay.
 
 Stage 1 workers honor the owning native session's explicitly selected reasoning
 effort. If unset, they keep their existing per-worker low/medium defaults.
@@ -300,6 +331,11 @@ Settings trigger); it does not save, apply, discard, stop work or close the runt
 The main framework is one project workspace: project navigation and Settings
 on the left and the selected phase's own workspace and history.
 Requirements, drawings and Prototype retain their specialized inputs and controls.
+Discovery views also expose horizontal Preparation, Requirements, Drawings and
+Prototype tabs above the workspace. They share the sidebar's selection and
+availability guards, keep the existing panels mounted, and scroll horizontally
+on narrow screens. The tab bar is absent from goal entry, Saved artifacts and
+Development; it does not change stage completion, reopening or data updates.
 The **Development** navigation entry contains formal Design, planning,
 implementation and Review; it is not an additional Stage1 Design phase.
 **Saved artifacts** is the cross-project library entry in the separate
@@ -325,7 +361,9 @@ clarification before dependent new work rather than fabricated defaults.
 New Design output and a Prototype update awaiting Apply are marked in navigation.
 
 The original discovery phase forms remain independently owned. Finish/Reopen
-controls live in their owning phase view, not a sidebar Discovery actions category.
+controls follow the stage tabs at the right of the workspace header, alongside
+Prototype preview controls when applicable, not in the tab content or sidebar.
+The header has no horizontal divider lines; controls wrap on narrow screens.
 Secondary history starts compact in constrained panels and can collapse to a
 small keyboard-accessible rail; reopening restores its prior sizing. Already
 approved, unchanged drawings show one Finish action rather than another primary
@@ -395,26 +433,97 @@ Successful preview checks and verbose version summaries stay collapsed in Detail
 unavailable versions and their targeted Restart actions remain prominent. The
 normal current-plus-pending view preserves a useful preview and initially reachable
 Feedback at 920x620, including an expanded feedback draft.
-Neither preview link nor iframe switches to a pending version without the explicit
+Neither current-preview link nor current iframe switches to a pending version without the explicit
 checkpoint-promotion action; its existing validation and Finish gates are unchanged.
+
+Optional **Visual exploration** uses one isolated application checkpoint with
+two or three working directions, not parallel replacement applications.
+`src/planning-prompts.ts` owns the generation/refinement instructions.
+`src/visual-directions.ts` validates the bounded manifest, exact setting enums
+and stable direction identities. Each direction describes layout, typography,
+palette, effects and departures from approved drawings; palette-only duplicates
+are rejected at the contract level. Descriptions are not proof of visual quality:
+workers must exercise the actual alternatives and report observations separately.
+
+The checkpoint retains `tandem-visual-directions.json` in its source root and
+serves an identical copy beside its preview page. The host checks both copies,
+the exact preview identities, opt-in HTML marker and unmodified preview bridge
+before recording readiness. The bridge applies source defaults on standalone
+startup, or bounded `tandem-*` selection parameters for an explicitly shared
+direction link. Trusted parent messages switch root attributes and CSS variables
+in place; acknowledgments bind the prototype, checkpoint, request and settings.
+No wildcard origins, browser-storage preferences or executable CSS inputs are
+accepted. Reduced motion overrides requested motion effects.
+
+Comparison state lives in `prototypeFlow.visualExploration`, independently of
+`displayedCheckpointId`. Viewing or adjusting alternatives never promotes them
+or starts model work. **Default** is the exact original checkpoint, not a neutral
+appearance preset of a generated direction. Its identity follows the exploration's
+original base through scoped refinements, even after accepting another direction.
+Accepting Default requires the current revision, unchanged source and drawings,
+and a verified preview identity; it restores that retained checkpoint without
+generation or deleting alternatives. Scoped refinement uses the existing durable feedback
+queue and latest exploration source, retaining the submitted direction/settings
+and original feedback base. Unrelated current-prototype feedback waits during
+unresolved exploration. Accepting the original Default resolves that optional
+choice and resumes queued ordinary feedback from the original source. The guarded
+`skip-visual` action explicitly marks outstanding visual feedback `dismissed`;
+it does not delete the alternatives or source.
+
+The top-toolbar **Accept** freezes a direction into a new checkpoint whose source
+manifest's `defaultSelection` must match exactly, then explicitly applies the
+verified saved choice. Later ordinary revisions retain those
+defaults; handoff captures the same source and snapshot rather than a URL-only
+theme preference. Previous single-theme checkpoints remain readable, and new
+exploration is an explicit action. Structure, Interaction and private
+Development ownership are unchanged.
 
 If a saved preview server has stopped, **Restart preview** targets only the
 displayed checkpoint; **Restart pending preview** targets only the waiting version.
-Neither action generates code, applies an update, changes feedback or opens
+**Restart visual exploration** targets the retained alternative bundle.
+Default and the named directions share one top-toolbar recheck/restart pair:
+Default binds the original checkpoint, while a named direction binds the shared
+exploration checkpoint. The open-preview action follows the same visible view.
+Pending-version recovery remains separate. Preview failures are visible in the
+pane rather than only in visually hidden status text.
+None of these actions generates code, applies an update, changes feedback or opens
 Development. A previously reviewed live server is reused rather than duplicated.
-For legacy checkpoints without a launch record, the UI asks you to review an
-existing Node entrypoint (and any arguments), then confirm the exact executable,
-checkpoint directory and saved URL. It never guesses an npm script or substitutes
-a static server. The current restart adapter supports the Windows Node host;
-unsupported stacks/platforms fail explicitly.
+New Node-based checkpoints may retain `previewStart` with the actual source-owned
+server entrypoint, working directory and argument vector supplied by the worker.
+Paths are checkpoint-relative, validated against materialized source, and kept
+with that checkpoint's source fingerprint. They are launch instructions, not
+tool-backed proof of a previous command invocation. They are never inherited from
+another checkpoint or treated as approval to start a process.
+
+Restart reuses a reviewed launch record or the checkpoint's saved instructions.
+Older checkpoints show labelled choices from source-owned server files and direct
+`node` start scripts in bounded, nested `package.json` discovery. Detection does
+not evaluate shell syntax, runtime flags, environment assignments or npm hooks.
+Other JavaScript files remain in **Advanced setup**, with one argument per line
+instead of JSON. The normal confirmation hides paths/arguments under technical
+details and describes the selected saved preview. It never substitutes a static
+server or guesses a missing npm command. The restart adapter still supports only
+the Windows Node host; unsupported stacks/platforms fail explicitly.
 
 Launch records bind the original main owner and accepted source fingerprint.
+An optional materialized working directory stays within the fingerprinted
+checkpoint root; execution never silently changes the source root or saved port.
+The launcher explicitly sets `PORT` from the reviewed saved URL, including for
+older recipes whose package script only says `node server.mjs`. Technical details
+and process receipts show that value. Other environment variables are not inferred
+from old worker text; explicit argument vectors remain unchanged.
 The native shell permission prompt remains authoritative. After approval, the
 packaged launcher rechecks source/executable identity and port availability,
 starts an attached session-owned process, and records its exact launch/PID.
 Ready requires both owned listener evidence and matching prototype/checkpoint
 markers. Changed source, foreign listeners, rejected consent and startup failure
-remain visible. Closing the owning host stops its own launches; no unrelated
+remain visible. Foreground-idle checks govern admission before native dispatch,
+not the launch's readiness loop: a shell completion can trigger native background
+processing, including after a startup failure. Readiness continues to verify
+source/owner/selection and the exact process receipt without mistaking that
+notification for competing work. Failed launches retain bounded stderr with
+their exit status; cleanup failures do not erase the original startup error.
+Closing the owning host stops its own launches; no unrelated
 server is terminated. A failed or uncertain attempt can be inspected/reconciled,
 not silently replaced with another command.
 Saved-evidence rows refresh when their source changes; native conversation records

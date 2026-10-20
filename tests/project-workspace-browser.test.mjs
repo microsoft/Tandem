@@ -543,6 +543,20 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
             value.previewUrl = value.prototypeFlow.checkpoints.find(item => item.id === body.checkpointId).previewUrl;
             value.revision++; json(value);
           }
+          else if (path === "/api/prototype/preview-restart/inspect") {
+            json({ needsRecipe: !body.choiceId, generation: value.generation, target: body.target, checkpointId: body.checkpointId,
+              cwd: root, url: value.previewUrl, executable: "node.exe", workingDirectory: join(root, "app"),
+              args: ["app\\server.mjs", "--port", "4321"],
+              message: "Choose the existing preview server. Your prototype and feedback stay unchanged.",
+              choices: [{ id: "browser-start", label: "Development preview", source: "package-script",
+                entrypoint: "app\\server.mjs", workingDirectory: "app", args: ["--port", "4321"],
+                detail: 'From "dev" in app\\package.json.' }], entrypoints: ["app\\server.mjs"],
+              ...(body.choiceId ? { confirmationId: "browser-restart-confirmation" } : {}) });
+          }
+          else if (path === "/api/prototype/preview-restart/decision") {
+            assert.equal(body.approve, false, "This browser test reviews/cancels without launching any server.");
+            json({ dismissed: true });
+          }
           else { response.writeHead(404); response.end(); }
         } else { response.writeHead(404); response.end(); }
       } catch (error) { response.writeHead(500); response.end(JSON.stringify({ error: error.message })); }
@@ -615,6 +629,39 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         for (const response of rootEvents) response.write(`data: ${JSON.stringify(value)}\n\n`);
         await browser.evaluate("new Promise(resolve => setTimeout(resolve, 80))");
       };
+      value.changeRequests = [{
+        version: 1, id: "impact-fixture", clientRequestId: "impact-client", originStage: "prototype",
+        message: "Add saving and loading without changing joint controls.", submittedAt: "2026-10-15T12:00:00Z",
+        baseCheckpointId: null, baseSketchRevisionId: null, visualSelection: null, sourceResultId: null, sourceRequests: [],
+        baselineDigest: "a".repeat(64), analysisId: "impact-analysis", status: "proposed", error: "", clarifications: [],
+        remainingStages: [], workStarted: [], affectedDecisionIds: [], snapshotPath: null, completedAt: null,
+        developmentAdmission: null, developmentRequest: null,
+        assessment: { version: 1, summary: "Synthetic impact review; no model or project mutation.",
+          reason: "Saving adds a requirement.", startStage: "requirements",
+          stages: [{ stage: "requirements", reason: "Define saving." }, { stage: "prototype", reason: "Add the mock interaction." }],
+          preserved: ["Joint controls", "Playback", "Chosen appearance"], affectedScreenIds: [], question: null, requirements: null },
+      }];
+      await push();
+      await browser.waitFor('document.querySelector("#approve-change")?.checkVisibility()');
+      for (const width of [1360, 760, 390]) {
+        await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: false });
+        await browser.evaluate('document.querySelector("#approve-change").scrollIntoView({block:"nearest"})');
+        const bounds = await browser.evaluate(`(() => {
+          const button=document.querySelector("#approve-change"), card=document.querySelector(".change-requests"), r=button.getBoundingClientRect();
+          const hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);
+          return {width:innerWidth,overflow:document.documentElement.scrollWidth>innerWidth+1,
+            reachable:hit===button||button.contains(hit),height:card.getBoundingClientRect().height,
+            text:card.textContent,requestCount:document.querySelectorAll(".change-impact").length};
+        })()`);
+        assert.equal(bounds.overflow, false, JSON.stringify(bounds));
+        assert.ok(bounds.reachable && bounds.height <= 450, JSON.stringify(bounds));
+        assert.equal(bounds.requestCount, 1);
+        assert.match(bounds.text, /Joint controls/);
+        t.diagnostic(`Impact review ${width}px: reachable, bounded and no page overflow; synthetic state.`);
+      }
+      value.changeRequests = [];
+      await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 1000, deviceScaleFactor: 1, mobile: false });
+      await push();
       const assertCleanSidebar = async () => {
         assert.equal(await browser.evaluate('document.querySelector("#requirements-pane .process-controls, #requirements-pane #handoff-stage, #requirements-pane #process-metrics")'), null);
         assert.equal(await browser.evaluate('document.querySelector("#export-handoff")'), null);
@@ -790,7 +837,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         await browser.waitFor(`document.querySelector(${JSON.stringify(phase === "sketch" ? "#sketch-tab" : "#live-preview-tab")})?.getAttribute("aria-selected")==="true"`);
         const geometry = await browser.evaluate(`(() => {
           const panel=document.querySelector(${JSON.stringify(phase === "sketch" ? "#sketch-panel" : "#live-preview-panel")});
-          const toolbar=panel.querySelector(".phase-actions").getBoundingClientRect();
+          const toolbar=document.querySelector(".previewbar > .phase-actions").getBoundingClientRect();
           const body=panel.querySelector(${JSON.stringify(phase === "sketch" ? ".sketch-stage" : ".preview-surface")}).getBoundingClientRect();
           return {toolbarHeight:toolbar.height,toolbarBottom:toolbar.bottom,bodyTop:body.top,bodyWidth:body.width,panelWidth:panel.clientWidth};
         })()`);
@@ -858,8 +905,32 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       assert.equal(value.prototypeFlow.pendingCheckpointId, "interaction");
       assert.equal(value.prototypeFlow.displayedCheckpointId, "structure");
       if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "unavailable-current-with-pending.png"), await browser.screenshot());
+      await clickRoot("#restart-current-preview");
+      await browser.waitFor('document.querySelector(".preview-restart-dialog[open] .preview-start-choice input")?.checked');
+      for (const width of [1360, 390]) {
+        await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 760, deviceScaleFactor: 1, mobile: false });
+        const layout = await browser.evaluate(`(() => {
+          const dialog = document.querySelector(".preview-restart-dialog[open]"), r = dialog.getBoundingClientRect(),
+            button = dialog.querySelector("#review-current-restart"), b = button.getBoundingClientRect(),
+            hit = document.elementFromPoint(b.x+b.width/2,b.y+b.height/2);
+          return { left:r.left, right:r.right, viewport:innerWidth, overflow:dialog.scrollWidth>dialog.clientWidth+1,
+            reachable:hit===button||button.contains(hit), advanced:dialog.querySelector(".preview-restart-advanced").open };
+        })()`);
+        assert.ok(layout.left >= 0 && layout.right <= layout.viewport && !layout.overflow && layout.reachable && !layout.advanced,
+          JSON.stringify(layout));
+        if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `restart-preview-${width}.png`), await browser.screenshot());
+        t.diagnostic(`Restart dialog ${width}px: selected detected server, collapsed advanced setup, reachable review control.`);
+      }
+      await clickRoot("#review-current-restart");
+      await browser.waitFor('Boolean(document.querySelector(".preview-restart-dialog[open] #confirm-current-restart"))');
+      assert.equal(await browser.evaluate('document.querySelector(".preview-restart-dialog[open] input")===null'), true);
+      assert.equal(await browser.evaluate('document.querySelector(".preview-restart-dialog[open] .preview-restart-advanced").open'), false);
+      await clickRoot(".preview-restart-dialog[open] .preview-restart-actions button");
+      await browser.waitFor('!document.querySelector(".preview-restart-dialog[open]")');
+      assert.equal(value.prototypeFlow.displayedCheckpointId, "structure");
+      assert.equal(value.prototypeFlow.pendingCheckpointId, "interaction");
       previewAvailable = true;
-      await clickRoot("#check-live-preview");
+      await clickRoot("#retry-current-preview");
       await browser.waitFor('document.querySelector("#preview-availability").textContent.includes("Current preview verified")');
       await browser.call("Emulation.setDeviceMetricsOverride", { width: 920, height: 620, deviceScaleFactor: 1, mobile: false });
       await browser.evaluate('window.beforePendingReload = true');
@@ -930,8 +1001,8 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       assert.equal(await browser.evaluate('document.querySelector("#preview-frame").contentDocument.querySelector("#preview-button").textContent'), "Preview interaction accepted");
       await browser.call("Emulation.setDeviceMetricsOverride", { width: 390, height: 1000, deviceScaleFactor: 1, mobile: false });
       holdPreviewChecks = true;
-      await clickRoot("#prototype-progress-details > summary");
-      await clickRoot("#check-live-preview");
+      assert.equal(await browser.evaluate('!!document.querySelector(".phase-actions #retry-current-preview")'), true);
+      await clickRoot("#retry-current-preview");
       await browser.waitFor('document.querySelector("#preview-availability").textContent.includes("Checking current preview")');
       const pendingPrototype = readyPrototype(1, true);
       pendingPrototype.previewUrl = pendingPrototype.prototypeFlow.checkpoints[0].previewUrl = currentPrototype.previewUrl;
@@ -945,11 +1016,12 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       assert.equal(await browser.evaluate('document.querySelector("#open-preview").href'), currentPrototype.previewUrl);
       assert.equal(await browser.evaluate('document.querySelector("#preview-frame").contentDocument.querySelector("#preview-button").textContent'), "Preview interaction accepted",
         "A pending version preserves the working iframe and its interaction state.");
-      assert.match(await browser.evaluate('document.querySelector("#prototype-progress-message").textContent'), /Interaction prototype ready to inspect.*current version until you choose Show Interaction prototype/);
+      assert.match(await browser.evaluate('document.querySelector("#prototype-progress-message").textContent'), /Interaction prototype ready to inspect.*accepted prototype stays unchanged until you choose Show Interaction prototype/);
       assert.equal(await browser.evaluate('document.querySelector("#preview-frame").getBoundingClientRect().bottom <= document.querySelector("#prototype-review").getBoundingClientRect().top'), true);
       if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "inline-pending-prototype-390.png"), await browser.screenshot());
       assert.equal(mutations.some(item => item.path === "/api/prototype/action"), false);
-      assert.equal(mutations.length, mutationsBeforeAvailability, "Availability, revisit and reconnect call no mutation/start endpoint.");
+      assert.equal(mutations.filter(item => !item.path.startsWith("/api/prototype/preview-restart/")).length, mutationsBeforeAvailability,
+        "Availability, revisit and reconnect call no mutation/start endpoint; restart review and cancellation do not launch.");
       holdPreviewChecks = false;
       await clickRoot("#apply-prototype-update");
       await browser.waitFor('document.querySelector("#preview-frame").contentDocument?.querySelector("#preview-button")?.textContent==="Candidate prototype"');
@@ -1240,6 +1312,42 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await waitInside('document.querySelector("#clipboard-caption").textContent.includes("Ready to send")');
       const attachment = await inside('document.querySelector("#clipboard-image").src');
       const beforeBrowse = mutations.length;
+      await click("#preparation-tab");
+      for (const width of [1360, 920, 390]) {
+        await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 1000, deviceScaleFactor: 1, mobile: false });
+        assert.deepEqual(await browser.evaluate('Array.from(document.querySelectorAll("#stage-workspace-tabs [role=tab]"), tab => tab.textContent)'),
+          ["Preparation", "Requirements", "Drawings", "Prototype"]);
+        for (const tab of ["#preparation-workspace-tab", "#design-tree-workspace-tab", "#sketch-workspace-tab", "#live-preview-workspace-tab"]) {
+          await click(tab);
+          const layout = await browser.evaluate(`(() => {
+            const tab=document.querySelector(${JSON.stringify(tab)}), panel=document.getElementById(tab.getAttribute("aria-controls")),
+              bar=document.querySelector("#stage-workspace-tabs").getBoundingClientRect(),
+              preview=document.querySelector("#preview-pane").getBoundingClientRect(), t=tab.getBoundingClientRect(), p=panel.getBoundingClientRect();
+            return {bar:{left:bar.left,right:bar.right,top:bar.top,bottom:bar.bottom}, tab:{left:t.left,right:t.right},
+              preview:{left:preview.left,right:preview.right}, panelTop:p.top, panelHeight:p.height,
+              labelledBy:panel.getAttribute("aria-labelledby"), selected:tab.getAttribute("aria-selected"),
+              pageFits:document.documentElement.scrollWidth<=innerWidth+1};
+          })()`);
+          assert.equal(layout.selected, "true");
+          assert.equal(layout.labelledBy, tab.slice(1));
+          assert.ok(layout.bar.left >= layout.preview.left && layout.bar.right <= layout.preview.right + 1
+            && layout.tab.left >= layout.bar.left - 1 && layout.tab.right <= layout.bar.right + 1
+            && layout.panelTop >= layout.bar.bottom && layout.panelHeight > 0 && layout.pageFits,
+          `Stage tabs fit and scroll without covering ${tab} at ${width}: ${JSON.stringify(layout)}`);
+        }
+        await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Home", windowsVirtualKeyCode: 36 });
+        await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Home", windowsVirtualKeyCode: 36 });
+        await browser.waitFor('document.activeElement.id==="preparation-workspace-tab"');
+        await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "End", windowsVirtualKeyCode: 35 });
+        await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "End", windowsVirtualKeyCode: 35 });
+        await browser.waitFor('document.activeElement.id==="live-preview-workspace-tab"');
+        assert.equal(await inside('document.querySelector("#message").value'), "As a user, I keep my draft while viewing Design.");
+        assert.equal(await inside('document.querySelector("#clipboard-image").src'), attachment);
+        if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `stage-tabs-${width}.png`), await browser.screenshot());
+      }
+      await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 1000, deviceScaleFactor: 1, mobile: false });
+      await click("#development-tab");
+      assert.equal(await browser.evaluate('document.querySelector("#stage-workspace-tabs")'), null);
       for (const tab of ["#preparation-tab", "#design-tree-tab", "#sketch-tab", "#live-preview-tab"]) {
         await click(tab);
         await browser.waitFor('document.querySelector("#project-conversation-frame").hidden');

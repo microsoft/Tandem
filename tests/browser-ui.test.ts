@@ -5,11 +5,15 @@ import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { runInNewContext } from "node:vm";
+import { createServer } from "node:http";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { BrowserStore, parseHostSnapshot, readLaunchCapability } from "../src/browser/client.js";
 import type { HostSnapshot } from "../src/browser/contracts.js";
 import type { ApplicationHeader } from "../src/renderer/standalone-header.js";
-import { reactHarness, state as workspaceState } from "./helpers/react-harness.js";
+import { decision, reactHarness, rendererFixtureScript, state as rendererState } from "./helpers/react-harness.js";
+import { browserAvailable, openFixtureBrowser } from "../development/tandem/test/helpers/browser-fixture.mjs";
 
 const applicationHeader: ApplicationHeader = {
     scope: "effort-generation", version: "1.1.15", lifecycle: "2. Requirements | discovery",
@@ -170,7 +174,7 @@ test("browser shell preserves the application origin, microphone delegation and 
 test("speech failure can be dismissed while the production workspace retains Preparation and its typed draft", async (t) => {
     const h = await fixture(t);
     const app = await reactHarness(t);
-    const initial = workspaceState();
+    const initial = rendererState();
     app.render(initial);
     await app.flush();
     const stored = app.store.getSnapshot().state;
@@ -495,6 +499,233 @@ test("an incompatible header response restores the application's own controls", 
     assert.equal(h.document.querySelector('[aria-label="Reset effort"]'), null);
     assert.match(h.document.querySelector('[role="alert"]')!.textContent!, /original controls remain available/);
 });
+
+test("browser footer combines workspace help, navigation and host status without reviving stale controls", async (t) => {
+    const h = await fixture(t);
+    const frame = h.document.querySelector<HTMLIFrameElement>("#tandem-application")!;
+    const sent: Array<{ data: Record<string, unknown>; origin: string }> = [];
+    frame.contentWindow!.postMessage = (data: Record<string, unknown>, origin: string) => {
+        sent.push({ data: JSON.parse(JSON.stringify(data)), origin });
+    };
+    await h.fromApplication({ type: "tandem:header:ready" });
+    assert.equal(sent.at(-1)!.data.statusBar, true);
+    const status = { text: ".tandem\\efforts\\active\\stages\\requirements-r53.json", error: false, action: "Add the first usage" };
+    await h.fromApplication({ type: "tandem:header:state", header: { ...applicationHeader, status } }, "https://untrusted.example");
+    assert.equal(h.document.querySelector(".host-application-status"), null);
+    await h.fromApplication({ type: "tandem:header:state", header: { ...applicationHeader, status } });
+    const footer = h.document.querySelector(".host-status")!;
+    assert.equal(footer.querySelector(".host-status-state")!.textContent, "Ready");
+    assert.equal(footer.querySelector(".host-application-status > span")!.textContent, status.text);
+    assert.equal(footer.querySelector<HTMLElement>(".host-application-status > span")!.title, status.text);
+    assert.match(footer.querySelector(".host-status-hint")!.textContent!, /Tab close keeps running/);
+    assert.ok(footer.contains(h.button("Go to action")));
+    assert.equal(h.button("Go to action").title, "Go to action: Add the first usage");
+    await h.click("Go to action");
+    const channel = sent[0].data.channel;
+    assert.deepEqual(sent.at(-1), { data: { type: "tandem:status:action", channel, scope: applicationHeader.scope },
+        origin: "http://127.0.0.1:5000" });
+    assert.equal(h.requests.length, 0);
+    await h.fromApplication({ type: "tandem:header:state", header: { ...applicationHeader,
+        status: { text: "Stage output could not be saved.", error: true, action: null } } });
+    assert.equal(footer.querySelector(".host-application-status")!.getAttribute("data-status"), "error");
+    assert.match(footer.querySelector(".host-application-status > span")!.textContent!, /could not be saved/);
+    assert.equal(footer.querySelector(".host-status-action"), null);
+    await h.click("Reload page");
+    assert.equal(footer.querySelector(".host-application-status"), null);
+    await h.fromApplication({ type: "tandem:header:state", channel, header: { ...applicationHeader, status } });
+    assert.equal(footer.querySelector(".host-status-action"), null);
+    assert.deepEqual(h.errors, []);
+});
+
+test("real browser keeps merged status and Requirements layouts bounded with working keyboard navigation",
+    { skip: !browserAvailable, timeout: 60_000 }, async (t) => {
+        const snapshot = rendererState();
+        const savedPath = ".tandem\\efforts\\active\\stages\\requirements-r53.json";
+        snapshot.status = savedPath;
+        snapshot.provider = { ...snapshot.provider, canSubmitAnswers: false };
+        const [hostScript, applicationScript, styles, applicationStyles] = await Promise.all([
+            compile(), rendererFixtureScript(),
+            build({ entryPoints: [fileURLToPath(new URL("../src/browser/styles.css", import.meta.url))],
+                bundle: true, write: false, logLevel: "silent" }),
+            build({ entryPoints: [fileURLToPath(new URL("../src/renderer/styles.css", import.meta.url))],
+                bundle: true, write: false, logLevel: "silent" }),
+        ]);
+        let origin: string;
+        const unexpected: string[] = [];
+        const server = createServer((request, response) => {
+            const path = new URL(request.url || "/", "http://127.0.0.1").pathname;
+            const send = (type: string, body: string) => {
+                response.writeHead(200, { "Content-Type": type, "Cache-Control": "no-store" });
+                response.end(body);
+            };
+            request.resume();
+            if (path === "/host") send("text/html", '<!doctype html><html><head><link rel="stylesheet" href="/host.css"></head>'
+                + '<body><div id="root"></div><script src="/host.js"></script><script>'
+                + `window.hostFixture = HostTest.mount(); hostFixture.flushSync(() => hostFixture.store.accept(${JSON.stringify(state({ canvasUrl: `${origin}/` }))}));`
+                + '</script></body></html>');
+            else if (path === "/") send("text/html", '<!doctype html><html><head><link rel="stylesheet" href="/application.css"></head>'
+                + '<body><div id="root"></div><script src="/application.js"></script><script>'
+                + `window.workspaceFixture = TandemTest.mount(); workspaceFixture.flushSync(() => workspaceFixture.store.accept(${JSON.stringify(snapshot)}));`
+                + '</script></body></html>');
+            else if (path === "/host.js") send("text/javascript", hostScript);
+            else if (path === "/application.js") send("text/javascript", applicationScript);
+            else if (path === "/host.css") send("text/css", styles.outputFiles[0].text);
+            else if (path === "/application.css") send("text/css", applicationStyles.outputFiles[0].text);
+            else if (path === "/api/project-entry") send("application/json", JSON.stringify({ projectPath: "C:\\fixture-project", startingPath: "preparation" }));
+            else if (path === "/api/project-entry/open") send("application/json", JSON.stringify({ developmentStarted: false, developmentContext: false }));
+            else if (path === "/api/development/view") send("application/json", JSON.stringify({ url: `${origin}/conversation`, channel: "fixture-project" }));
+            else if (path === "/conversation") send("text/html", "<!doctype html><html><body>Private Development</body></html>");
+            else if (path === "/favicon.ico") { response.writeHead(204); response.end(); }
+            else { unexpected.push(`${request.method} ${path}`); response.writeHead(404); response.end(); }
+        });
+        await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+        t.after(() => new Promise<void>((resolve, reject) => {
+            server.close((error) => error ? reject(error) : resolve());
+            server.closeAllConnections();
+        }));
+        const address = server.address();
+        assert.ok(address && typeof address !== "string");
+        origin = `http://127.0.0.1:${address.port}`;
+        const browser = await openFixtureBrowser(t);
+        await browser.call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
+        await browser.call("Page.navigate", { url: `${origin}/host` });
+        await browser.waitFor(`document.querySelector(".host-application-status > span")?.textContent === ${JSON.stringify(savedPath)}
+            && document.querySelector("#tandem-application")?.contentDocument.querySelector("#next-action-bar")?.hidden`);
+        const longStatus = `${savedPath} ${"Saved workspace status and help. ".repeat(40)}`;
+        await browser.evaluate(`(() => {
+            const frame = document.querySelector("#tandem-application").contentWindow;
+            frame.workspaceFixture.flushSync(() => frame.workspaceFixture.store.accept(${JSON.stringify({ ...snapshot, revision: 2, status: longStatus })}));
+        })()`);
+        await browser.waitFor(`document.querySelector(".host-application-status > span")?.title === ${JSON.stringify(longStatus)}`);
+        for (const width of [1280, 375]) {
+            await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 800, deviceScaleFactor: 1, mobile: false });
+            const geometry = await browser.evaluate(`(() => {
+                const footer = document.querySelector(".host-status"), text = footer.querySelector(".host-application-status > span");
+                const frame = document.querySelector("#tandem-application"), inner = frame.contentDocument;
+                return { width: footer.getBoundingClientRect().width, height: footer.getBoundingClientRect().height,
+                    hiddenHeight: inner.querySelector("#next-action-bar").getBoundingClientRect().height,
+                    workspaceHeight: inner.querySelector("#studio-workspace").getBoundingClientRect().height,
+                    frameHeight: frame.clientHeight, clipped: text.scrollWidth > text.clientWidth,
+                    title: text.title, hintVisible: getComputedStyle(footer.querySelector(".host-status-hint")).display !== "none" };
+            })()`);
+            assert.equal(geometry.width, width);
+            assert.equal(geometry.height, 28, "The merged footer remains a single compact row.");
+            assert.equal(geometry.hiddenHeight, 0, "The old upper bar occupies no space.");
+            assert.equal(geometry.workspaceHeight, geometry.frameHeight, "The workspace reclaims the removed row.");
+            assert.equal(geometry.clipped, true);
+            assert.equal(geometry.title, longStatus);
+            assert.equal(geometry.hintVisible, width > 680);
+        }
+        await browser.evaluate(`(() => {
+            const frame = document.querySelector("#tandem-application").contentWindow;
+            frame.workspaceFixture.flushSync(() => frame.workspaceFixture.store.accept(${JSON.stringify(rendererState("requirements", 3))}));
+        })()`);
+        await browser.waitFor('Boolean(document.querySelector(".host-status-action"))');
+        await browser.evaluate('document.querySelector(".host-status-action").focus()');
+        await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" });
+        await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+        await browser.waitFor('document.querySelector("#tandem-application").contentDocument.activeElement.id === "add-usage"');
+        await browser.call("Emulation.setDeviceMetricsOverride", { width: 1920, height: 800, deviceScaleFactor: 1, mobile: false });
+        const savedRequirements = rendererState("prototype", 4);
+        savedRequirements.requirements = { substage: "dag", usageItems: ["Validate the simulator's interaction and visualization."], suggestions: [] };
+        savedRequirements.decisionGraph.nodes = [decision("Interface validation approach", "answered")];
+        await browser.evaluate(`(() => {
+            const frame = document.querySelector("#tandem-application").contentWindow;
+            frame.__renderMermaid = async () => ({ svg: '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700"><rect width="1200" height="700" fill="white" /></svg>' });
+            frame.workspaceFixture.flushSync(() => frame.workspaceFixture.store.accept(${JSON.stringify(savedRequirements)}));
+        })()`);
+        await browser.waitFor('document.querySelector("#tandem-application").contentDocument.querySelector("#live-preview-panel")?.hidden === false');
+        await browser.evaluate(`(() => {
+            const frame = document.querySelector("#tandem-application").contentWindow;
+            frame.document.querySelector("#design-tree-workspace-tab").dispatchEvent(new frame.MouseEvent("mousedown", { bubbles: true, button: 0 }));
+        })()`);
+        await browser.waitFor('document.querySelector("#tandem-application").contentDocument.querySelector("#reopen-stage")?.hidden === false');
+        await browser.waitFor('Boolean(document.querySelector("#tandem-application").contentDocument.querySelector("#design-tree-host svg"))');
+        for (const expanded of [false, true]) {
+            if (expanded) {
+                await browser.evaluate('document.querySelector("#tandem-application").contentDocument.querySelector("#requirements-substage-section .usage-suggestion[aria-expanded]").click()');
+                await browser.waitFor('document.querySelector("#tandem-application").contentDocument.querySelector("#requirements-substage-section .usage-suggestion[aria-expanded]")?.getAttribute("aria-expanded") === "true"');
+            }
+            const layout = await browser.evaluate(`(() => {
+                const inner = document.querySelector("#tandem-application").contentDocument;
+                const bounds = selector => {
+                    const rect = inner.querySelector(selector).getBoundingClientRect();
+                    return { top: rect.top, bottom: rect.bottom, height: rect.height };
+                };
+                return { actions: bounds(".previewbar > .phase-actions"), intake: bounds("#requirements-substage-section"),
+                    trigger: bounds("#requirements-substage-section .usage-suggestion[aria-expanded]"), graph: bounds("#design-tree-card"),
+                    panel: bounds("#design-tree-panel") };
+            })()`);
+            assert.ok(layout.trigger.height > 0, "Accepted usages remain accessible.");
+            assert.ok(layout.intake.height > layout.trigger.height, `Usage history must not collapse into a border strip: ${JSON.stringify(layout)}`);
+            assert.ok(layout.trigger.bottom <= layout.intake.bottom, "The accepted usages control remains visible.");
+            assert.ok(layout.actions.bottom <= layout.intake.top, "Stage actions do not overlap usage history.");
+            assert.ok(layout.intake.bottom <= layout.graph.top, "The decision card does not overlap usage history.");
+            assert.ok(layout.graph.bottom <= layout.panel.bottom, "The decision card stays within its stage workspace.");
+        }
+        for (const width of [1920, 1024, 375]) {
+            await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 800, deviceScaleFactor: 1, mobile: false });
+            if (width === 375) {
+                await browser.call("Page.navigate", { url: `${origin}/` });
+                await browser.waitFor("Boolean(window.workspaceFixture?.store.getSnapshot().state)");
+                await browser.evaluate(`workspaceFixture.flushSync(() => workspaceFixture.store.accept(${JSON.stringify(savedRequirements)}))`);
+            }
+            for (const tab of ["preparation", "design-tree", "sketch", "live-preview"]) {
+                await browser.evaluate(`(() => {
+                    const inner = document.querySelector("#tandem-application")?.contentDocument ?? document;
+                    const frame = inner.defaultView;
+                    const trigger = inner.querySelector("#${tab}-workspace-tab");
+                    trigger.dispatchEvent(new frame.MouseEvent("mousedown", { bubbles: true, button: 0 }));
+                    trigger.focus();
+                })()`);
+                await browser.waitFor(`(document.querySelector("#tandem-application")?.contentDocument ?? document).querySelector("#${tab}-workspace-tab")?.getAttribute("aria-selected") === "true"`);
+                const layout = await browser.evaluate(`(() => {
+                    const inner = document.querySelector("#tandem-application")?.contentDocument ?? document;
+                    const header = inner.querySelector(".previewbar"), actions = header.querySelector(".phase-actions");
+                    const tabs = inner.querySelector("#stage-workspace-tabs"), selected = inner.querySelector("#${tab}-workspace-tab");
+                    const panel = inner.getElementById(selected.getAttribute("aria-controls"));
+                    const bounds = element => {
+                        const rect = element.getBoundingClientRect();
+                        return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, height: rect.height };
+                    };
+                    return { header: bounds(header), actions: bounds(actions), tabs: bounds(tabs), selected: bounds(selected), panel: bounds(panel),
+                        controls: Array.from(actions.querySelectorAll(":scope > button:not([hidden])"), bounds),
+                        headerBorder: inner.defaultView.getComputedStyle(header).borderBottomWidth,
+                        actionsBorder: inner.defaultView.getComputedStyle(actions).borderBottomWidth,
+                        viewportWidth: inner.defaultView.innerWidth,
+                        fits: header.scrollWidth <= header.clientWidth + 1,
+                        inPanel: Boolean(panel.querySelector(".phase-actions")) };
+                })()`);
+                assert.equal(layout.headerBorder, "0px");
+                assert.equal(layout.actionsBorder, "0px");
+                assert.equal(layout.viewportWidth, width);
+                assert.equal(layout.fits, true, `Stage header fits at ${width}: ${JSON.stringify(layout)}`);
+                assert.ok(layout.header.left >= 0 && layout.header.right <= width + 1, "The whole header stays within the actual application viewport.");
+                assert.equal(layout.inPanel, false);
+                assert.ok(layout.actions.height > 0 && layout.controls.length > 0);
+                assert.ok(layout.actions.left >= layout.header.left && layout.actions.right <= layout.header.right + 1);
+                assert.ok(layout.selected.left >= layout.tabs.left - 1 && layout.selected.right <= layout.tabs.right + 1,
+                    "The focused stage tab stays visible in the horizontal scroller.");
+                assert.ok(layout.panel.top >= layout.header.bottom - 1, "Content begins below the shared header.");
+                for (const control of layout.controls) {
+                    assert.ok(control.left >= layout.actions.left - 1 && control.right <= layout.actions.right + 1);
+                    assert.ok(control.top >= layout.actions.top - 1 && control.bottom <= layout.actions.bottom + 1);
+                }
+                if (width === 1920) {
+                    assert.ok(layout.actions.left >= layout.tabs.right, "Wide layouts keep actions to the right of the tabs.");
+                    assert.ok(layout.actions.top < layout.tabs.bottom && layout.actions.bottom > layout.tabs.top);
+                    if (tab === "preparation" && process.env.TANDEM_UI_EVIDENCE) {
+                        await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "preparation-workflow-actions-1920.png"), await browser.screenshot());
+                    }
+                }
+            }
+            if (process.env.TANDEM_UI_EVIDENCE) {
+                await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `stage-workflow-actions-${width}.png`), await browser.screenshot());
+            }
+        }
+        assert.deepEqual(unexpected, []);
+        assert.deepEqual(browser.exceptions, []);
+    });
 
 test("browser capability survives same-tab reload but is removed from the address", () => {
     const token = "a".repeat(43);

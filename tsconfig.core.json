@@ -7,6 +7,7 @@
     "src/project-store.ts",
     "src/workflow.ts",
     "src/requirements-reconciliation.ts",
+    "src/change-requests.ts",
     "src/decision-diagram.ts",
     "src/agent-runner.ts",
     "src/desktop/**/*.ts",

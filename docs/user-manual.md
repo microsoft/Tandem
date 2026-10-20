@@ -27,8 +27,14 @@ it does not mean an AI model is running. Empty requirement ledger sections stay 
 Hosted windows keep the folder identity in the host header rather than repeating
 it in the sidebar; an unhosted canvas retains the sidebar name and full-path tooltip.
 Use the left navigation to browse, **Current work** to find ongoing work/attention,
-and **Project settings** to configure the project. Browsing does not authorize
-work. Development Conversation appears only in Development; its draft and
+and **Project settings** to configure the project. Before Development, the
+workspace also has **Preparation**, **Requirements**, **Drawings** and
+**Prototype** tabs. Use them to revisit available stages without changing the
+current phase or losing drafts; unavailable stages stay disabled. Development
+remains a separate left-navigation entry. Browsing does not authorize work.
+**Finish** and **Reopen** actions for the selected stage appear to the right of
+the tabs, wrapping below them when space is limited.
+Development Conversation appears only in Development; its draft and
 attachments stay hidden when you browse other phases, not moved to their inputs.
 Parent Copilot chat is not a Development submission.
 
@@ -71,15 +77,26 @@ use Undo/Redo, or send a revision instruction. **Save drawings** saves edits;
 Already-approved, unchanged drawings may show **Finish Drawings and continue**
 instead. A saved/streamed revision alone is not approval.
 
-To change a completed phase, review its **Reopen** warning: affected outputs
-become stale and may need completion/approval again. History is retained.
-For ordinary changes once Development is underway, use a new Design request
-instead of restarting discovery. See [revision recipes](use-cases.md#revise-requirements-or-drawings).
+For chat changes, **Project changes** shows the earliest affected stage, the
+proposed updates and the work that stays unchanged. Approve that proposal before
+earlier stages change. Requirements keeps independent answers and shows previous
+answers for decisions that need review. The saved prototype remains available
+while its update is prepared. **Check impact again** refreshes a stale proposal;
+it does not approve it.
+
+Cancel before approval leaves accepted work unchanged. Cancelling remaining
+work afterwards retains already saved changes rather than rolling them back.
+Development can propose an upstream change when a discovery baseline exists;
+direct Development continues to own its Design without mandatory discovery.
+Returning a change to Development never substitutes for implementation confirmation.
+
+**Reopen** remains a broader manual operation: affected outputs become stale and
+may need completion/approval again. See [revision recipes](use-cases.md#revise-requirements-or-drawings).
 
 ## Prototype versions
 
 **Structure** and **Interaction** are automatic milestones after prototype work
-starts. Feedback and **Explore visual direction (optional)** are optional.
+starts. Feedback and **Explore visual directions (optional)** are optional.
 Existing GUI validation uses copied source; a new mock UI is not proof of real
 services, persistence or integrations.
 
@@ -88,11 +105,49 @@ A waiting version changes that only when you choose its action, such as
 **Show Interaction prototype** or **Show requested revision**. Automatic
 milestones are not feedback you submitted.
 
-Use **Feedback** to **Send revision** or **Queue revision**, then inspect its
+Use **Feedback** to **Send change** or **Queue change**, then inspect its
 status and clarifications. Finish requires the necessary milestones, current
 drawing approval and resolved submitted feedback. **Finish Prototype and save
 outputs** retains evidence; it starts neither Design nor implementation.
 Non-GUI work can retain a reason/specification without fabricating screens.
+
+### Explore visual directions
+
+After applying Interaction, choose **Explore visual directions (optional)**.
+The agent builds two or three working alternatives with different layouts,
+typography, colors and restrained effects. They keep the same primary workflow
+and mock data. **What differs** explains each direction, including layout
+departures from the approved drawings; visual exploration does not authorize
+new navigation or features.
+
+1. **Default** shows the exact original prototype from before visual exploration,
+   including its original layout, styling and interactions. Select a named
+   direction to compare an alternative. Switching views does not accept a design.
+2. Expand **Advanced settings** for light/dark, accent, density, text size and
+   effects on a named direction. Changed settings appear as **Custom** and switch
+   in place without an agent run. Reduced-motion preferences always turn motion off.
+3. Use **Refine direction** to request a change to that alternative only.
+   Ordinary **Feedback** still targets the current prototype and waits until
+   exploration is applied or put aside.
+4. Use **Accept** in the top toolbar to apply the previewed direction and settings.
+   Accepting **Default** restores the saved original without regenerating it.
+   Alternatives, settings and checkpoint history are retained.
+
+The top toolbar's **Recheck**, **Restart** and open-preview controls follow the
+view on screen: the original for **Default**, or the shared comparison preview
+for a named direction. There is no second set of controls below the directions.
+Unavailable previews show their error beside the preview area.
+**Finish Prototype and save outputs** saves the accepted version, not an
+unaccepted comparison.
+
+Select **Default** and **Accept** to keep the original and resume queued ordinary
+feedback without choosing a generated direction. To retain another already
+accepted direction, finish with that version instead. Alternatives, settings and
+history remain saved. If ordinary feedback has since changed the prototype,
+**Explore current prototype** builds fresh directions instead of applying stale
+comparisons. Resolve submitted feedback before finishing.
+
+### Continue into Development
 
 **Continue to Development** opens a handoff summary, not a model request.
 Check its saved specification, decisions, assumptions, deferred work and target

@@ -1,6 +1,6 @@
 ---
 name: tandem
-description: "Guide intent through Preparation, Requirements, approved Sketch, Prototype, and the native Development workspace for Design, implementation and Review."
+description: "Optional Q&A and prototype discovery, or direct native Development for Design, implementation and Review."
 priority: 100
 categories:
   - prototyping
@@ -29,9 +29,11 @@ invocation:
 
 This is the loaded Tandem skill. Do not invoke the skill again.
 
-The active lifecycle is **Preparation -> Requirements -> Sketch -> Prototype ->
-Development**. Development is PR #14's original human-loop application, not a
-renamed version of the old Design/Plan/Implement/Test factory pipeline.
+Stage 1 is optional: **Preparation -> Requirements -> Sketch -> Prototype**
+collects Q&A and prototype evidence, not formal Design. Stage 2 can open directly
+or later with saved Stage 1 files as explicit input. Development is PR #14's
+original human-loop application, not a renamed version of the old
+Design/Plan/Implement/Test factory pipeline.
 
 ## Invocation and intent
 
@@ -48,7 +50,8 @@ at the permitted upstream reset boundary. Without a goal, open without reset
 to restore the effort or show goal entry. Do not inspect the workspace, research
 sources or interview the user before opening.
 
-If the user supplied no goal, let them enter it and click **Start project**.
+If the user supplied no goal, let them enter it and click **Start project**, or
+choose **Open Development directly** without starting Stage 1.
 Opening a blank effort starts no agents. A supplied goal starts the bounded
 Preparation work owned by Tandem; let progress and results remain in its UI.
 Do not launch a second engine, create replacement sessions, or perform its
@@ -138,9 +141,25 @@ specification, not invented screens.
 ## Prototype
 
 The prototype is a separate artifact, not the Tandem discovery UI itself. Keep
-the existing structure/interaction/optional-visual checkpoints, finite work
-window, durable feedback queue and explicit **Apply update** controls. Retain
+the existing structure/interaction/optional-visual checkpoints, durable feedback
+queue and explicit **Apply update** controls. New work has no product-imposed
+execution-time cap; silence is not failure or permission to retry. Retain
 the working displayed checkpoint if a later attempt fails.
+
+**Visual exploration** is optional design exploration, not a palette-only polish
+pass. Build two or three distinct working layout/style directions in the same
+app, preserving the primary journey and mock contracts. Use the production
+checkpoint prompt and validated `tandem-visual-directions.json` contract; do not
+maintain a separate prompt or theme protocol here. Explain layout departures
+from the approved drawings without changing navigation or adding features.
+
+Comparison and per-direction appearance settings are not acceptance. Scoped
+feedback refines one alternative while retaining the others and the current
+prototype. **Prepare this direction** creates source with the exact chosen
+defaults; **Apply chosen visual direction** explicitly promotes it. Keeping the
+current prototype retains alternatives and puts outstanding visual feedback
+aside, not into accepted requirements. Preserve chosen defaults in subsequent
+revisions and distinguish unchosen alternatives in the draft feature specification.
 
 For `validate-existing`, work from the same existing GUI's copied source; do not
 replace it with a parallel demo. For `build`, create the minimum complete primary
@@ -159,21 +178,71 @@ A preview URL is convenient, not durable source evidence. The displayed
 checkpoint and actual multi-file source fingerprint must match. Do not reduce
 a React or multi-file prototype to an invented `index.html`.
 
-**Finish Prototype and continue Design** retains `generate-design-spec`, which
+For a source-owned Node server, retain the actual `previewStart` instruction from
+the production checkpoint prompt: entrypoint and working folder relative to the
+checkpoint root, plus the exact arguments used. Do not guess a script or copy an
+older checkpoint's port. Unsupported launch methods remain explicit rather than
+silently becoming a different server. Restart reviews saved or detected startup
+choices; manual server paths and line-separated arguments belong under Advanced
+setup. Restart does not generate, promote or approve a prototype.
+
+**Finish Prototype and save outputs** retains `generate-design-spec`, which
 creates `draft-feature-spec` at Prototype. It is not the retired technical
 Design stage. Resolve outstanding feedback, pending checkpoints and applicable
 sketch approval first. An offline preview does not invalidate already recorded,
 source-bound input; absent or changed required files are explicit blockers.
 
+Finishing Prototype (or non-GUI Requirements) saves output only. It must not
+start a private Stage 2 session or submit a Design request. The user can close
+Stage 1 and later explicitly open Development with the saved documents/source
+as ordinary file references. No Stage 1 connection has to remain alive.
+Files are evidence, not authority to replace an existing used Stage 2 owner,
+import canonical Design or replay an old request.
+
+## Scoped changes from later stages
+
+Use `request_change` for an explicit change that may affect earlier discovery
+stages. It assesses the original request against retained decisions and current
+work; it does not approve or apply an upstream change. Read the saved proposal
+and explain the earliest affected stage, the affected work and what is preserved.
+Use `decide_change` only with the displayed request, analysis and baseline
+identities and the user's actual decision. A stale proposal needs another impact
+assessment, not inferred approval.
+
+The original message, clarifications, independent answers, drawing revisions and
+displayed prototype remain retained. Ask only new or affected decisions. A
+Requirements change updates its graph incrementally; do not regenerate the whole
+interview or resubmit historical work as new tasks. Approval of changed drawings
+and application of a prepared prototype remain explicit. Cancellation after
+partial progress keeps saved changes; it is not rollback.
+
+Development can return a bound `discovery-change` handoff when the composed host
+supplies a discovery baseline. Direct Development without that baseline keeps its
+ordinary Design workflow. After accepted upstream updates, explicit
+`continue_change_development` sends the retained request to the same native
+Development owner. It is not implementation confirmation. Main-session chat
+still is not an implicit Tandem submission.
+
 ## Prototype handoff to Development
 
-The host freezes an immutable receipt and exact documents/source under the
+**Finish Prototype and save outputs** never requests Development work.
+**Continue to Development** opens a read-only summary of the exact saved
+specification, decisions, assumptions, deferred work and target folder.
+Cancel creates no receipt or request. Only **Create Design from Prototype**
+(or **Refine Design from Prototype**) confirms the reviewed binding and asks
+the current host to freeze an immutable receipt and exact documents/source under the
 target workspace's `.tandem\living-canvas\handoffs`. The receipt identifies the
 effort, generation, completed snapshot revision/hash, artifact and asset hashes,
 approved sketch, displayed checkpoint/source manifest, original shared state
 root, actual target worktree, and one exact request ID/timestamp/message.
 The snapshot retains confirmed, assumed and deferred decisions and mock
 shortcuts without reclassifying them.
+
+For canvas actions, present `review_prototype_handoff` before explicit user
+confirmation of `continue_design` with its `reviewBinding`. Navigation is
+**Open Development**, never implicit submission. Once admitted, show authoritative
+request/Designer/Design/questions status instead of another submission action.
+Unknown activity remains unverified; never invent progress or inject a model turn.
 
 Use that ordinary persisted request through `HumanLoopRuntime.send`. Router
 selects Designer; Designer reads the retained documents/source read-only and

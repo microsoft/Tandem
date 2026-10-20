@@ -83,7 +83,7 @@ test("preview verification rejects stale pending, checkpoint and generation resp
     replies[1](response(status(changedPending))); await h.flush();
     const current = h.get<HTMLIFrameElement>("preview-frame");
     assert.equal(current.hidden, false);
-    await h.click("check-live-preview");
+    await h.click("retry-current-preview");
     assert.equal(h.get("preview-frame"), current, "Rechecking a verified identity keeps the frame mounted.");
     const next = readyPrototype(3);
     next.prototypeFlow.checkpoints[1].previewUrl = first.previewUrl; next.previewUrl = first.previewUrl;
@@ -98,7 +98,7 @@ test("preview verification rejects stale pending, checkpoint and generation resp
     assert.equal(h.get<HTMLIFrameElement>("preview-frame").hidden, true);
     assert.match(h.get("preview-availability").textContent!, /could not be verified/);
     h.setPreviewFetch(async () => response(status(reset)));
-    await h.click("check-live-preview");
+    await h.click("retry-current-preview");
     await waitFor(h, () => !h.get<HTMLIFrameElement>("preview-frame").hidden);
     assert.equal(h.requests.length, 0);
 });

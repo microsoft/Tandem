@@ -4,18 +4,23 @@
   "files": [
     {
       "path": "extension.mjs",
-      "bytes": 3932666,
-      "sha256": "02245dfb91aaf97ad6db7ea44519f59a392c3361cd47630eb3885bf1dead885e"
+      "bytes": 4529640,
+      "sha256": "890f64599f36e89d6586dc80b44c42d0341107cce91fb782a52aee2e18ac32e3"
+    },
+    {
+      "path": "preview-launcher.mjs",
+      "bytes": 68097,
+      "sha256": "8978a832ba7d56321e721ab824e050477dc2763832bf28c9d0733f260db85058"
     },
     {
       "path": "skills/tandem/SKILL.md",
-      "bytes": 14603,
-      "sha256": "175280eba654176a3fb00d5d53ccd779d57ba5420c602802d6ba48939db405d5"
+      "bytes": 19086,
+      "sha256": "ffbb223c61a860ecffef2b7eb85cb5c2e49f91b9d08fb799a7aaf67d9bd21a37"
     },
     {
       "path": "stage2/INSTALL.md",
-      "bytes": 6684,
-      "sha256": "20dc05f9ccb56245ed29ae115b4a379b4a0f98a823eb7252029bfd9f15e41c99"
+      "bytes": 7459,
+      "sha256": "787780cc438c5dde1553668778fcd3218e0e90690c35e73ff765a1a434f64cb2"
     },
     {
       "path": "stage2/extension.mjs",
@@ -24,8 +29,8 @@
     },
     {
       "path": "stage2/manifest.json",
-      "bytes": 23332,
-      "sha256": "4eb6b70eba722df3a5b594b86b3a5b2476a75b263226da0328b6e65220946e72"
+      "bytes": 25434,
+      "sha256": "9e02ad04b1c85bd832a7cb655bbad24b11b251942fa61113f7d7a12a910bdced"
     },
     {
       "path": "stage2/package.json",
@@ -64,8 +69,8 @@
     },
     {
       "path": "stage2/public/artifacts/index.js",
-      "bytes": 15040,
-      "sha256": "e4e47f8ae74cf0b5e18fc555e4a262d974807e09fe693b81b5c81b0df4785bf8"
+      "bytes": 15145,
+      "sha256": "8cbc152fb27d6d1379d555916373eea1f1075a6dcc85716348020c1c6b24a3a1"
     },
     {
       "path": "stage2/public/artifacts/renderer.js",
@@ -79,28 +84,28 @@
     },
     {
       "path": "stage2/public/artifacts/vendor/LICENSES.json",
-      "bytes": 244512,
-      "sha256": "0aac28aa1438404c3749a8f97c3bbeb5a1f4f1437ee8dd2c004a1727e3ad81c3"
+      "bytes": 264241,
+      "sha256": "1a5674804c5e507f289acf4101cd0afcd0a938afe5bedd4cc210e238fe409dbf"
     },
     {
       "path": "stage2/public/artifacts/vendor/documents.js",
-      "bytes": 354900,
-      "sha256": "f1141e91c35da6fb84520443aadf5e872c1fc9a98d6652c1e9942297e68a07b7"
+      "bytes": 354877,
+      "sha256": "c5c65f99d350f0036c443f910d9b570d3b217e9531ce27d659481305285352be"
     },
     {
       "path": "stage2/public/artifacts/vendor/jpeg.js",
-      "bytes": 13716,
-      "sha256": "65c113eeb0090c8c9dbf56457ea4ae0d83f94dbbf15621bddc896d478e25088c"
+      "bytes": 13748,
+      "sha256": "ceddcdc9e115cf67173fb5c7d443008505c42f98051188e83662721f9b3d7621"
     },
     {
       "path": "stage2/public/artifacts/vendor/mermaid.js",
-      "bytes": 2720693,
-      "sha256": "4bf67357b65e170347b019dde97cdc05f2bd2973982674692ee26a1634fb4db4"
+      "bytes": 5254436,
+      "sha256": "a759156f2aa63cb1b44d30926f1e02007e6cd81e3b4c5eb7cc0b9e2382a5bd5a"
     },
     {
       "path": "stage2/public/artifacts/vendor/parsers.js",
-      "bytes": 371074,
-      "sha256": "d28763e2a5a1961e2c787f15a93198c778b1b9ff9bc0c94755c6b9722e66eb7e"
+      "bytes": 371116,
+      "sha256": "52ad3cc57311459dbfbc5016dca07997b3c790388193fd72b818960f73f23c26"
     },
     {
       "path": "stage2/public/assistant-response.js",
@@ -149,8 +154,8 @@
     },
     {
       "path": "stage2/public/composer-enter.js",
-      "bytes": 770,
-      "sha256": "7076591ff358bb2839e3d682bef5c0d1642ffc2abf78d9b7f6d57e57170a1cfb"
+      "bytes": 796,
+      "sha256": "2644545e2d74c245aadc38cd21584952f64737ff3b73d13efc561a11cf9bd4e5"
     },
     {
       "path": "stage2/public/composer-image.js",
@@ -158,24 +163,44 @@
       "sha256": "ea14c5876c29108d5dda7ab4c7b503a229b5604ede3b6c9be647961c3c9dd1dd"
     },
     {
+      "path": "stage2/public/development-status.d.ts",
+      "bytes": 335,
+      "sha256": "5d684312287578359b78199374d205e68ad5d8254a040d80c349dd147b5015ba"
+    },
+    {
+      "path": "stage2/public/development-status.js",
+      "bytes": 3127,
+      "sha256": "3ac33b73e444f0119cc0c1053eadb87ba321b7d097e0023a306cfb617ce06d96"
+    },
+    {
       "path": "stage2/public/experience.css",
-      "bytes": 30560,
-      "sha256": "a3f1d3f8902b12bf174eb7178a3840a0d0c4adae184ba7cc2e478a348a8e0787"
+      "bytes": 30688,
+      "sha256": "0822343a5a26b73bb8e1a156db700777c07eebf7349f737c1955fb4c68b3ca17"
+    },
+    {
+      "path": "stage2/public/handoff-presentation.d.ts",
+      "bytes": 908,
+      "sha256": "3dd4ee4209d7639953c9c5bdecc60140cd445d346dbd2348b86f85ad6fd45568"
+    },
+    {
+      "path": "stage2/public/handoff-presentation.js",
+      "bytes": 2259,
+      "sha256": "ad508df470601d87aed5de8949ee7556575e8e17a036116b6458076ee7ad22ae"
     },
     {
       "path": "stage2/public/human-loop-app.js",
-      "bytes": 39266,
-      "sha256": "784117e56a56ce966fd8f22f69ba040ac9e5860327b438461ac300e13c6f0e85"
+      "bytes": 59962,
+      "sha256": "2d09fc92cf5c1168fd833e17a04e4e1b062f7740d5fd6bcacb65974d4518f6eb"
     },
     {
       "path": "stage2/public/human-loop-shell.css",
-      "bytes": 41560,
-      "sha256": "eca46500bb97eb5fbf2abc5510f2c3c3eb8bf1f43fba1db96eaf619741821810"
+      "bytes": 49263,
+      "sha256": "19764c0f0d12cc23f6509933fbebf7fcd4ffe2873d94b78ac530ba9d495fb5d9"
     },
     {
       "path": "stage2/public/human-loop.html",
-      "bytes": 13305,
-      "sha256": "a7e3c0986e35a72551523684f204ac4a44947a2fccbdc7b6dfac44222fb96090"
+      "bytes": 17136,
+      "sha256": "776c30298ef4e86033d2821b33fb250e97261503068d62756300a582c9511ad6"
     },
     {
       "path": "stage2/public/implementation-confirmation.js",
@@ -194,13 +219,33 @@
     },
     {
       "path": "stage2/public/panel-splitter.js",
-      "bytes": 3678,
-      "sha256": "7ac57550cfd5723235f63eb4fd2377eaf991136799c44fcc6a86cc380d397170"
+      "bytes": 4573,
+      "sha256": "eb7e41f0b22486458a4521140b6f6bcb509c93358e30d575af47df9998d478ed"
     },
     {
       "path": "stage2/public/permission-presentation.js",
-      "bytes": 9030,
-      "sha256": "f9734d2143735b2bdf7821be1cf83b9300b636aefbbdfa00cb64856214a841fc"
+      "bytes": 9162,
+      "sha256": "34753f66092ee5e2953e747e12fe65e4425f970aa2fa19fdf03afc3212c46fbe"
+    },
+    {
+      "path": "stage2/public/project-outputs.js",
+      "bytes": 2240,
+      "sha256": "d98af921212cac7367839288e46f54e345a275519d9bd28b9fceaa040a17977b"
+    },
+    {
+      "path": "stage2/public/project-presentation.js",
+      "bytes": 17789,
+      "sha256": "3fc03ab1ba30261ec5edd1b01644c26d902bf61773aaa6450d80ca62784237f3"
+    },
+    {
+      "path": "stage2/public/project-theme.css",
+      "bytes": 2414,
+      "sha256": "acc414d1c78c1a25366d4673531dd456a844408a7ba5ec4de770002848590941"
+    },
+    {
+      "path": "stage2/public/project-workspace.css",
+      "bytes": 9411,
+      "sha256": "25c2ba084dc5e3ba42ae39b7fd0dce593ec3f13d6f59f6c67cd4d73f39502b54"
     },
     {
       "path": "stage2/public/prompts/human-loop.js",
@@ -209,18 +254,23 @@
     },
     {
       "path": "stage2/public/prompts/human-loop.json",
-      "bytes": 43604,
-      "sha256": "5029275f8cf22066ce2af88450e65e24c80d173e6fab8e6f9d544349fcd477d4"
+      "bytes": 54221,
+      "sha256": "32d64b25a218f6dd20aeb603e45630e6d20b39db815f01a6c3de66539fef4899"
     },
     {
       "path": "stage2/public/question-presentation.js",
-      "bytes": 1005,
-      "sha256": "320f6d2c63cd305f5937e6b821875ea4bcc4b21a71c19a57602a619fd600ed40"
+      "bytes": 2042,
+      "sha256": "efff8f394ce1486d793a5bbfa6c52e44e21551ddc2752d324b79b26e7f40ba58"
+    },
+    {
+      "path": "stage2/public/queued-requests.js",
+      "bytes": 3749,
+      "sha256": "7b8bf90175190e7022290f52f01315260060158f95de3f691f843533f2e8e897"
     },
     {
       "path": "stage2/public/renderers/conversation.js",
-      "bytes": 22194,
-      "sha256": "dbad4bbec1200f23ad8aff89ce15dda141b98146475111951af0d42ee3efbb80"
+      "bytes": 25192,
+      "sha256": "218504dd6c019774548fefdc90362c924f1736ff70462375c608ab714780cab5"
     },
     {
       "path": "stage2/public/renderers/history-icons.js",
@@ -229,8 +279,8 @@
     },
     {
       "path": "stage2/public/renderers/history-popover.js",
-      "bytes": 7421,
-      "sha256": "6cb4cca08e9d57f91b0fe3f454d598df385d8d9384c07da4aa8fd8e6953b136b"
+      "bytes": 7740,
+      "sha256": "b4827cb2d56e3cc936f013e456e3c9d7ae905ce49c6beebec24c9305d81a22df"
     },
     {
       "path": "stage2/public/renderers/human-loop-history.js",
@@ -244,18 +294,33 @@
     },
     {
       "path": "stage2/public/renderers/human-loop.js",
-      "bytes": 27518,
-      "sha256": "239681ac376979a8cfbe22f717638e54ffc61e87b9c76e97786c3f8281cd6177"
+      "bytes": 36483,
+      "sha256": "c57163a6d7f399cb55533dc66c33d147085c9c908dfc2230d81e7838c9751e0c"
     },
     {
       "path": "stage2/public/renderers/shared-design.js",
-      "bytes": 18236,
-      "sha256": "8babf4b9a3eb55183b94034e27148b957e4d8a9ea9b92a50ad94e073b54c6316"
+      "bytes": 18902,
+      "sha256": "b9e8f1e48e9b8c67c1bebda214bb3128aee60a9a822d9190c6f1897b2c231d67"
     },
     {
       "path": "stage2/public/review-decisions.js",
       "bytes": 2870,
       "sha256": "8acee9da096624b642083b9b3aaeed591e3d19ef592578d645cec6adc80270bd"
+    },
+    {
+      "path": "stage2/public/role-hint.d.ts",
+      "bytes": 208,
+      "sha256": "057f1507b381767a3efce4a107b84843a1e291853d43e4c1407f6fb68b8628fe"
+    },
+    {
+      "path": "stage2/public/role-hint.js",
+      "bytes": 700,
+      "sha256": "917725d46ad31e6562645a16461670e7e56c69d365f059b36eaa27fa57952cda"
+    },
+    {
+      "path": "stage2/public/role-suggestions.js",
+      "bytes": 4328,
+      "sha256": "88387f7ea82a70eb3cf3cc5f3ffa4e883d0817cf5f342e03cfb41be5d9327268"
     },
     {
       "path": "stage2/public/sketch/contract.js",
@@ -374,23 +439,23 @@
     },
     {
       "path": "stage2/runtime-src/domain/human-loop/contracts.ts",
-      "bytes": 29287,
-      "sha256": "eb44443acbd3d545b1e6ffef503c078d2157b2c378cebc54e8e1efe725e3ee2b"
+      "bytes": 32754,
+      "sha256": "3230912aaab3e0705e98233fd74fd641c5c165502e46d4cca5d23e961888cc72"
     },
     {
       "path": "stage2/runtime-src/domain/human-loop/ledger.ts",
-      "bytes": 1753,
-      "sha256": "4a1ef21b0fffa09c1d372a73c1a99a785cd1224734a4a5e33cf3b5c038c5b6a4"
+      "bytes": 1759,
+      "sha256": "ea892e77450e45d9b5143575007e70169718bb6bad53126c652aaf2be8b20720"
     },
     {
       "path": "stage2/runtime-src/domain/human-loop/model.ts",
-      "bytes": 76673,
-      "sha256": "e857922b30cb63894d02bc0e4abbc11b58e012fd4bb6b5896deae924a08cabd0"
+      "bytes": 78626,
+      "sha256": "04138f42506e973eb9a58d51058fac0de4c8260b06f014266b650931de6a1e77"
     },
     {
       "path": "stage2/runtime-src/domain/human-loop/tool-contracts.ts",
-      "bytes": 7731,
-      "sha256": "dbcddc939783773965992086f325abe030e03a5b5953b8cb4b6cbe4f8d75c449"
+      "bytes": 8262,
+      "sha256": "8beb149e54437456aec9acc5afea086f837df9b42d8681808e7e10d1670e4f06"
     },
     {
       "path": "stage2/runtime-src/domain/implementation-review.ts",
@@ -479,8 +544,8 @@
     },
     {
       "path": "stage2/runtime-src/permissions/permission-broker.ts",
-      "bytes": 17127,
-      "sha256": "ada99d4d9b8a5ba14195573f958922da7ce653c4ec82bafa1d49bb87bcefe5cd"
+      "bytes": 17789,
+      "sha256": "253b3407bb3df6c4a6f1ee7cfaf8fbcd2cca991b679776cc7388a3d5099cf33d"
     },
     {
       "path": "stage2/skills/backbone-designer/SKILL.md",
@@ -559,8 +624,8 @@
     },
     {
       "path": "stage2/src/extension.mjs",
-      "bytes": 2048,
-      "sha256": "948ccc262c8389ac9174c9d599feb80369cd93e3aaef02537ba9d6c965faf5c1"
+      "bytes": 2322,
+      "sha256": "db4ac3075255b62975275852afa9dbdc7952dc4a6cd6b948660ee4215989ddb3"
     },
     {
       "path": "stage2/src/human-loop-answers.mjs",
@@ -584,8 +649,8 @@
     },
     {
       "path": "stage2/src/human-loop-controller.mjs",
-      "bytes": 11687,
-      "sha256": "fa09e4a9665ea0a260c86cbb063066f8a563c8d77bec9db45f747889a6656b5d"
+      "bytes": 13733,
+      "sha256": "6167a003716acbf3a2fe62a9f2543533b785830ca769b998d3483a5a98a97dbd"
     },
     {
       "path": "stage2/src/human-loop-design-store.mjs",
@@ -594,13 +659,13 @@
     },
     {
       "path": "stage2/src/human-loop-design.mjs",
-      "bytes": 13527,
-      "sha256": "4f9d4941cc7119e0e251d1c5feeb42817e58058cd1929db9eb9400645c8390cf"
+      "bytes": 13714,
+      "sha256": "7abceceb60d68bdcb54b68f140323088b6f229ca08ec38ce639e7cd8553c5269"
     },
     {
       "path": "stage2/src/human-loop-installation.mjs",
-      "bytes": 37227,
-      "sha256": "a9bbe3521718adf4b034af28b3c6a0cdbbc687f4decfe3f9efa4a89fb98aa668"
+      "bytes": 48369,
+      "sha256": "d3a2462539f87d7818a69038c1ce852f7db3329ab68b0226b45ab302ad2d8eb7"
     },
     {
       "path": "stage2/src/human-loop-native-files.mjs",
@@ -624,13 +689,13 @@
     },
     {
       "path": "stage2/src/human-loop-preferences.mjs",
-      "bytes": 2191,
-      "sha256": "0c1737f55018236200d9190b25ae70448edaaf2a8367d12747f6a43a4cd3bdc4"
+      "bytes": 3177,
+      "sha256": "a72616f022d46bfe3c062e5f16a76cfd4d96d89d1f3efd27c2fdf07bedb90d24"
     },
     {
       "path": "stage2/src/human-loop-provider.mjs",
-      "bytes": 33127,
-      "sha256": "6f250f9fa0249d4ae80a537dec0eefc7d658fc2cbcc3fda3f29f5bc844251573"
+      "bytes": 45113,
+      "sha256": "25456bbd4421581ae6ad3e07188d427a354b0712191cc8aeb965c1f7fbecfc1d"
     },
     {
       "path": "stage2/src/human-loop-recovery.mjs",
@@ -644,18 +709,18 @@
     },
     {
       "path": "stage2/src/human-loop-runtime.mjs",
-      "bytes": 64851,
-      "sha256": "1b4d44a9338f996f13b7742e81358f6ffe2e0e26bcb833e0a787de3918fe3208"
+      "bytes": 75024,
+      "sha256": "0065feaf88c36893fc666db4ea15cb1357655301dfc4882de692f273b754751f"
     },
     {
       "path": "stage2/src/human-loop-startup.mjs",
-      "bytes": 4004,
-      "sha256": "c44eed8f64ad7a39243e23d47385c82590f4483cf3d8130648962155c1714d87"
+      "bytes": 7770,
+      "sha256": "00224f6b9ad9cc6ac205f5d6e70c2349a9ef0200ab9fd7755bba4a87e041b199"
     },
     {
       "path": "stage2/src/human-loop-store.mjs",
-      "bytes": 11182,
-      "sha256": "9d70d08ed947a11f6da6c497cb039c6eb1ec086348d7a1451a9053840f344182"
+      "bytes": 13461,
+      "sha256": "5e6a25fe0262102686f39dba37999f93b4dc56f739760d5e4b70a2a854dbfe64"
     },
     {
       "path": "stage2/src/human-loop-task.mjs",
@@ -664,13 +729,18 @@
     },
     {
       "path": "stage2/src/human-loop-transport.mjs",
-      "bytes": 80200,
-      "sha256": "8f2bcb9c288b0f6eb46aca78858c53d781ec7eed578fd0ad9d11189f08b03a41"
+      "bytes": 89807,
+      "sha256": "221e41c7901be6cbef481717336de41acc6939949eb3070e8907c95d625ce11e"
     },
     {
       "path": "stage2/src/human-loop-workspace.mjs",
       "bytes": 23967,
       "sha256": "45eff1a84509562e998d2cc65f76c30bd5ca664dae2fa2723140c680434c4714"
+    },
+    {
+      "path": "stage2/src/native-evidence-workflow.mjs",
+      "bytes": 7138,
+      "sha256": "c7648078d3dcafb4554cc7ec19505fc5f7bdbb12046c994d6d44a5b5a526dd34"
     },
     {
       "path": "stage2/src/native-permission-lifecycle.mjs",
@@ -708,5 +778,5 @@
       "sha256": "92b92e76eb4ac3bee96c6bbdde06ed1f7d9c0088576a51db1276c567dbb207f8"
     }
   ],
-  "digest": "f354d73c85d0831d6b69823432a2c771067c7780647f920b51399e605893a5df"
+  "digest": "e01bb320cef724723fa702d504f13e5177e760d7fb190740ab58b81cd539d1a2"
 }

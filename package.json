@@ -10,6 +10,7 @@
     "build": "tsx scripts/build.ts",
     "build:browser": "tsx scripts/build.ts --browser",
     "browser": "npm run build:browser && tsx scripts/browser.ts run",
+    "login:browser": "npm run browser -- login",
     "pack:browser": "npm run check && npm run build:browser && tsx scripts/browser.ts pack",
     "test:browser": "npm run build:browser && tsx scripts/browser-smoke.ts",
     "build:desktop:runtime": "tsx scripts/build.ts --desktop",

@@ -23,6 +23,17 @@ test("responsive layout and graph keyboard focus have explicit accessible styles
     assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.processing-indicator/);
 });
 
+test("stage tab headers wrap right-aligned actions without content divider lines", async () => {
+    const css = await readFile(new URL("../src/renderer/styles.css", import.meta.url), "utf8");
+    const header = css.match(/\.previewbar\s*\{([^}]+)\}/)![1];
+    const actions = css.match(/\.phase-actions\s*\{([^}]+)\}/)![1];
+    assert.match(header, /flex-wrap:\s*wrap/);
+    assert.match(actions, /margin-inline-start:\s*auto/);
+    assert.match(actions, /justify-content:\s*flex-end/);
+    assert.match(actions, /max-width:\s*100%/);
+    assert.doesNotMatch(header + actions, /border(?:-bottom|-top)?:/);
+});
+
 test("compact density is shared by all stage headers, panels, controls, and composers", async () => {
     const css = await readFile(new URL("../src/renderer/styles.css", import.meta.url), "utf8");
     const theme = await readFile(new URL("../development/tandem/public/project-theme.css", import.meta.url), "utf8");

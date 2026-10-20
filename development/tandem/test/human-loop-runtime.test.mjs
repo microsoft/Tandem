@@ -169,7 +169,7 @@ async function patchFile(session, { path, expectedDigest, content }) {
     + `${lines(content).map(line => `+${line}`).join("\n")}\n*** End Patch\n`);
 }
 
-async function fixture(t, script, { onHandoff, onProgress, autoConfirm = true, permissionHandler, filePermissionHandler, nativeShell, nativeControl, nativePermissionRequired = true, omitCancelledNativeCompletion = false, realDesign = false, initialIndex, initialFiles = {}, readDesign, onStop, reviewGraceMs, reviewExcerptCharacters, beforeAdmission, withRequestAdmission } = {}) {
+async function fixture(t, script, { onHandoff, onHandoffSettled, contextProvider, onProgress, autoConfirm = true, permissionHandler, filePermissionHandler, nativeShell, nativeControl, nativePermissionRequired = true, omitCancelledNativeCompletion = false, realDesign = false, initialIndex, initialFiles = {}, readDesign, onStop, reviewGraceMs, reviewExcerptCharacters, beforeAdmission, withRequestAdmission } = {}) {
   const root = await mkdtemp(join(process.cwd(), ".human-loop-runtime-")), project = join(root, "project");
   await mkdir(project); await git(project, "init", "--quiet");
   await writeFile(join(project, ".gitignore"), ".tandem/\n");
@@ -370,7 +370,7 @@ async function fixture(t, script, { onHandoff, onProgress, autoConfirm = true, p
   }
   const session = new Session();
   runtime = new HumanLoopRuntime({
-    withRequestAdmission,
+    withRequestAdmission, onHandoffSettled, contextProvider,
     configuration: { schemaVersion: "human-loop-runtime/v1", owner, runtimeDirectory: join(root, "runtime"),
       node: { path: process.execPath }, sdk: {}, cli: {}, buildId: "fixture" },
     client: { createSession: async (config) => { session.config = config; return session; }, stop: async () => [],
@@ -442,6 +442,45 @@ const submit = (session, packet, name, outcome) => session.call(name, {
 });
 const route = (session, packet, intent, cycleId = null, resolvedQuestions = []) => submit(session, packet, "submit_human_route", {
   kind: "route", intent, cycleId, resolvedQuestions, summary: "Interpret this exact user request.",
+});
+
+test("a bound upstream discovery proposal settles Router without Design changes, implementation or a second completion gate", async t => {
+  const source = { kind: "discovery-baseline", prototypeId: "simulation", sourceDigest: "a".repeat(64) };
+  const settled = Promise.withResolvers();
+  const f = await fixture(t, async (packet, session) => {
+    assert.equal(packet.binding.role, "router");
+    return submit(session, packet, "submit_human_route", { kind: "discovery-change", prototypeId: source.prototypeId,
+      sourceDigest: source.sourceDigest, stage: "requirements", summary: "Saving adds a requirement.",
+      reason: "Review the saving behavior before changing the existing simulation." });
+  }, { contextProvider: async () => [source], onHandoffSettled: handoff => { settled.resolve(handoff); } });
+  await f.send("save-sequence", "Add saving and loading while keeping joint controls.");
+  assert.equal((await f.runtime.whenIdle()).status, "ready");
+  const handoff = await settled.promise;
+  const state = await f.runtime.state();
+  assert.equal(state.requests[0].status, "completed");
+  assert.equal(handoff.result.outcome.kind, "discovery-change");
+  assert.equal(state.cycles.length, 0);
+  assert.deepEqual(state.design, design.binding);
+  assert.equal(state.implementationConfirmations?.length ?? 0, 0);
+  assert.deepEqual(f.history.map(item => item.role), ["router"]);
+  assert.deepEqual(f.errors, []);
+});
+
+test("standalone Development rejects an invented discovery source and retains ordinary routing", async t => {
+  const f = await fixture(t, async (packet, session) => {
+    if (packet.binding.role === "router") {
+      await assert.rejects(submit(session, packet, "submit_human_route", { kind: "discovery-change",
+        prototypeId: "invented", sourceDigest: "a".repeat(64), stage: "requirements",
+        summary: "Invented discovery", reason: "No host baseline was supplied." }), /discovery is unavailable|source identity/i);
+      return route(session, packet, "answer");
+    }
+    return submit(session, packet, "submit_readonly_answer", { kind: "answer",
+      summary: "Existing Design retained.", report: "No discovery stages were created.", evidenceRefs: [] });
+  });
+  await f.send("explain", "Explain this project.");
+  assert.equal((await f.runtime.whenIdle()).status, "ready");
+  assert.deepEqual(f.history.map(item => item.role), ["router", "agent"]);
+  assert.deepEqual(f.errors, []);
 });
 
 for (const [preferred, intent, actual] of [["designer", "answer", "agent"], ["agent", "design", "designer"]]) {

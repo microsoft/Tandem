@@ -27,18 +27,18 @@ From your **Tandem source checkout**, separate from that target project:
 
 ```powershell
 npm ci
-npm run build:browser
-node .\dist\browser\cli.mjs login
-node .\dist\browser\cli.mjs --workspace C:\projects\counter
+npm run login:browser
+npm run browser -- --workspace C:\projects\counter
 ```
 
-`login` signs in to Copilot, not optional Azure voice input. Review startup
-permissions and keep this terminal open.
+Both browser scripts build the app automatically. `npm run login:browser` signs
+in to Copilot, not optional Azure voice input. Review startup permissions and keep
+this terminal open.
 
 To choose the main/Preparation model and effort explicitly, add launch options:
 
 ```powershell
-node .\dist\browser\cli.mjs --workspace C:\projects\counter --model gpt-6-astra --reasoning-effort low
+npm run browser -- --workspace C:\projects\counter --model gpt-6-astra --reasoning-effort low
 ```
 
 Use a model available to your account. The launcher checks the native catalog and
@@ -98,7 +98,9 @@ Use this path to clarify requirements and UX.
 4. In **Prototype**, select **Start prototype** if no build is running.
    Structure and Interaction are automatic milestones. Try the current preview;
    use **Show Interaction prototype** when you want to display that ready version.
-   Feedback is optional.
+   Feedback is optional. For distinct layouts and styles, use
+   **Explore visual directions (optional)** and [compare, refine and apply a
+   direction](user-manual.md#explore-visual-directions).
 5. **Finish Prototype and save outputs** saves only; it does not request Design.
    Select **Continue to Development**, review the saved specification, decisions,
    assumptions, deferred work and target folder, then **Create Design from

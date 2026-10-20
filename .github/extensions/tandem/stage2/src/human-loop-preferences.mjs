@@ -2,13 +2,23 @@ import { resolve } from "node:path";
 import { HostStateFile } from "../runtime-src/domain/host-state-file.ts";
 import { getHostStateWal } from "../runtime-src/domain/host-state-wal.ts";
 
-const defaults = () => ({ schemaVersion: "human-loop-preferences/v1", theme: "system", fontSize: "normal", model: null, pendingModel: null });
+const defaults = () => ({ schemaVersion: "human-loop-preferences/v1", theme: "system", fontSize: "normal", model: null, pendingModel: null,
+  reasoningEffort: null, pendingReasoningEffort: null, projectReasoningEffort: null });
+export function validateProjectReasoningEffort(value) {
+  if (!["none", "minimal", "low", "medium", "high", "xhigh", "max"].includes(value)) throw new Error("Invalid Development reasoning effort.");
+  return value;
+}
 export function parsePreferences(input) {
-  const value = input === undefined ? defaults() : typeof input === "string" ? JSON.parse(input) : input;
+  const original = input === undefined ? defaults() : typeof input === "string" ? JSON.parse(input) : input;
+  const value = original && { reasoningEffort: null, pendingReasoningEffort: null, projectReasoningEffort: null, ...original };
   if (!value || Object.keys(value).sort().join() !== Object.keys(defaults()).sort().join()
     || value.schemaVersion !== "human-loop-preferences/v1"
     || !["system", "light", "dark"].includes(value.theme) || !["normal", "larger", "largest"].includes(value.fontSize)
-    || ![value.model, value.pendingModel].every((id) => id === null || typeof id === "string" && id.trim() === id && id.length > 0 && id.length <= 200)) {
+    || ![value.model, value.pendingModel].every((id) => id === null || typeof id === "string" && id.trim() === id && id.length > 0 && id.length <= 200)
+    || ![value.reasoningEffort, value.pendingReasoningEffort].every((effort) => effort === null
+      || typeof effort === "string" && effort.trim() === effort && effort.length > 0 && effort.length <= 40)
+    || value.projectReasoningEffort !== null && !["none", "minimal", "low", "medium", "high", "xhigh", "max"].includes(value.projectReasoningEffort)
+    || value.reasoningEffort !== null && !value.model || value.pendingReasoningEffort !== null && !value.pendingModel) {
     throw new Error("Canvas preferences are invalid; no defaults were substituted.");
   }
   return value;
@@ -27,7 +37,7 @@ export class HumanLoopPreferences {
   }
   async update(patch) {
     if (!patch || typeof patch !== "object" || Array.isArray(patch)
-      || Object.keys(patch).some((key) => !["theme", "fontSize", "model", "pendingModel"].includes(key))) throw new Error("Unknown Canvas preference.");
+      || Object.keys(patch).some((key) => !["theme", "fontSize", "model", "pendingModel", "reasoningEffort", "pendingReasoningEffort", "projectReasoningEffort"].includes(key))) throw new Error("Unknown Canvas preference.");
     return this.file.mutate("canvas-preferences", (original) => {
       const result = parsePreferences({ ...parsePreferences(original), ...patch });
       return { content: JSON.stringify(result), result };

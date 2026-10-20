@@ -15,14 +15,16 @@ export function projectDiscovery(state: UiState, busy: boolean, viewedStage: Lif
     const writable = state.provider?.canSubmitAnswers !== false && !state.effortReset && !busy;
     const active = hasActiveJobs(state);
     const action = viewedStage !== stage ? "none" : !state.goal.trim() ? "goal" : stage === "requirements" && state.requirements.substage === "usage" ? "usage"
+        : stage === "requirements" && state.requirements.substage === "dag" ? "change"
         : stage === "sketch" ? "sketch" : stage === "prototype" ? "prototype" : "none";
     const label = { goal: "Start discovery", usage: "Add requirement usage", sketch: "Revise saved drawings",
-        prototype: "Prototype feedback", none: "Discovery (use artifact controls)" }[action];
+        prototype: "Prototype feedback", change: "Request a requirement change", none: "Discovery (use artifact controls)" }[action];
     const key = JSON.stringify([state.prototypeId, state.generation, viewedStage, action, state.sketch?.current?.id,
         state.prototypeFlow?.displayedCheckpointId, state.lifecycle.completedStages]);
     return { stage: viewedStage, action, key, label, enabled: writable && action !== "none" && !state.lifecycle.completedStages.includes(stage)
         && (action === "prototype" ? state.processing?.action !== "generate-design-spec" : !active),
-        help: action === "sketch" ? "Revise the saved drawing revision; unsaved canvas edits are not included."
+        help: action === "change" ? "Review a scoped requirements change without repeating completed decisions."
+            : action === "sketch" ? "Revise the saved drawing revision; unsaved canvas edits are not included."
             : action === "prototype" ? "Queue feedback against the displayed prototype. Applying an update remains explicit."
                 : action === "usage" ? "Add a first-person usage to Requirements. Answer existing questions in the Requirements view."
                     : action === "goal" ? "Start optional discovery with this goal. This runs Preparation, not implementation."
@@ -41,11 +43,14 @@ export function discoveryEntries(state: UiState): Entry[] {
         push(`drawing-request:${request.requestId}`, request.kind === "revise" ? "user" : "status", request.instruction, request.requestedAt);
     }
     for (const checkpoint of state.prototypeFlow?.checkpoints ?? []) {
-        push(`checkpoint:${checkpoint.id}`, "status", `${checkpoint.milestone}: ${checkpoint.status}. ${checkpoint.summary || ""}`,
+        const scope = checkpoint.visual?.operation === "explore" || checkpoint.visual?.operation === "refine"
+            ? "Visual alternatives (not accepted)" : checkpoint.visual?.operation === "choose" ? "Chosen visual direction" : checkpoint.milestone;
+        push(`checkpoint:${checkpoint.id}`, "status", `${scope}: ${checkpoint.status}${checkpoint.visualDismissedAt ? " (put aside)" : ""}. ${checkpoint.summary || ""}`,
             checkpoint.completedAt || checkpoint.requestedAt);
     }
     for (const revision of state.prototypeReview?.revisions ?? []) {
-        push(`revision:${revision.id}`, "user", revision.suggestion);
+        push(`revision:${revision.id}`, "user", revision.visualSelection
+            ? `Visual feedback for ${revision.visualSelection.directionId} (${revision.status}): ${revision.suggestion}` : revision.suggestion);
     }
     for (const output of state.lifecycle.outputs) push(`saved:${output.path}`, "status", `Saved ${output.stageId}: ${output.path}`, output.completedAt);
     for (const receipt of state.factoryRuns ?? []) if (receipt.recovery) {
@@ -368,6 +373,8 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
                     const text = message.text.trim();
                     if (context.action === "goal") await post("/api/effort/start", { generation: state.generation, expectedRevision: state.revision, goal: text });
                     else if (context.action === "usage") await post("/api/answer", { questionId: "usage-intake", answer: text, action: "add-usage" });
+                    else if (context.action === "change") await post("/api/change-requests", { message: text, clientRequestId: message.id,
+                        originStage: context.stage, expectedGeneration: state.generation });
                     else if (context.action === "sketch") await post("/api/sketch", { action: "revise", expectedRevision: state.sketch.current?.id ?? null, expectedGeneration: state.generation, instruction: text });
                     else if (context.action === "prototype") await post("/api/revision", { suggestion: text, clientRequestId: message.id,
                         baseCheckpointId: state.prototypeFlow?.displayedCheckpointId ?? null });
