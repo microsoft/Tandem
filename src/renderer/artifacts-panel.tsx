@@ -37,7 +37,6 @@ export function ArtifactList({ selectedArtifactId, active = true }: ArtifactSele
   const selected = !active ? null : state.artifacts.some(artifact => artifact.id === selectedArtifactId)
     ? selectedArtifactId : state.artifacts[0]?.id ?? null;
   return <div id="artifact-list" className="artifact-list">
-    {!state.artifacts.length && <p className="artifact-empty">No artifacts yet.</p>}
     {artifactGroups.map(stage => {
       const artifacts = state.artifacts.filter(artifact => (artifact.stage || "requirements") === stage.id);
       if (!artifacts.length) return null;
@@ -67,7 +66,6 @@ export function DevelopmentArtifactList({ active }: { active: boolean }) {
     {view.outputStatus !== "verified" && <p role="status" className="artifact-availability">
       {view.outputStatus === "not-started" ? "Development has not been activated." : view.outputReason || "Development outputs are unverified, not deleted. Verify the saved runtime explicitly in Development."}
     </p>}
-    {view.outputStatus === "verified" && !view.outputs.length && <p>No published Development outputs yet.</p>}
     {view.outputReason && view.outputStatus === "verified" && <p role="status">{view.outputReason}</p>}
     {view.outputError && <p role="alert">{view.outputError}</p>}
     {(["Design", "Plan", "Implementation", "Review"] as const).map(group => {

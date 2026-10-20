@@ -114,6 +114,33 @@ test("saved Prototype does not project a legacy building phase into Development"
     assert.equal(h.get("phase").textContent, "building");
 });
 
+test("permission ownership follows the private session, not the viewed discovery tab or viewport", async (t) => {
+    const h = await reactHarness(t, host, "development");
+    h.render(state("development"));
+    await h.flush();
+    await h.sendHeaderMessage({ type: "tandem:header:connect" });
+    assert.equal(header(h.headerMessages).permissionScope, undefined, "Starting is not verified ownership.");
+    const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
+    const status = async (active: boolean, status: string) => h.sendHeaderMessage({
+        protocol: "tandem-project/v1", channel: "fixture-project", type: "status", active, status,
+    }, "http://127.0.0.1:8765", frame.contentWindow);
+    await status(true, "ready");
+    assert.equal(header(h.headerMessages).permissionScope, "development");
+    await h.fire(h.get("preparation-tab"), "mousedown", { button: 0, ctrlKey: false });
+    assert.equal(h.get("preparation-panel").hidden, false);
+    assert.equal(header(h.headerMessages).permissionScope, "development");
+    h.setNarrowViewport(true);
+    await h.flush();
+    assert.equal(header(h.headerMessages).permissionScope, "development");
+    await status(false, "unknown");
+    assert.equal(header(h.headerMessages).permissionScope, undefined, "Unknown private state never enables host permissions.");
+    await status(false, "unavailable");
+    assert.equal(header(h.headerMessages).permissionScope, undefined);
+    await status(true, "ready");
+    assert.equal(header(h.headerMessages).permissionScope, "development");
+    assert.equal(h.requests.length, 0, "Presentation does not submit work or grant permissions.");
+});
+
 test("hosted maintenance messages cannot revive removed primary actions; Preparation keeps confirmation", async (t) => {
     const h = await reactHarness(t, host);
     const initial = state();

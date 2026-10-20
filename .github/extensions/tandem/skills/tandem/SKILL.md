@@ -225,7 +225,11 @@ still is not an implicit Tandem submission.
 
 ## Prototype handoff to Development
 
-As an optional strict route, explicit **Continue Design from Prototype** asks
+**Finish Prototype and save outputs** never requests Development work.
+**Continue to Development** opens a read-only summary of the exact saved
+specification, decisions, assumptions, deferred work and target folder.
+Cancel creates no receipt or request. Only **Create Design from Prototype**
+(or **Refine Design from Prototype**) confirms the reviewed binding and asks
 the current host to freeze an immutable receipt and exact documents/source under the
 target workspace's `.tandem\living-canvas\handoffs`. The receipt identifies the
 effort, generation, completed snapshot revision/hash, artifact and asset hashes,
@@ -233,6 +237,12 @@ approved sketch, displayed checkpoint/source manifest, original shared state
 root, actual target worktree, and one exact request ID/timestamp/message.
 The snapshot retains confirmed, assumed and deferred decisions and mock
 shortcuts without reclassifying them.
+
+For canvas actions, present `review_prototype_handoff` before explicit user
+confirmation of `continue_design` with its `reviewBinding`. Navigation is
+**Open Development**, never implicit submission. Once admitted, show authoritative
+request/Designer/Design/questions status instead of another submission action.
+Unknown activity remains unverified; never invent progress or inject a model turn.
 
 Use that ordinary persisted request through `HumanLoopRuntime.send`. Router
 selects Designer; Designer reads the retained documents/source read-only and

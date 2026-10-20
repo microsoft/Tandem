@@ -63,20 +63,27 @@ the revision; the agent should not infer a requirement solely from what you trie
 
 **Use when:** finished discovery should inform Development's Design.
 
-1. Choose **Go to Development** and wait for Ready.
-2. Select **Continue Design from Prototype**, or **Continue saved Prototype
-   handoff** if an unsent handoff is already prepared.
-3. Inspect the Design/questions and send later changes in Conversation.
+1. Select **Continue to Development** from the saved Prototype, or **Review
+   Prototype handoff** in Development.
+2. Review the exact saved specification, decisions, assumptions, deferred work
+   and target folder. Confirm **Create Design from Prototype** or **Refine Design
+   from Prototype**. **Cancel** creates no handoff and starts no work.
+3. Follow the handoff status. Designer can take several minutes; answer any
+   permission request in the owning session. When Design is ready, inspect it
+   and answer blocking/advisory questions in Development.
 
 **Result:** retained source, decisions and mock limitations inform Design.
 Scripts are not executed by the handoff; originals remain. No manual transfer,
 shutdown or implementation approval is implied.
 
 An admitted handoff shows status instead of a repeated submission button.
-**Check handoff status** reads pending/unavailable status. **Reconcile saved
-handoff** checks uncertain admission and may submit only if not already admitted;
-it never replays retired work. An updated completed Prototype can offer
-**Continue Design from updated Prototype**.
+**Check handoff status** reads pending/unavailable status. **Review handoff
+recovery**, then **Reconcile saved handoff**, checks uncertain admission and may
+submit only if not already admitted; it never replays retired work. A saved update
+offers **Review updated Prototype**; a prepared request offers **Review saved
+handoff**. Each confirmation binds to the
+reviewed source and target; changed inputs require a fresh review.
+**Open Development** and ordinary navigation do not submit the Prototype.
 
 Alternatively, reference saved files in an ordinary Development request and
 explain the scope Designer should use.
@@ -111,7 +118,10 @@ no prefix.
 ```
 
 Start with exactly one lowercase `@designer` or `@agent`, then whitespace and
-your message. Check the composer's **Preference** help and send.
+your message. Typing `@` or a partial role at the start offers compact suggestions:
+use Up/Down and Enter/Tab, or click one, to insert it without sending. Escape
+dismisses suggestions and keeps your draft. Check the composer's **Preference**
+help and send when ready.
 Router still decides; hints do not grant permissions or force a role.
 
 Leading spaces, `@Designer`, `@designer:`, quoted mentions and mentions inside

@@ -388,6 +388,13 @@ export function ProcessPanel({ development = false, expanded = false, dialog, on
       <p id="process-metrics" className="muted">{metricText}</p>
     </ProcessSection>}
     <ProcessSection name="history" label="Acceptance & process history">
+      {state.development && <ProcessDetails name="saved-prototype-handoff">
+        <summary>Saved Prototype handoff</summary>
+        <p>Retained request: {state.development.requestId}</p>
+        <p>Receipt: {state.development.handoffId}</p>
+        <p>Saved source: {state.development.snapshotPath}</p>
+        <p>Used or retired work is never replayed. Implementation requires its separate confirmation.</p>
+      </ProcessDetails>}
       {(process?.acceptances || []).slice().reverse().map((record) => <AcceptanceDetails key={record.id} record={record}
         current={outputs.some((output) => output.stageId === record.stageId && output.path === record.snapshotPath)} />)}
       {(process?.events || []).slice().reverse().map((event) => <ProcessDetails key={event.id} name={`process-event:${event.id}`}>
@@ -396,7 +403,7 @@ export function ProcessPanel({ development = false, expanded = false, dialog, on
       </ProcessDetails>)}
       {process?.source && <p className="muted">Source: {process.source.adapter} · {process.source.reference}
         {process.source.parentEffortId ? ` · Parent effort: ${process.source.parentEffortId}` : ""}</p>}
-      {!(process?.acceptances || []).length && !(process?.events || []).length && <p className="muted">No handoffs or process events recorded yet.</p>}
+      {!state.development && !(process?.acceptances || []).length && !(process?.events || []).length && <p className="muted">No handoffs or process events recorded yet.</p>}
     </ProcessSection>
     <ProcessSection name="evidence" label={<><ShieldCheck size={14} aria-hidden="true" /> Historical verification evidence</>}>
       <ToolEvidence />

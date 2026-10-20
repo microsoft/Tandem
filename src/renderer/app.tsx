@@ -13,6 +13,7 @@ import { SketchPanel, SketchCompletionContext, isSketchRevisionApproved } from "
 import { PrototypePanel, prototypeCompletionBlocked } from "./prototype-panel.js";
 import { ArtifactList, ArtifactsPanel, DevelopmentArtifactList } from "./artifacts-panel.js";
 import { DevelopmentPanel } from "./development-panel.js";
+import { HandoffReviewProvider, useHandoffStatus } from "./handoff-review.js";
 import { WorkflowActivity } from "./workflow-activity.js";
 import { ProjectConversation, ProjectConversationProvider, useProjectView } from "./project-conversation.js";
 import { DiscoveryRecovery } from "./discovery-recovery.js";
@@ -150,9 +151,9 @@ function EffortApp({ state, store, version, connectionError, confirm }: {
       viewedStage={stageTabs.find(tab => tab.value === activeTab)?.stage
         ?? stageTabs.find(tab => tab.stage === state.artifacts.find(item => item.id === selectedArtifact)?.stage)?.stage ?? state.lifecycle.currentStage}
       onEntry={(path, firstChoice) => { if (path === "development") setActiveTab("development"); else if (firstChoice) setActiveTab("preparation"); }}
-      showDesign={() => setActiveTab("development")}><Workspace version={version} connectionError={connectionError} store={store} activeTab={activeTab} onTabChange={setActiveTab}
+      showDesign={() => setActiveTab("development")}><HandoffReviewProvider><Workspace version={version} connectionError={connectionError} store={store} activeTab={activeTab} onTabChange={setActiveTab}
       selectedArtifact={selectedArtifact} contextOpen={contextOpen} setContextOpen={setContextOpen}
-      sketchBlocked={sketchBlocked} onSketchBlocked={setSketchBlocked} effortBusy={busy.has("effort")} /></ProjectConversationProvider>
+      sketchBlocked={sketchBlocked} onSketchBlocked={setSketchBlocked} effortBusy={busy.has("effort")} /></HandoffReviewProvider></ProjectConversationProvider>
   </SpeechProvider></UiContext.Provider>;
 }
 
@@ -182,23 +183,27 @@ function GoalEntry() {
             data-status-help="Starting runs AI preparation: Tandem inspects the workspace and relevant sources, then opens Requirements. Implementation comes later."><Play size={16} aria-hidden="true" />{action.busy ? "Starting..." : "Start project"}</button></div>
         <p id="start-message" className="start-message" role="status" data-status={action.error ? "error" : "idle"}>{action.error || (!writable ? "Open the writable Tandem provider to start this project." : "")}</p>
       </form>
-      <p className="muted">Describe the project here to begin Preparation. Implementation remains a separate, confirmed step.</p>
     </div>
   </section>;
 }
 
-function Header({ version, connectionError, developmentView, status, showNextAction, onHostedChange }: {
-  version: string; connectionError: string; developmentView: boolean; status: ApplicationStatus;
+function Header({ version, connectionError, status, showNextAction, onHostedChange }: {
+  version: string; connectionError: string; status: ApplicationStatus;
   showNextAction(): void; onHostedChange(hosted: StandaloneHosting): void;
 }) {
   const { state } = useUi();
-  const { maintenanceError } = useProjectView();
+  const projectView = useProjectView();
+  const { maintenanceError } = projectView;
+  const ownershipUnknown = Boolean(connectionError || projectView.error || projectView.entry.error)
+    || projectView.entry.loading || projectView.entry.busy;
+  const permissionScope = ownershipUnknown ? undefined : projectView.active ? "development"
+    : projectView.starting || projectView.developmentEntered || ["unknown", "unavailable"].includes(projectView.status) ? undefined : "main";
   const stageIndex = Math.max(0, lifecycleStages.findIndex((stage) => stage.id === state.lifecycle.currentStage));
   const phase = state.lifecycle.currentStage === "development" ? "" : state.phase || "discovery";
   const hosted = useStandaloneHeader({
     scope: JSON.stringify([state.prototypeId, state.generation, state.provider?.extensionId]),
     version, lifecycle: isGoalEntry(state) ? "" : `${stageIndex + 1}. ${lifecycleStages[stageIndex].label}${phase ? ` | ${phase}` : ""}`,
-    permissionScope: developmentView ? "development" : "main",
+    ...(permissionScope ? { permissionScope } : {}),
     controls: {
       reload: null,
       reset: null,
@@ -308,12 +313,25 @@ function Workspace(props: WorkspaceProps) {
   const completionHelp = contextCollapsed && !allComplete && !stageAction.busy && !["prepare", "development"].includes(current)
     ? "Next stage: " + completionLabel : completionLabel;
   const selectedLabel = viewed === "sketch" ? "Drawings" : lifecycleStages.find((stage) => stage.id === viewed)?.label || viewed;
-  const statusBarError = props.connectionError || stageAction.error || projectView.maintenanceError || state.effortReset?.error;
+  const handoffStatus = useHandoffStatus(activeTab === "development");
+  const statusBarError = props.connectionError || stageAction.error || projectView.maintenanceError || state.effortReset?.error
+    || (activeTab === "development" ? projectView.error || state.developmentBlocker : "") || handoffStatus.error;
+  const developmentStatus = activeTab === "development" ? projectView.detail
+    || (projectView.starting ? "Opening Development..." : projectView.developmentEntered && !projectView.url
+      ? "Connecting to Development..." : "") : "";
   const savedPrototype = state.lifecycle.currentStage === "development" && state.lifecycle.outputs.some(output => output.stageId === "prototype")
     && state.status === "Prototype outputs saved. Stage 1 is complete. You can close now and open Development later with these files as input.";
-  const statusBarText = statusBarError || contextHelp || (nextAction ? "Next action: " + nextAction.label
-    : savedPrototype ? "Prototype saved. Continue in Development when you're ready."
-    : state.status || (atStart ? "Ready to start a project." : "Ready."));
+  const privateStatus = activeTab === "development" ? projectView.presentation : null;
+  const authoritativeActivity = privateStatus?.kind === "active" && !handoffStatus.busy && !pending
+    && !hasActiveJobs(state) && (!handoffStatus.rootStatus || savedPrototype) ? privateStatus.text : "";
+  const statusBarText = statusBarError || (privateStatus?.kind === "attention" ? privateStatus.text : "")
+    || authoritativeActivity || contextHelp || (nextAction ? "Next action: " + nextAction.label
+    : (handoffStatus.busy ? handoffStatus.text : "") || developmentStatus
+    || (pending || hasActiveJobs(state) ? state.status : "") || (!savedPrototype ? handoffStatus.rootStatus : "")
+    || (privateStatus?.kind === "active" ? privateStatus.text : "") || handoffStatus.text || privateStatus?.text
+    || (activeTab === "development" && projectView.developmentEntered ? "Development" : "")
+    || (savedPrototype ? "Prototype saved. Continue in Development when you're ready."
+    : handoffStatus.rootStatus || (atStart ? "Ready to start a project." : "Ready.")));
   const narrow = () => window.matchMedia("(max-width: 760px)").matches;
   const showNextAction = () => {
     if (!nextAction) return;
@@ -356,7 +374,7 @@ function Workspace(props: WorkspaceProps) {
       prototype: [["apply-prototype-update", "Show the prepared prototype version"], ["extend-prototype-budget", "Review an additional prototype work window"],
         ["retry-prototype-checkpoint", "Retry incomplete prototype work"], ["start-prototype", "Start the prototype build"],
         ["submit-clarification", "Answer the prototype clarification"], ["complete-stage", "Finish prototype iteration"]],
-      development: state.development ? [] : [["continue-design", "Continue Design from the completed Prototype"]],
+      development: state.development ? [] : [["continue-design", "Review the saved Prototype handoff"]],
     }[current] as [string, string, string?][];
     const update = () => {
       const candidate = candidates.find(([id, , revealId]) => {
@@ -463,7 +481,7 @@ function Workspace(props: WorkspaceProps) {
         <aside id="requirements-pane" className="requirements" aria-label="Project context" onKeyDown={(event) => {
           if (event.key === "Escape" && contextOpen) { setContextOpen(false); document.getElementById("context-toggle")?.focus(); event.preventDefault(); }
         }}>
-          <Header version={props.version} connectionError={props.connectionError} developmentView={projectView.active}
+          <Header version={props.version} connectionError={props.connectionError}
             status={{ text: statusBarText, error: Boolean(statusBarError), action: nextAction?.label ?? null }}
             showNextAction={showNextAction} onHostedChange={setHosting} />
           <nav className="project-navigation" aria-label="Project navigation">
@@ -483,7 +501,7 @@ function Workspace(props: WorkspaceProps) {
                 aria-current={currentPhase ? "step" : undefined}
                 aria-label={`${label}${currentPhase ? ", Current phase" : ""}${skipped ? `, not applicable. ${skipped.reason}` : ""}${designStatus ? `, ${designStatus}` : ""}`}
                 aria-controls={tab.id + "-panel"}><tab.icon size={15} aria-hidden="true" />
-                <span className="project-tab-label"><span className="project-tab-name">{label}</span>{designStatus === "Design available"
+                <span className="project-tab-label"><span className="project-tab-name">{label}</span>{designStatus === "Design available" && !currentPhase
                   && <span className="project-availability" title="Design available" aria-hidden="true" />}</span>
                 {currentPhase && <span className="current-phase" title="Current phase" aria-hidden="true"><CircleDot size={13} /></span>}
                 {designStatus === "New Design output" && <span className="artifact-count">New output</span>}

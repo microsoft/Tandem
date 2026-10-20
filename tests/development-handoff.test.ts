@@ -139,6 +139,76 @@ test("handoff status inspection is exact, read-only and never admits work", asyn
     await assert.rejects(f.store.admissionFor(f.state), /Prototype changed/);
 });
 
+test("review reads the exact completed snapshot without preparing anything and binds source, owner and target", async t => {
+    const f = await fixture("build"); t.after(f.cleanup);
+    const original = await retainedFiles(f.root);
+    f.state.confirmed = ["Changed live state must not enter the saved summary"];
+    const review = await f.store.review(f.state);
+    assert.deepEqual(await retainedFiles(f.root), original);
+    await assert.rejects(access(f.store.root), { code: "ENOENT" });
+    assert.deepEqual(review.confirmed, f.result.confirmed);
+    assert.deepEqual(review.assumed, f.result.assumed);
+    assert.deepEqual(review.deferred, f.result.deferred);
+    assert.equal(review.specification, f.result.artifacts[0].content);
+    assert.equal(review.workspaceRoot, f.workspace);
+    assert.equal(review.snapshotHash, createHash("sha256").update(await readFile(f.path)).digest("hex"));
+    assert.notEqual((await new DevelopmentHandoffs(f.workspace, f.shared, "other-owner").review(f.state)).binding, review.binding);
+    const target = join(f.root, "other-worktree"); await mkdir(target);
+    assert.notEqual((await new DevelopmentHandoffs(target, f.shared, "main").review(f.state)).binding, review.binding);
+    await assert.rejects(new DevelopmentHandoffs(target, f.shared, "main").prepare(f.state, review.binding), /target changed/);
+    const receipt = await f.store.prepare(f.state, review.binding);
+    assert.equal(receipt.source.snapshotHash, review.snapshotHash);
+    const changed = JSON.parse(await readFile(f.path, "utf8"));
+    changed.result.assumed = ["New unconfirmed assumption"];
+    await writeJsonAtomically(f.path, changed);
+    await assert.rejects(f.store.prepare(f.state, review.binding), /target changed/);
+    assert.equal((await f.store.read(receipt.id)).source.snapshotHash, review.snapshotHash);
+});
+
+test("HTTP review/cancel starts nothing; bound confirmation submits once and preserves starting choice", async t => {
+    const h = await extensionHarness({}, undefined, "", undefined, false, true);
+    let server: Awaited<ReturnType<typeof h.api.startServer>> | undefined;
+    t.after(async () => {
+        if (server) { clearInterval(server.heartbeat); server.live.close(); await new Promise<void>(done => server!.server.close(() => done())); }
+        await h.close();
+    });
+    const state = h.api.createState("review-http", "Synthetic CLI");
+    state.stage = state.lifecycle.currentStage = "requirements";
+    state.lifecycle.completedStages = ["prepare"]; state.preparation.status = "ready";
+    state.requirements = { substage: "dag", usageItems: ["Run the command"], suggestions: [] };
+    state.decisionGraph.nodes = [{ id: "decision", title: "Command", dependencies: [], question: null, answer: "Local only", status: "answered" }];
+    state.prototypeApproach = { mode: "not-applicable", reason: "CLI only" };
+    await h.api.persistState(state);
+    await h.api.completeLifecycleStage(state.prototypeId, "requirements", "project:tandem");
+    server = await h.api.startServer("review-http", state.prototypeId, "project:tandem", true);
+    const url = server.url;
+    let starts = 0; h.setBeforeDevelopmentStart(async () => { starts++; });
+    const get = async (path: string) => (await fetch(new URL(path, url))).json();
+    const post = (body: unknown) => fetch(new URL("api/development/continue", url), {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    const before = JSON.stringify(await h.api.loadState(state.prototypeId)), entryBefore = await get("api/project-entry");
+    const review = await get("api/development/handoff-review");
+    assert.equal(review.generation, state.generation);
+    assert.equal(starts, 0); assert.equal(h.developmentRequests.length, 0);
+    assert.equal(JSON.stringify(await h.api.loadState(state.prototypeId)), before);
+    await assert.rejects(access(join(h.root, ".tandem", "living-canvas", "handoffs")), { code: "ENOENT" });
+    const input = { generation: review.generation, snapshotPath: review.snapshotPath,
+        expectedRevision: (await h.api.loadState(state.prototypeId)).revision, reviewBinding: review.binding };
+    assert.equal((await post({ ...input, reviewBinding: undefined })).status, 409);
+    assert.equal((await post({ ...input, reviewBinding: "0".repeat(64) })).status, 409);
+    assert.equal(starts, 0); assert.equal(h.developmentRequests.length, 0);
+    const responses = await Promise.all([post(input), post(input)]);
+    for (const result of responses) assert.equal(result.status, 200, await result.text());
+    assert.equal(h.developmentRequests.length, 1);
+    assert.deepEqual(await get("api/project-entry"), entryBefore);
+    const status = await get("api/development/handoff");
+    assert.equal(status.admission.status, "admitted");
+    assert.equal(status.handoffId, h.developmentRequests[0].id);
+    await post(input);
+    assert.equal(h.developmentRequests.length, 1, "A repeated confirmation must reuse the exact ID without replay.");
+});
+
 test("empty-setup repair inspection preserves prepared handoffs and refuses every admission or owner change", async t => {
     const f = await fixture("build");
     t.after(f.cleanup);
@@ -794,6 +864,16 @@ for (const mode of ["build", "validate-existing", "not-applicable"] as const) {
             assert.deepEqual(await readFile(join(directory, "snapshot.json")), await readFile(f.path));
             assert.match(receipt.request.message, /Do not implement, run prototype scripts/);
             assert.match(receipt.request.message, /stage_human_design and submit_designer_outcome/);
+            assert.match(receipt.request.message, /accepted displayed saved Prototype.*visual baseline/);
+            assert.match(receipt.request.message, /target, snapshot hash and displayed checkpoint\/source fingerprint/);
+            assert.match(receipt.request.message, /pending or unapproved milestone is not the accepted baseline/);
+            assert.match(receipt.request.message, /layouts, hierarchy, spacing, typography, colors, labels, controls, interaction states and flows/);
+            assert.match(receipt.request.message, /Incomplete mock behavior is not confirmed intent/);
+            assert.match(receipt.request.message, /later explicitly approved Design revisions with an obsolete Prototype/);
+            assert.match(receipt.request.message, /existing Designer summary and Questions path.*user approval before consequential UX changes/);
+            assert.match(receipt.request.message, /not permission to auto-copy or overwrite production files/);
+            assert.match(receipt.request.message, /separate implementation request.*native human confirmation/);
+            assert.match(receipt.request.message, /keep User story and UI separate when both apply/);
             assert.equal(receipt.prototype.disposition, mode);
             assert.equal(receipt.files.some(file => file.path === "source/src/app.tsx"), mode !== "not-applicable");
             assert.equal(receipt.files.some(file => /node_modules|browser-profile|vite-checkpoint|\.env/.test(file.path)), false);

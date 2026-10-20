@@ -45,10 +45,10 @@
 .human-app[data-project-panel][data-font-size="largest"] { --shell-font-size: 17px; }
 .human-app[data-project-panel] .panel-heading {
   flex: none;
-  min-height: var(--studio-header-height);
+  min-height: 0;
   box-sizing: border-box;
-  padding: var(--studio-heading-padding);
-  gap: var(--studio-gap);
+  padding: 4px 12px;
+  gap: 6px;
   flex-wrap: wrap;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
@@ -147,3 +147,9 @@
   height: 100%; min-height: 0; flex: 1 1 0;
 }
 .human-app[data-project-working="discovery"] :is(#initialize, #notice, #project-connection-help, #composer, .conversation-current) { display: none; }
+.human-app[data-project-panel][data-project-stacked="true"] #design-panel[data-workspace-view="questions"] {
+  flex: 0 0 auto; height: auto; min-height: 0; max-height: none; overflow: visible;
+}
+.human-app[data-project-panel][data-project-stacked="true"] #design-panel[data-workspace-view="questions"] > :not(#question-panel) { display: none; }
+.human-app[data-project-panel][data-project-stacked="true"] #design-panel[data-workspace-view="questions"] #question-panel { position: relative; }
+.human-app[data-project-panel][data-project-stacked="true"] #design-panel[data-workspace-view="questions"] #questions-content { overflow: visible; }

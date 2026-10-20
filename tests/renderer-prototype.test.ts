@@ -127,7 +127,9 @@ test("pending Prototype copy distinguishes automatic milestones from recorded fe
     const h = await setup(t, value);
     assert.match(text(h, "prototype-progress-message"), /automatically generated milestone, not a response to feedback/);
     assert.equal(text(h, "apply-prototype-update"), "Show Interaction prototype");
-    assert.match(text(h, "prototype-feedback-help"), /Feedback is optional/);
+    assert.equal(h.document.getElementById("prototype-feedback-help"), null);
+    assert.equal(field(h, "revision-input").placeholder, "Describe one change you want to see in the prototype.");
+    assert.equal(field(h, "revision-input").getAttribute("aria-label"), "Prototype revision suggestion");
     const requested = readyPrototype(2, true);
     requested.prototypeFlow.checkpoints[1].revisionId = "feedback-one";
     requested.prototypeReview.revisions = [{ id: "feedback-one", suggestion: "Use a larger button.", status: "ready" }];

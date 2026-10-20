@@ -20,6 +20,44 @@ import { parseRequest } from "../runtime-src/domain/human-loop/contracts.ts";
 import { packageExtension } from "../scripts/package-extension.mjs";
 import { exerciseRoleHintDraft } from "./helpers/role-hint-browser.mjs";
 
+test("saved Prototype activity is request-bound, read-only and distinguishes Designer, published questions and retirement", () => {
+  const state = createHumanLoop({ schemaVersion: "human-loop-owner/v1", id: "owner", mainSessionId: "main", privateSessionId: "private",
+    workspacePath: process.cwd(), policy: DEFAULT_POLICY }, { revisionId: "existing-design", digest: "a".repeat(64) });
+  const id = `handoff-${"a".repeat(64)}`;
+  state.requests.push({ id, message: "Synthetic saved source", status: "waiting", answers: null,
+    blockingAnswerRefs: [], questionGatesReleased: false, route: null, stopId: null });
+  const view = () => {
+    const before = structuredClone(state);
+    const result = projectHumanLoopView(state, { status: "working" });
+    assert.deepEqual(state, before, "Presentation cannot dispatch, mutate history or approve implementation.");
+    return result.handoffActivity[0];
+  };
+  assert.match(view().label, /admitted and queued/);
+  assert.doesNotMatch(view().label, /Design ready/, "An unrelated existing Design is not a result of the handoff.");
+  state.activeRequestId = id; state.activeBatchRequestIds = [id];
+  state.activeTask = { binding: { requestId: id, role: "designer" }, condition: "queued" };
+  assert.match(view().label, /dispatch is pending/);
+  state.activeTask.condition = "waiting-permission";
+  assert.match(view().label, /waiting for native permission/);
+  state.activeTask.condition = "running";
+  assert.match(view().label, /Designer is reading.*several minutes/);
+  state.activeTask = null; state.activeRequestId = null; state.activeBatchRequestIds = [];
+  state.requests[0].status = "completed";
+  state.handoffs.push({ id: "presented", requestId: id, requestIds: [id], presented: true,
+    result: { resultId: "designer-result", outcome: { kind: "designer-changed", summary: "Synthetic Design published" } } });
+  for (const importance of ["blocking", "advisory"]) state.questions.push({
+    id: importance, context: "Synthetic choice", question: "Choose the counter behavior?", whyItMatters: "User-facing behavior",
+    importance, state: "open", answerRequestId: null, blockingActive: importance === "blocking", options: [], allowFreeform: true,
+    ...(importance === "advisory" ? { unanswered: { action: "keep-current-design", explanation: "Keep current behavior." } } : {}),
+    source: { role: "designer", resultId: "designer-result", requestId: id, requestIds: [id], cycleId: null,
+      design: { ...state.design }, planDigest: null },
+  });
+  assert.match(view().label, /Design ready.*Questions: 2, including 1 blocking/);
+  assert.equal((state.implementationConfirmations ?? []).length, 0);
+  state.requests[0].status = "retired";
+  assert.match(view().label, /retired.*will not be replayed/);
+});
+
 test("advisory view and history distinguish declared continuation from legacy uncertainty without rewriting records", () => {
   const state = createHumanLoop({ schemaVersion: "human-loop-owner/v1", id: "owner", mainSessionId: "main", privateSessionId: "private",
     workspacePath: process.cwd(), policy: DEFAULT_POLICY }, { revisionId: "design", digest: "a".repeat(64) });
@@ -282,6 +320,51 @@ test("packaged standalone role hints preserve editing, IME, images and truthful 
     if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "role-hint-standalone.png"), await browser.screenshot());
     t.diagnostic(`Actual standalone package ${outputDirectory}; ${(await browser.call("Browser.getVersion")).product}; deterministic provider, no model calls.`);
     assert.deepEqual(browser.exceptions, []);
+  });
+
+test("packaged private UI shows Prototype work instead of an unexplained empty Design and preserves question approval boundaries",
+  { skip: !browserAvailable, timeout: 90_000 }, async t => {
+    const staging = await mkdtemp(join(tmpdir(), "prototype-handoff-package-")), outputDirectory = join(staging, "tandem");
+    t.after(() => rm(staging, { recursive: true, force: true }));
+    await packageExtension({ outputDirectory });
+    const { createHumanLoopProvider: providerFactory } = await import(pathToFileURL(join(outputDirectory, "src", "human-loop-provider.mjs")).href);
+    const { getHostStateWal: hostStateWal } = await import(pathToFileURL(join(outputDirectory, "runtime-src", "domain", "host-state-wal.ts")).href);
+    const f = await fixture(t, { providerFactory, hostStateWal, publicDirectory: join(outputDirectory, "public"), surface: "browser" });
+    const id = `handoff-${"a".repeat(64)}`, design = f.design.content;
+    f.state.questions = []; f.state.handoffs = [];
+    f.state.requests = [{ id, message: "Synthetic saved Prototype", receivedAt: "2026-10-14T00:00:00Z",
+      answers: null, status: "active", route: null, blockingAnswerRefs: [], questionGatesReleased: false, stopId: null }];
+    f.state.activeRequestId = id; f.state.activeBatchRequestIds = [id];
+    f.state.activeTask = { binding: { requestId: id, role: "designer" }, condition: "running" };
+    f.design.content = null;
+    f.runtime.readiness = async () => ({ status: f.state.activeTask ? "working" : "waiting-answer", reason: null, workspacePath: f.root });
+    const browser = await f.openBrowser();
+    await browser.call("Emulation.setDeviceMetricsOverride", { width: 390, height: 520, deviceScaleFactor: 1, mobile: false });
+    await browser.call("Page.navigate", { url: f.provider.url });
+    await browser.waitFor('document.querySelector("#prototype-handoff-activity")?.textContent.includes("Designer is reading")');
+    assert.match(await browser.evaluate('document.querySelector("#assessment-card").textContent'), /saved Prototype request is tracked in Conversation/);
+    await browser.evaluate('document.querySelector("#prototype-handoff-activity").scrollIntoView({block:"nearest"})');
+    assert.equal(await browser.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'), true);
+    f.setInstallationStatus("unknown");
+    await browser.waitFor('document.querySelector("#backbone-state").textContent === "Design unverified"');
+    assert.equal(await browser.evaluate('document.querySelector("#prototype-handoff-activity").hidden'), true);
+    f.setInstallationStatus("ready"); f.design.content = design;
+    f.state.activeTask = null; f.state.activeRequestId = null; f.state.activeBatchRequestIds = [];
+    f.state.requests[0].status = "completed";
+    f.state.handoffs.push({ id: "synthetic-result", requestId: id, requestIds: [id], presented: true,
+      result: { resultId: "result", outcome: { kind: "designer-changed", summary: "Synthetic Design ready" } } });
+    for (const importance of ["blocking", "advisory"]) f.state.questions.push({
+      id: importance, context: "Synthetic counter", question: "Keep the count between visits?", whyItMatters: "Scope of saved data",
+      importance, options: [], allowFreeform: true, state: "open", answerRequestId: null, blockingActive: importance === "blocking",
+      ...(importance === "advisory" ? { unanswered: { action: "keep-current-design", explanation: "Keep the current Design." } } : {}),
+      source: { role: "designer", resultId: "result", requestId: id, requestIds: [id], cycleId: null, design: f.state.design, planDigest: null },
+    });
+    f.events.touch();
+    await browser.waitFor('document.querySelector("#prototype-handoff-activity").textContent.includes("Questions: 2, including 1 blocking")');
+    assert.equal(await browser.evaluate('document.querySelector("#backbone-state").textContent'), "Current Design");
+    assert.equal(f.received.length, 0); assert.equal((f.state.implementationConfirmations ?? []).length, 0);
+    assert.deepEqual(browser.exceptions, []);
+    t.diagnostic("Actual packaged private renderer in Edge; synthetic owned state, no native/model work or implementation.");
   });
 
 test("implementation confirmation has its own endpoint, never a tool-permission or text-request side effect", async t => {
@@ -1150,6 +1233,7 @@ test("actual browser entrypoint renders dynamic shared artifacts, answers and or
     await browser.call("Input.dispatchMouseEvent", { type: "mousePressed", button: "left", clickCount: 1, ...point });
     await browser.call("Input.dispatchMouseEvent", { type: "mouseReleased", button: "left", clickCount: 1, ...point });
   };
+  await click("#show-questions");
   await click(".human-loop-questions select");
   await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "ArrowDown", code: "ArrowDown", windowsVirtualKeyCode: 40 });
   await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "ArrowDown", code: "ArrowDown", windowsVirtualKeyCode: 40 });
@@ -1165,6 +1249,7 @@ test("actual browser entrypoint renders dynamic shared artifacts, answers and or
   await click("#send");
   await browser.waitFor("document.querySelector('#message').value === ''");
   assert.equal(f.received.at(-1).answers, null);
+  await click("#questions-back");
   for (const artifact of sharedDesignExample().artifacts) {
     await click(`[data-artifact-tab="${artifact.id}"]`);
     assert.equal(await browser.evaluate("document.querySelector('[data-sketch-id]').dataset.sketchId"), artifact.id);

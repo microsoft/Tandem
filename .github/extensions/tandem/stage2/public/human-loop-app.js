@@ -12,8 +12,11 @@ import { createWorkflowStopControl } from './workflow-stop-control.js';
 import { installPanelSplitter } from './panel-splitter.js';
 import { createImplementationConfirmations } from './implementation-confirmation.js';
 import { installProjectPresentation } from './project-presentation.js';
+import { currentHandoffActivity, handoffProgress, quietHandoff } from './handoff-presentation.js';
 import { projectOutputs } from './project-outputs.js';
 import { parseRoleMention } from './role-hint.js';
+import { installRoleSuggestions } from './role-suggestions.js';
+import { developmentStatus } from './development-status.js';
 import { createQueuedRequests } from './queued-requests.js';
 
 const $ = (id) => document.getElementById(id);
@@ -44,8 +47,34 @@ let initialCreationConfirmation = null;
 let initialCreationInspecting = false;
 let emptySetupConfirmation = null, emptySetupBusy = false;
 let installationNotice = null;
+let acknowledgement = null;
+let requestFailure = null, permissionFailure = null;
+let requestFailureText = null;
+const presentationScope = () => JSON.stringify([snapshot?.streamId, projectPresentation?.statusScope()]);
+const activityIdentity = () => JSON.stringify([snapshot?.streamId, projectPresentation?.statusScope(),
+  snapshot?.workflow?.activeRequestId, snapshot?.workflow?.activeRole, snapshot?.workflow?.activeCondition,
+  snapshot?.workflow?.status, snapshot?.workflow?.compaction,
+  snapshot?.messages?.at(-1)?.id, snapshot?.design?.binding,
+  snapshot?.accessRequests?.map(item => item.id)]);
+function statusPresentation() {
+  if (!controlsConnected) return { kind: 'attention', text: 'Development connection unavailable', requestId: null };
+  if (requestFailure === presentationScope() || permissionFailure === presentationScope()) return { kind: 'attention',
+    text: permissionFailure === presentationScope() ? 'Permission response needs attention' : 'Request needs attention', requestId: pending?.id ?? null };
+  if (acknowledgement?.identity !== activityIdentity()) acknowledgement = null;
+  if (acknowledgement?.requestId && snapshot?.messages?.some(item => item.requestId === acknowledgement.requestId))
+    acknowledgement = null;
+  const status = developmentStatus(snapshot, acknowledgement);
+  if (status.kind === 'active' || status.kind === 'attention') acknowledgement = null;
+  return status;
+}
+function acknowledge(text, requestId = null) {
+  acknowledgement = { id: crypto.randomUUID(), identity: activityIdentity(), text, requestId };
+  render();
+}
+for (const type of ['pointerdown', 'keydown']) document.addEventListener(type, () => {
+  if (acknowledgement) { acknowledgement = null; render(); }
+}, { capture: true });
 const answerPending = new Map();
-let revealedQuestionKey = null;
 const notice = (text) => { $('notice').textContent = text ?? ''; $('notice').hidden = !text; };
 const stopControl = createWorkflowStopControl({
   container: $('workflow-stop-control'), primary: $('stop-current-flow'), toggle: $('stop-options'),
@@ -69,6 +98,8 @@ const projectPresentation = installProjectPresentation({ document, window,
   outputSelection: () => selectedOutput ?? (designView.current() ? { id: `design:${designView.current().artifactId}`,
     binding: JSON.stringify(snapshot.design?.binding ?? lastVerifiedDesign?.binding) } : null),
   currentWork: () => $('focus-current-message').click(),
+  statusPresentation,
+  scopeChanged: () => { acknowledgement = null; requestFailure = null; permissionFailure = null; },
 });
 function renderReasoningEffort() {
   const id = $('setting-model').value, model = settingsModel;
@@ -178,9 +209,49 @@ cycleArtifact.className = 'human-loop';
 cycleArtifact.setAttribute('aria-label', 'Implementation cycle progress');
 questionArtifact.className = 'human-loop';
 questionArtifact.setAttribute('aria-label', 'Workflow questions');
-$('question-panel').append(questionArtifact);
+$('questions-content').append(questionArtifact);
+let questionFocus = null, designFocus = null, designScroll = [], designInert = [];
+const designChildren = [...$('design-panel').children].filter(node => node !== $('question-panel'));
+document.addEventListener('focusin', event => {
+  if ($('questions-content').contains(event.target)) questionFocus = event.target;
+  else if ($('design-panel').contains(event.target) && !$('question-panel').contains(event.target)
+    && event.target !== $('return-to-questions')) designFocus = event.target;
+});
+function showQuestions() {
+  projectPresentation?.showDesign();
+  if ($('question-panel').hidden) {
+    designInert = designChildren.map(node => [node, node.inert]);
+    designScroll = designChildren.flatMap(node => [node, ...node.querySelectorAll('*')])
+      .filter(node => node.scrollTop || node.scrollLeft).map(node => [node, node.scrollTop, node.scrollLeft]);
+  }
+  $('design-panel').dataset.workspaceView = 'questions';
+  for (const node of designChildren) node.inert = true;
+  $('question-panel').hidden = false;
+  $('show-questions').setAttribute('aria-expanded', 'true');
+  const target = questionFocus?.isConnected && questionFocus.getClientRects().length && !questionFocus.disabled
+    ? questionFocus : questionArtifact.querySelector('.question-open-list button[aria-current="true"]')
+      ?? questionArtifact.querySelector('.question-open-list button')
+      ?? questionArtifact.querySelector('.question-history:not([hidden]) > summary') ?? $('questions-back');
+  target.focus({ preventScroll: true });
+  if (matchMedia('(max-width: 660px)').matches || document.body.dataset.projectStacked === 'true') {
+    $('question-panel').scrollIntoView({ block: 'start' });
+  }
+}
+function closeQuestions({ focus = false } = {}) {
+  const wasOpen = !$('question-panel').hidden;
+  delete $('design-panel').dataset.workspaceView;
+  if (wasOpen) for (const [node, inert] of designInert) node.inert = inert;
+  $('question-panel').hidden = true;
+  $('show-questions').setAttribute('aria-expanded', 'false');
+  $('return-to-questions').hidden = true;
+  if (wasOpen) for (const [node, top, left] of designScroll) { node.scrollTop = top; node.scrollLeft = left; }
+  if (focus) (designFocus?.isConnected && designFocus.getClientRects().length ? designFocus : $('show-questions')).focus({ preventScroll: true });
+}
 const conversation = createConversationRenderer({ messages: $('messages'), history: $('state-history'),
   current: $('current-state'), currentDetail: $('current-detail'), newer: $('newer'),
+  canFollowMessages: () => !$('messages').contains(document.activeElement)
+    && !snapshot?.workflow?.questionInteractions.some(group => group.canAnswer
+      && group.questions.some(question => question.state === 'open' && question.blockingActive)),
   onSelectState: transition => { $('history-details')?.remove(); queuedRequests.focusRequest(transition.source?.requestId); } });
 const queuedRequests = createQueuedRequests($('queued-requests'));
 let annotation;
@@ -204,6 +275,7 @@ function inspectReference(binding, reference) {
   catch (error) { notice(error.message); }
 }
 function showOriginalDesign() {
+  closeQuestions();
   selectedOutput = null;
   pendingOutputFocus = null;
   $('project-output-view').hidden = true;
@@ -212,6 +284,7 @@ function showOriginalDesign() {
   if (snapshot) projectPresentation?.publish(snapshot);
 }
 function openOutput(item, source) {
+  closeQuestions();
   if (item.target.kind === 'design') {
     showOriginalDesign();
     designView.selectArtifact(item.target.artifactId);
@@ -294,33 +367,32 @@ function renderComposer() {
   $('send').setAttribute('aria-label', pendingSubmitted && !sending ? 'Retry exact request' : 'Send message');
   $('send').title = pendingSubmitted && !sending ? 'Retry exact request' : 'Send message';
   renderRoleHint();
+  roleSuggestions.refresh();
 }
 function renderRoleHint() {
   const help = $('role-hint-help');
-  help.hidden = Boolean(projectPresentation?.discovery());
   const parsed = pending ? { roleHint: pending.roleHint, error: null } : parseRoleMention($('message').value);
   const text = parsed.error ?? (parsed.roleHint
     ? `Preference: @${parsed.roleHint.role} for this message. Router decides who responds.`
-    : 'Start with @designer or @agent to suggest a role. Router decides.');
+    : '');
+  help.hidden = Boolean(projectPresentation?.discovery()) || !text;
   if (help.textContent !== text) help.textContent = text;
+  if (help.hidden) $('message').removeAttribute('aria-describedby');
+  else $('message').setAttribute('aria-describedby', help.id);
   $('message').setAttribute('aria-invalid', String(!help.hidden && Boolean(parsed.error)));
 }
 $('message').addEventListener('input', renderRoleHint);
 function render() {
   clipboard.refresh();
   if (!snapshot) return;
-  const followMessages = $('messages').scrollHeight - $('messages').scrollTop - $('messages').clientHeight < 60;
   const view = snapshot.workflow;
   const installed = snapshot.installation;
   const compaction = view?.compaction;
   $('request-compaction').disabled = compactionRequesting || !compaction?.canRequest;
   $('request-compaction').textContent = compaction?.active ? 'Compacting model context...'
     : compaction?.requested ? 'Compaction requested...' : 'Compact model context...';
-  $('compaction-status').hidden = !compaction?.active && !compaction?.requested && !compaction?.error;
-  $('compaction-status').textContent = compaction?.active
-    ? `Compacting model context. Workflow: ${humanLoopStatusLabel(view.status)}. Saved Conversation and Design remain retained.`
-    : compaction?.requested ? 'Approved compaction requested. Waiting for the native runtime.'
-      : compaction?.error ? `Context compaction failed: ${compaction.error}` : '';
+  $('compaction-status').hidden = !compaction?.error;
+  $('compaction-status').textContent = compaction?.error ? `Context compaction failed: ${compaction.error}` : '';
   $('initialize').hidden = projectPresentation
     ? !projectPresentation.workingDevelopment() || !installed?.canReopen && !installed?.canRetry
     : !installed?.canStart && !installed?.canReopen && !installed?.canRetry;
@@ -350,7 +422,7 @@ function render() {
   const handoffText = handoffEntry?.text ?? handoffEntry?.content;
   const summaryInConversation = typeof handoffText === 'string' && Boolean(presentedView?.lastHandoff?.summary)
     && handoffText.includes(presentedView.lastHandoff.summary);
-  renderHumanLoop($('human-workflow'), { view: presentedView, busy: false, questionsContainer: questionArtifact, cycleContainer: cycleArtifact,
+  renderHumanLoop($('human-workflow'), { view: presentedView, busy: false, questionsContainer: questionArtifact, questionWorkspace: true, cycleContainer: cycleArtifact,
     summaryInConversation, showQueue: false, answerDetails: snapshot.messages.flatMap(entry => (entry.answerDetails ?? [])
       .map(answer => ({ ...answer, answerRequestId: entry.requestId }))) }, {
     submitAnswers: async (batch) => {
@@ -373,11 +445,15 @@ function render() {
     },
     stop: () => requestStopAfterStep(),
     refresh: () => refresh(), discuss: () => $('message').focus(),
-    inspectReference,
-    inspectQuestionSource: (_resultId, requestId) => {
-      $('question-panel').hidden = true;
-      $('show-questions').setAttribute('aria-expanded', 'false');
-      if (!queuedRequests.focusRequest(requestId)) conversation.focusRequest(requestId);
+    inspectReference: (binding, reference) => {
+      const fromQuestion = !$('question-panel').hidden;
+      inspectReference(binding, reference);
+      if (fromQuestion) $('return-to-questions').hidden = false;
+    },
+    inspectQuestionSource: (resultId, requestId) => {
+      const entry = snapshot.messages.find(entry => entry.resultId === resultId || entry.id === resultId || entry.id === `handoff:${resultId}`);
+      if (entry) conversation.focusEntry(entry.id);
+      else if (!queuedRequests.focusRequest(requestId)) conversation.focusRequest(requestId);
     },
   });
   $('private-history-status').hidden = snapshot.conversationStatus !== 'unverified';
@@ -393,10 +469,17 @@ function render() {
     }
   }
   renderImplementationConfirmations();
-  conversation.current({ kind: view?.status ?? 'host', label: compaction?.active ? `Compacting · ${humanLoopStatusLabel(view.status)}`
-    : compaction?.requested ? 'Compaction requested'
-      : view ? humanLoopStatusLabel(view.status) : projectPresentation && installed?.status === 'new'
-        ? 'Development not activated' : installed ? humanLoopStatusLabel(installed.status) : 'Connecting',
+  const designVerified = snapshot.conversationStatus !== 'unverified' && ['ready', 'closed'].includes(installed?.status);
+  const statusOwner = projectPresentation?.handoffStatusOwner();
+  const prototypeActivity = designVerified ? currentHandoffActivity(snapshot.workflow?.handoffActivity, statusOwner) : null;
+  const unrelatedActivity = view?.activeRequestId && view.activeRequestId !== prototypeActivity?.requestId;
+  const prototypeProgress = !unrelatedActivity && prototypeActivity?.requestId !== statusOwner
+    && !view?.reason && !installed?.reason && !counts.unanswered
+    ? handoffProgress(prototypeActivity, snapshot.design?.content ? snapshot.design.binding : null, snapshot.accessRequests?.length ?? 0) : '';
+  const presentedStatus = statusPresentation();
+  $('focus-current-message').title = presentedStatus.text;
+  conversation.current({ kind: view?.status ?? 'host', label: presentedStatus.kind === 'idle' && prototypeProgress
+    ? prototypeProgress : presentedStatus.text,
     detail: view?.reason ?? installed?.reason ?? '' });
   if (view?.currentCycle) {
     conversation.placeArtifact('human-cycle-progress', cycleArtifact, { requestId: view.currentCycle.originRequestId,
@@ -429,7 +512,11 @@ function render() {
     if (app.canStop) { const stop = make('button', 'Stop preview'); stop.onclick = () => post('/api/apps/stop', { id: app.id }).then(refresh).catch((error) => notice(error.message)); row.append(stop); }
     return row;
   }));
-  const designVerified = snapshot.conversationStatus !== 'unverified' && ['ready', 'closed'].includes(installed?.status);
+  const showPrototypeActivity = prototypeActivity && !unrelatedActivity
+    && !["progress", "settled"].includes(prototypeActivity.statusKind)
+    && !quietHandoff(prototypeActivity, snapshot.design?.content ? snapshot.design.binding : null, snapshot.accessRequests?.length ?? 0);
+  $('prototype-handoff-activity').hidden = !showPrototypeActivity;
+  $('prototype-handoff-activity').textContent = showPrototypeActivity ? prototypeActivity.label : '';
   if (designVerified) lastVerifiedDesign = snapshot.design;
   const displayedDesign = designVerified ? snapshot.design : lastVerifiedDesign;
   const hasDesign = Boolean(displayedDesign?.content);
@@ -439,7 +526,8 @@ function render() {
   $('backbone-state').textContent = !designVerified ? 'Design unverified' : hasDesign ? 'Current Design' : 'No Design yet';
   $('assessment-card').querySelector('strong').textContent = designVerified ? 'No Design has been published' : 'Design is not yet verified';
   $('assessment-card').querySelector('p').textContent = designVerified
-    ? 'Discuss your idea in the conversation. The current Design will appear here when it is ready.'
+    ? prototypeActivity ? 'The saved Prototype request is tracked in Conversation. Design will appear here when published.'
+      : 'Discuss your idea in the conversation. The current Design will appear here when it is ready.'
     : 'Restore the Development connection to verify saved Design. Unavailable does not mean empty.';
   if (hasDesign) {
     const raw = JSON.stringify(displayedDesign.content, null, 2);
@@ -464,12 +552,7 @@ function render() {
       return row;
     }));
   }
-  const blockers = questionGroups.filter(group => group.canAnswer).flatMap(group => group.questions
-    .filter(q => q.state === 'open' && q.blockingActive).map(q => [group.resultId, q.id]));
-  const nextQuestionKey = blockers.length ? JSON.stringify(blockers) : null;
-  if (nextQuestionKey && nextQuestionKey !== revealedQuestionKey) revealCurrentQuestion();
-  else if (followMessages && !nextQuestionKey && !$('messages').contains(document.activeElement)) $('messages').scrollTop = $('messages').scrollHeight;
-  revealedQuestionKey = nextQuestionKey;
+  conversation.refreshLayout();
   projectPresentation?.publish(snapshot);
   focusProjectOutput();
   const outputView = $('project-output-view');
@@ -498,14 +581,26 @@ function renderPermissions() {
   $('access-approval').hidden = !snapshot.accessRequests.length;
   $('remembered-approvals').hidden = !remembered;
   renderPermissionRequests($('access-requests'), snapshot.accessRequests, {
-    decide: async (id, decision) => { await post(`/api/access/${encodeURIComponent(id)}`, { decision }); await refresh(); },
-    approvePendingOnce: async requestIds => {
-      const result = await post('/api/permissions/once', { requestIds });
-      const unavailable = result.results.filter(entry => entry.status === 'not-pending').length;
-      if (unavailable) notice(`${result.results.length - unavailable} permissions approved; ${unavailable} were no longer pending. Later arrivals were not included.`);
-      if (!await refresh()) throw new Error('Could not refresh permissions. The captured approval result was saved; refresh before retrying.');
+    decide: async (id, decision) => {
+      permissionFailure = null;
+      const scope = presentationScope();
+      try {
+        await post(`/api/access/${encodeURIComponent(id)}`, { decision });
+        if (!await refresh()) throw new Error('Permission response saved; refresh to verify current permissions.');
+        if (scope === presentationScope()) acknowledge('Permission response saved.');
+      } catch (error) { permissionFailure = scope; throw error; }
     },
-    onError: error => notice(error.message),
+    approvePendingOnce: async requestIds => {
+      permissionFailure = null;
+      const scope = presentationScope();
+      try {
+        const result = await post('/api/permissions/once', { requestIds });
+        const unavailable = result.results.filter(entry => entry.status === 'not-pending').length;
+        if (!await refresh()) throw new Error('Could not refresh permissions. The captured approval result was saved; refresh before retrying.');
+        if (scope === presentationScope()) acknowledge(`${result.results.length - unavailable} permission responses saved${unavailable ? `; ${unavailable} no longer pending` : ''}.`);
+      } catch (error) { permissionFailure = scope; throw error; }
+    },
+    onError: error => { notice(error.message); render(); },
   });
   const signature = JSON.stringify([snapshot.accessRequests, remembered, snapshot.workflow?.canResetApprovals]);
   if (signature === permissionSignature) return;
@@ -559,6 +654,8 @@ async function refresh() {
     if (pending && snapshot.messages.some(({ requestId }) => requestId === pending.id)) completePending();
     render(); return true;
   })().catch((error) => { controlsConnected = false; projectPresentation?.unavailable(error.message);
+    acknowledgement = null;
+    conversation.current({ kind: 'unavailable', label: 'Development connection unavailable', detail: error.message });
     renderComposer(); renderBackground(); renderStopControl(); renderImplementationConfirmations(); notice(error.message); return false; }).finally(() => { refreshing = null; });
   return refreshing;
 }
@@ -581,7 +678,19 @@ const clipboard = installComposerImage({
     return value.attachment;
   },
 });
+const roleSuggestions = installRoleSuggestions($('message'), $('role-suggestions'), () =>
+  !sending && !pending && controlsConnected && snapshot?.installation?.status === 'ready' && snapshot?.workflow?.canSend
+    && !developmentUnavailable() && projectPresentation?.discovery() !== true);
 installComposerEnter($('message'), $('composer'), () => !sending && !$('send').disabled);
+$('message').addEventListener('input', () => {
+  if (requestFailure && !pendingSubmitted) {
+    requestFailure = null;
+    if ($('notice').textContent === requestFailureText) notice('');
+    requestFailureText = null;
+    render();
+  }
+  if (acknowledgement) { acknowledgement = null; render(); }
+});
 $('quick-requests').querySelector('summary').addEventListener('click', event => {
   if (sending || pending) event.preventDefault();
 });
@@ -594,8 +703,7 @@ $('quick-requests').addEventListener('click', event => {
   $('quick-requests').open = false;
   input.focus();
   input.setSelectionRange(input.value.length, input.value.length);
-  notice(hadDraft ? 'Request added after your existing draft. Review and edit before sending.'
-    : 'Request added to your draft. Edit it, then Send.');
+  acknowledge('Request added to draft; not sent.');
 });
 $('quick-requests').addEventListener('keydown', event => {
   if (event.key !== 'Escape' || !$('quick-requests').open) return;
@@ -625,6 +733,9 @@ $('composer').addEventListener('submit', async (event) => {
     return;
   }
   sending = true; annotation.setSending(true); notice(''); renderComposer();
+  requestFailure = null;
+  acknowledgement = null;
+  const submissionScope = presentationScope();
   try {
     if (pending && pending.message !== $('message').value) throw new Error('The previous request is unconfirmed. Refresh before replacing its text.');
     if (!pending) {
@@ -646,16 +757,18 @@ $('composer').addEventListener('submit', async (event) => {
       }
     }
     const envelope = pending;
+    const scope = presentationScope();
     pendingSubmitted = true;
     const acknowledgement = await post('/api/requests', envelope, 202);
     if (acknowledgement.requestId !== envelope.id) throw new Error('Request acknowledgement has another identity; refresh before retrying.');
     if (pending?.id === envelope.id) completePending();
-    notice('Request received.');
+    if (scope === presentationScope()) acknowledge('Request received; awaiting workflow activity.', envelope.id);
   } catch (error) {
     if (error.accepted || (pending && snapshot?.messages.some(({ requestId }) => requestId === pending.id))) completePending();
     else {
       if (error.notAccepted || !pendingSubmitted) { pending = null; pendingSubmitted = false; pendingPreviewUrl = null; pendingClipboardId = null; }
       notice(error.message);
+      requestFailure = submissionScope; requestFailureText = error.message; render();
     }
   } finally {
     sending = false; annotation.setSending(pendingSubmitted); renderComposer();
@@ -700,24 +813,21 @@ $('advanced-workflow-controls').addEventListener('keydown', (event) => {
   }
 });
 function revealCurrentQuestion() {
-  const target = questionArtifact.querySelector('fieldset[data-question-state="open"]:not([disabled])');
+  const target = questionArtifact.querySelector('fieldset[data-question-state="open"] select:not([disabled])');
   if (!target) return false;
-  $('question-panel').hidden = false;
-  $('show-questions').setAttribute('aria-expanded', 'true');
-  target.closest('.human-loop-question-group').open = true;
-  target.scrollIntoView({ block: 'nearest' });
+  showQuestions();
   return true;
 }
 $('show-questions').onclick = () => {
-  const panel = $('question-panel');
-  panel.hidden = !panel.hidden;
-  $('show-questions').setAttribute('aria-expanded', String(!panel.hidden));
-  if (!panel.hidden) revealCurrentQuestion();
+  if ($('question-panel').hidden) showQuestions();
+  else closeQuestions({ focus: true });
 };
+$('questions-back').onclick = () => closeQuestions({ focus: true });
+$('return-to-questions').onclick = showQuestions;
+$('questions-conversation').onclick = () => $('message').focus();
 $('question-panel').addEventListener('keydown', event => {
-  if (event.key !== 'Escape') return;
-  event.preventDefault(); $('question-panel').hidden = true;
-  $('show-questions').setAttribute('aria-expanded', 'false');
+  if (event.key !== 'Escape' || event.defaultPrevented) return;
+  event.preventDefault(); closeQuestions();
   $('show-questions').focus();
 });
 $('focus-current-message').onclick = () => {
@@ -863,6 +973,11 @@ function renderImplementationConfirmations() {
   implementationConfirmations.render(snapshot?.workflow?.implementationConfirmations, { connected: controlsConnected });
 }
 stream.addEventListener('update', () => void refresh());
-stream.onerror = () => { controlsConnected = false; renderBackground(); renderStopControl(); renderImplementationConfirmations(); $('connection-status').textContent = 'Reconnecting'; };
+stream.onerror = () => {
+  controlsConnected = false; acknowledgement = null;
+  projectPresentation?.unavailable('Live updates disconnected; reconnecting.', true);
+  conversation.current({ kind: 'unavailable', label: 'Reconnecting to Development...', detail: '' });
+  renderBackground(); renderStopControl(); renderImplementationConfirmations(); $('connection-status').textContent = 'Reconnecting';
+};
 setInterval(() => void refresh(), 3000);
 await refresh();

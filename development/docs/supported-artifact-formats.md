@@ -46,6 +46,15 @@ screen thumbnails remains User story, not also UI just because it depicts screen
 UI-free projects do not require UI artifacts. Checkout interaction
 sequences remain a valid Mermaid choice. Category is independent of all visual and document formats.
 
+New or revised artifacts should answer focused review questions and be individually
+selectable with distinct stable IDs and purpose categories. Keep User story
+(ordered actions and outcomes) separate from UI (screen layouts and states) when
+both apply; likewise separate relevant workflow, contract/data and system views.
+Do not collapse the Design into one huge HTML page, internal HTML tabs or a long
+scrolling collage. Split unrelated journeys/screens into manageable artifacts.
+Combine only inseparable content serving the same review purpose, not to reduce
+file count. This requires neither all categories nor one artifact per widget.
+
 Only nonempty categories appear above exact artifact titles. Native buttons
 support Tab/Enter and visible focus, with horizontally scrollable rows on narrow
 panels. Each category remembers its selected artifact within the current revision;
@@ -106,7 +115,7 @@ Content-specific authoring defaults favor reviewable visuals:
 
 | Content | Recommended artifact |
 | --- | --- |
-| User story | HTML storyboard: ordered user actions, system responses/outcomes, relevant failure/retry |
+| User story | HTML storyboard for user-visible screen/step journeys; Mermaid sequence interaction timeline when actor exchanges and their order are central. Show actions, responses/outcomes and relevant failure/retry |
 | UI | HTML mockup: actual screen layouts and interaction states, not boxes describing screens |
 | Workflows | Mermaid flowchart/state/sequence for steps, lifecycle or interactions |
 | Behavioral contracts/rules | Mermaid sequence for exchanges; HTML decision tables for conditions/rules/outcomes |
@@ -120,6 +129,34 @@ HTML/SVG alternatives are allowed where clearer. Do not invent HTTP APIs or
 persistence to use a format. Select relevant complementary views without
 unnecessary duplication. The primary artifact must stand on its own; essential
 approval decisions cannot be hidden in notes.
+
+For newly authored or revised visuals, **make the visual carry the information**,
+including in HTML. Show relationships with named connectors, cardinality and typed
+fields; interactions with lifelines/messages or ordered action-response states;
+rules with compact decision tables; UI with actual layouts/states; and systems
+with boundaries and dependencies. Use short meaningful labels/captions and only
+essential callouts, not paragraph grids, repeated introductions, list-heavy
+specifications or decorative cards that still require reading paragraphs.
+For example, connect Order to LineItem with cardinality and typed fields rather
+than explaining the relationship in two text cards.
+
+Keep necessary constraints, invariants, errors, decisions, failure paths and
+evidence visible. Do not achieve brevity through arbitrary word caps, tiny fonts,
+clipping or hiding essential detail. Recompose instead. Brief deeper rationale
+can use existing optional notes/details; the primary artifact stays self-contained.
+This authoring guidance does not automatically rewrite saved artifacts.
+
+For a Prototype handoff, new or refined UI artifacts preserve the **accepted,
+displayed saved Prototype**: layout, hierarchy, spacing, typography, colors,
+labels, controls, states and interaction flows. Read the receipt-bound source
+and assets as evidence, not executable setup or permission to overwrite files.
+Pending milestones and incomplete mocks do not establish user intent. Later
+explicitly approved Design revisions take precedence over an obsolete Prototype.
+Missing/conflicting evidence or necessary deviations belong in the Designer
+summary and Questions, with approval before consequential UX changes.
+Production internals may differ without silent visual drift. Fidelity belongs
+in the canonical Design and observable outcomes; Design review and separate
+implementation confirmation remain unchanged.
 
 Existing Markdown contracts remain accepted and unchanged; no mandatory
 companion is introduced. They retain portable source behind a source disclosure; an
@@ -176,10 +213,10 @@ the user's system, then chooses a format independently for each view:
 
 | Purpose | Typical format |
 | --- | --- |
-| User-facing journeys and interaction steps | Static HTML/CSS screen/card storyboard |
+| User-facing journeys and interaction steps | Static HTML/CSS storyboard; Mermaid sequence timeline when actor exchanges/order are central |
 | Relationships, workflows, states, user/UI/service message sequences | Supported Mermaid syntax |
 | UX screens and wireframes | Static HTML and CSS |
-| Data/API contracts with actual fields, types, constraints and errors | HTML tables and text |
+| Data/API contracts with actual fields, types, constraints and errors | Mermaid ER/class; precise JSON Schema/OpenAPI when needed; HTML/SVG where clearer |
 | Context, components, responsibilities and integrations | Mermaid flowchart or SVG |
 | Precise spatial or geometric composition | SVG |
 

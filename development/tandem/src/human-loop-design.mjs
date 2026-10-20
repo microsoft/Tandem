@@ -48,6 +48,7 @@ export class HumanLoopDesigner {
     return this.#journal.inspect(async () => {
       const current = await this.#artifacts.inspectCurrent();
       return { binding: bindingOf(current), content: current?.input ?? null,
+        publication: current ? { requestId: current.requestId, previous: current.previous } : null,
         references: current ? designReferenceCatalog(current.input) : [] };
     });
   }
@@ -56,7 +57,8 @@ export class HumanLoopDesigner {
     await this.#verify();
     return this.#journal.inspect(async () => {
       const revision = await this.#artifacts.readRevision(binding);
-      return { binding: bindingOf(revision), content: revision.input, references: designReferenceCatalog(revision.input) };
+      return { binding: bindingOf(revision), content: revision.input,
+        publication: { requestId: revision.requestId, previous: revision.previous }, references: designReferenceCatalog(revision.input) };
     });
   }
 

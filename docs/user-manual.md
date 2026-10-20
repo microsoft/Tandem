@@ -7,6 +7,9 @@
 Open the project folder you want to work on. Its first Preparation/Development
 choice is saved there; it is not a mode switch on every visit.
 Preparation can progress into Development, and existing files are preserved.
+Both first-time choices check project Git setup before being saved. Review any
+local initialization/ignore-rule consent; Cancel leaves the choice unsaved.
+Existing repositories are reused, and Preparation never starts private Development.
 
 | Area | Your work | Output |
 | --- | --- | --- |
@@ -105,7 +108,7 @@ milestones are not feedback you submitted.
 Use **Feedback** to **Send change** or **Queue change**, then inspect its
 status and clarifications. Finish requires the necessary milestones, current
 drawing approval and resolved submitted feedback. **Finish Prototype and save
-outputs** retains evidence; it does not approve implementation.
+outputs** retains evidence; it starts neither Design nor implementation.
 Non-GUI work can retain a reason/specification without fabricating screens.
 
 ### Explore visual directions
@@ -144,6 +147,40 @@ history remain saved. If ordinary feedback has since changed the prototype,
 **Explore current prototype** builds fresh directions instead of applying stale
 comparisons. Resolve submitted feedback before finishing.
 
+### Continue into Development
+
+**Continue to Development** opens a handoff summary, not a model request.
+Check its saved specification, decisions, assumptions, deferred work and target
+folder, then confirm **Create Design from Prototype** (or **Refine Design from
+Prototype**). Cancel changes nothing. **Open Development** is navigation only.
+After confirmation, status distinguishes submission, Designer work and published
+Design/questions. If activity is unavailable, it says unverified rather than
+claiming completion. Scripts do not run and implementation remains separately
+confirmed. Once the matching Design is verified and visible, the completed
+handoff status clears and stays out of the workspace after later Design
+revisions. Results remain in Conversation; saved request/source details are under
+**Project settings > Advanced handoffs & history > Acceptance & process history**.
+New handoffs, unanswered questions and unverified or failed work still show their
+current status. Routine checking, setup and Designer progress use the existing
+bottom status bar without adding a header or moving the workspace. Review and
+recovery controls stay beside the handoff; questions, permissions and actionable
+errors stay in their owning Development controls. The standalone Development
+view uses its conversation status strip.
+
+In **Development only**, that bar shows one current message: required attention,
+then verified role activity or compaction, then a request/draft/permission
+acknowledgment, then Ready. “Request received” confirms receipt, not execution.
+Acknowledgments clear on the next interaction or relevant workflow change;
+editing a draft, switching project generation, or reconnecting cannot revive an
+old acknowledgment. Detailed errors, consent, questions, implementation decisions,
+attachment validation and Settings feedback remain with their owning controls.
+Preparation, Requirements, Drawings and Prototype keep their existing status UX.
+
+UI Design should preserve the accepted displayed Prototype's appearance and
+interactions, not redesign it from prose. Missing evidence or necessary UX changes
+are raised in the Designer summary and Questions; later approved Design revisions
+are not replaced by an older Prototype.
+
 Saved source and a running preview are separate. Use
 [preview recovery](troubleshooting.md#the-preview-is-unavailable) to restart a
 saved version, or [continue into Design](use-cases.md#continue-from-a-saved-prototype).
@@ -152,9 +189,16 @@ saved version, or [continue into Design](use-cases.md#continue-from-a-saved-prot
 
 Wait for **Ready**, then send requests in Development. **Quick requests** appends
 editable text to the draft; it never sends automatically.
+While Development's private session owns approvals, the browser host hides its
+redundant permission-mode icon, even when you browse discovery stages. Development
+permission settings and actual permission prompts remain available. The host
+selector is disabled while ownership is unverified.
 You can establish Design from existing code without editing it, refine an idea,
 or ask for an explanation. [Optional role hints](use-cases.md#suggest-designer-or-agent)
 and [visual annotations](use-cases.md#point-to-a-design-change) help express intent.
+Artifact actions share the artifact heading instead of a separate toolbar row.
+Questions, Current Design and connection status remain visible without redundant
+Canvas or Conversation titles.
 
 Before requesting implementation, trace a user goal through the proposed behavior:
 what starts it, what outcome the user sees, and which limits or failure cases
@@ -162,8 +206,29 @@ matter. For a service or CLI, use a request sequence or command/output example
 instead of requiring a screen. Describe what should happen, not a technology
 choice you do not feel equipped to judge.
 
-Open **Questions** to see the original context, options, implications and answers.
-Use that form to answer; ordinary chat is not guessed to be an answer to it.
+Select **Questions** beside Conversation to use the left workspace while keeping
+Conversation available on the right. Select a question from the visible list to
+read its context, options and consequences. List selection only navigates; it
+does not answer or submit anything. On narrow screens, Questions and Conversation stack
+in one column; **Go to Conversation** moves to the composer.
+**Back to Design** restores the retained Design view. Inspecting a Design
+reference offers **Back to Questions** without discarding your answer drafts.
+New questions and answers do not switch views.
+
+**Go to latest** (down arrow) appears when you scroll back in Conversation or
+status history, even without new messages. It returns both to the latest content
+without sending anything or clearing drafts. Incoming updates do not move you
+away from older content you are reading.
+
+**Send selected answers** sends the displayed selection list from that source as
+one batch, including drafts for its other questions; drafts from other sources
+are not sent. Unselected questions remain unanswered. Drafts survive navigation;
+answers are recorded only after acknowledgment. The open-question list shows
+blocking/advisory and draft states, and is hidden when empty.
+Expand **Answered history** (or **Question
+history** when it includes other statuses) to read the saved-question list and
+recorded answers. **Inspect full context** opens one entry's complete text and
+source references. Ordinary chat is not guessed to be a question answer.
 
 | Question | If you leave it unanswered |
 | --- | --- |

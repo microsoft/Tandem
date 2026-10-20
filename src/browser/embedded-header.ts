@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isApplicationHeader, isHeaderMessage, type ApplicationHeader, type HeaderAction } from "../renderer/standalone-header.js";
 
-export function useEmbeddedHeader(canvasUrl: string | null | undefined, generation: string | undefined, reload: number, report: (error: string) => void) {
+export function useEmbeddedHeader(canvasUrl: string | null | undefined, generation: string | undefined, reload: number, report: (error: string, dismissible?: boolean) => void) {
     const frame = useRef<HTMLIFrameElement>(null);
     const channel = useMemo(() => crypto.randomUUID(), [canvasUrl, generation, reload]);
     const [received, setReceived] = useState<{ channel: string; header: ApplicationHeader } | null>(null);
@@ -21,7 +21,7 @@ export function useEmbeddedHeader(canvasUrl: string | null | undefined, generati
                 else {
                     setReceived(null);
                     frame.current?.contentWindow?.postMessage({ type: "tandem:header:disconnect", channel }, origin);
-                    report("The application returned invalid header controls. Its original controls remain available; reload the page to reconnect.");
+                    report("The application returned invalid header controls. Its original controls remain available; reload the page to reconnect.", false);
                 }
             } else if (event.data.type === "tandem:header:error" && typeof event.data.message === "string") {
                 report(event.data.message.slice(0, 8192));
@@ -32,7 +32,7 @@ export function useEmbeddedHeader(canvasUrl: string | null | undefined, generati
     }, [channel, origin, connect, report]);
     const send = (action: HeaderAction) => {
         if (!origin || !header || !frame.current?.contentWindow || !header.controls[action] || header.controls[action]?.disabled) {
-            report("The application is not ready for that action. Wait for it to reconnect.");
+            report("The application is not ready for that action. Wait for it to reconnect.", false);
             return;
         }
         frame.current.contentWindow.postMessage({ type: "tandem:header:action", channel, scope: header.scope, action }, origin);

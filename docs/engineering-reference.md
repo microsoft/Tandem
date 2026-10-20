@@ -95,13 +95,13 @@ choice and progress; refreshing an already-open page does not repeat initializat
 Browsing artifacts does not start work, and Close is not undone by a render/poll.
 Foreign ownership or invalid metadata fails visibly without rebinding or resetting.
 
-Development entry first checks Git and effective application-state exclusions
+Initial project entry for either starting path checks Git and effective application-state exclusions
 without writing. `/api/development/preflight` binds an expiring, one-operation
 consent to the observed folder, Git metadata, saved choice and ignore bytes.
 Only explicit `/api/development/setup` consent may initialize local Git and append
 the missing `.tandem/` rule. It never chooses a starting path or starts a runtime.
 The renderer then resumes the originally requested public entry once; the backend
-rechecks readiness before saving a Development choice, opening it or preparing a
+rechecks readiness before saving either starting choice, opening Development or preparing a
 Prototype handoff. Setup does not authorize model submission or implementation.
 Cancel performs no setup or project-entry writes. Partial failures retain and
 report attempted changes, and require a fresh check before another consent.
@@ -281,7 +281,12 @@ adopt a previous Stage 2 run, its canonical Design or session authority. Existin
 used Stage 2 work still requires its original owner and same-ID recovery; this
 does not bypass the desktop workspace's main-session ownership rules.
 
-Alternatively, **Continue Design from Prototype** explicitly asks the current
+Alternatively, **Continue to Development** opens a read-only handoff review.
+`GET /api/development/handoff-review` reads the completed snapshot, without
+creating a receipt or native session. Confirmation binds its snapshot hash,
+generation, source path, target workspace, owner and acceptance context; changed
+inputs fail before admission. Cancel has no backend mutation.
+**Create Design from Prototype** (or **Refine Design from Prototype**) asks the current
 host to retain an immutable bounded handoff under the **target worktree's**
 `.tandem\living-canvas\handoffs`. It includes exact completed snapshot bytes,
 artifact hashes, confirmed/assumed/deferred decisions, approved drawings/assets,
@@ -602,8 +607,15 @@ request referencing the retained handoff, for example:
 `Continue Design from retained handoff <id> and its source. Preserve confirmed
 decisions and identify mocks. Do not implement.`
 
-An exactly admitted handoff shows **Prototype handoff admitted**, not a repeated
-primary submission button. Uncertain admission offers **Reconcile saved handoff**;
+An exactly admitted handoff does not repeat the primary submission button.
+The public Development projection supplies request-bound
+queued, Designer, published Design/questions and retired states; connection loss
+makes activity unverified. Polling is not progress evidence.
+Verified successful completion is quiet only when its matching Design is visible
+and no questions or permissions need attention. The authenticated presentation
+bridge gives the visible root control ownership of that exact request's notice;
+standalone Development retains its own status.
+Uncertain admission offers review before **Reconcile saved handoff**;
 pending submission offers a read-only status check. Reconciliation remains
 idempotent and cannot revive a retired request. A newly saved Prototype offers a
 separate explicit continuation. Do not use unused-setup initialization, delete history, or substitute a
@@ -640,7 +652,7 @@ five-minute confirmation, not ordinary Retry, Reconcile, or implementation
 approval. The application rechecks the bound evidence and records consumption
 before issuing creation. Existing WAL frames, handoff files, request IDs and
 startup uncertainty remain retained; it sends no project/model request.
-After **Ready**, explicitly select **Continue saved Prototype handoff** to admit the
+After **Ready**, review and confirm the saved Prototype handoff to admit the
 original prepared handoff. Never delete saved state or locks to bypass a
 rejected recovery check.
 
@@ -665,8 +677,8 @@ SDK creates the **same reserved ID** again. Old WAL frames and source/handoff
 files remain intact. This reinitializes empty setup; it does not restore
 nonexistent native history, create a replacement UUID, or send a dummy turn.
 Native model/effort readback must succeed before reporting completion. The
-prepared handoff stays unsent until a separate explicit **Continue Design from
-Prototype** / **Continue saved Prototype handoff** action. A failed or uncertain repair
+prepared handoff stays unsent until a separate handoff review and explicit
+confirmation. A failed or uncertain repair
 cannot reuse its consumed confirmation.
 
 ## Acceptance, export and process adapters

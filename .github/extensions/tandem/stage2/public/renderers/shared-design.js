@@ -213,6 +213,14 @@ export function createSharedDesignView({ tabs, mount, onChange = () => {}, onAnn
     figure = (['artifact/v1', 'artifact/v2'].includes(artifact.schemaVersion) ? renderArtifact : renderSketch)(document, artifact, { onSelect: (item) =>
       showElement(resolveDesignReference(design.content, `${artifact.id}#${item.id}`)) });
     figure.dataset.artifactId = artifact.id;
+    const caption = figure.querySelector(':scope > figcaption');
+    if (caption) {
+      caption.classList.add('artifact-heading');
+      const title = make('span', caption.textContent, 'artifact-heading-title');
+      caption.replaceChildren(title, toolbar);
+      const about = section.querySelector(':scope > .artifact-about');
+      if (about) caption.append(about);
+    }
     detail = make('details', undefined, 'artifact-element-details'); detail.hidden = true;
     section.append(figure, detail); mount.replaceChildren(section);
     if (figure.ready) {

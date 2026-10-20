@@ -29,18 +29,20 @@ function renderMermaid(source, document) {
   const render = renderQueue.then(async () => {
     const mermaid = (await (mermaidModule ??= import('./vendor/mermaid.js'))).default;
     const primaryTextColor = '#243d38', tertiaryColor = '#f5f2e9';
+    const erDiagram = /^\s*erDiagram\b/.test(source);
     mermaid.initialize({
       startOnLoad: false, securityLevel: 'strict', suppressErrorRendering: true,
       maxTextSize: 20_000, maxEdges: 300,
       flowchart: { htmlLabels: false, useMaxWidth: true, nodeSpacing: 24, rankSpacing: 36 },
       sequence: { useMaxWidth: true, actorMargin: 35, messageMargin: 28 },
       htmlLabels: false, theme: 'base', deterministicIds: true,
-      themeCSS: /^\s*erDiagram\b/.test(source)
+      themeCSS: erDiagram
         ? `.edgeLabel .background { fill: ${tertiaryColor}; } .edgeLabel text { fill: ${primaryTextColor}; }` : '',
       themeVariables: {
         fontFamily: 'system-ui, sans-serif', fontSize: '14px',
         primaryColor: '#e0eee2', primaryTextColor, primaryBorderColor: '#547c65',
         lineColor: '#567469', secondaryColor: '#deebfa', tertiaryColor,
+        ...(erDiagram ? { edgeLabelBackground: tertiaryColor } : {}),
       },
     });
     const { svg } = await mermaid.render(`artifact-mermaid-${++sequence}`, source);

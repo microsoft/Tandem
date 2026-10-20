@@ -19,7 +19,7 @@ const portable = (path) => path.split(sep).join("/");
 async function workspace(t) {
   const path = join(repositoryRoot, "tandem", "test", `.package-extension-${randomUUID()}`);
   await mkdir(path);
-  t.after(() => rm(path, { recursive: true, force: true }));
+  t.after(() => rm(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
   return path;
 }
 
@@ -235,6 +235,20 @@ test("quoted schema keywords are not module references", async (t) => {
   await verifyManifest(f.output);
   assert.equal(await readFile(join(f.output, "public", "schema.js"), "utf8"),
     content);
+});
+
+test("escaped vendor attributes and template diagnostics retain their values in a portable package", async (t) => {
+  const f = await fixture(t);
+  const content = 'export const attribute = "data-fro\\u006d";\n'
+    + 'export const diagnostic = value => `not fro\\u006d \'${value}\'.`;\n';
+  await put(f.source, "tandem/public/vendor-strings.js", content);
+  await packageExtension({ repositoryRoot: f.source, outputDirectory: f.output });
+  await verifyManifest(f.output);
+  const path = join(f.output, "public", "vendor-strings.js");
+  assert.equal(await readFile(path, "utf8"), content);
+  const vendor = await import(pathToFileURL(path).href);
+  assert.equal(vendor.attribute, "data-from");
+  assert.equal(vendor.diagnostic("frame"), "not from 'frame'.");
 });
 
 test("packages native JSON prompt imports with unchanged bytes and a closed relocatable graph", async (t) => {

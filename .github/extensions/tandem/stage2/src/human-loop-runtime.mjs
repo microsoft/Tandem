@@ -29,6 +29,7 @@ const string = { type: "string", minLength: 1 };
 export async function readHumanDesign(root) {
   const current = await new HumanLoopDesignStore(root).inspectCurrent();
   return { binding: sharedDesignBinding(current), content: current?.input ?? null,
+    publication: current ? { requestId: current.requestId, previous: current.previous } : null,
     references: current ? designReferenceCatalog(current.input) : [] };
 }
 

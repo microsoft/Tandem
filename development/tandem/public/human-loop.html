@@ -72,7 +72,6 @@
   </section>
   <section id="project-process-settings" class="settings-section" hidden>
     <button id="acceptance-delivery" type="button" aria-haspopup="dialog">Advanced handoffs &amp; history</button>
-    <p>Review saved snapshots, record acceptance, and manage delivery integrations. Not needed for everyday project work.</p>
   </section>
 </details>
 </header>
@@ -90,9 +89,10 @@
   <iframe id="rendering-debugger-frame" title="Design JSON rendering debugger" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer"></iframe>
 </dialog>
 <main class="workspace-shell human-layout">
-  <section id="design-panel" class="panel canvas-panel human-design">
-    <div class="panel-heading"><div><p class="eyebrow">Your design</p><h2 id="design-pane-title">Canvas</h2></div><span id="backbone-state" class="empty-badge">No Design yet</span></div>
+  <section id="design-panel" class="panel canvas-panel human-design" aria-labelledby="design-pane-title">
+    <div class="panel-heading"><h2 id="design-pane-title" class="visually-hidden">Canvas</h2><button id="return-to-questions" type="button" hidden>Back to Questions</button><span id="backbone-state" class="empty-badge">No Design yet</span></div>
     <div id="canvas-scroll" class="canvas-scroll">
+      <p id="prototype-handoff-activity" role="status" hidden></p>
       <div id="assessment-card" class="empty-state design-assessment"><strong>No Design has been published</strong><p>Discuss your idea in the conversation. The current Design will appear here when it is ready.</p></div>
       <div id="backbone-proposal" class="backbone-proposal" hidden>
         <details id="design-overview" class="design-metadata" open><summary>About this Design</summary>
@@ -105,12 +105,16 @@
     </div>
     <section id="project-output-view" class="canvas-scroll project-output-view" aria-label="Development output" tabindex="-1" hidden></section>
     <div id="annotation-parking" hidden><div id="annotation-tools" class="diagram-annotation-tools" hidden><button id="annotation-reset" type="button">Reset sketch</button><button id="annotation-capture" type="button">Snapshot to composer</button><span id="annotation-status" role="status"></span></div></div>
+    <section id="question-panel" aria-labelledby="questions-title" hidden>
+      <div class="questions-heading"><h2 id="questions-title">Questions</h2><button id="questions-conversation" type="button">Go to Conversation</button><button id="questions-back" type="button">Back to Design</button></div>
+      <div id="questions-content"></div>
+    </section>
   </section>
   <div id="workspace-divider" role="separator" tabindex="0" aria-orientation="vertical"
     aria-controls="design-panel conversation-panel" aria-label="Resize Design and Conversation"
     title="Drag to resize panels, or use Left and Right arrow keys"></div>
-  <section id="conversation-panel" class="panel activity-panel human-conversation">
-    <div class="panel-heading"><h2>Conversation</h2><button id="show-questions" type="button" aria-controls="question-panel" aria-expanded="false">Questions (0)</button><span class="connection"><i class="status-dot"></i><span id="connection-status">Connecting</span></span></div>
+  <section id="conversation-panel" class="panel activity-panel human-conversation" aria-labelledby="conversation-pane-title">
+    <div class="panel-heading"><h2 id="conversation-pane-title" class="visually-hidden">Conversation</h2><button id="show-questions" type="button" aria-controls="question-panel" aria-expanded="false">Questions (0)</button><span class="connection"><i class="status-dot"></i><span id="connection-status">Connecting</span></span></div>
     <button id="initialize" type="button" hidden>Initialize runtime</button>
     <button id="inspect-initial-creation" type="button" hidden>Inspect unused setup recovery</button>
     <button id="repair-empty-setup" type="button" hidden>Repair Development setup</button>
@@ -131,11 +135,10 @@
     <p id="notice" role="status" hidden></p>
     <p id="private-history-status" role="status" hidden>Private session history has not been verified. No other session's history is substituted.</p>
     <p id="compaction-status" role="status" aria-live="polite" hidden></p>
-    <section id="question-panel" aria-label="Saved questions" hidden></section>
     <div class="conversation-layout">
       <div class="conversation-thread">
         <div id="messages" class="conversation-messages" role="log" aria-label="Conversation" aria-live="polite" aria-relevant="additions"></div>
-        <button id="newer" type="button" hidden>New messages</button>
+        <button id="newer" type="button" aria-controls="messages state-history" hidden>&#8595; Go to latest</button>
       </div>
       <aside class="conversation-state-history conversation-state-column" aria-label="State history">
         <h3 class="visually-hidden">State history</h3>
@@ -154,8 +157,9 @@
       <div class="command-composer">
         <figure id="clipboard-preview" class="annotation-preview" hidden><img id="clipboard-image" alt="Unsent pasted image"><figcaption id="clipboard-caption" role="status"></figcaption><button type="button" id="clipboard-remove">Remove pasted image</button></figure>
         <figure id="annotation-preview" class="annotation-preview" hidden><img id="annotation-image" alt="Unsent diagram snapshot"><figcaption id="annotation-caption"></figcaption><button type="button" id="annotation-remove">Remove snapshot</button></figure>
-        <textarea id="message" rows="2" aria-describedby="role-hint-help" placeholder="Ask about the Design, or describe what you want to change..."></textarea>
-        <p id="role-hint-help" role="status">Start with @designer or @agent to suggest a role. Router decides.</p>
+        <div id="role-suggestions" class="role-suggestions" role="listbox" aria-label="Role suggestions" hidden></div>
+        <textarea id="message" rows="2" placeholder="Ask about the Design, or describe what you want to change..."></textarea>
+        <p id="role-hint-help" role="status" hidden></p>
       </div>
       <button id="send" type="submit" aria-label="Send message" title="Send message" disabled>↑</button>
       <div class="composer-actions">

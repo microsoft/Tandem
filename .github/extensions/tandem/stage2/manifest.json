@@ -48,8 +48,8 @@
     },
     {
       "path": "public/artifacts/index.js",
-      "bytes": 15040,
-      "sha256": "e4e47f8ae74cf0b5e18fc555e4a262d974807e09fe693b81b5c81b0df4785bf8"
+      "bytes": 15145,
+      "sha256": "8cbc152fb27d6d1379d555916373eea1f1075a6dcc85716348020c1c6b24a3a1"
     },
     {
       "path": "public/artifacts/renderer.js",
@@ -63,28 +63,28 @@
     },
     {
       "path": "public/artifacts/vendor/LICENSES.json",
-      "bytes": 244512,
-      "sha256": "0aac28aa1438404c3749a8f97c3bbeb5a1f4f1437ee8dd2c004a1727e3ad81c3"
+      "bytes": 264241,
+      "sha256": "1a5674804c5e507f289acf4101cd0afcd0a938afe5bedd4cc210e238fe409dbf"
     },
     {
       "path": "public/artifacts/vendor/documents.js",
-      "bytes": 354900,
-      "sha256": "f1141e91c35da6fb84520443aadf5e872c1fc9a98d6652c1e9942297e68a07b7"
+      "bytes": 354877,
+      "sha256": "c5c65f99d350f0036c443f910d9b570d3b217e9531ce27d659481305285352be"
     },
     {
       "path": "public/artifacts/vendor/jpeg.js",
-      "bytes": 13716,
-      "sha256": "65c113eeb0090c8c9dbf56457ea4ae0d83f94dbbf15621bddc896d478e25088c"
+      "bytes": 13748,
+      "sha256": "ceddcdc9e115cf67173fb5c7d443008505c42f98051188e83662721f9b3d7621"
     },
     {
       "path": "public/artifacts/vendor/mermaid.js",
-      "bytes": 2720693,
-      "sha256": "4bf67357b65e170347b019dde97cdc05f2bd2973982674692ee26a1634fb4db4"
+      "bytes": 5254436,
+      "sha256": "a759156f2aa63cb1b44d30926f1e02007e6cd81e3b4c5eb7cc0b9e2382a5bd5a"
     },
     {
       "path": "public/artifacts/vendor/parsers.js",
-      "bytes": 371074,
-      "sha256": "d28763e2a5a1961e2c787f15a93198c778b1b9ff9bc0c94755c6b9722e66eb7e"
+      "bytes": 371116,
+      "sha256": "52ad3cc57311459dbfbc5016dca07997b3c790388193fd72b818960f73f23c26"
     },
     {
       "path": "public/assistant-response.js",
@@ -133,8 +133,8 @@
     },
     {
       "path": "public/composer-enter.js",
-      "bytes": 770,
-      "sha256": "7076591ff358bb2839e3d682bef5c0d1642ffc2abf78d9b7f6d57e57170a1cfb"
+      "bytes": 796,
+      "sha256": "2644545e2d74c245aadc38cd21584952f64737ff3b73d13efc561a11cf9bd4e5"
     },
     {
       "path": "public/composer-image.js",
@@ -142,24 +142,44 @@
       "sha256": "ea14c5876c29108d5dda7ab4c7b503a229b5604ede3b6c9be647961c3c9dd1dd"
     },
     {
+      "path": "public/development-status.d.ts",
+      "bytes": 335,
+      "sha256": "5d684312287578359b78199374d205e68ad5d8254a040d80c349dd147b5015ba"
+    },
+    {
+      "path": "public/development-status.js",
+      "bytes": 3127,
+      "sha256": "3ac33b73e444f0119cc0c1053eadb87ba321b7d097e0023a306cfb617ce06d96"
+    },
+    {
       "path": "public/experience.css",
       "bytes": 30688,
       "sha256": "0822343a5a26b73bb8e1a156db700777c07eebf7349f737c1955fb4c68b3ca17"
     },
     {
+      "path": "public/handoff-presentation.d.ts",
+      "bytes": 908,
+      "sha256": "3dd4ee4209d7639953c9c5bdecc60140cd445d346dbd2348b86f85ad6fd45568"
+    },
+    {
+      "path": "public/handoff-presentation.js",
+      "bytes": 2259,
+      "sha256": "ad508df470601d87aed5de8949ee7556575e8e17a036116b6458076ee7ad22ae"
+    },
+    {
       "path": "public/human-loop-app.js",
-      "bytes": 53102,
-      "sha256": "321862d3ec85a2985dfd313a219bc22335260f4c73066c1e6045cd965f125684"
+      "bytes": 59962,
+      "sha256": "2d09fc92cf5c1168fd833e17a04e4e1b062f7740d5fd6bcacb65974d4518f6eb"
     },
     {
       "path": "public/human-loop-shell.css",
-      "bytes": 44487,
-      "sha256": "3dc0fa723e3f2b20fe66997453979b54e1c180aa80af113f1683aca9b508ab9c"
+      "bytes": 49263,
+      "sha256": "19764c0f0d12cc23f6509933fbebf7fcd4ffe2873d94b78ac530ba9d495fb5d9"
     },
     {
       "path": "public/human-loop.html",
-      "bytes": 16651,
-      "sha256": "d8f573e9e87b2212dadab4975cb00ef100c453aa876a05f1a1728b79f1acffa9"
+      "bytes": 17136,
+      "sha256": "776c30298ef4e86033d2821b33fb250e97261503068d62756300a582c9511ad6"
     },
     {
       "path": "public/implementation-confirmation.js",
@@ -193,8 +213,8 @@
     },
     {
       "path": "public/project-presentation.js",
-      "bytes": 16202,
-      "sha256": "ab7029faa11c352ba10e9bd257eb6898ce75cc34d68d942f4d7fd4d7a96ee6ce"
+      "bytes": 17789,
+      "sha256": "3fc03ab1ba30261ec5edd1b01644c26d902bf61773aaa6450d80ca62784237f3"
     },
     {
       "path": "public/project-theme.css",
@@ -203,8 +223,8 @@
     },
     {
       "path": "public/project-workspace.css",
-      "bytes": 8825,
-      "sha256": "5576f99d4ace3c6bef2dbebf1c82b77ec2849d6e37792d44ca81faf09d9adb58"
+      "bytes": 9411,
+      "sha256": "25c2ba084dc5e3ba42ae39b7fd0dce593ec3f13d6f59f6c67cd4d73f39502b54"
     },
     {
       "path": "public/prompts/human-loop.js",
@@ -213,8 +233,8 @@
     },
     {
       "path": "public/prompts/human-loop.json",
-      "bytes": 47840,
-      "sha256": "3eaad3a437421320b943f8fdd0e623885905bb74a47fc38b255032379c09d266"
+      "bytes": 54221,
+      "sha256": "32d64b25a218f6dd20aeb603e45630e6d20b39db815f01a6c3de66539fef4899"
     },
     {
       "path": "public/question-presentation.js",
@@ -228,8 +248,8 @@
     },
     {
       "path": "public/renderers/conversation.js",
-      "bytes": 23061,
-      "sha256": "0667df89adf753fc62ab13e04711cd38d42b2f8b1f65eef67069fe797500d0d7"
+      "bytes": 25192,
+      "sha256": "218504dd6c019774548fefdc90362c924f1736ff70462375c608ab714780cab5"
     },
     {
       "path": "public/renderers/history-icons.js",
@@ -253,13 +273,13 @@
     },
     {
       "path": "public/renderers/human-loop.js",
-      "bytes": 28276,
-      "sha256": "7394cdd13f0ccec738e8e985253b4ed7f3266a251d2d11c989e1c8bdefb6193d"
+      "bytes": 36483,
+      "sha256": "c57163a6d7f399cb55533dc66c33d147085c9c908dfc2230d81e7838c9751e0c"
     },
     {
       "path": "public/renderers/shared-design.js",
-      "bytes": 18516,
-      "sha256": "7a16098a972b5e8be809d2f4d4621bf6964e555c79674b63d410d0b5ecb804d2"
+      "bytes": 18902,
+      "sha256": "b9e8f1e48e9b8c67c1bebda214bb3128aee60a9a822d9190c6f1897b2c231d67"
     },
     {
       "path": "public/review-decisions.js",
@@ -275,6 +295,11 @@
       "path": "public/role-hint.js",
       "bytes": 700,
       "sha256": "917725d46ad31e6562645a16461670e7e56c69d365f059b36eaa27fa57952cda"
+    },
+    {
+      "path": "public/role-suggestions.js",
+      "bytes": 4328,
+      "sha256": "88387f7ea82a70eb3cf3cc5f3ffa4e883d0817cf5f342e03cfb41be5d9327268"
     },
     {
       "path": "public/sketch/contract.js",
@@ -613,8 +638,8 @@
     },
     {
       "path": "src/human-loop-design.mjs",
-      "bytes": 13527,
-      "sha256": "4f9d4941cc7119e0e251d1c5feeb42817e58058cd1929db9eb9400645c8390cf"
+      "bytes": 13714,
+      "sha256": "7abceceb60d68bdcb54b68f140323088b6f229ca08ec38ce639e7cd8553c5269"
     },
     {
       "path": "src/human-loop-installation.mjs",
@@ -648,8 +673,8 @@
     },
     {
       "path": "src/human-loop-provider.mjs",
-      "bytes": 38544,
-      "sha256": "82152d5504951ef5a6b035e34a14cd4ae696094fa130db7c98ccea6f5c8d5ee7"
+      "bytes": 45113,
+      "sha256": "25456bbd4421581ae6ad3e07188d427a354b0712191cc8aeb965c1f7fbecfc1d"
     },
     {
       "path": "src/human-loop-recovery.mjs",
@@ -663,8 +688,8 @@
     },
     {
       "path": "src/human-loop-runtime.mjs",
-      "bytes": 74927,
-      "sha256": "b337497926a4340c423cf8a83de20dd3e9873bfb2608580736518ed668123a87"
+      "bytes": 75024,
+      "sha256": "0065feaf88c36893fc666db4ea15cb1357655301dfc4882de692f273b754751f"
     },
     {
       "path": "src/human-loop-startup.mjs",

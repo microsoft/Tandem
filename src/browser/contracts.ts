@@ -13,6 +13,7 @@ export interface HostSnapshot {
     canvasUrl: string | null;
     status: string;
     error: string | null;
+    notice?: { id: string; message: string } | null;
     warning: string | null;
     permissionMode: DesktopPermissionMode;
     requests: HostRequest[];
@@ -29,6 +30,7 @@ export type BackendCommand =
 export type HostCommand = (
     | { type: "open-workspace"; workspace: string }
     | { type: "retry" | "stop" }
+    | { type: "dismiss-notice"; id: string }
     | Exclude<BackendCommand, { type: "shutdown" }>
 ) & { generation: string };
 
@@ -55,8 +57,13 @@ export function parseBackendEvent(value: unknown): DesktopEvent {
     if (isRecord(value)) {
         switch (value.type) {
             case "status":
-            case "error":
                 if (text(value.message, 60 * 1024)) return { type: value.type, message: value.message };
+                break;
+            case "error":
+                if (text(value.message, 60 * 1024) && (value.notificationId === undefined || text(value.notificationId, 512))) {
+                    return { type: value.type, message: value.message,
+                        ...(typeof value.notificationId === "string" ? { notificationId: value.notificationId } : {}) };
+                }
                 break;
             case "stopped": return { type: "stopped" };
             case "ready":

@@ -99,7 +99,7 @@ error rather than clearing session state or retrying an unrelated task.
 | --- | --- |
 | Runtime requirement error / npm `EBADENGINE` | For source builds, use actual Node 24.15+ (24.x LTS) or Node 26+ and rerun the [source quick start](quick-start.md). A successful install with an engine warning does not establish support. |
 | Browser did not open | Use the private URL from the launch terminal; never share it. `--no-open` prints it without opening a browser. |
-| Folder is not a Git root | For a new folder, review **Set up this folder and continue** before Development. For a subfolder, explicitly open the repository/worktree root named in the prompt; Tandem never silently switches or nests a repository. |
+| Folder is not a Git root | For a new folder, review **Set up this folder and continue** with either starting path. Older projects can need the same project setup when entering Development. For a subfolder, explicitly open the repository/worktree root named in the prompt; Tandem never silently switches or nests a repository. |
 | Git setup could not finish | Read what was attempted. Git metadata and ignore content are retained, not rolled back. Resolve the reported permission or file problem, then **Check again** and review fresh consent. |
 | Application state must be ignored by Git | Review the offered setup to add `.tandem/`, or use the [manual alternative](quick-start.md). Check `git status` before committing. |
 | Git tracks `.tandem/` state | An ignore rule does not untrack existing files. Deliberately untrack that state yourself after reviewing it, without deleting local session data. Tandem never automatically untracks or deletes files. |
@@ -109,10 +109,15 @@ error rather than clearing session state or retrying an unrelated task.
 | Contextual **Retry runtime** / **Retry Development** | Inspect the failure and retry there; this does not authorize replacement history or replay. |
 | Wrong owner, live writer or corrupt state | Return to the original project/session and retain the error. Do not bypass ownership. |
 | Quiet work | Inspect activity, last-update age and permissions; silence is not proof of failure or success. |
-| Microphone failed | Continue with text. Use voice sign-in only for its identified credential error. |
+| Microphone failed | Continue with text. **Dismiss** clears the standalone host's failed-operation notification only; it does not configure Azure, sign in, retry or restart work. Details remain in host **Diagnostics** and `.tandem/desktop/browser.log`. A new failure appears again. Use voice sign-in only for its identified credential error. |
 
 For a report, include version, phase, action and visible error. Remove private
 URLs, credentials, personal paths and sensitive project content first.
+
+Startup/runtime blockers, lost connections and pending permission prompts cannot
+be dismissed this way. Embedded recovery messages keep their existing actions.
+Browser-local action failures remain in **Diagnostics** for the current tab and
+workspace; dismissing them sends no command to the runtime.
 
 ## Advanced recovery
 

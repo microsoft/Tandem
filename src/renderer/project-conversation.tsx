@@ -6,6 +6,8 @@ import type { LifecycleStageId } from "../types.js";
 import type { StartingPath } from "../project-entry.js";
 import { useDevelopmentGit } from "./development-git.js";
 import { ProcessPanel } from "./process-panel.js";
+import { validHandoffActivity, validHandoffDesign, type HandoffActivity, type HandoffDesign } from "../../development/tandem/public/handoff-presentation.js";
+import { validDevelopmentStatus, type DevelopmentStatus } from "../../development/tandem/public/development-status.js";
 
 type Entry = { id: string; kind: "user" | "status"; role: string; text: string; timestamp: string };
 export function projectDiscovery(state: UiState, busy: boolean, viewedStage: LifecycleStageId = state.lifecycle.currentStage) {
@@ -65,6 +67,12 @@ interface ProjectView {
     url: string | null; channel: string; error: string; active: boolean; starting: boolean; developmentEntered: boolean;
     status: string; detail: string; designRevision: string | null; designChanged: boolean; attention: number;
     maintenanceError: string;
+    handoffActivity: HandoffActivity[] | null; designBinding: HandoffDesign | null;
+    setHandoffStatusOwner(requestId: string | null): void;
+    permissions: number;
+    activeRequestId: string | null;
+    compacting: boolean;
+    presentation: DevelopmentStatus | null;
     processError: string;
     activate(retry?: boolean): Promise<void>; command(command: string): void;
     outputs: ProjectOutput[]; outputStatus: string; outputReason: string; outputError: string; selectedOutput: string | null;
@@ -89,9 +97,13 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
     const { state, post, pending, setBusy, browseStage } = useUi();
     const [view, setView] = useState({ url: null as string | null, channel: "", error: "", active: false, starting: false, developmentEntered: false,
         status: "Not activated", detail: "", designRevision: null as string | null, designChanged: false, attention: 0,
+        handoffActivity: null as HandoffActivity[] | null, designBinding: null as HandoffDesign | null, permissions: 0, activeRequestId: null as string | null, compacting: false,
+        presentation: null as DevelopmentStatus | null,
+        presentationScope: "",
         outputs: [] as ProjectOutput[], outputStatus: "unverified", outputReason: "Development outputs have not been verified.",
         outputError: "", selectedOutput: null as string | null });
     const frame = useRef<HTMLIFrameElement>(null);
+    const [handoffStatusOwner, setHandoffStatusOwner] = useState<string | null>(null);
     const providerReload = useProviderReload(view.active || view.starting || view.status === "unknown" || effortBusy);
     const [entry, setEntry] = useState({ loading: true, busy: false, projectPath: state.projectPath ?? "", startingPath: null as StartingPath | null, error: "", ready: false });
     const choosing = useRef(false);
@@ -103,7 +115,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
     const [viewRequested, setViewRequested] = useState(false);
     const pendingCommand = useRef<string | null>(null);
     const entryCallback = useRef(onEntry); entryCallback.current = onEntry;
-    const latest = useRef({ state, post, pending, view, designVisible, viewedStage, showDesign, setBusy, browseStage, providerReload }); latest.current = { state, post, pending, view, designVisible, viewedStage, showDesign, setBusy, browseStage, providerReload };
+    const latest = useRef({ state, post, pending, view, designVisible, viewedStage, showDesign, setBusy, browseStage, providerReload, handoffStatusOwner }); latest.current = { state, post, pending, view, designVisible, viewedStage, showDesign, setBusy, browseStage, providerReload, handoffStatusOwner };
     const opening = useRef(false), submissions = useRef(new Map<string, { key: string; text: string; work: Promise<void> }>());
     const startRequested = useRef(false);
     const effortApplying = useRef(false);
@@ -112,7 +124,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
         choosing.current = true;
         setEntry(v => ({ ...v, busy: true, error: "" }));
         try {
-            if (choice === "development" && !await git.requireReady()) {
+            if (choice && !await git.requireReady()) {
                 setEntry(v => ({ ...v, loading: false, busy: false }));
                 return;
             }
@@ -123,7 +135,8 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
             if (typeof value.projectPath !== "string" || ![null, "preparation", "development"].includes(value.startingPath)) throw new Error("Invalid project entry metadata.");
             let starting = false, developmentEntered = false;
             if (value.startingPath && latest.current.state.provider?.canSubmitAnswers !== false) {
-                if (choice !== "development" && (value.startingPath === "development" || latest.current.state.lifecycle.currentStage === "development")
+                if (choice !== "development" && (value.startingPath === "development"
+                    || latest.current.state.lifecycle.currentStage === "development" && Boolean(latest.current.state.development))
                     && !await git.requireReady()) {
                     setEntry({ loading: false, busy: false, projectPath: value.projectPath, startingPath: value.startingPath,
                         error: "", ready: value.startingPath === "preparation" });
@@ -157,7 +170,9 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
         const workingStage = view.developmentEntered ? "development" : state.lifecycle.currentStage;
         const viewLabel = { prepare: "Preparation", requirements: "Requirements", sketch: "Drawings", prototype: "Prototype", development: "Development" }[workingStage];
         send({ type: "context", entries: [], discovery: projectDiscovery(state, pending, workingStage), viewedStage: workingStage, viewLabel,
+            statusScope: JSON.stringify([state.prototypeId, state.generation]), statusBarOwner: designVisible,
             developmentEntered: view.developmentEntered,
+            handoffStatusOwner: latest.current.handoffStatusOwner,
             canActivate: canOpenDevelopment(state), developmentActive: view.active, designVisible,
             developmentEnabled: canOpenDevelopment(state), starting: view.starting,
             canChangeEffort: state.provider?.canSubmitAnswers !== false && !pending,
@@ -220,7 +235,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
         })();
         return () => { disposed = true; };
     }, [entry.ready, viewRequested, state.provider?.canSubmitAnswers]);
-    useEffect(() => { sync(); }, [state, pending, view.url, view.active, view.starting, view.developmentEntered, designVisible, viewedStage, JSON.stringify(providerReload.view)]);
+    useEffect(() => { sync(); }, [state, pending, view.url, view.active, view.starting, view.developmentEntered, designVisible, viewedStage, handoffStatusOwner, JSON.stringify(providerReload.view)]);
     useEffect(() => {
         const observer = new ResizeObserver(syncLayout);
         const workspace = document.getElementById("studio-workspace");
@@ -313,10 +328,23 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
             }
             if (message.type === "activate") { void activate(message.retry === true); return; }
             if (message.type === "status" && typeof message.status === "string") {
+                if (message.statusScope !== undefined && message.statusScope !== null
+                    && message.statusScope !== JSON.stringify([state.prototypeId, state.generation])) return;
                 const retryable = message.canRetry === true || message.canReopen === true || ["failed", "unknown", "closed"].includes(message.installationStatus);
                 const settled = message.active === true || retryable;
                 if (retryable) startRequested.current = false;
                 setView(v => ({ ...v, status: message.status.slice(0, 80), detail: typeof message.reason === "string" ? message.reason.slice(0, 2000) : "",
+                    handoffActivity: Array.isArray(message.handoffActivity) && message.handoffActivity.length <= 100
+                        && message.handoffActivity.every(validHandoffActivity) ? message.handoffActivity : null,
+                    designBinding: validHandoffDesign(message.designBinding) ? message.designBinding : null,
+                    permissions: Number.isSafeInteger(message.permissions) && message.permissions > 0 ? message.permissions : 0,
+                    activeRequestId: typeof message.activeRequestId === "string" ? message.activeRequestId.slice(0, 200) : null,
+                    compacting: message.compacting === true,
+                    presentation: message.statusScope === JSON.stringify([state.prototypeId, state.generation])
+                        && validDevelopmentStatus(message.presentation)
+                        && (message.presentation.kind !== "active" || message.presentation.requestId === (message.activeRequestId ?? null))
+                        ? message.presentation : null,
+                    presentationScope: typeof message.statusScope === "string" ? message.statusScope : "",
                     active: message.active === true,
                     starting: settled ? false : v.starting,
                     designRevision: typeof message.designRevision === "string" ? message.designRevision : null,
@@ -360,9 +388,11 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
         return () => window.removeEventListener("message", receive);
     }, []);
     return <Context.Provider value={{ ...view, processError, maintenanceError: providerReload.view.error ? providerReload.view.message : "",
+        presentation: view.presentationScope === JSON.stringify([state.prototypeId, state.generation]) ? view.presentation : null,
+        detail: !view.presentationScope || view.presentationScope === JSON.stringify([state.prototypeId, state.generation]) ? view.detail : "",
         visible: designVisible, entry, chooseEntry: path => loadEntry(true, path), reloadEntry: () => loadEntry(),
         gitSetupVisible: git.visible, requireDevelopmentGit: git.requireReady,
-        frame, sync, activate,
+        frame, sync, activate, setHandoffStatusOwner,
         prepareDevelopmentView: () => { setViewRequested(true); setView(v => ({ ...v, developmentEntered: true })); },
         resumeDiscovery: () => setView(v => ({ ...v, developmentEntered: false })),
         command: command => {

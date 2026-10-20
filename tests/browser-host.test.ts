@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { test, type TestContext } from "node:test";
 import type { DesktopEvent } from "../src/desktop/protocol.js";
+import { DesktopProtocol } from "../src/desktop/protocol.js";
 import { consumeLines, type BackendOptions } from "../src/browser/backend.js";
 import type { BackendCommand } from "../src/browser/contracts.js";
 import { parseBackendEvent } from "../src/browser/contracts.js";
@@ -195,7 +196,8 @@ test("invalid folder selection preserves the current workspace and directory err
     f.ready();
     const state = f.host.snapshot();
     await f.command({ type: "open-workspace", workspace: join(f.root, "missing") });
-    await until(() => Boolean(f.host.snapshot().error));
+    await until(() => Boolean(f.host.snapshot().notice));
+    assert.match(f.host.snapshot().notice!.message, /Cannot open that workspace/);
     assert.equal(f.host.snapshot().phase, "ready");
     assert.equal(f.host.snapshot().canvasUrl, state.canvasUrl);
     assert.equal(f.host.snapshot().generation, state.generation);
@@ -204,6 +206,73 @@ test("invalid folder selection preserves the current workspace and directory err
     assert.ok(folders.directories.some((folder: { path: string }) => folder.path === f.workspace));
     assert.equal((await f.request(`host/directories?path=${encodeURIComponent(join(f.root, "missing"))}`)).status, 400);
     assert.equal((await f.request("host/directories?path=relative")).status, 400);
+});
+
+test("native speech notifications dismiss only their occurrence, retaining diagnostics and all runtime state", async (t) => {
+    const f = await fixture(t);
+    f.ready();
+    f.event(permission());
+    const input = new PassThrough(), output = new PassThrough();
+    let shutdowns = 0;
+    const protocol = new DesktopProtocol(input, output, () => { shutdowns++; });
+    t.after(() => protocol.close());
+    output.on("data", (data: Buffer) => f.event(parseBackendEvent(JSON.parse(data.toString()))));
+    const message = "Tandem request failed: Configure TANDEM_Speech__ResourceId and TANDEM_Speech__Region for an Azure Speech resource, then restart Tandem. Subscription keys are not used.";
+    const report = (id: string) => protocol.reportSessionError({ id, data: { errorType: "notification", message } });
+    report("speech-one");
+    const before = f.host.snapshot();
+    assert.equal(before.error, null);
+    assert.deepEqual(before.notice, { id: "speech-one", message });
+    assert.equal((await f.command({ type: "dismiss-notice", id: "speech-one" })).status, 202);
+    assert.deepEqual(f.host.snapshot(), { ...before, revision: before.revision + 1, notice: null });
+    assert.deepEqual(f.backends[0].commands, []);
+    assert.equal(f.backends[0].stops, 0);
+    assert.equal(shutdowns, 0);
+    const diagnostics = await f.request("host/diagnostics").then(response => response.json());
+    assert.ok(diagnostics.text.includes(message));
+    f.event({ type: "status", message: "Still preparing" });
+    report("speech-one");
+    assert.equal(f.host.snapshot().notice, null, "polling and replaying the acknowledged event cannot resurrect it");
+    report("speech-two");
+    assert.deepEqual(f.host.snapshot().notice, { id: "speech-two", message }, "identical text with a new native ID is a new failure");
+    assert.equal((await f.command({ type: "dismiss-notice", id: "speech-one" })).status, 202);
+    assert.equal(f.host.snapshot().notice!.id, "speech-two");
+    report("speech-three");
+    await f.command({ type: "dismiss-notice", id: "speech-two" });
+    assert.equal(f.host.snapshot().notice!.id, "speech-three", "a newer error wins the acknowledgment race");
+    await f.command({ type: "dismiss-notice", id: "speech-three" });
+    report("speech-one");
+    assert.equal(f.host.snapshot().notice, null, "earlier acknowledgments survive later ones");
+    await f.host.close();
+    assert.ok((await readFile(join(f.workspace, ".tandem", "desktop", "browser.log"), "utf8")).includes(message));
+});
+
+test("notification acknowledgments cannot suppress startup, runtime or next-workspace blockers", async (t) => {
+    const f = await fixture(t);
+    f.event({ type: "error", message: "Startup notification", notificationId: "startup" });
+    assert.equal(f.host.snapshot().phase, "error");
+    await f.command({ type: "dismiss-notice", id: "startup" });
+    assert.equal(f.host.snapshot().error, "Startup notification");
+    assert.equal(f.host.snapshot().notice, null);
+    await f.command({ type: "retry" });
+    await until(() => f.backends.length === 2);
+    f.ready();
+    const generation = f.host.snapshot().generation;
+    f.event({ type: "error", message: "Notification", notificationId: "notice" });
+    f.event({ type: "error", message: "Runtime ownership lost" });
+    await f.command({ type: "dismiss-notice", id: "notice" });
+    assert.equal(f.host.snapshot().error, "Runtime ownership lost", "runtime errors have no notification acknowledgment");
+    assert.equal((await f.command({ type: "dismiss-notice", id: {} })).status, 400);
+    await f.command({ type: "open-workspace", workspace: f.other });
+    await until(() => f.backends.length === 3);
+    f.ready();
+    f.event({ type: "error", message: "Notification", notificationId: "notice" });
+    assert.equal((await f.command({ type: "dismiss-notice", id: "notice", generation })).status, 409);
+    assert.equal(f.host.snapshot().notice!.id, "notice");
+    assert.deepEqual(f.backends[2].commands, []);
+    for (const notificationId of ["", 42, {}, "x".repeat(513)]) {
+        assert.throws(() => parseBackendEvent({ type: "error", message: "Invalid identity", notificationId }), /invalid host event/);
+    }
 });
 
 test("a late command failure cannot corrupt the next workspace", async (t) => {

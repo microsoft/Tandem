@@ -156,7 +156,7 @@ test('complete human-loop stylesheet stack preserves theme pairs and readable co
         '.human-design h2', '#assessment-card strong', '#message', '#message::placeholder',
         '.access-card h3', '.access-card p', '.access-card button', '#notice'];
       if (status === 'waiting-answer') selectors.push('.human-loop-question-title', '.human-loop select', '.human-loop textarea',
-        '.human-loop-questions > h3', '.human-loop-question-help', '.human-loop-question-status', '.human-loop-questions li',
+        '.human-loop-question-help', '.human-loop-question-status', '.human-loop-questions li',
         '.question-meaning');
       const values = await measure(browser, selectors);
       assert.deepEqual(values.filter(value => value.contrast < 4.5), [], `All enabled text needs 4.5:1 contrast: ${JSON.stringify(values)}`);
@@ -191,7 +191,7 @@ test('question cards retain boundaries without a duplicate wrapper, readable hie
       if (process.env.HUMAN_LOOP_THEME_SCREENSHOTS) {
         await browser.call('Emulation.setDeviceMetricsOverride', { width: 1100, height: 1100, deviceScaleFactor: 1, mobile: false });
         await browser.evaluate(`(() => {
-          const scroller=document.querySelector('#question-panel'),card=document.querySelector('.human-loop-questions');
+          const scroller=document.querySelector('#questions-content'),card=document.querySelector('.human-loop-questions');
           scroller.scrollTop+=card.getBoundingClientRect().top-scroller.getBoundingClientRect().top-12;
         })()`);
         const directory = resolve(process.env.HUMAN_LOOP_THEME_SCREENSHOTS);
@@ -203,8 +203,11 @@ test('question cards retain boundaries without a duplicate wrapper, readable hie
         const original=document.querySelector('.human-loop-questions > button');
         original.scrollIntoView({block:'center'});original.focus();
       })()`);
-      await browser.call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
-      await browser.call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
+      for (let step = 0; step < 8; step++) {
+        await browser.call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
+        await browser.call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
+        if (await browser.evaluate("document.activeElement===document.querySelector('.human-loop-questions select')")) break;
+      }
       const appearance = await browser.evaluate(`(() => {
         const card=document.querySelector('.human-loop-questions'),select=card.querySelector('select');
         const style=getComputedStyle(select),box=card.getBoundingClientRect();
@@ -219,18 +222,18 @@ test('question cards retain boundaries without a duplicate wrapper, readable hie
           status:card.querySelector('.question-meaning').textContent,
           overflow:document.documentElement.scrollWidth>innerWidth,
           controlFits:select.getBoundingClientRect().right<=box.right,
-          help:card.querySelector('.human-loop-question-help').textContent};
+          help:card.querySelector(':scope > .human-loop-question-help').textContent};
       })()`);
       assert.ok(appearance.active && appearance.focus);
       assert.equal(appearance.outline, 'solid'); assert.ok(appearance.outlineWidth >= 2);
-      const boundaries = await measure(browser, ['.human-loop select::outlineColor', '.human-loop select::borderTopColor']);
+      const boundaries = await measure(browser, ['.human-loop-questions select::outlineColor', '.human-loop-questions select::borderTopColor']);
       assert.ok(boundaries.every(({ contrast }) => contrast >= 3), JSON.stringify(boundaries));
       assert.notEqual(appearance.surface, appearance.parent);
       assert.equal(appearance.wrapperBorder, '0px'); assert.equal(appearance.wrapperPadding, '0px');
       assert.equal(appearance.cardBorder, '1px');
       assert.ok(appearance.heading >= 18 && appearance.question >= 16 && appearance.text >= 14, JSON.stringify(appearance));
       assert.ok(appearance.controlHeight >= 44 && appearance.controlFits && !appearance.overflow);
-      assert.match(appearance.status, preference === 'dark' ? /Advisory.*optional/ : /Blocking.*required/);
+      assert.match(appearance.status, preference === 'dark' ? /Advisory.*clarification required/ : /Blocking.*required/);
       assert.match(appearance.help, /unselected questions stay unanswered.*Ordinary messages do not resolve/);
       const values = await measure(browser, ['.human-loop-questions > h3', '.human-loop-question-title',
         '.human-loop-question-help', '.human-loop-question-status', '.human-loop select', '.human-loop textarea', '.human-loop-questions li']);
@@ -261,7 +264,14 @@ test('question titles and quiet metadata stay inside individually named cards', 
     await show('waiting-answer', 'blocking', titles);
     await theme(browser, preference, null);
     await browser.call('Emulation.setDeviceMetricsOverride', { width, height: 1000, deviceScaleFactor: 1, mobile: false });
-    const cards = await browser.evaluate(`(() => [...document.querySelectorAll('.human-loop-questions fieldset')].map(field => {
+    const cards = [];
+    for (const index of titles.keys()) {
+      await browser.evaluate(`(() => {
+        if(document.querySelector('#question-panel').hidden) document.querySelector('#show-questions').click();
+        document.querySelectorAll('.question-open-list button')[${index}]?.click();
+      })()`);
+      const card = await browser.evaluate(`(() => {
+      const field=document.querySelectorAll('.human-loop-questions fieldset')[${index}];
       const heading=field.querySelector('.human-loop-question-title, legend'),status=field.querySelector('.human-loop-question-status');
       const rect=n=>n.getBoundingClientRect().toJSON(),s=getComputedStyle(heading),metadata=getComputedStyle(status);
       return {field:rect(field),heading:rect(heading),status:rect(status),text:heading.textContent,tag:heading.tagName,
@@ -271,9 +281,8 @@ test('question titles and quiet metadata stay inside individually named cards', 
         selectLabel:field.querySelector('select').getAttribute('aria-label'),
         textareaLabel:field.querySelector('textarea').getAttribute('aria-label'),
         clipped:field.scrollWidth>field.clientWidth,pageOverflow:document.documentElement.scrollWidth>innerWidth};
-    }))()`);
-    assert.equal(cards.length, 2);
-    for (const [index, card] of cards.entries()) {
+    })()`);
+      cards.push(card);
       assert.equal(card.text, titles[index]);
       assert.equal(card.statusText, 'open');
       assert.equal(card.selectLabel, `Answer choice: ${titles[index]}`);
@@ -315,11 +324,13 @@ test('question titles and quiet metadata stay inside individually named cards', 
       assert.equal(await browser.evaluate("document.activeElement.getAttribute('aria-label')"), `Your own answer: ${titles[index]}`);
       assert.equal(await browser.evaluate("getComputedStyle(document.activeElement).outlineStyle"), 'solid');
     }
-    assert.ok(cards[1].field.top > cards[0].field.bottom);
+    assert.equal(cards.length, 2);
+    assert.equal(await browser.evaluate("document.querySelectorAll('.human-loop-questions fieldset:not([hidden])').length"), 1);
     if (!baseline) assert.notEqual(cards[0].id, cards[1].id);
     const tree = await browser.call('Accessibility.getFullAXTree');
     const groupNames = tree.nodes.filter(node => node.role?.value === 'group').map(node => node.name?.value);
-    for (const title of titles) assert.ok(groupNames.includes(title), JSON.stringify(groupNames));
+    assert.ok(groupNames.includes(titles.at(-1)), JSON.stringify(groupNames));
+    assert.ok(!groupNames.includes(titles[0]), 'Only the selected question belongs in the accessible reading surface.');
     evidence.push({ width, preference, cards, groupNames });
   }
   if (directory) await writeFile(join(directory, 'layout.json'), JSON.stringify(evidence, null, 2));

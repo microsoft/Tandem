@@ -8,6 +8,7 @@ import { SpeechTextarea } from "./speech-textarea.js";
 import { PreviewRestart } from "./preview-restart.js";
 import { awaitingVisualChoice, originalPrototypeCheckpointId, visualExplorationIsCurrent } from "../visual-directions.js";
 import { VisualExplorationPanel } from "./visual-exploration-panel.js";
+import { HandoffControls } from "./handoff-review.js";
 
 const milestones = [
   { id: "structure", label: "Structure" }, { id: "interaction", label: "Interaction" }, { id: "visual", label: "Visual exploration" },
@@ -346,9 +347,9 @@ export function PrototypePanel({ active: visible, connected, renderActions }: {
     {renderActions ? renderActions(previewActions) : previewActions}
     <div className="preview-surface">
       {savedOnly && state.lifecycle.outputs.some(output => output.stageId === "prototype") && !finalizing && <section className="prototype-progress" aria-label="Saved Prototype next step">
-        <p>Prototype saved. Continue in Development when you're ready.</p>
-        <button className="plan-button secondary" type="button" onClick={() => ui.browseStage("development")}>Go to Development</button>
-        <details><summary>Returning later</summary><p>You can also close and return later. The saved Prototype remains available through Continue Design from Prototype in Development; no manual file import is needed.</p></details>
+        <HandoffControls prototype active={visible} />
+        <button className="plan-button secondary" type="button" onClick={() => ui.browseStage("development")}>Open Development</button>
+        <details><summary>Returning later</summary><p>The saved Prototype remains available for review in Development. Opening Development does not submit it; confirm the handoff when ready.</p></details>
       </section>}
       <span id="preview-status" className="visually-hidden" role="status">{unavailable ? "not applicable" : finalizing ? "Finishing prototype..."
           : readyUrl && state.prototypeNeedsUpdate

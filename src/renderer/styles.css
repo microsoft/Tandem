@@ -52,13 +52,11 @@
 .development-panel { display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
 .preview > .development-panel[role="tabpanel"] { padding: 0; }
 .development-workspace { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
+.development-workspace:empty, .development-panel:not(:has(.development-workspace > *, .development-empty)) { display: none; }
 .development-frame { flex: 1; width: 100%; min-height: 0; border: 0; background: var(--studio-surface); }
 .development-toolbar { display: flex; flex-wrap: wrap; gap: var(--studio-control-gap); align-items: center; padding: 4px 8px; border-bottom: 1px solid var(--studio-border); }
 .development-toolbar > span { flex: 1; min-width: 200px; color: var(--studio-muted); font-size: 11px; }
 .development-error { color: var(--studio-danger); padding: 8px; overflow-wrap: anywhere; }
-.development-provenance { margin: 0; padding: 2px 8px; color: var(--studio-muted); font-size: 11px; }
-.development-provenance[open] { max-height: 130px; overflow: auto; }
-.development-provenance summary { cursor: pointer; }
 .development-empty { padding: 16px; }
 .development-handoff-status { padding: 4px 8px; color: var(--studio-muted); font-size: 12px; overflow-wrap: anywhere; }
 .dialog-overlay.process-dialog-overlay { z-index: 90; }
@@ -376,6 +374,12 @@ button > .lucide { width: 16px; height: 16px; margin: 0; stroke-width: 1.8; }
 .dialog-content h2 { margin: 0 0 12px; font-size: var(--text-title-small, 20px); }
 .dialog-content p { white-space: pre-line; line-height: 1.6; }
 .dialog-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--studio-control-gap); margin-top: 20px; }
+.handoff-review-dialog { width: min(640px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow: auto; overflow-wrap: anywhere; }
+.handoff-review-dialog pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.handoff-review-dialog details { margin-block: 12px; }
+.handoff-review-dialog .dialog-actions { position: sticky; bottom: -24px; padding-block: 12px; background: var(--studio-surface); flex-wrap: wrap; }
+.development-handoff-status { padding: 8px; overflow-wrap: anywhere; }
+.development-handoff-status button { margin: 4px 8px 4px 0; }
 .radio-control {
   display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
   width: 17px; height: 17px; min-height: 17px; padding: 0;
