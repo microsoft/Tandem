@@ -86,7 +86,7 @@ export class PreviewLaunches {
         guard(): Promise<void>;
     }) {}
     async binding(state: TandemState, target: PreviewTarget): Promise<PreviewLaunchBinding> {
-        if (!["current", "pending", "exploration"].includes(target)) throw new Error("Choose the current, pending or visual exploration saved version.");
+        if (!["current", "pending", "exploration", "original"].includes(target)) throw new Error("Choose the current, original, pending or visual exploration saved version.");
         const flow = state.prototypeFlow;
         const id = prototypePreviewCheckpointId(flow, target);
         const checkpoint = flow?.checkpoints.find(item => item.id === id);

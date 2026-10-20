@@ -5,7 +5,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { rendererFixtureScript } from "./helpers/react-harness.ts";
 import { exploringPrototype } from "./helpers/visual-fixture.ts";
-import { promotePrototypeCheckpoint, updateVisualSelection } from "../src/prototype-flow.ts";
+import { promotePrototypeCheckpoint, prototypePreviewCheckpointId, restoreOriginalPrototype, updateVisualSelection } from "../src/prototype-flow.ts";
 import { prototypePreviewBridgeSource } from "../src/prototype-bridge.ts";
 import { browserAvailable, openFixtureBrowser } from "../development/tandem/test/helpers/browser-fixture.mjs";
 
@@ -37,7 +37,7 @@ document.querySelector("#reset-shape").onclick=()=>{count=0;document.querySelect
 window.tandemPreviewState={capture:()=>({count}),restore:value=>{count=value.count;document.querySelector("#result").textContent="Selected "+count;}};</script>
 <script src="tandem-preview-bridge.js"></script></body></html>`;
 
-test("real browser compares distinct layouts, applies all controls in place and requires explicit choice/promotion", {
+test("real browser keeps the original as Default, shares the toolbar and explicitly accepts visual choices", {
   skip: !browserAvailable, timeout: 120000,
 }, async t => {
   const script = await rendererFixtureScript();
@@ -64,9 +64,8 @@ test("real browser compares distinct layouts, applies all controls in place and 
       else if (url.pathname === "/api/development/view") json({ url: origin + "/history", channel: "fixture" });
       else if (url.pathname === "/history") { res.writeHead(200, { "Content-Type": "text/html" }); res.end("<p>Saved discovery evidence</p>"); }
       else if (url.pathname === "/api/prototype/preview-status") {
-        const target = url.searchParams.get("target");
-        const id = target === "exploration" ? state.prototypeFlow.visualExploration.checkpointId
-          : target === "pending" ? state.prototypeFlow.pendingCheckpointId : state.prototypeFlow.displayedCheckpointId;
+        const target = url.searchParams.get("target") || "current";
+        const id = prototypePreviewCheckpointId(state.prototypeFlow, target);
         const checkpoint = state.prototypeFlow.checkpoints.find(item => item.id === id);
         json({ generation: state.generation, checkpointId: id, pendingCheckpointId: state.prototypeFlow.pendingCheckpointId,
           url: checkpoint?.previewUrl, available: Boolean(checkpoint), reason: "" });
@@ -84,6 +83,10 @@ test("real browser compares distinct layouts, applies all controls in place and 
           state.prototypeFlow.pendingCheckpointId = "chosen";
         } else if (input.action === "apply-update") {
           state.prototypeFlow = promotePrototypeCheckpoint(state.prototypeFlow, input.checkpointId);
+          state.previewUrl = state.prototypeFlow.checkpoints.find(item => item.id === input.checkpointId).previewUrl;
+        } else if (input.action === "visual-original") {
+          assert.equal(input.expectedRevision, state.revision);
+          state.prototypeFlow = restoreOriginalPrototype(state.prototypeFlow, input.checkpointId);
           state.previewUrl = state.prototypeFlow.checkpoints.find(item => item.id === input.checkpointId).previewUrl;
         } else throw new Error("Unexpected browser action: " + input.action);
         json({ ...state, revision: ++state.revision });
@@ -124,6 +127,9 @@ const r=e.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,disab
     await browser.evaluate(`(() => {const e=document.querySelector("#visual-setting-${key}");Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,"value").set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event("change",{bubbles:true}));})()`);
     await browser.waitFor('!document.querySelector("#choose-visual-direction").disabled');
   };
+  await browser.waitFor('document.querySelector("#preview-frame").contentDocument?.querySelector("#select-shape")');
+  assert.equal(await browser.evaluate('document.querySelector("#compare-current-prototype").getAttribute("aria-checked")'), "true");
+  await browser.evaluate('(() => {const d=document.querySelector("#preview-frame").contentDocument;d.querySelector("#select-shape").click();d.querySelector("#shape-name").value="Original draft";})()');
   await choose("precision");
   await browser.evaluate('window.originalCurrent=document.querySelector("#preview-frame");window.originalVisual=document.querySelector("#visual-preview-frame");void 0;');
   await frameValue('w.document.querySelector("#select-shape").click()');
@@ -173,22 +179,40 @@ const r=e.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,disab
       assert.ok(rect.height >= 300 && rect.hit, "Narrow preview must remain reachable: " + JSON.stringify(rect));
       if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "visual-exploration-430-preview.png"), await browser.screenshot());
     }
+    for (const selector of ["#choose-visual-direction", "#retry-visual-preview", "#restart-exploration-preview"]) {
+      const control = await browser.evaluate(`(() => {const e=document.querySelector(${JSON.stringify(selector)});e.scrollIntoView({block:"center"});
+const r=e.getBoundingClientRect();return {left:r.left,right:r.right,width:innerWidth,height:r.height,hit:e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))};})()`);
+      assert.ok(control.left >= 0 && control.right <= control.width && control.height >= 28 && control.hit,
+        `${selector} must remain reachable at ${width}px: ${JSON.stringify(control)}`);
+    }
+    if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `prototype-toolbar-${width}.png`), await browser.screenshot());
   }
   await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 960, deviceScaleFactor: 1, mobile: false });
+  assert.equal(await browser.evaluate('document.querySelectorAll(".phase-actions .preview-recovery-action").length'), 2);
+  assert.equal(await browser.evaluate('document.querySelector(".visual-exploration .preview-recovery-action")'), null);
   await click("#choose-visual-direction");
-  await browser.waitFor('document.querySelector("#apply-prototype-update").textContent.includes("Apply chosen visual direction") && !document.querySelector("#apply-prototype-update").disabled && !!document.querySelector("#open-prepared-visual")');
-  assert.equal(state.prototypeFlow.displayedCheckpointId, "interaction");
-  assert.equal(state.prototypeFlow.pendingCheckpointId, "chosen");
-  await click("#apply-prototype-update");
-  try {
-    await browser.waitFor('document.querySelector("#preview-frame").dataset.checkpointId==="chosen" && document.querySelector("#preview-frame").contentDocument?.documentElement?.dataset.tandemDirection==="canvas"');
-  } catch (error) {
-    const details = await browser.evaluate('(() => {const f=document.querySelector("#preview-frame");return {checkpoint:f.dataset.checkpointId,src:f.src,html:f.contentDocument?.documentElement?.outerHTML.slice(0,800),status:document.querySelector("#prototype-action-status").textContent,availability:document.querySelector("#preview-availability").textContent};})()');
-    throw new Error(`${error.message}\n${JSON.stringify(details)}\n${JSON.stringify(actions.at(-1))}`);
-  }
-  const defaults = await browser.evaluate('(() => {const r=document.querySelector("#preview-frame").contentDocument.documentElement;return {direction:r.dataset.tandemDirection,text:r.dataset.tandemTextSize,density:r.dataset.tandemDensity};})()');
+  await browser.waitFor('document.querySelector("#visual-custom-direction")?.dataset.applied==="true" && document.querySelector("#choose-visual-direction").disabled');
+  assert.equal(state.prototypeFlow.displayedCheckpointId, "chosen");
+  assert.equal(state.prototypeFlow.pendingCheckpointId, null);
+  await browser.evaluate(`(() => {const f=document.createElement("iframe");f.id="standalone-chosen";f.hidden=true;f.src=${JSON.stringify(origin + "/chosen/")};document.body.append(f);})()`);
+  await browser.waitFor('document.querySelector("#standalone-chosen").contentDocument?.documentElement?.dataset.tandemDirection==="canvas"');
+  const defaults = await browser.evaluate('(() => {const r=document.querySelector("#standalone-chosen").contentDocument.documentElement;return {direction:r.dataset.tandemDirection,text:r.dataset.tandemTextSize,density:r.dataset.tandemDensity};})()');
   assert.deepEqual(defaults, { direction: "canvas", text: "large", density: "compact" });
+  await browser.evaluate('document.querySelector("#standalone-chosen").remove()');
+  await click("#compare-current-prototype");
+  await browser.waitFor('!document.querySelector("#preview-frame").hidden && document.querySelector("#visual-preview-frame").hidden');
+  assert.equal(await browser.evaluate('window.originalCurrent===document.querySelector("#preview-frame")'), true);
+  assert.equal(await browser.evaluate('document.querySelector("#preview-frame").src'), origin + "/interaction/");
+  assert.equal(await browser.evaluate('document.querySelector("#preview-frame").contentDocument.querySelector("#shape-name").value'), "Original draft");
+  assert.equal(await browser.evaluate('document.querySelector("#preview-frame").contentDocument.querySelector("#result").textContent'), "Selected 1");
+  assert.equal(state.prototypeFlow.displayedCheckpointId, "chosen", "Default previews the original without implicitly accepting it.");
+  assert.equal(await browser.evaluate('!!document.querySelector(".phase-actions #restart-original-preview") && !document.querySelector("#restart-exploration-preview")'), true);
+  if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "prototype-default.png"), await browser.screenshot());
+  await click("#choose-visual-direction");
+  await browser.waitFor('document.querySelector("#compare-current-prototype").dataset.applied==="true" && document.querySelector("#choose-visual-direction").disabled');
+  assert.equal(state.prototypeFlow.displayedCheckpointId, "interaction");
   assert.equal(actions.filter(action => action.action === "choose-visual").length, 1);
   assert.equal(actions.filter(action => action.action === "apply-update").length, 1);
+  assert.equal(actions.filter(action => action.action === "visual-original").length, 1);
   assert.deepEqual(browser.exceptions, []);
 });

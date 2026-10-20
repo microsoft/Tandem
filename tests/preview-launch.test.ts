@@ -167,6 +167,37 @@ test("visual exploration restart binds only its source and preserves the current
     assert.equal(f.operations.filter(item => item.name === "powershell").length, 1);
     await f.launches.close();
 });
+test("Default restarts the original saved checkpoint even after a visual direction has been accepted", async t => {
+    const f = await fixture(t);
+    const flow = f.value.prototypeFlow;
+    const original = flow.checkpoints[0];
+    const exploration = flow.checkpoints[1];
+    const manifest = visualManifest();
+    exploration.milestone = "visual";
+    exploration.baseCheckpointId = original.id;
+    exploration.visual = { operation: "explore", explorationCheckpointId: null, selection: null, manifest };
+    const directory = join(f.root, ".tandem", "efforts", "fixture", "previews", "chosen");
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, "server.mjs"), "// chosen direction");
+    const chosen = { ...original, id: "chosen", requestId: "chosen", milestone: "visual",
+        baseCheckpointId: original.id, sourceCheckpointId: exploration.id, workspacePath: directory,
+        previewUrl: `http://127.0.0.1:${await freePort()}/`, sourceFingerprint: await fingerprintPrototypeWorkspace(directory),
+        visual: { operation: "choose", explorationCheckpointId: exploration.id, selection: manifest.defaultSelection, manifest } };
+    flow.checkpoints.push(chosen);
+    flow.pendingCheckpointId = null;
+    flow.displayedCheckpointId = chosen.id;
+    flow.visualExploration = { checkpointId: exploration.id, activeDirectionId: "precision", appliedCheckpointId: chosen.id,
+        selections: manifest.directions.map(direction => ({ directionId: direction.id, settings: direction.defaults })) };
+    const before = structuredClone(f.value);
+    const proposal = await f.launches.inspect(f.value, "original", "server.mjs");
+    assert.equal(proposal.checkpointId, original.id);
+    assert.equal(proposal.url, original.previewUrl);
+    assert.equal(proposal.target, "original");
+    await f.launches.decide(proposal.confirmationId!, true);
+    assert.deepEqual(f.value, before);
+    assert.equal(f.operations.filter(item => item.name === "powershell").length, 1);
+    await f.launches.close();
+});
 for (const failure of ["source", "owner", "permission", "identity", "during-launch-owner"]) test(`saved preview refuses ${failure} changes and preserves checkpoints`, async t => {
     const f = await fixture(t), before = structuredClone(f.value);
     const proposal = await f.launches.inspect(f.value, "current", "server.mjs");

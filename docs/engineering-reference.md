@@ -76,6 +76,10 @@ Reload failures remain visible in the root status bar and hosted error banners
 after Settings closes. An interrupted Preparation restart may use supported
 reload to reconnect, but reload does not clear that recovery barrier or resume work.
 
+Standalone hosts combine workspace status/help and **Go to action** with host
+status in one bottom bar. Independently opened canvases, and hosts without status
+bar support, retain the workspace's own bar.
+
 One composed public `tandem` provider owns both surfaces. The Node host retains
 user > project > session preference when those providers are present. It checks
 the selected provider's protocol, version and complete payload digest. An older
@@ -352,7 +356,9 @@ clarification before dependent new work rather than fabricated defaults.
 New Design output and a Prototype update awaiting Apply are marked in navigation.
 
 The original discovery phase forms remain independently owned. Finish/Reopen
-controls live in their owning phase view, not a sidebar Discovery actions category.
+controls follow the stage tabs at the right of the workspace header, alongside
+Prototype preview controls when applicable, not in the tab content or sidebar.
+The header has no horizontal divider lines; controls wrap on narrow screens.
 Secondary history starts compact in constrained panels and can collapse to a
 small keyboard-accessible rail; reopening restores its prior sizing. Already
 approved, unchanged drawings show one Finish action rather than another primary
@@ -446,15 +452,22 @@ accepted. Reduced motion overrides requested motion effects.
 
 Comparison state lives in `prototypeFlow.visualExploration`, independently of
 `displayedCheckpointId`. Viewing or adjusting alternatives never promotes them
-or starts model work. Scoped refinement uses the existing durable feedback
+or starts model work. **Default** is the exact original checkpoint, not a neutral
+appearance preset of a generated direction. Its identity follows the exploration's
+original base through scoped refinements, even after accepting another direction.
+Accepting Default requires the current revision, unchanged source and drawings,
+and a verified preview identity; it restores that retained checkpoint without
+generation or deleting alternatives. Scoped refinement uses the existing durable feedback
 queue and latest exploration source, retaining the submitted direction/settings
 and original feedback base. Unrelated current-prototype feedback waits during
-unresolved exploration. **Keep current prototype** explicitly marks outstanding
-visual feedback `dismissed`; it does not delete the alternatives or source.
+unresolved exploration. Accepting the original Default resolves that optional
+choice and resumes queued ordinary feedback from the original source. The guarded
+`skip-visual` action explicitly marks outstanding visual feedback `dismissed`;
+it does not delete the alternatives or source.
 
-**Prepare this direction** freezes a choice into a new checkpoint whose source
-manifest's `defaultSelection` must match exactly. Only **Apply chosen visual
-direction** promotes that checkpoint. Later ordinary revisions retain those
+The top-toolbar **Accept** freezes a direction into a new checkpoint whose source
+manifest's `defaultSelection` must match exactly, then explicitly applies the
+verified saved choice. Later ordinary revisions retain those
 defaults; handoff captures the same source and snapshot rather than a URL-only
 theme preference. Previous single-theme checkpoints remain readable, and new
 exploration is an explicit action. Structure, Interaction and private
@@ -463,6 +476,11 @@ Development ownership are unchanged.
 If a saved preview server has stopped, **Restart preview** targets only the
 displayed checkpoint; **Restart pending preview** targets only the waiting version.
 **Restart visual exploration** targets the retained alternative bundle.
+Default and the named directions share one top-toolbar recheck/restart pair:
+Default binds the original checkpoint, while a named direction binds the shared
+exploration checkpoint. The open-preview action follows the same visible view.
+Pending-version recovery remains separate. Preview failures are visible in the
+pane rather than only in visually hidden status text.
 None of these actions generates code, applies an update, changes feedback or opens
 Development. A previously reviewed live server is reused rather than duplicated.
 New Node-based checkpoints may retain `previewStart` with the actual source-owned

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Dialog } from "radix-ui";
-import { ArrowUp, FolderOpen, Info, LoaderCircle, RefreshCw, ScrollText, ShieldAlert, ShieldCheck, Square, X } from "lucide-react";
+import { ArrowRight, ArrowUp, FolderOpen, Info, LoaderCircle, RefreshCw, ScrollText, ShieldAlert, ShieldCheck, Square, X } from "lucide-react";
 import { BrowserStore } from "./client.js";
 import type { BackendCommand, HostCommand, HostRequest, HostSnapshot, WorkspaceListing } from "./contracts.js";
 import { Brand } from "../renderer/brand.js";
@@ -183,6 +183,7 @@ export function BrowserApp({ store, connect = true }: { store: BrowserStore; con
     const permissionsTitle = privateDevelopment ? "Development permissions are controlled inside its private session."
         : `Upstream tool permissions: ${host?.permissionMode === "allow-all" ? "Allow all for this session" : "Ask each time"}`;
     const displayedVersion = application.header?.version || host?.version;
+    const applicationStatus = application.header?.status;
     return <div className="host-shell">
         <header className="host-header">
             <div className="host-brand"><Brand /></div>
@@ -241,7 +242,15 @@ export function BrowserApp({ store, connect = true }: { store: BrowserStore; con
                     </div>}
                 </section>}
         </main>
-        <footer className="host-status"><span role="status">{host?.status || "Connecting..."}</span><span>Tab close keeps running | Stop or Ctrl+C to exit</span></footer>
+        <footer className="host-status">
+            <span className="host-status-state" role="status" title={host?.status || "Connecting..."}>{host?.status || "Connecting..."}</span>
+            {applicationStatus && <div className="host-application-status" data-status={applicationStatus.error ? "error" : "idle"}>
+                <span role="status" title={applicationStatus.text}>{applicationStatus.text}</span>
+                {applicationStatus.action && <button type="button" className="host-status-action" aria-label="Go to action"
+                    title={`Go to action: ${applicationStatus.action}`} onClick={application.showNextAction}><ArrowRight size={13} aria-hidden="true" /></button>}
+            </div>}
+            <span className="host-status-hint">Tab close keeps running | Stop or Ctrl+C to exit</span>
+        </footer>
         {dialog === "workspace" && host && <WorkspacePicker store={store} host={host} close={() => setDialog(null)} open={open} />}
         {dialog === "diagnostics" && <Modal title="Diagnostics" description="Redacted host and backend messages. Workspace logs are in .tandem\desktop\browser.log." close={() => setDialog(null)} wide>
             <pre className="host-log" tabIndex={0}>{diagnostics || "No diagnostic messages."}</pre>

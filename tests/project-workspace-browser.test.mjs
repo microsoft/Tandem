@@ -710,7 +710,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         await browser.waitFor(`document.querySelector(${JSON.stringify(phase === "sketch" ? "#sketch-tab" : "#live-preview-tab")})?.getAttribute("aria-selected")==="true"`);
         const geometry = await browser.evaluate(`(() => {
           const panel=document.querySelector(${JSON.stringify(phase === "sketch" ? "#sketch-panel" : "#live-preview-panel")});
-          const toolbar=panel.querySelector(".phase-actions").getBoundingClientRect();
+          const toolbar=document.querySelector(".previewbar > .phase-actions").getBoundingClientRect();
           const body=panel.querySelector(${JSON.stringify(phase === "sketch" ? ".sketch-stage" : ".preview-surface")}).getBoundingClientRect();
           return {toolbarHeight:toolbar.height,toolbarBottom:toolbar.bottom,bodyTop:body.top,bodyWidth:body.width,panelWidth:panel.clientWidth};
         })()`);
@@ -803,7 +803,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       assert.equal(value.prototypeFlow.displayedCheckpointId, "structure");
       assert.equal(value.prototypeFlow.pendingCheckpointId, "interaction");
       previewAvailable = true;
-      await clickRoot("#check-live-preview");
+      await clickRoot("#retry-current-preview");
       await browser.waitFor('document.querySelector("#preview-availability").textContent.includes("Current preview verified")');
       await browser.call("Emulation.setDeviceMetricsOverride", { width: 920, height: 620, deviceScaleFactor: 1, mobile: false });
       await browser.evaluate('window.beforePendingReload = true');
@@ -874,8 +874,8 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       assert.equal(await browser.evaluate('document.querySelector("#preview-frame").contentDocument.querySelector("#preview-button").textContent'), "Preview interaction accepted");
       await browser.call("Emulation.setDeviceMetricsOverride", { width: 390, height: 1000, deviceScaleFactor: 1, mobile: false });
       holdPreviewChecks = true;
-      await clickRoot("#prototype-progress-details > summary");
-      await clickRoot("#check-live-preview");
+      assert.equal(await browser.evaluate('!!document.querySelector(".phase-actions #retry-current-preview")'), true);
+      await clickRoot("#retry-current-preview");
       await browser.waitFor('document.querySelector("#preview-availability").textContent.includes("Checking current preview")');
       const pendingPrototype = readyPrototype(1, true);
       pendingPrototype.previewUrl = pendingPrototype.prototypeFlow.checkpoints[0].previewUrl = currentPrototype.previewUrl;
@@ -889,7 +889,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       assert.equal(await browser.evaluate('document.querySelector("#open-preview").href'), currentPrototype.previewUrl);
       assert.equal(await browser.evaluate('document.querySelector("#preview-frame").contentDocument.querySelector("#preview-button").textContent'), "Preview interaction accepted",
         "A pending version preserves the working iframe and its interaction state.");
-      assert.match(await browser.evaluate('document.querySelector("#prototype-progress-message").textContent'), /Interaction prototype ready to inspect.*current version until you choose Show Interaction prototype/);
+      assert.match(await browser.evaluate('document.querySelector("#prototype-progress-message").textContent'), /Interaction prototype ready to inspect.*accepted prototype stays unchanged until you choose Show Interaction prototype/);
       assert.equal(await browser.evaluate('document.querySelector("#preview-frame").getBoundingClientRect().bottom <= document.querySelector("#prototype-review").getBoundingClientRect().top'), true);
       if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "inline-pending-prototype-390.png"), await browser.screenshot());
       assert.equal(mutations.some(item => item.path === "/api/prototype/action"), false);

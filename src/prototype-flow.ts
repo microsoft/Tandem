@@ -2,9 +2,10 @@ import { ProjectStoreError } from "./project-store.js";
 import { readPreviewStart, type PreviewStart } from "./preview-start.js";
 import {
     isVisualExploration, readVisualCheckpoint, readVisualSelection, awaitingVisualChoice,
+    originalPrototypeCheckpointId, visualExplorationIsCurrent,
     type VisualCheckpoint, type VisualExploration, type VisualSelection,
 } from "./visual-directions.js";
-export { awaitingVisualChoice, visualExplorationIsCurrent } from "./visual-directions.js";
+export { awaitingVisualChoice, visualExplorationIsCurrent, prototypePreviewCheckpointId } from "./visual-directions.js";
 
 export type PrototypeMilestone = "structure" | "interaction" | "visual";
 export interface PrototypeCheckpoint {
@@ -177,11 +178,7 @@ export function prototypeCheckpoint(flow: PrototypeFlow, id: string | null): Pro
     return flow.checkpoints.find((item) => item.id === id) || null;
 }
 
-export type PrototypePreviewTarget = "current" | "pending" | "exploration";
-export function prototypePreviewCheckpointId(flow: PrototypeFlow | null | undefined, target: PrototypePreviewTarget): string | null {
-    return (target === "current" ? flow?.displayedCheckpointId
-        : target === "pending" ? flow?.pendingCheckpointId : flow?.visualExploration?.checkpointId) ?? null;
-}
+export type PrototypePreviewTarget = "current" | "pending" | "exploration" | "original";
 
 export function prototypeRetrySource(flow: PrototypeFlow, failed: PrototypeCheckpoint): PrototypeCheckpoint | null {
     const visited = new Set<string>();
@@ -267,6 +264,19 @@ export function promotePrototypeCheckpoint(flow: PrototypeFlow, id: string): Pro
         ...(exploration && ["choose", "preserve"].includes(checkpoint.visual?.operation || "")
             ? { visualExploration: { ...exploration, appliedCheckpointId: id } } : {}),
     };
+}
+
+export function restoreOriginalPrototype(flow: PrototypeFlow, id: string): PrototypeFlow {
+    const exploration = flow.visualExploration;
+    const original = prototypeCheckpoint(flow, originalPrototypeCheckpointId(flow));
+    if (!exploration || !visualExplorationIsCurrent(flow) || !original || original.id !== id || original.status !== "ready" || !original.previewUrl) {
+        throw new Error("The original prototype no longer matches this exploration. Review the current prototype before accepting Default.");
+    }
+    if (flow.activeCheckpointId || flow.pendingCheckpointId) {
+        throw new Error("Resolve the active or prepared prototype update before accepting Default.");
+    }
+    return { ...flow, displayedCheckpointId: original.id, visualRequested: false,
+        visualExploration: { ...exploration, appliedCheckpointId: null } };
 }
 
 export function updateVisualSelection(flow: PrototypeFlow, checkpointId: string, input: unknown): PrototypeFlow {

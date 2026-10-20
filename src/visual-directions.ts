@@ -1,4 +1,4 @@
-import type { PrototypeFlow } from "./prototype-flow.js";
+import type { PrototypeFlow, PrototypePreviewTarget } from "./prototype-flow.js";
 
 export const visualManifestName = "tandem-visual-directions.json";
 export const visualSettingsValues = {
@@ -10,9 +10,6 @@ export const visualSettingsValues = {
 } as const;
 
 export type VisualSettings = { [K in keyof typeof visualSettingsValues]: (typeof visualSettingsValues)[K][number] };
-export const defaultWireframeSettings = {
-    colorMode: "light", accent: "neutral", density: "comfortable", textSize: "standard", effects: "none",
-} as const satisfies VisualSettings;
 export interface VisualSelection { directionId: string; settings: VisualSettings }
 export interface VisualDirection {
     id: string;
@@ -138,11 +135,29 @@ export function isVisualExploration(checkpoint: { visual?: VisualCheckpoint } | 
     return checkpoint?.visual?.operation === "explore" || checkpoint?.visual?.operation === "refine";
 }
 
+export function originalPrototypeCheckpointId(flow: PrototypeFlow | null | undefined): string | null {
+    let checkpoint = flow?.checkpoints.find(item => item.id === flow.visualExploration?.checkpointId);
+    const visited = new Set<string>();
+    while (checkpoint?.visual?.operation === "refine") {
+        if (visited.has(checkpoint.id)) throw new Error("The saved visual exploration source chain contains a cycle.");
+        visited.add(checkpoint.id);
+        checkpoint = flow?.checkpoints.find(item => item.id === checkpoint?.visual?.explorationCheckpointId);
+    }
+    return isVisualExploration(checkpoint) ? checkpoint?.baseCheckpointId ?? null : null;
+}
+
+export function prototypePreviewCheckpointId(flow: PrototypeFlow | null | undefined, target: PrototypePreviewTarget): string | null {
+    return (target === "current" ? flow?.displayedCheckpointId
+        : target === "pending" ? flow?.pendingCheckpointId
+        : target === "original" ? originalPrototypeCheckpointId(flow) : flow?.visualExploration?.checkpointId) ?? null;
+}
+
 export function visualExplorationIsCurrent(flow: PrototypeFlow): boolean {
     const exploration = flow.visualExploration;
     const checkpoint = exploration && flow.checkpoints.find(item => item.id === exploration.checkpointId);
     const displayed = flow.checkpoints.find(item => item.id === flow.displayedCheckpointId);
-    return Boolean(checkpoint && (checkpoint.baseCheckpointId === flow.displayedCheckpointId ||
+    return Boolean(checkpoint && displayed && (checkpoint.baseCheckpointId === displayed.id ||
+        originalPrototypeCheckpointId(flow) === displayed.id ||
         displayed?.visual?.operation === "choose" && displayed.visual.explorationCheckpointId === checkpoint.id));
 }
 

@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { RefreshCw, RotateCw } from "lucide-react";
 import { Tooltip } from "radix-ui";
 import type { PrototypePreviewTarget } from "../prototype-flow.js";
+import { prototypePreviewCheckpointId } from "../visual-directions.js";
 import type { PreviewStartChoice } from "../preview-start.js";
 import { hasActiveJobs, useUi } from "./ui-context.js";
 
@@ -23,14 +24,14 @@ export function PreviewRestart({ target, unavailable, changed, iconOnly = false 
   const [error, setError] = useState(""), [status, setStatus] = useState("");
   const dialog = useRef<HTMLDialogElement>(null), inFlight = useRef(false);
   const blocked = pending || state.provider?.canSubmitAnswers === false || hasActiveJobs(state);
-  const label = target === "current" ? "current saved preview" : target === "pending" ? "pending saved version" : "visual exploration";
-  const checkpointId = target === "current" ? state.prototypeFlow?.displayedCheckpointId
-    : target === "pending" ? state.prototypeFlow?.pendingCheckpointId : state.prototypeFlow?.visualExploration?.checkpointId;
+  const label = target === "current" ? "current saved preview" : target === "pending" ? "pending saved version"
+    : target === "original" ? "original prototype" : "visual exploration";
+  const checkpointId = prototypePreviewCheckpointId(state.prototypeFlow, target);
   const stale = Boolean(inspection && (inspection.checkpointId !== checkpointId ||
     inspection.generation && inspection.generation !== state.generation));
   const choices = inspection?.choices ?? [];
   const restartLabel = target === "current" ? "Restart current preview"
-    : target === "pending" ? "Restart pending preview" : "Restart visual exploration";
+    : target === "pending" ? "Restart pending preview" : target === "original" ? "Restart original prototype" : "Restart visual exploration";
   const buttonLabel = busy === "inspect" ? "Finding start instructions..."
     : busy === "start" ? "Starting preview..." : target === "current" ? "Restart preview" : restartLabel;
   const RestartIcon = iconOnly ? RotateCw : RefreshCw;
@@ -81,11 +82,11 @@ export function PreviewRestart({ target, unavailable, changed, iconOnly = false 
     {!iconOnly && buttonLabel}
   </button>;
   return <div className={"preview-restart" + (iconOnly ? " preview-restart-compact" : "")}>
-    {(unavailable || iconOnly && Boolean(error)) && (iconOnly
+    {(unavailable || iconOnly) && (iconOnly
       ? <Tooltip.Root><Tooltip.Trigger asChild>{trigger}</Tooltip.Trigger><Tooltip.Portal>
         <Tooltip.Content className="preview-recovery-tooltip" sideOffset={6}>
           <strong>{restartLabel}</strong>
-          <p>{error || status || "The saved preview is unavailable."}</p>
+          <p>{error || status || (unavailable ? "The saved preview is unavailable." : "Check the saved server and restart it if needed.")}</p>
           <p>Review the saved server's start instructions before restarting. No rebuild or AI generation.</p>
         </Tooltip.Content>
       </Tooltip.Portal></Tooltip.Root> : trigger)}

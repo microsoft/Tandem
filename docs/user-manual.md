@@ -29,6 +29,8 @@ workspace also has **Preparation**, **Requirements**, **Drawings** and
 **Prototype** tabs. Use them to revisit available stages without changing the
 current phase or losing drafts; unavailable stages stay disabled. Development
 remains a separate left-navigation entry. Browsing does not authorize work.
+**Finish** and **Reopen** actions for the selected stage appear to the right of
+the tabs, wrapping below them when space is limited.
 Development Conversation appears only in Development; its draft and
 attachments stay hidden when you browse other phases, not moved to their inputs.
 Parent Copilot chat is not a Development submission.
@@ -115,24 +117,32 @@ and mock data. **What differs** explains each direction, including layout
 departures from the approved drawings; visual exploration does not authorize
 new navigation or features.
 
-1. **Preview direction** to switch alternatives. **Show current prototype**
-   returns to your existing version. Neither action accepts a design.
-2. Expand **Adjust appearance** for light/dark, accent, density, text size and
-   effects. Settings are saved per direction and switch in place without an
-   agent run. Reduced-motion preferences always turn motion off.
+1. **Default** shows the exact original prototype from before visual exploration,
+   including its original layout, styling and interactions. Select a named
+   direction to compare an alternative. Switching views does not accept a design.
+2. Expand **Advanced settings** for light/dark, accent, density, text size and
+   effects on a named direction. Changed settings appear as **Custom** and switch
+   in place without an agent run. Reduced-motion preferences always turn motion off.
 3. Use **Refine direction** to request a change to that alternative only.
    Ordinary **Feedback** still targets the current prototype and waits until
    exploration is applied or put aside.
-4. **Prepare this direction** saves your choice and settings as application
-   defaults in a new checkpoint. Inspect **Open prepared direction**, then
-   **Apply chosen visual direction**. **Back to alternatives** puts that
-   prepared choice aside without losing it.
+4. Use **Accept** in the top toolbar to apply the previewed direction and settings.
+   Accepting **Default** restores the saved original without regenerating it.
+   Alternatives, settings and checkpoint history are retained.
 
-**Keep current prototype** leaves your existing version unchanged and puts
-aside outstanding visual feedback. Alternatives, settings and history remain
-available through **Reopen visual exploration**. If the current prototype has
-since changed, new directions are built from it instead of applying stale work.
-Before finishing, apply your choice or keep the current prototype.
+The top toolbar's **Recheck**, **Restart** and open-preview controls follow the
+view on screen: the original for **Default**, or the shared comparison preview
+for a named direction. There is no second set of controls below the directions.
+Unavailable previews show their error beside the preview area.
+**Finish Prototype and save outputs** saves the accepted version, not an
+unaccepted comparison.
+
+Select **Default** and **Accept** to keep the original and resume queued ordinary
+feedback without choosing a generated direction. To retain another already
+accepted direction, finish with that version instead. Alternatives, settings and
+history remain saved. If ordinary feedback has since changed the prototype,
+**Explore current prototype** builds fresh directions instead of applying stale
+comparisons. Resolve submitted feedback before finishing.
 
 Saved source and a running preview are separate. Use
 [preview recovery](troubleshooting.md#the-preview-is-unavailable) to restart a

@@ -3,10 +3,11 @@ import { test, type TestContext } from "node:test";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { extensionHarness } from "./helpers/extension-harness.js";
-import { exploringPrototype, visualManifest } from "./helpers/visual-fixture.js";
+import { chosenVisualPrototype, exploringPrototype, visualManifest } from "./helpers/visual-fixture.js";
 import { prototypePreviewBridgeSource } from "../src/prototype-bridge.js";
-import { updateVisualSelection } from "../src/prototype-flow.js";
+import { restoreOriginalPrototype, updateVisualSelection } from "../src/prototype-flow.js";
 import { visualManifestName, type VisualManifest } from "../src/visual-directions.js";
+import { fingerprintPrototypeWorkspace } from "../src/prototype-runtime.js";
 import type { TandemState } from "../src/types.js";
 import { setup, response, current, submit, disabled, text } from "./renderer-fixtures.test.js";
 
@@ -167,6 +168,92 @@ test("a chosen direction must bake the exact settings into source; retry preserv
     assert.equal(state.previewUrl, "http://127.0.0.1:11000/");
 });
 
+test("accepting Default restores the verified original without generating a replacement or discarding alternatives", async t => {
+    const h = await visualHarness(t);
+    await h.api.prototypeAction("sample", provider, { action: "visual" });
+    let state = await h.settle(1);
+    const originalId = state.prototypeFlow!.displayedCheckpointId!;
+    const explorationId = state.prototypeFlow!.visualExploration!.checkpointId;
+    const selection = { directionId: "canvas", settings: visualManifest().directions[1].defaults };
+    await h.api.prototypeAction("sample", provider, { action: "choose-visual", checkpointId: explorationId, selection,
+        expectedRevision: state.revision });
+    state = await h.settle(2);
+    const chosen = state.prototypeFlow!.pendingCheckpointId!;
+    await assert.rejects(h.api.prototypeAction("sample", provider, { action: "visual-original", checkpointId: originalId,
+        expectedRevision: state.revision }), /active or prepared/);
+    state = await h.api.prototypeAction("sample", provider, { action: "apply-update", checkpointId: chosen });
+    const before = plain(state);
+    const server = await h.api.startServer("original-http", "sample", provider, true);
+    t.after(async () => {
+        clearInterval(server.heartbeat); server.live.close();
+        await new Promise<void>(resolve => { server.server.close(() => resolve()); server.server.closeAllConnections(); });
+    });
+    const originalStatus = await (await fetch(new URL("/api/prototype/preview-status?target=original", server.url))).json();
+    const currentStatus = await (await fetch(new URL("/api/prototype/preview-status", server.url))).json();
+    assert.equal(originalStatus.available, true);
+    assert.equal(originalStatus.checkpointId, originalId);
+    assert.equal(currentStatus.checkpointId, chosen);
+    assert.notEqual(originalStatus.url, currentStatus.url);
+    await assert.rejects(h.api.prototypeAction("sample", provider, { action: "visual-original", checkpointId: originalId }), /changed/);
+    await assert.rejects(h.api.prototypeAction("sample", provider, { action: "visual-original", checkpointId: chosen,
+        expectedRevision: state.revision }), /original prototype no longer matches/);
+    state = await h.api.prototypeAction("sample", provider, { action: "visual-original", checkpointId: originalId,
+        expectedRevision: state.revision });
+    assert.equal(state.previewUrl, "http://127.0.0.1:11000/");
+    assert.equal(state.prototypeFlow!.displayedCheckpointId, originalId);
+    assert.equal(state.prototypeFlow!.pendingCheckpointId, null);
+    assert.equal(state.prototypeFlow!.visualRequested, false);
+    assert.deepEqual(plain(state.prototypeFlow!.checkpoints), before.prototypeFlow!.checkpoints);
+    assert.deepEqual(plain(state.prototypeFlow!.visualExploration!.selections), before.prototypeFlow!.visualExploration!.selections);
+    assert.deepEqual(plain(state.prototypeReview.revisions), before.prototypeReview.revisions);
+    assert.equal(h.requests.length, 2);
+});
+
+test("Default cannot restore an original whose retained source changed after verification", async t => {
+    const h = await visualHarness(t);
+    await h.api.prototypeAction("sample", provider, { action: "visual" });
+    let state = await h.settle(1);
+    const original = state.prototypeFlow!.checkpoints.find(item => item.id === state.prototypeFlow!.displayedCheckpointId)!;
+    await writeFile(join(original.workspacePath, "original.mjs"), "// original source");
+    original.sourceFingerprint = await fingerprintPrototypeWorkspace(original.workspacePath);
+    await h.api.persistState(state);
+    state = await h.api.loadState("sample");
+    const explorationId = state.prototypeFlow!.visualExploration!.checkpointId;
+    await h.api.prototypeAction("sample", provider, { action: "choose-visual", checkpointId: explorationId,
+        selection: visualManifest().defaultSelection, expectedRevision: state.revision });
+    state = await h.settle(2);
+    state = await h.api.prototypeAction("sample", provider, { action: "apply-update", checkpointId: state.prototypeFlow!.pendingCheckpointId });
+    const before = plain(state);
+    await writeFile(join(original.workspacePath, "original.mjs"), "// source changed");
+    await assert.rejects(h.api.prototypeAction("sample", provider, { action: "visual-original", checkpointId: original.id,
+        expectedRevision: state.revision }), /source files changed/);
+    assert.deepEqual(plain(await h.api.loadState("sample")), before);
+});
+
+test("accepting the initial Default resumes queued prototype feedback from the original source", async t => {
+    const h = await visualHarness(t);
+    await h.api.prototypeAction("sample", provider, { action: "visual" });
+    let state = await h.settle(1);
+    const originalId = state.prototypeFlow!.displayedCheckpointId!;
+    const revision = await h.api.queuePrototypeRevision("sample", provider, {
+        suggestion: "Improve the original primary workflow.", clientRequestId: "keep-default-feedback",
+    });
+    state = await h.api.loadState("sample");
+    assert.equal(h.requests.length, 1);
+    h.mode("failed");
+    await h.api.prototypeAction("sample", provider, { action: "visual-original", checkpointId: originalId,
+        expectedRevision: state.revision });
+    state = await h.settle(2);
+    const work = state.prototypeFlow!.checkpoints.at(-1)!;
+    assert.equal(work.revisionId, revision.revisionId);
+    assert.equal(work.baseCheckpointId, originalId);
+    assert.equal(work.sourceCheckpointId, originalId);
+    assert.equal(state.prototypeFlow!.displayedCheckpointId, originalId);
+    assert.equal(state.prototypeFlow!.visualRequested, false);
+    assert.equal(state.prototypeReview.revisions.find(item => item.id === revision.revisionId).status, "failed",
+        "The resumed fixture failure is reported, not mistaken for a completed feedback update.");
+});
+
 test("visual refinement rejects changes to unrelated direction contracts and preserves the last-good bundle", async t => {
     const h = await visualHarness(t);
     await h.api.prototypeAction("sample", provider, { action: "visual" });
@@ -198,6 +285,10 @@ test("HTTP visual preview checks and adjustments target only the retained explor
     assert.equal(status.available, true);
     assert.equal(status.checkpointId, state.prototypeFlow!.visualExploration!.checkpointId);
     assert.notEqual(status.url, state.previewUrl);
+    const originalStatus = await (await fetch(new URL("/api/prototype/preview-status?target=original", server.url))).json();
+    assert.equal(originalStatus.available, true);
+    assert.equal(originalStatus.checkpointId, state.prototypeFlow!.displayedCheckpointId);
+    assert.equal(originalStatus.url, state.previewUrl);
     assert.deepEqual(plain(await h.api.loadState("sample")), before);
     const selection = { directionId: "presentation", settings: visualManifest().directions[2].defaults };
     const result = await fetch(new URL("/api/prototype/action", server.url), { method: "POST",
@@ -272,21 +363,28 @@ test("React visual controls switch and persist per direction without changing th
         return response({ ...value, revision: value.revision + 1 });
     });
     const accepted = h.get<HTMLIFrameElement>("preview-frame"), acceptedUrl = accepted.src;
-    assert.equal(disabled(h, "complete-stage"), true);
-    assert.equal(h.document.querySelectorAll(".visual-direction-card").length, 3);
+    assert.equal(disabled(h, "complete-stage"), false, "Finishing can keep the original without accepting an optional direction.");
+    assert.equal(h.document.querySelectorAll(".visual-direction-toggle").length, 4);
+    assert.equal(h.get("compare-current-prototype").dataset.applied, "true");
+    assert.equal(h.get("compare-current-prototype").getAttribute("aria-checked"), "true");
+    assert.ok(h.document.querySelector(".previewbar > .phase-actions")!.contains(h.get("choose-visual-direction")));
+    assert.equal(h.document.querySelector(".visual-selection-actions"), null);
     await h.input("revision-input", "Keep this current-prototype draft.");
     await h.click("visual-direction-canvas");
     assert.equal(h.get("preview-frame"), accepted);
     assert.equal(accepted.src, acceptedUrl);
     assert.equal(accepted.hidden, true);
-    assert.match(text(h, "visual-selection-status"), /Exploring: Canvas first.*Not applied/);
+    assert.match(text(h, "visual-selection-status"), /Previewing Canvas first.*Accept to apply/);
+    assert.equal(h.document.querySelector("#restart-original-preview"), null);
+    assert.ok(h.document.querySelector(".previewbar > .phase-actions")!.contains(h.get("restart-exploration-preview")));
+    assert.equal(h.document.querySelector(".visual-exploration .preview-recovery-action"), null);
     const frame = h.get<HTMLIFrameElement>("visual-preview-frame"), frameUrl = frame.src;
     await h.input("visual-setting-textSize", "large");
     assert.equal(h.get("visual-preview-frame"), frame);
     assert.equal(frame.src, frameUrl, "Adjustments use the bridge, not iframe reloads.");
     await h.click("visual-direction-precision");
     assert.equal(h.get<HTMLSelectElement>("visual-setting-textSize").value, "standard");
-    await h.click("visual-direction-canvas");
+    await h.click("visual-custom-direction");
     assert.equal(h.get<HTMLSelectElement>("visual-setting-textSize").value, "large");
     assert.equal(disabled(h, "choose-visual-direction"), true, "The iframe must confirm the exact settings before UI choice.");
     const sent: Array<{ data: Record<string, any>; origin: string }> = [];
@@ -313,8 +411,136 @@ test("React visual controls switch and persist per direction without changing th
     assert.equal(h.requests.at(-1)!.body.visualSelection.directionId, "canvas");
     await h.click("compare-current-prototype");
     assert.equal(accepted.hidden, false);
+    assert.equal(h.get("preview-frame"), accepted);
+    assert.equal(accepted.src, acceptedUrl);
+    assert.equal(h.get("compare-current-prototype").getAttribute("aria-checked"), "true");
+    assert.ok(h.document.querySelector(".previewbar > .phase-actions")!.contains(h.get("restart-original-preview")));
+    assert.equal(h.document.querySelector("#restart-exploration-preview"), null);
     assert.equal(h.get<HTMLTextAreaElement>("revision-input").value, "Keep this current-prototype draft.");
     assert.equal(current(h).prototypeFlow!.displayedCheckpointId, "interaction");
     assert.equal(current(h).prototypeFlow!.pendingCheckpointId, null);
     assert.equal(h.requests.filter(item => item.body?.action === "choose-visual").length, 0);
+    assert.equal(h.requests.filter(item => item.body?.selection?.settings.accent === "neutral").length, 0, "Default is not a generated neutral preset.");
+});
+
+test("Default remains the exact original after accepting a direction, and restoring it requires Accept", async t => {
+    const value = chosenVisualPrototype();
+    const h = await setup(t, value);
+    const original = h.get<HTMLIFrameElement>("preview-frame");
+    assert.equal(original.src, "http://127.0.0.1:9999/");
+    assert.equal(original.dataset.checkpointId, "interaction");
+    assert.equal(h.get("compare-current-prototype").dataset.preview, "true");
+    assert.equal(h.get("visual-direction-canvas").dataset.applied, "true");
+    assert.equal(h.get("visual-selection-status").classList.contains("visually-hidden"), false);
+    assert.equal(disabled(h, "choose-visual-direction"), false);
+    assert.equal(current(h).prototypeFlow!.displayedCheckpointId, "chosen", "Viewing Default does not roll back an accepted direction.");
+    h.setFetch(async (path, options) => {
+        assert.equal(path, "/api/prototype/action");
+        const body = JSON.parse(String(options.body));
+        assert.deepEqual(body, { action: "visual-original", checkpointId: "interaction", expectedRevision: 2 });
+        return response({ ...value, revision: 3, previewUrl: original.src,
+            prototypeFlow: restoreOriginalPrototype(value.prototypeFlow!, body.checkpointId) });
+    });
+    await h.click("choose-visual-direction");
+    assert.equal(current(h).prototypeFlow!.displayedCheckpointId, "interaction");
+    assert.equal(h.get("compare-current-prototype").dataset.applied, "true");
+    assert.equal(disabled(h, "choose-visual-direction"), true);
+    assert.equal(h.get("preview-frame"), original);
+    assert.equal(current(h).prototypeFlow!.checkpoints.length, value.prototypeFlow!.checkpoints.length);
+    assert.deepEqual(current(h).prototypeFlow!.visualExploration!.selections, value.prototypeFlow!.visualExploration!.selections);
+});
+
+test("Accept can explicitly keep the original Default without preparing a generated direction", async t => {
+    const value = exploringPrototype();
+    const h = await setup(t, value);
+    assert.equal(disabled(h, "choose-visual-direction"), false);
+    h.setFetch(async (_path, options) => {
+        const input = JSON.parse(String(options.body));
+        assert.deepEqual(input, { action: "visual-original", checkpointId: "interaction", expectedRevision: 1 });
+        return response({ ...value, revision: 2, prototypeFlow: restoreOriginalPrototype(value.prototypeFlow!, input.checkpointId) });
+    });
+    const original = h.get("preview-frame");
+    await h.click("choose-visual-direction");
+    assert.equal(current(h).prototypeFlow!.displayedCheckpointId, "interaction");
+    assert.equal(current(h).prototypeFlow!.visualRequested, false);
+    assert.equal(h.get("preview-frame"), original);
+    assert.equal(current(h).prototypeFlow!.checkpoints.length, value.prototypeFlow!.checkpoints.length);
+    assert.equal(disabled(h, "choose-visual-direction"), true);
+});
+
+test("returning to Default puts aside a prepared choice without applying it or deleting its checkpoint", async t => {
+    const value = chosenVisualPrototype();
+    value.prototypeFlow!.displayedCheckpointId = "interaction";
+    value.prototypeFlow!.pendingCheckpointId = "chosen";
+    value.prototypeFlow!.visualExploration!.appliedCheckpointId = null;
+    value.previewUrl = "http://127.0.0.1:9999/";
+    const h = await setup(t, value);
+    assert.equal(h.get<HTMLIFrameElement>("preview-frame").hidden, true);
+    h.setFetch(async (_path, options) => {
+        const input = JSON.parse(String(options.body));
+        assert.deepEqual(input, { action: "visual-back", checkpointId: "chosen", expectedRevision: 2 });
+        return response({ ...value, revision: 3, prototypeFlow: { ...value.prototypeFlow, pendingCheckpointId: null,
+            checkpoints: value.prototypeFlow!.checkpoints.map(item => item.id === "chosen"
+                ? { ...item, visualDismissedAt: value.updatedAt } : item) } });
+    });
+    await h.click("compare-current-prototype");
+    assert.equal(h.get<HTMLIFrameElement>("preview-frame").hidden, false);
+    assert.equal(current(h).prototypeFlow!.displayedCheckpointId, "interaction");
+    assert.equal(current(h).prototypeFlow!.pendingCheckpointId, null);
+    assert.ok(current(h).prototypeFlow!.checkpoints.find(item => item.id === "chosen")?.visualDismissedAt);
+    assert.equal(disabled(h, "choose-visual-direction"), false, "Accept can keep Default after putting the prepared alternative aside.");
+});
+
+test("completed Prototype keeps showing its accepted checkpoint without labelling it as an original Default preview", async t => {
+    const value = chosenVisualPrototype();
+    value.lifecycle.completedStages.push("prototype");
+    const h = await setup(t, value);
+    assert.equal(h.get<HTMLIFrameElement>("preview-frame").src, value.previewUrl);
+    assert.equal(h.get<HTMLIFrameElement>("preview-frame").dataset.checkpointId, "chosen");
+    assert.equal(h.get("visual-direction-canvas").getAttribute("aria-checked"), "true");
+    assert.equal(h.get("compare-current-prototype").getAttribute("aria-checked"), "false");
+    assert.equal(h.get("visual-selection-status").classList.contains("visually-hidden"), true);
+    assert.match(text(h, "visual-selection-status"), /saved accepted prototype/);
+    assert.equal(disabled(h, "choose-visual-direction"), true);
+    assert.equal(h.get<HTMLAnchorElement>("open-preview").href, value.previewUrl);
+    assert.deepEqual(h.requests, []);
+});
+
+test("the shared toolbar rechecks and restarts only the preview currently on screen", async t => {
+    const value = exploringPrototype();
+    const h = await setup(t, value);
+    const checks: string[] = [];
+    for (const target of ["original", "exploration"] as const) h.setPreviewFetch(async () => {
+        checks.push(target);
+        const checkpoint = current(h).prototypeFlow!.checkpoints.find(item => item.id === (target === "original" ? "interaction" : "visual-bundle"))!;
+        return response({ generation: value.generation, checkpointId: checkpoint.id, pendingCheckpointId: null,
+            url: checkpoint.previewUrl, available: false, reason: `${target} server stopped` });
+    }, target);
+    h.setFetch(async (path, options) => {
+        const body = JSON.parse(String(options.body));
+        if (path === "/api/prototype/action") return response({ ...current(h), revision: current(h).revision + 1,
+            prototypeFlow: updateVisualSelection(current(h).prototypeFlow!, body.checkpointId, body.selection) });
+        assert.equal(path, "/api/prototype/preview-restart/inspect");
+        return response({ needsRecipe: true, ...body, cwd: "C:\\fixture", url: "http://127.0.0.1:10000/",
+            executable: "node", entrypoints: [], message: "Review this preview's start instructions." });
+    });
+    await h.click("retry-original-preview");
+    assert.equal(checks.at(-1), "original");
+    assert.equal(h.get("preview-availability").classList.contains("visually-hidden"), false);
+    assert.match(text(h, "preview-availability"), /original server stopped/);
+    await h.click("restart-original-preview");
+    assert.equal(h.requests.at(-1)!.body.target, "original");
+    assert.equal(h.requests.at(-1)!.body.checkpointId, "interaction");
+    await h.click([...h.document.querySelectorAll<HTMLButtonElement>("dialog[open] button")].find(button => button.textContent === "Cancel")!);
+    await h.click("visual-direction-canvas");
+    await h.click("retry-visual-preview");
+    assert.equal(checks.at(-1), "exploration");
+    assert.match(text(h, "visual-preview-availability"), /exploration server stopped/);
+    assert.equal(h.get("visual-preview-availability").classList.contains("visually-hidden"), false);
+    await h.click("restart-exploration-preview");
+    assert.equal(h.requests.at(-1)!.body.target, "exploration");
+    assert.equal(h.requests.at(-1)!.body.checkpointId, "visual-bundle");
+    assert.equal(h.document.querySelectorAll(".phase-actions .preview-recovery-action").length, 2);
+    assert.equal(h.document.querySelector(".visual-exploration .preview-recovery-action"), null);
+    assert.equal(current(h).prototypeFlow!.displayedCheckpointId, "interaction");
 });

@@ -8,7 +8,7 @@ export function useEmbeddedHeader(canvasUrl: string | null | undefined, generati
     const header = received?.channel === channel ? received.header : null;
     const origin = canvasUrl ? new URL(canvasUrl).origin : null;
     const connect = useCallback(() => {
-        if (origin) frame.current?.contentWindow?.postMessage({ type: "tandem:header:connect", channel }, origin);
+        if (origin) frame.current?.contentWindow?.postMessage({ type: "tandem:header:connect", channel, statusBar: true }, origin);
     }, [channel, origin]);
     useEffect(() => {
         if (!origin) return;
@@ -37,6 +37,13 @@ export function useEmbeddedHeader(canvasUrl: string | null | undefined, generati
         }
         frame.current.contentWindow.postMessage({ type: "tandem:header:action", channel, scope: header.scope, action }, origin);
     };
+    const showNextAction = () => {
+        if (!origin || !header?.status?.action || !frame.current?.contentWindow) {
+            report("The application is not ready for that action. Wait for it to reconnect.");
+            return;
+        }
+        frame.current.contentWindow.postMessage({ type: "tandem:status:action", channel, scope: header.scope }, origin);
+    };
     const src = canvasUrl ? `${canvasUrl}#${new URLSearchParams({ "tandem-host": window.location.origin, "header-channel": channel })}` : undefined;
-    return { frame, src, header, send, onLoad: () => { setReceived(null); connect(); } };
+    return { frame, src, header, send, showNextAction, onLoad: () => { setReceived(null); connect(); } };
 }

@@ -7,6 +7,7 @@ import type { TestContext } from "node:test";
 import type { UiState } from "../../src/renderer/ui-context.js";
 import type { SpeechSessionFactory } from "../../src/renderer/speech-recognizer.js";
 import { createProcessState } from "../../src/process-state.js";
+import { prototypePreviewCheckpointId, type PrototypePreviewTarget } from "../../src/prototype-flow.js";
 
 let compiled: Promise<string> | undefined;
 async function compile() {
@@ -61,11 +62,13 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
   });
   const window = dom.window;
   const document = window.document;
+  window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
+  window.HTMLDialogElement.prototype.close = function () { this.open = false; };
   const requests: Request[] = [];
   const presentationRequests: string[] = [];
   const entryRequests: string[] = [];
   const previewRequests: RequestInit[] = [];
-  let previewFetcher: (() => Promise<Response>) | null = null;
+  const previewFetchers = new Map<PrototypePreviewTarget, () => Promise<Response>>();
   let entryOpened = false;
   let processSettingsFixture = false;
   let gitFetcher: (() => Promise<Response>) | null = null;
@@ -120,12 +123,13 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
       }
       if (path.startsWith("/api/prototype/preview-status")) {
         previewRequests.push(options);
-        const target = path.includes("target=pending") ? "pending" : path.includes("target=exploration") ? "exploration" : "current";
-        if (previewFetcher && target === "current") return previewFetcher();
+        const target = path.includes("target=pending") ? "pending" : path.includes("target=exploration") ? "exploration"
+          : path.includes("target=original") ? "original" : "current";
+        const previewFetcher = previewFetchers.get(target);
+        if (previewFetcher) return previewFetcher();
         const current = mounted.store.getSnapshot().state;
         const checkpoint = current.prototypeFlow?.checkpoints.find((item: { id: string }) =>
-          item.id === (target === "current" ? current.prototypeFlow.displayedCheckpointId
-            : target === "pending" ? current.prototypeFlow.pendingCheckpointId : current.prototypeFlow.visualExploration?.checkpointId));
+          item.id === prototypePreviewCheckpointId(current.prototypeFlow, target));
         return response({ generation: current.generation, checkpointId: checkpoint?.id ?? null,
           pendingCheckpointId: current.prototypeFlow?.pendingCheckpointId ?? null,
           url: checkpoint?.previewUrl || current.previewUrl, available: true, reason: "" });
@@ -207,7 +211,7 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
     },
     setFetch(handler: typeof fetcher) { fetcher = handler; },
     setGitPreflight(handler: () => Promise<Response>) { gitFetcher = handler; },
-    setPreviewFetch(handler: () => Promise<Response>) { previewFetcher = handler; },
+    setPreviewFetch(handler: () => Promise<Response>, target: PrototypePreviewTarget = "current") { previewFetchers.set(target, handler); },
     headerMessages,
     async sendHeaderMessage(data: Record<string, unknown>, origin = headerHost?.origin || "http://127.0.0.1:9000", source: unknown = parent) {
       const event = new window.MessageEvent("message", { data: { channel: headerHost?.channel, ...data }, origin });

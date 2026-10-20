@@ -101,6 +101,27 @@ test("compact prototype layout retains expanded details, drafts and iframe acros
     assert.equal(frame(h), displayed);
 });
 
+test("prototype preview controls share the stage tab toolbar without remounting the preview", async t => {
+    const value = readyPrototype();
+    const h = await setup(t, value), displayed = frame(h);
+    const actions = h.document.querySelector(".previewbar > .phase-actions")!;
+    const open = h.get<HTMLAnchorElement>("open-preview");
+    assert.ok(actions.contains(h.get("complete-stage")));
+    assert.ok(actions.contains(open));
+    assert.equal(open.href, value.previewUrl);
+    assert.equal(h.get("live-preview-panel").querySelector(".prototype-preview-actions"), null);
+    h.render({ ...value, revision: 2, status: "Current preview stays available." });
+    await h.flush();
+    assert.equal(h.get("open-preview"), open);
+    assert.equal(frame(h), displayed);
+    await browse(h, "requirements");
+    assert.equal(actions.querySelector(".prototype-preview-actions"), null);
+    await browse(h, "prototype");
+    assert.ok(actions.contains(h.get("open-preview")));
+    assert.equal(frame(h), displayed);
+    assert.deepEqual(h.requests, []);
+});
+
 test("pending Prototype copy distinguishes automatic milestones from recorded feedback revisions", async t => {
     const value = readyPrototype(1, true);
     const h = await setup(t, value);
@@ -127,7 +148,7 @@ test("unavailable current preview reviews an explicit legacy recipe and native d
     h.window.HTMLDialogElement.prototype.close = function () { this.open = false; };
     h.setPreviewFetch(async () => response({ generation: value.generation, checkpointId: "structure", pendingCheckpointId: "interaction",
         url: value.previewUrl, available: false, reason: "Saved preview server is stopped." }));
-    await h.click("check-live-preview");
+    await h.click("retry-current-preview");
     const before = JSON.stringify(value.prototypeFlow);
     let inspected = 0;
     h.setFetch(async (path, options) => {
@@ -168,7 +189,7 @@ test("detected preview startup is selectable without entering a path and saved l
     h.window.HTMLDialogElement.prototype.close = function () { this.open = false; };
     h.setPreviewFetch(async () => response({ generation: value.generation, checkpointId: "structure", pendingCheckpointId: "interaction",
         url: value.previewUrl, available: false, reason: "Stopped" }));
-    await h.click("check-live-preview");
+    await h.click("retry-current-preview");
     let attempts = 0;
     h.setFetch(async (path, options) => {
         const input = JSON.parse(String(options.body));
@@ -204,7 +225,7 @@ test("multiple restart options require selection and a stale preview cannot cons
     h.window.HTMLDialogElement.prototype.close = function () { this.open = false; };
     h.setPreviewFetch(async () => response({ generation: value.generation, checkpointId: "structure", pendingCheckpointId: "interaction",
         url: value.previewUrl, available: false, reason: "Stopped" }));
-    await h.click("check-live-preview");
+    await h.click("retry-current-preview");
     h.setFetch(async (path, options) => {
         const input = JSON.parse(String(options.body));
         return response({ needsRecipe: !input.choiceId, generation: value.generation, target: "current", checkpointId: "structure",

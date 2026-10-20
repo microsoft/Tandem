@@ -44,3 +44,19 @@ export function exploringPrototype(revision = 1): UiState {
         selections: manifest.directions.map(direction => ({ directionId: direction.id, settings: { ...direction.defaults } })) };
     return value;
 }
+
+export function chosenVisualPrototype(revision = 2): UiState {
+    const value = exploringPrototype(revision);
+    const flow = value.prototypeFlow!;
+    const exploration = flow.checkpoints.at(-1)!;
+    const selection = flow.visualExploration!.selections[1];
+    const manifest = { ...exploration.visual!.manifest!, defaultSelection: selection };
+    const chosen = { ...exploration, id: "chosen", requestId: "chosen",
+        sourceCheckpointId: exploration.id, previewUrl: "http://127.0.0.1:10001/",
+        visual: { operation: "choose" as const, explorationCheckpointId: exploration.id, selection, manifest } };
+    flow.checkpoints.push(chosen);
+    flow.displayedCheckpointId = chosen.id;
+    flow.visualExploration = { ...flow.visualExploration!, activeDirectionId: selection.directionId, appliedCheckpointId: chosen.id };
+    value.previewUrl = chosen.previewUrl;
+    return value;
+}

@@ -69,7 +69,7 @@ import { preparePrototypeWorkspace } from "./prototype-workspace.js";
 import { fingerprintPrototypeWorkspace, PROTOTYPE_FINGERPRINT_PREFIX } from "./prototype-runtime.js";
 import {
     newPrototypeFlow, nextPrototypeMilestone, prototypeCheckpoint, prototypeFlowCompletionError, prototypeRetrySource,
-    prototypeMilestoneLabels, promotePrototypeCheckpoint, readPrototypeFlow,
+    prototypeMilestoneLabels, promotePrototypeCheckpoint, restoreOriginalPrototype, readPrototypeFlow,
     reservePrototypeCheckpoint, settlePrototypeCheckpoint, awaitingVisualChoice, updateVisualSelection, visualExplorationIsCurrent, prototypePreviewCheckpointId,
     type PrototypeCheckpoint, type PrototypeFlow, type PrototypeMilestone,
 } from "./prototype-flow.js";
@@ -4022,6 +4022,17 @@ async function assertPrototypeCheckpointSources(checkpoint: PrototypeCheckpoint 
     }
 }
 
+async function verifyApplicablePrototypeCheckpoint(state: TandemState, checkpoint: PrototypeCheckpoint) {
+    const sketchInput = await approvedSketchInput(state);
+    if (checkpoint.generation !== state.generation ||
+        (checkpoint.sketchRevisionId || null) !== (sketchInput?.revisionId || null) ||
+        (checkpoint.sketchInputHash || null) !== sketchApprovalHash(state)) {
+        throw new CanvasError("prototype_sketch_stale", "The saved prototype refers to a different effort or different approved drawings.");
+    }
+    await assertPrototypeCheckpointSources(checkpoint);
+    await verifyPreviewIdentity(checkpoint.previewUrl, state.prototypeId, checkpoint.id);
+}
+
 async function dispatchPrototypeCheckpoint(prototypeId: string, extensionId: string,
     options: { retry?: boolean; checkpointId?: string; clarification?: { question: any; answer: string };
         exploreVisual?: boolean; visualChoice?: { checkpointId: string; selection: unknown; expectedRevision?: number } } = {}) {
@@ -4200,7 +4211,7 @@ async function prototypeAction(prototypeId: string, extensionId: string, input: 
     const next = await withAnswerClaim(prototypeId, async () => {
         const state = await loadState(prototypeId);
         if (state.lifecycle.currentStage !== "prototype") throw new CanvasError("stage_not_active", "These controls require the Prototype stage.");
-        if (action.startsWith("visual-") && input.expectedRevision !== undefined && input.expectedRevision !== state.revision) {
+        if (action.startsWith("visual-") && (input.expectedRevision !== undefined || action === "visual-original") && input.expectedRevision !== state.revision) {
             throw new CanvasError("visual_state_stale", "The visual exploration changed. Review the latest state and retry.");
         }
         if (hasActiveWork(state) && action !== "visual-preview") throw new CanvasError("processing_in_progress", "Wait for the current checkpoint to finish.");
@@ -4223,19 +4234,22 @@ async function prototypeAction(prototypeId: string, extensionId: string, input: 
         } else if (action === "apply-update") {
             const checkpoint = prototypeCheckpoint(flow, input.checkpointId);
             if (!checkpoint || checkpoint.id !== flow.pendingCheckpointId) throw new CanvasError("prototype_update_stale", "This update is no longer pending.");
-            const sketchInput = await approvedSketchInput(state);
-            if ((checkpoint.sketchRevisionId || null) !== (sketchInput?.revisionId || null) ||
-                (checkpoint.sketchInputHash || null) !== sketchApprovalHash(state)) {
-                throw new CanvasError("prototype_sketch_stale", "The prepared update refers to different approved drawings.");
-            }
-            await assertPrototypeCheckpointSources(checkpoint);
-            await verifyPreviewIdentity(checkpoint.previewUrl, prototypeId, checkpoint.id);
+            await verifyApplicablePrototypeCheckpoint(state, checkpoint);
             flow = promotePrototypeCheckpoint(flow, checkpoint.id);
             previewUrl = checkpoint.previewUrl;
             if (checkpoint.revisionId) {
                 review.revisions = review.revisions.map((item) => item.id === checkpoint.revisionId
                     ? { ...item, status: "applied", completedAt: new Date().toISOString() } : item);
             }
+        } else if (action === "visual-original") {
+            if (review.question || review.revisions.some(item => item.visualSelection && !["applied", "dismissed"].includes(item.status))) {
+                throw new CanvasError("prototype_feedback_pending", "Resolve submitted visual feedback before accepting Default.");
+            }
+            const restored = restoreOriginalPrototype(flow, input.checkpointId);
+            const checkpoint = prototypeCheckpoint(restored, restored.displayedCheckpointId)!;
+            await verifyApplicablePrototypeCheckpoint(state, checkpoint);
+            flow = restored;
+            previewUrl = checkpoint.previewUrl;
         } else if (action === "visual") {
             const displayed = prototypeCheckpoint(flow, flow.displayedCheckpointId);
             if (flow.pendingCheckpointId || !displayed || displayed.milestone === "structure" ||
@@ -4278,6 +4292,7 @@ async function prototypeAction(prototypeId: string, extensionId: string, input: 
             previewStatus: previewUrl ? "ready" : state.previewStatus,
             status: action === "apply-update" ? "Prototype updated. Continue the same workflow and send feedback at any time."
                 : action === "visual-preview" ? "Comparison settings saved. The current prototype is unchanged."
+                : action === "visual-original" ? "Original prototype accepted as Default. Visual alternatives and feedback history are preserved."
                 : action === "visual-back" ? "Prepared choice put aside. Explore the saved alternatives; the current prototype is unchanged."
                 : action === "skip-visual" ? "Current prototype kept. Visual alternatives and feedback history are preserved."
                 : "Prototype work requested.", updatedAt: new Date().toISOString() };
@@ -4290,7 +4305,7 @@ async function prototypeAction(prototypeId: string, extensionId: string, input: 
         if (next.prototypeFlow.visualExploration && visualExplorationIsCurrent(next.prototypeFlow)) return next;
         return dispatchPrototypeCheckpoint(prototypeId, extensionId, { retry: true, exploreVisual: true });
     }
-    if (action === "apply-update" || action === "skip-visual") {
+    if (action === "apply-update" || action === "skip-visual" || action === "visual-original") {
         await continueChangeWork(prototypeId);
         await continuePrototypeWork(prototypeId);
     }
@@ -7209,7 +7224,7 @@ async function handleRequest(entry, req, res) {
     if (req.method === "GET" && requestUrl.pathname === "/api/prototype/preview-status") {
         const state = await loadState(entry.prototypeId);
         const target = requestUrl.searchParams.get("target") ?? "current";
-        if (!["current", "pending", "exploration"].includes(target)) throw new Error("Choose the current, pending or visual exploration preview.");
+        if (!["current", "pending", "exploration", "original"].includes(target)) throw new Error("Choose the current, original, pending or visual exploration preview.");
         const selectedId = prototypePreviewCheckpointId(state.prototypeFlow, target as PreviewTarget);
         const checkpoint = state.prototypeFlow?.checkpoints.find(item => item.id === selectedId);
         const url = checkpoint?.previewUrl || (target === "current" ? state.previewUrl : null);
@@ -7232,7 +7247,7 @@ async function handleRequest(entry, req, res) {
             const state = await loadState(entry.prototypeId);
             if (hasActiveWork(state)) throw new Error("Wait for current phase work before restarting a saved preview.");
             if (requestUrl.pathname.endsWith("/inspect")) {
-                if (!isObject(input) || !["current", "pending", "exploration"].includes(input.target)
+                if (!isObject(input) || !["current", "pending", "exploration", "original"].includes(input.target)
                     || Object.keys(input).some(key => !["target", "generation", "checkpointId", "entrypoint", "args", "workingDirectory", "choiceId"].includes(key))
                     || input.generation !== state.generation
                     || input.checkpointId !== prototypePreviewCheckpointId(state.prototypeFlow, input.target)
@@ -8717,11 +8732,11 @@ session = await joinSession({
                 },
                 {
                     name: "prototype_action",
-                    description: "Explore visual alternatives, save comparison settings without applying them, prepare a chosen direction, apply a saved checkpoint, keep the current prototype, or retry failed work.",
+                    description: "Explore visual alternatives, save comparison settings without applying them, prepare a chosen direction, explicitly accept the original prototype as Default, apply a saved checkpoint, keep the current prototype, or retry failed work.",
                     inputSchema: {
                         type: "object", additionalProperties: false,
                         properties: {
-                            action: { type: "string", enum: ["apply-update", "retry", "visual", "visual-preview", "refine-visual", "choose-visual", "visual-back", "skip-visual", "extend-budget"] },
+                            action: { type: "string", enum: ["apply-update", "retry", "visual", "visual-preview", "refine-visual", "choose-visual", "visual-original", "visual-back", "skip-visual", "extend-budget"] },
                             checkpointId: { type: "string" },
                             expectedRevision: { type: "integer" },
                             selection: visualSelectionSchema,

@@ -1,7 +1,7 @@
 import { relative } from "node:path";
 import { prototypeRuntimePath } from "./prototype-runtime.js";
 import type { SketchDocument } from "./sketch.js";
-import { defaultWireframeSettings, visualSettingsValues } from "./visual-directions.js";
+import { visualSettingsValues } from "./visual-directions.js";
 
 export const tandemWorkerInteractionRules = [
     "Tandem owns user interaction. Do not call ask_user, ask_user_question, or any",
@@ -546,16 +546,16 @@ export function buildPrototypeCheckpointPrompt(args: {
             "tandem-textSize / tandem-effects URL parameters for shared preview links.",
             "It switches root attributes data-tandem-direction, data-tandem-color-mode,",
             "data-tandem-accent, data-tandem-density, data-tandem-text-size and data-tandem-effects in place.",
-            "The host provides an additional Default wireframe preset using the layout",
-            "identified by the source manifest's defaultSelection.directionId and these settings:",
-            JSON.stringify(defaultWireframeSettings),
-            "Do not add a separate Default direction or change stable direction IDs.",
+            "The host's Default option shows the exact original prototype checkpoint",
+            "from before visual exploration, not a generated direction or appearance preset.",
+            "Do not regenerate or restyle that original, add a separate Default direction,",
+            "or change stable direction IDs.",
             "Neutral accent is a real grayscale wireframe appearance: plain surfaces,",
             "simple outlined controls, restrained borders and no decorative effects when",
             "effects is none. Preserve the layout, readable status cues and every interaction.",
             "Apply this neutral treatment to app-specific cards, badges, charts and custom",
-            "components as well as native controls. Named presets should remain visually",
-            "distinct from this baseline. Changing a Default setting is a Custom selection.",
+            "components as well as native controls. Changing a named direction's settings",
+            "is a Custom selection; it never changes the original prototype.",
             "Implement real CSS/layout variants for these attributes. All controls MUST",
             "have an observable effect. Consume --tandem-accent and --tandem-accent-contrast",
             "for accented controls, --tandem-spacing-scale for spacing, --tandem-text-scale",

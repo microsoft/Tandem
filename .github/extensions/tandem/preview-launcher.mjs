@@ -1785,7 +1785,7 @@ async function materialized(path, kind) {
 // src/visual-directions.ts
 var visualSettingsValues = {
   colorMode: ["light", "dark"],
-  accent: ["blue", "teal", "violet", "amber"],
+  accent: ["neutral", "blue", "teal", "violet", "amber"],
   density: ["comfortable", "compact"],
   textSize: ["standard", "large"],
   effects: ["none", "subtle"]

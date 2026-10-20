@@ -185,6 +185,28 @@ test("horizontal stage tabs retain drafts and current-stage identity without sub
     assert.deepEqual(h.requests, []);
 });
 
+test("workflow actions follow the stage tabs outside every tab content view", async t => {
+    const h = await setup(t, state("prototype"));
+    for (const [stage, label] of [["prepare", "Preparation"], ["requirements", "Requirements"], ["sketch", "Drawings"], ["prototype", "Prototype"]]) {
+        await browse(h, stage);
+        const tabs = h.get("stage-workspace-tabs");
+        const actions = h.document.querySelector(".previewbar > .phase-actions")!;
+        assert.ok(actions);
+        assert.equal(tabs.nextElementSibling, actions, "Actions follow, rather than belong to, the tab list.");
+        assert.equal(actions.getAttribute("aria-label"), `${label} actions`);
+        assert.ok(actions.contains(h.get("complete-stage")));
+        assert.ok(actions.contains(h.get("reopen-stage")));
+        assert.equal(h.get("complete-stage").hidden, stage !== "prototype");
+        assert.equal(h.get("reopen-stage").hidden, stage === "prototype");
+        assert.equal(text(h, "reopen-stage"), `Reopen ${label}`);
+        assert.equal(h.document.querySelectorAll("#complete-stage, #reopen-stage").length, 2);
+        assert.equal(h.document.querySelector('[role="tabpanel"] .phase-actions'), null);
+    }
+    await browse(h, "development");
+    assert.equal(h.document.querySelector(".phase-actions"), null);
+    assert.deepEqual(h.requests, []);
+});
+
 test("horizontal keyboard navigation skips unavailable stages and stays separate from Development", async t => {
     const value = state("prototype");
     value.lifecycle.skippedStages = [{ stageId: "sketch", reason: "Existing drawings were supplied." }];
@@ -506,7 +528,7 @@ test("next-step guidance navigates and focuses without executing its mutation", 
     assert.equal(h.requests.length, 0);
 });
 
-test("owning phase toolbar completes the active stage without expanding context or losing drafts", async (t) => {
+test("stage tab toolbar completes the active stage without expanding context or losing drafts", async (t) => {
     const value = state();
     value.requirements.substage = "dag";
     value.decisionGraph.nodes = [decision("accepted", "answered")];
@@ -521,7 +543,8 @@ test("owning phase toolbar completes the active stage without expanding context 
     assert.equal(button.getAttribute("aria-label"), "Next stage: Finish requirements");
     assert.equal(button.title, button.getAttribute("aria-label"));
     assert.ok(button.querySelector('svg.lucide-check[aria-hidden="true"]'));
-    assert.equal(button.closest('[role="tabpanel"]')?.id, "design-tree-panel");
+    assert.equal(button.closest('[role="tabpanel"]'), null);
+    assert.equal(button.closest(".phase-actions")?.previousElementSibling, h.get("stage-workspace-tabs"));
     assert.equal(h.get("requirements-pane").contains(button), false);
     assert.doesNotMatch(h.get("requirements-pane").textContent || "", /Discovery actions/);
     button.focus();

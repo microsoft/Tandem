@@ -1,4 +1,5 @@
 import { Component, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ErrorInfo, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { AlertDialog, Tabs, Tooltip } from "radix-ui";
 import { ArrowRight, Check, ChevronDown, CircleDot, ClipboardList, Code, FileText, FolderOpen, GitBranch, Layers, ListChecks, Monitor, PanelLeft, PanelLeftClose, PanelLeftOpen, PencilRuler, Play, RotateCcw, Sparkles, X } from "lucide-react";
 import { lifecycleStages } from "../workflow.js";
@@ -18,7 +19,7 @@ import { DiscoveryRecovery } from "./discovery-recovery.js";
 import { ChangeRequestsPanel } from "./change-requests-panel.js";
 import { SpeechProvider, SpeechTextarea } from "./speech-textarea.js";
 import { Brand } from "./brand.js";
-import { useStandaloneHeader } from "./standalone-header.js";
+import { useStandaloneHeader, type ApplicationStatus, type StandaloneHosting } from "./standalone-header.js";
 
 const stageTabs = [
   { stage: "prepare", value: "preparation", id: "preparation", label: "Preparation", icon: Sparkles, className: "preparation-panel" },
@@ -186,8 +187,9 @@ function GoalEntry() {
   </section>;
 }
 
-function Header({ version, connectionError, developmentView, onHostedChange }: {
-  version: string; connectionError: string; developmentView: boolean; onHostedChange(hosted: boolean): void;
+function Header({ version, connectionError, developmentView, status, showNextAction, onHostedChange }: {
+  version: string; connectionError: string; developmentView: boolean; status: ApplicationStatus;
+  showNextAction(): void; onHostedChange(hosted: StandaloneHosting): void;
 }) {
   const { state } = useUi();
   const { maintenanceError } = useProjectView();
@@ -207,12 +209,13 @@ function Header({ version, connectionError, developmentView, onHostedChange }: {
       { id: "maintenance", text: maintenanceError, error: true },
       { id: "connection", text: connectionError, error: true },
     ].filter((message) => message.text).map((message) => ({ ...message, text: message.text.slice(0, 8192) })),
+    status: { ...status, text: status.text.slice(0, 8192) },
   }, { reload: () => { throw new Error("Use Project settings diagnostics to reload Tandem."); },
     reset: () => { throw new Error("Use Preparation actions to restart Preparation."); },
     signIn: () => { throw new Error("Use the voice input's sign-in control."); },
-    cancelSignIn: () => { throw new Error("Use the voice input's cancel control."); } });
+    cancelSignIn: () => { throw new Error("Use the voice input's cancel control."); } }, showNextAction);
   useEffect(() => { onHostedChange(hosted); }, [hosted, onHostedChange]);
-  return <header className="topbar" hidden={hosted} data-hosted={hosted || undefined}><Brand /><div className="topbar-actions">
+  return <header className="topbar" hidden={hosted.header} data-hosted={hosted.header || undefined}><Brand /><div className="topbar-actions">
     <div id="lifecycle-status" className="lifecycle" aria-label="Development lifecycle" hidden={isGoalEntry(state)}>
       <span id="current-stage" className="stage" aria-label={"Current lifecycle stage: " + lifecycleStages[stageIndex].label}>
         <span id="current-stage-index" className="stage-index" aria-hidden="true">{stageIndex + 1}</span><span id="stage">{lifecycleStages[stageIndex].label}</span>
@@ -271,9 +274,10 @@ function Workspace(props: WorkspaceProps) {
   const { activeTab, onTabChange, selectedArtifact, contextOpen, setContextOpen, sketchBlocked } = props;
   const stageAction = useAction("stage");
   const workspace = useRef<HTMLElement>(null);
+  const [stageActionsContainer, setStageActionsContainer] = useState<HTMLElement | null>(null);
   const [width, setWidth] = useState(minimumContextWidth);
   const [contextCollapsed, setContextCollapsed] = useState(false);
-  const [headerHosted, setHeaderHosted] = useState(false);
+  const [hosting, setHosting] = useState<StandaloneHosting>({ header: false, status: false });
   const [maximum, setMaximum] = useState(minimumContextWidth);
   const [dragging, setDragging] = useState<number | null>(null);
   const [nextAction, setNextAction] = useState<{ id: string; label: string; revealId: string | null } | null>(null);
@@ -311,6 +315,17 @@ function Workspace(props: WorkspaceProps) {
     : savedPrototype ? "Prototype saved. Continue in Development when you're ready."
     : state.status || (atStart ? "Ready to start a project." : "Ready."));
   const narrow = () => window.matchMedia("(max-width: 760px)").matches;
+  const showNextAction = () => {
+    if (!nextAction) return;
+    if (nextAction.id === "complete-stage") { setContextCollapsed(false); onTabChange(tabFor(current)); if (narrow()) setContextOpen(true); }
+    else { onTabChange(tabFor(current)); setContextOpen(false); }
+    const reveal = nextAction.revealId ? document.getElementById(nextAction.revealId) : null;
+    if (reveal?.getAttribute("aria-expanded") === "false") reveal.click();
+    window.requestAnimationFrame(() => {
+      const target = document.getElementById(nextAction.id);
+      target?.scrollIntoView?.({ block: "nearest" }); target?.focus({ preventScroll: true });
+    });
+  };
   // Keep both artifact and conversation minimum widths, including the two dividers.
   const maximumContextWidth = () => Math.max(minimumContextWidth,
     (workspace.current?.getBoundingClientRect().width || minimumContextWidth + 587) - 587);
@@ -368,7 +383,7 @@ function Workspace(props: WorkspaceProps) {
     onTabChange(tab as TabId);
     setContextOpen(false);
   }
-  const phaseActions = (previewActions?: ReactNode) => <section className="phase-actions" aria-label={`${selectedLabel} actions`} aria-describedby="stage-browsing stage-message">
+  const phaseActions = <section ref={setStageActionsContainer} className="phase-actions" aria-label={`${selectedLabel} actions`} aria-describedby="stage-browsing stage-message">
     <button id="complete-stage" className="complete-stage" type="button" hidden={projectView.developmentEntered || current === "prepare" || current === "development" || viewed !== current || Boolean(skippedStage(state, current))} aria-describedby="stage-message"
       aria-label={completionHelp} title={completionHelp} data-status-help={completionHelp}
       disabled={!complete} onClick={() => {
@@ -394,7 +409,6 @@ function Workspace(props: WorkspaceProps) {
       }}>
       <Check size={16} aria-hidden="true" /><span className="complete-stage-label">{completionLabel}</span>
     </button>
-    {previewActions}
     <p id="stage-browsing" className="visually-hidden">{readOnly ? `Viewing ${selectedLabel} · read only. Reopen explicitly to change its scope.` : ""}</p>
     <button id="reopen-stage" className="complete-stage" type="button" aria-describedby="stage-browsing"
       hidden={viewed === "development" || !lifecycleStages.some(stage => stage.id === viewed) || !readOnly || Boolean(skippedStage(state, viewed)) || lifecycleStages.findIndex((stage) => stage.id === viewed) > lifecycleStages.findIndex((stage) => stage.id === current)}
@@ -449,7 +463,9 @@ function Workspace(props: WorkspaceProps) {
         <aside id="requirements-pane" className="requirements" aria-label="Project context" onKeyDown={(event) => {
           if (event.key === "Escape" && contextOpen) { setContextOpen(false); document.getElementById("context-toggle")?.focus(); event.preventDefault(); }
         }}>
-          <Header version={props.version} connectionError={props.connectionError} developmentView={projectView.active} onHostedChange={setHeaderHosted} />
+          <Header version={props.version} connectionError={props.connectionError} developmentView={projectView.active}
+            status={{ text: statusBarText, error: Boolean(statusBarError), action: nextAction?.label ?? null }}
+            showNextAction={showNextAction} onHostedChange={setHosting} />
           <nav className="project-navigation" aria-label="Project navigation">
             <button id="project-settings" type="button" className="plan-button" onClick={() => projectView.command("settings")}>Project settings</button>
             <Tabs.List id="project-contents" className="preview-tabs project-tabs" aria-label="Project contents">
@@ -480,8 +496,8 @@ function Workspace(props: WorkspaceProps) {
               Current work{projectView.attention ? ` (${projectView.attention} needs attention)` : ""}
             </button>
           </nav>
-          <div className="context-pane-heading" data-hosted={headerHosted || undefined}>
-            <span className="project-folder" hidden={headerHosted} title={projectView.entry.projectPath}>{projectView.entry.projectPath.split(/[\\/]/).filter(Boolean).at(-1)}</span>
+          <div className="context-pane-heading" data-hosted={hosting.header || undefined}>
+            <span className="project-folder" hidden={hosting.header} title={projectView.entry.projectPath}>{projectView.entry.projectPath.split(/[\\/]/).filter(Boolean).at(-1)}</span>
             <button id="toggle-context-pane" className="context-collapse" type="button" aria-controls="requirements-pane"
               aria-expanded={!contextCollapsed} aria-label={contextCollapsed ? "Expand project context" : "Collapse project context"}
               title={contextCollapsed ? "Expand project context" : "Collapse to stage activity bar"}
@@ -539,11 +555,11 @@ function Workspace(props: WorkspaceProps) {
                 </Tabs.Trigger>;
               })}
             </Tabs.List>
+            {phaseActions}
           </div>}
           {stageTabs.map((tab) => <Tabs.Content key={tab.value} value={tab.value} forceMount hidden={activeTab !== tab.value}
             id={tab.id + "-panel"} className={tab.className}
             aria-labelledby={tab.id + (showStageTabs && tab.stage !== "development" ? "-workspace-tab" : "-tab")} tabIndex={0}>
-            {activeTab === tab.value && tab.stage !== "development" && tab.stage !== "prototype" && !atStart && phaseActions()}
             <UiContext.Provider value={tab.stage === "development" ? ui : { ...ui, canEdit: (stage, allowCompleted) => !projectView.developmentEntered && ui.canEdit(stage, allowCompleted) }}>
             {tab.stage === "prepare" && <PreparationRestart store={props.store} effortBusy={props.effortBusy} />}
             {tab.stage === "prepare" ? atStart ? projectView.developmentEntered
@@ -551,7 +567,8 @@ function Workspace(props: WorkspaceProps) {
               : <GoalEntry /> : <PreparationPanel /> : tab.stage === "requirements" ? <RequirementsPanel />
               : tab.stage === "sketch" ? <SketchCompletionContext.Provider value={props.onSketchBlocked}><SketchPanel /></SketchCompletionContext.Provider>
               : tab.stage === "prototype" ? <PrototypePanel active={activeTab === "preview" && projectView.entry.ready}
-                connected={!props.connectionError} renderActions={activeTab === "preview" && !atStart ? phaseActions : undefined} /> : <DevelopmentPanel active={developmentView} />}
+                connected={!props.connectionError} renderActions={activeTab === "preview" && !atStart
+                  ? actions => stageActionsContainer ? createPortal(actions, stageActionsContainer) : null : undefined} /> : <DevelopmentPanel active={developmentView} />}
             </UiContext.Provider>
           </Tabs.Content>)}
           <Tabs.Content value="content" forceMount hidden={activeTab !== "content"} id="content-panel" className="content-panel" aria-labelledby="content-tab" tabIndex={0}><ArtifactsPanel selectedArtifactId={selectedArtifact} /></Tabs.Content>
@@ -559,20 +576,11 @@ function Workspace(props: WorkspaceProps) {
         <ProjectConversation />
       </main>
     </Tabs.Root>
-    <div id="next-action-bar" className="next-action-bar" data-status={statusBarError ? "error" : "idle"}>
+    <div id="next-action-bar" className="next-action-bar" hidden={hosting.status} data-status={statusBarError ? "error" : "idle"}>
       <span id="next-action-guide" role="status" title={statusBarText}>{statusBarText}</span>
       <button id="show-next-action" type="button" hidden={!nextAction}
-        aria-label="Go to action" title={nextAction ? "Go to action: " + nextAction.label : "Go to action"} onClick={() => {
-        if (!nextAction) return;
-        if (nextAction.id === "complete-stage") { setContextCollapsed(false); onTabChange(tabFor(current)); if (narrow()) setContextOpen(true); }
-        else { onTabChange(tabFor(current)); setContextOpen(false); }
-        const reveal = nextAction.revealId ? document.getElementById(nextAction.revealId) : null;
-        if (reveal?.getAttribute("aria-expanded") === "false") reveal.click();
-        window.requestAnimationFrame(() => {
-          const target = document.getElementById(nextAction.id);
-          target?.scrollIntoView?.({ block: "nearest" }); target?.focus({ preventScroll: true });
-        });
-      }}><ArrowRight size={13} aria-hidden="true" /></button>
+        aria-label="Go to action" title={nextAction ? "Go to action: " + nextAction.label : "Go to action"}
+        onClick={showNextAction}><ArrowRight size={13} aria-hidden="true" /></button>
     </div>
   </div>;
 }

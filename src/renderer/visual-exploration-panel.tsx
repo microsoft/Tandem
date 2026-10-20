@@ -1,7 +1,7 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { Check, ExternalLink, RefreshCw, Send } from "lucide-react";
 import { ToggleGroup, Tooltip } from "radix-ui";
-import { awaitingVisualChoice, defaultWireframeSettings, readVisualSelection, visualExplorationIsCurrent, visualPreviewUrl, visualSettingsValues,
+import { awaitingVisualChoice, originalPrototypeCheckpointId, readVisualSelection, visualExplorationIsCurrent, visualPreviewUrl, visualSettingsValues,
   type VisualSelection, type VisualSettings } from "../visual-directions.js";
 import { hasActiveJobs, useAction, useDraft, useUi } from "./ui-context.js";
 import { PreviewRestart } from "./preview-restart.js";
@@ -20,7 +20,7 @@ interface VisualAcceptance {
   displayedCheckpointId: string | null;
   explorationCheckpointId: string;
   checkpointId: string | null;
-  selection: VisualSelection;
+  selection: VisualSelection | null;
 }
 
 function VisualFeedback({ checkpointId, selection, name, disabled }: {
@@ -56,9 +56,10 @@ function VisualFeedback({ checkpointId, selection, name, disabled }: {
   </form>;
 }
 
-export function VisualExplorationPanel({ active, connected, inspecting, onInspectChange, onApply }: {
+export function VisualExplorationPanel({ active, connected, inspecting, onInspectChange, onApply, defaultPreviewReady, renderActions }: {
   active: boolean; connected: boolean; inspecting: boolean; onInspectChange(value: boolean): void;
-  onApply?: (checkpointId: string) => Promise<void>;
+  onApply?: (checkpointId: string) => Promise<void>; defaultPreviewReady: boolean;
+  renderActions?: (actions: ReactNode) => ReactNode;
 }) {
   const { state, post, pending, canEdit } = useUi();
   const action = useAction("visual-exploration");
@@ -84,28 +85,30 @@ export function VisualExplorationPanel({ active, connected, inspecting, onInspec
   const previewUnavailable = availability.binding === binding && !availability.available && !availability.busy;
   const previewError = bridge.key === selectionKey && Boolean(bridge.error);
   const current = Boolean(state.prototypeFlow && visualExplorationIsCurrent(state.prototypeFlow));
+  const original = current
+    ? state.prototypeFlow?.checkpoints.find(item => item.id === originalPrototypeCheckpointId(state.prototypeFlow))
+    : displayed;
   const acceptedVisual = displayed?.visual;
   const acceptedSelection = current && acceptedVisual?.explorationCheckpointId === checkpoint?.id
     && manifest?.directions.some(item => item.id === acceptedVisual?.selection?.directionId) ? acceptedVisual?.selection ?? null : null;
-  const defaultSelection = manifest ? readVisualSelection({
-    directionId: manifest.defaultSelection.directionId, settings: defaultWireframeSettings,
-  }) : null;
   function optionFor(choice: VisualSelection | null | undefined): string {
     const preset = manifest?.directions.find(item => item.id === choice?.directionId);
     if (!choice || !preset) return "";
-    if (JSON.stringify(choice) === JSON.stringify(defaultSelection)) return defaultOption;
     return JSON.stringify(choice.settings) === JSON.stringify(preset.defaults) ? choice.directionId : customOption;
   }
-  const appliedDirection = optionFor(acceptedSelection);
+  const appliedDirection = original && original.id === displayed?.id ? defaultOption : optionFor(acceptedSelection);
   const selectedDirection = optionFor(selection);
-  const previewIsDefault = selectedDirection === defaultOption;
   const previewIsCustom = selectedDirection === customOption;
   const appliedIsCustom = appliedDirection === customOption;
   const savedCustom = optionFor(customDraft) === customOption ? customDraft : null;
   const customSelection = previewIsCustom ? selection : savedCustom ?? (appliedIsCustom ? acceptedSelection : null);
   const customBase = manifest?.directions.find(item => item.id === customSelection?.directionId);
-  const previewDirection = inspecting ? selectedDirection : appliedDirection;
-  const selectionChanged = inspecting && JSON.stringify(selection) !== JSON.stringify(acceptedSelection);
+  const savedOnly = state.lifecycle.completedStages.includes("prototype");
+  const previewDirection = inspecting ? selectedDirection : savedOnly ? appliedDirection : defaultOption;
+  const selectionChanged = inspecting ? JSON.stringify(selection) !== JSON.stringify(acceptedSelection)
+    : !savedOnly && Boolean(original && original.id !== displayed?.id);
+  const needsAcceptance = !savedOnly && (selectionChanged ||
+    !inspecting && Boolean(state.prototypeFlow && awaitingVisualChoice(state.prototypeFlow)));
   const editable = canEdit("prototype");
   const finalizing = state.processing?.action === "generate-design-spec" && hasActiveJobs(state);
   const savedChoice = candidate?.visual?.operation === "choose" && candidate.visual.explorationCheckpointId === checkpoint?.id;
@@ -114,11 +117,12 @@ export function VisualExplorationPanel({ active, connected, inspecting, onInspec
     || Boolean(state.prototypeFlow?.pendingCheckpointId && !savedChoice);
   const revisions: Array<{ status: string; visualSelection?: unknown }> = state.prototypeReview.revisions || [];
   const unresolved = revisions.filter(item => !["applied", "dismissed"].includes(item.status));
-  const choiceBlocked = pending || !editable || finalizing || Boolean(acceptance) || !connected || inspecting && !current || hasActiveJobs(state)
-    || Boolean(state.prototypeFlow?.pendingCheckpointId && !(inspecting ? matchingChoice : savedChoice))
+  const choiceBlocked = pending || !editable || finalizing || Boolean(acceptance) || !connected || !current || hasActiveJobs(state)
+    || Boolean(state.prototypeFlow?.pendingCheckpointId && !(inspecting && matchingChoice))
     || Boolean(state.prototypeReview.question) || unresolved.some(item => item.visualSelection)
     || inspecting && (!onApply || !verified || bridge.key !== selectionKey || !bridge.ready)
-    || !selectionChanged;
+    || !inspecting && (!original || !defaultPreviewReady)
+    || !needsAcceptance;
   const activeCheckpoint = state.prototypeFlow?.checkpoints.find(item => item.id === state.prototypeFlow?.activeCheckpointId);
   const refinementBlocked = controlsBlocked || !current || unresolved.length >= 50 ||
     Boolean(activeCheckpoint && activeCheckpoint.visual?.operation !== "refine") ||
@@ -127,7 +131,7 @@ export function VisualExplorationPanel({ active, connected, inspecting, onInspec
   useEffect(() => { if (savedChoice) onInspectChange(true); }, [candidate?.id, savedChoice]);
 
   useEffect(() => {
-    if (!acceptance || applying.current || action.busy) return;
+    if (!acceptance?.selection || applying.current || action.busy) return;
     const flow = state.prototypeFlow;
     const target = flow?.checkpoints.find(item => item.id === acceptance.checkpointId);
     const fail = (message: string) => { action.setError(message); setAcceptance(null); };
@@ -220,17 +224,26 @@ export function VisualExplorationPanel({ active, connected, inspecting, onInspec
     return () => { window.clearTimeout(timer); window.removeEventListener("message", receive); };
   }, [inspecting, verified, selectionKey, loaded, refresh]);
 
-  if (!exploration || !checkpoint || !manifest || !selection || !direction || !defaultSelection) return null;
-  const previewName = previewIsDefault ? "Default" : previewIsCustom ? "Custom" : direction.name;
+  if (!exploration || !checkpoint || !manifest || !selection || !direction) return null;
+  const previewName = previewIsCustom ? "Custom" : direction.name;
+  async function comparisonState() {
+    const result = savedChoice && candidate
+      ? await post("/api/prototype/action", { action: "visual-back", checkpointId: candidate.id, expectedRevision: state.revision }) : state;
+    if (result.generation !== state.generation || result.prototypeFlow?.displayedCheckpointId !== state.prototypeFlow?.displayedCheckpointId
+      || result.prototypeFlow?.visualExploration?.checkpointId !== checkpoint?.id) {
+      throw new Error("The prototype changed. Review its current state before selecting another direction.");
+    }
+    return result;
+  }
+  async function showDefault() {
+    if (controlsBlocked) return;
+    if (!savedChoice) { onInspectChange(false); return; }
+    await action.run(async () => { await comparisonState(); onInspectChange(false); });
+  }
   async function select(next: VisualSelection) {
     if (controlsBlocked || !checkpoint) return;
     await action.run(async () => {
-      const result = savedChoice && candidate
-        ? await post("/api/prototype/action", { action: "visual-back", checkpointId: candidate.id, expectedRevision: state.revision }) : state;
-      if (result.generation !== state.generation || result.prototypeFlow?.displayedCheckpointId !== state.prototypeFlow?.displayedCheckpointId
-        || result.prototypeFlow?.visualExploration?.checkpointId !== checkpoint.id) {
-        throw new Error("The prototype changed. Review its current state before selecting another direction.");
-      }
+      const result = await comparisonState();
       await post("/api/prototype/action", { action: "visual-preview", checkpointId: checkpoint.id,
         selection: next, expectedRevision: result.revision });
       if (optionFor(next) === customOption) setCustomDraft(next);
@@ -239,16 +252,27 @@ export function VisualExplorationPanel({ active, connected, inspecting, onInspec
     });
   }
   async function accept() {
-    if (choiceBlocked || !checkpoint || !selection || !inspecting) return;
+    if (choiceBlocked || !checkpoint || !selection) return;
     await action.run(async () => {
       const intent: VisualAcceptance = {
         prototypeId: state.prototypeId, generation: state.generation,
         displayedCheckpointId: state.prototypeFlow?.displayedCheckpointId ?? null,
-        explorationCheckpointId: checkpoint.id, checkpointId: matchingChoice && candidate ? candidate.id : null,
-        selection,
+        explorationCheckpointId: checkpoint.id,
+        checkpointId: inspecting ? matchingChoice && candidate ? candidate.id : null : original?.id ?? null,
+        selection: inspecting ? selection : null,
       };
       setAcceptance(intent);
       try {
+        if (!intent.selection) {
+          const result = await post("/api/prototype/action", { action: "visual-original",
+            checkpointId: intent.checkpointId, expectedRevision: state.revision });
+          if (result.generation !== intent.generation || result.prototypeFlow?.displayedCheckpointId !== intent.checkpointId
+            || result.prototypeFlow.visualExploration?.checkpointId !== intent.explorationCheckpointId) {
+            throw new Error("The original prototype changed before acceptance finished. Review Default before accepting again.");
+          }
+          setAcceptance(null);
+          return;
+        }
         if (intent.checkpointId) return;
         const result = await post("/api/prototype/action", { action: "choose-visual", checkpointId: intent.explorationCheckpointId,
           selection: intent.selection, expectedRevision: state.revision });
@@ -263,7 +287,30 @@ export function VisualExplorationPanel({ active, connected, inspecting, onInspec
       } catch (error) { setAcceptance(null); throw error; }
     });
   }
-  return <section className="visual-exploration" data-inspecting={inspecting} aria-labelledby="visual-exploration-title">
+  const previewActions = <>
+    <button id="choose-visual-direction" type="button" className="plan-button preview-accept-action" disabled={choiceBlocked}
+      aria-describedby="visual-choice-help" aria-busy={Boolean(acceptance)}
+      title={!inspecting ? "Accept the original prototype as Default."
+        : !onApply ? "Accept is unavailable in this view." : "Apply the previewed direction and settings."}
+      onClick={() => void accept()}><Check size={14} aria-hidden="true" />
+      {acceptance ? "Accepting..." : "Accept"}</button>
+    {inspecting && <Tooltip.Root><Tooltip.Trigger asChild>
+      <button id="retry-visual-preview" type="button" className="plan-button secondary preview-recovery-action"
+        aria-label="Recheck visual preview" data-error={previewUnavailable || previewError} disabled={availability.busy || !connected}
+        onClick={() => setRefresh(value => value + 1)}><RefreshCw size={16} aria-hidden="true" /></button>
+    </Tooltip.Trigger><Tooltip.Portal><Tooltip.Content className="preview-recovery-tooltip" sideOffset={6}>
+      <strong>Recheck visual preview</strong>{(previewError || availability.reason) && <p>{previewError ? bridge.error : availability.reason}</p>}
+      <p>Recheck the saved preview and confirm its settings. Does not rebuild, regenerate, or restart it.</p>
+    </Tooltip.Content></Tooltip.Portal></Tooltip.Root>}
+    {inspecting && <PreviewRestart target="exploration" unavailable={previewUnavailable}
+      changed={() => setRefresh(value => value + 1)} iconOnly />}
+    {inspecting && verified && checkpoint.previewUrl && <a id="open-visual-preview" className="plan-button secondary preview-open-action"
+      href={visualPreviewUrl(checkpoint.previewUrl, selection)} target="_blank" rel="noreferrer"
+      aria-label="Open this direction" title="Open this direction"><ExternalLink size={16} aria-hidden="true" /></a>}
+  </>;
+  return <>
+    {renderActions ? renderActions(previewActions) : <div className="prototype-preview-actions">{previewActions}</div>}
+    <section className="visual-exploration" data-inspecting={inspecting} aria-labelledby="visual-exploration-title">
     <div className="visual-exploration-heading">
       <strong id="visual-exploration-title">Compare visual directions</strong>
     </div>
@@ -271,27 +318,25 @@ export function VisualExplorationPanel({ active, connected, inspecting, onInspec
       <ToggleGroup.Root className="visual-direction-toggles" type="single" aria-label="Design directions"
         value={previewDirection} disabled={controlsBlocked}
         onValueChange={value => {
-          if (!value) {
-            if (!inspecting && acceptedSelection) void select(acceptedSelection);
-            return;
-          }
-          if (value === defaultOption) { void select(defaultSelection); return; }
+          if (!value) return;
+          if (value === defaultOption) { void showDefault(); return; }
           if (value === customOption) { if (customSelection) void select(customSelection); return; }
           const preset = manifest.directions.find(item => item.id === value);
           if (preset) void select(readVisualSelection({ directionId: preset.id, settings: preset.defaults }));
         }}>
         <Tooltip.Root><Tooltip.Trigger asChild>
           <ToggleGroup.Item id="compare-current-prototype" className="visual-direction-toggle" type="button" value={defaultOption}
+            disabled={!original}
             data-applied={appliedDirection === defaultOption} data-preview={selectionChanged && previewDirection === defaultOption}
             aria-current={appliedDirection === defaultOption ? "true" : undefined}
             aria-description={appliedDirection === defaultOption ? "Applied direction" : previewDirection === defaultOption ? "Previewing direction" : undefined}>
             Default
           </ToggleGroup.Item>
         </Tooltip.Trigger><Tooltip.Portal><Tooltip.Content className="visual-direction-tooltip" sideOffset={6}>
-          <strong>Default wireframe</strong><p>Grayscale surfaces, simple outlines, and minimal decoration.</p>
-          <dl>{(Object.keys(visualSettingsValues) as Array<keyof VisualSettings>).map(key => <Fragment key={key}>
-            <dt>{settingLabels[key]}</dt><dd>{optionLabel(defaultSelection.settings[key])}</dd>
-          </Fragment>)}</dl>
+          <strong>Default: original prototype</strong>
+          <p>{current ? "The exact saved prototype from before visual exploration, with its original layout, styling and interactions."
+            : "The current prototype. These saved alternatives precede its latest changes."}</p>
+          <p>Previewing Default does not change the accepted version. Use Accept to restore the original.</p>
         </Tooltip.Content></Tooltip.Portal></Tooltip.Root>
         {manifest.directions.map(item => <Tooltip.Root key={item.id}><Tooltip.Trigger asChild>
           <ToggleGroup.Item id={`visual-direction-${item.id}`} className="visual-direction-toggle" type="button" value={item.id}
@@ -322,28 +367,15 @@ export function VisualExplorationPanel({ active, connected, inspecting, onInspec
           </Fragment>)}</dl>
         </Tooltip.Content></Tooltip.Portal></Tooltip.Root>}
       </ToggleGroup.Root>
-      <div className="visual-selection-actions">
-        <button id="choose-visual-direction" type="button" className="plan-button" disabled={choiceBlocked}
-          aria-describedby="visual-choice-help" aria-busy={Boolean(acceptance)}
-          title={inspecting && !onApply ? "Accept is unavailable in this view." : undefined}
-          onClick={() => void accept()}><Check size={14} aria-hidden="true" />
-          {acceptance ? "Accepting..." : "Accept"}</button>
-        {inspecting && (previewUnavailable || previewError) && <Tooltip.Root><Tooltip.Trigger asChild>
-          <button id="retry-visual-preview" type="button" className="plan-button secondary preview-recovery-action"
-            aria-label="Retry visual preview" data-error="true" disabled={availability.busy || !connected}
-            onClick={() => setRefresh(value => value + 1)}><RefreshCw size={16} aria-hidden="true" /></button>
-        </Tooltip.Trigger><Tooltip.Portal><Tooltip.Content className="preview-recovery-tooltip" sideOffset={6}>
-          <strong>Retry visual preview</strong><p>{previewError ? bridge.error : availability.reason || "The visual preview is unavailable."}</p>
-          <p>Recheck the saved preview and confirm its settings. Does not rebuild, regenerate, or restart it.</p>
-        </Tooltip.Content></Tooltip.Portal></Tooltip.Root>}
-        {inspecting && <PreviewRestart target="exploration" unavailable={previewUnavailable}
-          changed={() => setRefresh(value => value + 1)} iconOnly />}
-      </div>
     </div>
-    <span id="visual-selection-status" className="visually-hidden" role="status">{acceptance ? "Applying the accepted direction. The current prototype stays available."
+    <p id="visual-selection-status" className={needsAcceptance || acceptance ? "muted" : "visually-hidden"} role="status">{acceptance
+      ? acceptance.selection ? "Applying the accepted direction. The current prototype stays available." : "Restoring the original prototype."
       : inspecting ? selectionChanged ? `Previewing ${previewName}. Accept to apply.` : `Accepted: ${previewName}.`
-      : "Showing the current prototype."}</span>
-    <p id="visual-choice-help" className="visually-hidden">Solid fill marks the applied direction. A blue border marks an unapplied preview. Accept applies the previewed direction or appearance settings only when they differ from the applied selection.</p>
+      : savedOnly ? "Showing the saved accepted prototype."
+      : needsAcceptance && !selectionChanged ? "Showing Default (original prototype). Accept to keep it."
+      : selectionChanged ? "Previewing Default (original prototype). Accept to apply." : "Showing Default (original prototype)."}</p>
+    <p id="visual-choice-help" className="visually-hidden">Default shows the original prototype. Solid fill marks the applied direction. A blue border marks an unapplied preview. Accept applies the previewed original, direction or appearance settings; previewing alone never changes the accepted prototype.</p>
+    {!original && <p role="alert">The original prototype snapshot is unavailable. Saved directions and settings are preserved.</p>}
     {!current && <p role="status">These alternatives precede the current prototype. Keep them for reference; generate new directions before applying further changes.</p>}
     {inspecting && <>
       <div className="visual-exploration-tools">
@@ -359,20 +391,20 @@ export function VisualExplorationPanel({ active, connected, inspecting, onInspec
           </div>
           <p>Changes appear as Custom. Reduced-motion preferences always turn motion off.</p>
         </details>
-        {verified && checkpoint.previewUrl && <a id="open-visual-preview" href={visualPreviewUrl(checkpoint.previewUrl, selection)}
-          target="_blank" rel="noreferrer"><ExternalLink size={14} />Open this direction</a>}
       </div>
     </>}
     {action.error && <p id="visual-action-error" className="revision-status" role="alert" data-status="error">{action.error}</p>}
-    {inspecting && (!verified || availability.busy) && <p id="visual-preview-availability" className="visually-hidden" role="status">
+    {inspecting && (!verified || availability.busy) && <p id="visual-preview-availability"
+      className={previewUnavailable ? "revision-status" : "visually-hidden"} role="status" data-status={previewUnavailable ? "error" : "idle"}>
       {availability.binding !== binding || availability.busy ? "Checking visual exploration preview..."
-        : `Visual exploration preview unavailable. ${availability.reason} Saved directions and settings are preserved.`}</p>}
-    {inspecting && previewError && <p className="visually-hidden" role="alert">{bridge.error}</p>}
+        : `Visual exploration preview unavailable. ${availability.reason} Use the toolbar to recheck or restart it. Saved directions and settings are preserved.`}</p>}
+    {inspecting && previewError && <p className="revision-status" role="alert" data-status="error">{bridge.error}</p>}
     <iframe key={binding} id="visual-preview-frame" ref={frame} title={`Visual direction: ${previewName}`}
       hidden={!inspecting || !verified} src={verified && opened ? checkpoint.previewUrl || undefined : undefined}
       referrerPolicy="origin" sandbox="allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
       onLoad={() => setLoaded(value => value + 1)} />
     {inspecting && <VisualFeedback key={direction.id} checkpointId={checkpoint.id} selection={selection} name={previewName}
       disabled={refinementBlocked} />}
-  </section>;
+    </section>
+  </>;
 }

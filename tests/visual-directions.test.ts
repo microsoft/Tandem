@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
-import { readVisualManifest, readVisualSelection, visualPreviewUrl, type VisualCheckpoint } from "../src/visual-directions.js";
+import { originalPrototypeCheckpointId, readVisualManifest, readVisualSelection, visualExplorationIsCurrent, visualPreviewUrl, type VisualCheckpoint } from "../src/visual-directions.js";
 import { newPrototypeFlow, readPrototypeFlow, reservePrototypeCheckpoint, settlePrototypeCheckpoint,
-    updateVisualSelection, prototypeFlowCompletionError, promotePrototypeCheckpoint, type PrototypeCheckpoint } from "../src/prototype-flow.js";
+    updateVisualSelection, prototypeFlowCompletionError, promotePrototypeCheckpoint, restoreOriginalPrototype,
+    prototypePreviewCheckpointId, type PrototypeCheckpoint } from "../src/prototype-flow.js";
 import { prototypePreviewBridgeSource } from "../src/prototype-bridge.js";
 import { buildPrototypeCheckpointPrompt } from "../src/planning-prompts.js";
 import { visualManifest } from "./helpers/visual-fixture.js";
@@ -71,6 +72,40 @@ test("comparison and adjustments persist without promotion; choice defaults surv
     assert.equal(prototypeFlowCompletionError(applied), null);
     assert.deepEqual(readPrototypeFlow(JSON.parse(JSON.stringify(applied))), applied);
     assert.equal(applied.checkpoints.find(item => item.id === "visual")!.visual!.manifest!.defaultSelection.directionId, "precision");
+    assert.equal(prototypePreviewCheckpointId(applied, "original"), "interaction");
+    const restored = restoreOriginalPrototype(applied, "interaction");
+    assert.equal(restored.displayedCheckpointId, "interaction");
+    assert.equal(restored.visualRequested, false);
+    assert.equal(restored.visualExploration!.appliedCheckpointId, null);
+    assert.deepEqual(restored.checkpoints, applied.checkpoints);
+    assert.deepEqual(restored.visualExploration!.selections, applied.visualExploration!.selections);
+    assert.deepEqual(readPrototypeFlow(JSON.parse(JSON.stringify(restored))), restored);
+    assert.equal(prototypeFlowCompletionError(restored), null);
+    assert.throws(() => restoreOriginalPrototype(prepared, "interaction"), /active or prepared/);
+    assert.throws(() => restoreOriginalPrototype(applied, "chosen"), /original prototype no longer matches/);
+});
+
+test("refining an accepted visual direction retains the original Default source rather than replacing it with that direction", () => {
+    const flow = readyFlow();
+    const selection = visualManifest().directions[1];
+    const choice: VisualCheckpoint = { operation: "choose", explorationCheckpointId: "visual",
+        selection: { directionId: selection.id, settings: selection.defaults }, manifest: null };
+    const prepared = settlePrototypeCheckpoint(reservePrototypeCheckpoint(flow, pending("chosen", "visual", "interaction", choice)),
+        "chosen", { status: "ready", previewUrl: "http://127.0.0.1:9004/", summary: "", focus: "",
+            visual: { ...choice, manifest: { ...visualManifest(), defaultSelection: choice.selection! } } }, "2026-10-15T00:01:00Z");
+    const applied = promotePrototypeCheckpoint(prepared, "chosen");
+    const refinement: VisualCheckpoint = { ...choice, operation: "refine" };
+    const refined = settlePrototypeCheckpoint(reservePrototypeCheckpoint(applied, pending("refined", "visual", "chosen", refinement)),
+        "refined", { status: "ready", previewUrl: "http://127.0.0.1:9005/", summary: "", focus: "",
+            visual: { ...refinement, manifest: visualManifest() } }, "2026-10-15T00:02:00Z");
+    assert.equal(originalPrototypeCheckpointId(refined), "interaction");
+    const restored = restoreOriginalPrototype(refined, "interaction");
+    assert.equal(visualExplorationIsCurrent(restored), true);
+    assert.equal(originalPrototypeCheckpointId(restored), "interaction");
+    assert.deepEqual(readPrototypeFlow(JSON.parse(JSON.stringify(restored))), restored);
+    const cyclic = { ...refined, checkpoints: refined.checkpoints.map(item => item.id === "refined"
+        ? { ...item, visual: { ...refinement, explorationCheckpointId: "refined" } } : item) };
+    assert.throws(() => originalPrototypeCheckpointId(cyclic), /source chain contains a cycle/);
 });
 
 test("visual reload rejects dangling alternatives, changed choices and incomplete source/default identities", () => {
@@ -94,6 +129,8 @@ test("the shared production prompt asks for layout/style exploration and narrowl
         "tandem-visual-directions.json", "data-tandem-direction", "--tandem-text-scale", "EVERY direction", "same primary journey"]) {
         assert.match(prompt.toLowerCase(), new RegExp(expected.toLowerCase()));
     }
+    assert.match(prompt, /Default option shows the exact original prototype checkpoint/);
+    assert.doesNotMatch(prompt, /additional Default wireframe preset/);
     const selection = visualManifest().defaultSelection;
     const choice = buildPrototypeCheckpointPrompt({ ...args, checkpoint: { ...args.checkpoint,
         visual: { ...visual, operation: "choose", explorationCheckpointId: "visual", selection } }, visualBase: visualManifest() });
