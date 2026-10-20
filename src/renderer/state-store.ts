@@ -27,7 +27,8 @@ export class StudioStore {
   private requestSequence = 0;
   private disposed = false;
 
-  constructor(private readonly fetcher: typeof fetch = (input, init) => fetch(input, init)) {}
+  constructor(private readonly fetcher: typeof fetch = (input, init) => fetch(input, init),
+    private readonly options: { apiUrl?: (endpoint: string) => string; events?: boolean } = {}) {}
 
   getSnapshot = () => this.snapshot;
   subscribe = (listener: () => void) => {
@@ -55,7 +56,7 @@ export class StudioStore {
     const changed = !previous || revision > previousRevision
       || (revision === 0 && state.updatedAt !== previous.updatedAt);
     const next = changed ? { ...state, revision } : { ...previous };
-    for (const field of ["provider", "preparationRuntime", "workflowRuntime", "developmentBlocker"] as const) {
+    for (const field of ["provider", "preparationRuntime", "workflowRuntime", "developmentBlocker", "stageReviewStatus"] as const) {
       if (sequence >= this.lastTransportSequence && Object.hasOwn(state, field)) {
         // Each transport-only field retains its own declared type.
         Object.assign(next, { [field]: state[field] });
@@ -69,7 +70,7 @@ export class StudioStore {
         ? state.sketchPreview : undefined);
     next.sketchPreview = preview.preview;
     this.lastTransportSequence = Math.max(this.lastTransportSequence, sequence);
-    const transportChanged = !previous || ["provider", "preparationRuntime", "workflowRuntime", "developmentBlocker", "sketchPreview"].some(
+    const transportChanged = !previous || ["provider", "preparationRuntime", "workflowRuntime", "developmentBlocker", "sketchPreview", "stageReviewStatus"].some(
       (field) => JSON.stringify(Reflect.get(next, field)) !== JSON.stringify(Reflect.get(previous, field)));
     if (changed || transportChanged) this.publish({ state: next as UiState, connectionError: preview.error });
     else this.setConnectionError(preview.error);
@@ -87,7 +88,7 @@ export class StudioStore {
     const stage = this.snapshot.state?.lifecycle.currentStage;
     const endpoint = stage === "prepare" ? "/api/preparation/status"
       : stage !== "development" && this.snapshot.state && workflowBinding(this.snapshot.state) ? "/api/workflow/status" : "/api/state";
-    this.request = this.fetcher(endpoint, { cache: "no-store", signal: AbortSignal.timeout(15000) })
+    this.request = this.fetcher(this.options.apiUrl?.(endpoint) ?? endpoint, { cache: "no-store", signal: AbortSignal.timeout(15000) })
       .then(async (response) => {
         if (!response.ok) throw new Error("Could not load studio state.");
         this.accept(await response.json(), sequence);
@@ -103,7 +104,7 @@ export class StudioStore {
   post = async <T = UiState>(endpoint: string, body: unknown, timeoutMs = 60000): Promise<T> => {
     const sequence = ++this.sequence;
     const identity = this.snapshot.state;
-    const response = await this.fetcher(endpoint, {
+    const response = await this.fetcher(this.options.apiUrl?.(endpoint) ?? endpoint, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs),
     });
@@ -116,7 +117,10 @@ export class StudioStore {
     if (endpoint !== "/api/effort/reset" && identity && this.snapshot.state?.generation !== identity.generation) {
       throw new Error("The effort changed while the request was in flight. Review the current state before retrying.");
     }
-    if (isStateSnapshot(result)) this.accept(result, sequence);
+    if (isStateSnapshot(result)) {
+      if (identity && result.prototypeId !== identity.prototypeId) throw new Error("The request returned a different effort. Review the saved state before retrying.");
+      this.accept(result, sequence);
+    }
     else await this.refresh(sequence);
     return result as T;
   };
@@ -125,16 +129,16 @@ export class StudioStore {
     this.disposed = false;
     void this.refresh().catch(() => { this.setConnectionError("Could not load the studio state. Retrying..."); });
     const timer = window.setInterval(() => { void this.refresh().catch(() => undefined); }, 2000);
-    const events = new EventSource("/events");
-    events.onmessage = (event) => {
+    const events = this.options.events === false ? null : new EventSource("/events");
+    if (events) events.onmessage = (event) => {
       try { this.accept(JSON.parse(event.data)); }
       catch { this.setConnectionError("Could not read the studio update. Retrying..."); }
     };
-    events.onerror = () => { this.setConnectionError("Reconnecting to the studio..."); };
+    if (events) events.onerror = () => { this.setConnectionError("Reconnecting to the studio..."); };
     return () => {
       this.disposed = true;
       window.clearInterval(timer);
-      events.close();
+      events?.close();
     };
   }
 }

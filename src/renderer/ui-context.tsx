@@ -3,6 +3,7 @@ import type { HistoricalStageId, LifecycleStageId, TandemState } from "../types.
 import type { SketchPreview } from "../sketch-stream.js";
 import type { WorkflowActivitySnapshot } from "../workflow-activity.js";
 import { isPendingFactoryRun } from "../agent-runner.js";
+import { lifecycleStages } from "../workflow.js";
 
 export interface RuntimeAgent {
   id?: string;
@@ -37,6 +38,10 @@ export interface UiState extends TandemState {
   preparationRuntime?: RuntimeSnapshot | null;
   sketchPreview?: SketchPreview | null;
   workflowRuntime?: WorkflowActivitySnapshot | null;
+  stageReviewStatus?: {
+    conflict: string; blocker: string | null; changed: boolean; currentStage: LifecycleStageId;
+    appliedAt: string | null; discardedAt: string | null;
+  };
 }
 
 export interface UiContextValue {
@@ -50,6 +55,9 @@ export interface UiContextValue {
   browseStage: (stage: LifecycleStageId) => void;
   selectArtifact: (id: string) => void;
   setBusy: (key: string, busy: boolean) => void;
+  apiUrl?: (endpoint: string) => string;
+  setReviewDirty?: (key: string, dirty: boolean) => void;
+  reviewStage?: (stage: LifecycleStageId, request?: import("../change-requests.js").ChangeRequest) => Promise<void>;
 }
 
 export const UiContext = createContext<UiContextValue | null>(null);
@@ -129,6 +137,8 @@ export function skippedStage(state: UiState, stage: HistoricalStageId) {
 
 export function hasStageData(state: UiState, stage: LifecycleStageId): boolean {
   return state.lifecycle.currentStage === stage
+    || Boolean(state.lifecycle.reviewId && lifecycleStages.findIndex(item => item.id === stage)
+      < lifecycleStages.findIndex(item => item.id === state.lifecycle.currentStage))
     || (state.lifecycle.completedStages || []).includes(stage)
     || (state.lifecycle.history || []).some((entry) => entry.stageId === stage)
     || (state.artifacts || []).some((artifact) => artifact.stage === stage)

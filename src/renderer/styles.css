@@ -3548,6 +3548,15 @@ textarea {
 .project-tabs .project-tab-label { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
 .project-tabs .project-tab-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-tabs .current-phase { display: inline-flex; grid-column: 3; grid-row: 1; }
+.project-tabs .project-stage-status { display: inline-flex; grid-column: 3; grid-row: 1; color: var(--studio-muted); }
+#project-contents .preview-tab[aria-selected="true"]:not([aria-current="step"]) { background: transparent; border-color: transparent; box-shadow: none; color: var(--studio-text); font-weight: var(--font-weight-normal, 400); }
+#project-contents .preview-tab::after { display: none; }
+#project-contents .preview-tab[aria-current="step"] { background: var(--studio-accent-soft); color: var(--studio-text); box-shadow: inset 3px 0 0 var(--studio-accent); font-weight: var(--font-weight-semibold, 600); }
+.project-tabs .preview-tab[data-status="complete"] .project-stage-status { color: var(--studio-success); }
+@media (forced-colors: active) {
+  #project-contents .preview-tab[aria-selected="true"]:not([aria-current="step"]):not(:focus-visible) { outline: none; }
+  #project-contents .preview-tab[aria-current="step"] { outline: 2px solid Highlight; outline-offset: -2px; }
+}
 .project-tabs .project-availability { flex: none; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .project-tabs .artifact-count { grid-column: 2; justify-self: start; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .artifact-library-nav { margin-bottom: 8px; }
@@ -3611,6 +3620,26 @@ textarea {
 .phase-actions #reopen-stage:not(:disabled) { background: var(--studio-surface); color: var(--studio-text); border-color: var(--studio-border); }
 .phase-actions .complete-stage:disabled { opacity: 1; }
 .phase-actions .stage-message { margin: 0; }
+.phase-actions .review-secondary { background: var(--studio-surface); color: var(--studio-text); border-color: var(--studio-border); }
+.stage-review-workspace { display: flex; flex-direction: column; min-height: 0; min-width: 0; height: 100%; overflow: auto; }
+.stage-review-banner { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 12px; background: var(--studio-accent-soft); }
+.stage-review-banner > strong { display: inline-flex; align-items: center; gap: 6px; }
+.stage-review-banner > span { margin-inline-start: auto; color: var(--studio-muted); }
+.stage-review-banner > p { flex-basis: 100%; margin: 0; }
+.stage-review-tools { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.stage-review-comparison { flex: 1 1 210px; min-width: 0; overflow: auto; }
+.stage-review-comparison[open] { flex-basis: 100%; }
+.stage-review-comparison summary, .stage-review-request summary { cursor: pointer; }
+.stage-review-comparison table { width: 100%; border-collapse: collapse; }
+.stage-review-comparison td, .stage-review-comparison th { padding: 6px; border: 1px solid var(--studio-border); text-align: start; overflow-wrap: anywhere; }
+.stage-review-comparison td { white-space: pre-wrap; }
+.stage-review-comparison figure { margin: 12px 0; }
+.stage-review-comparison img { display: block; max-width: 100%; height: auto; }
+.stage-review-form { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px; }
+.stage-review-form label, .stage-review-form textarea, .stage-review-form [role="alert"] { flex-basis: 100%; }
+.stage-review-form textarea { min-width: 0; width: 100%; color: var(--studio-text); background: var(--studio-surface); border: 1px solid var(--studio-border); border-radius: var(--studio-radius); padding: var(--studio-control-padding); }
+.stage-review-request { padding: 12px; }
+.stage-review-workspace > .preview-surface { flex: 1 0 auto; }
 .project-workspace #sketch-panel { flex-direction: column; }
 .project-workspace > .preview { grid-template-rows: minmax(0, 1fr); }
 .project-workspace > .preview[data-stage-tabs="true"] { grid-template-rows: auto minmax(0, 1fr); }

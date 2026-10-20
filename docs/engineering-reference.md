@@ -332,10 +332,41 @@ The main framework is one project workspace: project navigation and Settings
 on the left and the selected phase's own workspace and history.
 Requirements, drawings and Prototype retain their specialized inputs and controls.
 Discovery views also expose horizontal Preparation, Requirements, Drawings and
-Prototype tabs above the workspace. They share the sidebar's selection and
-availability guards, keep the existing panels mounted, and scroll horizontally
+Prototype tabs above the workspace. They share the sidebar's browsing selection
+and availability guards, but sidebar styling stays bound to lifecycle progress:
+the current phase stays highlighted and completed inputs stay visibly locked.
+The tabs keep the existing panels mounted and scroll horizontally
 on narrow screens. The tab bar is absent from goal entry, Saved artifacts and
 Development; it does not change stage completion, reopening or data updates.
+Earlier-stage **Review changes** opens a pinned, independently stored draft using
+the existing stage editors. Root `stageReviews` records link each draft to its
+parent generation, stage and eventual Apply/discard outcome; the draft's
+`stageReview` binding identifies its accepted baseline. Draft state and its
+immutable baseline live under `.tandem/efforts/review-<id>/`. Opening a draft copies
+only state metadata, not application source, and dispatches no worker.
+
+Drawing revisions and prototype candidates use new immutable paths in the
+parent effort's existing asset namespaces. This preserves the exact asset,
+checkpoint and preview identities required by restart, acceptance and Development
+handoffs without copying or rewriting an accepted revision. Prototype feedback
+stays queued in the draft until an explicit preview build. Draft worker requests
+retain their own effort/request identities; preview HTML identifies the parent
+project and the exact candidate checkpoint.
+
+Apply holds the parent and draft `ProjectStore` transactions, validates the
+stage's baseline and predecessors, rejects stale draft revisions or active work,
+and requires Development to be quiet before changing accepted inputs. Independent
+later-stage progress does not stale an earlier-stage draft. The lifecycle
+`reviewId` preserves the working stage while dependent completion records move
+to history; affected stages must be reviewed again without implicitly rewinding
+the project. Earlier-stage chat proposals enter this same draft path and remain
+separate from normal current-stage work and broader Reopen operations.
+
+Review editors use scoped API routes and an independent store, busy state and
+draft-input provider. Navigating to current work hides rather than remounts the
+pinned editor. Applying does not close it or authorize Development implementation.
+GPT-live remains confined to the original current-stage endpoint; draft Drawings
+uses direct edits or explicitly requested revisions.
 The **Development** navigation entry contains formal Design, planning,
 implementation and Review; it is not an additional Stage1 Design phase.
 **Saved artifacts** is the cross-project library entry in the separate

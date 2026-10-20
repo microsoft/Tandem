@@ -642,7 +642,7 @@ test("legacy optional history fields and archived Preparation remain browsable",
     h.render({ ...value, revision: 2, lifecycle: { ...value.lifecycle, completedStages: [],
         history: [{ stageId: "prepare", path: "history\\preparation.md", completedAt: value.updatedAt }] } });
     const button = h.get("project-contents").querySelector<HTMLButtonElement>('[data-stage-id="prepare"]')!;
-    assert.equal(button.disabled, false); assert.equal(button.title, "history\\preparation.md");
+    assert.equal(button.disabled, false); assert.equal(button.title, "history\\preparation.md. Needs review");
     await h.fire(button, "mousedown", { button: 0 });
     assert.equal(hidden(h, "preparation-panel"), false);
     assert.equal(h.requests.length, 0);

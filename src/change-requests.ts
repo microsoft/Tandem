@@ -30,7 +30,7 @@ export interface ChangeAssessment {
     requirements: RequirementsDelta | null;
 }
 
-export type ChangeStatus = "queued" | "analyzing" | "proposed" | "active" | "completed" | "cancelled" | "failed";
+export type ChangeStatus = "queued" | "analyzing" | "proposed" | "reviewing" | "active" | "completed" | "cancelled" | "failed";
 export interface ChangeRequest {
     version: 1;
     id: string;
@@ -47,6 +47,7 @@ export interface ChangeRequest {
     analysisId: string | null;
     assessment: ChangeAssessment | null;
     status: ChangeStatus;
+    reviewId?: string | null;
     error: string;
     clarifications: Array<{ question: string; answer: string }>;
     remainingStages: LifecycleStageId[];
@@ -90,16 +91,18 @@ const changeRequestSchema = object({
     sourceRequests: array(object({ id: text(500), message: text(65536), receivedAt: text(100), context: text(524288) }), 50),
     baselineDigest: nullable(text(64)), analysisId: nullable(text(120)),
     assessment: nullable(changeAssessmentSchema),
-    status: { type: "string", enum: ["queued", "analyzing", "proposed", "active", "completed", "cancelled", "failed"] },
+    status: { type: "string", enum: ["queued", "analyzing", "proposed", "reviewing", "active", "completed", "cancelled", "failed"] },
+    reviewId: nullable(text(120)),
     error: text(2000, 0), clarifications: array(object({ question: text(2000), answer: text() }), 20),
     remainingStages: array(stageSchema, 5), workStarted: array(stageSchema, 5), affectedDecisionIds: strings(200, 120),
     snapshotPath: nullable(text(2000)), completedAt: nullable(text(100)),
     developmentAdmission: nullable({ type: "string", enum: ["sending", "admitted", "uncertain"] }),
     developmentRequest: nullable(object({ id: text(120), message: text(4 * 1024 * 1024), receivedAt: text(100) })),
 });
-
 export function readChangeRequests(value: unknown): ChangeRequest[] {
     if (value === undefined) return [];
+    if (Array.isArray(value)) value = value.map(item => item && typeof item === "object" && !Array.isArray(item)
+        && !Object.hasOwn(item, "reviewId") ? { ...item, reviewId: null } : item);
     validateRequirementsValue(value, array(changeRequestSchema, 200), "change requests");
     const requests = value as ChangeRequest[];
     if (new Set(requests.map(request => request.id)).size !== requests.length ||
@@ -112,7 +115,9 @@ export function readChangeRequests(value: unknown): ChangeRequest[] {
             request.baselineDigest !== null && !/^[a-f0-9]{64}$/.test(request.baselineDigest) ||
             !Number.isFinite(Date.parse(request.submittedAt)) ||
             request.completedAt !== null && !Number.isFinite(Date.parse(request.completedAt)) ||
-            ["proposed", "active"].includes(request.status) && (!request.assessment || !request.baselineDigest || !request.analysisId)) {
+            ["proposed", "reviewing", "active"].includes(request.status) && (!request.assessment || !request.baselineDigest || !request.analysisId)
+            || request.status === "reviewing" && !request.reviewId
+            || request.reviewId != null && !/^review-[a-f0-9-]{36}$/.test(request.reviewId)) {
             throw new Error("Saved change request provenance is invalid. Its data was preserved.");
         }
         if (request.visualSelection) readVisualSelection(request.visualSelection);
@@ -129,15 +134,17 @@ export function activeChange(state: Pick<TandemState, "changeRequests">): Change
 }
 
 export function pendingChange(state: Pick<TandemState, "changeRequests">): ChangeRequest | undefined {
-    return state.changeRequests?.find(request => !["completed", "cancelled"].includes(request.status));
+    return state.changeRequests?.find(request => !["completed", "cancelled", "reviewing"].includes(request.status));
 }
 
 export function prototypeNeedsChangeUpdate(state: TandemState): boolean {
     const displayed = state.prototypeFlow?.checkpoints.find(item => item.id === state.prototypeFlow?.displayedCheckpointId);
     if (!displayed) return false;
-    return Boolean(state.changeRequests?.some(request => request.snapshotPath && request.assessment?.requirements) &&
+    return Boolean((state.lifecycle.reviewId || state.changeRequests?.some(request => request.snapshotPath && request.assessment?.requirements
+        && !request.reviewId && ["active", "completed", "cancelled"].includes(request.status))
+        || state.stageReviews?.some(review => review.appliedAt && ["prepare", "requirements"].includes(review.stage))) &&
         displayed.requirementsDigest !== requirementsInputDigest(state) ||
-        state.lifecycle.changeRequestId && state.sketch.current && displayed.sketchRevisionId !== state.sketch.current.id);
+        (state.lifecycle.changeRequestId || state.lifecycle.reviewId) && state.sketch.current && displayed.sketchRevisionId !== state.sketch.current.id);
 }
 
 export function changeBaselineDigest(state: TandemState, development: unknown = null): string {
@@ -257,6 +264,7 @@ export function activateChange(state: TandemState, request: ChangeRequest, snaps
             remainingStages: [...stages], affectedDecisionIds: delta?.affected ?? [], snapshotPath, error: "" } : item),
         status: `Updating ${assessment.startStage === "sketch" ? "Drawings" : assessment.startStage} for your request. Previous work is retained.`,
     };
+    if (!state.stageReview) delete next.lifecycle.reviewId;
     return next;
 }
 

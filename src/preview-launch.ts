@@ -92,7 +92,7 @@ export class PreviewLaunches {
         const checkpoint = flow?.checkpoints.find(item => item.id === id);
         if (!checkpoint || checkpoint.status !== "ready" || !checkpoint.previewUrl || !checkpoint.sourceFingerprint
             || checkpoint.generation !== state.generation) throw new Error("This saved version lacks a verified checkpoint/source identity. It cannot be restarted.");
-        const expected = join(this.options.storageRoot, "efforts", state.prototypeId, "previews", checkpoint.requestId);
+        const expected = join(this.options.storageRoot, "efforts", state.stageReview?.parentId ?? state.prototypeId, "previews", checkpoint.requestId);
         if (!samePreviewPath(expected, checkpoint.workspacePath)) throw new Error("The checkpoint is not in its exact project-owned saved workspace.");
         await materialized(checkpoint.workspacePath, "directory");
         return { prototypeId: state.prototypeId, generation: state.generation, checkpointId: checkpoint.id,

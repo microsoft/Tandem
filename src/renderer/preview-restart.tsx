@@ -16,7 +16,7 @@ interface PreviewRestartInspection {
 export function PreviewRestart({ target, unavailable, changed, iconOnly = false }: {
   target: PrototypePreviewTarget; unavailable: boolean; changed(): void; iconOnly?: boolean;
 }) {
-  const { state, pending } = useUi();
+  const { state, pending, apiUrl } = useUi();
   const [inspection, setInspection] = useState<PreviewRestartInspection | null>(null);
   const [entrypoint, setEntrypoint] = useState(""), [argumentsText, setArgumentsText] = useState("");
   const [workingDirectory, setWorkingDirectory] = useState("."), [choiceId, setChoiceId] = useState("");
@@ -36,7 +36,8 @@ export function PreviewRestart({ target, unavailable, changed, iconOnly = false 
     : busy === "start" ? "Starting preview..." : target === "current" ? "Restart preview" : restartLabel;
   const RestartIcon = iconOnly ? RotateCw : RefreshCw;
   async function request(action: string, body: object): Promise<PreviewRestartInspection & { started?: boolean; alreadyRunning?: boolean }> {
-    const response = await fetch(`/api/prototype/preview-restart/${action}`, { method: "POST", headers: { "Content-Type": "application/json" },
+    const endpoint = `/api/prototype/preview-restart/${action}`;
+    const response = await fetch(apiUrl?.(endpoint) ?? endpoint, { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body), signal: AbortSignal.timeout(120_000) });
     const value = await response.json();
     if (!response.ok) throw new Error(value.error || "Saved preview restart failed.");

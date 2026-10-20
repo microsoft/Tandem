@@ -239,6 +239,14 @@ export function RequirementsPanel() {
     const usageItems = state.requirements?.usageItems || [];
     const suggestions = state.requirements?.suggestions || [];
     const suggestionsLoading = state.suggestionProcessing?.status === "running";
+    const unsavedReview = Boolean(usageDraft.value.trim()) || nodes.some(node => {
+        const saved = answerDrafts[requirementDraftKey(state, node)];
+        return saved && (saved.choice !== initialAnswer(node).choice || Boolean(saved.detail.trim()));
+    });
+    useEffect(() => {
+        ui.setReviewDirty?.("requirements", unsavedReview);
+        return () => ui.setReviewDirty?.("requirements", false);
+    }, [unsavedReview, ui.setReviewDirty]);
     const dagFailed = processing?.action === "generate-dag" && processing.status === "error";
     const defaultsFailed = processing?.action === "apply-defaults" && processing.status === "error";
     const defaultsRunning = activeAction === "defaults" || processing?.action === "apply-defaults" && workerBusy;

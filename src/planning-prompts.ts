@@ -346,6 +346,7 @@ export function buildChangeAssessmentPrompt(input: unknown): string {
 
 export function buildPrototypeCheckpointPrompt(args: {
     prototypeId: string;
+    previewPrototypeId?: string;
     projectRoot: string;
     checkpoint: {
         id: string; milestone: "structure" | "interaction" | "visual"; workspacePath: string;
@@ -515,7 +516,7 @@ export function buildPrototypeCheckpointPrompt(args: {
         "adapter (npm lifecycle scripts, Vite CLI, Python, etc.), return previewStart",
         "null and explain the actual command in evidence. Missing support is not",
         "permission to invent a launch recipe or alter the app's stack.",
-        `Include BOTH <meta name="tandem-prototype-id" content="${args.prototypeId}">`,
+        `Include BOTH <meta name="tandem-prototype-id" content="${args.previewPrototypeId ?? args.prototypeId}">`,
         `AND <meta name="tandem-prototype-checkpoint" content="${args.checkpoint.id}">`,
         "in the HTML served at the exact preview URL.",
         "Serve checkpoint-root tandem-preview-bridge.js with JavaScript MIME and include",
