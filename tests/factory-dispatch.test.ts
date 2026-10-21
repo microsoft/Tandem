@@ -6,6 +6,33 @@ import { extensionHarness } from "./helpers/extension-harness.js";
 const schemaRejection = "unknown field `limits`, expected one of `name`, `args`, `options`";
 const provider = "project:tandem";
 
+test("answer workflow schema accepts every supported action, including change assessment", async () => {
+    const fixture = await extensionHarness();
+    try {
+        const action = fixture.api.answerFactory.meta.argsSchema.properties.action;
+        assert.equal(action.type, "string");
+        assert.deepEqual(Array.from(action.enum), [
+            "assess-change",
+            "add-usage",
+            "generate-dag",
+            "answer-decision",
+            "change-answer",
+            "apply-defaults",
+            "submit-revision",
+            "clarify-revision",
+            "generate-design-spec",
+            "build-prototype",
+            "generate-sketch",
+            "revise-sketch",
+        ]);
+        await assert.rejects(fixture.api.answerFactory.run({ args: {
+            prototypeId: "sample", projectRoot: fixture.root, requestId: "unsupported-action",
+            question: { id: "change", text: "Assess this change." }, answer: "Move the primary action.",
+            action: "unsupported-action", state: {},
+        } }), /Tandem factory arguments are invalid/);
+    } finally { await fixture.close(); }
+});
+
 test("programmatic Stage1 definitions have no product execution-time deadline", async () => {
     const fixture = await extensionHarness();
     try {

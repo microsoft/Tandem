@@ -130,6 +130,9 @@ The host explicitly supplies that SDK to extension processes, preserving native
 Retained Stage 1 coordinators use the public Dynamic Workflows API. Existing
 `factoryRuns` and `factoryName` receipt fields remain unchanged on disk; their
 names are historical, not an alternate legacy execution path.
+The answer workflow's `action` schema is derived from `ANSWER_ACTIONS`, the same
+set used for runtime validation. This includes the `assess-change` prerequisite
+for drawing and prototype revision requests.
 
 Creating a tarball does not publish it. Root `package.json` is the release-version
 authority. Before an authorized release, bump with
@@ -170,7 +173,9 @@ without fabricating a graphical prototype.
 Chat changes use the additive `changeRequests` ledger and the production
 `buildChangeAssessmentPrompt`, not the broad stage-reopen/reset path. HTTP and
 canvas entry points share assessment and decision handlers; the original stage
-engines remain independently usable. Assessment is context-only and preserves
+engines remain independently usable. The change ledger, stage tabs and active
+editor occupy separate workspace rows; absent headers collapse without overlapping
+stage controls. Assessment is context-only and preserves
 accepted state. Approval binds the exact analysis ID and semantic baseline digest,
 including current Development Design/code when available. It saves a complete
 baseline snapshot before applying a sparse Requirements patch and marking only
