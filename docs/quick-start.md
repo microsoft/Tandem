@@ -32,8 +32,7 @@ npm run browser -- --workspace C:\projects\counter
 ```
 
 Both browser scripts build the app automatically. `npm run login:browser` signs
-in to Copilot, not optional Azure voice input. Review startup permissions and keep
-this terminal open.
+in to Copilot. Review startup permissions and keep this terminal open.
 
 To choose the main/Preparation model and effort explicitly, add launch options:
 

@@ -116,7 +116,6 @@ test("public drawing revisions pass workflow action validation before assessment
         assert.deepEqual(await store.read("sample", saved.sketch.current!), revised);
     } finally {
         if (server) {
-            server.live.close();
             clearInterval(server.heartbeat);
             await new Promise<void>((resolve, reject) => server.server.close(error => error ? reject(error) : resolve()));
         }
@@ -266,7 +265,7 @@ test("drawing edits create immutable revisions and stale saves or previews canno
     } finally { await fixture.close(); }
 });
 
-test("voice drawing requests retain generation and revision boundaries and use the existing worker", async () => {
+test("drawing requests retain generation and revision boundaries and use the existing worker", async () => {
     const fixture = await extensionHarness();
     try {
         await readyRequirements(fixture);

@@ -45,8 +45,6 @@ import {
     executionDigest, fingerprintWorkspace,
 } from "./execution.js";
 import { canvasRequestAllowed, readJsonRequest, sendJsonResponse } from "./canvas-transport.js";
-import { createSpeechTokenService, SpeechAuthError, validateSpeechTokenRequest } from "./speech-auth.js";
-import { attachSketchLiveServer, SketchLiveError } from "./sketch-live-server.js";
 import { acceptStageSnapshot, exportAcceptedSnapshot, ensureMaterializedDirectories } from "./accepted-artifacts.js";
 import {
     createProcessState, currentAcceptances, normalizeProcessSettings, normalizeProcessState,
@@ -55,7 +53,7 @@ import {
 import {
     buildChangeAssessmentPrompt, buildGoalOnlyPreparationPrompt, buildDevelopmentHandoffPrompt, buildPreparationHandoffPrompt,
     buildPreparationSourcesPrompt, buildPreparationWorkspacePrompt, buildPrototypeCheckpointPrompt,
-    buildSketchPrompt, buildSketchLivePrompt, buildUsageSuggestionsPrompt, tandemWorkerInteractionRules,
+    buildSketchPrompt, buildUsageSuggestionsPrompt, tandemWorkerInteractionRules,
     type PrototypeSketchInput,
 } from "./planning-prompts.js";
 import { inspectEmptyPreparationWorkspace } from "./preparation.js";
@@ -112,7 +110,6 @@ const PROJECT_EXTENSION_ID = "project:tandem";
 const MAX_REQUEST_BYTES = 32 * 1024;
 const PROCESS_STARTED_AT = Date.now();
 const WORKSPACE_ROOT = process.cwd();
-const speechTokens = createSpeechTokenService();
 const SHARED_PROJECT_ROOT = resolveSharedProjectRoot();
 const STATE_DIRECTORY = join(SHARED_PROJECT_ROOT, ".tandem");
 const sketchStore = new SketchStore(SHARED_PROJECT_ROOT);
@@ -3292,7 +3289,7 @@ async function sketchAction(prototypeId: string, extensionId: string, value: unk
     const next = await withAnswerClaim(prototypeId, async () => {
         const state = await loadState(prototypeId);
         if (input.expectedGeneration !== undefined && input.expectedGeneration !== state.generation) {
-            throw new CanvasError("sketch_generation_stale", "The effort changed. The voice drawing request was not applied.");
+            throw new CanvasError("sketch_generation_stale", "The effort changed. The drawing request was not applied.");
         }
         if (automatic && (state.lifecycle.currentStage !== "sketch" || hasActiveWork(state) ||
             state.processing?.sketchRequest?.generation === state.generation ||
@@ -7632,47 +7629,6 @@ async function handleRequest(entry, req, res) {
         return;
     }
 
-    if (requestUrl.pathname === "/api/sketch/live/session") {
-        validateSpeechTokenRequest(req, new URL(entry.url).origin);
-        const body = await readRequestBody(req);
-        if (Object.keys(body).some((key) => key !== "context")) {
-            sendJson(res, 400, { error: "GPT-live configuration is owned by the extension, not the request." });
-            return;
-        }
-        sendJson(res, 200, await entry.live.issueTicket(body.context));
-        return;
-    }
-
-    if (["/api/speech/token", "/api/speech/login", "/api/speech/sign-in"].includes(requestUrl.pathname)) {
-        validateSpeechTokenRequest(req, new URL(entry.url).origin);
-        const body = await readRequestBody(req);
-        if (Object.keys(body).length) {
-            sendJson(res, 400, { error: "Speech configuration is owned by the extension, not the request." });
-            return;
-        }
-        const state = await loadState(entry.prototypeId);
-        if (!(await isPreferredAnswerProvider(entry.extensionId)) || state.effortReset
-            || (hasActiveWork(state) && state.jobOwner
-                && !sameOwner(state.jobOwner, { sessionId: session.sessionId, workspaceRoot: WORKSPACE_ROOT }))) {
-            sendJson(res, 409, { error: "Open the writable Tandem provider in the session that owns this effort to use speech input." });
-            return;
-        }
-        if (requestUrl.pathname === "/api/speech/login" || requestUrl.pathname === "/api/speech/sign-in") {
-            const controller = new AbortController();
-            const disconnected = () => { if (!res.writableEnded) controller.abort(); };
-            res.on("close", disconnected);
-            try {
-                const result = await speechTokens.signIn(controller.signal);
-                if (!res.destroyed) sendJson(res, 200, result);
-            } finally {
-                res.off("close", disconnected);
-            }
-        } else {
-            sendJson(res, 200, await speechTokens());
-        }
-        return;
-    }
-
     if (req.method === "POST" && requestUrl.pathname === "/api/process") {
         const state = await processAction(entry.prototypeId, entry.extensionId, await readRequestBody(req));
         sendJson(res, 200, publicState(entry, state));
@@ -7792,9 +7748,8 @@ async function startServer(
     const server = createServer((req, res) => {
         handleRequest(entry, req, res).catch(async (error) => {
             if (!res.headersSent) {
-                sendJson(res, error instanceof ProjectStoreError || error instanceof AnswerRequestError || error instanceof SpeechAuthError || error instanceof SketchLiveError ? error.statusCode : error instanceof CanvasError ? 409 : 500, {
+                sendJson(res, error instanceof ProjectStoreError || error instanceof AnswerRequestError ? error.statusCode : error instanceof CanvasError ? 409 : 500, {
                     error: error instanceof Error ? error.message : "Tandem request failed.",
-                    ...(error instanceof SpeechAuthError && error.speechSignInRequired ? { speechSignInRequired: true } : {}),
                 });
             } else {
                 res.end();
@@ -7806,26 +7761,6 @@ async function startServer(
             );
         });
     });
-    entry.live = attachSketchLiveServer(server, {
-        origin: () => new URL(entry.url).origin,
-        onFailure: (code) => { void logSafely(`Tandem GPT-live failed: ${code}`, "warning"); },
-        authorize: async () => {
-            const state = await loadState(entry.prototypeId);
-            if (!(await isPreferredAnswerProvider(entry.extensionId)) || state.effortReset
-                || state.lifecycle.currentStage !== "sketch" || state.lifecycle.completedStages.includes("sketch")
-                || state.lifecycle.skippedStages.some((stage) => stage.stageId === "sketch")
-                || !["build", "validate-existing"].includes(state.prototypeApproach.mode)
-                || (hasActiveWork(state) && state.jobOwner
-                    && !sameOwner(state.jobOwner, { sessionId: session.sessionId, workspaceRoot: WORKSPACE_ROOT }))) {
-                throw new SpeechAuthError("GPT-live is available only in the writable Sketch stage of the owning Tandem session.", 409);
-            }
-            return {
-                identity: JSON.stringify([state.prototypeId, state.generation, requirementsInputDigest(state), entry.extensionId]),
-                instructions: buildSketchLivePrompt(),
-            };
-        },
-    });
-
     await new Promise<void>((resolve, reject) => {
         server.once("error", reject);
         server.listen(0, "127.0.0.1", () => resolve());
@@ -9248,7 +9183,6 @@ session = await joinSession({
                 servers.delete(ctx.instanceId);
                 instancePrototypeIds.delete(ctx.instanceId);
                 clearInterval(entry.heartbeat);
-                entry.live.close();
                 for (const client of entry.clients) client.end();
                 await new Promise((resolve) => entry.server.close(resolve));
             },

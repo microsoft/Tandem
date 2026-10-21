@@ -302,7 +302,7 @@ test("public prototype feedback reaches impact assessment rather than the writab
         assert.equal(state.prototypeReview.revisions.length, 0);
         assert.equal(state.lifecycle.currentStage, "prototype");
     } finally {
-        clearInterval(server.heartbeat); server.live.close();
+        clearInterval(server.heartbeat);
         await new Promise<void>(resolve => server.server.close(() => resolve()));
         await f.h.close();
     }

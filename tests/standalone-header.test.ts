@@ -186,35 +186,22 @@ test("hosted reload cannot bypass the relocated Project settings control", async
     assert.equal(h.document.querySelector(".topbar #reload-extension"), null);
 });
 
-test("hosted speech login stays at its requesting input and cannot be invoked from chrome", async (t) => {
+test("hosted header rejects retired input actions without submitting or changing typed drafts", async (t) => {
     const h = await reactHarness(t, host);
     h.render(state());
-    let aborted = false;
-    h.setSpeechFactory(async () => { throw Object.assign(new h.window.Error("Voice sign-in required."), { speechSignInRequired: true }); });
-    h.setFetch(async (path, options) => {
-        assert.equal(path, "/api/speech/login");
-        return new Promise((_resolve, reject) => {
-            options.signal?.addEventListener("abort", () => { aborted = true; reject(new Error("Cancelled")); }, { once: true });
-        });
-    });
     await h.flush();
+    const input = h.get<HTMLTextAreaElement>("usage-input");
+    await h.input(input, "Keep my typed draft");
     await h.sendHeaderMessage({ type: "tandem:header:connect" });
     const scope = header(h.headerMessages).scope;
-    await h.sendHeaderMessage({ type: "tandem:header:action", scope, action: "signIn" });
+    assert.deepEqual(Object.keys(header(h.headerMessages).controls), ["reload", "reset"]);
+    for (const action of ["signIn", "cancelSignIn"]) {
+        await h.sendHeaderMessage({ type: "tandem:header:action", scope, action });
+        assert.equal(h.headerMessages.at(-2)?.type, "tandem:header:error");
+    }
     assert.equal(h.requests.length, 0);
-    const input = h.get<HTMLTextAreaElement>("usage-input");
-    const composer = input.closest(".voice-composer")!;
-    await h.click(composer.querySelector(".speech-toggle")!);
-    await h.click(composer.querySelector(".speech-sign-in")!);
-    assert.equal(h.requests.length, 1);
-    assert.equal(header(h.headerMessages).controls.signIn, null);
-    assert.equal(header(h.headerMessages).controls.cancelSignIn, null);
-    await h.sendHeaderMessage({ type: "tandem:header:action", scope, action: "cancelSignIn" });
-    assert.equal(aborted, false, "Hosted messages do not invoke a removed header control.");
-    await h.click(composer.querySelector(".speech-cancel")!);
-    assert.equal(aborted, true);
-    assert.equal(header(h.headerMessages).controls.cancelSignIn, null);
-    assert.match(composer.querySelector(".speech-status")!.textContent!, /sign-in cancelled/);
+    assert.equal(input.value, "Keep my typed draft");
+    assert.equal(input.disabled || input.readOnly, false);
 });
 
 test("standalone header configuration cannot target arbitrary websites or carry unbounded controls", () => {
@@ -224,7 +211,7 @@ test("standalone header configuration cannot target arbitrary websites or carry 
     }
     assert.equal(isApplicationHeader({ scope: "effort", version: "test", lifecycle: "", controls: null, messages: [] }), false);
     const value: ApplicationHeader = { scope: "effort", version: "test", lifecycle: "",
-        controls: { reload: null, reset: null, signIn: null, cancelSignIn: null }, messages: [] };
+        controls: { reload: null, reset: null }, messages: [] };
     assert.equal(isApplicationHeader(value), true, "Older application headers remain compatible.");
     assert.equal(isApplicationHeader({ ...value, status: { text: "Ready", error: false, action: null } }), true);
     for (const status of [null, {}, { text: 123, error: false, action: null }, { text: "Ready", error: "false", action: null },

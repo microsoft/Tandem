@@ -4,7 +4,6 @@ import { Collapsible, RadioGroup } from "radix-ui";
 import { buildDecisionGraphMermaid } from "../decision-diagram.js";
 import type { DecisionNode } from "../workflow.js";
 import { Diagram } from "./diagram.js";
-import { SpeechTextarea } from "./speech-textarea.js";
 import { skippedStage, useAction, useDraft, useUi, type UiContextValue, type UiState } from "./ui-context.js";
 import { requirementDraftKey, requirementNodes, selectedRequirement, wholeGraphDefaults } from "./requirements-model.js";
 
@@ -158,9 +157,9 @@ function DecisionQuestion({ node, nodes, draft, busy, canEdit, guidance, process
                         {choice === question.recommended && !changing && <span className="recommended">Recommended</span>}
                     </RadioGroup.Item>)}
                 </RadioGroup.Root>}
-                {question.allowFreeText !== false && <SpeechTextarea
+                {question.allowFreeText !== false && <textarea
+                    className="composer-input"
                     name="prototype-detail"
-                    speechKey={requirementFormIdentity(node)}
                     data-ui-key={`decision:${question.id}:detail`}
                     value={draft.detail}
                     maxLength={4000}
@@ -168,13 +167,12 @@ function DecisionQuestion({ node, nodes, draft, busy, canEdit, guidance, process
                     aria-label="Additional answer context"
                     placeholder={changing ? "Enter a replacement answer" : question.answerPlaceholder
                         || (question.choices.length ? "Optional context" : "Enter your answer")}
-                    onValueChange={(detail) => onChange({
-                        detail,
-                        choice: detail.trim() ? "" : question.choices.includes(question.recommended || "") ? question.recommended! : "",
-                    })}
-                    onSpeechStart={() => {
-                        const beforeSpeech = { choice: draft.choice, detail: draft.detail };
-                        return () => onChange(beforeSpeech);
+                    onChange={(event) => {
+                        const detail = event.currentTarget.value;
+                        onChange({
+                            detail,
+                            choice: detail.trim() ? "" : question.choices.includes(question.recommended || "") ? question.recommended! : "",
+                        });
                     }}
                 />}
                 <div className="actions">
@@ -446,7 +444,7 @@ export function RequirementsPanel() {
                     <span className="requirements-substage-index">2</span><span>Decision DAG</span>
                 </li>
             </ol></div>
-            <div id="usage-intake" className="usage-intake" data-suggestions={suggestions.length > 0 || suggestionsLoading} hidden={!isUsage}>
+            <div id="usage-intake" className="usage-intake" hidden={!isUsage}>
                 <div className="usage-entry">
                 <h2 className="usage-title">What should this help you do?</h2>
                 <p id="usage-help" className="visually-hidden">Add one goal at a time. Start with your own, or choose a suggestion below.</p>
@@ -455,10 +453,14 @@ export function RequirementsPanel() {
                         : <li className="muted">No usages added yet.</li>}
                 </ul>
                 <form id="usage-form" className="usage-form inline-composer" onSubmit={(event) => { event.preventDefault(); void submitUsage("add-usage"); }}>
-                    <SpeechTextarea
+                    <textarea
+                        className="composer-input"
                         id="usage-input"
                         value={usageDraft.value}
-                        onValueChange={(value) => setUsageDraft((current) => ({ value, version: current.version + 1 }))}
+                        onChange={(event) => {
+                            const value = event.currentTarget.value;
+                            setUsageDraft((current) => ({ value, version: current.version + 1 }));
+                        }}
                         rows={2}
                         maxLength={500}
                         autoComplete="off"
@@ -520,14 +522,14 @@ export function RequirementsPanel() {
                   ? "Saved requirements" : state.requirements.substage === "usage" ? "Collecting usages" : "Requirements decisions"}</span>
             </div>
             <div className="design-tree-body">
-                <div className="design-tree-legend" aria-label="Decision status legend">
-                    <span><i className="answered" aria-hidden="true" />Answered</span>
-                    <span><i className="active" aria-hidden="true" />Active</span>
-                    <span><i className="to-answer" aria-hidden="true" />To answer</span>
-                </div>
                 {nodes.length > 0 && <div className="design-tree-host">
                     <Diagram id="design-tree-host" source={graph.source}
                         onNodeSelect={(alias) => selectDecision(graph.aliases.get(alias)?.id || alias)}
+                        legend={<div className="design-tree-legend" aria-label="Decision status legend">
+                            <span><i className="answered" aria-hidden="true" />Answered</span>
+                            <span><i className="active" aria-hidden="true" />Active</span>
+                            <span><i className="to-answer" aria-hidden="true" />To answer</span>
+                        </div>}
                         label="Requirements decision DAG" />
                 </div>}
                 <ol id="decision-list" className="decision-list" aria-label="Requirement decisions">

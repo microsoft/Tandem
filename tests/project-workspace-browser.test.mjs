@@ -346,7 +346,6 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
   { skip: !browserAvailable, timeout: 150_000 }, async t => {
     const root = await mkdtemp(join(tmpdir(), "tandem-project-ui-"));
     const events = new HumanLoopEvents(), mutations = [], nativeRequests = [];
-    let voiceLoginAborted = false;
     let accessRequests = [];
     const owner = { schemaVersion: "human-loop-owner/v1", id: "owner", mainSessionId: "main", privateSessionId: "private",
       workspacePath: root, policy: DEFAULT_POLICY };
@@ -502,14 +501,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         else if (request.method === "POST") {
           const chunks = []; for await (const chunk of request) chunks.push(chunk);
           const body = JSON.parse(Buffer.concat(chunks).toString() || "{}"); mutations.push({ path, body });
-          if (path === "/api/speech/token") {
-            response.writeHead(503, { "Content-Type": "application/json" });
-            response.end(JSON.stringify({ error: "Voice input needs Azure Speech sign-in.", speechSignInRequired: true }));
-          }
-          else if (path === "/api/speech/login") {
-            response.on("close", () => { voiceLoginAborted = true; });
-          }
-          else if (path === "/api/reload") {
+          if (path === "/api/reload") {
             value.reloadReceipt = { status: "success", message: "Fixture provider reload accepted." };
             value.revision++; json({ scheduled: true });
           }
@@ -796,20 +788,8 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await browser.waitFor('!document.querySelector("#effort-message").textContent.includes("unconfirmed")');
       await clickRoot("#design-tree-tab");
       await clickRoot("#usage-input"); await browser.call("Input.insertText", { text: "As a user, I retain the original Requirements input." });
-      assert.equal(mutations.some(item => item.path.startsWith("/api/speech/")), false, "Typing and opening Settings do not start voice auth.");
-      assert.equal(await browser.evaluate('document.querySelector("[data-ui-key=usage-input-speech-sign-in]")'), null);
-      await clickRoot('[data-ui-key="usage-input-speech-toggle"]');
-      await browser.waitFor('document.querySelector("[data-ui-key=usage-input-speech-sign-in]")?.textContent==="Sign in for voice input"');
+      assert.equal(await browser.evaluate('document.querySelector(".speech-toggle, .speech-sign-in, #sketch-live-toggle, #sketch-voice-options")'), null);
       assert.equal(await browser.evaluate('document.querySelector("#usage-input").value'), "As a user, I retain the original Requirements input.");
-      assert.equal(await browser.evaluate('document.querySelector("[data-ui-key=usage-input-speech-toggle]").getAttribute("aria-pressed")'), "false");
-      if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "contextual-voice-sign-in.png"), await browser.screenshot());
-      await clickRoot('[data-ui-key="usage-input-speech-sign-in"]');
-      await browser.waitFor('!document.querySelector("[data-ui-key=usage-input-speech-cancel]").hidden');
-      await clickRoot('[data-ui-key="usage-input-speech-cancel"]');
-      await browser.waitFor('document.querySelector("#usage-input").closest(".voice-composer").textContent.includes("sign-in cancelled")');
-      await browser.waitFor('document.activeElement.id==="usage-input"');
-      for (let attempt = 0; !voiceLoginAborted && attempt < 100; attempt++) await new Promise(resolve => setTimeout(resolve, 20));
-      assert.equal(voiceLoginAborted, true);
       await clickRoot("#add-usage");
       await browser.waitFor('document.querySelector("#usage-input").value===""');
       assert.equal(mutations.at(-1).path, "/api/answer");

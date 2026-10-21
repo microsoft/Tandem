@@ -208,7 +208,7 @@ test("invalid folder selection preserves the current workspace and directory err
     assert.equal((await f.request("host/directories?path=relative")).status, 400);
 });
 
-test("native speech notifications dismiss only their occurrence, retaining diagnostics and all runtime state", async (t) => {
+test("native notifications dismiss only their occurrence, retaining diagnostics and all runtime state", async (t) => {
     const f = await fixture(t);
     f.ready();
     f.event(permission());
@@ -217,13 +217,13 @@ test("native speech notifications dismiss only their occurrence, retaining diagn
     const protocol = new DesktopProtocol(input, output, () => { shutdowns++; });
     t.after(() => protocol.close());
     output.on("data", (data: Buffer) => f.event(parseBackendEvent(JSON.parse(data.toString()))));
-    const message = "Tandem request failed: Configure TANDEM_Speech__ResourceId and TANDEM_Speech__Region for an Azure Speech resource, then restart Tandem. Subscription keys are not used.";
+    const message = "Tandem request failed: The saved prototype preview is unavailable. Existing drawings, decisions, and draft text are unchanged.";
     const report = (id: string) => protocol.reportSessionError({ id, data: { errorType: "notification", message } });
-    report("speech-one");
+    report("notice-one");
     const before = f.host.snapshot();
     assert.equal(before.error, null);
-    assert.deepEqual(before.notice, { id: "speech-one", message });
-    assert.equal((await f.command({ type: "dismiss-notice", id: "speech-one" })).status, 202);
+    assert.deepEqual(before.notice, { id: "notice-one", message });
+    assert.equal((await f.command({ type: "dismiss-notice", id: "notice-one" })).status, 202);
     assert.deepEqual(f.host.snapshot(), { ...before, revision: before.revision + 1, notice: null });
     assert.deepEqual(f.backends[0].commands, []);
     assert.equal(f.backends[0].stops, 0);
@@ -231,17 +231,17 @@ test("native speech notifications dismiss only their occurrence, retaining diagn
     const diagnostics = await f.request("host/diagnostics").then(response => response.json());
     assert.ok(diagnostics.text.includes(message));
     f.event({ type: "status", message: "Still preparing" });
-    report("speech-one");
+    report("notice-one");
     assert.equal(f.host.snapshot().notice, null, "polling and replaying the acknowledged event cannot resurrect it");
-    report("speech-two");
-    assert.deepEqual(f.host.snapshot().notice, { id: "speech-two", message }, "identical text with a new native ID is a new failure");
-    assert.equal((await f.command({ type: "dismiss-notice", id: "speech-one" })).status, 202);
-    assert.equal(f.host.snapshot().notice!.id, "speech-two");
-    report("speech-three");
-    await f.command({ type: "dismiss-notice", id: "speech-two" });
-    assert.equal(f.host.snapshot().notice!.id, "speech-three", "a newer error wins the acknowledgment race");
-    await f.command({ type: "dismiss-notice", id: "speech-three" });
-    report("speech-one");
+    report("notice-two");
+    assert.deepEqual(f.host.snapshot().notice, { id: "notice-two", message }, "identical text with a new native ID is a new failure");
+    assert.equal((await f.command({ type: "dismiss-notice", id: "notice-one" })).status, 202);
+    assert.equal(f.host.snapshot().notice!.id, "notice-two");
+    report("notice-three");
+    await f.command({ type: "dismiss-notice", id: "notice-two" });
+    assert.equal(f.host.snapshot().notice!.id, "notice-three", "a newer error wins the acknowledgment race");
+    await f.command({ type: "dismiss-notice", id: "notice-three" });
+    report("notice-one");
     assert.equal(f.host.snapshot().notice, null, "earlier acknowledgments survive later ones");
     await f.host.close();
     assert.ok((await readFile(join(f.workspace, ".tandem", "desktop", "browser.log"), "utf8")).includes(message));

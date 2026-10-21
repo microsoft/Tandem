@@ -209,7 +209,7 @@
 .sketch-transition label { display: flex; min-width: 0; flex-direction: column; }
 .sketch-transition input, .sketch-transition select { min-width: 0; width: 100%; }
 .sketch-input-pane { position: relative; flex: none; min-height: 0; max-height: 45%; margin-top: 4px; overflow: visible; }
-.sketch-revise-form { display: grid; gap: var(--studio-control-gap); }
+.sketch-revise-form { display: flex; align-items: flex-start; gap: var(--studio-control-gap); min-width: 0; }
 .sketch-revise-form button { justify-self: start; }
 .sketch-revise-form p { margin: 0; }
 .sketch-request-history-pane {
@@ -274,57 +274,17 @@
   font-size: var(--text-body-small, 12px);
   overflow-wrap: anywhere;
 }
-.voice-composer { display: grid; gap: var(--studio-control-gap); min-width: 0; }
-.voice-composer-row { display: flex; align-items: flex-start; gap: var(--studio-control-gap); min-width: 0; }
-.voice-composer-row > textarea { flex: 1; min-width: 0; }
-.voice-composer-microphone { display: flex; flex: none; }
-.voice-composer-microphone button { display: inline-flex; align-items: center; justify-content: center; width: var(--studio-control-height); height: var(--studio-control-height); padding: 0; }
-.voice-composer-microphone .speech-toggle { border-radius: 5px 0 0 5px; }
-.voice-composer-microphone .voice-options-toggle { width: 24px; margin-inline-start: -1px; border-radius: 0 5px 5px 0; }
-.voice-composer-microphone button > .lucide, .voice-settings-button > .lucide { margin: 0; }
-.voice-composer-microphone .speech-toggle[aria-pressed="true"] { color: var(--studio-danger); border-color: currentColor; }
-form:not(.sketch-composer) .voice-composer-microphone .speech-toggle {
-  display: inline-flex; align-items: center; justify-content: center; flex: none;
-  width: var(--studio-composer-height); height: var(--studio-composer-height); min-height: var(--studio-composer-height);
-  padding: 0; border: 1px solid var(--studio-border); border-radius: 6px;
-  background: var(--studio-surface); color: var(--studio-text); cursor: pointer;
-}
-form:not(.sketch-composer) .voice-composer-microphone .speech-toggle[aria-pressed="true"] { color: var(--studio-danger); border-color: currentColor; }
-form:not(.sketch-composer) .voice-composer-microphone .speech-toggle:disabled { opacity: .55; cursor: not-allowed; }
-form.sketch-composer .voice-composer-row > textarea,
-form.sketch-composer .voice-composer-row > textarea[data-speech-input] {
+form.sketch-composer > #sketch-instruction {
   flex: 1; min-width: 0; width: 100%; height: var(--studio-composer-height); min-height: var(--studio-composer-height); max-height: 120px;
   padding: var(--studio-control-padding);
 }
-form.sketch-composer .voice-composer-row > textarea[data-voice-caption="true"] {
-  height: auto; min-height: 60px; max-height: 120px; field-sizing: content;
-}
 .sketch-composer .sketch-send { flex: none; min-height: var(--studio-control-height); white-space: nowrap; }
-.sketch-composer .voice-settings-button { display: inline-flex; align-items: center; justify-content: center; flex: none; width: var(--studio-control-height); height: var(--studio-control-height); padding: 0; }
+.sketch-composer .sketch-history-toggle { display: inline-flex; align-items: center; justify-content: center; flex: none; width: var(--studio-control-height); height: var(--studio-control-height); padding: 0; }
 .sketch-composer .sketch-history-toggle[data-status="error"] {
   color: var(--studio-danger);
   border-color: currentColor;
   background: color-mix(in srgb, var(--studio-surface) 88%, var(--studio-danger));
 }
-.voice-composer-feedback { min-width: 0; }
-.voice-composer-feedback:not(:has(> :not([hidden], .visually-hidden))) { display: contents; }
-.sketch-live-composer { min-width: 0; }
-.voice-settings-popover {
-  z-index: 50; width: min(340px, calc(100vw - 24px)); max-height: var(--radix-popover-content-available-height);
-  overflow: auto; padding: 16px; border: 1px solid var(--studio-border); border-radius: 8px;
-  background: var(--studio-panel); color: var(--studio-text);
-}
-.voice-settings-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
-.voice-settings-heading h3 { margin: 0; font-size: 14px; }
-.voice-settings-heading button { display: inline-flex; align-items: center; justify-content: center; width: var(--studio-control-height); height: var(--studio-control-height); padding: 0; border: 1px solid var(--studio-border); border-radius: 5px; background: transparent; }
-.voice-settings-heading button > .lucide { margin: 0; }
-.voice-settings-popover label { display: block; margin-bottom: var(--studio-control-gap); }
-.voice-settings-popover select { width: 100%; padding: var(--studio-control-padding); border: 1px solid var(--studio-border); border-radius: 5px; background: var(--studio-surface); }
-.voice-settings-popover p { margin: 12px 0 0; font-size: 12px; line-height: 1.5; }
-.speech-header-sign-in { display: flex; align-items: center; gap: var(--studio-control-gap); }
-.speech-header-error { max-width: 260px; overflow-wrap: anywhere; }
-.sketch-live { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--studio-border); border-radius: 6px; }
-.sketch-live-captions { max-height: 120px; overflow: auto; margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 @container output (max-width: 640px) {
   .sketch-workspace { grid-template-columns: 140px minmax(0, 1fr); }
   .sketch-list, .sketch-tree { max-height: 140px; }
@@ -429,7 +389,7 @@ input[type="checkbox"], input[type="radio"] { min-height: auto; vertical-align: 
   .review-submit, .thread-action, .review-artifact-link, .retry-preparation, .generate-dag,
   .send, .all-recommended, .review-current-defaults, .next-decision, .test-error-toggle,
   .usage-form button, .usage-suggestion, .revision-form button, .revision-question-form button,
-  .diagram-toolbar button, .speech-controls button, .sketch-panel button) {
+  .diagram-toolbar button, .sketch-panel button) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -457,7 +417,7 @@ input[type="checkbox"], input[type="radio"] { min-height: auto; vertical-align: 
 .sketch-panel .plan-button:not(.secondary):not(:disabled):hover { background: var(--studio-action-bg); }
 .sketch-list button { justify-content: flex-start; }
 
-form textarea[data-speech-input] {
+form textarea.composer-input {
   width: 100%;
   min-width: 0;
   min-height: var(--studio-composer-height);
@@ -468,10 +428,8 @@ form textarea[data-speech-input] {
   background: var(--studio-surface);
 }
 
-/* Disabling the sign-in trigger must not move Cancel between pointer down/up. */
-.voice-composer:has(.speech-cancel:not([hidden])) textarea[data-speech-input],
-form:focus-within textarea[data-speech-input],
-#question-host:focus-within textarea[data-speech-input] {
+form:focus-within textarea.composer-input,
+#question-host:focus-within textarea.composer-input {
   min-height: var(--studio-composer-expanded-height);
 }
 
@@ -677,7 +635,7 @@ h1 {
 }
 
 .start-form label { font-weight: var(--font-weight-semibold, 600); }
-.start-form textarea[data-speech-input] { min-height: 112px; height: 112px; }
+.start-form textarea.composer-input { min-height: 112px; height: 112px; }
 .start-form p { margin: 0; font-size: var(--text-body-small, 12px); line-height: 1.6; }
 .start-form textarea[aria-invalid="true"] { border-color: var(--studio-danger); }
 .start-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--studio-gap); }
@@ -1210,7 +1168,6 @@ h1 {
 #visual-preview-frame { width: 100%; min-height: 340px; flex: 1 0 340px; border: 1px solid var(--studio-border); background: var(--studio-surface); }
 .visual-feedback { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
 .visual-feedback > label, .visual-feedback > p { grid-column: 1 / -1; }
-.visual-feedback .speech-field { min-width: 0; }
 .visual-feedback > button { align-self: end; }
 @container output (max-width: 680px) {
   .visual-settings { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1493,12 +1450,22 @@ h1 {
   background: var(--studio-section);
 }
 
+.diagram-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--studio-gap);
+  margin-bottom: var(--studio-gap);
+}
+
 .diagram-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: var(--studio-control-gap);
-  margin-bottom: var(--studio-gap);
+  max-width: 100%;
+  margin-inline-start: auto;
 }
 
 .diagram-toolbar button {
@@ -1657,10 +1624,6 @@ h1 {
 .design-tree-panel:has(.design-tree-card:not([hidden])) { display: flex; flex-direction: column; gap: var(--studio-gap); overflow: hidden; }
 .design-tree-panel > .design-tree-card { flex: 1; height: auto; }
 .requirements-intake-panel[data-substage="dag"] { flex: none; max-height: min(240px, 35vh); overflow: auto; margin-bottom: 0; }
-
-@container output (min-width: 880px) {
-  .usage-intake[data-suggestions="true"] { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); align-items: start; }
-}
 
 .design-review-panel {
   min-height: 0;
@@ -2449,7 +2412,7 @@ h1 {
   display: flex;
   flex-wrap: wrap;
   gap: 8px 16px;
-  margin: 0 0 10px;
+  margin: 0;
   color: var(--studio-muted);
   font-size: var(--text-body-small, 12px);
 }
@@ -2814,46 +2777,13 @@ h1 {
   margin: 10px 0;
 }
 
-.speech-controls {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--studio-control-gap);
-  min-width: 0;
-}
-
-.speech-controls .speech-toggle,
-.speech-controls .speech-sign-in,
-.speech-controls .speech-cancel {
-  min-height: var(--studio-small-control-height);
-  padding: var(--studio-control-padding);
-  font-size: var(--text-body-small, 12px);
-  border: 1px solid var(--studio-border);
-  border-radius: 6px;
-  background: var(--studio-surface);
-  color: var(--studio-text);
-  cursor: pointer;
-  font-weight: var(--font-weight-semibold, 600);
-}
-.speech-controls .speech-toggle { width: var(--studio-small-control-height); padding: 0; flex: none; }
-
-.speech-controls .speech-toggle[aria-pressed="true"] {
-  color: var(--studio-danger);
-  border-color: currentColor;
-}
-
-.speech-controls button:disabled { opacity: .55; cursor: not-allowed; }
-.speech-status { color: var(--studio-muted); font-size: 12px; }
-.speech-status[data-status="error"] { color: var(--studio-danger); }
-[data-speech-input][readonly] { outline: 1px solid var(--studio-focus); }
-
 .inline-composer {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
   gap: var(--studio-control-gap);
 }
-.inline-composer > .voice-composer { flex: 1 1 160px; }
+.inline-composer > textarea.composer-input { flex: 1 1 160px; }
 .inline-composer > :is(.plan-actions, .review-composer-actions, .actions) { display: contents; }
 .inline-composer > :is(.choices, .revision-question-choices, .review-request-kind) { flex-basis: 100%; min-width: 0; }
 .inline-composer button[type="submit"] { flex: none; max-width: 100%; }
@@ -3434,10 +3364,8 @@ textarea {
   .lifecycle { grid-column: 3 / 5; grid-row: 1; justify-self: end; }
   #reload-extension { grid-column: 1; grid-row: 2; }
   #reset-effort { grid-column: 2; grid-row: 2; }
-  .speech-header-sign-in { grid-column: 3; grid-row: 2; flex-wrap: wrap; min-width: 0; }
   .build-version { grid-column: 4; grid-row: 2; justify-self: end; }
   .reload-status[data-status="error"], .effort-message, .connection-status { grid-column: 1 / -1; max-width: none; }
-  .speech-header-error { max-width: 100%; }
 }
 
 @container output (max-width: 680px) {
@@ -3521,7 +3449,7 @@ textarea {
 @media (pointer: coarse) {
   :root { --studio-control-height: 44px; --studio-tab-height: 44px; }
   button, .sketch-panel .sketch-icon-button, #sketch-tools .sketch-icon-button,
-  .voice-composer-microphone button, .sketch-composer .voice-settings-button,
+  .sketch-composer .sketch-history-toggle,
   .diagram-toolbar button, .next-action-bar button,
   .process-controls button.ledger-summary, .process-section button.ledger-summary { min-width: 44px; min-height: 44px; }
   .next-action-bar { height: auto; min-height: 48px; }

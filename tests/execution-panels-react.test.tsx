@@ -46,8 +46,8 @@ async function harness(t: TestContext, panel: "preparation") {
   };
   const previous = new Map(Object.keys(globalValues).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   for (const [key, value] of Object.entries(globalValues)) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
-  const [{ createRoot }, { UiContext, DraftProvider }, { SpeechProvider }, { PreparationPanel }] = await Promise.all([
-    import("react-dom/client"), import("../src/renderer/ui-context.js"), import("../src/renderer/speech-textarea.js"),
+  const [{ createRoot }, { UiContext, DraftProvider }, { PreparationPanel }] = await Promise.all([
+    import("react-dom/client"), import("../src/renderer/ui-context.js"),
     import("../src/renderer/preparation-panel.js"),
   ]);
   const panels: Record<typeof panel, ComponentType> = { preparation: PreparationPanel };
@@ -68,7 +68,7 @@ async function harness(t: TestContext, panel: "preparation") {
       confirm: async () => true, browseStage: () => {}, selectArtifact: () => {}, setBusy: () => {},
     };
     root.render(<UiContext.Provider value={context}>
-      <DraftProvider key={state.prototypeId + ":" + state.generation}><SpeechProvider><Panel /></SpeechProvider></DraftProvider>
+      <DraftProvider key={state.prototypeId + ":" + state.generation}><Panel /></DraftProvider>
     </UiContext.Provider>);
   }
   t.after(async () => {

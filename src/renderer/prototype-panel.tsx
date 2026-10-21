@@ -4,7 +4,6 @@ import { ArrowUpRight, Check, ExternalLink, LoaderCircle, Play, RefreshCw, Send,
 import { RadioGroup, Tooltip } from "radix-ui";
 import type { DecisionQuestion } from "../workflow.js";
 import { hasActiveJobs, hasStageData, skippedStage, useAction, useDraft, useUi, type UiState } from "./ui-context.js";
-import { SpeechTextarea } from "./speech-textarea.js";
 import { PreviewRestart } from "./preview-restart.js";
 import { awaitingVisualChoice, originalPrototypeCheckpointId, visualExplorationIsCurrent } from "../visual-directions.js";
 import { VisualExplorationPanel } from "./visual-exploration-panel.js";
@@ -102,11 +101,10 @@ function Clarification({ question }: { question: DecisionQuestion }) {
           <span>{choice}</span>
         </label>)}
       </RadioGroup.Root>
-      {question.allowFreeText !== false && <SpeechTextarea id="revision-question-detail" value={draft.detail} speechKey={JSON.stringify(question)}
-        onValueChange={(detail) => setDraft((current) => ({ detail, choice: detail.trim() ? "" : current.choice, version: current.version + 1 }))}
-        onSpeechStart={() => {
-          const beforeSpeech = { choice: draft.choice, detail: draft.detail };
-          return () => setDraft((current) => ({ ...beforeSpeech, version: current.version + 1 }));
+      {question.allowFreeText !== false && <textarea className="composer-input" id="revision-question-detail" value={draft.detail}
+        onChange={(event) => {
+          const detail = event.currentTarget.value;
+          setDraft((current) => ({ detail, choice: detail.trim() ? "" : current.choice, version: current.version + 1 }));
         }}
         maxLength={4000} disabled={blocked} placeholder={question.answerPlaceholder || "Optional clarification"} aria-label="Prototype clarification" />}
       <button id="submit-clarification" type="submit" disabled={blocked}><Check size={16} />{action.busy ? "Sending..." : "Use this answer"}</button>
@@ -467,7 +465,10 @@ export function PrototypePanel({ active: visible, connected, renderActions }: {
           setDraft((current) => current.version === submitted ? { value: "", version: submitted + 1 } : current);
         });
       }}>
-        <SpeechTextarea id="revision-input" value={draft.value} onValueChange={(value) => setDraft((current) => ({ value, version: current.version + 1 }))}
+        <textarea className="composer-input" id="revision-input" value={draft.value} onChange={(event) => {
+          const value = event.currentTarget.value;
+          setDraft((current) => ({ value, version: current.version + 1 }));
+        }}
           rows={1} maxLength={4000} disabled={Boolean(state.effortReset)} placeholder="Describe one change you want to see in the prototype." aria-label="Prototype revision suggestion" aria-describedby="revision-status" />
         <button id="submit-revision" type="submit" aria-describedby="revision-status" disabled={pending || !canRequestChange || finalizing || unresolved.length >= 50}><Send size={16} />{revisionAction.busy ? state.stageReview ? "Saving..." : "Sending..." : state.stageReview ? "Save draft feedback" : hasActiveJobs(state) || question || candidate || !readyUrl ? "Queue change" : "Send change"}</button>
       </form>

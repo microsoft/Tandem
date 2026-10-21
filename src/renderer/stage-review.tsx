@@ -151,7 +151,6 @@ function ReviewEditor({ parent, active, actionsContainer, workingStage, onExit, 
       {!settled && status?.conflict && <p role="alert">{status.conflict}</p>}
       {!settled && !status?.conflict && status?.blocker && <p role="status">{status.blocker}</p>}
       {hasActiveJobs(state) && <p role="status">{state.status}</p>}
-      {stage === "sketch" && <p className="muted">GPT-live stays with current-stage editing. Use the drawing editor or revision instructions in this draft.</p>}
       <div className="stage-review-tools"><BaselineComparison />
         {!settled && <button id="discard-stage-review" className="plan-button secondary" type="button" disabled={blocked}
           onClick={() => void discard()}>Discard draft</button>}</div>

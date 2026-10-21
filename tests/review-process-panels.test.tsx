@@ -5,7 +5,6 @@ import React, { act, useState } from "react";
 import { createProcessState } from "../src/process-state.js";
 import { ArtifactList, ArtifactsPanel } from "../src/renderer/artifacts-panel.js";
 import { ProcessPanel } from "../src/renderer/process-panel.js";
-import { SpeechProvider } from "../src/renderer/speech-textarea.js";
 import { DraftProvider, UiContext, type UiContextValue, type UiState } from "../src/renderer/ui-context.js";
 import type { AcceptanceRecord } from "../src/accepted-artifacts.js";
 
@@ -81,10 +80,10 @@ async function harness(initial = fixture()) {
       }),
     };
     return <UiContext.Provider value={context}>
-      <DraftProvider key={`${state.prototypeId}:${state.generation}`}><SpeechProvider>
+      <DraftProvider key={`${state.prototypeId}:${state.generation}`}>
         <ArtifactList selectedArtifactId={selection} />
         <ArtifactsPanel selectedArtifactId={selection} /><ProcessPanel />
-      </SpeechProvider></DraftProvider>
+      </DraftProvider>
     </UiContext.Provider>;
   }
   async function render(next: UiState) {

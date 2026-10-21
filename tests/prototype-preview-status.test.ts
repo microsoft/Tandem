@@ -51,7 +51,7 @@ test("preview status verifies only the displayed checkpoint and preserves pendin
         assert.deepEqual(await h.api.loadState(state.prototypeId), before);
         assert.equal(h.requests.length, 0);
     } finally {
-        clearInterval(server.heartbeat); server.live.close();
+        clearInterval(server.heartbeat);
         await new Promise<void>(resolve => { server.server.close(() => resolve()); server.server.closeAllConnections(); });
         await new Promise<void>(resolve => { preview.close(() => resolve()); preview.closeAllConnections(); });
         await h.close();

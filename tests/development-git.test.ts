@@ -214,7 +214,7 @@ for (const startingPath of ["preparation", "development"]) test(`public ${starti
     t.after(() => h.close());
     const value = h.api.createState("git-entry"); await h.api.persistState(value);
     const server = await h.api.startServer("git-entry", "git-entry", "project:tandem", true);
-    t.after(async () => { clearInterval(server.heartbeat); server.live.close(); await new Promise<void>(done => server.server.close(() => done())); });
+    t.after(async () => { clearInterval(server.heartbeat); await new Promise<void>(done => server.server.close(() => done())); });
     const post = (path: string, body: unknown = {}) => fetch(new URL(path, server.url), {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     });

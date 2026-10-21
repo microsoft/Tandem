@@ -246,7 +246,7 @@ export function BrowserApp({ store, connect = true }: { store: BrowserStore; con
                             if (!host) return;
                             if (event.target.value === "ask") void run({ type: "set-permission-mode", mode: "ask", generation: host.generation });
                             else setConfirmation({ title: "Allow all tool actions for this session?",
-                                detail: "Copilot may run commands, change files and access the network without further tool confirmation. Only enable this for trusted workspaces. This is not saved: restarting or switching the workspace restores Ask each time. Managed-policy, sandbox-bypass, and microphone consent remain separate.",
+                                detail: "Copilot may run commands, change files and access the network without further tool confirmation. Only enable this for trusted workspaces. This is not saved: restarting or switching the workspace restores Ask each time. Managed-policy and sandbox-bypass consent remain separate.",
                                 command: { type: "set-permission-mode", mode: "allow-all", generation: host.generation } });
                         }}>
                         <option value="ask">Ask each time</option><option value="allow-all">Allow all for this session</option>
@@ -278,7 +278,7 @@ export function BrowserApp({ store, connect = true }: { store: BrowserStore; con
         {request && !showRequest && <button className="host-pending" type="button" onClick={() => { setDialog(null); setConfirmation(null); }}>{host.requests.length} backend request(s) need your response</button>}
         <main className="host-main" tabIndex={0} aria-label="Tandem workspace viewport">
             {host?.canvasUrl ? <iframe key={`${host.generation}:${host.canvasUrl}:${reload}`} ref={application.frame} id="tandem-application" title="Tandem workspace"
-                src={application.src} onLoad={application.onLoad} referrerPolicy="no-referrer" allow={`microphone ${new URL(host.canvasUrl).origin}`}
+                src={application.src} onLoad={application.onLoad} referrerPolicy="no-referrer"
                 sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox" />
                 : <section className="host-notice" aria-label="Workspace status">
                     {host?.phase === "starting" && <LoaderCircle className="spin" size={28} />}
@@ -310,7 +310,7 @@ export function BrowserApp({ store, connect = true }: { store: BrowserStore; con
         </Modal>}
         {dialog === "about" && <Modal title={`Tandem ${host?.version || ""}`} description="Standalone Node.js browser host" close={() => setDialog(null)}>
             <p>The same Tandem workflow and artifacts, without .NET or WebView2. Copilot authentication and network access are required for AI operations.</p>
-            <p>Only open workspaces and tools you trust. Tool permissions start in Ask each time; browser microphone permissions are separate.</p>
+            <p>Only open workspaces and tools you trust. Tool permissions start in Ask each time.</p>
             <p>Closing a tab leaves the backend running. Use Stop here or Ctrl+C in the terminal to stop it.</p>
             <div className="dialog-actions"><button type="button" onClick={() => setDialog(null)}>Close</button></div>
         </Modal>}

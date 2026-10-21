@@ -21,8 +21,6 @@ const applicationHeader: ApplicationHeader = {
     controls: {
         reload: { label: "Reload", title: "Reload the extension", disabled: false, busy: false },
         reset: { label: "Reset", title: "Reset effort", disabled: false, busy: false },
-        signIn: { label: "Sign in", title: "Sign in with Microsoft", disabled: false, busy: false },
-        cancelSignIn: null,
     },
     messages: [],
 };
@@ -136,14 +134,14 @@ async function fixture(t: TestContext) {
     };
 }
 
-test("browser shell preserves the application origin, microphone delegation and host controls", async (t) => {
+test("browser shell preserves the application origin and host controls without device permission delegation", async (t) => {
     const h = await fixture(t);
     await h.fromApplication({ type: "tandem:header:state", header: applicationHeader });
     const frame = h.document.querySelector<HTMLIFrameElement>("#tandem-application")!;
     assert.equal(new URL(frame.src).origin, "http://127.0.0.1:5000");
     assert.equal(new URL(frame.src).pathname, "/");
     assert.equal(new URLSearchParams(new URL(frame.src).hash.slice(1)).get("tandem-host"), "http://127.0.0.1:4567");
-    assert.match(frame.getAttribute("allow")!, /microphone http:\/\/127\.0\.0\.1:5000/);
+    assert.equal(frame.getAttribute("allow"), null);
     assert.equal(frame.getAttribute("referrerpolicy"), "no-referrer");
     assert.equal(h.document.querySelector(".host-main")!.getAttribute("tabindex"), "0");
     assert.ok(!frame.src.includes("token"));
@@ -171,7 +169,7 @@ test("browser shell preserves the application origin, microphone delegation and 
     assert.deepEqual(h.errors, []);
 });
 
-test("speech failure can be dismissed while the production workspace retains Preparation and its typed draft", async (t) => {
+test("operation failure can be dismissed while the production workspace retains Preparation and its typed draft", async (t) => {
     const h = await fixture(t);
     const app = await reactHarness(t);
     const initial = rendererState();
@@ -180,18 +178,16 @@ test("speech failure can be dismissed while the production workspace retains Pre
     const stored = app.store.getSnapshot().state;
     const input = app.get<HTMLTextAreaElement>("usage-input");
     const preparation = app.get("preparation-panel");
-    assert.ok(input.matches("textarea[data-speech-input]"), "test the production input, not a substitute textarea");
+    assert.ok(input.matches("textarea.composer-input"), "test the production input, not a substitute textarea");
+    assert.equal(app.document.querySelector(".speech-toggle, .speech-sign-in, #sketch-live-toggle, #sketch-voice-options"), null);
     await app.input(input, "Continue by typing");
     const frame = h.document.querySelector("#tandem-application");
-    const message = "Tandem request failed: Configure TANDEM_Speech__ResourceId and TANDEM_Speech__Region for an Azure Speech resource, then restart Tandem. Subscription keys are not used.";
-    let speechAttempts = 0;
-    app.setSpeechFactory(async () => { speechAttempts++; throw new app.window.Error(message); });
-    await app.click(input.closest(".voice-composer")!.querySelector(".speech-toggle")!);
+    const message = "Tandem request failed: The saved prototype preview is unavailable. Existing drawings, decisions, and draft text are unchanged.";
     await app.fire(app.get("preparation-tab"), "mousedown", { button: 0, ctrlKey: false });
     assert.equal(preparation.hidden, false);
-    await h.accept(state({ revision: 2, notice: { id: "speech-one", message } }));
+    await h.accept(state({ revision: 2, notice: { id: "notice-one", message } }));
     h.setDiagnostics(message);
-    assert.match(h.document.querySelector('.host-notification [role="alert"]')!.textContent!, /Subscription keys are not used/);
+    assert.match(h.document.querySelector('.host-notification [role="alert"]')!.textContent!, /preview is unavailable/);
     const dismiss = h.button("Dismiss notification");
     assert.equal(dismiss.type, "button");
     assert.equal(dismiss.disabled, false);
@@ -211,9 +207,8 @@ test("speech failure can be dismissed while the production workspace retains Pre
     await app.fire(app.get("design-tree-tab"), "mousedown", { button: 0, ctrlKey: false });
     await app.input(input, "Continue by typing after the failure");
     assert.equal(input.value, "Continue by typing after the failure");
-    assert.equal(speechAttempts, 1);
-    assert.deepEqual(app.requests, [], "dismissal must not configure voice, start a model, sign in or submit typed input");
-    assert.deepEqual(h.requests.map(request => request.body), [{ type: "dismiss-notice", id: "speech-one", generation: "generation-one" }]);
+    assert.deepEqual(app.requests, [], "dismissal must not start a model, restart the preview or submit typed input");
+    assert.deepEqual(h.requests.map(request => request.body), [{ type: "dismiss-notice", id: "notice-one", generation: "generation-one" }]);
     assert.equal(app.store.getSnapshot().state, stored);
     await h.click("Diagnostics");
     assert.ok(h.document.querySelector(".host-log")!.textContent!.includes(message));
@@ -266,11 +261,11 @@ test("old notification replies cannot clear a new workspace or hide fatal and co
     assert.match(h.document.querySelector('[role="alert"]')!.textContent!, /Startup failed/);
     assert.equal([...h.document.querySelectorAll("button")].some(button => button.textContent === "Dismiss notification"), false);
     assert.ok(h.button("Retry"));
-    await h.accept(state({ revision: 6, notice: { id: "voice", message: "Voice unavailable" }, error: "Runtime needs attention" }));
+    await h.accept(state({ revision: 6, notice: { id: "preview", message: "Preview unavailable" }, error: "Runtime needs attention" }));
     h.setCommandHandler(undefined);
     await h.click("Dismiss notification");
     assert.match(h.document.querySelector('[role="alert"]')!.textContent!, /Runtime needs attention/);
-    await h.accept(state({ revision: 8, notice: { id: "voice-again", message: "Voice unavailable" } }));
+    await h.accept(state({ revision: 8, notice: { id: "preview-again", message: "Preview unavailable" } }));
     await h.disconnect();
     assert.match(h.document.querySelector('[role="alert"]')!.textContent!, /Host connection lost/);
     assert.equal([...h.document.querySelectorAll("button")].some(button => button.textContent === "Dismiss notification"), false);
@@ -281,7 +276,7 @@ test("embedded failed actions have local occurrences but persistent recovery and
     await h.fromApplication({ type: "tandem:header:state", header: { ...applicationHeader, messages: [
         { id: "maintenance", text: "Provider reload remains unconfirmed", error: true },
         { id: "connection", text: "Application disconnected", error: true },
-        { id: "speech", text: "Complete Microsoft sign-in", error: false },
+        { id: "preview", text: "Review the saved preview", error: false },
     ] } });
     const message = "The application header action failed.";
     await h.fromApplication({ type: "tandem:header:error", message });
@@ -289,7 +284,7 @@ test("embedded failed actions have local occurrences but persistent recovery and
     await h.click("Dismiss notification");
     assert.match(h.document.body.textContent!, /Provider reload remains unconfirmed/);
     assert.match(h.document.body.textContent!, /Application disconnected/);
-    assert.match(h.document.body.textContent!, /Complete Microsoft sign-in/);
+    assert.match(h.document.body.textContent!, /Review the saved preview/);
     await h.accept(state({ revision: 2, status: "Still working" }));
     assert.equal(h.document.querySelector(".host-notification"), null);
     await h.fromApplication({ type: "tandem:header:error", message });
@@ -309,17 +304,17 @@ test("embedded failed actions have local occurrences but persistent recovery and
 
 test("failed acknowledgments leave the original notice and a dismissible diagnostic, without reviving old-workspace errors", async (t) => {
     const h = await fixture(t);
-    await h.accept(state({ revision: 2, notice: { id: "voice", message: "Voice unavailable" } }));
+    await h.accept(state({ revision: 2, notice: { id: "preview", message: "Preview unavailable" } }));
     h.setCommandHandler(async () => Response.json({ error: "Acknowledgment delivery failed. token=private" }, { status: 503 }));
     await h.click("Dismiss notification");
     const banners = [...h.document.querySelectorAll(".host-notification")];
     assert.equal(banners.length, 2);
-    assert.ok(banners.some(banner => banner.textContent!.includes("Voice unavailable")));
+    assert.ok(banners.some(banner => banner.textContent!.includes("Preview unavailable")));
     const local = banners.find(banner => banner.textContent!.includes("Acknowledgment delivery failed"))!;
     local.querySelector<HTMLButtonElement>("button")!.click();
     await h.flush();
     assert.equal(h.requests.length, 1, "dismissing the local failure does not retry its request");
-    assert.equal(h.document.querySelector(".host-notification")!.textContent, "Voice unavailableDismiss notification");
+    assert.equal(h.document.querySelector(".host-notification")!.textContent, "Preview unavailableDismiss notification");
     await h.click("Diagnostics");
     assert.match(h.document.querySelector(".host-log")!.textContent!, /Acknowledgment delivery failed\. token=\[redacted\]/);
     assert.doesNotMatch(h.document.querySelector(".host-log")!.textContent!, /private/);
@@ -337,7 +332,7 @@ test("failed acknowledgments leave the original notice and a dismissible diagnos
 test("dismissing a notification never resolves a pending permission prompt", async (t) => {
     const h = await fixture(t);
     const prompt = { type: "permission", id: "consent", title: "Permission still required", details: "Review this operation.", canAllowAllForSession: false } as const;
-    await h.accept(state({ revision: 2, notice: { id: "voice", message: "Voice unavailable" }, requests: [prompt] }));
+    await h.accept(state({ revision: 2, notice: { id: "preview", message: "Preview unavailable" }, requests: [prompt] }));
     const allow = h.button("Allow once"), deny = h.button("Deny");
     assert.equal(h.document.activeElement, deny);
     // Simulate another tab acknowledging the notice while this tab owns the prompt.
@@ -471,13 +466,12 @@ test("combined header delegates application icons only to the current frame and 
     assert.equal(sent.some(item => item.data.type === "tandem:header:action"), false);
     assert.equal(h.requests.length, 0, "application actions must not bypass existing iframe handlers through host HTTP");
     await h.fromApplication({ type: "tandem:header:state", header: {
-        ...applicationHeader, controls: { ...applicationHeader.controls, signIn: { ...applicationHeader.controls.signIn, disabled: true, busy: true },
-            cancelSignIn: { label: "Cancel Microsoft sign-in", title: "Cancel", disabled: false, busy: false } },
-        messages: [{ id: "speech", text: "Complete Microsoft sign-in", error: false }],
+        ...applicationHeader, controls: { ...applicationHeader.controls,
+            reload: { label: "Reload", title: "Reload the extension", disabled: true, busy: true } },
+        messages: [{ id: "maintenance", text: "Reload is in progress", error: false }],
     } });
-    assert.equal(h.document.querySelector('[aria-label="Sign in with Microsoft"]'), null);
-    assert.match(h.document.body.textContent!, /Complete Microsoft sign-in/);
-    assert.equal(h.document.querySelector('[aria-label="Cancel Microsoft sign-in"]'), null, "Voice cancellation belongs to the requesting input.");
+    assert.equal(h.document.querySelector('[aria-label="Reload extension"]'), null);
+    assert.match(h.document.body.textContent!, /Reload is in progress/);
     await h.fromApplication({ type: "tandem:header:state", header: {
         ...applicationHeader, messages: [{ id: "reset", text: "Reset could not stop the active work.", error: true }],
     } });
@@ -616,16 +610,49 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
             assert.equal(geometry.title, longStatus);
             assert.equal(geometry.hintVisible, width > 680);
         }
+        const usageIntake = rendererState("requirements", 3);
+        usageIntake.requirements.suggestions = [
+            "I want to organize image-transition filter plugins so I can find and manage my work.",
+            "I want to preview a transition between two images and adjust its progress and parameters.",
+        ];
         await browser.evaluate(`(() => {
             const frame = document.querySelector("#tandem-application").contentWindow;
-            frame.workspaceFixture.flushSync(() => frame.workspaceFixture.store.accept(${JSON.stringify(rendererState("requirements", 3))}));
+            frame.workspaceFixture.flushSync(() => frame.workspaceFixture.store.accept(${JSON.stringify(usageIntake)}));
         })()`);
         await browser.waitFor('Boolean(document.querySelector(".host-status-action"))');
         await browser.evaluate('document.querySelector(".host-status-action").focus()');
         await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" });
         await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
         await browser.waitFor('document.querySelector("#tandem-application").contentDocument.activeElement.id === "add-usage"');
+        await browser.call("Page.navigate", { url: `${origin}/` });
+        await browser.waitFor("Boolean(window.workspaceFixture?.store.getSnapshot().state)");
+        await browser.evaluate(`workspaceFixture.flushSync(() => workspaceFixture.store.accept(${JSON.stringify(usageIntake)}))`);
+        for (const width of [1920, 1024, 375]) {
+            await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 800, deviceScaleFactor: 1, mobile: false });
+            await browser.evaluate('document.querySelector("#usage-input").focus()');
+            const layout = await browser.evaluate(`(() => {
+                const bounds = selector => {
+                    const rect = document.querySelector(selector).getBoundingClientRect();
+                    return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, height: rect.height };
+                };
+                return { entry: bounds(".usage-entry"), suggestions: bounds("#usage-suggestion-area"),
+                    intake: bounds("#usage-intake"), input: bounds("#usage-input"), viewportWidth: innerWidth,
+                    fits: document.querySelector("#usage-intake").scrollWidth <= document.querySelector("#usage-intake").clientWidth + 1 };
+            })()`);
+            assert.equal(layout.viewportWidth, width);
+            assert.ok(layout.input.height > 0 && layout.suggestions.height > 0, "The input and suggestions remain visible.");
+            assert.ok(layout.suggestions.top >= layout.entry.bottom, `Suggestions occupy a separate row at ${width}: ${JSON.stringify(layout)}`);
+            assert.ok(Math.abs(layout.suggestions.left - layout.entry.left) <= 1, "Both rows share the same left edge.");
+            assert.ok(Math.abs(layout.suggestions.right - layout.entry.right) <= 1, "Both rows use the full intake width.");
+            assert.ok(layout.suggestions.bottom <= layout.intake.bottom + 1, "The intake contains the suggestion list.");
+            assert.equal(layout.fits, true, `Usage intake does not overflow at ${width}.`);
+            if (process.env.TANDEM_UI_EVIDENCE) {
+                await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `requirements-usage-rows-${width}.png`), await browser.screenshot());
+            }
+        }
         await browser.call("Emulation.setDeviceMetricsOverride", { width: 1920, height: 800, deviceScaleFactor: 1, mobile: false });
+        await browser.call("Page.navigate", { url: `${origin}/host` });
+        await browser.waitFor('Boolean(document.querySelector("#tandem-application")?.contentWindow.workspaceFixture?.store.getSnapshot().state)');
         const savedRequirements = rendererState("prototype", 4);
         savedRequirements.requirements = { substage: "dag", usageItems: ["Validate the simulator's interaction and visualization."], suggestions: [] };
         savedRequirements.decisionGraph.nodes = [decision("Interface validation approach", "answered")];
@@ -641,6 +668,37 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
         })()`);
         await browser.waitFor('document.querySelector("#tandem-application").contentDocument.querySelector("#reopen-stage")?.hidden === false');
         await browser.waitFor('Boolean(document.querySelector("#tandem-application").contentDocument.querySelector("#design-tree-host svg"))');
+        for (const width of [1920, 1024, 375]) {
+            await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 800, deviceScaleFactor: 1, mobile: false });
+            const layout = await browser.evaluate(`(() => {
+                const inner = document.querySelector("#tandem-application").contentDocument;
+                const header = inner.querySelector(".design-tree-host .diagram-header");
+                const legend = header.querySelector(".design-tree-legend"), toolbar = header.querySelector(".diagram-toolbar");
+                const bounds = element => {
+                    const rect = element.getBoundingClientRect();
+                    return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+                };
+                return { header: bounds(header), legend: bounds(legend), toolbar: bounds(toolbar),
+                    controls: Array.from(toolbar.children, bounds), fits: header.scrollWidth <= header.clientWidth + 1 };
+            })()`);
+            assert.equal(layout.fits, true, `Diagram controls do not overflow at ${width}: ${JSON.stringify(layout)}`);
+            assert.ok(layout.legend.left >= layout.header.left && layout.toolbar.right <= layout.header.right + 1);
+            for (const control of layout.controls) {
+                assert.ok(control.left >= layout.header.left && control.right <= layout.header.right + 1,
+                    `Every zoom control remains within the header at ${width}.`);
+            }
+            if (width === 1920) {
+                assert.ok(layout.legend.top < layout.toolbar.bottom && layout.toolbar.top < layout.legend.bottom,
+                    "The legend and zoom controls share one row when space allows.");
+                assert.ok(layout.legend.right <= layout.toolbar.left, "The legend and zoom controls do not overlap.");
+            } else if (width === 375) {
+                assert.ok(layout.toolbar.top >= layout.legend.bottom, "Zoom controls wrap below the legend on narrow panels.");
+            }
+            if (process.env.TANDEM_UI_EVIDENCE) {
+                await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `requirements-diagram-controls-${width}.png`), await browser.screenshot());
+            }
+        }
+        await browser.call("Emulation.setDeviceMetricsOverride", { width: 1920, height: 800, deviceScaleFactor: 1, mobile: false });
         for (const expanded of [false, true]) {
             if (expanded) {
                 await browser.evaluate('document.querySelector("#tandem-application").contentDocument.querySelector("#requirements-substage-section .usage-suggestion[aria-expanded]").click()');

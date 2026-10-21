@@ -109,7 +109,7 @@ error rather than clearing session state or retrying an unrelated task.
 | Contextual **Retry runtime** / **Retry Development** | Inspect the failure and retry there; this does not authorize replacement history or replay. |
 | Wrong owner, live writer or corrupt state | Return to the original project/session and retain the error. Do not bypass ownership. |
 | Quiet work | Inspect activity, last-update age and permissions; silence is not proof of failure or success. |
-| Microphone failed | Continue with text. **Dismiss** clears the standalone host's failed-operation notification only; it does not configure Azure, sign in, retry or restart work. Details remain in host **Diagnostics** and `.tandem/desktop/browser.log`. A new failure appears again. Use voice sign-in only for its identified credential error. |
+| Dismissible failed-operation notification | **Dismiss** clears the standalone host's notification only; it does not retry or restart work. Details remain in host **Diagnostics** and `.tandem/desktop/browser.log`. A new failure appears again. |
 
 For a report, include version, phase, action and visible error. Remove private
 URLs, credentials, personal paths and sensitive project content first.

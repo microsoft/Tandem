@@ -8,7 +8,6 @@ import { copyFile, mkdir, readFile, readdir, rm } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
-import { buildSpeechWorker } from "./speech-worker-build.js";
 import { packageExtension } from "../development/tandem/scripts/package-extension.mjs";
 import { createPayload } from "../src/payload.js";
 
@@ -73,27 +72,9 @@ for (const [name, licenseFile] of [
     const license = await readFile(join(packageRoot, licenseFile), "utf8");
     bundledNotices.push(`/* ${name}\n${license.replaceAll("*/", "* /")}\n*/`);
 }
-for (const name of ["@azure/identity", "microsoft-cognitiveservices-speech-sdk", "ws"]) {
-    const packageRoot = dirname(createRequire(import.meta.url).resolve(`${name}/package.json`));
-    const license = await readFile(join(packageRoot, "LICENSE"), "utf8");
-    bundledNotices.push(`/* ${name}\n${license.replaceAll("*/", "* /")}\n*/`);
-}
-
 const rendererAssetsPlugin: Plugin = {
     name: "tandem-renderer-assets",
     setup(buildApi) {
-        buildApi.onResolve({ filter: /^tandem:speech-worker$/ }, () => ({
-            path: "speech-login-worker.ts",
-            namespace: "tandem-speech-worker",
-        }));
-        buildApi.onLoad({ filter: /.*/, namespace: "tandem-speech-worker" }, async () => {
-            const compiled = await buildSpeechWorker();
-            return {
-                contents: `export default ${JSON.stringify(compiled.outputFiles[0].text)};`,
-                loader: "js",
-                watchFiles: Object.keys(compiled.metafile.inputs).map((path) => resolve(path)),
-            };
-        });
         buildApi.onResolve({ filter: /^tandem:(?:client|browser-client)$/ }, (args) => ({
             path: args.path === "tandem:browser-client" ? "browser-main.tsx" : "main.tsx",
             namespace: "tandem-client",

@@ -693,7 +693,7 @@ native journey is still in progress; this is not a full-function E2E pass.
 
 The defaults pointer no-op was subsequently reproduced from the captured real
 Requirements snapshot. Moving focus from a radio inside the answer form to the
-sibling defaults button collapsed the speech textarea by 42 pixels between
+sibling defaults button collapsed the answer textarea by 42 pixels between
 mouse-down and mouse-up. The latter hit the inspector instead of the button.
 The question card now retains expanded composer height while any of its controls
 has focus. `tests/requirements-pointer.test.ts` verifies trusted pointer-down

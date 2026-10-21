@@ -20,6 +20,8 @@ function batch() {
 test("requirements remain answerable and selectable without Mermaid", async (t) => {
     const h = await setup(t, dag(decision("active"), decision("previous", "answered"), decision("future", "toAnswer")));
     assert.ok(detail(h));
+    assert.equal(h.document.querySelector(".design-tree-host .diagram-header .design-tree-legend")?.textContent, "AnsweredActiveTo answer");
+    assert.equal(h.document.querySelector(".design-tree-host .diagram-toolbar"), null);
     const buttons = h.get("decision-list").querySelectorAll<HTMLButtonElement>("button");
     assert.equal(buttons.length, 3);
     await h.click(buttons[2]);

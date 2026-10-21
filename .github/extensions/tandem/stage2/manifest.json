@@ -63,28 +63,28 @@
     },
     {
       "path": "public/artifacts/vendor/LICENSES.json",
-      "bytes": 264241,
-      "sha256": "1a5674804c5e507f289acf4101cd0afcd0a938afe5bedd4cc210e238fe409dbf"
+      "bytes": 264383,
+      "sha256": "7aeb9d0c7c77bcae8cb8ba89686a1ba9cc11b76cb10096716b0f3bc35af05bac"
     },
     {
       "path": "public/artifacts/vendor/documents.js",
-      "bytes": 354877,
-      "sha256": "c5c65f99d350f0036c443f910d9b570d3b217e9531ce27d659481305285352be"
+      "bytes": 354933,
+      "sha256": "50e1279ccd7f284945c5bdaa5379ddf3d66f59f6e571391374e6ef1af2cb4437"
     },
     {
       "path": "public/artifacts/vendor/jpeg.js",
-      "bytes": 13748,
-      "sha256": "ceddcdc9e115cf67173fb5c7d443008505c42f98051188e83662721f9b3d7621"
+      "bytes": 13749,
+      "sha256": "41a1734dd0391f6c6ae6e69cdf052127b50ea885b236e494ea322160bfc88446"
     },
     {
       "path": "public/artifacts/vendor/mermaid.js",
-      "bytes": 5254436,
-      "sha256": "a759156f2aa63cb1b44d30926f1e02007e6cd81e3b4c5eb7cc0b9e2382a5bd5a"
+      "bytes": 5258749,
+      "sha256": "f9c8c4debbdc38bb35f0842e43b7d40f99fbdf8bdf1ac6070f45d627507cc931"
     },
     {
       "path": "public/artifacts/vendor/parsers.js",
-      "bytes": 371116,
-      "sha256": "52ad3cc57311459dbfbc5016dca07997b3c790388193fd72b818960f73f23c26"
+      "bytes": 371128,
+      "sha256": "5c47f4eb164a1a32113c3ff393ec8695de2b34a35614749c83202d056ab229ee"
     },
     {
       "path": "public/assistant-response.js",

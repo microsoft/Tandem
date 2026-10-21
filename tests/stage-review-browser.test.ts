@@ -33,7 +33,7 @@ test("pinned draft review keeps lifecycle styling, editor state and controls usa
     await h.api.persistState({ ...initial, revision: 0 });
     const server = await h.api.startServer("pinned-browser", "sample", "project:tandem", true);
     t.after(async () => {
-        clearInterval(server.heartbeat); server.live.close();
+        clearInterval(server.heartbeat);
         await new Promise<void>(resolve => { server.server.close(() => resolve()); server.server.closeAllConnections(); });
         await h.close();
     });

@@ -58,7 +58,7 @@ does not switch the pinned tab.
 **Compare with the accepted baseline** shows what the draft started from.
 If accepted inputs changed meanwhile, the draft is kept but cannot overwrite
 them: compare it, discard it, then start a fresh review. Drawings drafts support
-direct editing and revision instructions; GPT-live remains current-stage only.
+direct editing and typed revision instructions.
 
 ## Find saved work
 
