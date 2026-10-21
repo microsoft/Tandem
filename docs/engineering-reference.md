@@ -151,10 +151,22 @@ its conversation only when ready. Startup consent, model validation, recovery an
 implementation confirmation remain explicit. Preparation can progress normally
 into Development using saved outputs; choosing a starting path never erases history.
 
-Preparation inspects the workspace and necessary authoritative sources, then
-offers optional first-person usages. Generic goals in an empty workspace do not
-require external research. Requirements collects accepted usages and a
-dependency-aware decision graph; recommendations are not answers until selected.
+Preparation inspects local workspace context and offers optional first-person
+usages. Only an unfamiliar reference essential to understanding the goal can
+trigger an early lookup, bounded to one authoritative source call. Named APIs,
+repositories or research goals alone do not trigger substantive research.
+
+After the user accepts usages, **Generate requirements DAG** runs targeted
+research before generating the dependency-aware questions. Research uses accepted
+usages and relevant Preparation findings, not unselected suggestions, with at
+most four authoritative source calls and no external lookup for ordinary concepts
+when none is needed. Pure implementation research waits for Development unless
+it changes a requirements decision. The question-generation worker is tool-free.
+Findings and sources are saved with the exact input snapshot, generation,
+request and run identities; stale results cannot advance Requirements. Failed
+generation retains usages and any completed research for explicit retry.
+Progress and **Research and sources** stay inside Requirements, without a new
+user-facing stage. Recommendations and research findings are not accepted answers.
 Whole-graph defaults require explicit confirmation and one bounded reconciliation.
 Failed or conflicting answers remain visible, not silently accepted.
 

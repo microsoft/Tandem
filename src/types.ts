@@ -136,6 +136,7 @@ export interface TandemState {
         substage: "usage" | "dag";
         usageItems: string[];
         suggestions: string[];
+        research?: import("./requirements-research.js").RequirementsResearch | null;
     };
     question: DecisionQuestion | null;
     decisionGraph: DecisionGraph;

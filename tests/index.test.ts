@@ -23,6 +23,7 @@ import "./sketch-editor.test.js";
 import "./artifact-assets.test.js";
 import "./prototype-workspace.test.js";
 import "./requirements-dag.test.js";
+import "./requirements-research.test.js";
 import "./requirements-defaults.test.js";
 import "./change-requests.test.js";
 import "./change-requests-ui.test.js";

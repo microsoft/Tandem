@@ -190,7 +190,7 @@ test("Preparation drafts analyze only on request and Apply preserves the working
             suggestedUsages: ["I want to share my task list."], prototypeApproach: parent.prototypeApproach, assumed: [], deferred: [] };
         const result = await h.api.preparationFactory.run({
             args: request.args, runId, phase() {}, log() {}, step: (_key: string, work: () => Promise<unknown>) => work(),
-            agent: async (_prompt: string, options: { label: string }) => options.label === "prepare:goal-only"
+            agent: async (_prompt: string, options: { label: string }) => ["prepare:goal-only", "prepare:context"].includes(options.label)
                 ? { requiresSourceResearch: false, handoff } : options.label === "prepare:requirements" ? handoff
                     : { summary: "Synthetic fixture inspection", checks: [], sources: [] },
         });

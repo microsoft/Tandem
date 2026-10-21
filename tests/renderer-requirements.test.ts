@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { setup, state, decision, response, text, field, disabled, hidden, submit, browse, type Harness } from "./renderer-fixtures.test.js";
+import { requirementsResearchInput } from "../src/requirements-research.js";
 
 function dag(...nodes: ReturnType<typeof decision>[]) {
     const value = state(); value.requirements.substage = "dag"; value.decisionGraph.nodes = nodes;
@@ -57,6 +58,37 @@ test("rejected DAGs retain usages, stop generating, and expose explicit retry", 
     assert.equal(h.requests[0].path, "/api/answer");
     assert.equal(h.requests[0].body.action, "generate-dag");
     assert.equal(text(h, "generate-dag"), "Generating DAG...");
+});
+
+test("Requirements shows research progress and retained sources without adding a stage or accepting decisions", async (t) => {
+    const value = state();
+    value.requirements.usageItems = ["I want to recover from a declined payment."];
+    value.status = "Researching missing facts for your accepted usages...";
+    value.processing = { action: "generate-dag", requestId: "research-request", status: "running" };
+    const h = await setup(t, value);
+    assert.match(text(h, "usage-message"), /Researching missing facts/);
+    assert.equal(h.document.querySelectorAll(".requirements-substage").length, 2);
+    assert.equal(h.document.getElementById("requirements-research"), null);
+    const researched = { ...value, revision: 2, requirements: { ...value.requirements, research: {
+        generation: value.generation, requestId: "research-request", runId: "research-run",
+        input: requirementsResearchInput(value), completedAt: new Date().toISOString(),
+        summary: "Declines may need another payment method.",
+        checks: [{ label: "Live payment", status: "deferred" as const, detail: "Use mocks." }],
+        sources: [{ title: "Declines reference", url: "https://docs.stripe.com/declines", purpose: "Recovery options" }],
+    } }, processing: { ...value.processing, status: "error", message: "Question generation failed." } };
+    h.render(researched);
+    assert.match(text(h, "requirements-research"), /Declines may need another payment method/);
+    assert.match(text(h, "requirements-research"), /Live payment.*deferred/);
+    const link = h.get("requirements-research").querySelector("a")!;
+    assert.equal(link.href, "https://docs.stripe.com/declines");
+    assert.equal(link.rel, "noreferrer");
+    assert.equal(text(h, "generate-dag"), "Retry requirements DAG");
+    assert.match(text(h, "usage-message"), /Question generation failed/);
+    assert.equal(hidden(h, "usage-intake"), false);
+    h.render({ ...researched, revision: 3, requirements: { ...researched.requirements, usageItems: ["I want to save a payment method."] } });
+    assert.match(text(h, "requirements-research"), /Earlier research and sources/);
+    assert.match(text(h, "requirements-research"), /belong to earlier inputs/);
+    assert.equal(h.requests.length, 0);
 });
 
 test("accepted DAG opens Requirements and focuses exactly once without Mermaid", async (t) => {

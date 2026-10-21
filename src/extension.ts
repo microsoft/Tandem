@@ -23,8 +23,13 @@ import { resolveSharedProjectRoot } from "./workspace-root.js";
 import { buildDecisionGraphMermaid } from "./decision-diagram.js";
 import {
     curatedDefault, patchSemanticList, readDefaultBatch, reconciliationInput,
-    requirementsChangeSetSchema, requirementsInputDigest, validateChangeSet,
+    requirementsChangeSetSchema, requirementsInputDigest, validateChangeSet, validateRequirementsValue,
 } from "./requirements-reconciliation.js";
+import {
+    assertResearchSourceUrls, researchAnalysisSchema, researchCheckSchema, researchSourceSchema,
+    requirementsResearchInput, requirementsResearchIsCurrent, requirementsResearchSchema,
+    type RequirementsResearch, type RequirementsResearchInput,
+} from "./requirements-research.js";
 import {
     activateChange, activeChange, changeAssessmentSchema, changeBaselineDigest, pendingChange,
     preserveUnchangedScreens, prototypeNeedsChangeUpdate, readChangeAssessment, readChangeRequests,
@@ -51,9 +56,9 @@ import {
     processEvent, processMetrics,
 } from "./process-state.js";
 import {
-    buildChangeAssessmentPrompt, buildGoalOnlyPreparationPrompt, buildDevelopmentHandoffPrompt, buildPreparationHandoffPrompt,
+    buildChangeAssessmentPrompt, buildPreparationIntentPrompt, buildDevelopmentHandoffPrompt, buildPreparationHandoffPrompt,
     buildPreparationSourcesPrompt, buildPreparationWorkspacePrompt, buildPrototypeCheckpointPrompt,
-    buildSketchPrompt, buildUsageSuggestionsPrompt, tandemWorkerInteractionRules,
+    buildRequirementsResearchPrompt, buildSketchPrompt, buildUsageSuggestionsPrompt, tandemWorkerInteractionRules,
     type PrototypeSketchInput,
 } from "./planning-prompts.js";
 import { inspectEmptyPreparationWorkspace } from "./preparation.js";
@@ -131,7 +136,7 @@ const PROVIDER_SCOPE = providerScopeFromModuleUrl(import.meta.url);
 const textWorkerAgent = {
     name: `tandem-text-worker-${PROVIDER_SCOPE}`,
     displayName: "Tandem context-only worker",
-    description: "Return structured handoffs and usage suggestions from supplied context without tools or user interviews.",
+    description: "Return structured handoffs, usage suggestions and requirements questions from supplied context without tools or user interviews.",
     infer: false,
     tools: [],
     prompt: tandemWorkerInteractionRules,
@@ -163,7 +168,7 @@ const PROCESSING_MESSAGES = {
     "revise-sketch": "Revising the drawings without changing accepted requirements.",
     "build-prototype": "Building the initial runnable prototype from the accepted requirements.",
     "add-usage": "Saving the usage and generating complementary suggestions.",
-    "generate-dag": "Analyzing usages and building the dependency-aware requirements DAG.",
+    "generate-dag": "Researching missing facts for accepted usages before generating requirements questions.",
     "answer-decision": "Recording the answer and recomputing dependent decisions.",
     "change-answer": "Regenerating every downstream decision affected by this answer.",
     "apply-defaults": "Reconciling the approved whole-graph defaults in one hidden job.",
@@ -481,9 +486,9 @@ function preparationWorkItems() {
         },
         {
             id: "sources",
-            title: "Analyze authoritative sources",
+            title: "Clarify the goal if needed",
             status: "pending",
-            detail: "Ground named products, methods, and benchmarks in primary sources.",
+            detail: "Only look up an unfamiliar reference needed to understand the goal. Substantive research follows accepted usages.",
             result: "",
         },
         {
@@ -858,7 +863,17 @@ function normalizeRequirements(value, decisionGraph = { nodes: [] }) {
         .filter((item) => !normalizedUsage.has(item.toLowerCase()))
         .slice(0, 6);
 
-    return { substage, usageItems, suggestions };
+    const research = readRequirementsResearch(isObject(value) ? value.research : null);
+    return { substage, usageItems, suggestions, ...(research ? { research } : {}) };
+}
+
+function readRequirementsResearch(value: unknown): RequirementsResearch | null {
+    if (value === undefined || value === null) return null;
+    validateRequirementsValue(value, requirementsResearchSchema, "requirements research");
+    const research = value as RequirementsResearch;
+    assertResearchSourceUrls(research.sources);
+    assertResearchSourceUrls(research.input.preparation.sources);
+    return research;
 }
 
 function usageQuestion(suggestions) {
@@ -3016,7 +3031,7 @@ async function updateTandemLocked(ctx) {
         }
         if (Object.prototype.hasOwnProperty.call(input, "requirements")) {
             next.requirements = normalizeRequirements(
-                input.requirements,
+                { ...input.requirements, research: current.requirements.research },
                 next.decisionGraph,
             );
         }
@@ -4746,6 +4761,12 @@ function answerFactoryPrompt(args) {
             "The accepted usageItems define the user's intents. Unselected suggestions",
             "are not scope. Questions must refine those intents and explicit goal",
             "constraints, not invent extra locations, ordering, payments, or features.",
+            "Use the completed requirements.research findings to ground choices and",
+            "surface consequential unresolved or conflicting facts in the DAG.",
+            "Findings are evidence, not accepted scope or user answers. Do not repeat",
+            "research, use tools, or investigate implementation details.",
+            "The host preserves the research record and its source/request identities;",
+            "return only substage, usageItems, and suggestions in requirements.",
             "Do not conduct a separate interview. Return questions in decisionGraph;",
             "Tandem presents and records answers after intent collection.",
             "Defer exact business names, hours, addresses, and other replaceable content",
@@ -4827,7 +4848,9 @@ function answerFactoryPrompt(args) {
         JSON.stringify(args.state, null, 2),
         ...(args.sketchInput ? ["Approved sketch input:", JSON.stringify(args.sketchInput)] : []),
         "The snapshot may omit historical discussion or mark content truncated.",
-        "Read durableStatePath when more evidence is needed; do not write that file.",
+        args.action === "generate-dag"
+            ? "Use only the frozen inputs and research supplied here. Do not read or write files."
+            : "Read durableStatePath when more evidence is needed; do not write that file.",
         "",
         ...actionInstructions[args.action],
         "",
@@ -4845,7 +4868,9 @@ function answerFactoryPrompt(args) {
         "build, validate-existing, or not-applicable and provide a concise",
         "user-facing reason.",
         "While lifecycle.currentStage is requirements, do not edit prototype files or",
-        "publish a preview. Preserve and return the complete requirements object. During",
+        "publish a preview. Return requirements substage, usageItems, and suggestions",
+        "only. Research records are host-owned: do not return or edit them. Use their",
+        "findings for the recorded inputs, not as verification of changed scope. During",
         "usage intake, the extension creates the intake question from suggestions. Once",
         "the DAG is fully answered, leave question null and report that requirements are",
         "ready to be completed.",
@@ -4940,6 +4965,40 @@ async function recordFactoryRunId(
         await persistState(next);
         publishState(prototypeId);
         return true;
+    });
+}
+
+async function recordRequirementsResearch(
+    args: { prototypeId: string; requestId: string; generation: string; input: RequirementsResearchInput },
+    runId: string,
+    research: RequirementsResearch | null,
+) {
+    await withAnswerClaim(args.prototypeId, async () => {
+        const current = await loadState(args.prototypeId);
+        if (!(await isPreferredAnswerProvider(PROVIDER_EXTENSION_ID)) ||
+            current.generation !== args.generation ||
+            current.lifecycle.currentStage !== "requirements" || current.requirements.substage !== "usage" ||
+            !current.requirements.usageItems.length ||
+            current.processing?.action !== "generate-dag" || current.processing.status !== "running" ||
+            current.processing.requestId !== args.requestId || current.processing.runId !== runId ||
+            JSON.stringify(requirementsResearchInput(current)) !== JSON.stringify(args.input)) {
+            throw new Error("The research job no longer owns its accepted usages and Preparation context.");
+        }
+        if (research && (readRequirementsResearch(research)?.requestId !== args.requestId ||
+            research.runId !== runId || !requirementsResearchIsCurrent(current, research))) {
+            throw new Error("The research result does not match this Requirements request.");
+        }
+        const message = research
+            ? "Research findings are saved. Generating requirements questions from your usages..."
+            : "Researching missing facts for your accepted usages...";
+        await persistState({
+            ...current,
+            requirements: research ? { ...current.requirements, research } : current.requirements,
+            status: message,
+            processing: { ...current.processing, message },
+            updatedAt: new Date().toISOString(),
+        });
+        publishState(args.prototypeId);
     });
 }
 
@@ -5119,6 +5178,11 @@ async function applyFactoryResult(prototypeId, requestId, run) {
                 current.prototypeApproach.mode === "undecided",
             );
             if (graphError) throw new Error(graphError);
+            const research = current.requirements.research;
+            if (!research || research.requestId !== requestId || research.runId !== run.runId ||
+                !requirementsResearchIsCurrent(current, research)) {
+                throw new Error("The generated requirements have no matching research result. Retry requirements DAG.");
+            }
         }
         const answeredQuestionId = current.processing.question?.id;
         if (
@@ -5138,7 +5202,7 @@ async function applyFactoryResult(prototypeId, requestId, run) {
             }
         }
         let requirements = normalizeRequirements(
-            result.requirements,
+            { ...result.requirements, research: current.requirements.research },
             decisionGraph,
         );
         if (action === "add-usage" && current.processing.answer) {
@@ -5146,6 +5210,7 @@ async function applyFactoryResult(prototypeId, requestId, run) {
                 {
                     ...requirements,
                     substage: "usage",
+                    research: current.requirements.research,
                     usageItems: [
                         ...current.requirements.usageItems,
                         current.processing.answer,
@@ -5159,6 +5224,7 @@ async function applyFactoryResult(prototypeId, requestId, run) {
                 {
                     ...requirements,
                     substage: "dag",
+                    research: current.requirements.research,
                     usageItems: current.requirements.usageItems,
                     suggestions: [],
                 },
@@ -7030,7 +7096,7 @@ async function submitAnswer(entry, req, res) {
                     action === "add-usage"
                         ? "Adding the usage and generating fresh suggestions..."
                         : action === "generate-dag"
-                          ? "Generating the requirements DAG from your usages..."
+                          ? "Researching missing facts for your accepted usages..."
                           : action === "change-answer"
                             ? "Updating this frontier and all dependent decisions..."
                             : "Applying the answer and preparing the next active decision...",
@@ -7913,33 +7979,12 @@ const preparationSchema = {
         checks: {
             type: "array",
             maxItems: 20,
-            items: {
-                type: "object",
-                additionalProperties: false,
-                properties: {
-                    label: { type: "string", minLength: 1, maxLength: 120 },
-                    status: {
-                        type: "string",
-                        enum: ["ready", "missing", "deferred"],
-                    },
-                    detail: { type: "string", maxLength: 500 },
-                },
-                required: ["label", "status", "detail"],
-            },
+            items: researchCheckSchema,
         },
         sources: {
             type: "array",
             maxItems: 20,
-            items: {
-                type: "object",
-                additionalProperties: false,
-                properties: {
-                    title: { type: "string", minLength: 1, maxLength: 160 },
-                    url: { type: "string", minLength: 1, maxLength: 1000 },
-                    purpose: { type: "string", maxLength: 500 },
-                },
-                required: ["title", "url", "purpose"],
-            },
+            items: researchSourceSchema,
         },
         suggestedUsages: {
             type: "array",
@@ -7996,22 +8041,11 @@ const preparationWorkspaceOutputSchema = {
 };
 
 const preparationSourcesOutputSchema = {
-    type: "object",
-    additionalProperties: false,
+    ...researchAnalysisSchema,
     properties: {
-        summary: { type: "string", minLength: 1, maxLength: 4000 },
-        sources: {
-            type: "array",
-            maxItems: 20,
-            items: preparationSourceSchema,
-        },
-        checks: {
-            type: "array",
-            maxItems: 10,
-            items: preparationCheckSchema,
-        },
+        ...researchAnalysisSchema.properties,
+        sources: { type: "array", maxItems: 1, items: preparationSourceSchema },
     },
-    required: ["summary", "sources", "checks"],
 };
 
 const preparationFactoryOutputSchema = {
@@ -8316,15 +8350,15 @@ const preparationFactory = defineWorkflow({
     meta: {
         name: PREPARATION_FACTORY_NAME,
         description:
-            "Inspect the workspace and authoritative sources, then prepare the Requirements handoff.",
+            "Inspect local context, clarify unfamiliar references only if needed, then prepare usage collection.",
         phases: [
             {
                 title: "Inspect workspace",
                 detail: "Identify repository structure, tooling, and execution constraints.",
             },
             {
-                title: "Analyze sources",
-                detail: "Ground named products, methods, and benchmarks in authoritative sources.",
+                title: "Clarify goal",
+                detail: "Use an early lookup only when essential to understand the goal before collecting usages.",
             },
             {
                 title: "Prepare requirements",
@@ -8346,7 +8380,7 @@ const preparationFactory = defineWorkflow({
         },
         limits: {
             maxConcurrentSubagents: 1,
-            maxTotalSubagents: 3,
+            maxTotalSubagents: 4,
             maxAiCredits: 1024000,
         },
     },
@@ -8396,20 +8430,18 @@ const preparationFactory = defineWorkflow({
             workspaceAnalysis.summary,
         );
 
-        ctx.phase("Analyze sources");
-        ctx.log(workspaceAnalysis.emptyWorkspace === true
-            ? "Empty workspace detected. Assessing the goal and drafting a handoff without tool calls."
-            : "Reading authoritative sources for named concepts.");
+        ctx.phase("Clarify goal");
+        ctx.log("Drafting usage suggestions from the goal and workspace context without substantive research.");
         await recordPreparationWorkItem(
             args.prototypeId,
             "sources",
             "running",
             token,
         );
-        const goalOnlyResult: unknown = workspaceAnalysis.emptyWorkspace === true
-            ? await ctx.step(`${token.requestId}:prepare-goal-only`, async () =>
-                jsonResult(await ctx.agent(buildGoalOnlyPreparationPrompt({ goal: args.goal }, workspaceAnalysis), {
-                    label: "prepare:goal-only",
+        const intentResult: unknown = await ctx.step(
+            `${token.requestId}:${workspaceAnalysis.emptyWorkspace === true ? "prepare-goal-only" : "prepare-context"}`, async () =>
+                jsonResult(await ctx.agent(buildPreparationIntentPrompt({ goal: args.goal, intake: args.intake }, workspaceAnalysis), {
+                    label: workspaceAnalysis.emptyWorkspace === true ? "prepare:goal-only" : "prepare:context",
                     agent: textWorkerAgent.name,
                     schema: {
                         type: "object",
@@ -8421,22 +8453,19 @@ const preparationFactory = defineWorkflow({
                         required: ["requiresSourceResearch", "handoff"],
                     },
                     reasoningEffort: await workflowReasoningEffort(session, "low"),
-                })))
-            : null;
-        if (workspaceAnalysis.emptyWorkspace === true &&
-            (!isObject(goalOnlyResult) || typeof goalOnlyResult.requiresSourceResearch !== "boolean" ||
-                (goalOnlyResult.requiresSourceResearch
-                    ? goalOnlyResult.handoff !== null
-                    : !isObject(goalOnlyResult.handoff) || !Array.isArray(goalOnlyResult.handoff.sources) ||
-                        goalOnlyResult.handoff.sources.length !== 0))) {
-            throw new Error("Goal-only preparation returned an invalid source-research decision or unsupported sources.");
+                })));
+        if (!isObject(intentResult) || typeof intentResult.requiresSourceResearch !== "boolean" ||
+            (intentResult.requiresSourceResearch
+                ? intentResult.handoff !== null
+                : !isObject(intentResult.handoff) || !Array.isArray(intentResult.handoff.sources) ||
+                    intentResult.handoff.sources.length !== 0)) {
+            throw new Error("Preparation returned an invalid source-research decision or unsupported sources.");
         }
-        const goalOnlyHandoff = isObject(goalOnlyResult) && !goalOnlyResult.requiresSourceResearch
-            ? goalOnlyResult.handoff : null;
-        if (goalOnlyResult && !goalOnlyHandoff) ctx.log("The goal requires authoritative sources; continuing with source analysis.");
+        const intentHandoff = !intentResult.requiresSourceResearch ? intentResult.handoff : null;
+        if (!intentHandoff) ctx.log("An unfamiliar reference needs one small lookup to understand the goal. Substantive research remains deferred.");
         const sourceAnalysis: any = await ctx.step(`${token.requestId}:analyze-sources`, async () =>
-            goalOnlyHandoff ? {
-                summary: "External research was not needed for this goal-only handoff. No external sources were consulted.",
+            intentHandoff ? {
+                summary: "Substantive research is deferred until usages are accepted. No external sources were consulted.",
                 checks: [],
                 sources: [],
             } :
@@ -8446,6 +8475,8 @@ const preparationFactory = defineWorkflow({
                 reasoningEffort: await workflowReasoningEffort(session, "medium"),
             })),
         );
+        validateRequirementsValue(sourceAnalysis, preparationSourcesOutputSchema, "goal clarification");
+        assertResearchSourceUrls(sourceAnalysis.sources);
         await recordPreparationWorkItem(
             args.prototypeId,
             "sources",
@@ -8463,7 +8494,7 @@ const preparationFactory = defineWorkflow({
             token,
         );
         const handoff: any = await ctx.step(`${token.requestId}:prepare-requirements`, async () =>
-            goalOnlyHandoff || jsonResult(await ctx.agent(
+            intentHandoff || jsonResult(await ctx.agent(
                 preparationHandoffPrompt(
                     args,
                     workspaceAnalysis,
@@ -8584,6 +8615,10 @@ const answerFactory = defineWorkflow({
             "Process one Tandem request; whole-graph defaults return only a focused Requirements change set.",
         phases: [
             {
+                title: "Research accepted usages",
+                detail: "Resolve relevant missing facts before generating Requirements questions.",
+            },
+            {
                 title: "Interpret decision",
                 detail: "Apply the selected product intent to the current prototype.",
             },
@@ -8650,7 +8685,7 @@ const answerFactory = defineWorkflow({
             throw new Error("Tandem factory arguments are invalid.");
         }
 
-        ctx.phase("Interpret decision");
+        ctx.phase(args.action === "generate-dag" ? "Research accepted usages" : "Interpret decision");
         if (!(await isPreferredAnswerProvider(PROVIDER_EXTENSION_ID))) {
             throw new Error(
                 "This provider no longer owns hidden answer processing.",
@@ -8682,7 +8717,35 @@ const answerFactory = defineWorkflow({
                 throw new Error("The drawing job no longer owns its frozen requirements and draft.");
             }
         }
-        const result: any = await ctx.step("process-answer", async () => {
+        let workerArgs = args;
+        if (args.action === "generate-dag") {
+            const input = requirementsResearchInput({
+                goal: args.state.goal, requirements: args.state.requirements, preparation: args.state.preparation,
+            });
+            const binding = { prototypeId: args.prototypeId, requestId: args.requestId, generation: args.state.generation, input };
+            await recordRequirementsResearch(binding, ctx.runId, null);
+            const research = readRequirementsResearch(await ctx.step(`${args.requestId}:research-usages`, async () => {
+                const analysis = jsonResult(await ctx.agent(buildRequirementsResearchPrompt(input), {
+                    label: "Research accepted usages",
+                    schema: researchAnalysisSchema,
+                    reasoningEffort: await workflowReasoningEffort(session, "medium"),
+                }));
+                validateRequirementsValue(analysis, researchAnalysisSchema, "requirements research findings");
+                if (!isObject(analysis)) throw new Error("Requirements research returned invalid findings.");
+                const result = readRequirementsResearch({
+                    ...analysis, input, generation: args.state.generation,
+                    requestId: args.requestId, runId: ctx.runId, completedAt: new Date().toISOString(),
+                });
+                if (!result) throw new Error("Requirements research returned no findings.");
+                return jsonResult(result);
+            }));
+            if (!research) throw new Error("Requirements research returned no saved findings.");
+            await recordRequirementsResearch(binding, ctx.runId, research);
+            workerArgs = { ...args, state: { ...args.state, requirements: { ...args.state.requirements, research } } };
+            ctx.phase("Interpret decision");
+            ctx.log("Research findings are saved. Generating questions without accepting decisions.");
+        }
+        const result: any = await ctx.step(args.action === "generate-dag" ? `${args.requestId}:generate-researched-dag` : "process-answer", async () => {
             if (isSketchAction(args.action)) {
                 const current = await loadState(args.prototypeId);
                 const token = readSketchRequest(current.processing?.sketchRequest);
@@ -8720,9 +8783,9 @@ const answerFactory = defineWorkflow({
                     },
                 }));
             }
-            return ctx.agent(answerFactoryPrompt(args), {
+            return ctx.agent(answerFactoryPrompt(workerArgs), {
                 label: args.action === "assess-change" ? "Assess change impact" : args.action === "apply-defaults" ? "Reconcile whole-graph defaults" : "Process Tandem answer",
-                ...(args.action === "assess-change" ? { agent: textWorkerAgent.name } : {}),
+                ...(["assess-change", "generate-dag"].includes(args.action) ? { agent: textWorkerAgent.name } : {}),
                 schema: args.state.processing?.prototypeCheckpointId ? prototypeCheckpointOutputSchema
                     : args.action === "assess-change" ? changeAssessmentSchema
                     : args.action === "apply-defaults" ? requirementsChangeSetSchema : answerFactoryOutputSchema,

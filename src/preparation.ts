@@ -19,7 +19,7 @@ export async function inspectEmptyPreparationWorkspace(projectRoot: string) {
             {
                 label: "Implementation tooling",
                 status: "deferred",
-                detail: "Runtime, dependency, credential, and execution checks are deferred until Requirements selects an implementation approach. No tooling readiness was verified.",
+                detail: "Runtime, dependency, credential, and execution checks are deferred to Development unless they affect a requirements decision. No tooling readiness was verified.",
             },
         ] satisfies PreparationCheck[],
     };

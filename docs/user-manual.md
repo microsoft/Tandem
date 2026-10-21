@@ -78,11 +78,17 @@ Implementation or Review view/history, without copying stores together.
 ## Requirements and Drawings
 
 Preparation starts from **Start project**, reports its results and advances
-automatically. Its original brief stays there. A reported failure can offer
-**Retry preparation**; quiet progress alone is not a reason to retry.
+automatically. It checks workspace context; an early lookup is only for an
+unfamiliar reference needed to understand the goal. Its original brief stays
+there. A reported failure can offer **Retry preparation**; quiet progress alone
+is not a reason to retry.
 
 In Requirements, **Add usage** accepts a usage, then **Generate requirements DAG**
-creates connected decisions. Answer active decisions with **Use this answer**.
+researches relevant missing facts before creating connected decisions. Progress
+appears here; expand **Research and sources** to inspect findings and references.
+Research informs questions, not accepted features or answers. Failed generation
+keeps your usages and any completed findings for **Retry requirements DAG**.
+Answer active decisions with **Use this answer**.
 Prerequisites hold dependent questions. Free text, when offered, replaces the
 selected option rather than adding a second answer.
 

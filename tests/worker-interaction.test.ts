@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-    buildGoalOnlyPreparationPrompt, buildPreparationHandoffPrompt,
+    buildPreparationIntentPrompt, buildPreparationHandoffPrompt,
     buildPreparationSourcesPrompt, buildPreparationWorkspacePrompt, buildUsageSuggestionsPrompt,
-    tandemWorkerInteractionRules,
+    buildRequirementsResearchPrompt, tandemWorkerInteractionRules,
 } from "../src/planning-prompts.js";
 import { extensionHarness } from "./helpers/extension-harness.js";
 
@@ -15,7 +15,7 @@ test("preparation and intent workers defer product interviews through the shared
         buildPreparationWorkspacePrompt(args),
         buildPreparationSourcesPrompt(args, workspace),
         buildPreparationHandoffPrompt(args, workspace, sources),
-        buildGoalOnlyPreparationPrompt(args, workspace),
+        buildPreparationIntentPrompt(args, workspace),
         buildUsageSuggestionsPrompt({ goal: args.goal, usageItems: [] }),
     ];
     for (const prompt of prompts) {
@@ -31,6 +31,22 @@ test("preparation and intent workers defer product interviews through the shared
     assert.match(tandemWorkerInteractionRules, /Never prepend or mix/);
     assert.match(tandemWorkerInteractionRules, /no separate progress channel, keep the result format pure/);
     assert.match(tandemWorkerInteractionRules, /private\nreasoning, prompts or credentials/);
+});
+
+test("research is scoped to accepted usages and separated from implementation and decisions", () => {
+    const prompt = buildRequirementsResearchPrompt({
+        goal: "Build a coffee shop website",
+        usageItems: ["I want to view the drinks menu."],
+        preparation: { summary: "No existing application", checks: [], sources: [] },
+    });
+    assert.ok(prompt.includes(tandemWorkerInteractionRules));
+    assert.match(prompt, /accepted usageItems and explicit goal constraints define the scope/);
+    assert.match(prompt, /Do not add features, accept decisions, or research unselected suggestions/);
+    assert.match(prompt, /at most four source calls total/);
+    assert.match(prompt, /Defer stack selection, runtime\nchecks and implementation details to Development/);
+    assert.match(prompt, /Do not edit files, install dependencies, start servers/);
+    assert.match(prompt, /Findings inform questions; they are not accepted requirements/);
+    assert.match(prompt, /I want to view the drinks menu/);
 });
 
 test("usage suggestion generation selects the tool-free worker and returns proposals without an interview", async () => {

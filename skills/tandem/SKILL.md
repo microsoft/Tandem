@@ -84,13 +84,13 @@ must not be presented as private Development controls.
 
 ## Preparation
 
-Preparation checks the workspace, researches only necessary authoritative
-sources, and produces a Requirements handoff. For ordinary goals in an empty
-workspace, the existing lightweight goal-only path is sufficient; do not add
-unnecessary research. Named products, repositories or specialized methods may
-require primary sources, within the worker's existing budget.
+Preparation checks local workspace context and produces a lightweight handoff
+for usage collection. Do not perform substantive domain/product research before
+accepted usages. Only an unfamiliar reference essential to understanding the
+goal permits a small early lookup, bounded to one authoritative source call.
+A named API, repository, method or research request alone does not justify it.
 
-The visible work items are workspace inspection, authoritative-source analysis
+The visible work items are workspace inspection, goal clarification if needed,
 and Requirements handoff. Preserve sources, readiness checks, suggested usages,
 assumptions and deferrals. Missing tooling or credentials are not fabricated
 successes. `needs-attention` may proceed to Requirements with explicit deferrals;
@@ -109,7 +109,16 @@ Do not call stage completion to bypass it.
 ## Requirements
 
 Let the user add usages and optional suggestions before explicitly generating
-the DAG. Each decision has prerequisites, a clear question, three to five curated
+the DAG. **Generate requirements DAG** first researches missing facts relevant
+to accepted usages, reusing sufficient Preparation findings. Ordinary concepts
+need no external lookup; necessary research uses at most four authoritative
+source calls. Unselected suggestions are not research scope. Defer pure
+implementation research to Development unless it affects a requirements decision.
+Progress and retained **Research and sources** belong inside Requirements, not
+a new stage. The question-generation worker uses those findings without tools.
+Research informs choices; it never accepts answers or adds features.
+
+Each decision has prerequisites, a clear question, three to five curated
 choices, a recommended default where appropriate, and mutually exclusive free
 text. Questions should affect observable behavior or the primary workflow.
 
@@ -122,6 +131,9 @@ one-question approvals. Conflicts and changed questions require review.
 After generation, verify `requirements.substage === "dag"`, the decision graph,
 the active question and processing receipt before claiming readiness. Failed
 generation/reconciliation retains the user's inputs for explicit retry.
+Completed research retains its exact inputs, generation, request and run IDs
+even if question generation fails. Never substitute stale or worker-invented
+research for the active request's saved findings.
 
 ## Sketch
 
