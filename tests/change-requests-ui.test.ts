@@ -1,8 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { reactHarness, response, state } from "./helpers/react-harness.js";
+import { build } from "esbuild";
+import { createServer } from "node:http";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { reactHarness, rendererFixtureScript, response, state } from "./helpers/react-harness.js";
 import type { ChangeRequest } from "../src/change-requests.js";
 import { createStageReview, type StageReviewReference } from "../src/stage-review.js";
+import { sketchFixture } from "./renderer-fixtures.test.js";
+import { browserAvailable, openFixtureBrowser } from "../development/tandem/test/helpers/browser-fixture.mjs";
 
 function request(): ChangeRequest {
     return { version: 1, id: "change", clientRequestId: "client", originStage: "prototype", message: "Add save and reload.",
@@ -15,6 +22,106 @@ function request(): ChangeRequest {
             preserved: ["Joint controls", "Playback"], affectedScreenIds: [], question: null, requirements: null,
         } };
 }
+
+test("change history, stage navigation and drawing controls occupy separate workspace rows", {
+    skip: !browserAvailable, timeout: 60000,
+}, async t => {
+    const drawing = sketchFixture();
+    const change: ChangeRequest = {
+        ...request(), originStage: "sketch", message: "Move the primary action below the title.", status: "active",
+        remainingStages: ["sketch"], workStarted: ["sketch"], assessment: {
+            version: 1, summary: "Adjust the primary action.", reason: "The agreed behavior is unchanged.",
+            startStage: "sketch", stages: [{ stage: "sketch", reason: "Adjust the layout." }],
+            preserved: ["Accepted requirements"], affectedScreenIds: [drawing.document.screens[0].id], question: null, requirements: null,
+        },
+    };
+    const initial = { ...drawing.value, changeRequests: [change] };
+    const [script, styles] = await Promise.all([
+        rendererFixtureScript(),
+        build({ entryPoints: [fileURLToPath(new URL("../src/renderer/styles.css", import.meta.url))],
+            bundle: true, write: false, logLevel: "silent" }),
+    ]);
+    const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>${styles.outputFiles[0].text}</style></head><body><div id="root"></div>
+        <script>${script.replaceAll("</script", "<\\/script")}
+        window.workspaceFixture = TandemTest.mount();
+        workspaceFixture.flushSync(() => workspaceFixture.store.accept(${JSON.stringify(initial)}));
+        </script></body></html>`;
+    const unexpected: string[] = [];
+    const server = createServer((req, res) => {
+        const path = new URL(req.url || "/", "http://127.0.0.1").pathname;
+        req.resume();
+        const send = (body: unknown) => {
+            res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+            res.end(JSON.stringify(body));
+        };
+        if (path === "/") { res.writeHead(200, { "Content-Type": "text/html" }); res.end(html); }
+        else if (path === "/api/project-entry") send({ projectPath: "C:\\fixture-project", startingPath: "preparation" });
+        else if (path === "/api/project-entry/open") send({ developmentStarted: false, developmentContext: false });
+        else if (path === "/api/sketch") send({ sketch: initial.sketch, document: drawing.document });
+        else if (path === "/favicon.ico") { res.writeHead(204); res.end(); }
+        else { unexpected.push(`${req.method} ${path}`); res.writeHead(404); res.end(); }
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    t.after(() => new Promise<void>((resolve, reject) => {
+        server.close(error => error ? reject(error) : resolve());
+        server.closeAllConnections();
+    }));
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    const browser = await openFixtureBrowser(t);
+    await browser.call("Emulation.setDeviceMetricsOverride", { width: 1686, height: 900, deviceScaleFactor: 1, mobile: false });
+    await browser.call("Page.navigate", { url: `http://127.0.0.1:${address.port}/` });
+    await browser.waitFor('Boolean(document.querySelector("#sketch-board svg")) && !document.querySelector("#studio-workspace").inert');
+    let revision = initial.revision;
+    for (const width of [1686, 1024, 375]) {
+        await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: false });
+        for (const history of ["active", "completed", "expanded", "none"]) {
+            const changes = history === "none" ? [] : [{
+                ...change, ...(history !== "active" ? { status: "completed", completedAt: initial.updatedAt } : {}),
+            }];
+            await browser.evaluate(`workspaceFixture.flushSync(() => workspaceFixture.store.accept(${JSON.stringify({
+                ...initial, revision: ++revision, changeRequests: changes,
+            })}))`);
+            await browser.evaluate(`(() => {
+                const history = document.querySelector(".change-history");
+                if (history) history.open = ${history === "expanded"};
+                return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            })()`);
+            const layout = await browser.evaluate(`(() => {
+                const bounds = selector => {
+                    const rect = document.querySelector(selector)?.getBoundingClientRect();
+                    return rect ? { top: rect.top, bottom: rect.bottom, height: rect.height, left: rect.left, right: rect.right } : null;
+                };
+                return { changes: bounds(".change-requests"), tabs: bounds(".previewbar"), panel: bounds("#sketch-panel"),
+                    controls: bounds(".sketch-header-actions"), board: bounds(".sketch-board-wrap"), viewport: bounds("#preview-pane"),
+                    pageFits: document.documentElement.scrollWidth <= innerWidth + 1 };
+            })()`);
+            if (process.env.TANDEM_UI_EVIDENCE) {
+                await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `change-layout-${width}-${history}.png`), await browser.screenshot());
+            }
+            const context = `${width}px / ${history}: ${JSON.stringify(layout)}`;
+            if (layout.changes) assert.ok(layout.tabs.top >= layout.changes.bottom - 1, context);
+            assert.ok(layout.panel.top >= layout.tabs.bottom - 1, context);
+            assert.ok(layout.controls.top >= layout.tabs.bottom - 1, context);
+            assert.ok(layout.panel.height > layout.controls.height, context);
+            assert.ok(layout.board.height > 0, context);
+            assert.ok(layout.controls.bottom <= layout.viewport.bottom + 1, context);
+            assert.equal(layout.pageFits, true, context);
+        }
+    }
+    await browser.evaluate(`workspaceFixture.flushSync(() => workspaceFixture.store.accept(${JSON.stringify({
+        ...initial, revision: ++revision,
+    })}))`);
+    await browser.evaluate('document.querySelector("#content-tab").dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))');
+    await browser.waitFor('document.querySelector("#content-panel").hidden === false');
+    assert.equal(await browser.evaluate('document.querySelector("#stage-workspace-tabs")'), null);
+    assert.ok(await browser.evaluate(`document.querySelector("#content-panel").getBoundingClientRect().top
+        >= document.querySelector(".change-requests").getBoundingClientRect().bottom - 1`));
+    assert.deepEqual(unexpected, []);
+    assert.deepEqual(browser.exceptions, []);
+    await browser.call("Page.navigate", { url: "about:blank" });
+});
 
 test("impact review stays beside the existing prototype and submits the exact displayed proposal identity", async t => {
     const h = await reactHarness(t), initial = state("prototype");

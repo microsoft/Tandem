@@ -53,7 +53,13 @@ interface HarnessApi {
     waitForAnswer(id: string): Promise<void>;
     recoverAnswerFactory(state: TandemState, writable: boolean): void;
     answerFactoryPrompt(args: unknown): string;
-    answerFactory: { meta: { limits: { timeoutSeconds?: number } }; run(ctx: Record<string, unknown>): Promise<unknown> };
+    answerFactory: {
+        meta: {
+            argsSchema: { properties: { action: { type: string; enum: string[] } } };
+            limits: { timeoutSeconds?: number };
+        };
+        run(ctx: Record<string, unknown>): Promise<unknown>;
+    };
     usageSuggestionFactory: { meta: { limits: { timeoutSeconds?: number } }; run(ctx: Record<string, unknown>): Promise<unknown> };
     textWorkerAgent: { name: string; tools: string[]; infer: boolean; prompt: string };
     processAction(id: string, provider: string, input: unknown): Promise<TandemState>;

@@ -3641,8 +3641,10 @@ textarea {
 .stage-review-request { padding: 12px; }
 .stage-review-workspace > .preview-surface { flex: 1 0 auto; }
 .project-workspace #sketch-panel { flex-direction: column; }
-.project-workspace > .preview { grid-template-rows: minmax(0, 1fr); }
-.project-workspace > .preview[data-stage-tabs="true"] { grid-template-rows: auto minmax(0, 1fr); }
+.project-workspace > .preview { grid-template-rows: auto auto minmax(0, 1fr); }
+.project-workspace > .preview > .change-requests { grid-row: 1; }
+.project-workspace > .preview > .previewbar { grid-row: 2; }
+.project-workspace > .preview > [role="tabpanel"] { grid-row: 3; }
 .project-workspace #live-preview-panel { display: flex; flex-direction: column; }
 .project-workspace #live-preview-panel > .preview-surface { flex: 1 0 auto; }
 .project-workspace #live-preview-panel > .prototype-review { flex: none; }
@@ -3679,6 +3681,10 @@ textarea {
   #studio-workspace.project-workspace { display: flex; flex-direction: column; overflow: auto; }
   .project-workspace > .requirements { flex: 0 0 auto; max-height: 180px; overflow: auto; }
   .project-workspace > .preview { flex: 0 0 420px; }
+  .project-workspace:not([data-development="true"]) > .preview:has(> .change-requests) {
+    flex-basis: auto;
+    grid-template-rows: auto auto 420px;
+  }
   .project-workspace[data-development="true"] > .preview { flex: 0 0 auto; }
   #project-conversation { flex: 1 0 560px; }
   .project-tabs { flex-direction: row; flex-wrap: wrap; }

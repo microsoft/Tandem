@@ -8,6 +8,7 @@ import { SketchStore } from "../src/sketch-store.js";
 import { buildPrototypeCheckpointPrompt, buildSketchPrompt } from "../src/planning-prompts.js";
 import { newPrototypeFlow } from "../src/prototype-flow.js";
 import { fingerprintPrototypeWorkspace } from "../src/prototype-runtime.js";
+import type { ChangeAssessment } from "../src/change-requests.js";
 
 async function readyRequirements(fixture: Awaited<ReturnType<typeof extensionHarness>>, noGui = false) {
     const state = fixture.api.createState("sample", "A task app");
@@ -41,6 +42,87 @@ async function approveDrawings(fixture: Awaited<ReturnType<typeof extensionHarne
         previews: [{ screenId: "main", data: screenPng() }],
     });
 }
+
+test("public drawing revisions pass workflow action validation before assessment and revision", async () => {
+    const fixture = await extensionHarness();
+    let server: Awaited<ReturnType<typeof fixture.api.startServer>> | undefined;
+    try {
+        await readyRequirements(fixture);
+        const instruction = "Move the primary action below the title.";
+        const revised = sketchDocument();
+        revised.screens[0].shapes[0].y = 100;
+        const assessment: ChangeAssessment = {
+            version: 1, summary: "Move only the primary action.", reason: "The agreed behavior is unchanged.",
+            startStage: "sketch", stages: [{ stage: "sketch", reason: "Adjust the existing screen layout." }],
+            preserved: ["Accepted requirements"], affectedScreenIds: ["main"], question: null, requirements: null,
+        };
+        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, workflow: {
+            run: async (request: { args: { action: string } }) => {
+                fixture.requests.push(request);
+                const action = request.args.action;
+                assert.ok(fixture.api.answerFactory.meta.argsSchema.properties.action.enum.includes(action),
+                    `Workflow argument validation rejected action "${action}".`);
+                const runId = `drawing-${fixture.requests.length}`;
+                if (action === "assess-change") {
+                    const result = await fixture.api.answerFactory.run({
+                        args: request.args, runId, phase() {}, log() {},
+                        step: (_: string, work: () => Promise<unknown>) => work(),
+                        agent: async (prompt: string) => {
+                            assert.ok(prompt.includes(instruction));
+                            assert.match(prompt, /Do not use tools/);
+                            return assessment;
+                        },
+                    });
+                    return { status: "completed", runId, result };
+                }
+                assert.ok(action === "generate-sketch" || action === "revise-sketch");
+                return { status: "completed", runId, result: action === "revise-sketch" ? revised : sketchDocument() };
+            },
+        } } });
+        await fixture.api.completeLifecycleStage("sample", "requirements", "project:tandem");
+        await fixture.api.waitForAnswer("sample");
+        const first = await fixture.api.loadState("sample");
+        assert.equal(first.processing.status, "success", first.processing.message);
+        server = await fixture.api.startServer("drawing-revision-http", "sample", "project:tandem", true);
+        const response = await fetch(new URL("/api/sketch", server.url), {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "revise", expectedRevision: first.sketch.current!.id,
+                expectedGeneration: first.generation, instruction }),
+        });
+        assert.equal(response.status, 200, await response.text());
+        await fixture.waitForRequests(2);
+        await fixture.api.waitForAnswer("sample");
+        const assessed = await fixture.api.loadState("sample");
+        assert.notEqual(assessed.processing.status, "error", assessed.processing.message);
+        await fixture.waitForRequests(3);
+        await fixture.api.waitForAnswer("sample");
+        const saved = await fixture.api.loadState("sample");
+        assert.equal(saved.processing.status, "success", saved.processing.message);
+        assert.equal(saved.processing.action, "revise-sketch");
+        assert.equal(saved.sketch.history.length, 2);
+        assert.equal(saved.sketch.current!.source, "revised");
+        assert.notEqual(saved.sketch.current!.id, first.sketch.current!.id);
+        assert.equal(saved.changeRequests![0].message, instruction);
+        assert.equal(saved.sketch.requests.at(-1)!.baseRevisionId, first.sketch.current!.id);
+        assert.deepEqual(saved.requirements, first.requirements);
+        assert.deepEqual(saved.decisionGraph, first.decisionGraph);
+        assert.equal(saved.generation, first.generation);
+        assert.equal(saved.lifecycle.currentStage, "sketch");
+        assert.equal(saved.jobOwner, null);
+        assert.equal(saved.factoryRuns!.length, 3);
+        assert.ok(saved.factoryRuns!.every(receipt => receipt.runId && receipt.terminal));
+        const store = new SketchStore(fixture.root);
+        assert.deepEqual(await store.read("sample", first.sketch.current!), sketchDocument());
+        assert.deepEqual(await store.read("sample", saved.sketch.current!), revised);
+    } finally {
+        if (server) {
+            server.live.close();
+            clearInterval(server.heartbeat);
+            await new Promise<void>((resolve, reject) => server.server.close(error => error ? reject(error) : resolve()));
+        }
+        await fixture.close();
+    }
+});
 
 test("drawing requests retain original text and identity through successful and failed revisions", async () => {
     const fixture = await extensionHarness();
