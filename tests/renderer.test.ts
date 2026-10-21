@@ -18,7 +18,7 @@ test("responsive layout and graph keyboard focus have explicit accessible styles
     assert.match(css, /\.preview-tabs\s*\{[^}]*overflow-x: auto/);
     assert.match(css, /\.preview\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
     assert.match(css, /\.prototype-view \.frame-wrap\s*\{[^}]*grid-template-rows:\s*minmax\(220px, 1fr\) auto/);
-    assert.match(css, /form:focus-within textarea\[data-speech-input\]/);
+    assert.match(css, /form:focus-within textarea\.composer-input/);
     assert.doesNotMatch(css, /animation:\s*next-action/);
     assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.processing-indicator/);
 });
@@ -60,9 +60,10 @@ test("compact density is shared by all stage headers, panels, controls, and comp
         ".implementation-heading", ".content-heading", ".design-tree-heading"]) {
         assert.match(rules(selector), /padding:\s*var\(--studio-heading-padding\)/, selector);
     }
-    assert.match(rules("form textarea[data-speech-input]"), /height:\s*var\(--studio-composer-height\)/);
-    assert.match(rules("#question-host:focus-within textarea[data-speech-input]"), /var\(--studio-composer-expanded-height\)/);
-    assert.match(rules(".start-form textarea[data-speech-input]"), /min-height:\s*112px/);
+    assert.match(rules("form textarea.composer-input"), /height:\s*var\(--studio-composer-height\)/);
+    assert.match(rules("#question-host:focus-within textarea.composer-input"), /var\(--studio-composer-expanded-height\)/);
+    assert.match(rules(".start-form textarea.composer-input"), /min-height:\s*112px/);
+    assert.match(rules("form.sketch-composer > #sketch-instruction"), /min-height:\s*var\(--studio-composer-height\)/);
     assert.match(rules(".artifact-content"), /line-height:\s*1\.55/);
     assert.match(rules(".requirements"), /padding-inline-end:\s*4px/);
     assert.match(rules(".requirements"), /scrollbar-width:\s*thin/);
@@ -94,7 +95,7 @@ test("compact theme preserves host colors, standalone dark mode, and accessible 
     assert.match(css, /@media \(pointer: coarse\)[\s\S]*?--studio-control-height:\s*44px/);
     assert.match(css, /@media \(forced-colors: active\)/);
     assert.match(css, /\.choice\[data-state="checked"\][^{]*\{[^}]*background:\s*var\(--studio-accent-soft\)/);
-    assert.match(css, /@container output \(min-width: 880px\)[\s\S]*?\.usage-intake\[data-suggestions="true"\]/);
+    assert.match(css, /\.usage-intake\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/);
     assert.match(css, /\.requirements-intake-panel\[data-substage="dag"\]\s*\{[^}]*max-height:\s*min\(240px, 35vh\);[^}]*overflow:\s*auto/,
         "Expanded usage history must not push the decision workspace out of reach");
     assert.match(css, /\.reload-status:not\(\[data-status="error"\]\)/, "Compact headers must not hide reload errors");

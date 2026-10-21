@@ -19,7 +19,6 @@ import { ProjectConversation, ProjectConversationProvider, useProjectView } from
 import { DiscoveryRecovery } from "./discovery-recovery.js";
 import { ChangeRequestsPanel } from "./change-requests-panel.js";
 import { StageReviewWorkspace } from "./stage-review.js";
-import { SpeechProvider, SpeechTextarea } from "./speech-textarea.js";
 import { Brand } from "./brand.js";
 import { useStandaloneHeader, type ApplicationStatus, type StandaloneHosting } from "./standalone-header.js";
 
@@ -150,7 +149,7 @@ function EffortApp({ state, store, version, connectionError, confirm }: {
       : "Open the installed user-scoped Tandem to " + action + ".",
     confirm, browseStage, selectArtifact, setBusy,
   };
-  return <UiContext.Provider value={value}><SpeechProvider signInPlacement="on-demand">
+  return <UiContext.Provider value={value}>
     <ProjectConversationProvider designVisible={activeTab === "development"} effortBusy={busy.has("effort")}
       viewedStage={stageTabs.find(tab => tab.value === activeTab)?.stage
         ?? stageTabs.find(tab => tab.stage === state.artifacts.find(item => item.id === selectedArtifact)?.stage)?.stage ?? state.lifecycle.currentStage}
@@ -158,7 +157,7 @@ function EffortApp({ state, store, version, connectionError, confirm }: {
       showDesign={() => setActiveTab("development")}><HandoffReviewProvider><Workspace version={version} connectionError={connectionError} store={store} activeTab={activeTab} onTabChange={setActiveTab}
       selectedArtifact={selectedArtifact} contextOpen={contextOpen} setContextOpen={setContextOpen}
       sketchBlocked={sketchBlocked} onSketchBlocked={setSketchBlocked} effortBusy={busy.has("effort")} /></HandoffReviewProvider></ProjectConversationProvider>
-  </SpeechProvider></UiContext.Provider>;
+  </UiContext.Provider>;
 }
 
 function GoalEntry() {
@@ -178,7 +177,7 @@ function GoalEntry() {
         });
       }}>
         <label htmlFor="start-goal">Your project goal</label>
-        <SpeechTextarea id="start-goal" ref={input} value={goal} onValueChange={(text) => { setGoal(text); action.setError(""); }}
+        <textarea className="composer-input" id="start-goal" ref={input} value={goal} onChange={(event) => { setGoal(event.currentTarget.value); action.setError(""); }}
           rows={5} maxLength={4000} required disabled={!writable || pending} aria-invalid={Boolean(action.error)}
           aria-describedby="start-help start-message" placeholder="Build an app that helps my team triage customer requests." />
         <p id="start-help" className="visually-hidden">Describe who it is for and what it should help them do. You can refine the details together.</p>
@@ -211,8 +210,6 @@ function Header({ version, connectionError, status, showNextAction, onHostedChan
     controls: {
       reload: null,
       reset: null,
-      signIn: null,
-      cancelSignIn: null,
     },
     messages: [
       { id: "maintenance", text: maintenanceError, error: true },
@@ -220,9 +217,7 @@ function Header({ version, connectionError, status, showNextAction, onHostedChan
     ].filter((message) => message.text).map((message) => ({ ...message, text: message.text.slice(0, 8192) })),
     status: { ...status, text: status.text.slice(0, 8192) },
   }, { reload: () => { throw new Error("Use Project settings diagnostics to reload Tandem."); },
-    reset: () => { throw new Error("Use Preparation actions to restart Preparation."); },
-    signIn: () => { throw new Error("Use the voice input's sign-in control."); },
-    cancelSignIn: () => { throw new Error("Use the voice input's cancel control."); } }, showNextAction);
+    reset: () => { throw new Error("Use Preparation actions to restart Preparation."); } }, showNextAction);
   useEffect(() => { onHostedChange(hosted); }, [hosted, onHostedChange]);
   return <header className="topbar" hidden={hosted.header} data-hosted={hosted.header || undefined}><Brand /><div className="topbar-actions">
     <div id="lifecycle-status" className="lifecycle" aria-label="Development lifecycle" hidden={isGoalEntry(state)}>

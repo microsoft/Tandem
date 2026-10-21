@@ -4,8 +4,8 @@
   "files": [
     {
       "path": "extension.mjs",
-      "bytes": 4586745,
-      "sha256": "782d0a9a650312e4735bbf06b23cc7ddd8ea6da861f6deab0267f72aae5634c2"
+      "bytes": 1968917,
+      "sha256": "a5171111577b5158e19909f3b3c73c6a0ad84deb0da85b42bdd8114ac1bb40f3"
     },
     {
       "path": "preview-launcher.mjs",
@@ -14,8 +14,8 @@
     },
     {
       "path": "skills/tandem/SKILL.md",
-      "bytes": 19086,
-      "sha256": "ffbb223c61a860ecffef2b7eb85cb5c2e49f91b9d08fb799a7aaf67d9bd21a37"
+      "bytes": 19048,
+      "sha256": "de04b34ca5e2b8c3f4a36f71bb63a5c5563dfb86403d0ab558dfa7230299542d"
     },
     {
       "path": "stage2/INSTALL.md",
@@ -30,7 +30,7 @@
     {
       "path": "stage2/manifest.json",
       "bytes": 25434,
-      "sha256": "9e02ad04b1c85bd832a7cb655bbad24b11b251942fa61113f7d7a12a910bdced"
+      "sha256": "3d76d7d942bb9296ebc645be8863943f2666fb4d8d644f14fb4c68c6b3dc9d2c"
     },
     {
       "path": "stage2/package.json",
@@ -84,28 +84,28 @@
     },
     {
       "path": "stage2/public/artifacts/vendor/LICENSES.json",
-      "bytes": 264241,
-      "sha256": "1a5674804c5e507f289acf4101cd0afcd0a938afe5bedd4cc210e238fe409dbf"
+      "bytes": 264383,
+      "sha256": "7aeb9d0c7c77bcae8cb8ba89686a1ba9cc11b76cb10096716b0f3bc35af05bac"
     },
     {
       "path": "stage2/public/artifacts/vendor/documents.js",
-      "bytes": 354877,
-      "sha256": "c5c65f99d350f0036c443f910d9b570d3b217e9531ce27d659481305285352be"
+      "bytes": 354933,
+      "sha256": "50e1279ccd7f284945c5bdaa5379ddf3d66f59f6e571391374e6ef1af2cb4437"
     },
     {
       "path": "stage2/public/artifacts/vendor/jpeg.js",
-      "bytes": 13748,
-      "sha256": "ceddcdc9e115cf67173fb5c7d443008505c42f98051188e83662721f9b3d7621"
+      "bytes": 13749,
+      "sha256": "41a1734dd0391f6c6ae6e69cdf052127b50ea885b236e494ea322160bfc88446"
     },
     {
       "path": "stage2/public/artifacts/vendor/mermaid.js",
-      "bytes": 5254436,
-      "sha256": "a759156f2aa63cb1b44d30926f1e02007e6cd81e3b4c5eb7cc0b9e2382a5bd5a"
+      "bytes": 5258749,
+      "sha256": "f9c8c4debbdc38bb35f0842e43b7d40f99fbdf8bdf1ac6070f45d627507cc931"
     },
     {
       "path": "stage2/public/artifacts/vendor/parsers.js",
-      "bytes": 371116,
-      "sha256": "52ad3cc57311459dbfbc5016dca07997b3c790388193fd72b818960f73f23c26"
+      "bytes": 371128,
+      "sha256": "5c47f4eb164a1a32113c3ff393ec8695de2b34a35614749c83202d056ab229ee"
     },
     {
       "path": "stage2/public/assistant-response.js",
@@ -778,5 +778,5 @@
       "sha256": "92b92e76eb4ac3bee96c6bbdde06ed1f7d9c0088576a51db1276c567dbb207f8"
     }
   ],
-  "digest": "bc026637032f792c48b38935b3b624b31e9ebb92f4376172c7cfad4dc5f8b088"
+  "digest": "d55d64bc2d6411267146f8b4d2c1d98234f47066d8a9d86c8d9772d47b50250c"
 }

@@ -111,7 +111,6 @@ async function harness(initial: UiState) {
     const { createRoot } = await import("react-dom/client");
     const { RequirementsPanel } = await import("../src/renderer/requirements-panel.js");
     const { DraftProvider, UiContext } = await import("../src/renderer/ui-context.js");
-    const { SpeechProvider } = await import("../src/renderer/speech-textarea.js");
     const root = createRoot(dom.window.document.getElementById("root")!);
     const requests: { path: string; body: any }[] = [];
     const confirmations: string[] = [];
@@ -135,7 +134,7 @@ async function harness(initial: UiState) {
         await act(async () => {
             root.render(createElement(UiContext.Provider, { value: context() },
                 createElement(DraftProvider, { key: `${value.prototypeId}:${value.generation}` },
-                    createElement(SpeechProvider, null, createElement(RequirementsPanel)))));
+                    createElement(RequirementsPanel))));
         });
     };
     const find = <T extends Element = HTMLElement>(selector: string): T => {

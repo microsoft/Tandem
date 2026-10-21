@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-export const headerActions = ["reload", "reset", "signIn", "cancelSignIn"] as const;
+export const headerActions = ["reload", "reset"] as const;
 export type HeaderAction = typeof headerActions[number];
 export interface HeaderControl {
   label: string;

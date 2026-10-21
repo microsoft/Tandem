@@ -5,7 +5,6 @@ import { awaitingVisualChoice, originalPrototypeCheckpointId, readVisualSelectio
   type VisualSelection, type VisualSettings } from "../visual-directions.js";
 import { hasActiveJobs, useAction, useDraft, useUi } from "./ui-context.js";
 import { PreviewRestart } from "./preview-restart.js";
-import { SpeechTextarea } from "./speech-textarea.js";
 
 const settingLabels: Record<keyof VisualSettings, string> = {
   colorMode: "Appearance", accent: "Accent", density: "Density", textSize: "Text size", effects: "Effects",
@@ -50,10 +49,13 @@ function VisualFeedback({ checkpointId, selection, name, disabled }: {
     });
   }}>
     <label htmlFor="visual-feedback-input">Refine {name} only</label>
-    <SpeechTextarea id="visual-feedback-input" value={draft.value} rows={1} maxLength={4000}
+    <textarea className="composer-input" id="visual-feedback-input" value={draft.value} rows={1} maxLength={4000}
       disabled={Boolean(state.effortReset)} aria-label={`Feedback for ${name}`} aria-describedby="visual-feedback-status"
       placeholder="Keep this layout, but simplify the toolbar..."
-      onValueChange={value => setDraft(current => ({ value, version: current.version + 1 }))} />
+      onChange={event => {
+        const value = event.currentTarget.value;
+        setDraft(current => ({ value, version: current.version + 1 }));
+      }} />
     <button id="submit-visual-feedback" type="submit" disabled={disabled}><Send size={14} />
       {action.busy ? "Sending..." : hasActiveJobs(state) ? "Queue refinement" : "Refine direction"}</button>
     <p id="visual-feedback-status" className="revision-status" role="status" data-status={action.error ? "error" : "idle"}>

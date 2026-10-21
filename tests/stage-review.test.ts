@@ -140,7 +140,7 @@ test("scoped review HTTP routes isolate reads and refuse lifecycle, settings and
     const { h, parent } = await fixture(); t.after(() => h.close());
     const server = await h.api.startServer("review-http", "sample", provider, true);
     t.after(async () => {
-        clearInterval(server.heartbeat); server.live.close();
+        clearInterval(server.heartbeat);
         await new Promise<void>(resolve => { server.server.close(() => resolve()); server.server.closeAllConnections(); });
     });
 
@@ -172,7 +172,7 @@ test("Preparation drafts analyze only on request and Apply preserves the working
     const draft = await h.api.openStageReview("sample", provider, { stageId: "prepare", expectedGeneration: parent.generation });
     const server = await h.api.startServer("preparation-review-http", "sample", provider, true);
     t.after(async () => {
-        clearInterval(server.heartbeat); server.live.close();
+        clearInterval(server.heartbeat);
         await new Promise<void>(resolve => { server.server.close(() => resolve()); server.server.closeAllConnections(); });
     });
     const post = (suffix: string, body: unknown) => fetch(new URL(`/api/reviews/${draft.prototypeId}${suffix}`, server.url), {
@@ -235,7 +235,7 @@ test("prototype feedback is saved without work; only an explicit draft preview b
     const draft = await h.api.openStageReview("sample", provider, { stageId: "prototype", expectedGeneration: parent.generation });
     const server = await h.api.startServer("prototype-review-http", "sample", provider, true);
     t.after(async () => {
-        clearInterval(server.heartbeat); server.live.close();
+        clearInterval(server.heartbeat);
         await new Promise<void>(resolve => { server.server.close(() => resolve()); server.server.closeAllConnections(); });
     });
     const response = await fetch(new URL(`/api/reviews/${draft.prototypeId}/revision`, server.url), {

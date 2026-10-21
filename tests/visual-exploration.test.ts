@@ -185,7 +185,7 @@ test("accepting Default restores the verified original without generating a repl
     const before = plain(state);
     const server = await h.api.startServer("original-http", "sample", provider, true);
     t.after(async () => {
-        clearInterval(server.heartbeat); server.live.close();
+        clearInterval(server.heartbeat);
         await new Promise<void>(resolve => { server.server.close(() => resolve()); server.server.closeAllConnections(); });
     });
     const originalStatus = await (await fetch(new URL("/api/prototype/preview-status?target=original", server.url))).json();
@@ -277,7 +277,7 @@ test("HTTP visual preview checks and adjustments target only the retained explor
     const state = await h.settle(1);
     const server = await h.api.startServer("visual-http", "sample", provider, true);
     t.after(async () => {
-        clearInterval(server.heartbeat); server.live.close();
+        clearInterval(server.heartbeat);
         await new Promise<void>(resolve => { server.server.close(() => resolve()); server.server.closeAllConnections(); });
     });
     const before = plain(await h.api.loadState("sample"));

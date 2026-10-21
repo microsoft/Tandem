@@ -5,7 +5,6 @@ import type { LifecycleStageId } from "../types.js";
 import { lifecycleStages } from "../workflow.js";
 import { hasActiveJobs, useAction, useDraft, useUi, type UiState } from "./ui-context.js";
 import { useProjectView } from "./project-conversation.js";
-import { SpeechTextarea } from "./speech-textarea.js";
 
 const label = (stage: LifecycleStageId) => stage === "sketch" ? "Drawings" : lifecycleStages.find(item => item.id === stage)?.label || stage;
 const statuses: Record<ChangeRequest["status"], string> = {
@@ -85,8 +84,11 @@ export function ChangeRequestsPanel() {
                 event.preventDefault(); void decide(plan?.question ? "clarify" : "refine");
             }}>
                 <label htmlFor="change-detail">{plan?.question || "Add or correct the instructions for this change"}</label>
-                <SpeechTextarea id="change-detail" value={drafts[current.id] ?? ""} rows={2} maxLength={4000}
-                    onValueChange={value => setDrafts(previous => ({ ...previous, [current.id]: value }))}
+                <textarea className="composer-input" id="change-detail" value={drafts[current.id] ?? ""} rows={2} maxLength={4000}
+                    onChange={event => {
+                        const value = event.currentTarget.value;
+                        setDrafts(previous => ({ ...previous, [current.id]: value }));
+                    }}
                     disabled={busy} aria-describedby="change-action-status" />
                 <button className="plan-button" disabled={busy || !drafts[current.id]?.trim()} type="submit">Check impact with this detail</button>
             </form> : current.status === "proposed" && plan && <div className="change-actions">

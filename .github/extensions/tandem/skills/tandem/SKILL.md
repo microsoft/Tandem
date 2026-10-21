@@ -79,7 +79,7 @@ Preserve request, generation, source and specification identities. Never edit
 
 The Node main session's permission controls apply to Preparation through
 Prototype only. Development has a separate private Interactive session and
-its own consent. Main Allow all, Microsoft speech sign-in and upstream Reset
+its own consent. Main Allow all and upstream Reset
 must not be presented as private Development controls.
 
 ## Preparation
@@ -126,7 +126,7 @@ generation/reconciliation retains the user's inputs for explicit retry.
 ## Sketch
 
 Keep the existing screen editor, shapes, transitions, undo/redo, streamed
-revisions, live voice and approval flow. Drawings describe the actual primary
+revisions and approval flow. Drawings describe the actual primary
 journey, not one screen per decision. Preserve stable screen/shape IDs and exact
 accepted decision references. Do not invent a sketch approval.
 

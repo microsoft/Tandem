@@ -31,7 +31,8 @@ For direct edits rather than a chat request:
    broader warning; settle/close Development first if required.
 2. In Requirements, choose the answered question and **Update answer and
    dependents**. Review affected decisions.
-3. In Drawings, edit and **Save drawings**, or send a precise change. Inspect
+3. In Drawings, edit and **Save drawings**, or type a precise change and use
+   **Send** (**Ctrl+Enter** or **Command+Enter**). Inspect
    **Revision history** if a request failed; retry the recorded request deliberately.
 4. Approve the new drawings before using them for Prototype.
 
@@ -202,26 +203,3 @@ or starting agents; **Open linked effort and start Preparation** is the separate
 action that starts discovery.
 
 </details>
-
-## Use optional voice input
-
-**Use when:** you prefer dictating a discovery goal, answer or revision.
-Text and Copilot use do not require Azure voice sign-in.
-
-1. Select **Mic** at the intended input. If an Azure credential error requires it,
-   choose the offered **Sign in for voice input** and complete browser sign-in.
-2. Select **Mic** again and allow microphone access. Successful login never
-   starts recording.
-3. **Stop** the recording, edit the transcript, then use the form's send/answer
-   action yourself. **Cancel** or Escape restores the original draft.
-
-**Result:** editable text, not an automatically sent request. Audio goes to Azure;
-Tandem does not retain a recording. **Cancel sign-in**, or hiding/navigating away
-from its input, cancels pending login. Configuration/microphone errors are not
-fixed by sign-in; type normally if voice is unavailable.
-
-Drawings' **Voice settings** separately offers **GPT-live conversation**.
-With an authorized deployment, **Talk with GPT-live** can discuss and submit
-drawing revisions; you still approve drawings. **End voice** does not cancel
-an already-submitted revision. Its authentication differs from Azure dictation.
-See [speech configuration](engineering-reference.md#speech-input) for prerequisites.

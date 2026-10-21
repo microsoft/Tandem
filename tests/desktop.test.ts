@@ -25,7 +25,7 @@ test("desktop accepts only root loopback application URLs", () => {
 
 test("independent runtimes do not inherit another host's session or tool trampoline", () => {
     const source = { SESSION_ID: "parent", COPILOT_TRAMPOLINE_PORT: "1234", COPILOT_TRAMPOLINE_TOKEN: "parent-only",
-        COPILOT_SDK_PATH: "parent-sdk", COPILOT_HOME: "user-home", PATH: "tools", TANDEM_Speech__Region: "eastus" };
+        COPILOT_SDK_PATH: "parent-sdk", COPILOT_HOME: "user-home", PATH: "tools", TANDEM_TEST_SETTING: "retained" };
     const environment = desktopRuntimeEnvironment(source);
     assert.equal(environment.SESSION_ID, undefined);
     assert.equal(environment.COPILOT_TRAMPOLINE_PORT, undefined);
@@ -33,7 +33,7 @@ test("independent runtimes do not inherit another host's session or tool trampol
     assert.equal(environment.COPILOT_SDK_PATH, undefined);
     assert.equal(environment.COPILOT_HOME, "user-home");
     assert.equal(environment.PATH, "tools");
-    assert.equal(environment.TANDEM_Speech__Region, "eastus");
+    assert.equal(environment.TANDEM_TEST_SETTING, "retained");
     assert.equal(source.SESSION_ID, "parent");
 });
 
@@ -65,6 +65,26 @@ test("canvas transport rejects cross-origin API requests and rebinding hosts but
     }, origin), true);
 });
 
+test("canvas rejects retired audio endpoints and has no WebSocket upgrade handler", async () => {
+    const h = await extensionHarness();
+    const entry = await h.api.startServer("retired-endpoints", "sample", "project:tandem", true);
+    try {
+        assert.equal(entry.server.listenerCount("upgrade"), 0);
+        for (const path of ["/api/speech/token", "/api/speech/login", "/api/speech/sign-in", "/api/sketch/live/session"]) {
+            const response = await fetch(new URL(path, entry.url), {
+                method: "POST", headers: { origin: new URL(entry.url).origin, "Content-Type": "application/json" }, body: "{}",
+            });
+            assert.equal(response.status, 404, path);
+            assert.deepEqual(await response.json(), { error: "Not found." });
+        }
+        assert.deepEqual(h.requests, []);
+    } finally {
+        clearInterval(entry.heartbeat);
+        await new Promise<void>(resolve => entry.server.close(() => resolve()));
+        await h.close();
+    }
+});
+
 function protocolFixture() {
     const input = new PassThrough();
     const output = new PassThrough();
@@ -79,7 +99,7 @@ function protocolFixture() {
 test("native session errors retain notification identity without reclassifying runtime blockers by text", () => {
     const f = protocolFixture();
     try {
-        const message = "Configure TANDEM_Speech__ResourceId and TANDEM_Speech__Region";
+        const message = "The saved prototype preview is unavailable.";
         f.protocol.reportSessionError({ id: "one", data: { errorType: "notification", message } });
         f.protocol.reportSessionError({ id: "two", data: { errorType: "notification", message } });
         for (const errorType of ["authentication", "query", "unknown"]) {

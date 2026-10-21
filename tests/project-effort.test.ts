@@ -37,7 +37,7 @@ test("one project endpoint applies both independent interfaces without starting 
         assert.equal(failure.settings.stage1.actual, "low");
         assert.equal(failure.settings.stage2.status, "error");
     } finally {
-        clearInterval(entry.heartbeat); entry.live.close();
+        clearInterval(entry.heartbeat);
         await new Promise<void>((resolve, reject) => entry.server.close(error => error ? reject(error) : resolve()));
         await h.close();
     }

@@ -5,7 +5,6 @@ import { webcrypto } from "node:crypto";
 import { TextEncoder, TextDecoder } from "node:util";
 import type { TestContext } from "node:test";
 import type { UiState } from "../../src/renderer/ui-context.js";
-import type { SpeechSessionFactory } from "../../src/renderer/speech-recognizer.js";
 import { createProcessState } from "../../src/process-state.js";
 import { prototypePreviewCheckpointId, type PrototypePreviewTarget } from "../../src/prototype-flow.js";
 
@@ -33,12 +32,9 @@ async function compile() {
     plugins: [{
       name: "renderer-test-services",
       setup(api) {
-        api.onResolve({ filter: /speech-recognizer\.js$/ }, () => ({ path: "speech", namespace: "test-services" }));
         api.onResolve({ filter: /^https:.*mermaid/ }, () => ({ path: "mermaid", namespace: "test-services" }));
-        api.onLoad({ filter: /.*/, namespace: "test-services" }, (args) => ({
-          contents: args.path === "speech"
-            ? "export const createAzureSpeechSession = (...args) => globalThis.__speechFactory(...args);"
-            : "export default { initialize(){}, render: (...args) => globalThis.__renderMermaid(...args) };",
+        api.onLoad({ filter: /.*/, namespace: "test-services" }, () => ({
+          contents: "export default { initialize(){}, render: (...args) => globalThis.__renderMermaid(...args) };",
         }));
       },
     }],
@@ -82,7 +78,6 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
   if (headerHost) Object.defineProperty(window, "parent", { value: parent, configurable: true });
   let narrow = false;
   let fetcher: (path: string, options: RequestInit) => Promise<Response> = async () => { throw new Error("Network disabled in renderer tests"); };
-  let speechFactory: SpeechSessionFactory = async () => { throw new Error("Speech is not configured in this test"); };
   let mermaid: (id: string, source: string) => Promise<{ svg: string }> = async () => { throw new Error("Mermaid unavailable in this test"); };
   window.console.error = (...args: unknown[]) => { errors.push(args.map(String).join(" ")); };
   Object.defineProperty(window, "crypto", { value: webcrypto });
@@ -137,7 +132,6 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
       requests.push({ path, body: options.body ? JSON.parse(String(options.body)) : null, options });
       return fetcher(path, options);
     },
-    __speechFactory: (...args: Parameters<SpeechSessionFactory>) => speechFactory(...args),
     __renderMermaid: (id: string, source: string) => mermaid(id, source),
   });
   Object.assign(window.HTMLElement.prototype, {
@@ -219,7 +213,6 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
       mounted.flushSync(() => window.dispatchEvent(event));
       await flush();
     },
-    setSpeechFactory(handler: SpeechSessionFactory) { speechFactory = handler; },
     setMermaid(handler: typeof mermaid) { mermaid = handler; },
     setNarrowViewport(value: boolean) { narrow = value; window.dispatchEvent(new window.Event("resize")); },
     enablePngExport(data = "iVBORw0KGgo=") {

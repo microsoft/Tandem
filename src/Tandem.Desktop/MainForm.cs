@@ -396,32 +396,6 @@ internal sealed class MainForm : Form
         {
             args.State = CoreWebView2PermissionState.Deny;
             args.SavesInProfile = false;
-            if (args.PermissionKind != CoreWebView2PermissionKind.Microphone || !args.IsUserInitiated ||
-                !ReferenceEquals(_webView, webView) || !IsCurrentTrustedPage() ||
-                !SecurityPolicy.IsTrusted(_trustedOrigin, args.Uri)) return;
-            var deferral = args.GetDeferral();
-            var token = _sessionCancellation.Token;
-            BeginInvoke(new Action(async () =>
-            {
-                try
-                {
-                    var allowed = await AskPermissionAsync("Use your microphone?",
-                        "Allow Tandem to use the microphone for speech input this time? " +
-                        "This approval is not saved. Only the current local Tandem page can request it.", token);
-                    if (allowed && !token.IsCancellationRequested && ReferenceEquals(_webView, webView) &&
-                        IsCurrentTrustedPage() && SecurityPolicy.IsTrusted(_trustedOrigin, args.Uri))
-                        args.State = CoreWebView2PermissionState.Allow;
-                }
-                catch (Exception ex) when (ex is InvalidOperationException or System.Runtime.InteropServices.COMException)
-                {
-                    _log.Write("Microphone request ended before it could be answered.");
-                }
-                finally
-                {
-                    try { deferral.Complete(); }
-                    catch (Exception ex) when (ex is InvalidOperationException or System.Runtime.InteropServices.COMException) { }
-                }
-            }));
         };
         core.DownloadStarting += (_, args) =>
         {
@@ -469,7 +443,7 @@ internal sealed class MainForm : Form
         _allowAll.Checked = mode == "allow-all";
         _permissions.Text = mode == "ask" ? "Upstream permissions: Ask each time" : "Upstream permissions: Allow all (session)";
         _permissions.ToolTipText = "Preparation through Prototype only; Development has its own private permission controls. File permissions, active-work protection, managed policy, " +
-            "sandbox consent, microphone access and external-browser confirmation are not bypassed.";
+            "sandbox consent and external-browser confirmation are not bypassed.";
     }
 
     private async Task ChangePermissionModeAsync(string mode)

@@ -2,7 +2,7 @@ import {
   createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState,
   type KeyboardEvent, type PointerEvent, type ReactNode,
 } from "react";
-import { Popover, Toggle, ToggleGroup } from "radix-ui";
+import { Toggle, ToggleGroup } from "radix-ui";
 import {
   ArrowRight, Check, ChevronDown, Circle, History, Minus, Monitor, PanelRight, Pencil, PenTool, Plus, Redo2, RefreshCw, Save, Send, Sparkles, Spline, Square, Trash2, Type, Undo2, Workflow, X,
 } from "lucide-react";
@@ -11,10 +11,6 @@ import type { SketchCurve, SketchDocument, SketchRevision, SketchScreen, SketchS
 import { sketchPathData } from "../sketch-path.js";
 import { createCurveShape, createScreen, createShape, parsePathPoints, renderSketchPng, resizeScreen, setPathPoints, setShapeBounds, shapeBounds, SketchEditor, SKETCH_SIZE_PRESETS } from "./sketch-editor.js";
 import { SketchViewport } from "./sketch-viewport.js";
-import { SpeechTextarea, useSpeechCoordinator } from "./speech-textarea.js";
-import { SketchLivePanel } from "./sketch-live-panel.js";
-import { sketchLiveContext } from "./sketch-live-context.js";
-import type { SketchLiveSessionFactory } from "./sketch-live-session.js";
 import { readSketchPreview } from "./sketch-preview.js";
 import { hasActiveJobs, skippedStage, useAction, useDraft, useUi, type UiState } from "./ui-context.js";
 
@@ -168,9 +164,8 @@ const sidePanes = [
   { id: "history", label: "Revision history", target: "sketch-revision-history", Icon: History },
 ] as const;
 
-export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchLiveSessionFactory } = {}) {
+export function SketchPanel() {
   const ui = useUi();
-  const speech = useSpeechCoordinator();
   const { state, pending, canEdit, guidance } = ui;
   const action = useAction("sketch");
   const reportCompletion = useContext(SketchCompletionContext);
@@ -190,12 +185,9 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
   const [gesture, setGesture] = useState<Gesture | null>(null);
   const gestureRef = useRef(gesture);
   const [instruction, setInstruction] = useDraft("sketch:instruction", "");
-  const [voiceProvider, setVoiceProvider] = useDraft<"azure-speech" | "gpt-live">("sketch:voice-provider", "azure-speech");
-  const [voiceSettingsOpen, setVoiceSettingsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [requestHistory, setRequestHistory] = useState<RequestHistoryItem[]>([]);
   const [clearedWorkerError, setClearedWorkerError] = useState("");
-  const instructionInput = useRef<HTMLTextAreaElement>(null);
   const instructionRef = useRef(instruction);
   instructionRef.current = instruction;
   const [retryDraft, setRetryDraft] = useState("");
@@ -225,7 +217,7 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
     catch (cause) { return { preview: null, error: errorMessage(cause) }; }
   }, [state]);
   const livePreview = !dirty ? incoming.preview : null;
-  // A preview is only a display source: the editor, undo history and voice scene stay local/saved.
+  // A preview is only a display source: the editor and undo history stay local/saved.
   const document = livePreview?.document ?? editor.document;
   const screen = document?.screens.find((item) => item.id === selectedScreen) ?? document?.screens[0];
   const shape = screen?.shapes.find((item) => item.id === selectedShape);
@@ -488,14 +480,13 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
     if (result.revision >= stateRef.current.revision) stateRef.current = result;
     return result;
   }
-  async function save(identity: string, expectedGeneration?: string) {
+  async function save(identity: string) {
     if (!editor.document) throw new Error("Add a screen before saving.");
     if (hasInvalidFields()) throw new Error("Complete the invalid drawing fields before saving drawings.");
     ensureRevision(loadRef.current.baseRevision);
     const savedDocument = validateSketchDocument(editor.document, acceptedDecisionIds(stateRef.current));
     const result = await post("/api/sketch", {
       action: "save", expectedRevision: loadRef.current.baseRevision?.id ?? null, document: savedDocument,
-      ...(expectedGeneration !== undefined ? { expectedGeneration } : {}),
     }, identity);
     const revision = result.sketch.current;
     if (!revision) throw new Error("The saved revision could not be confirmed. Reload state before retrying.");
@@ -504,7 +495,7 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
     updateDrafts({});
     updateLoad({ baseRevision: { ...revision }, loadedKey: loadKey(stateRef.current), failedKey: null, conflict: false });
   }
-  async function submit(kind: "generate" | "save" | "approve" | "revise", retry?: string, signal?: AbortSignal) {
+  async function submit(kind: "generate" | "save" | "approve" | "revise", retry?: string) {
     if (!canWrite() || hasConflict() || hasInvalidFields()) return;
     const requestedInstruction = retry ?? instructionRef.current.trim();
     if (kind === "revise" && (!editor.document || !requestedInstruction)) return;
@@ -514,7 +505,6 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
     }
     if (kind === "approve" && (emptyScreens || stateRef.current.sketch.status === "stale")) return;
     const identity = identityOf(stateRef.current);
-    const expectedGeneration = signal ? stateRef.current.generation : undefined;
     const startRevision = loadRef.current.baseRevision;
     const historyId = `${Date.now()}-${kind}`;
     recordHistory({
@@ -537,12 +527,10 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
         ensureEffort(identity);
         ensureRevision(startRevision);
         ensureSketchWritable();
-        signal?.throwIfAborted();
         if (kind === "revise" && retry !== undefined) setRetryDraft(requestedInstruction);
-        if (kind === "save" || (editor.dirty && (kind === "approve" || kind === "revise"))) await save(identity, expectedGeneration);
+        if (kind === "save" || (editor.dirty && (kind === "approve" || kind === "revise"))) await save(identity);
         ensureEffort(identity);
         ensureSketchWritable();
-        signal?.throwIfAborted();
         if (kind === "approve") {
           const revision = loadRef.current.baseRevision;
           if (!revision || !editor.document) throw new Error("Save a drawing revision before approval.");
@@ -566,7 +554,6 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
           const result = await post("/api/sketch", {
             action: kind, expectedRevision: loadRef.current.baseRevision?.id ?? null,
             ...(kind === "revise" ? { instruction: requestedInstruction } : {}),
-            ...(expectedGeneration !== undefined ? { expectedGeneration } : {}),
           }, identity);
           updateHistory(historyId, {
             requestId: typeof result.processing?.requestId === "string" ? result.processing.requestId : "",
@@ -594,46 +581,6 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
     });
   }
 
-  async function reviseByVoice(instruction: string, signal: AbortSignal) {
-    signal.throwIfAborted();
-    if (!canWrite() || hasConflict() || hasInvalidFields() || !editor.document) {
-      throw new Error("Drawings are busy, conflicted or unavailable. Finish the current edit or reload before asking again.");
-    }
-    const identity = identityOf(stateRef.current);
-    const queued = await submit("revise", instruction, signal);
-    if (!queued || typeof queued.processing?.requestId !== "string") {
-      throw new Error("The voice revision could not be submitted. Review the drawing error and retry explicitly.");
-    }
-    const requestId = queued.processing.requestId;
-    const baseRevisionId = queued.processing.sketchRequest?.baseRevisionId ?? queued.sketch.current?.id;
-    const deadline = Date.now() + 310_000;
-    while (Date.now() < deadline) {
-      signal.throwIfAborted();
-      ensureEffort(identity);
-      const snapshot = stateRef.current;
-      if (snapshot.lifecycle.currentStage !== "sketch" || snapshot.effortReset) {
-        throw new Error("Sketch changed while the voice revision was running.");
-      }
-      const processing = snapshot.processing;
-      if (processing?.requestId !== requestId) throw new Error("The voice revision was replaced by another drawing request.");
-      if (processing.status === "error") throw new Error(processing.message || "The voice drawing revision failed.");
-      if (processing.status === "success") {
-        const revision = snapshot.sketch.current;
-        if (!revision || revision.id === baseRevisionId || revision.source !== "revised") {
-          throw new Error("No new saved drawing revision could be confirmed.");
-        }
-        return `Drawing revision ${revision.number} is saved and ready to review. Approval is still required in the Sketch UI.`;
-      }
-      await new Promise<void>((resolve, reject) => {
-        const abort = () => { clearTimeout(timer); reject(new Error("Voice stopped.")); };
-        const timer = setTimeout(() => { signal.removeEventListener("abort", abort); resolve(); }, 500);
-        signal.addEventListener("abort", abort, { once: true });
-      });
-      signal.throwIfAborted();
-      await latest.current.refresh();
-    }
-    throw new Error("The drawing revision has not finished within its deadline. Check Sketch before retrying.");
-  }
   async function reload() {
     if (operation.current || loadRef.current.loading || gestureRef.current || hasActiveJobs(stateRef.current)) return;
     const identity = identityOf(stateRef.current);
@@ -799,26 +746,6 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
   const canvasPreset = SKETCH_SIZE_PRESETS.find((size) => size.width === screen?.width && size.height === screen?.height);
   const revisions = [...new Map([...state.sketch.history, ...(state.sketch.current ? [state.sketch.current] : [])]
     .map((revision) => [revision.id, revision])).values()].reverse();
-  const composer = {
-    voiceOptions: <Popover.Trigger asChild>
-      <button id="sketch-voice-options" className="voice-options-toggle" type="button" aria-label="Voice settings" title="Voice settings">
-        <ChevronDown size={14} aria-hidden="true" />
-      </button>
-    </Popover.Trigger>,
-    actions: <>
-      <button id="sketch-revise" className="plan-button sketch-send" type="submit"
-        title="Send drawing revision (Ctrl+Enter)"
-        disabled={!writable || !document || conflict || !instruction.trim() || invalidFields || speech.active?.kind === "capture"}>
-        <Send size={15} aria-hidden="true" /> Send
-      </button>
-      <button id="sketch-history-toggle" className="voice-settings-button sketch-history-toggle" type="button"
-        data-status={activeError ? "error" : "idle"}
-        aria-label={activeError ? "Open request history and drawing errors" : "Open request history"}
-        title={activeError ? "Drawing request failed. Open request history." : "Request history"}
-        aria-expanded={historyOpen} aria-controls="sketch-request-history-pane"
-        onClick={() => setHistoryOpen((open) => !open)}><History size={17} aria-hidden="true" /></button>
-    </>,
-  };
   const sendShortcut = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && !event.nativeEvent.isComposing) {
       event.preventDefault();
@@ -1132,48 +1059,23 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
         No drawing requests yet.
       </p>
     </section>
-    <Popover.Root open={voiceSettingsOpen} onOpenChange={setVoiceSettingsOpen}>
     <form id="sketch-revise-form" className="sketch-revise-form sketch-composer" onSubmit={(event) => { event.preventDefault(); void submit("revise"); }}>
       <label className="visually-hidden" htmlFor="sketch-instruction">Describe a drawing change</label>
-      {voiceProvider === "azure-speech"
-        ? <SpeechTextarea ref={instructionInput} id="sketch-instruction" rows={1} maxLength={4000} disabled={!writable}
-          value={instruction} onValueChange={setInstruction} onKeyDown={sendShortcut} composer={composer} aria-describedby="sketch-status"
-          placeholder="Describe a drawing change... (Ctrl+Enter)" />
-        : <SketchLivePanel identity={identityOf(state)} input={instructionInput} createSession={createLiveSession}
-            enabled={!state.stageReview && canEdit("sketch") && state.provider?.canSubmitAnswers !== false && !state.effortReset
-              && !skipped && !conflict && !invalidFields}
-            canStart={writable && Boolean(document)}
-            context={sketchLiveContext(state, editor.document, selectedScreen, selectedShape)} revise={reviseByVoice}
-            composer={{ ...composer, input: (caption) => <textarea ref={instructionInput} id="sketch-instruction"
-              rows={caption === null ? 1 : 2} maxLength={caption === null ? 4000 : undefined}
-              disabled={caption === null && !writable} readOnly={caption !== null} data-voice-caption={caption !== null}
-              aria-label={caption === null ? undefined : "Voice transcript: you and GPT-live"}
-              aria-describedby="sketch-live-status"
-              value={caption ?? instruction} onChange={(event) => { if (caption === null) setInstruction(event.target.value); }}
-              onKeyDown={sendShortcut}
-              placeholder="Describe a drawing change... (Ctrl+Enter)" /> }} />}
-      <Popover.Portal>
-        <Popover.Content id="sketch-voice-settings" className="voice-settings-popover" side="top" align="start"
-          sideOffset={8} collisionPadding={12} aria-labelledby="sketch-voice-settings-title">
-          <div className="voice-settings-heading">
-            <h3 id="sketch-voice-settings-title">Voice settings</h3>
-            <Popover.Close asChild><button type="button" aria-label="Close voice settings"><X size={16} aria-hidden="true" /></button></Popover.Close>
-          </div>
-          <label htmlFor="sketch-voice-provider">Voice provider</label>
-          <select id="sketch-voice-provider" value={voiceProvider} disabled={Boolean(speech.active)} aria-describedby="sketch-voice-provider-help" onChange={(event) => {
-            if (event.target.value === "azure-speech" || event.target.value === "gpt-live") setVoiceProvider(event.target.value);
-          }}>
-            <option value="azure-speech">Azure dictation</option>
-            <option value="gpt-live">GPT-live conversation</option>
-          </select>
-          {speech.active?.kind === "capture" && <p role="status" aria-live="polite">Voice session in progress</p>}
-          <p id="sketch-voice-provider-help" className="visually-hidden">{voiceProvider === "azure-speech"
-            ? "Use Sign in in the top bar for Azure Speech. Audio goes to Azure; dictation does not send your message. Language and Azure resources use the existing host configuration."
-            : "GPT-live uses Azure CLI sign-in and sends audio and sketch context to Azure. Spoken drawing requests can create revisions; approval stays manual."}</p>
-        </Popover.Content>
-      </Popover.Portal>
+      <textarea className="composer-input" id="sketch-instruction" rows={1} maxLength={4000} disabled={!writable}
+        value={instruction} onChange={(event) => setInstruction(event.currentTarget.value)} onKeyDown={sendShortcut}
+        aria-describedby="sketch-status" placeholder="Describe a drawing change... (Ctrl+Enter)" />
+      <button id="sketch-revise" className="plan-button sketch-send" type="submit"
+        title="Send drawing revision (Ctrl+Enter)"
+        disabled={!writable || !document || conflict || !instruction.trim() || invalidFields}>
+        <Send size={15} aria-hidden="true" /> Send
+      </button>
+      <button id="sketch-history-toggle" className="sketch-history-toggle" type="button"
+        data-status={activeError ? "error" : "idle"}
+        aria-label={activeError ? "Open request history and drawing errors" : "Open request history"}
+        title={activeError ? "Drawing request failed. Open request history." : "Request history"}
+        aria-expanded={historyOpen} aria-controls="sketch-request-history-pane"
+        onClick={() => setHistoryOpen((open) => !open)}><History size={17} aria-hidden="true" /></button>
     </form>
-    </Popover.Root>
     </div>
   </section>;
 }

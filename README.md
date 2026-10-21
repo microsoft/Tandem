@@ -75,7 +75,7 @@ Private launch URLs must not be shared.
 | [Quick start](docs/quick-start.md) | Open your first project and reach an implementation decision. |
 | [The Tandem story](docs/the-tandem-story.md) | Understand the vision through a concrete example. |
 | [User manual](docs/user-manual.md) | Learn the workspace and everyday controls. |
-| [Task recipes](docs/use-cases.md) | Revise a prototype, refine Design, use voice, or export an outcome. |
+| [Task recipes](docs/use-cases.md) | Revise a prototype, refine Design, or export an outcome. |
 | [Troubleshooting](docs/troubleshooting.md) | Handle queued work, unavailable previews, Stop and reopen. |
 
 The [documentation index](docs/README.md) also links advanced configuration and

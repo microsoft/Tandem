@@ -115,7 +115,6 @@ for (const startingPath of ["preparation", "development"]) test(`packaged guided
                 } finally {
                     await browser.call("Page.navigate", { url: "about:blank" });
                     clearInterval(server.heartbeat);
-                    server.live.close();
                     server.server.closeAllConnections();
                     await new Promise<void>(done => server.server.close(() => done()));
                     await h.close();
@@ -175,7 +174,7 @@ test("packaged handoff review cancels without startup and confirms the exact rea
         } finally {
             gate.resolve();
             await browser.call("Page.navigate", { url: "about:blank" });
-            clearInterval(server.heartbeat); server.live.close(); server.server.closeAllConnections();
+            clearInterval(server.heartbeat); server.server.closeAllConnections();
             await new Promise<void>(done => server.server.close(() => done()));
             await h.close();
         }

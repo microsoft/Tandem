@@ -169,7 +169,7 @@ test("HTTP review/cancel starts nothing; bound confirmation submits once and pre
     const h = await extensionHarness({}, undefined, "", undefined, false, true);
     let server: Awaited<ReturnType<typeof h.api.startServer>> | undefined;
     t.after(async () => {
-        if (server) { clearInterval(server.heartbeat); server.live.close(); await new Promise<void>(done => server!.server.close(() => done())); }
+        if (server) { clearInterval(server.heartbeat); await new Promise<void>(done => server!.server.close(() => done())); }
         await h.close();
     });
     const state = h.api.createState("review-http", "Synthetic CLI");
@@ -1066,7 +1066,7 @@ test("synthetic fresh provider opens Development from finished Stage1 files with
         assert.deepEqual(await retainedFiles(join(root, ".tandem", "efforts")), files);
     } finally {
         if (entry) {
-            clearInterval(entry.heartbeat); entry.live.close();
+            clearInterval(entry.heartbeat);
             await new Promise<void>((resolve, reject) => entry.server.close(error => error ? reject(error) : resolve()));
         }
         await first.close(); await fresh?.close();

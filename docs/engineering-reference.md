@@ -3,7 +3,7 @@
 [Project overview](../README.md) | [User guides](README.md) | [Troubleshooting](troubleshooting.md)
 
 This maintainer reference preserves the integrated application's runtime,
-ownership, recovery, packaging and optional speech-configuration details formerly
+ownership, recovery and packaging details formerly
 in the root README. For task-by-task instructions, use the
 [user manual](user-manual.md) rather than this implementation reference.
 
@@ -19,7 +19,6 @@ All source paths and command working directories below are relative to the
 | [Workflow contracts](#workflow) | Independent stages, effort, progress, source handoff and UI boundaries. |
 | [State, migration and recovery](#state-migration-and-recovery) | Retained history, interrupted work and guarded setup repair. |
 | [Acceptance and adapters](#acceptance-export-and-process-adapters) | Capture, export, Local/GitHub delivery and evidence limits. |
-| [Speech configuration](#speech-input) | Optional Azure dictation and GPT-live prerequisites and privacy. |
 | [Windows Forms host](#optional-windows-forms-host) | Alternative host requirements. |
 | [Development and packaging](#develop-validate-and-package) | Source layout, checks, packaging and qualification boundaries. |
 
@@ -63,7 +62,7 @@ Development operations. Development owns a separate real Interactive session,
 with the PR's private permission broker, once-only consent and native enforcement.
 Its model, compaction, permissions, Stop and Close controls remain independently
 owned, inside the persistent project conversation and Project settings.
-Main permission and speech controls remain scoped or disabled while the private
+Main permission controls remain scoped or disabled while the private
 runtime is active, not merely while browsing Design. Maintenance is not in the
 branded root or hosted header. Supported providers expose **Reload Tandem extension**
 in Project settings' advanced diagnostics. Its explanation warns that this
@@ -370,8 +369,7 @@ separate from normal current-stage work and broader Reopen operations.
 Review editors use scoped API routes and an independent store, busy state and
 draft-input provider. Navigating to current work hides rather than remounts the
 pinned editor. Applying does not close it or authorize Development implementation.
-GPT-live remains confined to the original current-stage endpoint; draft Drawings
-uses direct edits or explicitly requested revisions.
+Draft Drawings uses direct edits or explicitly requested revisions.
 The **Development** navigation entry contains formal Design, planning,
 implementation and Review; it is not an additional Stage1 Design phase.
 **Saved artifacts** is the cross-project library entry in the separate
@@ -747,133 +745,6 @@ authenticated `gh`. Reviewed external publication is explicit; export itself
 never commits, pushes, merges or deploys. Legacy automatic implementation/test
 settings and verification records are historical only, with no executable
 scheduler or mutable UI.
-
-## Speech input
-
-These controls belong to upstream discovery. Development preserves the PR's own
-composer and private-session controls; main speech sign-in never authorizes it.
-
-### GPT-live in Sketch
-
-Sketch uses a compact microphone, message, and **Send** row. Open **Voice settings**
-with the microphone dropdown or settings button to select **Azure dictation** or
-**GPT-live conversation**. This selector affects Sketch only; all other stages
-retain Azure Speech. **Ctrl+Enter** (or **Command+Enter**) sends a typed drawing
-revision. Voice status and errors appear only when relevant. While GPT-live is
-connecting or listening, the message box is read-only and shows the current
-sentence for **You** and **GPT-live**, using VisionLoop's sentence boundaries
-instead of adding a transcript row for each word. Ending voice restores your
-unsent typed draft.
-
-Select GPT-live, then **Talk with GPT-live** to start the microphone and hear
-spoken replies. Discuss the current screen or ask for layout, label, shape,
-canvas-size or navigation changes. Like VisionLoop, GPT-live delegates drawing
-work to the app rather than directly executing model-generated commands.
-Tandem saves local drawing edits first, runs its bounded streaming sketch worker,
-and shows drawing operations incrementally before saving the completed revision.
-Typed drafts remain untouched; a live preview is not a saved or approved result.
-Voice never accepts requirements, approves drawings, advances stages or publishes.
-Review the drawing and use **Approve drawings and continue** yourself.
-The initial scene summary is included in session startup. Later context and
-spoken work updates carry the provider's delegation ID; manual changes are
-included at the next delegation rather than sent as unsolicited append commands.
-
-GPT-live uses VisionLoop's native Live WebSocket protocol, **gpt-live-1**, mono
-16 kHz PCM audio, and Azure CLI / Microsoft Entra authentication. It is not the
-OpenAI Realtime/WebRTC API. The extension holds the Entra token; only a short-lived,
-single-use loopback connection ticket reaches the page. Its configuration is
-separate from Azure Speech:
-
-```powershell
-$env:Path += ";$env:LOCALAPPDATA\Programs\AzureCLI\bin" # For a per-user Azure CLI installation
-az login --tenant 72f988bf-86f1-41af-91ab-2d7cd011db47
-# Optional overrides in the environment that launches Tandem / Copilot:
-$env:TANDEM_Live__Endpoint = "https://cloudgpt-ins.openai.azure.com/openai/v1/"
-$env:TANDEM_Live__Model = "gpt-live-1"
-$env:TANDEM_Live__Voice = "marin"
-$env:TANDEM_Live__TenantId = "72f988bf-86f1-41af-91ab-2d7cd011db47"
-```
-
-Your account must have access to this Azure GPT-live deployment. The endpoint
-is restricted to the approved VisionLoop host and Live route; arbitrary
-endpoints and other models are rejected rather than receiving credentials.
-Azure Speech's **Sign in for voice input** does not sign in to GPT-live.
-On Windows, GPT-live also adds the verified
-`%LOCALAPPDATA%\Programs\AzureCLI\bin` installation to the extension process's
-PATH before authenticating. This works even when Copilot was launched before
-Azure CLI was added to PATH; it does not change your persistent Windows PATH.
-
-**Live audio, captions and a bounded summary of the current sketch are sent to
-Azure.** The provider session requests `store: false`. Tandem keeps conversation
-captions in page memory, not audio files; a delegated drawing instruction is
-handled by the normal sketch revision workflow. Connections stop after ten
-minutes, when Sketch is hidden, when the effort/provider changes, or when you
-select **End voice** or press Escape. Stopping voice does not cancel a drawing
-worker already submitted. Failures are visible and never switch providers or
-reconnect automatically. A microphone-capable browser with Web Audio is required;
-use **Open Tandem in browser** if the embedded canvas blocks microphone access.
-
-### Azure Speech dictation
-
-Discovery text inputs offer **Mic**, including project goals, usages, requirement
-answers, prototype revisions and clarifications. This is not a voice control for
-Development's separate composer.
-Voice input is optional; typed input and Development never require voice sign-in.
-There is no generic Sign in action in the root or hosted header. Select **Mic**
-when you want to dictate. If Azure Speech authentication requires attention,
-**Sign in for voice input** appears beside that input, with an explanation of its
-scope. It opens your browser only when explicitly selected. Choose your work
-account and complete any MFA prompt, then return and select **Mic** again:
-successful sign-in never starts recording. Allow microphone access and speak.
-Audio is sent to Azure. Partial text updates
-in place; **Stop** finishes the recognized text so you can edit and send it.
-**Cancel** or Escape restores the original draft. Recording never sends a message
-or starts an agent. One input can record at a time, for up to two minutes.
-Changing conversation, hiding the page, or resetting the effort cancels capture.
-
-Speech uses **Azure Speech with Microsoft Entra ID**, following Demore's
-identity-based authentication pattern, not a Speech subscription key. Configure
-these environment variables in the environment that launches Copilot, then restart
-Copilot so the extension inherits them:
-
-```powershell
-$env:TANDEM_Speech__ResourceId = "/subscriptions/<subscription-id>/resourceGroups/<group>/providers/Microsoft.CognitiveServices/accounts/<speech-resource>"
-$env:TANDEM_Speech__Region = "eastus"
-$env:TANDEM_Speech__Language = "en-US" # Optional; defaults to en-US
-```
-
-Use an Azure Speech resource and grant the signed-in identity the **Cognitive
-Services Speech User** role on that resource. **Browser sign-in requires neither
-Azure CLI nor an API key.** It uses Azure Identity's `InteractiveBrowserCredential`
-with PKCE and a local loopback callback. Browser sign-in has a three-minute limit;
-**Cancel sign-in** or Escape stops the local listener. Switching to the browser
-does not cancel sign-in. It never starts the microphone or sends your draft.
-
-The selected account and token cache are memory-only for this extension session;
-sign in again when requested after restarting or reloading the extension.
-Failed or cancelled sign-in
-does not replace an already selected account. Once a browser account is selected,
-Tandem does not silently switch to another identity if its tokens expire.
-Before browser sign-in, existing `DefaultAzureCredential` sources (such as
-`az login` or a managed identity) remain supported.
-
-For local development, the browser flow uses Azure Identity's development
-application. If your organization's policies require an approved app, set
-`TANDEM_Speech__TenantId` and `TANDEM_Speech__ClientId` to its tenant and client
-GUIDs. Register it as a public desktop client with the `http://localhost` redirect
-URI and the required Azure Cognitive Services delegated permissions/consent.
-Use an organization-owned application for production distribution. No client
-secret is used. Shell-only environment changes apply only to applications
-launched from that shell.
-
-**Microphone audio is sent to Azure for transcription.** Tandem does not save
-audio, recognition history, or credentials; unsent text stays in the current
-page's draft memory. Normal message persistence starts only when you explicitly
-send. Recognition errors restore the original draft and never switch to another
-provider. If the host canvas denies microphone access, use **Open Tandem in
-browser** beside the error and grant microphone permission there; the same effort
-and chat inputs are available. Unsent drafts are page-local, so copy any draft
-you want to keep before switching windows.
 
 ## Optional Windows Forms host
 
