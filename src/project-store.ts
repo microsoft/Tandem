@@ -96,6 +96,7 @@ interface Transaction {
     id: string;
     active: boolean;
     assertOwned(): void;
+    parent?: Transaction;
 }
 
 interface StoreOptions<T extends StoredProject> {
@@ -109,6 +110,13 @@ export class ProjectStore<T extends StoredProject> {
     private readonly transactions = new AsyncLocalStorage<Transaction>();
 
     constructor(private readonly options: StoreOptions<T>) {}
+
+    private ownedTransaction(id: string): Transaction | undefined {
+        for (let transaction = this.transactions.getStore(); transaction; transaction = transaction.parent) {
+            if (transaction.id === id && transaction.active) return transaction;
+        }
+        return undefined;
+    }
 
     statePath(id: string): string {
         return join(this.options.root, "efforts", normalizeProjectId(id), "state.json");
@@ -152,13 +160,13 @@ export class ProjectStore<T extends StoredProject> {
 
     async transaction<R>(id: string, operation: () => Promise<R>, rejectIfBusy = false): Promise<R> {
         id = normalizeProjectId(id);
-        const existing = this.transactions.getStore();
-        if (existing?.id === id && existing.active) {
+        const existing = this.ownedTransaction(id);
+        if (existing) {
             existing.assertOwned();
             return operation();
         }
         return this.locked(`effort-${id}`, async (assertOwned) => {
-            const transaction = { id, assertOwned, active: true };
+            const transaction: Transaction = { id, assertOwned, active: true, parent: this.transactions.getStore() };
             try {
                 return await this.transactions.run(transaction, operation);
             } finally {
@@ -202,7 +210,7 @@ export class ProjectStore<T extends StoredProject> {
 
     async save(state: T, beforeCommit?: () => void): Promise<void> {
         return this.transaction(state.prototypeId, async () => {
-            const transaction = this.transactions.getStore()!;
+            const transaction = this.ownedTransaction(state.prototypeId)!;
             const stored = await readJsonFile(this.statePath(state.prototypeId));
             const revision = stored === undefined ? 0 : this.decode(stored, state.prototypeId).revision;
             if (state.revision !== revision) {
@@ -211,6 +219,9 @@ export class ProjectStore<T extends StoredProject> {
             const next = { ...state, revision: revision + 1 };
             await writeJsonAtomically(this.statePath(state.prototypeId), next, () => {
                 transaction.assertOwned();
+                for (let ancestor = this.transactions.getStore(); ancestor; ancestor = ancestor.parent) {
+                    if (ancestor.active) ancestor.assertOwned();
+                }
                 beforeCommit?.();
             });
             state.revision = next.revision;

@@ -10,20 +10,25 @@ import { SpeechTextarea } from "./speech-textarea.js";
 const label = (stage: LifecycleStageId) => stage === "sketch" ? "Drawings" : lifecycleStages.find(item => item.id === stage)?.label || stage;
 const statuses: Record<ChangeRequest["status"], string> = {
     queued: "Queued for impact review", analyzing: "Checking affected stages", proposed: "Review change impact",
-    active: "Updating affected work", completed: "Change handled", cancelled: "Cancelled", failed: "Impact assessment failed",
+    reviewing: "Reviewing draft changes", active: "Updating affected work", completed: "Change handled", cancelled: "Cancelled", failed: "Impact assessment failed",
 };
 
 export function ChangeRequestsPanel() {
-    const { state, post, pending, browseStage } = useUi();
+    const { state, post, pending, browseStage, reviewStage } = useUi();
     const project = useProjectView();
     const action = useAction("change-request");
     const requests = state.changeRequests ?? [];
-    const current = requests.find(item => !["completed", "cancelled"].includes(item.status));
+    const current = requests.find(item => !["completed", "cancelled", "reviewing"].includes(item.status))
+        ?? requests.find(item => item.status === "reviewing");
     const [refining, setRefining] = useState<string | null>(null);
     const [drafts, setDrafts] = useDraft<Record<string, string>>("change-request-details", {});
     if (!requests.length) return null;
     const plan = current?.assessment;
     const busy = pending || hasActiveJobs(state) || state.provider?.canSubmitAnswers === false;
+    const draftBusy = pending || state.provider?.canSubmitAnswers === false;
+    const earlier = (stage: string) => stage !== "none" && lifecycleStages.findIndex(item => item.id === stage)
+        < lifecycleStages.findIndex(item => item.id === state.lifecycle.currentStage);
+    const opensDraft = Boolean(!state.stageReview && reviewStage && plan && earlier(plan.startStage));
     async function decide(decision: string) {
         if (!current) return;
         const next = await action.run(() => post<UiState>("/api/change-requests/decision", {
@@ -33,7 +38,7 @@ export function ChangeRequestsPanel() {
         if (!next) return;
         setRefining(null);
         if (decision === "approve") {
-            project.resumeDiscovery();
+            if (!state.stageReview) project.resumeDiscovery();
             browseStage(next.lifecycle.currentStage);
         }
     }
@@ -63,7 +68,7 @@ export function ChangeRequestsPanel() {
                 <ol className="change-stage-path" aria-label="Affected stages">
                     {plan.stages.map(item => <li key={item.stage} title={item.reason}>
                         <strong>{label(item.stage)}</strong>
-                        <span>{current.status === "active"
+                        <span>{["active", "reviewing"].includes(current.status)
                             ? current.remainingStages.includes(item.stage) ? "Update pending" : "Saved"
                             : item.stage === plan.startStage ? "Start here" : "Review / update"}</span>
                     </li>)}
@@ -85,10 +90,17 @@ export function ChangeRequestsPanel() {
                     disabled={busy} aria-describedby="change-action-status" />
                 <button className="plan-button" disabled={busy || !drafts[current.id]?.trim()} type="submit">Check impact with this detail</button>
             </form> : current.status === "proposed" && plan && <div className="change-actions">
-                {plan.startStage !== "development" && <button id="approve-change" className="plan-button" disabled={busy}
-                    onClick={() => void decide("approve")}><ArrowRight size={15} aria-hidden="true" />
-                    Review {plan.startStage === "none" ? "change" : label(plan.startStage)} changes</button>}
-                {plan.startStage === "development" && <button className="plan-button" disabled={busy}
+                {plan.startStage !== "development" && <button id="approve-change" className="plan-button" disabled={opensDraft ? draftBusy : busy}
+                    onClick={() => {
+                        if (opensDraft && reviewStage && plan.startStage !== "none") {
+                            const target = plan.startStage;
+                            void action.run(() => reviewStage(target, current));
+                        }
+                        else void decide("approve");
+                    }}><ArrowRight size={15} aria-hidden="true" />
+                    {opensDraft ? "Review draft changes" : state.stageReview ? "Update this draft"
+                        : `Review ${plan.startStage === "none" ? "change" : label(plan.startStage)} changes`}</button>}
+                {plan.startStage === "development" && !state.stageReview && <button className="plan-button" disabled={busy}
                     onClick={() => void continueDevelopment(true)}>Review in Development</button>}
                 <button className="plan-button secondary" disabled={busy} onClick={() => setRefining(current.id)}>Refine request</button>
             </div>}
@@ -96,14 +108,25 @@ export function ChangeRequestsPanel() {
                 {current.remainingStages.length === 1 && current.remainingStages[0] === "development"
                     ? <button className="plan-button" disabled={busy} onClick={() => void continueDevelopment(false)}>Continue change in Development</button>
                     : <button className="plan-button secondary" disabled={pending} onClick={() => {
-                    project.resumeDiscovery(); browseStage(state.lifecycle.currentStage);
+                    if (!state.stageReview) project.resumeDiscovery();
+                    browseStage(state.lifecycle.currentStage);
                 }}>Go to {label(state.lifecycle.currentStage)}</button>}
                 <span className="muted">Only affected work is revisited. Saved versions remain available.</span>
+            </div>}
+            {current.status === "reviewing" && <div className="change-actions">
+                {current.remainingStages.length === 1 && current.remainingStages[0] === "development"
+                    ? <button className="plan-button" disabled={busy} onClick={() => void continueDevelopment(false)}>Continue change in Development</button>
+                    : <button className="plan-button secondary" disabled={draftBusy} onClick={() => {
+                        const next = current.remainingStages[0];
+                        if (next && earlier(next) && reviewStage) void action.run(() => reviewStage(next, current));
+                        else browseStage(state.lifecycle.currentStage);
+                    }}>{current.remainingStages[0] && earlier(current.remainingStages[0]) ? "Open pinned draft review" : "Continue current-stage work"}</button>}
+                <span className="muted">Draft edits stay separate until Apply changes. The current stage has not been reopened.</span>
             </div>}
             <div className="change-actions">
                 {["queued", "failed", "proposed"].includes(current.status) && <button className="plan-button secondary" disabled={busy}
                     onClick={() => void decide("retry")}><RefreshCw size={14} aria-hidden="true" />Check impact again</button>}
-                <button className="plan-button secondary" disabled={busy} onClick={() => void decide("cancel")}
+                <button className="plan-button secondary" disabled={current.status === "reviewing" ? draftBusy : busy} onClick={() => void decide("cancel")}
                     title={current.status === "active" ? "Stop the remaining change request without undoing saved work." : "Leave accepted work unchanged."}>
                     <X size={14} aria-hidden="true" />{current.status === "active" ? "Cancel remaining change" : "Cancel request"}</button>
             </div>

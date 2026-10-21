@@ -26,6 +26,28 @@ function store(root: string, Store = ProjectStore) {
     });
 }
 
+test("nested review and parent transactions retain both owners until their cross-state save finishes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tandem-review-store-"));
+    const current = store(root), other = store(root);
+    try {
+        await current.save(await current.load("parent"));
+        await current.save(await current.load("draft"));
+        await current.transaction("parent", () => current.transaction("draft", async () => {
+            await assert.rejects(other.transaction("parent", async () => {}, true), { code: "state_busy" });
+            await assert.rejects(other.transaction("draft", async () => {}, true), { code: "state_busy" });
+            const parent = await current.load("parent");
+            parent.answers.push("Apply the reviewed draft");
+            await current.save(parent);
+            const draft = await current.load("draft");
+            draft.answers.push("Saved separately");
+            await current.save(draft);
+        }));
+        assert.deepEqual((await other.load("parent")).answers, ["Apply the reviewed draft"]);
+        await other.transaction("parent", async () => {}, true);
+        await other.transaction("draft", async () => {}, true);
+    } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 let compiled: Promise<string> | undefined;
 async function atomicWriteHarness(options: {
     rename: typeof rename;

@@ -54,7 +54,8 @@ export function PreparationPanel() {
     || (preparation.status === "needs-attention"
       ? "Preparation completed with blockers. Requirements suggestions are still available."
       : preparation.status === "ready"
-        ? "Preparation completed and its suggestions were passed to Requirements."
+        ? state.stageReview ? "Draft analysis is ready. Apply changes explicitly to update accepted Preparation."
+          : "Preparation completed and its suggestions were passed to Requirements."
         : "");
 
   function retry() {
@@ -63,7 +64,7 @@ export function PreparationPanel() {
   }
 
   return <div>
-    {state.goal && <section className="preparation-stage-card" aria-label="Original project brief">
+    {state.goal && !state.stageReview && <section className="preparation-stage-card" aria-label="Original project brief">
       <h3>Original project brief</h3><p id="goal" className="goal">{state.goal}</p>
     </section>}
     <section className="preparation-stage-card">
@@ -106,7 +107,7 @@ export function PreparationPanel() {
             </p>
             <div id="preparation-result-suggestions" className="preparation-result-suggestions">
               {!!preparation.suggestedUsages?.length && <>
-                <strong>Passed to Requirements</strong>
+                <strong>{state.stageReview ? "Draft usage suggestions" : "Passed to Requirements"}</strong>
                 <ul>{preparation.suggestedUsages.map((usage, index) => <li key={index}>{usage}</li>)}</ul>
               </>}
             </div>
@@ -149,7 +150,7 @@ export function PreparationPanel() {
               className="retry-preparation"
               type="button"
               aria-describedby="preparation-stage-message"
-              hidden={preparation.status !== "failed" || currentStage !== "prepare"}
+              hidden={Boolean(state.stageReview) || preparation.status !== "failed" || currentStage !== "prepare"}
               disabled={retryDisabled}
               onClick={retry}
             >

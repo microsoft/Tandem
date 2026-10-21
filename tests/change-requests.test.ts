@@ -4,6 +4,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
     activateChange, applyRequirementsDelta, changeBaselineDigest, readChangeAssessment, readChangeRequests, preserveUnchangedScreens,
+    prototypeNeedsChangeUpdate,
     type ChangeAssessment, type ChangeRequest, type RequirementsDelta,
 } from "../src/change-requests.js";
 import { migrateLifecycle } from "../src/lifecycle.js";
@@ -170,7 +171,7 @@ function approval(request: ChangeRequest) {
     return { requestId: request.id, analysisId: request.analysisId, baselineDigest: request.baselineDigest, decision: "approve" };
 }
 
-test("prototype feedback assesses once without mutating accepted work; approval patches only requested scope", async () => {
+test("prototype feedback assesses once and opens a pinned draft without changing accepted work", async () => {
     const f = await fixture();
     try {
         const { receipt, state } = await assess(f);
@@ -184,18 +185,22 @@ test("prototype feedback assesses once without mutating accepted work; approval 
         assert.equal(repeated.requestId, receipt.requestId);
         assert.equal(f.h.requests.length, 1);
         const next = await f.h.api.decideChangeRequest("sample", "project:tandem", approval(state.changeRequests![0]));
-        assert.equal(next.lifecycle.currentStage, "requirements");
-        assert.equal(next.decisionGraph.nodes.filter(item => item.answer).length, 3);
-        assert.equal(next.question!.id, "save-location");
+        assert.equal(next.lifecycle.currentStage, "prototype");
+        assert.equal(next.changeRequests![0].status, "reviewing");
+        assert.equal(prototypeNeedsChangeUpdate(next), false, "Opening a draft cannot make the accepted legacy preview stale.");
+        const draft = await f.h.api.loadState(next.changeRequests![0].reviewId!);
+        assert.equal(draft.decisionGraph.nodes.filter(item => item.answer).length, 3);
+        assert.equal(draft.question!.id, "save-location");
+        assert.deepEqual(plain(next.decisionGraph), plain(f.initial.decisionGraph));
         assert.deepEqual(plain(next.prototypeFlow), plain(f.initial.prototypeFlow));
         const baseline = JSON.parse(await readFile(join(f.h.root, next.changeRequests![0].snapshotPath!), "utf8"));
-        assert.equal(baseline.baseline.prototypeFlow.displayedCheckpointId, "old-interaction");
-        assert.equal(baseline.baseline.decisionGraph.nodes.length, 3);
+        assert.equal(baseline.prototypeFlow.displayedCheckpointId, "old-interaction");
+        assert.equal(baseline.decisionGraph.nodes.length, 3);
         assert.equal(f.h.requests.length, 1, "approval does not replay the old prototype or interview");
     } finally { await f.h.close(); }
 });
 
-test("stale approval and private Development ownership cannot change upstream artifacts", async () => {
+test("stale proposals cannot create drafts; private Development permits drafting but blocks Apply", async () => {
     const f = await fixture();
     try {
         const { state } = await assess(f);
@@ -204,9 +209,41 @@ test("stale approval and private Development ownership cannot change upstream ar
         const unchanged = await f.h.api.loadState("sample");
         assert.equal(unchanged.lifecycle.currentStage, "prototype");
         assert.equal(unchanged.decisionGraph.nodes.length, 3);
+        await f.h.api.persistState({ ...unchanged, deferred: f.initial.deferred });
         f.h.developmentRequests.push({ id: "busy" });
-        await assert.rejects(f.h.api.decideChangeRequest("sample", "project:tandem", approval(state.changeRequests![0])), /Development/);
+        const reviewing = await f.h.api.decideChangeRequest("sample", "project:tandem", approval(state.changeRequests![0]));
+        const draft = await f.h.api.loadState(reviewing.changeRequests![0].reviewId!);
+        draft.decisionGraph.nodes.find(item => item.id === "save-location")!.answer = "Keep";
+        await f.h.api.persistState(draft);
+        await assert.rejects(f.h.api.applyStageReview("sample", "project:tandem", {
+            reviewId: draft.prototypeId, expectedRevision: draft.revision,
+        }), /Development/);
         assert.equal((await f.h.api.loadState("sample")).lifecycle.currentStage, "prototype");
+    } finally { await f.h.close(); }
+});
+
+test("cancelling a pinned proposal retains current work and cannot abandon a running draft", async () => {
+    const f = await fixture();
+    try {
+        const { state } = await assess(f);
+        const reviewing = await f.h.api.decideChangeRequest("sample", "project:tandem", approval(state.changeRequests![0]));
+        const draft = await f.h.api.loadState(reviewing.changeRequests![0].reviewId!);
+        draft.processing = { action: "answer-decision", status: "running", requestId: "draft-answer", requestedAt: draft.updatedAt };
+        await f.h.api.persistState(draft);
+        const decision = { requestId: state.changeRequests![0].id, decision: "cancel" };
+        await assert.rejects(f.h.api.decideChangeRequest("sample", "project:tandem", decision), /Finish draft work/);
+        await assert.rejects(f.h.api.reopenLifecycleStage("sample", "requirements", "project:tandem"), /review draft work/);
+        draft.processing = null; await f.h.api.persistState(draft);
+        const current = await f.h.api.loadState("sample");
+        current.processing = { action: "build-prototype", status: "running", requestId: "current-work", requestedAt: current.updatedAt };
+        await f.h.api.persistState(current);
+        const cancelled = await f.h.api.decideChangeRequest("sample", "project:tandem", decision);
+        assert.equal(cancelled.changeRequests![0].status, "cancelled");
+        assert.equal(cancelled.processing.requestId, "current-work");
+        assert.equal(prototypeNeedsChangeUpdate(cancelled), false, "Cancelling an unapplied draft cannot invalidate the accepted preview.");
+        assert.deepEqual(cancelled.lifecycle, current.lifecycle);
+        assert.deepEqual(cancelled.decisionGraph, current.decisionGraph);
+        assert.ok(cancelled.stageReviews?.find(item => item.id === draft.prototypeId)?.discardedAt);
     } finally { await f.h.close(); }
 });
 
@@ -271,14 +308,20 @@ test("public prototype feedback reaches impact assessment rather than the writab
     }
 });
 
-test("an approved new usage returns from Requirements to a delta checkpoint based on the existing application", async () => {
+test("applying a draft usage keeps Prototype current and builds a delta only when explicitly requested", async () => {
     const f = await fixture();
     try {
         const plan = assessment(); plan.requirements!.upsert = [];
         const { state } = await assess(f, plan);
         const changed = await f.h.api.decideChangeRequest("sample", "project:tandem", approval(state.changeRequests![0]));
-        assert.equal(changed.question, null, "an unambiguous new usage does not repeat answered questions");
-        await f.h.api.completeLifecycleStage("sample", "requirements", "project:tandem");
+        const draft = await f.h.api.loadState(changed.changeRequests![0].reviewId!);
+        assert.equal(draft.question, null, "an unambiguous new usage does not repeat answered questions");
+        const accepted = await f.h.api.applyStageReview("sample", "project:tandem", {
+            reviewId: draft.prototypeId, expectedRevision: draft.revision,
+        });
+        assert.equal(accepted.lifecycle.currentStage, "prototype");
+        assert.equal(f.h.requests.length, 1, "Apply does not start another preview.");
+        await f.h.api.beginPrototypeBuild("sample", "project:tandem");
         await f.h.waitForRequests(2); await f.h.api.waitForAnswer("sample");
         const ready = await f.h.api.loadState("sample");
         const checkpoint = ready.prototypeFlow!.checkpoints.at(-1)!;

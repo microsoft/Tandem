@@ -26,9 +26,14 @@ interface VisualAcceptance {
 function VisualFeedback({ checkpointId, selection, name, disabled }: {
   checkpointId: string; selection: VisualSelection; name: string; disabled: boolean;
 }) {
-  const { state, post } = useUi();
+  const { state, post, setReviewDirty } = useUi();
   const action = useAction("visual-feedback");
   const [draft, setDraft] = useDraft("visual-feedback:" + selection.directionId, { value: "", version: 0 });
+  useEffect(() => {
+    const key = `visual-feedback:${selection.directionId}`;
+    setReviewDirty?.(key, Boolean(draft.value.trim()));
+    return () => setReviewDirty?.(key, false);
+  }, [draft.value, selection.directionId, setReviewDirty]);
   const submissions = useRef(new Map<string, string>());
   return <form id="visual-feedback-form" className="visual-feedback inline-composer" onSubmit={event => {
     event.preventDefault();
@@ -61,7 +66,8 @@ export function VisualExplorationPanel({ active, connected, inspecting, onInspec
   onApply?: (checkpointId: string) => Promise<void>; defaultPreviewReady: boolean;
   renderActions?: (actions: ReactNode) => ReactNode;
 }) {
-  const { state, post, pending, canEdit } = useUi();
+  const { state, post, pending, canEdit, apiUrl } = useUi();
+  const previewOwner = state.stageReview?.parentId ?? state.prototypeId;
   const action = useAction("visual-exploration");
   const exploration = state.prototypeFlow?.visualExploration;
   const checkpoint = state.prototypeFlow?.checkpoints.find(item => item.id === exploration?.checkpointId);
@@ -170,7 +176,8 @@ export function VisualExplorationPanel({ active, connected, inspecting, onInspec
     setAvailability(previous => ({ binding, available: previous.binding === binding && previous.available, busy: true, reason: "" }));
     void (async () => {
       try {
-        const response = await fetch("/api/prototype/preview-status?target=exploration", { cache: "no-store", redirect: "error",
+        const endpoint = "/api/prototype/preview-status?target=exploration";
+        const response = await fetch(apiUrl?.(endpoint) ?? endpoint, { cache: "no-store", redirect: "error",
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(7000)]) });
         const value = await response.json();
         if (!response.ok || value.generation !== state.generation || value.checkpointId !== checkpoint.id ||
@@ -196,7 +203,7 @@ export function VisualExplorationPanel({ active, connected, inspecting, onInspec
       requestId = crypto.randomUUID();
       setBridge({ key: selectionKey, ready: false, error: "" });
       try {
-        source.postMessage({ type: "tandem:visual:apply", requestId, prototypeId: state.prototypeId,
+        source.postMessage({ type: "tandem:visual:apply", requestId, prototypeId: previewOwner,
           checkpointId: checkpoint.id, selection }, origin);
       } catch (error) {
         setBridge({ key: selectionKey, ready: false, error: error instanceof Error ? error.message : "The visual preview could not receive these settings." });
@@ -207,7 +214,7 @@ export function VisualExplorationPanel({ active, connected, inspecting, onInspec
     };
     const receive = (event: MessageEvent) => {
       if (event.source !== source || event.source !== frame.current?.contentWindow || event.origin !== origin ||
-          event.data?.prototypeId !== state.prototypeId || event.data.checkpointId !== checkpoint.id) return;
+          event.data?.prototypeId !== previewOwner || event.data.checkpointId !== checkpoint.id) return;
       if (event.data.type === "tandem:visual:ready") { send(); return; }
       if (event.data.requestId !== requestId || !["tandem:visual:applied", "tandem:visual:error"].includes(event.data.type)) return;
       window.clearTimeout(timer);

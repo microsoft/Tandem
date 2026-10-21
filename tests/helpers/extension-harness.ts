@@ -19,6 +19,9 @@ interface CanvasContext {
 }
 
 interface HarnessApi {
+    openStageReview(id: string, provider: string, input: Record<string, unknown>): Promise<TandemState>;
+    applyStageReview(id: string, provider: string, input: Record<string, unknown>): Promise<TandemState>;
+    discardStageReview(id: string, provider: string, input: Record<string, unknown>): Promise<TandemState>;
     submitChangeRequest(id: string, provider: string, input: Record<string, unknown>): Promise<{ requestId: string }>;
     decideChangeRequest(id: string, provider: string, input: Record<string, unknown>): Promise<TandemState>;
     continueChangeWork(id: string): Promise<void>;
@@ -114,7 +117,7 @@ async function compile(): Promise<string> {
         logLevel: "silent",
         define: { __TANDEM_VERSION__: JSON.stringify("test") },
     });
-    return result.outputFiles[0].text + "\nObject.assign(module.exports, { submitChangeRequest, decideChangeRequest, continueChangeWork, sendChangeToDevelopment }); module.exports.assertDevelopmentAvailable = assertDevelopmentAvailable; module.exports.resumeEffortRun = resumeEffortRun; module.exports.waitForSuggestion = id => activeSuggestionRuns.get(id);";
+    return result.outputFiles[0].text + "\nObject.assign(module.exports, { openStageReview, applyStageReview, discardStageReview, submitChangeRequest, decideChangeRequest, continueChangeWork, sendChangeToDevelopment }); module.exports.assertDevelopmentAvailable = assertDevelopmentAvailable; module.exports.resumeEffortRun = resumeEffortRun; module.exports.waitForSuggestion = id => activeSuggestionRuns.get(id);";
 }
 
 export async function extensionHarness(speechEnvironment: Record<string, string> = {}, sharedRoot?: string, rendererHtml = "", workspaceRoot?: string, unselectedEntry = false, gitReady = false) {

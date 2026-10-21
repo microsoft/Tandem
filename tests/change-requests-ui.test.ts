@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { reactHarness, response, state } from "./helpers/react-harness.js";
 import type { ChangeRequest } from "../src/change-requests.js";
+import { createStageReview, type StageReviewReference } from "../src/stage-review.js";
 
 function request(): ChangeRequest {
     return { version: 1, id: "change", clientRequestId: "client", originStage: "prototype", message: "Add save and reload.",
@@ -23,18 +24,26 @@ test("impact review stays beside the existing prototype and submits the exact di
     assert.match(h.document.querySelector(".change-impact")!.textContent!, /Joint controls/);
     assert.equal(h.store.getSnapshot().state.lifecycle.currentStage, "prototype");
     assert.equal(h.requests.filter(item => item.options.method === "POST").length, 0);
+    const reference: StageReviewReference = { version: 1, id: "review-22222222-2222-2222-2222-222222222222",
+        stage: "requirements", generation: initial.generation, createdAt: initial.updatedAt, appliedAt: null, discardedAt: null,
+        changeRequestId: "change" };
+    const draft = { ...createStageReview(initial, reference), revision: 1, provider: initial.provider,
+        stageReviewStatus: { conflict: "", blocker: "Review the draft decisions.", changed: true, currentStage: "prototype",
+            appliedAt: null, discardedAt: null } };
     h.setFetch(async path => {
-        assert.equal(path, "/api/change-requests/decision");
-        const next = { ...initial, revision: 2, stage: "requirements" as const,
-            lifecycle: { ...initial.lifecycle, currentStage: "requirements" as const, completedStages: ["prepare" as const] },
-            changeRequests: [{ ...request(), status: "active" as const, remainingStages: ["requirements" as const, "prototype" as const] }] };
-        return response(next);
+        if (path === "/api/reviews/open") return response({ draft });
+        if (path.startsWith(`/api/reviews/${reference.id}/`)) return response(draft);
+        assert.equal(path, "/api/state");
+        return response({ ...initial, revision: 2, stageReviews: [reference],
+            changeRequests: [{ ...request(), status: "reviewing", reviewId: reference.id, remainingStages: ["requirements", "prototype"] }] });
     });
     await h.click("approve-change");
-    const sent = h.requests.find(item => item.path === "/api/change-requests/decision")!;
-    assert.deepEqual(sent.body, { requestId: "change", analysisId: "analysis", baselineDigest: "a".repeat(64), decision: "approve", answer: "" });
+    const sent = h.requests.find(item => item.path === "/api/reviews/open")!;
+    assert.deepEqual(sent.body, { stageId: "requirements", expectedGeneration: initial.generation,
+        changeRequestId: "change", analysisId: "analysis", baselineDigest: "a".repeat(64) });
     assert.equal(h.store.getSnapshot().state.previewUrl, initial.previewUrl);
-    assert.equal(h.store.getSnapshot().state.lifecycle.currentStage, "requirements");
+    assert.equal(h.store.getSnapshot().state.lifecycle.currentStage, "prototype");
+    assert.match(h.get("design-tree-panel").textContent!, /Pinned draft review/);
     assert.equal(h.errors.length, 0, h.errors.join("\n"));
 });
 

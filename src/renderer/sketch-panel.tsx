@@ -216,6 +216,10 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
   const available = Boolean(state.sketch && (state.lifecycle.currentStage === "sketch" || state.sketch.current));
   const invalidFields = Object.values(drafts).some((draft) => Boolean(draft.error));
   const dirty = editor.dirty || Boolean(gesture) || Object.keys(drafts).length > 0;
+  useEffect(() => {
+    ui.setReviewDirty?.("drawings", dirty || Boolean(instruction.trim()));
+    return () => ui.setReviewDirty?.("drawings", false);
+  }, [dirty, instruction, ui.setReviewDirty]);
   const incoming = useMemo(() => {
     try { return { preview: readSketchPreview(state, state.sketchPreview), error: "" }; }
     catch (cause) { return { preview: null, error: errorMessage(cause) }; }
@@ -287,12 +291,13 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
   function requestLabel(kind: RequestHistoryItem["kind"], value: string) {
     if (kind === "revise") return value || "Revise drawings";
     if (kind === "generate") return editor.document ? "Regenerate drawings" : "Generate drawings";
-    if (kind === "approve") return "Approve drawings and continue";
+    if (kind === "approve") return state.stageReview ? "Approve draft drawings" : "Approve drawings and continue";
     return "Save drawings";
   }
   function responseLabel(kind: RequestHistoryItem["kind"], result: UiState | undefined) {
     if (kind === "save") return `Saved ${result?.sketch.current ? `revision ${result.sketch.current.number}` : "drawings"}.`;
-    if (kind === "approve") return "Approved drawings and continued to the next stage.";
+    if (kind === "approve") return state.stageReview ? "Draft drawings approved. Accepted work is unchanged until Apply changes."
+      : "Approved drawings and continued to the next stage.";
     const processing = result?.processing;
     if (processing?.message) return processing.message;
     return kind === "revise" ? "Revision request queued." : "Drawing generation queued.";
@@ -358,7 +363,7 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
     updateLoad({ loading: true });
     if (discard || loadRef.current.loadedKey === null) action.setError("");
     try {
-      const response = await fetch("/api/sketch", { cache: "no-store", signal: abort.signal });
+      const response = await fetch(latest.current.apiUrl?.("/api/sketch") ?? "/api/sketch", { cache: "no-store", signal: abort.signal });
       const result = await response.json() as { sketch?: SketchState; document?: unknown; error?: string };
       if (!response.ok) throw new Error(result.error || "Could not load drawings.");
       if (!mounted.current || sequence !== request.current || startKey !== loadKey(stateRef.current)) return;
@@ -555,7 +560,7 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
             throw new Error("Drawing approval could not be confirmed.");
           }
           ensureSketchWritable();
-          await post("/api/stage/complete", { stageId: "sketch" }, identity);
+          if (!stateRef.current.stageReview) await post("/api/stage/complete", { stageId: "sketch" }, identity);
           updateHistory(historyId, { response: responseLabel("approve", stateRef.current), status: "success" });
         } else if (kind !== "save") {
           const result = await post("/api/sketch", {
@@ -850,13 +855,13 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
         <Sparkles size={16} aria-hidden="true" />
       </button>
       <button id="sketch-save" className="sketch-icon-button" type="button" title="Save drawings" aria-label="Save drawings"
-        disabled={!writable || !document || !editor.dirty || conflict || invalidFields} onClick={() => void submit("save")}>
+        disabled={!writable || !document || !editor.dirty && !(state.stageReview && state.sketch.status === "stale") || conflict || invalidFields} onClick={() => void submit("save")}>
         <Save size={16} aria-hidden="true" />
       </button>
       <button id="sketch-approve" className="plan-button" type="button"
         hidden={isSketchRevisionApproved(state.sketch) && !dirty && !conflict}
         disabled={!writable || emptyScreens || conflict || state.sketch.status === "stale" || invalidFields}
-        onClick={() => void submit("approve")}><Check size={14} aria-hidden="true" /> Approve drawings and continue</button>
+        onClick={() => void submit("approve")}><Check size={14} aria-hidden="true" />{state.stageReview ? "Approve draft drawings" : "Approve drawings and continue"}</button>
       {isSketchRevisionApproved(state.sketch) && !dirty && !conflict && <span role="status">Saved drawings approved</span>}
     </div>
     <p id="sketch-status" className={incoming.preview || loadState.loading || action.busy || conflict || dirty || state.sketch.status === "stale" ? "muted" : "visually-hidden"} role="status" aria-live="polite" hidden={!status}>{status}</p>
@@ -1135,7 +1140,7 @@ export function SketchPanel({ createLiveSession }: { createLiveSession?: SketchL
           value={instruction} onValueChange={setInstruction} onKeyDown={sendShortcut} composer={composer} aria-describedby="sketch-status"
           placeholder="Describe a drawing change... (Ctrl+Enter)" />
         : <SketchLivePanel identity={identityOf(state)} input={instructionInput} createSession={createLiveSession}
-            enabled={canEdit("sketch") && state.provider?.canSubmitAnswers !== false && !state.effortReset
+            enabled={!state.stageReview && canEdit("sketch") && state.provider?.canSubmitAnswers !== false && !state.effortReset
               && !skipped && !conflict && !invalidFields}
             canStart={writable && Boolean(document)}
             context={sketchLiveContext(state, editor.document, selectedScreen, selectedShape)} revise={reviseByVoice}

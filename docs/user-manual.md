@@ -22,8 +22,10 @@ diagrams or concrete input/output examples, not just prose. Those views describe
 one agreement: check that the same behavior and boundaries appear consistently.
 Confirmed behavior, assumptions and unanswered questions are not interchangeable.
 
-The circled-dot **Current phase** marker identifies the working phase independently of the selected view;
-it does not mean an AI model is running. Empty requirement ledger sections stay hidden.
+The sidebar tracks actual stage progress, not the selected tab. Its circled-dot
+**Current phase** marker identifies the working phase; completed stages show a
+lock because their accepted content is read-only. Neither marker means an AI
+model is running. Empty requirement ledger sections stay hidden.
 Hosted windows keep the folder identity in the host header rather than repeating
 it in the sidebar; an unhosted canvas retains the sidebar name and full-path tooltip.
 Use the left navigation to browse, **Current work** to find ongoing work/attention,
@@ -37,6 +39,26 @@ the tabs, wrapping below them when space is limited.
 Development Conversation appears only in Development; its draft and
 attachments stay hidden when you browse other phases, not moved to their inputs.
 Parent Copilot chat is not a Development submission.
+
+### Review an earlier stage without moving current work
+
+Open an earlier stage's tab and choose **Review changes**. Its existing editor
+opens in a separate, pinned draft. **Current work** returns to the working stage;
+coming back to the review keeps its editor and unsent input. Background progress
+does not switch the pinned tab.
+
+| Action | Effect |
+| --- | --- |
+| Save or edit a draft | Changes only the draft, not accepted inputs or current work. |
+| **Build draft preview** | Copies the saved prototype into a new candidate workspace and runs the requested update. Merely opening review does neither. |
+| **Apply changes** | Updates accepted content after checking the draft's baseline and waiting for active work to settle. The current stage stays in place; affected downstream outputs need review. |
+| **Exit review** | Leaves the editor. Saved edits remain available through **Resume draft review**. |
+| **Reopen** | Makes the earlier stage current again and marks dependent outputs stale. Use it only when you intend to restart that part of the workflow. |
+
+**Compare with the accepted baseline** shows what the draft started from.
+If accepted inputs changed meanwhile, the draft is kept but cannot overwrite
+them: compare it, discard it, then start a fresh review. Drawings drafts support
+direct editing and revision instructions; GPT-live remains current-stage only.
 
 ## Find saved work
 
@@ -78,8 +100,9 @@ Already-approved, unchanged drawings may show **Finish Drawings and continue**
 instead. A saved/streamed revision alone is not approval.
 
 For chat changes, **Project changes** shows the earliest affected stage, the
-proposed updates and the work that stays unchanged. Approve that proposal before
-earlier stages change. Requirements keeps independent answers and shows previous
+proposed updates and the work that stays unchanged. **Review draft changes**
+opens an earlier-stage proposal without reopening that stage; only **Apply
+changes** updates its accepted content. Requirements keeps independent answers and shows previous
 answers for decisions that need review. The saved prototype remains available
 while its update is prepared. **Check impact again** refreshes a stale proposal;
 it does not approve it.
