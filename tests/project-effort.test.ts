@@ -59,7 +59,7 @@ test("Settings effort bridge uses the existing public endpoint and preserves par
     h.render(value); await h.flush();
     assert.equal(h.requests.length, 0);
     assert.equal(h.document.querySelector("#project-effort-settings"), null, "There is no second navigation disclosure.");
-    const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
+    const { frame } = await h.projectSettings();
     const replies: Array<{ type: string; id: string; error?: string; settings?: typeof settings }> = [];
     frame.contentWindow!.postMessage = message => { replies.push(JSON.parse(JSON.stringify(message))); };
     const send = async (data: object, origin = "http://127.0.0.1:8765") => {
@@ -68,6 +68,13 @@ test("Settings effort bridge uses the existing public endpoint and preserves par
         await h.flush();
     };
     await send({ type: "project-effort-apply", id: "foreign", effort: "low" }, "http://127.0.0.1:9999");
+    assert.equal(h.requests.length, 0);
+    const status = h.get("project-current-work").getAttribute("aria-label");
+    await send({ type: "status", status: "working", active: true });
+    await send({ type: "discovery-send", id: "not-a-settings-action", key: "unrelated", text: "Do not dispatch" });
+    await send({ type: "process-open" });
+    assert.equal(h.get("project-current-work").getAttribute("aria-label"), status);
+    assert.equal(h.document.querySelector(".process-dialog"), null);
     assert.equal(h.requests.length, 0);
     await send({ type: "project-effort-read", id: "read" });
     assert.equal(replies.find(reply => reply.id === "read")?.settings?.stage1.status, "unset");

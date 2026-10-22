@@ -1,11 +1,10 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { PanelRightClose, PanelRightOpen } from "lucide-react";
 import { canOpenDevelopment, hasActiveJobs, useUi, type UiState } from "./ui-context.js";
-import { DiscoveryProjectSettings, ProjectEffortError, requestProjectEffort, useProviderReload } from "./project-effort.js";
+import { ProjectEffortError, requestProjectEffort, useProviderReload } from "./project-effort.js";
 import type { LifecycleStageId } from "../types.js";
 import type { StartingPath } from "../project-entry.js";
 import { useDevelopmentGit } from "./development-git.js";
-import { ProcessPanel } from "./process-panel.js";
 import { validHandoffActivity, validHandoffDesign, type HandoffActivity, type HandoffDesign } from "../../development/tandem/public/handoff-presentation.js";
 import { validDevelopmentStatus, type DevelopmentStatus } from "../../development/tandem/public/development-status.js";
 
@@ -64,6 +63,7 @@ export function discoveryEntries(state: UiState): Entry[] {
 export interface ProjectOutput { id: string; group: "Design" | "Plan" | "Implementation" | "Review"; title: string; detail: string; binding: string }
 interface ProjectView {
     visible: boolean;
+    workspaceRequested: boolean;
     url: string | null; channel: string; error: string; active: boolean; starting: boolean; developmentEntered: boolean;
     status: string; detail: string; designRevision: string | null; designChanged: boolean; attention: number;
     maintenanceError: string;
@@ -73,7 +73,6 @@ interface ProjectView {
     activeRequestId: string | null;
     compacting: boolean;
     presentation: DevelopmentStatus | null;
-    processError: string;
     activate(retry?: boolean): Promise<void>; command(command: string): void;
     outputs: ProjectOutput[]; outputStatus: string; outputReason: string; outputError: string; selectedOutput: string | null;
     openOutput(item: ProjectOutput): void;
@@ -103,15 +102,27 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
         outputs: [] as ProjectOutput[], outputStatus: "unverified", outputReason: "Development outputs have not been verified.",
         outputError: "", selectedOutput: null as string | null });
     const frame = useRef<HTMLIFrameElement>(null);
+    const workspaceRequested = useRef(false);
+    const settingsFrame = useRef<HTMLIFrameElement>(null);
+    const settingsDialog = useRef<HTMLDialogElement>(null);
     const [handoffStatusOwner, setHandoffStatusOwner] = useState<string | null>(null);
     const providerReload = useProviderReload(view.active || view.starting || view.status === "unknown" || effortBusy);
     const [entry, setEntry] = useState({ loading: true, busy: false, projectPath: state.projectPath ?? "", startingPath: null as StartingPath | null, error: "", ready: false });
     const choosing = useRef(false);
     const git = useDevelopmentGit();
-    const [discoverySettings, setDiscoverySettings] = useState(false);
-    const [processOpen, setProcessOpen] = useState(false);
-    const [processError, setProcessError] = useState("");
-    function openProcess() { setDiscoverySettings(false); setProcessOpen(true); }
+    const [settingsOpen, setSettingsOpen] = useState(false);
+    const [settingsRequested, setSettingsRequested] = useState(false);
+    function openSettings() { setSettingsRequested(true); setSettingsOpen(true); setViewRequested(true); }
+    useEffect(() => {
+        const dialog = settingsDialog.current;
+        if (!dialog) return;
+        if (settingsOpen) {
+            if (!dialog.open) dialog.showModal();
+        } else {
+            if (dialog.open) dialog.close();
+            document.getElementById("project-settings")?.focus();
+        }
+    }, [settingsOpen, settingsRequested]);
     const [viewRequested, setViewRequested] = useState(false);
     const pendingCommand = useRef<string | null>(null);
     const entryCallback = useRef(onEntry); entryCallback.current = onEntry;
@@ -151,7 +162,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
             }
             setEntry({ loading: false, busy: false, projectPath: value.projectPath, startingPath: value.startingPath, error: "", ready: Boolean(value.startingPath) });
             if (value.startingPath) entryCallback.current(value.startingPath, firstChoice);
-            if (developmentEntered) { setViewRequested(true); setView(v => ({ ...v, developmentEntered: true })); }
+            if (developmentEntered) { workspaceRequested.current = true; setViewRequested(true); setView(v => ({ ...v, developmentEntered: true })); }
             if (starting) {
                 startRequested.current = true;
                 setView(v => ({ ...v, starting: true }));
@@ -161,10 +172,21 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
         } finally { choosing.current = false; }
     }
     useEffect(() => { void loadEntry(); }, []);
-    function send(value: object) {
+    function send(value: { type: string; [key: string]: unknown }) {
         const { url, channel } = latest.current.view;
-        if (url) frame.current?.contentWindow?.postMessage({ protocol: "tandem-project/v1", channel, ...value }, new URL(url).origin);
+        if (url) {
+            const message = { protocol: "tandem-project/v1", channel, ...value };
+            frame.current?.contentWindow?.postMessage(message, new URL(url).origin);
+            if (["context", "layout", "appearance", "project-effort-result", "project-reload-result"].includes(value.type)) {
+                settingsFrame.current?.contentWindow?.postMessage(message, new URL(url).origin);
+            }
+        }
     }
+    useEffect(() => {
+        if (settingsOpen && view.url) settingsFrame.current?.contentWindow?.postMessage({
+            protocol: "tandem-project/v1", channel: view.channel, type: "command", command: "settings-refresh",
+        }, new URL(view.url).origin);
+    }, [settingsOpen, view.url]);
     function sync() {
         const { state, pending, view, designVisible } = latest.current;
         const workingStage = view.developmentEntered ? "development" : state.lifecycle.currentStage;
@@ -200,6 +222,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
         if (!canOpenDevelopment(latest.current.state)) { setView(v => ({ ...v, error: "Finish current discovery work or resolve ownership before activating Development." })); return; }
         if (opening.current) return;
         if (startRequested.current || latest.current.view.active) {
+            workspaceRequested.current = true;
             setView(v => ({ ...v, developmentEntered: true }));
             return;
         }
@@ -207,6 +230,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
         try {
             if (!await git.requireReady()) return;
             if (!canOpenDevelopment(latest.current.state)) throw new Error("Project ownership or discovery work changed. Review it before entering Development.");
+            workspaceRequested.current = true;
             setViewRequested(true);
             startRequested.current = true;
             setView(v => ({ ...v, starting: true, developmentEntered: true, error: "" }));
@@ -221,7 +245,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
     }
     useEffect(() => {
         let disposed = false;
-        if (!entry.ready || !viewRequested || state.provider?.canSubmitAnswers === false) return;
+        if (!viewRequested || state.provider?.canSubmitAnswers === false) return;
         void (async () => {
             try {
                 const response = await fetch("/api/development/view", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
@@ -248,9 +272,12 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
     useEffect(() => {
         const receive = (event: MessageEvent) => {
             const { state, pending, view, post } = latest.current;
-            if (!view.url || event.source !== frame.current?.contentWindow || event.origin !== new URL(view.url).origin
+            const fromSettings = event.source === settingsFrame.current?.contentWindow && Boolean(settingsFrame.current);
+            const fromWorkspace = event.source === frame.current?.contentWindow && Boolean(frame.current);
+            if (!view.url || !fromSettings && !fromWorkspace || event.origin !== new URL(view.url).origin
                 || event.data?.protocol !== "tandem-project/v1" || event.data.channel !== view.channel) return;
             const message = event.data;
+            if (fromSettings && !["ready", "settings-closed", "appearance", "project-effort-read", "project-effort-apply", "project-reload"].includes(message.type)) return;
             if (message.type === "project-reload" && typeof message.id === "string" && message.id.length > 0 && message.id.length <= 100
                 && typeof message.scope === "string" && message.scope.length <= 1024) {
                 void latest.current.providerReload.reload(message.scope).then(result =>
@@ -285,7 +312,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
             }
             if (message.type === "ready") {
                 sync();
-                if (pendingCommand.current) { send({ type: "command", command: pendingCommand.current }); pendingCommand.current = null; }
+                if (!fromSettings && pendingCommand.current) { send({ type: "command", command: pendingCommand.current }); pendingCommand.current = null; }
                 return;
             }
             if (message.type === "view-stage" && ["prepare", "requirements", "sketch", "prototype", "development"].includes(message.stage)) {
@@ -293,8 +320,8 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
                 return;
             }
             if (message.type === "show-design") { latest.current.showDesign(); return; }
-            if (message.type === "process-open") { openProcess(); return; }
-            if (message.type === "settings-closed") { document.getElementById("project-settings")?.focus(); return; }
+            if (message.type === "settings-open") { openSettings(); return; }
+            if (message.type === "settings-closed") { setSettingsOpen(false); return; }
             if (message.type === "conversation-resize"
                 && (message.width === null || Number.isFinite(message.width) && message.width >= 300
                     && message.width <= window.innerWidth)) {
@@ -308,6 +335,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
                 && ["normal", "larger", "largest"].includes(message.fontSize)) {
                 document.documentElement.dataset.projectTheme = message.theme;
                 document.documentElement.dataset.projectFontSize = message.fontSize;
+                send({ type: "appearance", theme: message.theme, fontSize: message.fontSize });
                 return;
             }
             if (["project-effort-read", "project-effort-apply"].includes(message.type)) {
@@ -387,19 +415,18 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
         window.addEventListener("message", receive);
         return () => window.removeEventListener("message", receive);
     }, []);
-    return <Context.Provider value={{ ...view, processError, maintenanceError: providerReload.view.error ? providerReload.view.message : "",
+    return <Context.Provider value={{ ...view, maintenanceError: providerReload.view.error ? providerReload.view.message : "",
         presentation: view.presentationScope === JSON.stringify([state.prototypeId, state.generation]) ? view.presentation : null,
         detail: !view.presentationScope || view.presentationScope === JSON.stringify([state.prototypeId, state.generation]) ? view.detail : "",
-        visible: designVisible, entry, chooseEntry: path => loadEntry(true, path), reloadEntry: () => loadEntry(),
+        visible: designVisible, workspaceRequested: workspaceRequested.current, entry, chooseEntry: path => loadEntry(true, path), reloadEntry: () => loadEntry(),
         gitSetupVisible: git.visible, requireDevelopmentGit: git.requireReady,
         frame, sync, activate, setHandoffStatusOwner,
-        prepareDevelopmentView: () => { setViewRequested(true); setView(v => ({ ...v, developmentEntered: true })); },
+        prepareDevelopmentView: () => { workspaceRequested.current = true; setViewRequested(true); setView(v => ({ ...v, developmentEntered: true })); },
         resumeDiscovery: () => setView(v => ({ ...v, developmentEntered: false })),
         command: command => {
-            if (command === "process") { openProcess(); return; }
+            if (command === "settings") { openSettings(); return; }
             if (!latest.current.designVisible || !latest.current.view.developmentEntered) {
-                if (command === "settings") setDiscoverySettings(true);
-                else if (command === "current-work") {
+                if (command === "current-work") {
                     if (latest.current.view.developmentEntered) latest.current.showDesign();
                     else latest.current.browseStage(latest.current.state.lifecycle.currentStage);
                 }
@@ -410,10 +437,19 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
             if (latest.current.view.outputStatus !== "verified") return;
             latest.current.showDesign();
             send({ type: "output-open", id: item.id, binding: item.binding });
-        } }}>{children}{git.dialog}{discoverySettings && <DiscoveryProjectSettings providerReload={providerReload}
-            close={() => setDiscoverySettings(false)} openProcess={openProcess} />}
-        <ProcessPanel development={view.developmentEntered} expanded dialog={{ open: processOpen, onOpenChange: setProcessOpen }}
-            onErrorChange={setProcessError} />
+        } }}>{children}{git.dialog}{settingsRequested && <dialog ref={settingsDialog}
+              role="dialog" aria-labelledby="project-settings-title" aria-describedby="project-settings-description"
+              className="dialog-content project-settings-dialog" hidden={!settingsOpen}
+              onCancel={event => { event.preventDefault(); setSettingsOpen(false); }}
+              onKeyDown={event => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); setSettingsOpen(false); } }}>
+              <div className="root-settings-heading"><h2 id="project-settings-title">Project settings</h2>
+                <button id="close-project-settings" className="plan-button secondary" onClick={() => setSettingsOpen(false)}>Close</button></div>
+              <p id="project-settings-description">Shared project preferences and independent Development settings. Opening settings does not start Development.</p>
+              {state.provider?.canSubmitAnswers === false ? <p role="status">Open Project settings in the Tandem session that owns this project.</p>
+                : view.url ? <iframe ref={settingsFrame} id="project-settings-frame" title="Project settings controls"
+                    src={`${view.url}?panel=settings`} onLoad={sync} />
+                  : <p role={view.error ? "alert" : "status"}>{view.error || "Loading project settings..."}</p>}
+        </dialog>}
     </Context.Provider>;
 }
 export function ProjectConversation() {
@@ -456,7 +492,7 @@ export function ProjectConversation() {
             aria-expanded={!historyCollapsed} onClick={() => setHistoryChoice(!historyCollapsed)}>
             {historyCollapsed ? <PanelRightOpen size={16} aria-hidden="true" /> : <><PanelRightClose size={16} aria-hidden="true" />Hide history</>}</button>}
         {view.visible && view.error && <p role="alert">{view.error}</p>}
-        {view.url && <iframe ref={view.frame} id="project-conversation-frame" title="Private Development conversation"
+        {view.url && view.workspaceRequested && <iframe ref={view.frame} id="project-conversation-frame" title="Private Development conversation"
             hidden={!view.visible} src={`${view.url}?panel=workspace`} onLoad={view.sync} allow="clipboard-read; clipboard-write" />}
         {!view.visible && <div id="discovery-history" className="discovery-history" aria-label="Discovery history" hidden={historyCollapsed}>
                 {discoveryEntries(state).map(item => <article key={item.id} data-entry-id={item.id}>

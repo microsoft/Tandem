@@ -676,3 +676,11 @@
 #project-message-context label { display: flex; gap: 8px; align-items: center; }
 #project-message-context select { display: block; min-width: 0; max-width: 100%; }
 #project-message-context p { margin: 4px 0; font-size: 12px; color: var(--muted); }
+.human-app[data-project-panel="settings"] { display: block; height: auto; overflow: auto; }
+.human-app[data-project-panel="settings"] > :not(.human-header):not(dialog):not(script) { display: none; }
+.human-app[data-project-panel="settings"] .human-header { display: block; height: auto; }
+.human-app[data-project-panel="settings"] .canvas-settings[open] {
+  position: static; width: 100%; max-height: none; padding: 8px; border: 0; border-radius: 0; box-shadow: none;
+}
+.human-app[data-project-panel="settings"] .canvas-settings > summary,
+.human-app[data-project-panel="settings"] #close-settings { display: none; }

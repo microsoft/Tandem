@@ -552,7 +552,7 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
       }
       if (file === resolve(publicRoot, "human-loop.html") && projectHost) {
         const panel = new URL(request.url, url).searchParams.get("panel") ?? "workspace";
-        requireCondition(panel === "workspace", "Unknown project presentation panel.");
+        requireCondition(["workspace", "settings"].includes(panel), "Unknown project presentation panel.");
         content = Buffer.from(content.toString("utf8").replace('class="human-app"',
           `class="human-app" data-project-panel="${panel}" data-project-origin="${projectHost.origin}" data-project-channel="${projectHost.channel}"`));
       }

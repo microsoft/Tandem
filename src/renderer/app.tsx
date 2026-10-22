@@ -568,10 +568,6 @@ function Workspace(props: WorkspaceProps) {
             </div>
             <DevelopmentArtifactList active={developmentView} />
           </section>
-          {projectView.processError && <div role="alert" className="stage-message" data-status="error">
-            <p>{projectView.processError}</p>
-            <button type="button" className="plan-button secondary" onClick={() => projectView.command("process")}>Review handoff error</button>
-          </div>}
           <details className="section ledger-details" hidden={!(["confirmed", "assumed", "deferred"] as const).some(kind => state[kind]?.length)}><summary className="eyebrow ledger-summary">Requirement ledger</summary>
             <div className="ledger">{(["confirmed", "assumed", "deferred"] as const).filter(kind => state[kind]?.length).map((kind) => <div key={kind}><h3>{kind[0].toUpperCase() + kind.slice(1)}</h3><ul id={kind}>{state[kind].map((text, index) => <li key={index}>{text}</li>)}</ul></div>)}</div>
           </details>

@@ -90,7 +90,7 @@ let lastVerifiedDesign = null;
 if (document.body.dataset.projectPanel) $('design-overview').open = false;
 const projectPresentation = installProjectPresentation({ document, window,
   changed: () => { if (snapshot) render(); },
-  settings: () => { $('canvas-settings').open = true; $('setting-theme').focus(); void refreshSettings(); },
+  settings: () => { $('canvas-settings').open = true; void refreshSettings(true); },
   effortChanged: () => { void refreshSettings(true); },
   layoutChanged: layout => splitter.setProjectLayout(layout),
   hasAttachments: () => $('annotation-preview')?.hidden === false || $('clipboard-preview')?.hidden === false,
@@ -184,7 +184,7 @@ async function saveSettings(path, data) {
 }
 $('canvas-settings').addEventListener('toggle', () => { if ($('canvas-settings').open) void refreshSettings(); });
 function closeSettings() {
-  $('canvas-settings').open = false;
+  if (projectPresentation?.panel !== 'settings') $('canvas-settings').open = false;
   if (projectPresentation) projectPresentation.settingsClosed();
   else $('canvas-settings').querySelector('summary').focus();
 }
@@ -796,20 +796,25 @@ $('rendering-debugger-frame').addEventListener('load', () => {
   error.hidden = loaded;
   error.textContent = loaded ? '' : 'Rendering debugger could not load. Close it and check the renderer package.';
 });
+const settingsToggle = () => projectPresentation?.panel === 'settings'
+  ? $('open-diagnostics') : $('canvas-settings').querySelector('summary');
 $('open-diagnostics').onclick = () => {
   const panel = $('advanced-workflow-controls'); panel.open = !panel.open;
-  $('canvas-settings').open = false;
-  (panel.open ? panel : $('canvas-settings')).querySelector('summary').focus();
+  if (projectPresentation?.panel !== 'settings') $('canvas-settings').open = false;
+  (panel.open ? panel.querySelector('summary') : settingsToggle()).focus();
 };
+if (projectPresentation?.panel === 'settings') {
+  $('canvas-settings').append($('advanced-workflow-controls'), $('notice'));
+}
 $('advanced-workflow-controls').addEventListener('toggle', () => {
   const panel = $('advanced-workflow-controls');
   $('open-diagnostics').setAttribute('aria-expanded', String(panel.open));
-  if (!panel.open && panel.contains(document.activeElement)) $('canvas-settings').querySelector('summary').focus();
+  if (!panel.open && panel.contains(document.activeElement)) settingsToggle().focus();
 });
 $('advanced-workflow-controls').addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
     event.preventDefault(); $('advanced-workflow-controls').open = false;
-    $('canvas-settings').querySelector('summary').focus();
+    settingsToggle().focus();
   }
 });
 function revealCurrentQuestion() {
@@ -904,7 +909,8 @@ $('approve-empty-setup').onclick = async () => {
     const result = await post('/api/runtime/empty-setup/decision', { confirmationId, approve: true });
     await refresh();
     if (result.readback?.verified === false) {
-      $('canvas-settings').open = true; $('setting-model').focus(); void refreshSettings();
+      if (projectPresentation?.panel === 'workspace') projectPresentation.openSettings();
+      else { $('canvas-settings').open = true; $('setting-model').focus(); void refreshSettings(); }
       notice(`The same session was reinitialized, but model verification is still required. Select and apply a private model in Settings. The handoff remains unsent. ${result.readback.reason ?? ''}`);
     } else notice('Development setup repaired with the same reserved ID. The retained handoff has not been submitted.');
   } catch (error) { notice(error.message); }

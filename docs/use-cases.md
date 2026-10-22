@@ -169,37 +169,17 @@ If evidence is partial, ask what remains unverified instead of treating it as a
 pass. Recovery checks do not settle purge rules or an unconfirmed interface.
 You may leave those decisions open and retain an explicitly limited outcome.
 
-## Locate and export saved outputs
+## Locate saved outputs
 
-**Use when:** you want a reviewed snapshot to share.
+**Use when:** you want to inspect the project's saved work and evidence.
 
 1. Expand the relevant **Artifacts** group and inspect the original output.
-2. Open **Project settings → Advanced handoffs & history**. Choose a saved
-   discovery snapshot, or use **Capture Development outcome for review** in
-   Development. Inspect the captured and original outcomes, including any
-   failed/partial/unverified areas.
-3. Select the completed stage/captured outcome, enter **Accepted by**, and review
-   **Accept handoff**.
-4. Once that snapshot is accepted, **Export accepted handoff** appears. Export,
-   then inspect the local `tandem-records` bundle before sharing.
+2. In Development, inspect Design, Plan, Implementation and Review outputs and
+   their original Conversation entries. Keep failed, partial and unavailable
+   coverage distinct from passing evidence.
+3. Use the saved files as evidence when sharing or requesting follow-up work.
+   Publication remains a separate action outside Project settings.
 
-**Result:** an exported accepted snapshot, not a Git commit or publication.
-Acceptance records attribution, not authenticated identity, implementation approval or a test pass.
-If source/Design changed, capture and review again.
-
-<details>
-<summary>Optional delivery and linked follow-up work</summary>
-
-**Prepare delivery draft** is separate from export. **Process settings** selects
-Local/GitHub independently for delivery, status and intake; **Save process
-settings** applies the selection. Existing references/history remain, and errors
-never switch adapters.
-
-GitHub needs authenticated `gh` and suitable access. **Publish reviewed handoff**
-posts to an existing PR with GitHub or writes a local bundle with Local, only
-after confirmation. Nothing is merged or deployed.
-**Import linked effort** creates a follow-up without resetting the current one
-or starting agents; **Open linked effort and start Preparation** is the separate
-action that starts discovery.
-
-</details>
+**Result:** inspected original outputs, not a new acceptance or export.
+The former acceptance, delivery and linked-intake workflow has been removed.
+Previously saved snapshots, receipts and `tandem-records` exports remain intact.

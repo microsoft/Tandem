@@ -6,16 +6,9 @@ export function installProjectPresentation({ document, window, changed, settings
   const { projectPanel: panel, projectOrigin: origin, projectChannel: channel } = document.body.dataset;
   if (!panel) return null;
   let context = null, draftContext = null, pending = null, nativePending = false;
-  let currentSnapshot = null;
+  let currentSnapshot = null, settingsRead = false;
   const send = value => window.parent.postMessage({ protocol: "tandem-project/v1", channel, ...value }, origin);
-  const processPanel = document.querySelector("#project-process-settings");
-  if (processPanel) {
-    processPanel.hidden = false;
-    document.querySelector("#acceptance-delivery").onclick = () => {
-      document.querySelector("#canvas-settings").open = false;
-      send({ type: "process-open" });
-    };
-  }
+  if (panel === "settings") document.querySelector("#canvas-settings").open = true;
   const effortPanel = document.querySelector("#project-effort-settings");
   const effort = document.querySelector("#project-effort"), effortApply = document.querySelector("#apply-project-effort");
   const effortRefresh = document.querySelector("#refresh-project-effort"), effortStatus = document.querySelector("#project-effort-status");
@@ -139,6 +132,10 @@ export function installProjectPresentation({ document, window, changed, settings
       document.body.dataset.projectWorking = message.developmentEntered === true ? "development" : "discovery";
       renderEffort();
       renderReload();
+      if (panel === "settings" && !settingsRead) {
+        settingsRead = true;
+        requestEffort();
+      }
       update(); changed();
     } else if (message.type === "layout" && typeof message.stacked === "boolean"
       && (message.conversationWidth === null
@@ -154,8 +151,13 @@ export function installProjectPresentation({ document, window, changed, settings
         send({ type: "output-opened", id: item.id, binding: item.binding });
       } catch (error) { send({ type: "output-opened", id: message.id, error: error.message }); }
     } else if (message.type === "command") {
-      if (message.command === "settings") { settings(); requestEffort(); }
+      if (message.command === "settings") send({ type: "settings-open" });
+      if (message.command === "settings-refresh" && panel === "settings") { settings(); requestEffort(); }
       if (message.command === "current-work") currentWork();
+    } else if (message.type === "appearance" && ["system", "light", "dark"].includes(message.theme)
+      && ["normal", "larger", "largest"].includes(message.fontSize)) {
+      document.body.dataset.theme = message.theme;
+      document.body.dataset.fontSize = message.fontSize;
     } else if (message.type === "project-reload-result" && reloadPending === message.id) {
       reloadPending = null;
       reloadError = typeof message.error === "string" ? message.error
@@ -203,6 +205,7 @@ export function installProjectPresentation({ document, window, changed, settings
     panel,
     activate: retry => send({ type: "activate", retry: retry === true }),
     showDesign: () => send({ type: "show-design" }),
+    openSettings: () => send({ type: "settings-open" }),
     settingsClosed: () => send({ type: "settings-closed" }),
     unavailable(reason, reconnecting = false) {
       currentSnapshot = null;

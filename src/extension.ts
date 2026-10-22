@@ -1568,7 +1568,7 @@ async function persistState(state, beforeCommit?: () => void) {
         !state.lifecycle.completedStages.includes(state.lifecycle.currentStage) &&
         !stageCompletionError(state, state.lifecycle.currentStage)) {
         state.process = processEvent(state.process, state.lifecycle.currentStage, "ready",
-            "Stage output is ready for completion and handoff acceptance.",
+            "Stage output is ready to finish and save.",
             `${state.generation}:${state.lifecycle.currentStage}`);
     }
     state.jobOwner = hasActiveWork(state)
@@ -7630,8 +7630,8 @@ async function handleRequest(entry, req, res) {
     }
 
     if (req.method === "POST" && requestUrl.pathname === "/api/process") {
-        const state = await processAction(entry.prototypeId, entry.extensionId, await readRequestBody(req));
-        sendJson(res, 200, publicState(entry, state));
+        sendJson(res, 410, { code: "process_retired",
+            error: "Acceptance, export, delivery and process actions are retired. Saved history is retained. Use Development for Design and implementation requests." });
         return;
     }
 
@@ -8815,7 +8815,7 @@ session = await joinSession({
             id: CANVAS_ID,
             displayName: "Tandem",
             description:
-                "Guide software intent through requirements, approved app sketches, prototypes, and delivery stages.",
+                "Guide software intent through requirements, approved app sketches, prototypes, and native Development.",
             inputSchema: {
                 type: "object",
                 additionalProperties: false,
@@ -8875,28 +8875,6 @@ session = await joinSession({
                             reviewBinding: ctx.input["reviewBinding"],
                         });
                     },
-                },
-                {
-                    name: "process_action",
-                    description: "Configure process blocks, accept a completed stage handoff, or explicitly export accepted artifacts. Never commits or pushes.",
-                    inputSchema: {
-                        type: "object",
-                        properties: {
-                            action: { type: "string", enum: ["configure", "capture-development", "accept", "export", "prepare-handoff", "handoff", "status", "intake", "open-intake"] },
-                            expectedRevision: { type: "integer" },
-                            stageId: { type: "string" },
-                            approver: { type: "string" },
-                            acceptanceId: { type: "string" },
-                            settings: { type: "object" },
-                            reference: { type: "string" },
-                            content: { type: "string" },
-                            confirm: { type: "boolean" },
-                            receiptId: { type: "string" },
-                        },
-                        required: ["action", "expectedRevision"],
-                    },
-                    handler: async (ctx) => processAction(
-                        await resolvePrototypeId(ctx.instanceId, undefined), ctx.extensionId, ctx.input),
                 },
                 {
                     name: "update_tandem",

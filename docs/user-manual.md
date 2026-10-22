@@ -181,14 +181,21 @@ Design/questions. If activity is unavailable, it says unverified rather than
 claiming completion. Scripts do not run and implementation remains separately
 confirmed. Once the matching Design is verified and visible, the completed
 handoff status clears and stays out of the workspace after later Design
-revisions. Results remain in Conversation; saved request/source details are under
-**Project settings > Advanced handoffs & history > Acceptance & process history**.
+revisions. Results remain in Conversation; the original saved request/source
+records remain on disk.
 New handoffs, unanswered questions and unverified or failed work still show their
 current status. Routine checking, setup and Designer progress use the existing
 bottom status bar without adding a header or moving the workspace. Review and
 recovery controls stay beside the handoff; questions, permissions and actionable
 errors stay in their owning Development controls. The standalone Development
 view uses its conversation status strip.
+
+**Project settings** opens one consistent window in every phase, with
+appearance, shared reasoning effort, private Development model/access and
+diagnostics. Opening settings does not start Development or change its consent.
+The obsolete acceptance/export, delivery and linked-intake workflow is removed;
+it is not available under an advanced settings menu. Existing snapshots,
+receipts and exports are retained.
 
 In **Development only**, that bar shows one current message: required attention,
 then verified role activity or compaction, then a request/draft/permission
@@ -300,7 +307,7 @@ agreement. If the intended behavior has changed, request a Design update first.
 Use the original Questions form for issued questions; request implementation
 separately when ready. Review reports and an empty question queue never authorize
 another code-changing cycle. Follow the [outcome recipe](use-cases.md#inspect-a-result-and-request-the-right-follow-up)
-before accepting or exporting work.
+before requesting follow-up work.
 
 ## Settings and saved state
 
@@ -317,9 +324,9 @@ see the [quick start](quick-start.md). These options do not choose Development's
 private model. Resolve pending private model intent using the offered retry or
 **Accept actual model** only if you want the reported model.
 
-Development settings include **Theme**, **Text size**, **Save appearance** and
-Windows **Open project folder**. Before Development opens, the discovery settings
-panel exposes shared effort without starting the Development UI.
+The same Project settings window includes **Theme**, **Text size**,
+**Save appearance** and Windows **Open project folder** in every phase.
+Opening it before Development does not start the private runtime.
 **Close** or Escape only dismisses Settings: it does not save, apply or stop work.
 
 **Compact model context...** needs fresh approval and does not replace saved
@@ -330,5 +337,6 @@ Operational data is under `.tandem`. Before Development, guided setup can add a
 preserving `.tandem/` ignore rule with your explicit consent; the
 [quick start](quick-start.md) also shows a manual alternative. Keep this data out
 of commits. Do not edit it to force readiness or assume Git backs it up.
-Optional [acceptance and export](use-cases.md#locate-and-export-saved-outputs)
-writes reviewed output to `tandem-records`; export is not Git publication.
+[Saved outputs](use-cases.md#locate-saved-outputs) remain available through
+Artifacts and Conversation. Existing `tandem-records` exports are retained; the
+retired acceptance/export workflow is not part of Project settings.

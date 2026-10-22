@@ -367,14 +367,8 @@ test("completed changed and unchanged handoffs remain quiet after a later verifi
         await waitPrivate('document.querySelector("#backbone-state").textContent==="Current Design"');
         await browser.waitFor(`${visibleRootStatuses}.length===0`);
         await checkEmptyChrome();
-        await browser.evaluate('document.querySelector("#project-settings").click()');
-        await waitPrivate('document.querySelector("#canvas-settings").open');
-        await evaluatePrivate('document.querySelector("#acceptance-delivery").click()');
-        await browser.waitFor('!!document.querySelector(".process-dialog")');
-        await browser.evaluate('[...document.querySelectorAll(".process-dialog details")].forEach(e=>e.open=true)');
-        assert.equal(await browser.evaluate(`document.querySelector(".process-dialog").textContent.includes(${JSON.stringify(requestId)})`), true);
-        assert.equal(await browser.evaluate(`document.querySelector(".process-dialog").textContent.includes(${JSON.stringify(snapshotPath)})`), true);
-        await browser.evaluate('document.querySelector("#close-acceptance-delivery").click()');
+        assert.equal(await browser.evaluate('document.querySelector("#acceptance-delivery, .process-dialog")'), null);
+        assert.equal(f.state.requests.some(request => request.id === requestId), true);
         await checkEmptyChrome();
         f.state.questions.push({ id: "choice", context: "Synthetic behavior", question: "Keep the count?", whyItMatters: "Scope",
           importance: "blocking", options: [], allowFreeform: true, state: "open", answerRequestId: null, blockingActive: true,

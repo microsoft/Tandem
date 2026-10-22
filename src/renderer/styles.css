@@ -59,9 +59,10 @@
 .development-error { color: var(--studio-danger); padding: 8px; overflow-wrap: anywhere; }
 .development-empty { padding: 16px; }
 .development-handoff-status { padding: 4px 8px; color: var(--studio-muted); font-size: 12px; overflow-wrap: anywhere; }
-.dialog-overlay.process-dialog-overlay { z-index: 90; }
-.dialog-content.process-dialog { z-index: 91; width: min(680px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow: auto; }
-.process-dialog .root-settings-heading { position: sticky; top: -24px; padding-block: 8px; background: var(--studio-surface); z-index: 1; }
+.dialog-content.project-settings-dialog { width: min(760px, calc(100vw - 24px)); height: min(820px, calc(100dvh - 24px)); margin: 0; display: flex; flex-direction: column; overflow: hidden; }
+.project-settings-dialog::backdrop { background: rgba(0, 0, 0, .45); }
+.project-settings-dialog[hidden] { display: none; }
+#project-settings-frame { flex: 1; width: 100%; min-height: 0; border: 0; }
 
 .sketch-panel {
   display: flex;
@@ -348,16 +349,6 @@ button > .lucide { width: 16px; height: 16px; margin: 0; stroke-width: 1.8; }
 }
 .radio-control[data-state="checked"] { border-color: var(--studio-accent); }
 .radio-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--studio-accent); }
-.process-controls button.ledger-summary, .process-section button.ledger-summary {
-  display: flex; align-items: center; gap: 6px;
-  width: 100%; min-height: auto; padding: 0; border: 0;
-  background: transparent; text-align: left; cursor: pointer;
-}
-.process-controls button.ledger-summary .lucide, .process-section button.ledger-summary .lucide {
-  transition: transform 120ms ease;
-}
-.process-controls button.ledger-summary[data-state="open"] > .lucide:first-child,
-.process-section button.ledger-summary[data-state="open"] > .lucide:first-child { transform: rotate(180deg); }
 .spin { animation: react-spin 1.2s linear infinite; }
 @keyframes react-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
@@ -3421,37 +3412,17 @@ textarea {
     border-left: 0;
   }
 }
-/* Process controls remain in the sidebar so inspecting a handoff does not change stages. */
-.process-controls label { display: block; margin-top: var(--studio-gap); }
-.process-controls input:not([type="checkbox"]),
-.process-controls select,
-.process-controls textarea {
-  width: 100%;
-  box-sizing: border-box;
-  margin-top: var(--studio-control-gap);
-  padding: var(--studio-control-padding);
-  border: 1px solid var(--studio-border);
-  border-radius: 6px;
-  background: var(--studio-surface);
-}
-.process-controls .complete-stage,
 #reopen-stage {
   border-color: var(--studio-border);
   background: var(--studio-surface);
   color: var(--studio-text);
 }
-.process-controls summary { cursor: pointer; }
-.process-controls textarea { font-family: var(--font-mono, monospace); font-size: 12px; }
-.process-controls details { margin-top: 12px; }
-.process-controls .muted { overflow-wrap: anywhere; }
-.process-controls pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; }
 
 @media (pointer: coarse) {
   :root { --studio-control-height: 44px; --studio-tab-height: 44px; }
   button, .sketch-panel .sketch-icon-button, #sketch-tools .sketch-icon-button,
   .sketch-composer .sketch-history-toggle,
-  .diagram-toolbar button, .next-action-bar button,
-  .process-controls button.ledger-summary, .process-section button.ledger-summary { min-width: 44px; min-height: 44px; }
+  .diagram-toolbar button, .next-action-bar button { min-width: 44px; min-height: 44px; }
   .next-action-bar { height: auto; min-height: 48px; }
   .radio-control { min-width: 24px; min-height: 24px; }
 }
@@ -3590,10 +3561,7 @@ textarea {
 #studio-workspace[data-history-collapsed="true"]:not([data-development="true"]) { grid-template-columns: var(--requirements-width, 220px) 1px minmax(280px, 1fr) 0 44px; }
 #toggle-discovery-history { align-self: flex-end; width: auto; margin: 6px; }
 #project-conversation[data-history-collapsed="true"] { min-width: 0; }
-.root-settings-heading, .root-effort-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
-.root-effort-field { display: grid; gap: 6px; min-width: 0; margin-block: 16px 8px; }
-.root-effort-field select { width: 100%; min-width: 0; box-sizing: border-box; }
-.root-effort-actions { justify-content: flex-start; margin-block: 8px; }
+.root-settings-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 @media (max-width: 999px) {
   #studio-workspace.project-workspace { grid-template-columns: 180px minmax(0, 1fr); grid-template-rows: minmax(260px, 1fr) minmax(80px, 180px); }
   #studio-workspace[data-history-collapsed="true"]:not([data-development="true"]) { grid-template-columns: 180px minmax(0, 1fr); grid-template-rows: minmax(260px, 1fr) auto; }
