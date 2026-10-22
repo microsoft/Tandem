@@ -99,9 +99,13 @@ use Undo/Redo, or send a revision instruction. **Save drawings** saves edits;
 Already-approved, unchanged drawings may show **Finish Drawings and continue**
 instead. A saved/streamed revision alone is not approval.
 
-For chat changes, **Project changes** shows the earliest affected stage, the
-proposed updates and the work that stays unchanged. **Review draft changes**
-opens an earlier-stage proposal without reopening that stage; only **Apply
+For chat changes, **Project changes** starts as a compact status above the editor.
+Choose **Review change** or **View details** to inspect the earliest affected stage,
+the proposed updates and the work that stays unchanged in a popup dialog.
+**Close** or **Escape** dismisses it without discarding your clarification or
+resizing the editor; errors remain visible in the compact status.
+**Review draft changes** opens an earlier-stage proposal without reopening that
+stage; only **Apply
 changes** updates its accepted content. Requirements keeps independent answers and shows previous
 answers for decisions that need review. The saved prototype remains available
 while its update is prepared. **Check impact again** refreshes a stale proposal;

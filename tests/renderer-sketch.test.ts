@@ -29,6 +29,7 @@ test("Sketch is first-class after Requirements, loads separately, and never auto
     assert.equal(shapes(h).length, 1);
     assert.equal(disabled(h, "sketch-approve"), false);
     assert.equal(disabled(h, "complete-stage"), true);
+    assert.equal(hidden(h, "complete-stage"), true, "Unapproved drawings must not show a duplicate Finish action.");
     assert.match(text(h, "next-action-guide"), /Approve drawings/);
     assert.match(text(h, "sketch-history"), /Revision 2.*generated.*current/);
     assert.equal(h.requests.length, 1);
@@ -254,6 +255,8 @@ test("failed Sketch continuation retains approval; Finish retries without anothe
     assert.equal(current(h).sketch.status, "approved");
     assert.match(text(h, "sketch-message"), /Continuation failed/);
     assert.equal(disabled(h, "complete-stage"), false);
+    assert.equal(hidden(h, "complete-stage"), false, "Retain Finish for retrying already-approved drawings.");
+    assert.equal(hidden(h, "sketch-approve"), true);
     await h.click("complete-stage");
     assert.equal(current(h).lifecycle.currentStage, "prototype");
     assert.equal(h.pngExports.length, 1);

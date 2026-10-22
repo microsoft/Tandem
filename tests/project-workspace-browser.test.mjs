@@ -701,19 +701,21 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
           preserved: ["Joint controls", "Playback", "Chosen appearance"], affectedScreenIds: [], question: null, requirements: null },
       }];
       await push();
+      await browser.waitFor('Boolean(document.querySelector("#toggle-change-details"))');
+      await clickRoot("#toggle-change-details");
       await browser.waitFor('document.querySelector("#approve-change")?.checkVisibility()');
       for (const width of [1360, 760, 390]) {
         await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: false });
         await browser.evaluate('document.querySelector("#approve-change").scrollIntoView({block:"nearest"})');
         const bounds = await browser.evaluate(`(() => {
-          const button=document.querySelector("#approve-change"), card=document.querySelector(".change-requests"), r=button.getBoundingClientRect();
+          const button=document.querySelector("#approve-change"), card=document.querySelector(".change-details-dialog"), r=button.getBoundingClientRect();
           const hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);
           return {width:innerWidth,overflow:document.documentElement.scrollWidth>innerWidth+1,
-            reachable:hit===button||button.contains(hit),height:card.getBoundingClientRect().height,
+            reachable:hit===button||button.contains(hit),height:card.getBoundingClientRect().height, maxHeight:innerHeight-24,
             text:card.textContent,requestCount:document.querySelectorAll(".change-impact").length};
         })()`);
         assert.equal(bounds.overflow, false, JSON.stringify(bounds));
-        assert.ok(bounds.reachable && bounds.height <= 450, JSON.stringify(bounds));
+        assert.ok(bounds.reachable && bounds.height <= bounds.maxHeight, JSON.stringify(bounds));
         assert.equal(bounds.requestCount, 1);
         assert.match(bounds.text, /Joint controls/);
         t.diagnostic(`Impact review ${width}px: reachable, bounded and no page overflow; synthetic state.`);

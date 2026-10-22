@@ -174,8 +174,13 @@ Chat changes use the additive `changeRequests` ledger and the production
 canvas entry points share assessment and decision handlers; the original stage
 engines remain independently usable. The change ledger, stage tabs and active
 editor occupy separate workspace rows; absent headers collapse without overlapping
-stage controls. Assessment is context-only and preserves
-accepted state. Approval binds the exact analysis ID and semantic baseline digest,
+stage controls. Impact details open in a bounded modal dialog outside the workspace
+grid, so reviewing them never resizes the editor. Closing the dialog restores focus
+to its trigger and retains clarification drafts. Errors remain visible in the
+dialog and the compact status bar. Drawing completion is shown only
+after approval, while a failed continuation remains explicitly retryable.
+Assessment is context-only and preserves accepted state. Approval binds the exact
+analysis ID and semantic baseline digest,
 including current Development Design/code when available. It saves a complete
 baseline snapshot before applying a sparse Requirements patch and marking only
 the affected stage outputs for review. Stable decision IDs, independent answers,
