@@ -7,7 +7,7 @@ import { HumanLoopInstallation } from "./human-loop-installation.mjs";
 import { HumanLoopRuntime } from "./human-loop-runtime.mjs";
 import { HumanLoopEvents, createHumanLoopProvider, projectHumanProgress } from "./human-loop-provider.mjs";
 import { createNativePermissionLifecycle } from "./native-permission-lifecycle.mjs";
-import { HumanLoopPreferences, validateProjectReasoningEffort } from "./human-loop-preferences.mjs";
+import { HumanLoopPreferences, normalizeModelCatalog, validateProjectReasoningEffort } from "./human-loop-preferences.mjs";
 
 export async function createDurablePrivateSession(client, configuration, onCreated) {
   if (typeof client.start !== "function") throw new Error("Installed SDK cannot start the private native client.");
@@ -38,7 +38,7 @@ export function createHumanLoopController(options) {
     reportError: error => events.append({ type: "human.permission-sync-failed", source: "system", summary: error.message }),
   });
   const providers = new Map(), providerStarts = new Map();
-  let session, installation, starting, closing, ending = false;
+  let session, installation, starting, closing, ending = false, changingSettings = false;
   const reportError = error => events.append({ type: "human.setup-waiting", source: "system", summary: error.message });
   const toolHook = async input => installation?.guardMainTool(input);
   const permissionHandler = (request, invocation) => options.mainPermissionHandler
@@ -82,6 +82,7 @@ export function createHumanLoopController(options) {
   async function start(openOptions = {}) {
     if (ending) throw new Error("The owning session is closing.");
     if (!installation) throw new Error("Development is still attaching to the current main session.");
+    if (changingSettings) throw new Error("Wait for the Development settings change to finish before opening its runtime.");
     if (starting) return starting;
     starting = (async () => {
       await options.beforeStart?.();
@@ -103,7 +104,7 @@ export function createHumanLoopController(options) {
     if (providerStarts.has(id)) return providerStarts.get(id);
     const opening = (async () => {
       const original = await createHumanLoopProvider({ repositoryRoot, publicDirectory, getInstallation: () => installation,
-        events, permissions, start, finishEmptyRepair: async () => {
+        events, permissions, start, modelSettings, changeModel, finishEmptyRepair: async () => {
           const runtime = installation.runtime;
           if (!runtime) throw new Error("The repaired runtime is not available for readback.");
           if (options.projectEffortControl) await runtime.applyProjectEffort();
@@ -160,21 +161,93 @@ export function createHumanLoopController(options) {
     }
   }
   async function validateReasoningEffort(effort) {
+    assertSettingsIdle();
+    await validateEffortSelection(effort);
+  }
+  async function validateEffortSelection(effort) {
     validateProjectReasoningEffort(effort);
     if (!options.projectEffortControl) throw new Error("Project effort control is not enabled for this provider.");
-    if (starting || closing) throw new Error("Development is opening or closing.");
     const current = await status();
     if (!["new", "prepared", "ready", "closed"].includes(current.installation.status)) throw new Error("Open and reconcile the original Development owner before changing its effort.");
-    if ((await preferences.read()).pendingModel) throw new Error("Reconcile the pending private model before changing project effort.");
+    const saved = await preferences.read();
+    if (saved.pendingModel) throw new Error("Reconcile the pending private model before changing project effort.");
     if (installation?.runtime && current.installation.status !== "closed") await installation.runtime.validateProjectEffort(effort);
+    else if (saved.model) {
+      const model = (await availableModels()).find(model => model.id === saved.model);
+      if (!model?.supportedReasoningEfforts.includes(effort)) throw new Error("The saved private model does not advertise this reasoning effort.");
+    }
   }
   async function selectReasoningEffort(effort) {
-    await validateReasoningEffort(effort);
-    const current = await status();
-    if (installation?.runtime && current.installation.status !== "closed") await installation.runtime.selectProjectEffort(effort);
-    else await preferences.update({ projectReasoningEffort: effort });
-    events.touch();
+    assertSettingsIdle();
+    changingSettings = true;
+    try {
+      await validateEffortSelection(effort);
+      if (ending) throw new Error("The owning session is closing.");
+      const current = await status();
+      if (installation?.runtime && current.installation.status !== "closed") await installation.runtime.selectProjectEffort(effort);
+      else {
+        const saved = await preferences.read();
+        await preferences.update({ projectReasoningEffort: effort, ...(saved.model ? { reasoningEffort: effort } : {}) });
+      }
+    } finally { changingSettings = false; events.touch(); }
     return reasoningEffortStatus();
+  }
+  function assertSettingsIdle() {
+    if (starting || closing || ending || changingSettings) throw new Error("Development is opening, closing or changing settings.");
+  }
+  async function availableModels() {
+    if (typeof session?.rpc?.model?.list !== "function") throw new Error("The main session cannot read the authenticated model catalog.");
+    const catalog = await session.rpc.model.list();
+    if (!Array.isArray(catalog?.list)) throw new Error("The SDK model list is unavailable or invalid.");
+    return normalizeModelCatalog(catalog.list.map(model => ({ ...model,
+      supportedReasoningEfforts: model?.capabilities?.supports?.reasoning_effort ?? [] })));
+  }
+  async function modelSettings() {
+    const current = await status();
+    if (installation?.runtime) {
+      const value = await installation.runtime.modelSettings();
+      return current.installation.status === "ready" && !starting && !closing && !ending && !changingSettings ? value
+        : { ...value, canChange: false, reason: "Wait for the original Development runtime to be Ready before changing its model." };
+    }
+    const saved = await preferences.read();
+    const deferred = ["new", "prepared"].includes(current.installation.status);
+    let models = [], error = null;
+    try { models = await availableModels(); }
+    catch (cause) { error = cause.message; }
+    return { models, actual: null, desired: saved.model, pending: saved.pendingModel,
+      actualReasoningEffort: null, desiredReasoningEffort: saved.reasoningEffort,
+      pendingReasoningEffort: saved.pendingReasoningEffort, canSetReasoningEffort: true,
+      effortManaged: options.projectEffortControl === true, projectReasoningEffort: saved.projectReasoningEffort,
+      deferred, canChange: deferred && models.length > 0 && !error && !saved.pendingModel && !starting && !closing && !ending && !changingSettings,
+      error, capabilities: null, reason: deferred
+        ? "Development has not started. Save a model for startup; the private session will verify it before work begins. The main chat model is unchanged."
+        : "Open and reconcile the original Development owner before changing its model." };
+  }
+  async function changeModel(selection) {
+    assertSettingsIdle();
+    changingSettings = true;
+    try {
+      const current = await status();
+      if (installation?.runtime && current.installation.status === "ready") return await installation.runtime.changeModel(selection);
+      if (installation?.runtime || !["new", "prepared"].includes(current.installation.status)) {
+        throw new Error("Open and reconcile the original Development owner before changing its model.");
+      }
+      if (selection.acceptActual) throw new Error("There is no running private model to accept.");
+      const saved = await preferences.read();
+      if (saved.pendingModel) throw new Error("Reconcile the unconfirmed private model before saving another selection.");
+      const effort = options.projectEffortControl && saved.projectReasoningEffort !== null
+        ? saved.projectReasoningEffort : selection.reasoningEffort ?? null;
+      if (options.projectEffortControl && saved.projectReasoningEffort !== null && selection.reasoningEffort != null
+        && selection.reasoningEffort !== effort) throw new Error("Change reasoning effort through the single project control.");
+      const selected = (await availableModels()).find(model => model.id === selection.model);
+      if (!selected) throw new Error("Selected model is not in the authenticated SDK model list.");
+      if (effort !== null && !selected.supportedReasoningEfforts.includes(effort)) throw new Error("Selected reasoning effort is not advertised for this model.");
+      if (ending) throw new Error("The owning session is closing.");
+      if (installation?.runtime || !["new", "prepared"].includes((await status()).installation.status)) {
+        throw new Error("Development ownership changed. Review its current state before saving model settings.");
+      }
+      await preferences.update({ model: selected.id, reasoningEffort: effort });
+    } finally { changingSettings = false; events.touch(); }
   }
   async function reasoningEffortStatus() {
     const preference = await preferences.read(), desired = preference.projectReasoningEffort;
@@ -209,6 +282,6 @@ export function createHumanLoopController(options) {
     try { return await closing; } finally { closing = null; }
   }
   return { attach, toolHook, permissionHandler, observe: nativePermissions.observe, start, openView, closeView,
-    status, assertQuiet, close, reportError, events, validateReasoningEffort, selectReasoningEffort, reasoningEffortStatus,
+    status, assertQuiet, close, reportError, events, validateReasoningEffort, selectReasoningEffort, reasoningEffortStatus, modelSettings, changeModel,
     get installation() { return installation; } };
 }

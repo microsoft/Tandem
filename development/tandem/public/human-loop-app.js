@@ -132,25 +132,26 @@ function applySettings(value, preserveAppearanceDraft = false) {
     const option = make('option', name); option.value = id; return option;
   }));
   if (!model.models.length || !model.actual && !model.pending && !model.desired) {
-    const option = make('option', model.models.length ? 'Choose a private model' : 'Unavailable until verified'); option.value = '';
+    const option = make('option', model.models.length ? 'Choose a private model' : 'Model catalog unavailable'); option.value = '';
     $('setting-model').prepend(option);
   }
   $('setting-model').value = model.models.some(({ id }) => id === desired) ? desired : model.pending ?? model.actual ?? model.desired ?? '';
   settingsModel = model;
   renderReasoningEffort();
   $('setting-model').disabled = settingsBusy || !model.canChange;
+  $('apply-model').textContent = model.deferred ? 'Save model for Development' : 'Apply model';
   $('apply-model').disabled = settingsBusy || !model.canChange || !$('setting-model').value;
-  $('accept-actual-model').hidden = !model.pending && !model.error;
+  $('accept-actual-model').hidden = !model.actual || !model.pending && !model.error;
   $('accept-actual-model').disabled = settingsBusy || !model.canChange || !model.actual;
   $('model-setting-status').textContent = [
-    `Actual private model: ${model.actual ?? 'not yet verified'}.`,
-    `Actual reasoning effort: ${model.actualReasoningEffort ?? 'not explicitly reported'}.`,
+    model.deferred ? 'Development has not started.' : `Actual private model: ${model.actual ?? 'not yet verified'}.`,
+    model.deferred ? '' : `Actual reasoning effort: ${model.actualReasoningEffort ?? 'not explicitly reported'}.`,
     model.effortManaged ? `Reasoning effort is controlled by the project effort control (${model.projectReasoningEffort ?? 'no shared choice yet'}).` : '',
-    model.desired ? `Saved selection: ${model.desired}.` : '',
+    model.desired ? `Saved selection: ${model.desired}${model.deferred ? ' (applies at startup)' : ''}.` : '',
     model.desiredReasoningEffort ? `Saved reasoning effort: ${model.desiredReasoningEffort}.` : '',
     model.pending ? `Pending selection: ${model.pending}.` : '',
     model.pendingReasoningEffort ? `Pending reasoning effort: ${model.pendingReasoningEffort}.` : '',
-    model.error, model.reason,
+    model.error, model.deferred ? 'Saving does not start Development. Its model and effort will be verified when you open it.' : model.reason,
     model.capabilities ? `Diagram images: ${model.capabilities.supported ? 'supported' : model.capabilities.reason ?? 'not supported'}.` : '',
     'This setting never changes the main chat model.',
   ].filter(Boolean).join(' ');

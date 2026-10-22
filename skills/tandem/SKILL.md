@@ -320,6 +320,10 @@ For an unrelated canonical project, use another workspace.
 Project settings is the same window in every phase. Appearance, shared reasoning
 effort and native Development settings retain their original owners; opening
 settings does not start Development or grant consent.
+Before first startup, **Save model for Development** records the user's private
+model choice. Startup validates and applies that saved preference, then verifies
+native readback; saving is not proof of a running model. Catalog failures or
+unavailable model/effort choices never authorize a fallback.
 
 The obsolete acceptance, capture/export, delivery and linked-intake workflow is
 retired, including `process_action`. Do not recreate or relocate those controls.

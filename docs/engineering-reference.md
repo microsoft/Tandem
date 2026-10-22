@@ -725,6 +725,15 @@ work. Main-session and private Development model/permission ownership remain
 independent. Close and Escape return focus to Project settings; closing or
 browsing another phase retains the settings document and its unsaved fields.
 
+Before first Development startup, the authenticated main-session catalog supplies
+model choices without creating a private session. **Save model for Development**
+writes the existing native preferences store, not the main model. The original
+private startup path validates and applies the saved model/effort and verifies
+native readback before work. Unavailable choices, incompatible effort and
+uncertain existing ownership remain explicit errors; a saved preference is not
+an actual running model. Once Ready, changes still use the native idle-only
+model-switch path.
+
 The obsolete acceptance, capture, export, delivery, adapter configuration and
 linked-intake controls have been removed, not moved into settings. The public
 `process_action` canvas action is no longer registered; `/api/process` returns

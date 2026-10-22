@@ -317,8 +317,13 @@ choice can be pending before it opens; this does not start it.
 **Refresh status** rereads without work. Busy, unsupported, unavailable or partial
 application is not success and needs explicit resolution.
 
-In Development, **Private Canvas model > Apply model** changes only that model;
-the main/discovery model belongs to the launching host. The browser CLI accepts
+Before first opening Development, choose **Private Canvas model > Save model
+for Development**. The choice is saved without creating a private session or
+starting work. Startup checks that the saved model and effort are still available,
+applies them, and verifies the actual private model; it never silently substitutes
+another model. Once Development is Ready, **Apply model** changes that running
+private session only. The main/discovery model belongs to the launching host.
+The browser CLI accepts
 `--model <id>` and optional `--reasoning-effort <level>` for that main session;
 see the [quick start](quick-start.md). These options do not choose Development's
 private model. Resolve pending private model intent using the offered retry or

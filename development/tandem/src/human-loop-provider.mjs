@@ -280,7 +280,7 @@ async function body(request) {
 }
 
 export async function createHumanLoopProvider({ repositoryRoot, publicDirectory, getInstallation, events, permissions, start, finishEmptyRepair, openBrowser,
-  openProjectFolder: revealProject = openProjectFolder, surface = "canvas", projectHost = null }) {
+  openProjectFolder: revealProject = openProjectFolder, surface = "canvas", projectHost = null, modelSettings, changeModel }) {
   requireCondition(["canvas", "browser"].includes(surface), "Unsupported Tandem delivery surface.");
   if (projectHost) requireCondition(/^http:\/\/127\.0\.0\.1:\d+$/.test(projectHost.origin)
     && /^[a-zA-Z0-9-]{1,100}$/.test(projectHost.channel), "Invalid project presentation binding.");
@@ -291,8 +291,9 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
   const attachments = new AnnotationAttachmentStore(root);
   const preferences = new HumanLoopPreferences(root);
   async function settings() {
-    return { preferences: await preferences.read(), model: runtime()?.modelSettings ? await runtime().modelSettings()
-      : { models: [], actual: null, canChange: false, reason: "Private model selection becomes available when the automatically started runtime is Ready." } };
+    return { preferences: await preferences.read(), model: modelSettings ? await modelSettings()
+      : runtime()?.modelSettings ? await runtime().modelSettings()
+        : { models: [], actual: null, canChange: false, reason: "The authenticated model catalog is not available in this view." } };
   }
   async function snapshot() {
     const installation = getInstallation();
@@ -335,14 +336,17 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
         requireCondition(["select", "accept-actual"].includes(data.action), "Unknown model setting action.");
         requireCondition(data.action === "accept-actual" ? data.model === null
           : typeof data.model === "string" && data.model.trim() === data.model && data.model.length > 0 && data.model.length <= 200, "Invalid model selection.");
-        requireCondition((await getInstallation().read()).status === "ready", "Private runtime must be Ready for model settings.");
         requireCondition(data.reasoningEffort === undefined || data.reasoningEffort === null
           || typeof data.reasoningEffort === "string" && data.reasoningEffort.trim() === data.reasoningEffort
             && data.reasoningEffort.length > 0 && data.reasoningEffort.length <= 40, "Invalid reasoning effort selection.");
         requireCondition(data.action !== "accept-actual" || data.reasoningEffort == null,
           "Accept actual reads native reasoning effort; it cannot override it.");
-        await requireRuntime().changeModel({ model: data.model, reasoningEffort: data.reasoningEffort ?? null,
-          acceptActual: data.action === "accept-actual" });
+        const selection = { model: data.model, reasoningEffort: data.reasoningEffort ?? null, acceptActual: data.action === "accept-actual" };
+        if (changeModel) await changeModel(selection);
+        else {
+          requireCondition((await getInstallation().read()).status === "ready", "Private runtime must be Ready for model settings.");
+          await requireRuntime().changeModel(selection);
+        }
         return json(response, 200, await settings());
       }
       if (request.method === "GET" && path === "/api/host-state") {
