@@ -244,6 +244,9 @@ in one column; **Go to Conversation** moves to the composer.
 **Back to Design** restores the retained Design view. Inspecting a Design
 reference offers **Back to Questions** without discarding your answer drafts.
 New questions and answers do not switch views.
+The Questions button is highlighted while any blocking or non-blocking questions
+remain unanswered. It returns to its neutral appearance once they are answered;
+saved answers remain available.
 
 **Go to latest** (down arrow) appears when you scroll back in Conversation or
 status history, even without new messages. It returns both to the latest content

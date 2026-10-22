@@ -645,6 +645,12 @@
 .human-app .question-batch ul { padding-inline-start: 18px; }
 .human-app .question-batch button { text-align: start; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .human-app #question-panel :is(p, li, h4, button) { overflow-wrap: anywhere; }
+.human-app #show-questions[data-unanswered="true"]:not(:disabled) {
+  color: var(--on-accent);
+  background: var(--accent-fill);
+  border-color: var(--shell-primary-border);
+}
+.human-app #show-questions[data-unanswered="true"]:hover:not(:disabled) { background: var(--accent-fill-hover); }
 .human-app .human-conversation:has(#show-questions:not(:disabled)) { overflow: auto; }
 .human-app .human-conversation:has(#show-questions:not(:disabled)) .conversation-layout { min-height: 80px; }
 .human-app .human-conversation:has(#show-questions:not(:disabled)) #access-approval { --permission-height: min(28vh, 220px); }

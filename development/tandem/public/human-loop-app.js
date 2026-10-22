@@ -435,7 +435,9 @@ function render() {
   const questionRequestId = questionGroups.find(group => group.questions.some(q => q.state === 'open' && q.blockingActive))?.source.requestId;
   const counts = view?.questionCounts ?? { unanswered: 0, blockers: 0, processing: 0 };
   $('show-questions').textContent = `Questions (${counts.unanswered}, ${counts.blockers} blockers)`;
-  $('show-questions').title = counts.processing ? `${counts.processing} blocking answer request(s) still processing` : 'View saved questions and answers';
+  $('show-questions').dataset.unanswered = String(counts.unanswered > 0 || counts.blockers > 0);
+  $('show-questions').title = counts.processing ? `${counts.processing} blocking answer request(s) still processing`
+    : counts.unanswered > 0 || counts.blockers > 0 ? 'Review and answer pending questions' : 'View saved questions and answers';
   $('show-questions').disabled = questionGroups.length === 0;
   const contextRequestId = view?.activeRequestId ?? handoffEntry?.requestId
     ?? (view?.currentCycle ? undefined : questionRequestId);
