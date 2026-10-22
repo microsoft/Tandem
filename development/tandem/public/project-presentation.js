@@ -1,5 +1,6 @@
 import { projectOutputs } from "./project-outputs.js";
 import { validHandoffDesign } from "./handoff-presentation.js";
+import { developmentStartup } from "./development-status.js";
 
 export function isModelSelectionReady(model, selected, effort) {
   if (!model || !selected || model.error || model.pending || !model.models?.some(item => item.id === selected)) return false;
@@ -263,20 +264,21 @@ export function installProjectPresentation({ document, window, changed, settings
     },
     publish(snapshot) {
       currentSnapshot = snapshot;
+      const starting = Boolean(developmentStartup(snapshot));
       const catalog = projectOutputs(snapshot);
       const selection = outputSelection?.();
       send({ type: "outputs", status: catalog.status, reason: catalog.reason,
         items: catalog.items.map(({ target, ...item }) => item),
         selected: catalog.items.find(item => item.id === selection?.id && item.binding === selection?.binding)?.id ?? null });
-      send({ type: "status", status: snapshot.workflow?.status ?? snapshot.installation?.status ?? "unavailable",
+      send({ type: "status", status: starting ? "starting" : snapshot.workflow?.status ?? snapshot.installation?.status ?? "unavailable",
         presentation: statusPresentation?.() ?? null, statusScope: context?.statusScope ?? null,
         installationStatus: snapshot.installation?.status,
-        canRetry: snapshot.installation?.canRetry === true, canReopen: snapshot.installation?.canReopen === true,
-        active: snapshot.installation?.status === "ready",
+        starting, canRetry: !starting && snapshot.installation?.canRetry === true, canReopen: !starting && snapshot.installation?.canReopen === true,
+        active: !starting && snapshot.installation?.status === "ready",
         activeRequestId: snapshot.workflow?.activeRequestId ?? null,
         compacting: snapshot.workflow?.compaction?.active === true || snapshot.workflow?.compaction?.requested === true,
         handoffActivity: snapshot.workflow?.handoffActivity ?? null,
-        role: snapshot.workflow?.activeRole ?? null, reason: snapshot.workflow?.reason ?? snapshot.installation?.reason ?? null,
+        role: snapshot.workflow?.activeRole ?? null, reason: starting ? null : snapshot.workflow?.reason ?? snapshot.installation?.reason ?? null,
         designRevision: snapshot.design?.binding?.revisionId ?? null,
         designBinding: snapshot.conversationStatus === "verified" && ["ready", "closed"].includes(snapshot.installation?.status)
           && snapshot.design?.content && validHandoffDesign(snapshot.design.binding) ? snapshot.design.binding : null,

@@ -57,6 +57,24 @@ test("Development status prioritizes required decisions and exact current activi
   assert.equal(validDevelopmentStatus({ kind: "active", text: "Pretend", requestId: {} }), false);
 });
 
+test("startup and model verification are progress, while consent and settled failures remain attention", () => {
+  const snapshot = { startup: "starting", installation: { status: "recovering", reason: "Previous attempt failed" },
+    conversationStatus: "unverified", accessRequests: [], workflow: null };
+  assert.deepEqual(developmentStatus(snapshot), { kind: "active", text: "Starting Development...", requestId: null });
+  snapshot.startup = "verifying"; snapshot.installation.status = "ready";
+  assert.equal(developmentStatus(snapshot).text, "Verifying Development model...");
+  snapshot.accessRequests = [{ id: "native-consent" }];
+  assert.equal(developmentStatus(snapshot).text, "Permission response needed");
+  snapshot.accessRequests = []; snapshot.startup = null; snapshot.installation.status = "unknown";
+  assert.equal(developmentStatus(snapshot).kind, "attention");
+  snapshot.installation = { status: "ready", reason: null }; snapshot.conversationStatus = "verified";
+  snapshot.workflow = { status: "waiting-runtime", reason: "Actual model readback failed" };
+  assert.equal(developmentStatus(snapshot).kind, "attention");
+  snapshot.workflow = { status: "ready", reason: null };
+  assert.equal(developmentStatus(snapshot).text, "Ready");
+  assert.equal(developmentStatus({ installation: { status: "attaching", reason: "Attaching the current main session." } }).kind, "active");
+});
+
 export function handoffFixture(kind = "designer-changed") {
   const state = createHumanLoop({ schemaVersion: "human-loop-owner/v1", id: "owner", mainSessionId: "main",
     privateSessionId: "private", workspacePath: process.cwd(), policy: DEFAULT_POLICY }, binding);

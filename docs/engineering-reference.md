@@ -748,6 +748,13 @@ failed writes, and stale/foreign readiness messages. Each opening gets a fresh
 scope; continuation still rechecks the native preflight and cannot resume after
 the user closes the window during that check.
 
+The controller exposes a presentation-only startup phase through private runtime
+creation/recovery and final model/effort verification. Until it settles, the
+renderer shows progress rather than temporary unverified-history or model-error
+warnings, and keeps request/retry controls unavailable. Pending permissions remain
+actionable. Clearing the phase publishes the actual Ready or failure state; no
+error is erased, and this adds no role-completion or execution gate.
+
 The obsolete acceptance, capture, export, delivery, adapter configuration and
 linked-intake controls have been removed, not moved into settings. The public
 `process_action` canvas action is no longer registered; `/api/process` returns

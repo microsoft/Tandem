@@ -88,10 +88,90 @@ test("unopened model settings save authenticated preferences without reserving a
   assert.equal(f.session.sends.length, 0);
 });
 
+for (const failed of [false, true]) test(`startup projection stays in progress through native model verification (${failed ? "failed readback" : "success"})`, async t => {
+  const f = await fixture(t, { model: "one", reasoningEffort: "low", projectReasoningEffort: "low" }, true);
+  const controller = await unopenedController(t, f);
+  const opening = Promise.withResolvers(), opened = Promise.withResolvers();
+  const verification = Promise.withResolvers(), verifying = Promise.withResolvers();
+  let phase = "new", available = false;
+  t.mock.method(controller.installation, "read", async () => ({
+    status: phase, reason: phase === "creating" ? "Previous attempt failed" : null, canRetry: phase === "creating",
+  }));
+  const runtime = t.mock.getter(controller.installation, "runtime", () => available ? f.runtime : null);
+  t.mock.method(controller.installation, "open", async () => {
+    phase = "creating"; available = true; opened.resolve(); await opening.promise;
+    phase = "ready"; return f.runtime;
+  });
+  const apply = f.runtime.applyProjectEffort.bind(f.runtime);
+  t.mock.method(f.runtime, "applyProjectEffort", async () => {
+    verifying.resolve(); await verification.promise;
+    if (failed) f.actual(undefined);
+    await apply();
+  });
+  t.mock.method(f.runtime, "wake", () => {});
+  const provider = await controller.openView("progress");
+  const snapshot = async () => (await fetch(new URL("api/snapshot", provider.url))).json();
+  let start;
+  try {
+    start = controller.start();
+    await opened.promise;
+    const initial = await snapshot();
+    assert.equal(initial.startup, "starting");
+    assert.equal(initial.workflow, null);
+    assert.equal(initial.installation.reason, "Previous attempt failed", "The diagnostic is retained, not erased.");
+    opening.resolve(); await verifying.promise;
+    const checking = await snapshot();
+    assert.equal(checking.startup, "verifying");
+    assert.equal(checking.installation.status, "ready");
+    assert.equal(checking.workflow, null, "Do not expose partial model readback as a settled workflow failure.");
+    const settings = await controller.modelSettings();
+    assert.equal(settings.startup, "verifying");
+    assert.equal(settings.error, null);
+    assert.equal(settings.actual, null);
+    assert.equal(settings.canChange, false);
+    verification.resolve(); await start;
+    const settled = await snapshot();
+    assert.equal(settled.startup, null);
+    assert.equal(settled.conversationStatus, "verified");
+    assert.equal(settled.workflow.status, failed ? "waiting-runtime" : "ready");
+    if (failed) assert.match(settled.workflow.reason, /pending a verified private model/);
+    else assert.equal(settled.workflow.reason, null);
+    assert.equal(f.session.sends.length, 0);
+  } finally {
+    opening.resolve(); verification.resolve();
+    if (start) await Promise.allSettled([start]);
+    runtime.mock.restore();
+    await controller.close(); controller.events.close();
+  }
+});
+
+test("reusing a ready runtime does not project another initialization or hide its verified history", async t => {
+  const f = await fixture(t, { model: "one" }, true), controller = await unopenedController(t, f);
+  const checking = Promise.withResolvers(), release = Promise.withResolvers();
+  t.mock.method(controller.installation, "read", async () => ({ status: "ready" }));
+  const runtime = t.mock.getter(controller.installation, "runtime", () => f.runtime);
+  t.mock.method(controller.installation, "open", async () => f.runtime);
+  t.mock.method(f.runtime, "applyProjectEffort", async () => { checking.resolve(); await release.promise; });
+  t.mock.method(f.runtime, "wake", () => {});
+  const provider = await controller.openView("already-ready");
+  const start = controller.start();
+  try {
+    await checking.promise;
+    const snapshot = await (await fetch(new URL("api/snapshot", provider.url))).json();
+    assert.equal(snapshot.startup, null);
+    assert.equal(snapshot.conversationStatus, "verified");
+    assert.equal(snapshot.workflow.status, "ready");
+  } finally {
+    release.resolve(); await start; runtime.mock.restore();
+    await controller.close(); controller.events.close();
+  }
+});
+
 test("first Development startup asks for a model before reserving ownership, even with saved effort", async t => {
   const f = await fixture(t, { projectReasoningEffort: "low" }, true, false), controller = await unopenedController(t, f);
   assert.equal(await controller.requiresModelSelection(), true);
   await assert.rejects(controller.start(), error => error.code === "development_model_required");
+  assert.equal((await controller.status()).startup, null, "Failed admission cannot leave a permanent startup indicator.");
   assert.equal(controller.installation.runtime, null);
   assert.equal(controller.installation.configuration, null);
   const provider = await controller.openView("settings");

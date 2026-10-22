@@ -50,6 +50,33 @@ test("consolidated status is Development-only and rejects previous-generation pr
     assert.deepEqual(h.errors, []);
 });
 
+test("Development startup progress spans verification without premature model prompts or retry state", async t => {
+    const h = await reactHarness(t, undefined, "development"), value = state("prepare");
+    h.render(value); await h.flush();
+    const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
+    let modelChecks = 0;
+    h.setModelSelectionFetch(async () => { modelChecks++; return response({ required: true }); });
+    const send = async (extra: object) => {
+        h.window.dispatchEvent(new h.window.MessageEvent("message", { source: frame.contentWindow, origin: "http://127.0.0.1:8765",
+            data: { protocol: "tandem-project/v1", channel: "fixture-project", type: "status",
+                statusScope: JSON.stringify([value.prototypeId, value.generation]), ...extra } }));
+        await h.flush();
+    };
+    for (const [installationStatus, text] of [["recovering", "Starting Development..."], ["ready", "Verifying Development model..."]]) {
+        await send({ status: "starting", starting: true, installationStatus, active: false,
+            presentation: { kind: "active", text, requestId: null } });
+        assert.equal(h.get("next-action-guide").textContent, text);
+        assert.equal(h.document.querySelector("#start-development-after-model"), null);
+    }
+    assert.equal(modelChecks, 0);
+    await send({ status: "ready", starting: false, installationStatus: "ready", active: true,
+        presentation: { kind: "idle", text: "Ready", requestId: null } });
+    assert.doesNotMatch(h.get("next-action-guide").textContent!, /Starting|Verifying|needs attention/);
+    await send({ status: "unknown", starting: false, installationStatus: "unknown", active: false, reason: "Native creation failed.",
+        presentation: { kind: "attention", text: "Development setup needs attention", requestId: null } });
+    assert.equal(h.get("next-action-guide").textContent, "Development setup needs attention");
+});
+
 test("Discovery and Development artifact groups keep separate disclosure keys through live index updates", async t => {
     const h = await reactHarness(t, undefined, "development"), value = state("development");
     value.artifacts = [{ id: "old", title: "Original discovery Design", stage: "design", kind: "markdown",

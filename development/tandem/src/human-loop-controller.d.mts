@@ -28,7 +28,7 @@ export interface HumanLoopController {
   modelSettings(): Promise<DevelopmentModelSettings>;
   changeModel(selection: { model: string | null; reasoningEffort?: string | null; acceptActual?: boolean }): Promise<DevelopmentModelSettings | void>;
   close(): Promise<{ status: string; warnings: string[] }>;
-  status(): Promise<{ installation: { status: string; reason?: string | null }; workflow: { status: string; reason?: string | null } | null }>;
+  status(): Promise<{ installation: { status: string; reason?: string | null }; startup?: "starting" | "verifying" | null; workflow: { status: string; reason?: string | null } | null }>;
   reportError(error: Error): void;
   installation?: { runtime: HumanLoopRuntimeHandle | null; configuration: { owner: HumanLoopState["owner"] } | null };
 }
@@ -53,6 +53,7 @@ export interface DevelopmentModelSettings {
   canSetReasoningEffort: boolean;
   canChange: boolean;
   deferred?: boolean;
+  startup?: "starting" | "verifying";
   error: string | null;
   reason: string | null;
 }

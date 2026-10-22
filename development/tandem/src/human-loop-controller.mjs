@@ -38,7 +38,7 @@ export function createHumanLoopController(options) {
     reportError: error => events.append({ type: "human.permission-sync-failed", source: "system", summary: error.message }),
   });
   const providers = new Map(), providerStarts = new Map();
-  let session, installation, starting, closing, ending = false, changingSettings = false;
+  let session, installation, starting, closing, ending = false, changingSettings = false, startupPhase = null;
   const reportError = error => events.append({ type: "human.setup-waiting", source: "system", summary: error.message });
   const toolHook = async input => installation?.guardMainTool(input);
   const permissionHandler = (request, invocation) => options.mainPermissionHandler
@@ -85,11 +85,14 @@ export function createHumanLoopController(options) {
     if (changingSettings) throw new Error("Wait for the Development settings change to finish before opening its runtime.");
     if (starting) return starting;
     starting = (async () => {
+      const initializing = !installation.runtime || (await installation.read()).status !== "ready";
+      if (initializing) { startupPhase = "starting"; events.touch(); }
       await options.beforeStart?.();
       if (await requiresModelSelection()) throw Object.assign(
         new Error("Choose and save a Development model in Project settings before starting Development."),
         { code: "development_model_required" });
       const runtime = await installation.open(openOptions);
+      if (initializing) { startupPhase = "verifying"; events.touch(); }
       if (options.projectEffortControl) await runtime.applyProjectEffort();
       events.enablePersistence(repositoryRoot);
       runtime.wake();
@@ -98,7 +101,7 @@ export function createHumanLoopController(options) {
         summary: readiness.status === "ready" ? "Ready for new instructions. Previous work is not resumed by recovery."
           : readiness.reason ?? "The workflow is not Ready." });
       return runtime;
-    })().finally(() => { starting = null; });
+    })().finally(() => { starting = null; startupPhase = null; events.touch(); });
     return starting;
   }
   async function openView(id, providerOptions = {}) {
@@ -107,7 +110,7 @@ export function createHumanLoopController(options) {
     if (providerStarts.has(id)) return providerStarts.get(id);
     const opening = (async () => {
       const original = await createHumanLoopProvider({ repositoryRoot, publicDirectory, getInstallation: () => installation,
-        events, permissions, start, modelSettings, changeModel, finishEmptyRepair: async () => {
+        events, permissions, start, modelSettings, changeModel, getStartupPhase: () => startupPhase, finishEmptyRepair: async () => {
           const runtime = installation.runtime;
           if (!runtime) throw new Error("The repaired runtime is not available for readback.");
           if (options.projectEffortControl) await runtime.applyProjectEffort();
@@ -137,7 +140,7 @@ export function createHumanLoopController(options) {
     if (provider) { providers.delete(id); await provider.close(); }
   }
   async function status() {
-    return installation ? { installation: await installation.read(),
+    return installation ? { installation: await installation.read(), startup: startupPhase,
       workflow: installation.runtime ? await installation.runtime.readiness() : null,
       owner: installation.configuration ? {
         mainSessionId: installation.configuration.owner.mainSessionId,
@@ -206,6 +209,15 @@ export function createHumanLoopController(options) {
       supportedReasoningEfforts: model?.capabilities?.supports?.reasoning_effort ?? [] })));
   }
   async function modelSettings() {
+    const initializing = startupPhase;
+    if (initializing) {
+      const saved = await preferences.read();
+      return { models: [], actual: null, desired: saved.model, pending: saved.pendingModel,
+        actualReasoningEffort: null, desiredReasoningEffort: saved.reasoningEffort, pendingReasoningEffort: saved.pendingReasoningEffort,
+        effortManaged: options.projectEffortControl === true, projectReasoningEffort: saved.projectReasoningEffort,
+        canSetReasoningEffort: false, canChange: false, error: null, capabilities: null, startup: initializing,
+        reason: "Development initialization and model verification are in progress." };
+    }
     const current = await status();
     if (installation?.runtime) {
       const value = await installation.runtime.modelSettings();

@@ -404,6 +404,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       tasks: [], current: { id: "fixture-snapshot" },
       implementationResult: { resultId: "fixture-implementation", outcome: { kind: "implementation-result", summary: "Original reported implementation", evidenceRefs: ["fixture-test-receipt"] } } });
     let active = false, stopped = false, installationStatus = "new", modelSelectionRequired = false;
+    let startupPhase = null;
     let modelSaveFailure = false, modelSaveWait = null;
     let startingPath = null;
     const value = discoveryState("requirements");
@@ -554,6 +555,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
           else if (path === "/api/development/open") {
             const first = mutations.filter(item => item.path === "/api/development/open").length === 1;
             active = !first; stopped = false; installationStatus = first ? "starting" : "ready";
+            startupPhase = first ? "starting" : null;
             events.touch(); json({ url: provider.url });
           }
           else if (path === "/api/answer") { value.requirements.usageItems.push(body.answer); value.revision++; json(value); }
@@ -587,6 +589,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
     provider = await createHumanLoopProvider({ repositoryRoot: root, publicDirectory: process.env.TANDEM_PACKAGED_EXTENSION
       ? join(dirname(process.env.TANDEM_PACKAGED_EXTENSION), "stage2", "public") : resolve("development", "tandem", "public"),
       surface: "browser", projectHost: { origin: new URL(url).origin, channel: "whole-project-fixture" }, events,
+      getStartupPhase: () => startupPhase,
       modelSettings: async () => ({ ...await runtime.modelSettings(), ...(!active
         ? { actual: null, actualReasoningEffort: null, desired: modelSelectionRequired ? null : "fixture", deferred: true } : {}) }),
       changeModel: async ({ model }) => {
@@ -1196,10 +1199,18 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         await waitInside('document.body.dataset.projectStacked==="false"');
       };
       await waitInside('document.body.dataset.projectWorking==="development"');
-      await waitInside('document.querySelector("#backbone-state").textContent==="Design unverified"');
-      assert.equal(await inside('document.querySelector("#backbone-state").textContent'), "Design unverified");
-      assert.match(await inside('document.querySelector("#assessment-card").textContent'), /not yet verified/);
+      await waitInside('document.querySelector("#backbone-state").textContent==="Loading Design..."');
+      assert.equal(await inside('document.querySelector("#backbone-state").textContent'), "Loading Design...");
+      assert.match(await inside('document.querySelector("#assessment-card").textContent'), /Starting Development/);
+      assert.match(await inside('document.querySelector("#private-history-status").textContent'), /Loading private session history/);
+      assert.equal(await inside('document.querySelector("#notice").hidden'), true);
+      await browser.waitFor('document.querySelector("#next-action-guide").textContent==="Starting Development..."');
       assert.doesNotMatch(await inside('document.querySelector("#assessment-card").textContent'), /No Design has been published/);
+      startupPhase = "verifying"; active = true; installationStatus = "ready"; events.touch();
+      await browser.waitFor('document.querySelector("#next-action-guide").textContent==="Verifying Development model..."');
+      assert.equal(await inside('document.querySelector("#initialize").hidden'), true);
+      assert.equal(await inside('document.querySelector("#message").disabled && document.querySelector("#send").disabled'), true);
+      assert.equal(await inside('document.querySelector("#notice").hidden'), true);
       await browser.call("Emulation.setDeviceMetricsOverride", { width: 390, height: 620, deviceScaleFactor: 1, mobile: false });
       await waitInside('document.body.dataset.projectStacked==="true"');
       assert.ok(await inside('document.querySelector("#design-panel").getBoundingClientRect().height <= 180'),
@@ -1209,8 +1220,10 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       assert.equal(await inside('document.querySelector("#message").disabled && document.querySelector("#send").disabled'), true,
         "The chosen Development context is not actionable before runtime readiness.");
       assert.equal(await inside('document.querySelector("#initialize").hidden'), true, "No redundant setup action while entry initializes.");
-      installationStatus = "prepared"; events.touch();
+      startupPhase = null; active = false; installationStatus = "prepared"; events.touch();
       await waitInside('!document.querySelector("#initialize").hidden && !document.querySelector("#initialize").disabled');
+      await browser.waitFor('document.querySelector("#next-action-guide").textContent==="Development setup needs attention"');
+      assert.match(await inside('document.querySelector("#notice").textContent'), /Git observation failed/);
       await checkDevelopmentLayout("startup-error");
       assert.equal(await inside('document.querySelector("#message").disabled && document.querySelector("#send").disabled'), true);
       assert.equal(nativeRequests.length, 0);

@@ -276,7 +276,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
             workspaceRequested.current = true;
             setViewRequested(true);
             startRequested.current = true;
-            setView(v => ({ ...v, starting: true, developmentEntered: true, error: "" }));
+            setView(v => ({ ...v, starting: true, developmentEntered: true, error: "", detail: "", presentation: null, presentationScope: "" }));
             const response = await fetch("/api/development/open", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ retry }) });
             const result = await response.json();
             if (!response.ok) throw new Error(result.error || "Development could not activate.");
@@ -409,7 +409,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
                     void requireDevelopmentModel({ kind: "activate", retry: false }).catch(error =>
                         setView(v => ({ ...v, error: error instanceof Error ? error.message : "Development model selection could not be checked." })));
                 }
-                const retryable = message.canRetry === true || message.canReopen === true || ["failed", "unknown", "closed"].includes(message.installationStatus);
+                const retryable = message.starting !== true && (message.canRetry === true || message.canReopen === true || ["failed", "unknown", "closed"].includes(message.installationStatus));
                 const settled = message.active === true || retryable;
                 if (retryable) startRequested.current = false;
                 setView(v => ({ ...v, status: message.status.slice(0, 80), detail: typeof message.reason === "string" ? message.reason.slice(0, 2000) : "",
@@ -425,7 +425,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
                         ? message.presentation : null,
                     presentationScope: typeof message.statusScope === "string" ? message.statusScope : "",
                     active: message.active === true,
-                    starting: settled ? false : v.starting,
+                    starting: message.starting === true || !settled && v.starting,
                     designRevision: typeof message.designRevision === "string" ? message.designRevision : null,
                     designChanged: !latest.current.designVisible && Boolean(message.designRevision)
                         && (v.designChanged || v.designRevision !== message.designRevision),

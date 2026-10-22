@@ -280,7 +280,7 @@ async function body(request) {
 }
 
 export async function createHumanLoopProvider({ repositoryRoot, publicDirectory, getInstallation, events, permissions, start, finishEmptyRepair, openBrowser,
-  openProjectFolder: revealProject = openProjectFolder, surface = "canvas", projectHost = null, modelSettings, changeModel }) {
+  openProjectFolder: revealProject = openProjectFolder, surface = "canvas", projectHost = null, modelSettings, changeModel, getStartupPhase = () => null }) {
   requireCondition(["canvas", "browser"].includes(surface), "Unsupported Tandem delivery surface.");
   if (projectHost) requireCondition(/^http:\/\/127\.0\.0\.1:\d+$/.test(projectHost.origin)
     && /^[a-zA-Z0-9-]{1,100}$/.test(projectHost.channel), "Invalid project presentation binding.");
@@ -299,17 +299,18 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
     const installation = getInstallation();
     const running = runtime();
     const installed = installation ? await installation.read() : { status: "attaching", reason: "Attaching the current main session." };
+    const startup = getStartupPhase();
     const privateId = running?.sessionId ?? installation?.configuration?.owner.privateSessionId;
     const privateEvents = projectPrivateEvents(events.list(), privateId);
-    if (!running || !["ready", "closed"].includes(installed.status)) return { schemaVersion: "human-loop-snapshot-view/v1", streamId: events.streamId,
-      installation: installed,
+    if (startup || !running || !["ready", "closed"].includes(installed.status)) return { schemaVersion: "human-loop-snapshot-view/v1", streamId: events.streamId,
+      installation: installed, startup,
       conversationStatus: "unverified", workflow: null, design: null, messages: [], events: privateEvents,
       accessRequests: privateId ? permissions.list(privateId) : [], processes: { apps: [], commands: [] } };
     const [state, readiness, originals, design, processes] = await Promise.all([
       running.state(), running.readiness(), running.conversation(), running.currentDesign(), running.commands.read(),
     ]);
     return { schemaVersion: "human-loop-snapshot-view/v1", streamId: events.streamId,
-      installation: installed, workflow: projectHumanLoopView(state, readiness, design),
+      installation: installed, startup, workflow: projectHumanLoopView(state, readiness, design),
       conversationStatus: "verified", design, cycles: state.cycles.map(projectHumanCycle), messages: projectHumanConversation(state, originals), events: privateEvents,
       historyRequests: state.requests.slice(-500).map(({ id, receivedAt }) => ({ id, receivedAt })),
       recoveries: (state.recoveries ?? []).map(({ id, recoveredAt }) => ({ id, recoveredAt })),

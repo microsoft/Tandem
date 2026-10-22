@@ -330,6 +330,10 @@ continuation. Saving a model by itself never starts Development.
 Continue stays disabled until the displayed model choice is saved or applied.
 Changing that choice disables it again; a failed or pending save never enables
 it. While startup checks the saved model, the button shows **Checking model...**.
+Development then shows **Starting Development...** and **Verifying Development
+model...** until initialization finishes. These are progress states, not warnings.
+Permissions still require your response, and a failed startup or model check
+remains visible once the operation settles.
 The browser CLI accepts
 `--model <id>` and optional `--reasoning-effort <level>` for that main session;
 see the [quick start](quick-start.md). These options do not choose Development's

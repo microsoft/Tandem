@@ -338,6 +338,7 @@ function Workspace(props: WorkspaceProps) {
   const authoritativeActivity = privateStatus?.kind === "active" && !handoffStatus.busy && !pending
     && !hasActiveJobs(state) && (!handoffStatus.rootStatus || savedPrototype) ? privateStatus.text : "";
   const statusBarText = statusBarError || (privateStatus?.kind === "attention" ? privateStatus.text : "")
+    || (activeTab === "development" && projectView.starting ? privateStatus?.text || "Starting Development..." : "")
     || authoritativeActivity || contextHelp || (nextAction ? "Next action: " + nextAction.label
     : (handoffStatus.busy ? handoffStatus.text : "") || developmentStatus
     || (pending || hasActiveJobs(state) ? state.status : "") || (!savedPrototype ? handoffStatus.rootStatus : "")
