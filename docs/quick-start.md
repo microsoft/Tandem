@@ -80,6 +80,9 @@ folder and continue**: it initializes local Git only when needed and adds
 `.tandem/` to `.gitignore`, preserving files and rules. No commit, remote or push
 is created. **Cancel** performs no setup and leaves the starting choice unsaved.
 Choosing Preparation does not open Development.
+After setup, **Opening your selected project...** stays visible until entry
+finishes; you are not asked to choose the starting path again. Cancellation
+returns to the chooser, and a failed entry offers an explicit retry.
 
 ### Start with Preparation
 

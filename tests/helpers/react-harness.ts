@@ -66,6 +66,7 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
   const previewRequests: RequestInit[] = [];
   const previewFetchers = new Map<PrototypePreviewTarget, () => Promise<Response>>();
   let entryOpened = false;
+  let entryGate: ((path: string, options: RequestInit) => Promise<void>) | null = null;
   let gitFetcher: (() => Promise<Response>) | null = null;
   let modelSelectionFetcher = async () => response({ required: modelSelectionRequired });
   const errors: string[] = [];
@@ -95,6 +96,7 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
       }
       if (path === "/api/project-entry") {
         entryRequests.push(path + ":" + (options.method || "GET"));
+        if (entryGate) await entryGate(path, options);
         if (options.method === "POST") {
           const choice = JSON.parse(String(options.body)).startingPath;
           if (startingPath && choice !== startingPath) return response({ error: "Starting path already chosen." }, 409);
@@ -104,6 +106,7 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
       }
       if (path === "/api/project-entry/open") {
         entryRequests.push(path);
+        if (entryGate) await entryGate(path, options);
         const developmentStarted = !entryOpened && startingPath === "development";
         entryOpened = true;
         return response({ developmentStarted, developmentContext: startingPath === "development" });
@@ -204,6 +207,7 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
       await click(button);
     },
     setFetch(handler: typeof fetcher) { fetcher = handler; },
+    setEntryGate(handler: typeof entryGate) { entryGate = handler; },
     setGitPreflight(handler: () => Promise<Response>) { gitFetcher = handler; },
     setModelSelectionFetch(handler: () => Promise<Response>) { modelSelectionFetcher = handler; },
     setPreviewFetch(handler: () => Promise<Response>, target: PrototypePreviewTarget = "current") { previewFetchers.set(target, handler); },

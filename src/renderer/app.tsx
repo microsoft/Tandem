@@ -468,8 +468,10 @@ function Workspace(props: WorkspaceProps) {
     <p id="stage-message" className={stageAction.error ? "stage-message" : "visually-hidden"} title={stageAction.error || undefined} role="status" data-status={stageAction.error ? "error" : "idle"}>{stageAction.error || (state.lifecycle.outputs?.at(-1) ? "Saved " + state.lifecycle.outputs.at(-1)!.path : current === "prepare" ? "Preparation advances automatically when analysis completes." : "Complete the active stage to unlock the next.")}</p>
   </section>;
   return <UiContext.Provider value={{ ...ui, reviewStage: openReview }}><div className="app project-workspace-app">
-    {projectView.entry.loading && <p className="project-entry-loading" role="status">Reading project metadata...</p>}
-    <AlertDialog.Root open={!projectView.entry.loading && !projectView.entry.ready && !projectView.gitSetupVisible && !projectView.settingsOpen}>
+    {!projectView.entry.ready && (projectView.entry.loading || projectView.entry.busy) && !projectView.gitSetupVisible && !projectView.settingsOpen
+      && <p id="project-entry-progress" className="project-entry-loading" role="status">
+        {projectView.entry.loading ? "Reading project metadata..." : "Opening your selected project..."}</p>}
+    <AlertDialog.Root open={!projectView.entry.loading && !projectView.entry.busy && !projectView.entry.ready && !projectView.gitSetupVisible && !projectView.settingsOpen}>
       <AlertDialog.Portal><AlertDialog.Overlay className="dialog-overlay" /><AlertDialog.Content className="dialog-content project-entry">
         <AlertDialog.Title>Choose where to start</AlertDialog.Title>
         <AlertDialog.Description>
@@ -488,14 +490,13 @@ function Workspace(props: WorkspaceProps) {
                 onClick={() => void projectView.chooseEntry("development")}><strong>Go to Development</strong>
                 <span>Go directly to Development if you already have project files, an initial implementation, or a rough idea you want to work on. You can refine the Design there without going through Preparation.</span></button>
             </div>}
-        {projectView.entry.busy && <p role="status">Preparing your selected project context...</p>}
         {state.provider?.canSubmitAnswers === false && <p role="status">This provider is read-only. Use the project's owning writable provider to make the initial choice.</p>}
       </AlertDialog.Content></AlertDialog.Portal>
     </AlertDialog.Root>
     <Tabs.Root value={activeTab} onValueChange={navigate} asChild>
       <main id="studio-workspace" ref={workspace} className="workspace project-workspace" data-development={developmentView} data-context-open={contextOpen} data-context-collapsed={contextCollapsed}
         inert={!projectView.entry.ready || props.effortBusy}
-        aria-busy={props.effortBusy || Boolean(state.effortReset)} style={{ "--requirements-width": width + "px" } as CSSProperties}>
+        aria-busy={!projectView.entry.ready && projectView.entry.busy || props.effortBusy || Boolean(state.effortReset)} style={{ "--requirements-width": width + "px" } as CSSProperties}>
         <button id="context-toggle" className="context-toggle" type="button" aria-expanded={contextOpen} aria-controls="requirements-pane" onClick={() => setContextOpen(!contextOpen)}>
           <PanelLeft size={15} aria-hidden="true" /><span>Project context</span><span id="context-stage" className="context-stage">{lifecycleStages.find((stage) => stage.id === current)?.label}</span><ChevronDown className="context-chevron" size={16} aria-hidden="true" />
         </button>
