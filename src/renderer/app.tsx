@@ -468,7 +468,7 @@ function Workspace(props: WorkspaceProps) {
   </section>;
   return <UiContext.Provider value={{ ...ui, reviewStage: openReview }}><div className="app project-workspace-app">
     {projectView.entry.loading && <p className="project-entry-loading" role="status">Reading project metadata...</p>}
-    <AlertDialog.Root open={!projectView.entry.loading && !projectView.entry.ready && !projectView.gitSetupVisible}>
+    <AlertDialog.Root open={!projectView.entry.loading && !projectView.entry.ready && !projectView.gitSetupVisible && !projectView.settingsOpen}>
       <AlertDialog.Portal><AlertDialog.Overlay className="dialog-overlay" /><AlertDialog.Content className="dialog-content project-entry">
         <AlertDialog.Title>Choose where to start</AlertDialog.Title>
         <AlertDialog.Description>

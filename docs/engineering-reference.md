@@ -734,6 +734,15 @@ uncertain existing ownership remain explicit errors; a saved preference is not
 an actual running model. Once Ready, changes still use the native idle-only
 model-switch path.
 
+First startup requires an explicit saved model. The root entry/open controls
+read the controller's model-selection preflight and open the same Project
+settings window when needed; startup remains a separate explicit action after
+saving. The native controller enforces the requirement before installation or
+private-session creation. A previously created but unselected private session
+uses that same prompt and its original model-switch path, not a replacement
+session. Prototype submission still needs its separate handoff review after
+model selection.
+
 The obsolete acceptance, capture, export, delivery, adapter configuration and
 linked-intake controls have been removed, not moved into settings. The public
 `process_action` canvas action is no longer registered; `/api/process` returns

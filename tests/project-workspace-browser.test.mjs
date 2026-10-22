@@ -362,7 +362,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       plan: { id: "fixture-plan", version: 2, digest: "b".repeat(64), design: designBinding, goal: "Original saved plan", tasks: [] },
       tasks: [], current: { id: "fixture-snapshot" },
       implementationResult: { resultId: "fixture-implementation", outcome: { kind: "implementation-result", summary: "Original reported implementation", evidenceRefs: ["fixture-test-receipt"] } } });
-    let active = false, stopped = false, installationStatus = "new";
+    let active = false, stopped = false, installationStatus = "new", modelSelectionRequired = false;
     let startingPath = null;
     const value = discoveryState("requirements");
     value.provider = { ...value.provider, canReload: true };
@@ -496,6 +496,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
           json({ projectPath: root, startingPath });
         }
         else if (path === "/api/project-entry/open") json({ developmentContext: startingPath === "development", developmentStarted: false });
+        else if (path === "/api/development/model-selection") json({ required: modelSelectionRequired });
         else if (path === "/api/development/preflight") json({ status: "ready", projectPath: root, initialize: false, message: "Fixture Git working copy is ready." });
         else if (path === "/api/development/view") json({ url: provider.url, channel: "whole-project-fixture" });
         else if (path === "/api/settings/project-effort") json({ desired: "low", changing: false,
@@ -544,6 +545,9 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
     provider = await createHumanLoopProvider({ repositoryRoot: root, publicDirectory: process.env.TANDEM_PACKAGED_EXTENSION
       ? join(dirname(process.env.TANDEM_PACKAGED_EXTENSION), "stage2", "public") : resolve("development", "tandem", "public"),
       surface: "browser", projectHost: { origin: new URL(url).origin, channel: "whole-project-fixture" }, events,
+      modelSettings: async () => ({ ...await runtime.modelSettings(), ...(!active
+        ? { actual: null, actualReasoningEffort: null, desired: modelSelectionRequired ? null : "fixture", deferred: true } : {}) }),
+      changeModel: async ({ model }) => { assert.equal(model, "fixture"); modelSelectionRequired = false; events.touch(); },
       getInstallation: () => ({ runtime: active ? runtime : null,
         close: async () => { stopped = true; installationStatus = "closed"; events.touch(); return {}; },
         read: async () => ({ status: installationStatus,
@@ -617,6 +621,16 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       };
       await browser.waitFor('Boolean(document.querySelector("#entry-preparation"))');
       assert.equal(await browser.evaluate('document.querySelector("#project-conversation-frame")===null'), true);
+      modelSelectionRequired = true;
+      await clickRoot("#entry-development");
+      await browser.waitFor('document.querySelector(".project-settings-dialog")?.open');
+      await waitSettings('document.activeElement.id==="setting-model"');
+      assert.equal(await browser.evaluate('document.querySelector("[role=alertdialog]")===null'), true);
+      assert.equal(startingPath, null);
+      assert.equal(active, false);
+      await clickRoot("#close-project-settings");
+      await browser.waitFor('Boolean(document.querySelector("#entry-preparation"))');
+      modelSelectionRequired = false;
       await clickRoot("#entry-preparation");
       await browser.waitFor('!document.querySelector("#entry-preparation")');
       const push = async () => {
@@ -993,7 +1007,21 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 1000, deviceScaleFactor: 1, mobile: false });
       await clickRoot("#development-tab");
       assert.equal(active, false, "Artifact navigation is not initialization.");
+      modelSelectionRequired = true;
       await clickRoot("#enter-development");
+      await browser.waitFor('document.querySelector(".project-settings-dialog")?.open');
+      await waitSettings('document.activeElement.id==="setting-model"');
+      assert.equal(mutations.some(item => item.path === "/api/development/open"), false);
+      assert.equal(await browser.evaluate('document.querySelector("#project-conversation-frame")===null'), true);
+      await clickRoot("#start-development-after-model");
+      assert.equal(mutations.some(item => item.path === "/api/development/open"), false);
+      await settingsInside(`document.querySelector("#setting-model").value="fixture";
+        document.querySelector("#setting-model").dispatchEvent(new Event("change"));
+        document.querySelector("#apply-model").click();`);
+      await waitSettings('document.querySelector("#model-setting-status").textContent.includes("Saved selection: fixture") && !document.querySelector("#apply-model").disabled');
+      assert.equal(modelSelectionRequired, false);
+      assert.equal(active, false, "Saving alone never starts Development.");
+      await clickRoot("#start-development-after-model");
       await browser.waitFor('Boolean(document.querySelector("#project-conversation-frame"))');
       await browser.waitFor('document.querySelector(".brand-artwork").naturalWidth > 0');
       let frame;

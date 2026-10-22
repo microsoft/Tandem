@@ -77,6 +77,7 @@ export function HandoffReviewProvider({ children }: { children: ReactNode }) {
         await action.run(async () => {
             setOpen(false); setPhase("Checking project setup...");
             try {
+                if (!await project.requireDevelopmentModel()) return;
                 if (!await project.requireDevelopmentGit()) return;
                 if (latest.current.key !== key) throw new Error("The Prototype changed during project setup. Review it again.");
                 project.prepareDevelopmentView(); browseStage("development");

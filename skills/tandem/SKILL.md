@@ -324,6 +324,9 @@ Before first startup, **Save model for Development** records the user's private
 model choice. Startup validates and applies that saved preference, then verifies
 native readback; saving is not proof of a running model. Catalog failures or
 unavailable model/effort choices never authorize a fallback.
+If first startup has no saved private model, ask through Project settings before
+creating the session. Saving the selection alone must not resume startup or
+submit a handoff; the user explicitly continues afterward.
 
 The obsolete acceptance, capture/export, delivery and linked-intake workflow is
 retired, including `process_action`. Do not recreate or relocate those controls.

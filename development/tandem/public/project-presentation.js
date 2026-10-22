@@ -6,7 +6,7 @@ export function installProjectPresentation({ document, window, changed, settings
   const { projectPanel: panel, projectOrigin: origin, projectChannel: channel } = document.body.dataset;
   if (!panel) return null;
   let context = null, draftContext = null, pending = null, nativePending = false;
-  let currentSnapshot = null, settingsRead = false;
+  let currentSnapshot = null, settingsRead = false, modelSelectionRequested = false;
   const send = value => window.parent.postMessage({ protocol: "tandem-project/v1", channel, ...value }, origin);
   if (panel === "settings") document.querySelector("#canvas-settings").open = true;
   const effortPanel = document.querySelector("#project-effort-settings");
@@ -132,6 +132,10 @@ export function installProjectPresentation({ document, window, changed, settings
       document.body.dataset.projectWorking = message.developmentEntered === true ? "development" : "discovery";
       renderEffort();
       renderReload();
+      if (panel === "settings") {
+        if (message.modelSelectionRequested === true && !modelSelectionRequested) settings(true);
+        modelSelectionRequested = message.modelSelectionRequested === true;
+      }
       if (panel === "settings" && !settingsRead) {
         settingsRead = true;
         requestEffort();

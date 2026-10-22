@@ -226,6 +226,7 @@ test("completed changed and unchanged handoffs remain quiet after a later verifi
           request.on("close", () => rootEvents.delete(response));
         } else if (path === "/api/project-entry") json({ projectPath: root, startingPath: "development" });
         else if (path === "/api/project-entry/open") json({ developmentContext: true, developmentStarted: false });
+        else if (path === "/api/development/model-selection") json({ required: false });
         else if (path === "/api/settings/project-effort") json({ desired: null, changing: false,
           stage1: { desired: null, actual: null, model: null, supported: [], status: "pending", error: null },
           stage2: { desired: null, actual: null, model: null, supported: [], status: "pending", error: null } });

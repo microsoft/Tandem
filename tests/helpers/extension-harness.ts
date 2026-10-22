@@ -135,6 +135,7 @@ export async function extensionHarness(environment: Record<string, string> = {},
     let mainReasoningEffort: string | undefined;
     let developmentReasoningEffort: string | null = null, developmentEffortActive = false, developmentEffortError: string | null = null;
     let beforeDevelopmentStart: () => Promise<void> = async () => {};
+    let developmentModelRequired = false;
     const logs: string[] = [];
     let previewHtml = '<html><meta name="tandem-prototype-id" content="sample"></html>';
     let previewFetch: typeof fetch = async () => new Response(previewHtml);
@@ -173,6 +174,7 @@ export async function extensionHarness(environment: Record<string, string> = {},
                     if (developmentRequests.length) throw new Error("Finish or close Development before changing upstream discovery.");
                 },
                 status: async () => ({ installation: { status: "new" }, workflow: null }),
+                requiresModelSelection: async () => developmentModelRequired,
                 validateReasoningEffort: async () => {
                     if (developmentRequests.length) throw new Error("Private native work is busy.");
                 },
@@ -237,6 +239,7 @@ export async function extensionHarness(environment: Record<string, string> = {},
             setDevelopmentEffortActive(value: boolean) { developmentEffortActive = value; },
             setDevelopmentEffortError(value: string | null) { developmentEffortError = value; },
             setBeforeDevelopmentStart(handler: () => Promise<void>) { beforeDevelopmentStart = handler; },
+            setDevelopmentModelRequired(value: boolean) { developmentModelRequired = value; },
             setRename(value: typeof fs.rename) { rename = value; },
             setPreviewHtml(value: string) { previewHtml = value; },
             setPreviewFetch(value: typeof fetch) { previewFetch = value; },

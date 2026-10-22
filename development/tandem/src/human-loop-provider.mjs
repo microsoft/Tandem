@@ -578,7 +578,8 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
           } else if (state) outcome.notAccepted = true;
         } catch { /* No read proof means the client must retain its retry identity. */ }
       }
-      json(response, error.code === "ENOENT" ? 404 : 409, { error: error.message, ...outcome });
+      json(response, error.code === "ENOENT" ? 404 : 409, { error: error.message,
+        ...(error.code === "development_model_required" ? { code: error.code } : {}), ...outcome });
     }
   });
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });

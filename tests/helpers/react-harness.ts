@@ -51,7 +51,7 @@ export function response(body: unknown, status = 200): Response {
   return { ok: status < 400, status, json: async () => body } as Response;
 }
 
-export async function reactHarness(t?: TestContext, headerHost?: { origin: string; channel: string }, startingPath: "preparation" | "development" | null = "preparation") {
+export async function reactHarness(t?: TestContext, headerHost?: { origin: string; channel: string }, startingPath: "preparation" | "development" | null = "preparation", modelSelectionRequired = false) {
   const hash = headerHost ? "#" + new URLSearchParams({ "tandem-host": headerHost.origin, "header-channel": headerHost.channel }) : "";
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
     url: "http://127.0.0.1:4567/" + hash, runScripts: "outside-only", pretendToBeVisual: true,
@@ -67,6 +67,7 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
   const previewFetchers = new Map<PrototypePreviewTarget, () => Promise<Response>>();
   let entryOpened = false;
   let gitFetcher: (() => Promise<Response>) | null = null;
+  let modelSelectionFetcher = async () => response({ required: modelSelectionRequired });
   const errors: string[] = [];
   const pngExports: { width: number; height: number; source: string }[] = [];
   const headerMessages: Record<string, any>[] = [];
@@ -87,6 +88,7 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
     PointerEvent: window.MouseEvent,
     fetch: async (input: string | URL | Request, options: RequestInit = {}) => {
       const path = String(input);
+      if (path === "/api/development/model-selection") return modelSelectionFetcher();
       if (path === "/api/development/preflight") {
         return gitFetcher ? gitFetcher() : response({ status: "ready", projectPath: "C:\\fixture-project",
           initialize: false, message: "Fixture Git working copy is ready." });
@@ -202,6 +204,7 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
     },
     setFetch(handler: typeof fetcher) { fetcher = handler; },
     setGitPreflight(handler: () => Promise<Response>) { gitFetcher = handler; },
+    setModelSelectionFetch(handler: () => Promise<Response>) { modelSelectionFetcher = handler; },
     setPreviewFetch(handler: () => Promise<Response>, target: PrototypePreviewTarget = "current") { previewFetchers.set(target, handler); },
     headerMessages,
     async sendHeaderMessage(data: Record<string, unknown>, origin = headerHost?.origin || "http://127.0.0.1:9000", source: unknown = parent) {

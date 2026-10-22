@@ -323,6 +323,10 @@ starting work. Startup checks that the saved model and effort are still availabl
 applies them, and verifies the actual private model; it never silently substitutes
 another model. Once Development is Ready, **Apply model** changes that running
 private session only. The main/discovery model belongs to the launching host.
+If you start Development without a saved model, Tandem opens this same settings
+window before creating its private session. Choose and save a model, then select
+**Start Development with saved model**. Closing settings cancels the startup
+continuation. Saving a model by itself never starts Development.
 The browser CLI accepts
 `--model <id>` and optional `--reasoning-effort <level>` for that main session;
 see the [quick start](quick-start.md). These options do not choose Development's

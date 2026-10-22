@@ -7493,6 +7493,9 @@ async function handleRequest(entry, req, res) {
     }
     if (requestUrl.pathname.startsWith("/api/development/")) {
         if (!(await isPreferredAnswerProvider(entry.extensionId))) throw new CanvasError("read_only_provider", "Open the writable provider for Development.");
+        if (req.method === "GET" && requestUrl.pathname === "/api/development/model-selection") {
+            sendJson(res, 200, { required: await development.requiresModelSelection() }); return;
+        }
         if (req.method === "GET" && requestUrl.pathname === "/api/development/preflight") {
             sendJson(res, 200, await developmentGit.preflight()); return;
         }

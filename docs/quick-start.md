@@ -115,8 +115,10 @@ prototyping with a recorded reason and **Finish Requirements and save outputs**.
 
 Use this path for existing code, an initial implementation, or a rough idea.
 
-1. Complete project setup above, then wait for **Ready**. Opening Development
-   does not submit a model request or approve implementation.
+1. Complete project setup above. If no Development model is saved, Tandem opens
+   **Project settings** first: select a private model, **Save model for
+   Development**, then **Start Development with saved model**. Wait for **Ready**.
+   Opening Development does not submit a model request or approve implementation.
 2. Choose **Quick requests > Understand existing project**, review the inserted
    text and send it. Or use **Design something new** for an idea without code.
 3. Inspect the Design beside Conversation and answer its questions.

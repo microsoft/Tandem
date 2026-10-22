@@ -90,7 +90,12 @@ let lastVerifiedDesign = null;
 if (document.body.dataset.projectPanel) $('design-overview').open = false;
 const projectPresentation = installProjectPresentation({ document, window,
   changed: () => { if (snapshot) render(); },
-  settings: () => { $('canvas-settings').open = true; void refreshSettings(true); },
+  settings: focusModel => {
+    $('canvas-settings').open = true;
+    void refreshSettings(settingsLoaded).then(() => {
+      if (focusModel) { $('setting-model').scrollIntoView({ block: 'center' }); $('setting-model').focus(); }
+    });
+  },
   effortChanged: () => { void refreshSettings(true); },
   layoutChanged: layout => splitter.setProjectLayout(layout),
   hasAttachments: () => $('annotation-preview')?.hidden === false || $('clipboard-preview')?.hidden === false,
@@ -183,7 +188,7 @@ async function saveSettings(path, data) {
     await refreshSettings(); await refresh();
   }
 }
-$('canvas-settings').addEventListener('toggle', () => { if ($('canvas-settings').open) void refreshSettings(); });
+$('canvas-settings').addEventListener('toggle', () => { if ($('canvas-settings').open) void refreshSettings(settingsLoaded); });
 function closeSettings() {
   if (projectPresentation?.panel !== 'settings') $('canvas-settings').open = false;
   if (projectPresentation) projectPresentation.settingsClosed();
@@ -323,7 +328,7 @@ async function post(path, data, expectedStatus) {
   const response = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) });
   const value = await response.json();
   if (!response.ok) throw Object.assign(new Error(value.error ?? `Request failed (${response.status}).`),
-    { notAccepted: value.notAccepted === true, accepted: value.accepted === true });
+  { code: value.code, notAccepted: value.notAccepted === true, accepted: value.accepted === true });
   if (expectedStatus !== undefined && response.status !== expectedStatus) throw new Error('Request acceptance was not confirmed; refresh before retrying.');
   return value;
 }
@@ -868,7 +873,12 @@ function requestWorkflowStop(mode) {
   return stopRequest;
 }
 $('initialize').onclick = () => projectPresentation ? projectPresentation.activate(snapshot.installation?.canRetry) : post('/api/runtime/start', snapshot.installation?.canRetry ? { retry: true } : {})
-  .then(async () => { notice(''); await refresh(); }).catch((error) => notice(error.message));
+  .then(async () => { notice(''); await refresh(); }).catch((error) => {
+    notice(error.message);
+    if (error.code === 'development_model_required') {
+      $('canvas-settings').open = true; $('setting-model').focus(); void refreshSettings();
+    }
+  });
 $('inspect-initial-creation').onclick = async () => {
   if (initialCreationInspecting) return;
   initialCreationInspecting = true; render();

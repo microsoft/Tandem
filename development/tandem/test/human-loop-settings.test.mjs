@@ -88,6 +88,36 @@ test("unopened model settings save authenticated preferences without reserving a
   assert.equal(f.session.sends.length, 0);
 });
 
+test("first Development startup asks for a model before reserving ownership, even with saved effort", async t => {
+  const f = await fixture(t, { projectReasoningEffort: "low" }, true, false), controller = await unopenedController(t, f);
+  assert.equal(await controller.requiresModelSelection(), true);
+  await assert.rejects(controller.start(), error => error.code === "development_model_required");
+  assert.equal(controller.installation.runtime, null);
+  assert.equal(controller.installation.configuration, null);
+  const provider = await controller.openView("settings");
+  const response = await fetch(new URL("api/runtime/start", provider.url), { method: "POST",
+    headers: { "content-type": "application/json" }, body: "{}" });
+  assert.equal(response.status, 409);
+  assert.equal((await response.json()).code, "development_model_required");
+  await controller.changeModel({ model: "one" });
+  assert.equal(await controller.requiresModelSelection(), false);
+  assert.equal(controller.installation.configuration, null);
+  assert.equal(f.session.sends.length, 0);
+});
+
+test("a ready but unselected private model asks for selection without replacing its existing session", async t => {
+  const f = await fixture(t, {}, true), controller = await unopenedController(t, f);
+  f.actual(undefined);
+  t.mock.method(controller.installation, "read", async () => ({ status: "ready" }));
+  const runtime = t.mock.getter(controller.installation, "runtime", () => f.runtime);
+  assert.equal(await controller.requiresModelSelection(), true);
+  await f.runtime.changeModel({ model: "one" });
+  assert.equal(await controller.requiresModelSelection(), false);
+  assert.equal(f.runtime.sessionId, "private");
+  assert.equal(f.session.sends.length, 0);
+  runtime.mock.restore();
+});
+
 test("unopened model choices reject unsupported, disabled and unverified inputs without changing preferences", async t => {
   const f = await fixture(t, { projectReasoningEffort: "low" }, true, false), controller = await unopenedController(t, f);
   const provider = await controller.openView("settings");
@@ -197,6 +227,27 @@ test("Settings can save a model before Development exists and retains it across 
   await browser.call("Page.reload");
   await browser.waitFor("document.querySelector('#setting-model').value==='two'");
   assert.equal((await controller.modelSettings()).actual, null);
+  assert.equal(controller.installation.configuration, null);
+  assert.equal(f.session.sends.length, 0);
+  assert.deepEqual(browser.exceptions, []);
+});
+
+test("standalone Start Development opens its existing model settings instead of failing after private creation", { skip: !browserAvailable }, async t => {
+  const f = await fixture(t, {}, true, false), controller = await unopenedController(t, f);
+  const provider = await controller.openView("settings", { surface: "browser" });
+  const browser = await openFixtureBrowser(t);
+  await browser.call("Page.navigate", { url: provider.url });
+  await browser.waitFor("document.querySelector('#initialize').checkVisibility() && !document.querySelector('#initialize').disabled && !document.querySelector('#setting-model').disabled");
+  await browser.evaluate("document.querySelector('#initialize').click()");
+  await browser.waitFor("document.querySelector('#canvas-settings').open && !document.querySelector('#setting-model').disabled");
+  assert.equal(controller.installation.configuration, null);
+  assert.equal(controller.installation.runtime, null);
+  assert.match(await browser.evaluate("document.querySelector('#notice').textContent"), /Choose and save a Development model/);
+  await browser.evaluate(`document.querySelector('#setting-model').value='one';
+    document.querySelector('#setting-model').dispatchEvent(new Event('change'));
+    document.querySelector('#apply-model').click();`);
+  await browser.waitFor("document.querySelector('#model-setting-status').textContent.includes('Saved selection: one')");
+  assert.equal(await controller.requiresModelSelection(), false);
   assert.equal(controller.installation.configuration, null);
   assert.equal(f.session.sends.length, 0);
   assert.deepEqual(browser.exceptions, []);
@@ -632,7 +683,7 @@ test("native-unselected model remains explicit in browser Settings until verifie
       document.querySelector('#setting-model').value='two';
       document.querySelector('#setting-model').dispatchEvent(new Event('change'));
       document.querySelector('#apply-model').click();`);
-    await browser.waitFor("document.querySelector('#model-setting-status').textContent.includes('Actual private model: two.')");
+    await browser.waitFor("document.querySelector('#model-setting-status').textContent.includes('Actual private model: two.') && !document.querySelector('#apply-model').disabled");
     assert.equal((await f.preferences.read()).model, "two");
     await browser.evaluate(`document.querySelector('#setting-model').value='one';
       document.querySelector('#setting-model').dispatchEvent(new Event('change'));`);

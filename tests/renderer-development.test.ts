@@ -677,6 +677,9 @@ test("real React Development keeps handoff controls in view across long-status h
             } else if (path === "/api/project-entry/open") {
                 response.writeHead(200, { "Content-Type": "application/json" });
                 response.end(JSON.stringify({ developmentContext: true, developmentStarted: false }));
+            } else if (path === "/api/development/model-selection") {
+                response.writeHead(200, { "Content-Type": "application/json" });
+                response.end(JSON.stringify({ required: false }));
             } else if (path === "/api/development/preflight") {
                 response.writeHead(200, { "Content-Type": "application/json" });
                 response.end(JSON.stringify({ status: "ready", projectPath: "C:\\layout-fixture", initialize: false, message: "Fixture Git working copy is ready." }));

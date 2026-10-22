@@ -86,6 +86,9 @@ export function createHumanLoopController(options) {
     if (starting) return starting;
     starting = (async () => {
       await options.beforeStart?.();
+      if (await requiresModelSelection()) throw Object.assign(
+        new Error("Choose and save a Development model in Project settings before starting Development."),
+        { code: "development_model_required" });
       const runtime = await installation.open(openOptions);
       if (options.projectEffortControl) await runtime.applyProjectEffort();
       events.enablePersistence(repositoryRoot);
@@ -223,6 +226,15 @@ export function createHumanLoopController(options) {
         ? "Development has not started. Save a model for startup; the private session will verify it before work begins. The main chat model is unchanged."
         : "Open and reconcile the original Development owner before changing its model." };
   }
+  async function requiresModelSelection() {
+    const current = await status();
+    if (["new", "prepared"].includes(current.installation.status)) return !(await preferences.read()).model;
+    if (current.installation.status === "ready" && installation?.runtime) {
+      const settings = await installation.runtime.modelSettings();
+      return !settings.actual && !settings.desired;
+    }
+    return false;
+  }
   async function changeModel(selection) {
     assertSettingsIdle();
     changingSettings = true;
@@ -282,6 +294,6 @@ export function createHumanLoopController(options) {
     try { return await closing; } finally { closing = null; }
   }
   return { attach, toolHook, permissionHandler, observe: nativePermissions.observe, start, openView, closeView,
-    status, assertQuiet, close, reportError, events, validateReasoningEffort, selectReasoningEffort, reasoningEffortStatus, modelSettings, changeModel,
+    status, assertQuiet, close, reportError, events, validateReasoningEffort, selectReasoningEffort, reasoningEffortStatus, modelSettings, changeModel, requiresModelSelection,
     get installation() { return installation; } };
 }
