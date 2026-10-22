@@ -327,6 +327,9 @@ If you start Development without a saved model, Tandem opens this same settings
 window before creating its private session. Choose and save a model, then select
 **Start Development with saved model**. Closing settings cancels the startup
 continuation. Saving a model by itself never starts Development.
+Continue stays disabled until the displayed model choice is saved or applied.
+Changing that choice disables it again; a failed or pending save never enables
+it. While startup checks the saved model, the button shows **Checking model...**.
 The browser CLI accepts
 `--model <id>` and optional `--reasoning-effort <level>` for that main session;
 see the [quick start](quick-start.md). These options do not choose Development's

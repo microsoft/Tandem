@@ -742,6 +742,11 @@ private-session creation. A previously created but unselected private session
 uses that same prompt and its original model-switch path, not a replacement
 session. Prototype submission still needs its separate handoff review after
 model selection.
+The settings document reports scoped model readiness only after readback matches
+its displayed model/effort. Continue is disabled for unsaved choices, pending or
+failed writes, and stale/foreign readiness messages. Each opening gets a fresh
+scope; continuation still rechecks the native preflight and cannot resume after
+the user closes the window during that check.
 
 The obsolete acceptance, capture, export, delivery, adapter configuration and
 linked-intake controls have been removed, not moved into settings. The public

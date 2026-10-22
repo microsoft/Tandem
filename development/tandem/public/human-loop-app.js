@@ -11,7 +11,7 @@ import { renderBackgroundProcesses } from './background-processes.js';
 import { createWorkflowStopControl } from './workflow-stop-control.js';
 import { installPanelSplitter } from './panel-splitter.js';
 import { createImplementationConfirmations } from './implementation-confirmation.js';
-import { installProjectPresentation } from './project-presentation.js';
+import { installProjectPresentation, isModelSelectionReady } from './project-presentation.js';
 import { currentHandoffActivity, handoffProgress, quietHandoff } from './handoff-presentation.js';
 import { projectOutputs } from './project-outputs.js';
 import { parseRoleMention } from './role-hint.js';
@@ -83,7 +83,7 @@ const stopControl = createWorkflowStopControl({
 const renderStopControl = () => stopControl.render(snapshot?.workflow, { connected: controlsConnected, pending: Boolean(stopRequest) });
 const make = (tag, text) => { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; return node; };
 let settingsBusy = false, settingsLoaded = false, settingsLoading = null, settingsVersion = 0;
-let settingsModel = null, effortModel = null;
+let settingsModel = null, effortModel = null, settingsVerified = false;
 let selectedOutput = null;
 let pendingOutputFocus = null;
 let lastVerifiedDesign = null;
@@ -97,6 +97,8 @@ const projectPresentation = installProjectPresentation({ document, window,
     });
   },
   effortChanged: () => { void refreshSettings(true); },
+  modelSelectionReady: () => settingsVerified && !settingsBusy
+    && isModelSelectionReady(settingsModel, $('setting-model').value, $('setting-effort').value),
   layoutChanged: layout => splitter.setProjectLayout(layout),
   hasAttachments: () => $('annotation-preview')?.hidden === false || $('clipboard-preview')?.hidden === false,
   openOutput,
@@ -161,20 +163,28 @@ function applySettings(value, preserveAppearanceDraft = false) {
     'This setting never changes the main chat model.',
   ].filter(Boolean).join(' ');
   settingsLoaded = true;
+  settingsVerified = true;
+  projectPresentation?.modelSettingsChanged();
 }
 function refreshSettings(preserveAppearanceDraft = false) {
   if (settingsLoading) return settingsLoading;
+  settingsVerified = false;
+  projectPresentation?.modelSettingsChanged();
   const version = settingsVersion;
   settingsLoading = (async () => {
     const response = await fetch('/api/settings'), value = await response.json();
     if (!response.ok) throw new Error(value.error ?? 'Settings could not be read.');
     if (version === settingsVersion && !settingsBusy) applySettings(value, preserveAppearanceDraft);
-  })().catch((error) => { if (version === settingsVersion && !settingsBusy) settingsError(error); }).finally(() => { settingsLoading = null; });
+  })().catch((error) => {
+    if (version === settingsVersion && !settingsBusy) { settingsVerified = false; settingsError(error); projectPresentation?.modelSettingsChanged(); }
+  }).finally(() => { settingsLoading = null; });
   return settingsLoading;
 }
 async function saveSettings(path, data) {
   if (settingsBusy) return;
   settingsBusy = true; settingsVersion++; settingsError(null);
+  settingsVerified = false;
+  projectPresentation?.modelSettingsChanged();
   for (const id of ['save-appearance', 'apply-model', 'accept-actual-model', 'setting-model', 'setting-effort']) $(id).disabled = true;
   try {
     const value = await post(path, data);
@@ -206,7 +216,9 @@ $('apply-model').onclick = () => saveSettings('/api/settings/model', { action: '
 $('setting-model').onchange = () => {
   renderReasoningEffort();
   $('apply-model').disabled = settingsBusy || $('setting-model').disabled || !$('setting-model').value;
+  projectPresentation?.modelSettingsChanged();
 };
+$('setting-effort').onchange = () => projectPresentation?.modelSettingsChanged();
 $('accept-actual-model').onclick = () => saveSettings('/api/settings/model', { action: 'accept-actual', model: null });
 const questionArtifact = make('section');
 const cycleArtifact = make('section');

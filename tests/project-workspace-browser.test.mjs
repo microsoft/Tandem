@@ -14,10 +14,51 @@ import { DEFAULT_POLICY } from "../development/tandem/runtime-src/domain/workflo
 import { getHostStateWal } from "../development/tandem/runtime-src/domain/host-state-wal.ts";
 import { browserAvailable, openFixtureBrowser } from "../development/tandem/test/helpers/browser-fixture.mjs";
 import { JSDOM } from "jsdom";
-import { installProjectPresentation } from "../development/tandem/public/project-presentation.js";
+import { installProjectPresentation, isModelSelectionReady } from "../development/tandem/public/project-presentation.js";
 import { createConversationRenderer } from "../development/tandem/public/renderers/conversation.js";
 import { sharedDesignExampleV3 } from "../development/tandem/test/helpers/shared-design-fixture.mjs";
 import { exerciseRoleHintDraft } from "../development/tandem/test/helpers/role-hint-browser.mjs";
+
+test("Continue readiness requires the selected model and effort to match saved or actual readback", () => {
+  const saved = { models: [{ id: "one" }, { id: "two" }], deferred: true, desired: "one", actual: null,
+    desiredReasoningEffort: "medium", projectReasoningEffort: "medium", effortManaged: true, pending: null, error: null };
+  assert.equal(isModelSelectionReady(saved, "one", "medium"), true);
+  assert.equal(isModelSelectionReady(saved, "two", "medium"), false);
+  assert.equal(isModelSelectionReady(saved, "", "medium"), false);
+  for (const change of [{ desired: null }, { pending: "one" }, { error: "Unverified" },
+    { desiredReasoningEffort: "low" }, { models: [] }]) {
+    assert.equal(isModelSelectionReady({ ...saved, ...change }, "one", "medium"), false);
+  }
+  const applied = { ...saved, deferred: false, actual: "one", actualReasoningEffort: "medium" };
+  assert.equal(isModelSelectionReady(applied, "one", "medium"), true);
+  assert.equal(isModelSelectionReady({ ...applied, actual: null }, "one", "medium"), false);
+  assert.equal(isModelSelectionReady({ ...applied, actualReasoningEffort: "low" }, "one", "medium"), false);
+  assert.equal(isModelSelectionReady({ ...applied, effortManaged: false }, "one", "high"), false);
+  assert.equal(isModelSelectionReady(null, "one", "medium"), false);
+});
+
+test("settings readiness is scoped to the current opening and refreshed rather than replayed from cache", t => {
+  const dom = new JSDOM(`<body data-project-panel="settings" data-project-origin="http://127.0.0.1:4000" data-project-channel="model">
+    <details id="canvas-settings"></details><form id="composer"><textarea id="message"></textarea></form>`);
+  t.after(() => dom.window.close());
+  const sent = [], parent = { postMessage: value => sent.push(value) };
+  Object.defineProperty(dom.window, "parent", { value: parent });
+  let verified = true;
+  const presentation = installProjectPresentation({ document: dom.window.document, window: dom.window, changed() {},
+    settings() { verified = false; }, modelSelectionReady: () => verified });
+  const receive = scope => dom.window.dispatchEvent(new dom.window.MessageEvent("message", { source: parent, origin: "http://127.0.0.1:4000",
+    data: { protocol: "tandem-project/v1", channel: "model", type: "context", entries: [], settingsScope: scope,
+      discovery: { key: "same", label: "Development", help: "", enabled: false } } }));
+  receive("first");
+  assert.equal(sent.at(-1).ready, false);
+  verified = true; presentation.modelSettingsChanged();
+  assert.deepEqual(sent.at(-1), { protocol: "tandem-project/v1", channel: "model", type: "model-selection-readiness", scope: "first", ready: true });
+  verified = false; presentation.modelSettingsChanged();
+  assert.equal(sent.at(-1).ready, false);
+  verified = true; receive("second");
+  assert.equal(sent.at(-1).scope, "second");
+  assert.equal(sent.at(-1).ready, false);
+});
 
 test("one latest control tracks both viewports, manual scrollback and delayed growth without stealing follow intent", t => {
   const dom = new JSDOM('<div><div id="history"></div></div><div id="messages"></div><div id="current"></div><div id="detail"></div><button id="newer"></button>');
@@ -363,6 +404,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       tasks: [], current: { id: "fixture-snapshot" },
       implementationResult: { resultId: "fixture-implementation", outcome: { kind: "implementation-result", summary: "Original reported implementation", evidenceRefs: ["fixture-test-receipt"] } } });
     let active = false, stopped = false, installationStatus = "new", modelSelectionRequired = false;
+    let modelSaveFailure = false, modelSaveWait = null;
     let startingPath = null;
     const value = discoveryState("requirements");
     value.provider = { ...value.provider, canReload: true };
@@ -386,7 +428,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       commands: { read: async () => ({ apps: [], commands: [] }) },
       modelSettings: async () => ({ models: [{ id: "fixture", name: "Fixture", supportedReasoningEfforts: ["low"] }],
         actual: "fixture", actualReasoningEffort: "low", desired: "fixture", canChange: true,
-        canSetReasoningEffort: true, effortManaged: true, projectReasoningEffort: "low" }),
+        desiredReasoningEffort: "low", canSetReasoningEffort: true, effortManaged: true, projectReasoningEffort: "low" }),
       async send(request) {
         nativeRequests.push(request);
         nativeState.requests.push({ ...request, status: "active", queueAdmitted: true, blockingAnswerRefs: [] });
@@ -547,7 +589,12 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       surface: "browser", projectHost: { origin: new URL(url).origin, channel: "whole-project-fixture" }, events,
       modelSettings: async () => ({ ...await runtime.modelSettings(), ...(!active
         ? { actual: null, actualReasoningEffort: null, desired: modelSelectionRequired ? null : "fixture", deferred: true } : {}) }),
-      changeModel: async ({ model }) => { assert.equal(model, "fixture"); modelSelectionRequired = false; events.touch(); },
+      changeModel: async ({ model }) => {
+        assert.equal(model, "fixture");
+        if (modelSaveWait) await modelSaveWait;
+        if (modelSaveFailure) throw new Error("Fixture model selection rejected.");
+        modelSelectionRequired = false; events.touch();
+      },
       getInstallation: () => ({ runtime: active ? runtime : null,
         close: async () => { stopped = true; installationStatus = "closed"; events.touch(); return {}; },
         read: async () => ({ status: installationStatus,
@@ -1013,12 +1060,29 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await waitSettings('document.activeElement.id==="setting-model"');
       assert.equal(mutations.some(item => item.path === "/api/development/open"), false);
       assert.equal(await browser.evaluate('document.querySelector("#project-conversation-frame")===null'), true);
-      await clickRoot("#start-development-after-model");
+      assert.equal(await browser.evaluate('document.querySelector("#start-development-after-model").disabled'), true);
+      await browser.evaluate('document.querySelector("#start-development-after-model").click()');
       assert.equal(mutations.some(item => item.path === "/api/development/open"), false);
       await settingsInside(`document.querySelector("#setting-model").value="fixture";
-        document.querySelector("#setting-model").dispatchEvent(new Event("change"));
-        document.querySelector("#apply-model").click();`);
+        document.querySelector("#setting-model").dispatchEvent(new Event("change"));`);
+      assert.equal(await browser.evaluate('document.querySelector("#start-development-after-model").disabled'), true, "Selecting a draft is not applying it.");
+      modelSaveFailure = true;
+      await settingsInside('document.querySelector("#apply-model").click()');
+      await waitSettings('document.querySelector("#settings-error").textContent.includes("Fixture model selection rejected") && !document.querySelector("#apply-model").disabled');
+      assert.equal(await browser.evaluate('document.querySelector("#start-development-after-model").disabled'), true, "A failed save does not enable Continue.");
+      modelSaveFailure = false;
+      let releaseModel;
+      modelSaveWait = new Promise(resolve => { releaseModel = resolve; });
+      await settingsInside('document.querySelector("#apply-model").click()');
+      await waitSettings('document.querySelector("#apply-model").disabled');
+      assert.equal(await browser.evaluate('document.querySelector("#start-development-after-model").disabled'), true, "An in-flight save does not enable Continue.");
+      releaseModel(); modelSaveWait = null;
       await waitSettings('document.querySelector("#model-setting-status").textContent.includes("Saved selection: fixture") && !document.querySelector("#apply-model").disabled');
+      await browser.waitFor('!document.querySelector("#start-development-after-model").disabled');
+      await settingsInside('document.querySelector("#setting-model").value=""; document.querySelector("#setting-model").dispatchEvent(new Event("change"))');
+      await browser.waitFor('document.querySelector("#start-development-after-model").disabled');
+      await settingsInside('document.querySelector("#setting-model").value="fixture"; document.querySelector("#setting-model").dispatchEvent(new Event("change"))');
+      await browser.waitFor('!document.querySelector("#start-development-after-model").disabled');
       assert.equal(modelSelectionRequired, false);
       assert.equal(active, false, "Saving alone never starts Development.");
       await clickRoot("#start-development-after-model");

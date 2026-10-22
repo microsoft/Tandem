@@ -173,14 +173,15 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
   t?.after(dispose);
   return { presentationRequests, entryRequests, previewRequests,
     window, document, requests, errors, pngExports, store: mounted.store, get, click, input, fire, flush, dispose,
-    async projectSettings() {
-      await click("project-settings");
+    async projectSettings(open = true) {
+      if (open) await click("project-settings");
       const frame = get<HTMLIFrameElement>("project-settings-frame");
       const messages: Record<string, any>[] = [];
       frame.contentWindow!.postMessage = message => { messages.push(JSON.parse(JSON.stringify(message))); };
       await fire(frame, "load");
       return {
         frame, messages,
+        scope: () => messages.findLast(message => message.type === "context")!.settingsScope,
         reload: () => messages.findLast(message => message.type === "context")!.providerReload,
         async send(data: object) {
           window.dispatchEvent(new window.MessageEvent("message", { origin: "http://127.0.0.1:8765", source: frame.contentWindow,

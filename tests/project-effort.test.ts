@@ -97,13 +97,22 @@ test("Open Development asks for a model in the same settings window and requires
     assert.equal(h.document.querySelectorAll(".project-settings-dialog").length, 1);
     assert.equal(h.document.querySelector("#project-conversation-frame"), null);
     assert.equal(h.requests.length, 0);
+    const settings = await h.projectSettings(false);
+    assert.equal(h.get<HTMLButtonElement>("start-development-after-model").disabled, true);
     await h.click("start-development-after-model");
-    assert.equal(h.requests.length, 0, "Continue rechecks the saved choice rather than creating an unselected session.");
+    assert.equal(h.requests.length, 0, "Continue is disabled until the settings view verifies the saved choice.");
     h.setModelSelectionFetch(async () => response({ required: false }));
+    await settings.send({ type: "model-selection-readiness", scope: settings.scope(), ready: true });
     await h.flush();
     assert.equal(h.requests.length, 0, "Saving a model does not resume startup automatically.");
     h.setFetch(async path => { assert.equal(path, "/api/development/open"); return response({}); });
+    let release!: (value: Response) => void;
+    h.setModelSelectionFetch(() => new Promise(resolve => { release = resolve; }));
     await h.click("start-development-after-model");
+    assert.equal(h.get<HTMLButtonElement>("start-development-after-model").disabled, true);
+    assert.equal(h.get("start-development-after-model").textContent, "Checking model...");
+    await h.click("start-development-after-model");
+    release(response({ required: false })); await h.flush();
     assert.equal(h.requests.length, 1);
     assert.equal(h.get("project-settings-title").closest("dialog")!.open, false);
     assert.ok(h.get("project-conversation-frame"));
@@ -134,6 +143,8 @@ test("a saved direct starting path cannot auto-create an unselected private mode
     assert.equal(h.entryRequests.includes("/api/project-entry/open"), false);
     assert.equal(h.document.querySelector("#project-conversation-frame"), null);
     h.setModelSelectionFetch(async () => response({ required: false }));
+    const settings = await h.projectSettings(false);
+    await settings.send({ type: "model-selection-readiness", scope: settings.scope(), ready: true });
     await h.click("start-development-after-model");
     assert.equal(h.entryRequests.filter(request => request === "/api/project-entry/open").length, 1);
     assert.equal(h.entryRequests.some(request => request.endsWith(":POST")), false, "Continuing a saved entry does not rewrite its original starting choice.");
@@ -180,7 +191,53 @@ test("an existing unselected private session opens the same prompt without resta
     assert.equal(h.get("start-development-after-model").textContent, "Continue to Development");
     assert.match(h.get("project-settings-description").textContent!, /Choose a private Development model/);
     h.setModelSelectionFetch(async () => response({ required: false }));
+    const settings = await h.projectSettings(false);
+    await settings.send({ type: "model-selection-readiness", scope: settings.scope(), ready: true });
     await h.click("start-development-after-model");
     assert.equal(h.get("project-conversation-frame"), frame);
+    assert.equal(h.requests.length, 0);
+});
+
+test("Continue ignores foreign, malformed and prior-opening readiness and disables again for unsaved model changes", async t => {
+    const h = await reactHarness(t);
+    h.render(state("requirements")); await h.flush();
+    h.setModelSelectionFetch(async () => response({ required: true }));
+    await h.fire(h.get("development-tab"), "mousedown", { button: 0 });
+    await h.click("enter-development");
+    const settings = await h.projectSettings(false), oldScope = settings.scope();
+    const button = h.get<HTMLButtonElement>("start-development-after-model");
+    for (const data of [{ scope: "old", ready: true }, { scope: oldScope, ready: "true" },
+        { scope: oldScope, ready: true, channel: "foreign" }]) {
+        await settings.send({ type: "model-selection-readiness", ...data });
+        assert.equal(button.disabled, true);
+    }
+    await settings.send({ type: "model-selection-readiness", scope: oldScope, ready: true });
+    assert.equal(button.disabled, false);
+    await settings.send({ type: "model-selection-readiness", scope: oldScope, ready: false });
+    assert.equal(button.disabled, true);
+    assert.match(h.get("model-continuation-help").textContent!, /Save or apply/);
+    await h.click("close-project-settings");
+    await h.click("enter-development");
+    assert.notEqual(settings.scope(), oldScope);
+    await settings.send({ type: "model-selection-readiness", scope: oldScope, ready: true });
+    assert.equal(h.get<HTMLButtonElement>("start-development-after-model").disabled, true);
+    assert.equal(h.requests.length, 0);
+});
+
+test("closing settings while Continue checks the model cancels startup without reopening the prompt", async t => {
+    const h = await reactHarness(t);
+    h.render(state("requirements")); await h.flush();
+    h.setModelSelectionFetch(async () => response({ required: true }));
+    await h.fire(h.get("development-tab"), "mousedown", { button: 0 });
+    await h.click("enter-development");
+    const settings = await h.projectSettings(false);
+    await settings.send({ type: "model-selection-readiness", scope: settings.scope(), ready: true });
+    let release!: (value: Response) => void;
+    h.setModelSelectionFetch(() => new Promise(resolve => { release = resolve; }));
+    await h.click("start-development-after-model");
+    await h.click("close-project-settings");
+    release(response({ required: false })); await h.flush();
+    assert.equal(h.get("project-settings-title").closest("dialog")!.open, false);
+    assert.equal(h.document.querySelector("#project-conversation-frame"), null);
     assert.equal(h.requests.length, 0);
 });

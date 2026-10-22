@@ -1,8 +1,17 @@
 import { projectOutputs } from "./project-outputs.js";
 import { validHandoffDesign } from "./handoff-presentation.js";
 
+export function isModelSelectionReady(model, selected, effort) {
+  if (!model || !selected || model.error || model.pending || !model.models?.some(item => item.id === selected)) return false;
+  const desiredEffort = model.effortManaged ? model.projectReasoningEffort ?? model.desiredReasoningEffort ?? null : effort || null;
+  if (!model.effortManaged && desiredEffort !== (model.desiredReasoningEffort ?? null)) return false;
+  return model.deferred
+    ? selected === model.desired && desiredEffort === (model.desiredReasoningEffort ?? null)
+    : selected === model.actual && (desiredEffort == null || desiredEffort === model.actualReasoningEffort);
+}
+
 // Presentation messages never become native conversation input or runtime authority.
-export function installProjectPresentation({ document, window, changed, settings, currentWork, effortChanged, layoutChanged, openOutput, outputSelection, statusPresentation, scopeChanged, hasAttachments = () => false }) {
+export function installProjectPresentation({ document, window, changed, settings, currentWork, effortChanged, layoutChanged, openOutput, outputSelection, statusPresentation, scopeChanged, modelSelectionReady = () => false, hasAttachments = () => false }) {
   const { projectPanel: panel, projectOrigin: origin, projectChannel: channel } = document.body.dataset;
   if (!panel) return null;
   let context = null, draftContext = null, pending = null, nativePending = false;
@@ -40,7 +49,12 @@ export function installProjectPresentation({ document, window, changed, settings
     reloadPending = crypto.randomUUID(); reloadError = ""; renderReload();
     send({ type: "project-reload", id: reloadPending, scope: view.scope });
   };
-  let effortPending = null;
+  let effortPending = null, savedEffort = "";
+  function publishModelSelection() {
+    if (panel !== "settings" || typeof context?.settingsScope !== "string" || !context.settingsScope || context.settingsScope.length > 100) return;
+    send({ type: "model-selection-readiness", scope: context.settingsScope,
+      ready: !effortPending && (!effortPanel || effort.value === savedEffort) && modelSelectionReady() === true });
+  }
   if (effortPanel) {
     effortPanel.hidden = false;
     document.querySelector("#private-effort-setting").hidden = true;
@@ -54,6 +68,7 @@ export function installProjectPresentation({ document, window, changed, settings
     effortApply.disabled = blocked || !effort.value;
     effortRefresh.disabled = Boolean(effortPending);
     effortPanel.setAttribute("aria-busy", String(Boolean(effortPending)));
+    publishModelSelection();
   }
   function requestEffort(apply = false) {
     if (!effortPanel || effortPending || apply && (context?.canChangeEffort !== true || !effort.value)) return;
@@ -126,16 +141,18 @@ export function installProjectPresentation({ document, window, changed, settings
       && typeof message.discovery.enabled === "boolean") {
       captureDraft();
       if (context?.statusScope !== message.statusScope) scopeChanged?.();
+      const newSettingsScope = context?.settingsScope !== message.settingsScope;
       context = message;
       document.body.dataset.rootStatusOwner = String(message.statusBarOwner === true);
       document.body.dataset.projectDesign = String(message.designVisible === true);
       document.body.dataset.projectWorking = message.developmentEntered === true ? "development" : "discovery";
-      renderEffort();
-      renderReload();
       if (panel === "settings") {
-        if (message.modelSelectionRequested === true && !modelSelectionRequested) settings(true);
+        if (newSettingsScope && message.settingsScope || message.modelSelectionRequested === true && !modelSelectionRequested) settings(message.modelSelectionRequested === true);
         modelSelectionRequested = message.modelSelectionRequested === true;
       }
+      renderEffort();
+      renderReload();
+      publishModelSelection();
       if (panel === "settings" && !settingsRead) {
         settingsRead = true;
         requestEffort();
@@ -184,6 +201,7 @@ export function installProjectPresentation({ document, window, changed, settings
             option.textContent = level || "No shared choice; native defaults unchanged"; option.disabled = !level; effort.append(option);
           }
           effort.value = value.desired ?? "";
+          savedEffort = value.desired ?? "";
           effortStatus.replaceChildren(...[value.stage1, value.stage2].map((stage, index) => {
             const row = document.createElement("p");
             row.textContent = `Stage ${index + 1}: ${stage.status}. Actual: ${stage.actual || "not yet available"}.`
@@ -193,8 +211,8 @@ export function installProjectPresentation({ document, window, changed, settings
         }
       } else if (!error) error = "Project effort readback is unavailable.";
       effortError.textContent = error; effortError.hidden = !error;
-      renderEffort(); changed();
       effortChanged?.();
+      renderEffort(); changed();
     } else if (message.type === "discovery-result" && pending?.id === message.id) {
       const work = pending; pending = null; update();
       if (message.ok === true) work.resolve();
@@ -207,6 +225,7 @@ export function installProjectPresentation({ document, window, changed, settings
   send({ type: "ready", panel });
   return {
     panel,
+    modelSettingsChanged: publishModelSelection,
     activate: retry => send({ type: "activate", retry: retry === true }),
     showDesign: () => send({ type: "show-design" }),
     openSettings: () => send({ type: "settings-open" }),
