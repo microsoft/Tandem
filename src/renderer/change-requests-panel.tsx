@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Dialog } from "radix-ui";
 import { ArrowRight, RefreshCw, X } from "lucide-react";
 import type { ChangeRequest } from "../change-requests.js";
 import type { LifecycleStageId } from "../types.js";
@@ -20,8 +21,12 @@ export function ChangeRequestsPanel() {
     const current = requests.find(item => !["completed", "cancelled", "reviewing"].includes(item.status))
         ?? requests.find(item => item.status === "reviewing");
     const [refining, setRefining] = useState<string | null>(null);
+    const [expandedId, setExpandedId] = useState<string | null>(null);
     const [drafts, setDrafts] = useDraft<Record<string, string>>("change-request-details", {});
     if (!requests.length) return null;
+    const detailsId = current?.id ?? "history";
+    const detailsOpen = expandedId === detailsId;
+    const error = current ? action.error || current.error : "";
     const plan = current?.assessment;
     const busy = pending || hasActiveJobs(state) || state.provider?.canSubmitAnswers === false;
     const draftBusy = pending || state.provider?.canSubmitAnswers === false;
@@ -37,12 +42,15 @@ export function ChangeRequestsPanel() {
         if (!next) return;
         setRefining(null);
         if (decision === "approve") {
+            setExpandedId(null);
             if (!state.stageReview) project.resumeDiscovery();
             browseStage(next.lifecycle.currentStage);
         }
     }
     async function continueDevelopment(approve: boolean) {
-        if (!current || !await project.requireDevelopmentGit()) return;
+        if (!current) return;
+        setExpandedId(null);
+        if (!await project.requireDevelopmentGit()) return;
         await action.run(async () => {
             if (approve) await post("/api/change-requests/decision", { requestId: current.id, decision: "approve",
                 analysisId: current.analysisId, baselineDigest: current.baselineDigest });
@@ -51,12 +59,38 @@ export function ChangeRequestsPanel() {
             await project.activate();
         });
     }
-    return <section className="change-requests" aria-label="Project changes">
-        {current && <div className="change-impact" data-status={current.status}>
-            <div className="change-heading">
-                <h2 id="change-impact-title">{statuses[current.status]}</h2>
-                <span className="muted">From {label(current.originStage)}</span>
+    return <Dialog.Root open={detailsOpen} onOpenChange={open => setExpandedId(open ? detailsId : null)}>
+        <section className="change-requests" aria-label="Project changes">
+        <div className="change-summary">
+            <div>
+                <h2 id="change-impact-title">{current ? statuses[current.status] : `Change history (${requests.length})`}</h2>
+                {current && <p title={current.message}>{current.message}</p>}
             </div>
+            <Dialog.Trigger asChild aria-controls="change-request-details">
+                <button id="toggle-change-details" type="button" className="plan-button secondary">
+                    {current?.status === "proposed" ? "Review change" : "View details"}
+                </button>
+            </Dialog.Trigger>
+        </div>
+        {error && <p id="change-action-status" className="error change-summary-error" role="alert">{error}</p>}
+        </section>
+        <Dialog.Portal><Dialog.Overlay className="dialog-overlay" />
+        <Dialog.Content id="change-request-details" className="dialog-content change-details-dialog" aria-modal="true">
+            <div className="change-details-heading">
+                <Dialog.Title>{current ? statuses[current.status] : "Change history"}</Dialog.Title>
+                <Dialog.Close asChild>
+                    <button id="close-change-details" type="button" className="plan-button secondary">
+                        <X size={14} aria-hidden="true" />Close
+                    </button>
+                </Dialog.Close>
+            </div>
+            <Dialog.Description>{current
+                ? "Review the affected stages before applying changes. Closing this dialog keeps your request and unsent clarification."
+                : "Saved change requests, assessments and clarifications."}</Dialog.Description>
+            {error && <p id="change-dialog-error" className="error change-summary-error" role="alert">{error}</p>}
+        <div className="change-request-details">
+        {current && <div className="change-impact" data-status={current.status}>
+            <p className="muted">From {label(current.originStage)}</p>
             <p className="change-original">{current.message}</p>
             {current.sourceRequests.length > 0 && <details><summary>Original Development requests</summary>
                 {current.sourceRequests.map(request => <p key={request.id}>{request.message}</p>)}
@@ -89,14 +123,17 @@ export function ChangeRequestsPanel() {
                         const value = event.currentTarget.value;
                         setDrafts(previous => ({ ...previous, [current.id]: value }));
                     }}
-                    disabled={busy} aria-describedby="change-action-status" />
+                    disabled={busy} aria-describedby={error ? "change-dialog-error" : undefined} />
                 <button className="plan-button" disabled={busy || !drafts[current.id]?.trim()} type="submit">Check impact with this detail</button>
             </form> : current.status === "proposed" && plan && <div className="change-actions">
                 {plan.startStage !== "development" && <button id="approve-change" className="plan-button" disabled={opensDraft ? draftBusy : busy}
                     onClick={() => {
                         if (opensDraft && reviewStage && plan.startStage !== "none") {
                             const target = plan.startStage;
-                            void action.run(() => reviewStage(target, current));
+                            void action.run(async () => {
+                                await reviewStage(target, current);
+                                setExpandedId(null);
+                            });
                         }
                         else void decide("approve");
                     }}><ArrowRight size={15} aria-hidden="true" />
@@ -110,6 +147,7 @@ export function ChangeRequestsPanel() {
                 {current.remainingStages.length === 1 && current.remainingStages[0] === "development"
                     ? <button className="plan-button" disabled={busy} onClick={() => void continueDevelopment(false)}>Continue change in Development</button>
                     : <button className="plan-button secondary" disabled={pending} onClick={() => {
+                    setExpandedId(null);
                     if (!state.stageReview) project.resumeDiscovery();
                     browseStage(state.lifecycle.currentStage);
                 }}>Go to {label(state.lifecycle.currentStage)}</button>}
@@ -120,8 +158,14 @@ export function ChangeRequestsPanel() {
                     ? <button className="plan-button" disabled={busy} onClick={() => void continueDevelopment(false)}>Continue change in Development</button>
                     : <button className="plan-button secondary" disabled={draftBusy} onClick={() => {
                         const next = current.remainingStages[0];
-                        if (next && earlier(next) && reviewStage) void action.run(() => reviewStage(next, current));
-                        else browseStage(state.lifecycle.currentStage);
+                        if (next && earlier(next) && reviewStage) void action.run(async () => {
+                            await reviewStage(next, current);
+                            setExpandedId(null);
+                        });
+                        else {
+                            setExpandedId(null);
+                            browseStage(state.lifecycle.currentStage);
+                        }
                     }}>{current.remainingStages[0] && earlier(current.remainingStages[0]) ? "Open pinned draft review" : "Continue current-stage work"}</button>}
                 <span className="muted">Draft edits stay separate until Apply changes. The current stage has not been reopened.</span>
             </div>}
@@ -132,7 +176,6 @@ export function ChangeRequestsPanel() {
                     title={current.status === "active" ? "Stop the remaining change request without undoing saved work." : "Leave accepted work unchanged."}>
                     <X size={14} aria-hidden="true" />{current.status === "active" ? "Cancel remaining change" : "Cancel request"}</button>
             </div>
-            {(current.error || action.error) && <p id="change-action-status" className="error" role="alert">{action.error || current.error}</p>}
         </div>}
         <details className="change-history"><summary>Change history ({requests.length})</summary>
             <ul>{requests.slice().reverse().map(request => <li key={request.id}>
@@ -142,5 +185,7 @@ export function ChangeRequestsPanel() {
                 {request.clarifications.map((item, index) => <p key={index}>{item.question}: {item.answer}</p>)}
             </li>)}</ul>
         </details>
-    </section>;
+        </div>
+        </Dialog.Content></Dialog.Portal>
+    </Dialog.Root>;
 }

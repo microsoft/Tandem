@@ -23,7 +23,7 @@ function request(): ChangeRequest {
         } };
 }
 
-test("change history, stage navigation and drawing controls occupy separate workspace rows", {
+test("change details open in a bounded dialog without moving stage navigation or drawing controls", {
     skip: !browserAvailable, timeout: 60000,
 }, async t => {
     const drawing = sketchFixture();
@@ -83,7 +83,11 @@ test("change history, stage navigation and drawing controls occupy separate work
             await browser.evaluate(`workspaceFixture.flushSync(() => workspaceFixture.store.accept(${JSON.stringify({
                 ...initial, revision: ++revision, changeRequests: changes,
             })}))`);
-            await browser.evaluate(`(() => {
+            await browser.evaluate(`(async () => {
+                const toggle = document.querySelector("#toggle-change-details");
+                if (${history === "expanded"}) toggle?.click();
+                else document.querySelector("#close-change-details")?.click();
+                await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
                 const history = document.querySelector(".change-history");
                 if (history) history.open = ${history === "expanded"};
                 return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -108,7 +112,89 @@ test("change history, stage navigation and drawing controls occupy separate work
             assert.ok(layout.board.height > 0, context);
             assert.ok(layout.controls.bottom <= layout.viewport.bottom + 1, context);
             assert.equal(layout.pageFits, true, context);
+            if (history === "expanded") {
+                assert.equal(await browser.evaluate('document.querySelector("#change-request-details")?.getAttribute("role")'), "dialog");
+                await browser.evaluate('document.querySelector("#close-change-details").click()');
+            }
         }
+    }
+    const longChange: ChangeRequest = {
+        ...change, status: "proposed", error: "Retained Development ownership must be opened and explicitly settled or closed before upstream discovery can change.",
+        assessment: { ...change.assessment!, summary: "Improve alignment and text layout while preserving the accepted workflows.",
+            reason: "This changes the draft screen layout, not product capabilities. ".repeat(8),
+            preserved: Array.from({ length: 8 }, (_, index) => `Accepted behavior ${index + 1}: keep saved screens, navigation, explicit saves and validation unchanged.`) },
+    };
+    for (const [width, height, fontSize] of [
+        [1556, 900, "standard"], [1024, 600, "standard"], [760, 700, "standard"], [375, 700, "standard"],
+        [1024, 600, "largest"], [375, 700, "largest"],
+    ] as const) {
+        await browser.call("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+        await browser.evaluate(`document.documentElement.dataset.projectFontSize = ${JSON.stringify(fontSize)}`);
+        await browser.evaluate(`workspaceFixture.flushSync(() => workspaceFixture.store.accept(${JSON.stringify({
+            ...initial, revision: ++revision, changeRequests: [longChange],
+        })}))`);
+        await browser.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+        const compact = await browser.evaluate(`(() => {
+            const panel = document.querySelector(".change-requests").getBoundingClientRect();
+            const workspace = document.querySelector("#preview-pane").getBoundingClientRect();
+            const board = document.querySelector("#sketch-board-wrap").getBoundingClientRect();
+            const header = document.querySelector(".sketch-header-actions");
+            const bounds = header.getBoundingClientRect();
+            return { height: panel.height, workspaceHeight: workspace.height, boardHeight: board.height,
+                boardTop: board.top, boardWidth: board.width,
+                finishVisible: document.querySelector("#complete-stage").checkVisibility(),
+                approveVisible: document.querySelector("#sketch-approve").checkVisibility(),
+                controlsFit: [...header.querySelectorAll("button:not([hidden])")].every(button => {
+                    const rect = button.getBoundingClientRect();
+                    return rect.left >= bounds.left && rect.right <= bounds.right + 1 && rect.bottom <= bounds.bottom + 1;
+                }) };
+        })()`);
+        const context = `${width}x${height} / ${fontSize}: ${JSON.stringify(compact)}`;
+        if (process.env.TANDEM_UI_EVIDENCE) {
+            await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `long-impact-${width}-${fontSize}-collapsed.png`), await browser.screenshot());
+        }
+        assert.ok(compact.height <= 150, `A long impact report must start compact: ${context}`);
+        assert.ok(compact.boardHeight >= (width > 600 ? 200 : 80), `Keep usable drawing space: ${context}`);
+        assert.equal(compact.finishVisible, false, context);
+        assert.equal(compact.approveVisible, true, context);
+        assert.equal(compact.controlsFit, true, context);
+        await browser.evaluate('document.querySelector("#toggle-change-details").focus()');
+        await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" });
+        await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+        await browser.waitFor('document.querySelector("#toggle-change-details").getAttribute("aria-expanded") === "true"');
+        const popup = await browser.evaluate(`(() => {
+            const dialog = document.querySelector("#change-request-details"), rect = dialog.getBoundingClientRect();
+            const board = document.querySelector("#sketch-board-wrap").getBoundingClientRect();
+            return { role: dialog.getAttribute("role"), modal: dialog.getAttribute("aria-modal"),
+                inWorkspace: Boolean(dialog.closest("#preview-pane")),
+                focusInside: dialog.contains(document.activeElement), initialFocus: document.activeElement.id,
+                top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom,
+                boardHeight: board.height, boardTop: board.top, boardWidth: board.width };
+        })()`);
+        assert.equal(popup.role, "dialog");
+        assert.equal(popup.modal, "true");
+        assert.equal(popup.inWorkspace, false, "Dialog content must not participate in the workspace grid.");
+        assert.equal(popup.focusInside, true);
+        assert.equal(popup.initialFocus, "close-change-details", "Opening details cannot focus an approval action.");
+        assert.ok(popup.top >= 0 && popup.left >= 0 && popup.right <= width && popup.bottom <= height, JSON.stringify(popup));
+        for (const key of ["boardHeight", "boardTop", "boardWidth"] as const) {
+            assert.ok(Math.abs(popup[key] - compact[key]) <= 1, `${key} changed when the dialog opened: ${context}`);
+        }
+        await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 });
+        await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 });
+        assert.equal(await browser.evaluate('document.querySelector("#change-request-details").contains(document.activeElement)'), true);
+        await browser.evaluate('document.querySelector("#approve-change").scrollIntoView({block:"nearest"})');
+        assert.equal(await browser.evaluate(`(() => {
+            const button = document.querySelector("#approve-change"), rect = button.getBoundingClientRect();
+            const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+            return button === hit || button.contains(hit);
+        })()`), true, `Explicit review remains reachable at ${width}px`);
+        if (process.env.TANDEM_UI_EVIDENCE) {
+            await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `change-dialog-${width}-${fontSize}.png`), await browser.screenshot());
+        }
+        await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+        await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+        await browser.waitFor('!document.querySelector("#change-request-details") && document.activeElement.id === "toggle-change-details"');
     }
     await browser.evaluate(`workspaceFixture.flushSync(() => workspaceFixture.store.accept(${JSON.stringify({
         ...initial, revision: ++revision,
@@ -123,11 +209,52 @@ test("change history, stage navigation and drawing controls occupy separate work
     await browser.call("Page.navigate", { url: "about:blank" });
 });
 
+test("impact dialog preserves clarification drafts and errors across closing, reopening and updates", async t => {
+    const h = await reactHarness(t), initial = state("prototype");
+    initial.changeRequests = [request()];
+    h.render(initial); await h.flush();
+    const toggle = h.get("toggle-change-details");
+    assert.equal(toggle.getAttribute("aria-expanded"), "false");
+    assert.equal(toggle.getAttribute("aria-haspopup"), "dialog");
+    assert.equal(h.document.getElementById("change-request-details"), null);
+    assert.match(h.get("change-impact-title").textContent!, /Review change impact/);
+    await h.click(toggle);
+    const details = h.get("change-request-details");
+    assert.equal(details.getAttribute("role"), "dialog");
+    assert.equal(details.closest("#preview-pane"), null);
+    assert.equal(toggle.getAttribute("aria-expanded"), "true");
+    const refine = [...details.querySelectorAll("button")].find(button => button.textContent === "Refine request")!;
+    await h.click(refine);
+    await h.input("change-detail", "Keep my unsent clarification.");
+    const field = h.get<HTMLTextAreaElement>("change-detail");
+    h.render({ ...initial, revision: 2, changeRequests: [{ ...request(), error: "Retained Development ownership needs attention." }] });
+    await h.flush();
+    assert.equal(h.get("change-detail"), field, "A state update must not replace an open editor.");
+    assert.match(h.get("change-dialog-error").textContent!, /Retained Development ownership/);
+    await h.click("close-change-details");
+    assert.equal(h.document.getElementById("change-request-details"), null);
+    assert.equal(h.document.activeElement, toggle);
+    h.render({ ...initial, revision: 3, changeRequests: [{ ...request(), error: "Retained Development ownership needs attention." }] });
+    await h.flush();
+    const error = h.get("change-action-status");
+    assert.equal(error.closest("[hidden]"), null, "Errors remain visible after the dialog closes.");
+    assert.match(error.textContent!, /Retained Development ownership/);
+    assert.equal(h.document.getElementById("change-request-details"), null, "An update must not reopen the dialog.");
+    await h.click(toggle);
+    assert.equal(h.get<HTMLTextAreaElement>("change-detail").value, "Keep my unsent clarification.");
+    await h.fire(h.get("close-change-details"), "keydown", { key: "Escape" });
+    assert.equal(h.document.getElementById("change-request-details"), null);
+    assert.equal(h.requests.filter(item => item.options.method === "POST").length, 0);
+    assert.equal(h.store.getSnapshot().state.lifecycle.currentStage, "prototype");
+    assert.deepEqual(h.errors, []);
+});
+
 test("impact review stays beside the existing prototype and submits the exact displayed proposal identity", async t => {
     const h = await reactHarness(t), initial = state("prototype");
     initial.previewStatus = "ready"; initial.previewUrl = "http://127.0.0.1:4321/";
     initial.changeRequests = [request()];
     h.render(initial); await h.flush();
+    await h.click("toggle-change-details");
     assert.match(h.document.querySelector(".change-impact")!.textContent!, /Joint controls/);
     assert.equal(h.store.getSnapshot().state.lifecycle.currentStage, "prototype");
     assert.equal(h.requests.filter(item => item.options.method === "POST").length, 0);
@@ -151,16 +278,45 @@ test("impact review stays beside the existing prototype and submits the exact di
     assert.equal(h.store.getSnapshot().state.previewUrl, initial.previewUrl);
     assert.equal(h.store.getSnapshot().state.lifecycle.currentStage, "prototype");
     assert.match(h.get("design-tree-panel").textContent!, /Pinned draft review/);
+    assert.equal(h.document.getElementById("change-request-details"), null, "The dialog must close to reveal the opened draft.");
     assert.equal(h.errors.length, 0, h.errors.join("\n"));
+});
+
+test("same-stage approval and return-to-work actions close the dialog without losing the request", async t => {
+    const h = await reactHarness(t), initial = state("prototype");
+    const change: ChangeRequest = { ...request(), assessment: { ...request().assessment!,
+        startStage: "prototype", stages: [{ stage: "prototype", reason: "Adjust the current preview only." }] } };
+    initial.changeRequests = [change];
+    h.render(initial); await h.flush();
+    const active = { ...initial, revision: 2, changeRequests: [{ ...change, status: "active" as const, remainingStages: ["prototype" as const] }] };
+    h.setFetch(async () => response(active));
+    await h.click("toggle-change-details");
+    await h.click("approve-change");
+    assert.equal(h.document.getElementById("change-request-details"), null);
+    const sent = h.requests.find(item => item.path === "/api/change-requests/decision")!;
+    assert.deepEqual(sent.body, { requestId: change.id, analysisId: change.analysisId, baselineDigest: change.baselineDigest,
+        decision: "approve", answer: "" });
+    await h.click("toggle-change-details");
+    const go = [...h.get("change-request-details").querySelectorAll("button")].find(button => button.textContent === "Go to Prototype")!;
+    assert.ok(go);
+    await h.click(go);
+    assert.equal(h.document.getElementById("change-request-details"), null);
+    assert.equal(h.store.getSnapshot().state.changeRequests![0].id, change.id);
+    assert.equal(h.store.getSnapshot().state.lifecycle.currentStage, "prototype");
+    assert.equal(h.requests.filter(item => item.options.method === "POST").length, 1);
+    assert.deepEqual(h.errors, []);
 });
 
 test("stale impact errors keep the request and clarification draft visible without navigation", async t => {
     const h = await reactHarness(t), initial = state("prototype");
     initial.changeRequests = [request()];
     h.render(initial); await h.flush();
+    await h.click("toggle-change-details");
     h.setFetch(async () => response({ error: "The project changed. Check the impact again." }, 409));
     await h.click("approve-change");
     assert.match(h.get("change-action-status").textContent!, /project changed/);
+    assert.match(h.get("change-dialog-error").textContent!, /project changed/);
+    assert.equal(h.get("change-request-details").getAttribute("role"), "dialog");
     assert.equal(h.store.getSnapshot().state.lifecycle.currentStage, "prototype");
     const refined = h.document.querySelector(".change-actions button:nth-child(2)")!;
     await h.click(refined);

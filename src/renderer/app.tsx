@@ -416,7 +416,9 @@ function Workspace(props: WorkspaceProps) {
     setContextOpen(false);
   }
   const phaseActions = <section ref={setStageActionsContainer} className="phase-actions" aria-label={`${selectedLabel} actions`} aria-describedby="stage-browsing stage-message">
-    <button id="complete-stage" className="complete-stage" type="button" hidden={reviewing || projectView.developmentEntered || current === "prepare" || current === "development" || viewed !== current || Boolean(skippedStage(state, current))} aria-describedby="stage-message"
+    <button id="complete-stage" className="complete-stage" type="button" hidden={reviewing || projectView.developmentEntered
+      || current === "prepare" || current === "development" || (current === "sketch" && sketchBlocked)
+      || viewed !== current || Boolean(skippedStage(state, current))} aria-describedby="stage-message"
       aria-label={completionHelp} title={completionHelp} data-status-help={completionHelp}
       disabled={!complete} onClick={() => {
         if (!complete) return;
