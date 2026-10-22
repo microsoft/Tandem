@@ -1,11 +1,10 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { PanelRightClose, PanelRightOpen } from "lucide-react";
 import { canOpenDevelopment, hasActiveJobs, useUi, type UiState } from "./ui-context.js";
-import { DiscoveryProjectSettings, ProjectEffortError, requestProjectEffort, useProviderReload } from "./project-effort.js";
+import { ProjectEffortError, requestProjectEffort, useProviderReload } from "./project-effort.js";
 import type { LifecycleStageId } from "../types.js";
 import type { StartingPath } from "../project-entry.js";
 import { useDevelopmentGit } from "./development-git.js";
-import { ProcessPanel } from "./process-panel.js";
 import { validHandoffActivity, validHandoffDesign, type HandoffActivity, type HandoffDesign } from "../../development/tandem/public/handoff-presentation.js";
 import { validDevelopmentStatus, type DevelopmentStatus } from "../../development/tandem/public/development-status.js";
 
@@ -64,6 +63,8 @@ export function discoveryEntries(state: UiState): Entry[] {
 export interface ProjectOutput { id: string; group: "Design" | "Plan" | "Implementation" | "Review"; title: string; detail: string; binding: string }
 interface ProjectView {
     visible: boolean;
+    settingsOpen: boolean;
+    workspaceRequested: boolean;
     url: string | null; channel: string; error: string; active: boolean; starting: boolean; developmentEntered: boolean;
     status: string; detail: string; designRevision: string | null; designChanged: boolean; attention: number;
     maintenanceError: string;
@@ -73,7 +74,6 @@ interface ProjectView {
     activeRequestId: string | null;
     compacting: boolean;
     presentation: DevelopmentStatus | null;
-    processError: string;
     activate(retry?: boolean): Promise<void>; command(command: string): void;
     outputs: ProjectOutput[]; outputStatus: string; outputReason: string; outputError: string; selectedOutput: string | null;
     openOutput(item: ProjectOutput): void;
@@ -82,6 +82,7 @@ interface ProjectView {
     entry: { loading: boolean; busy: boolean; projectPath: string; startingPath: StartingPath | null; error: string; ready: boolean };
     chooseEntry(path: StartingPath): Promise<void>; reloadEntry(): Promise<void>;
     gitSetupVisible: boolean; requireDevelopmentGit(): Promise<boolean>;
+    requireDevelopmentModel(): Promise<boolean>;
     frame: React.RefObject<HTMLIFrameElement | null>; sync(): void;
 }
 const Context = createContext<ProjectView | null>(null);
@@ -103,27 +104,71 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
         outputs: [] as ProjectOutput[], outputStatus: "unverified", outputReason: "Development outputs have not been verified.",
         outputError: "", selectedOutput: null as string | null });
     const frame = useRef<HTMLIFrameElement>(null);
+    const workspaceRequested = useRef(false);
+    const settingsFrame = useRef<HTMLIFrameElement>(null);
+    const settingsDialog = useRef<HTMLDialogElement>(null);
     const [handoffStatusOwner, setHandoffStatusOwner] = useState<string | null>(null);
     const providerReload = useProviderReload(view.active || view.starting || view.status === "unknown" || effortBusy);
     const [entry, setEntry] = useState({ loading: true, busy: false, projectPath: state.projectPath ?? "", startingPath: null as StartingPath | null, error: "", ready: false });
     const choosing = useRef(false);
     const git = useDevelopmentGit();
-    const [discoverySettings, setDiscoverySettings] = useState(false);
-    const [processOpen, setProcessOpen] = useState(false);
-    const [processError, setProcessError] = useState("");
-    function openProcess() { setDiscoverySettings(false); setProcessOpen(true); }
+    const [settingsOpen, setSettingsOpen] = useState(false);
+    const [settingsRequested, setSettingsRequested] = useState(false);
+    const [modelPrompt, setModelPrompt] = useState(false);
+    const [settingsScope, setSettingsScope] = useState("");
+    const [modelReady, setModelReady] = useState(false);
+    const [continuing, setContinuing] = useState(false);
+    const continuePending = useRef(false);
+    const [settingsNext, setSettingsNext] = useState<{ kind: "entry"; firstChoice: boolean; choice?: StartingPath } | { kind: "activate"; retry: boolean } | null>(null);
+    function openSettings() { setModelReady(false); setSettingsScope(crypto.randomUUID()); setSettingsRequested(true); setSettingsOpen(true); setViewRequested(true); }
+    function closeSettings() { setSettingsOpen(false); setModelPrompt(false); setSettingsNext(null); setModelReady(false); setSettingsScope(""); }
+    async function continueDevelopment() {
+        if (!modelReady || !settingsNext || continuePending.current) return;
+        continuePending.current = true; setContinuing(true);
+        try {
+            if (settingsNext.kind === "entry") await loadEntry(settingsNext.firstChoice, settingsNext.choice, settingsScope);
+            else await activate(settingsNext.retry, settingsScope);
+        } finally { continuePending.current = false; setContinuing(false); }
+    }
+    async function requireDevelopmentModel(next: typeof settingsNext = null, expectedScope?: string) {
+        const response = await fetch("/api/development/model-selection", { cache: "no-store", signal: AbortSignal.timeout(15000) });
+        const result = await response.json();
+        if (expectedScope && expectedScope !== latest.current.settingsScope) return false;
+        if (!response.ok) throw new Error(result.error || "Development model selection could not be checked.");
+        if (typeof result.required !== "boolean") throw new Error("Development model selection readback is invalid.");
+        if (!result.required) return true;
+        setModelPrompt(true); setSettingsNext(next); openSettings();
+        return false;
+    }
+    useEffect(() => {
+        const dialog = settingsDialog.current;
+        if (!dialog) return;
+        if (settingsOpen) {
+            if (!dialog.open) dialog.showModal();
+        } else {
+            if (dialog.open) dialog.close();
+            document.getElementById("project-settings")?.focus();
+        }
+    }, [settingsOpen, settingsRequested]);
     const [viewRequested, setViewRequested] = useState(false);
     const pendingCommand = useRef<string | null>(null);
     const entryCallback = useRef(onEntry); entryCallback.current = onEntry;
-    const latest = useRef({ state, post, pending, view, designVisible, viewedStage, showDesign, setBusy, browseStage, providerReload, handoffStatusOwner }); latest.current = { state, post, pending, view, designVisible, viewedStage, showDesign, setBusy, browseStage, providerReload, handoffStatusOwner };
+    const latest = useRef({ state, post, pending, view, designVisible, viewedStage, showDesign, setBusy, browseStage, providerReload, handoffStatusOwner, modelPrompt, settingsScope }); latest.current = { state, post, pending, view, designVisible, viewedStage, showDesign, setBusy, browseStage, providerReload, handoffStatusOwner, modelPrompt, settingsScope };
     const opening = useRef(false), submissions = useRef(new Map<string, { key: string; text: string; work: Promise<void> }>());
     const startRequested = useRef(false);
     const effortApplying = useRef(false);
-    async function loadEntry(firstChoice = false, choice?: StartingPath) {
+    async function loadEntry(firstChoice = false, choice?: StartingPath, expectedScope?: string) {
         if (choosing.current) return;
         choosing.current = true;
         setEntry(v => ({ ...v, busy: true, error: "" }));
         try {
+            if (choice === "development") {
+                if (!await requireDevelopmentModel({ kind: "entry", firstChoice, choice }, expectedScope)) {
+                    setEntry(v => ({ ...v, loading: false, busy: false }));
+                    return;
+                }
+                closeSettings();
+            }
             if (choice && !await git.requireReady()) {
                 setEntry(v => ({ ...v, loading: false, busy: false }));
                 return;
@@ -135,9 +180,14 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
             if (typeof value.projectPath !== "string" || ![null, "preparation", "development"].includes(value.startingPath)) throw new Error("Invalid project entry metadata.");
             let starting = false, developmentEntered = false;
             if (value.startingPath && latest.current.state.provider?.canSubmitAnswers !== false) {
-                if (choice !== "development" && (value.startingPath === "development"
-                    || latest.current.state.lifecycle.currentStage === "development" && Boolean(latest.current.state.development))
-                    && !await git.requireReady()) {
+                const needsDevelopment = value.startingPath === "development"
+                    || latest.current.state.lifecycle.currentStage === "development" && Boolean(latest.current.state.development);
+                if (choice !== "development" && needsDevelopment && !await requireDevelopmentModel({ kind: "entry", firstChoice }, expectedScope)) {
+                    setEntry({ loading: false, busy: false, projectPath: value.projectPath, startingPath: value.startingPath, error: "", ready: false });
+                    return;
+                }
+                if (needsDevelopment) closeSettings();
+                if (choice !== "development" && needsDevelopment && !await git.requireReady()) {
                     setEntry({ loading: false, busy: false, projectPath: value.projectPath, startingPath: value.startingPath,
                         error: "", ready: value.startingPath === "preparation" });
                     if (value.startingPath === "preparation") entryCallback.current(value.startingPath, firstChoice);
@@ -151,7 +201,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
             }
             setEntry({ loading: false, busy: false, projectPath: value.projectPath, startingPath: value.startingPath, error: "", ready: Boolean(value.startingPath) });
             if (value.startingPath) entryCallback.current(value.startingPath, firstChoice);
-            if (developmentEntered) { setViewRequested(true); setView(v => ({ ...v, developmentEntered: true })); }
+            if (developmentEntered) { workspaceRequested.current = true; setViewRequested(true); setView(v => ({ ...v, developmentEntered: true })); }
             if (starting) {
                 startRequested.current = true;
                 setView(v => ({ ...v, starting: true }));
@@ -161,10 +211,21 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
         } finally { choosing.current = false; }
     }
     useEffect(() => { void loadEntry(); }, []);
-    function send(value: object) {
+    function send(value: { type: string; [key: string]: unknown }) {
         const { url, channel } = latest.current.view;
-        if (url) frame.current?.contentWindow?.postMessage({ protocol: "tandem-project/v1", channel, ...value }, new URL(url).origin);
+        if (url) {
+            const message = { protocol: "tandem-project/v1", channel, ...value };
+            frame.current?.contentWindow?.postMessage(message, new URL(url).origin);
+            if (["context", "layout", "appearance", "project-effort-result", "project-reload-result"].includes(value.type)) {
+                settingsFrame.current?.contentWindow?.postMessage(message, new URL(url).origin);
+            }
+        }
     }
+    useEffect(() => {
+        if (settingsOpen && view.url) settingsFrame.current?.contentWindow?.postMessage({
+            protocol: "tandem-project/v1", channel: view.channel, type: "command", command: "settings-refresh",
+        }, new URL(view.url).origin);
+    }, [settingsOpen, view.url]);
     function sync() {
         const { state, pending, view, designVisible } = latest.current;
         const workingStage = view.developmentEntered ? "development" : state.lifecycle.currentStage;
@@ -173,6 +234,8 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
             statusScope: JSON.stringify([state.prototypeId, state.generation]), statusBarOwner: designVisible,
             developmentEntered: view.developmentEntered,
             handoffStatusOwner: latest.current.handoffStatusOwner,
+            modelSelectionRequested: latest.current.modelPrompt,
+            settingsScope: latest.current.settingsScope,
             canActivate: canOpenDevelopment(state), developmentActive: view.active, designVisible,
             developmentEnabled: canOpenDevelopment(state), starting: view.starting,
             canChangeEffort: state.provider?.canSubmitAnswers !== false && !pending,
@@ -196,20 +259,24 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
         send({ type: "layout", stacked: (frame.current?.clientWidth ?? 0) <= 660,
             conversationWidth: Number.isFinite(developmentWidth) ? developmentWidth : null });
     }
-    async function activate(retry = false) {
+    async function activate(retry = false, expectedScope?: string) {
         if (!canOpenDevelopment(latest.current.state)) { setView(v => ({ ...v, error: "Finish current discovery work or resolve ownership before activating Development." })); return; }
         if (opening.current) return;
-        if (startRequested.current || latest.current.view.active) {
-            setView(v => ({ ...v, developmentEntered: true }));
-            return;
-        }
         opening.current = true;
         try {
+            if (!await requireDevelopmentModel({ kind: "activate", retry }, expectedScope)) return;
+            closeSettings();
+            if (startRequested.current || latest.current.view.active) {
+                workspaceRequested.current = true;
+                setView(v => ({ ...v, developmentEntered: true }));
+                return;
+            }
             if (!await git.requireReady()) return;
             if (!canOpenDevelopment(latest.current.state)) throw new Error("Project ownership or discovery work changed. Review it before entering Development.");
+            workspaceRequested.current = true;
             setViewRequested(true);
             startRequested.current = true;
-            setView(v => ({ ...v, starting: true, developmentEntered: true, error: "" }));
+            setView(v => ({ ...v, starting: true, developmentEntered: true, error: "", detail: "", presentation: null, presentationScope: "" }));
             const response = await fetch("/api/development/open", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ retry }) });
             const result = await response.json();
             if (!response.ok) throw new Error(result.error || "Development could not activate.");
@@ -221,7 +288,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
     }
     useEffect(() => {
         let disposed = false;
-        if (!entry.ready || !viewRequested || state.provider?.canSubmitAnswers === false) return;
+        if (!viewRequested || state.provider?.canSubmitAnswers === false) return;
         void (async () => {
             try {
                 const response = await fetch("/api/development/view", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
@@ -235,7 +302,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
         })();
         return () => { disposed = true; };
     }, [entry.ready, viewRequested, state.provider?.canSubmitAnswers]);
-    useEffect(() => { sync(); }, [state, pending, view.url, view.active, view.starting, view.developmentEntered, designVisible, viewedStage, handoffStatusOwner, JSON.stringify(providerReload.view)]);
+    useEffect(() => { sync(); }, [state, pending, view.url, view.active, view.starting, view.developmentEntered, designVisible, viewedStage, handoffStatusOwner, modelPrompt, settingsScope, JSON.stringify(providerReload.view)]);
     useEffect(() => {
         const observer = new ResizeObserver(syncLayout);
         const workspace = document.getElementById("studio-workspace");
@@ -248,9 +315,16 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
     useEffect(() => {
         const receive = (event: MessageEvent) => {
             const { state, pending, view, post } = latest.current;
-            if (!view.url || event.source !== frame.current?.contentWindow || event.origin !== new URL(view.url).origin
+            const fromSettings = event.source === settingsFrame.current?.contentWindow && Boolean(settingsFrame.current);
+            const fromWorkspace = event.source === frame.current?.contentWindow && Boolean(frame.current);
+            if (!view.url || !fromSettings && !fromWorkspace || event.origin !== new URL(view.url).origin
                 || event.data?.protocol !== "tandem-project/v1" || event.data.channel !== view.channel) return;
             const message = event.data;
+            if (fromSettings && !["ready", "settings-closed", "appearance", "project-effort-read", "project-effort-apply", "project-reload", "model-selection-readiness"].includes(message.type)) return;
+            if (message.type === "model-selection-readiness") {
+                if (fromSettings && message.scope && message.scope === latest.current.settingsScope && typeof message.ready === "boolean") setModelReady(message.ready);
+                return;
+            }
             if (message.type === "project-reload" && typeof message.id === "string" && message.id.length > 0 && message.id.length <= 100
                 && typeof message.scope === "string" && message.scope.length <= 1024) {
                 void latest.current.providerReload.reload(message.scope).then(result =>
@@ -285,7 +359,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
             }
             if (message.type === "ready") {
                 sync();
-                if (pendingCommand.current) { send({ type: "command", command: pendingCommand.current }); pendingCommand.current = null; }
+                if (!fromSettings && pendingCommand.current) { send({ type: "command", command: pendingCommand.current }); pendingCommand.current = null; }
                 return;
             }
             if (message.type === "view-stage" && ["prepare", "requirements", "sketch", "prototype", "development"].includes(message.stage)) {
@@ -293,8 +367,8 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
                 return;
             }
             if (message.type === "show-design") { latest.current.showDesign(); return; }
-            if (message.type === "process-open") { openProcess(); return; }
-            if (message.type === "settings-closed") { document.getElementById("project-settings")?.focus(); return; }
+            if (message.type === "settings-open") { openSettings(); return; }
+            if (message.type === "settings-closed") { closeSettings(); return; }
             if (message.type === "conversation-resize"
                 && (message.width === null || Number.isFinite(message.width) && message.width >= 300
                     && message.width <= window.innerWidth)) {
@@ -308,6 +382,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
                 && ["normal", "larger", "largest"].includes(message.fontSize)) {
                 document.documentElement.dataset.projectTheme = message.theme;
                 document.documentElement.dataset.projectFontSize = message.fontSize;
+                send({ type: "appearance", theme: message.theme, fontSize: message.fontSize });
                 return;
             }
             if (["project-effort-read", "project-effort-apply"].includes(message.type)) {
@@ -330,7 +405,11 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
             if (message.type === "status" && typeof message.status === "string") {
                 if (message.statusScope !== undefined && message.statusScope !== null
                     && message.statusScope !== JSON.stringify([state.prototypeId, state.generation])) return;
-                const retryable = message.canRetry === true || message.canReopen === true || ["failed", "unknown", "closed"].includes(message.installationStatus);
+                if (message.active === true && message.status === "waiting-runtime" && view.status !== "waiting-runtime" && view.developmentEntered) {
+                    void requireDevelopmentModel({ kind: "activate", retry: false }).catch(error =>
+                        setView(v => ({ ...v, error: error instanceof Error ? error.message : "Development model selection could not be checked." })));
+                }
+                const retryable = message.starting !== true && (message.canRetry === true || message.canReopen === true || ["failed", "unknown", "closed"].includes(message.installationStatus));
                 const settled = message.active === true || retryable;
                 if (retryable) startRequested.current = false;
                 setView(v => ({ ...v, status: message.status.slice(0, 80), detail: typeof message.reason === "string" ? message.reason.slice(0, 2000) : "",
@@ -346,7 +425,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
                         ? message.presentation : null,
                     presentationScope: typeof message.statusScope === "string" ? message.statusScope : "",
                     active: message.active === true,
-                    starting: settled ? false : v.starting,
+                    starting: message.starting === true || !settled && v.starting,
                     designRevision: typeof message.designRevision === "string" ? message.designRevision : null,
                     designChanged: !latest.current.designVisible && Boolean(message.designRevision)
                         && (v.designChanged || v.designRevision !== message.designRevision),
@@ -387,19 +466,18 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
         window.addEventListener("message", receive);
         return () => window.removeEventListener("message", receive);
     }, []);
-    return <Context.Provider value={{ ...view, processError, maintenanceError: providerReload.view.error ? providerReload.view.message : "",
+    return <Context.Provider value={{ ...view, maintenanceError: providerReload.view.error ? providerReload.view.message : "",
         presentation: view.presentationScope === JSON.stringify([state.prototypeId, state.generation]) ? view.presentation : null,
         detail: !view.presentationScope || view.presentationScope === JSON.stringify([state.prototypeId, state.generation]) ? view.detail : "",
-        visible: designVisible, entry, chooseEntry: path => loadEntry(true, path), reloadEntry: () => loadEntry(),
-        gitSetupVisible: git.visible, requireDevelopmentGit: git.requireReady,
+        visible: designVisible, settingsOpen, workspaceRequested: workspaceRequested.current, entry, chooseEntry: path => loadEntry(true, path), reloadEntry: () => loadEntry(),
+        gitSetupVisible: git.visible, requireDevelopmentGit: git.requireReady, requireDevelopmentModel,
         frame, sync, activate, setHandoffStatusOwner,
-        prepareDevelopmentView: () => { setViewRequested(true); setView(v => ({ ...v, developmentEntered: true })); },
+        prepareDevelopmentView: () => { workspaceRequested.current = true; setViewRequested(true); setView(v => ({ ...v, developmentEntered: true })); },
         resumeDiscovery: () => setView(v => ({ ...v, developmentEntered: false })),
         command: command => {
-            if (command === "process") { openProcess(); return; }
+            if (command === "settings") { openSettings(); return; }
             if (!latest.current.designVisible || !latest.current.view.developmentEntered) {
-                if (command === "settings") setDiscoverySettings(true);
-                else if (command === "current-work") {
+                if (command === "current-work") {
                     if (latest.current.view.developmentEntered) latest.current.showDesign();
                     else latest.current.browseStage(latest.current.state.lifecycle.currentStage);
                 }
@@ -410,10 +488,29 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
             if (latest.current.view.outputStatus !== "verified") return;
             latest.current.showDesign();
             send({ type: "output-open", id: item.id, binding: item.binding });
-        } }}>{children}{git.dialog}{discoverySettings && <DiscoveryProjectSettings providerReload={providerReload}
-            close={() => setDiscoverySettings(false)} openProcess={openProcess} />}
-        <ProcessPanel development={view.developmentEntered} expanded dialog={{ open: processOpen, onOpenChange: setProcessOpen }}
-            onErrorChange={setProcessError} />
+        } }}>{children}{git.dialog}{settingsRequested && <dialog ref={settingsDialog}
+              role="dialog" aria-labelledby="project-settings-title" aria-describedby="project-settings-description"
+              className="dialog-content project-settings-dialog" hidden={!settingsOpen}
+              onCancel={event => { event.preventDefault(); closeSettings(); }}
+              onKeyDown={event => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); closeSettings(); } }}>
+              <div className="root-settings-heading"><h2 id="project-settings-title">Project settings</h2>
+                <button id="close-project-settings" className="plan-button secondary" onClick={closeSettings}>Close</button></div>
+              <p id="project-settings-description">{modelPrompt
+                ? settingsNext ? "Choose a private Development model below and save it, then start Development. No work has been submitted."
+                    : "Choose a private Development model below and save it, then close settings and review your Prototype handoff again. No work has been submitted."
+                : "Shared project preferences and independent Development settings. Opening settings does not start Development."}</p>
+              {modelPrompt && settingsNext && <button id="start-development-after-model" className="plan-button"
+                aria-describedby="model-continuation-help" aria-busy={continuing}
+                disabled={!modelReady || continuing || entry.busy || view.starting || pending} onClick={() => void continueDevelopment()}>
+                {continuing ? "Checking model..." : view.active ? "Continue to Development" : "Start Development with saved model"}</button>}
+              {modelPrompt && settingsNext && <p id="model-continuation-help" role="status">{continuing ? "Checking the saved model before continuing."
+                : modelReady ? "Model selection is saved. You can continue." : "Save or apply your model choice below to enable Continue."}</p>}
+              {modelPrompt && (view.error || entry.error) && <p role="alert">{view.error || entry.error}</p>}
+              {state.provider?.canSubmitAnswers === false ? <p role="status">Open Project settings in the Tandem session that owns this project.</p>
+                : view.url ? <iframe ref={settingsFrame} id="project-settings-frame" title="Project settings controls"
+                    src={`${view.url}?panel=settings`} onLoad={() => { setModelReady(false); sync(); }} />
+                  : <p role={view.error ? "alert" : "status"}>{view.error || "Loading project settings..."}</p>}
+        </dialog>}
     </Context.Provider>;
 }
 export function ProjectConversation() {
@@ -456,7 +553,7 @@ export function ProjectConversation() {
             aria-expanded={!historyCollapsed} onClick={() => setHistoryChoice(!historyCollapsed)}>
             {historyCollapsed ? <PanelRightOpen size={16} aria-hidden="true" /> : <><PanelRightClose size={16} aria-hidden="true" />Hide history</>}</button>}
         {view.visible && view.error && <p role="alert">{view.error}</p>}
-        {view.url && <iframe ref={view.frame} id="project-conversation-frame" title="Private Development conversation"
+        {view.url && view.workspaceRequested && <iframe ref={view.frame} id="project-conversation-frame" title="Private Development conversation"
             hidden={!view.visible} src={`${view.url}?panel=workspace`} onLoad={view.sync} allow="clipboard-read; clipboard-write" />}
         {!view.visible && <div id="discovery-history" className="discovery-history" aria-label="Discovery history" hidden={historyCollapsed}>
                 {discoveryEntries(state).map(item => <article key={item.id} data-entry-id={item.id}>

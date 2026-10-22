@@ -1,5 +1,5 @@
 import { humanLoopPrompts } from "../public/prompts/human-loop.js";
-import { HumanLoopPreferences } from "./human-loop-preferences.mjs";
+import { HumanLoopPreferences, normalizeModelCatalog } from "./human-loop-preferences.mjs";
 import { parseHumanLoopOwner, requireHumanRequestRunning } from "../runtime-src/domain/human-loop/model.ts";
 import { parseRoleResult } from "../runtime-src/domain/human-loop/contracts.ts";
 import { humanLoopResultTools, humanLoopProgressTool, humanLoopStopTool } from "../runtime-src/domain/human-loop/tool-contracts.ts";
@@ -219,18 +219,7 @@ export class HumanLoopTransport {
     requireCondition(typeof this.#client.start === "function" && typeof this.#client.listModels === "function",
       "Installed SDK cannot list authenticated private-session models.");
     await this.#client.start();
-    const models = await this.#client.listModels();
-    requireCondition(Array.isArray(models) && models.length > 0 && models.length <= 1000
-      && models.every((model) => typeof model.id === "string" && model.id.trim() && model.id.length <= 200),
-    "The SDK model list is unavailable or invalid.");
-    return models.map(({ id, name, supportedReasoningEfforts = [] }) => {
-      requireCondition(Array.isArray(supportedReasoningEfforts) && supportedReasoningEfforts.length <= 40
-        && supportedReasoningEfforts.every(effort => typeof effort === "string" && effort.trim() === effort
-          && effort.length > 0 && effort.length <= 40)
-        && new Set(supportedReasoningEfforts).size === supportedReasoningEfforts.length,
-      "SDK supported reasoning efforts are invalid.");
-      return { id, name: typeof name === "string" ? name.slice(0, 200) : id, supportedReasoningEfforts };
-    });
+    return normalizeModelCatalog(await this.#client.listModels());
   }
   async currentModelSelection() {
     requireCondition(typeof this.#session?.rpc?.model?.getCurrent === "function", "SDK cannot verify the actual private-session model.");

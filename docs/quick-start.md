@@ -80,6 +80,9 @@ folder and continue**: it initializes local Git only when needed and adds
 `.tandem/` to `.gitignore`, preserving files and rules. No commit, remote or push
 is created. **Cancel** performs no setup and leaves the starting choice unsaved.
 Choosing Preparation does not open Development.
+After setup, **Opening your selected project...** stays visible until entry
+finishes; you are not asked to choose the starting path again. Cancellation
+returns to the chooser, and a failed entry offers an explicit retry.
 
 ### Start with Preparation
 
@@ -115,8 +118,10 @@ prototyping with a recorded reason and **Finish Requirements and save outputs**.
 
 Use this path for existing code, an initial implementation, or a rough idea.
 
-1. Complete project setup above, then wait for **Ready**. Opening Development
-   does not submit a model request or approve implementation.
+1. Complete project setup above. If no Development model is saved, Tandem opens
+   **Project settings** first: select a private model, **Save model for
+   Development**, then **Start Development with saved model**. Wait for **Ready**.
+   Opening Development does not submit a model request or approve implementation.
 2. Choose **Quick requests > Understand existing project**, review the inserted
    text and send it. Or use **Design something new** for an idea without code.
 3. Inspect the Design beside Conversation and answer its questions.

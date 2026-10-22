@@ -18,7 +18,7 @@ All source paths and command working directories below are relative to the
 | [Browser host and ownership](#standalone-nodebrowser-app) | Shutdown, permissions, provider selection and local packaging. |
 | [Workflow contracts](#workflow) | Independent stages, effort, progress, source handoff and UI boundaries. |
 | [State, migration and recovery](#state-migration-and-recovery) | Retained history, interrupted work and guarded setup repair. |
-| [Acceptance and adapters](#acceptance-export-and-process-adapters) | Capture, export, Local/GitHub delivery and evidence limits. |
+| [Settings and retained history](#project-settings-and-retained-history) | Shared settings, independent runtime ownership and retired process records. |
 | [Windows Forms host](#optional-windows-forms-host) | Alternative host requirements. |
 | [Development and packaging](#develop-validate-and-package) | Source layout, checks, packaging and qualification boundaries. |
 
@@ -715,36 +715,58 @@ prepared handoff stays unsent until a separate handoff review and explicit
 confirmation. A failed or uncertain repair
 cannot reuse its consumed confirmation.
 
-## Acceptance, export and process adapters
+## Project settings and retained history
 
-Open **Project settings → Advanced handoffs & history** from discovery or
-Development. Close and Escape return focus to Project settings; drafts and
-history expansion are retained. These optional controls are not part of the
-everyday sidebar. Opening or closing them does not accept, export, publish or
-start work. Errors remain reachable through **Review handoff error**.
-The sidebar shows the Requirement ledger only when it has entries, omitting
-empty categories.
+**Project settings** opens the same window in Preparation, Requirements,
+Drawings, Prototype and Development. Its isolated settings document reuses the
+native renderer for appearance, shared reasoning effort, private model, session
+access and diagnostics. Opening it does not start the private runtime or submit
+work. Main-session and private Development model/permission ownership remain
+independent. Close and Escape return focus to Project settings; closing or
+browsing another phase retains the settings document and its unsaved fields.
 
-Use **Capture Development outcome for review**, inspect the original Development
-outcome and captured artifact, then explicitly accept it. The projection binds
-the exact Design, cycle, source snapshots, implementation/review outcomes,
-coverage, unresolved questions, native command references and verification limits.
-Failed, partial, unavailable and unverified outcomes stay labeled.
+Before first Development startup, the authenticated main-session catalog supplies
+model choices without creating a private session. **Save model for Development**
+writes the existing native preferences store, not the main model. The original
+private startup path validates and applies the saved model/effort and verifies
+native readback before work. Unavailable choices, incompatible effort and
+uncertain existing ownership remain explicit errors; a saved preference is not
+an actual running model. Once Ready, changes still use the native idle-only
+model-switch path.
 
-Acceptance records attribution, not authenticated code-owner approval or a test
-pass. It does not start work. **Export accepted handoff** is a separate explicit
-operation writing local `tandem-records`, shown only for the selected snapshot's
-current acceptance. Preparing a delivery draft does not export.
-Source/Design drift requires a fresh capture and review before acceptance or
-publication.
+First startup requires an explicit saved model. The root entry/open controls
+read the controller's model-selection preflight and open the same Project
+settings window when needed; startup remains a separate explicit action after
+saving. The native controller enforces the requirement before installation or
+private-session creation. A previously created but unselected private session
+uses that same prompt and its original model-switch path, not a replacement
+session. Prototype submission still needs its separate handoff review after
+model selection.
+The settings document reports scoped model readiness only after readback matches
+its displayed model/effort. Continue is disabled for unsaved choices, pending or
+failed writes, and stale/foreign readiness messages. Each opening gets a fresh
+scope; continuation still rechecks the native preflight and cannot resume after
+the user closes the window during that check.
 
-`ProcessAdapterRegistry` remains authoritative for independently selected Local
-and GitHub handoff/status/intake blocks. Switching an adapter retains existing
-references and receipts. Errors never substitute another adapter. GitHub requires
-authenticated `gh`. Reviewed external publication is explicit; export itself
-never commits, pushes, merges or deploys. Legacy automatic implementation/test
-settings and verification records are historical only, with no executable
-scheduler or mutable UI.
+The controller exposes a presentation-only startup phase through private runtime
+creation/recovery and final model/effort verification. Until it settles, the
+renderer shows progress rather than temporary unverified-history or model-error
+warnings, and keeps request/retry controls unavailable. Pending permissions remain
+actionable. Clearing the phase publishes the actual Ready or failure state; no
+error is erased, and this adds no role-completion or execution gate.
+
+The obsolete acceptance, capture, export, delivery, adapter configuration and
+linked-intake controls have been removed, not moved into settings. The public
+`process_action` canvas action is no longer registered; `/api/process` returns
+`410 process_retired` without mutation. Compatibility storage and historical
+snapshots, acceptances, Local/GitHub selections, receipts and existing
+`tandem-records` exports are preserved. No adapter substitution or publication
+occurs during this retirement.
+
+This does not retire the separately reviewed **Create Design from Prototype**
+handoff or native implementation confirmation. Design, Conversation and native
+results remain the ordinary Development evidence surfaces. The Requirement
+ledger still omits empty categories.
 
 ## Optional Windows Forms host
 

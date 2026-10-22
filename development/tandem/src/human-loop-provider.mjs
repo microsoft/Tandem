@@ -280,7 +280,7 @@ async function body(request) {
 }
 
 export async function createHumanLoopProvider({ repositoryRoot, publicDirectory, getInstallation, events, permissions, start, finishEmptyRepair, openBrowser,
-  openProjectFolder: revealProject = openProjectFolder, surface = "canvas", projectHost = null }) {
+  openProjectFolder: revealProject = openProjectFolder, surface = "canvas", projectHost = null, modelSettings, changeModel, getStartupPhase = () => null }) {
   requireCondition(["canvas", "browser"].includes(surface), "Unsupported Tandem delivery surface.");
   if (projectHost) requireCondition(/^http:\/\/127\.0\.0\.1:\d+$/.test(projectHost.origin)
     && /^[a-zA-Z0-9-]{1,100}$/.test(projectHost.channel), "Invalid project presentation binding.");
@@ -291,24 +291,26 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
   const attachments = new AnnotationAttachmentStore(root);
   const preferences = new HumanLoopPreferences(root);
   async function settings() {
-    return { preferences: await preferences.read(), model: runtime()?.modelSettings ? await runtime().modelSettings()
-      : { models: [], actual: null, canChange: false, reason: "Private model selection becomes available when the automatically started runtime is Ready." } };
+    return { preferences: await preferences.read(), model: modelSettings ? await modelSettings()
+      : runtime()?.modelSettings ? await runtime().modelSettings()
+        : { models: [], actual: null, canChange: false, reason: "The authenticated model catalog is not available in this view." } };
   }
   async function snapshot() {
     const installation = getInstallation();
     const running = runtime();
     const installed = installation ? await installation.read() : { status: "attaching", reason: "Attaching the current main session." };
+    const startup = getStartupPhase();
     const privateId = running?.sessionId ?? installation?.configuration?.owner.privateSessionId;
     const privateEvents = projectPrivateEvents(events.list(), privateId);
-    if (!running || !["ready", "closed"].includes(installed.status)) return { schemaVersion: "human-loop-snapshot-view/v1", streamId: events.streamId,
-      installation: installed,
+    if (startup || !running || !["ready", "closed"].includes(installed.status)) return { schemaVersion: "human-loop-snapshot-view/v1", streamId: events.streamId,
+      installation: installed, startup,
       conversationStatus: "unverified", workflow: null, design: null, messages: [], events: privateEvents,
       accessRequests: privateId ? permissions.list(privateId) : [], processes: { apps: [], commands: [] } };
     const [state, readiness, originals, design, processes] = await Promise.all([
       running.state(), running.readiness(), running.conversation(), running.currentDesign(), running.commands.read(),
     ]);
     return { schemaVersion: "human-loop-snapshot-view/v1", streamId: events.streamId,
-      installation: installed, workflow: projectHumanLoopView(state, readiness, design),
+      installation: installed, startup, workflow: projectHumanLoopView(state, readiness, design),
       conversationStatus: "verified", design, cycles: state.cycles.map(projectHumanCycle), messages: projectHumanConversation(state, originals), events: privateEvents,
       historyRequests: state.requests.slice(-500).map(({ id, receivedAt }) => ({ id, receivedAt })),
       recoveries: (state.recoveries ?? []).map(({ id, recoveredAt }) => ({ id, recoveredAt })),
@@ -335,14 +337,17 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
         requireCondition(["select", "accept-actual"].includes(data.action), "Unknown model setting action.");
         requireCondition(data.action === "accept-actual" ? data.model === null
           : typeof data.model === "string" && data.model.trim() === data.model && data.model.length > 0 && data.model.length <= 200, "Invalid model selection.");
-        requireCondition((await getInstallation().read()).status === "ready", "Private runtime must be Ready for model settings.");
         requireCondition(data.reasoningEffort === undefined || data.reasoningEffort === null
           || typeof data.reasoningEffort === "string" && data.reasoningEffort.trim() === data.reasoningEffort
             && data.reasoningEffort.length > 0 && data.reasoningEffort.length <= 40, "Invalid reasoning effort selection.");
         requireCondition(data.action !== "accept-actual" || data.reasoningEffort == null,
           "Accept actual reads native reasoning effort; it cannot override it.");
-        await requireRuntime().changeModel({ model: data.model, reasoningEffort: data.reasoningEffort ?? null,
-          acceptActual: data.action === "accept-actual" });
+        const selection = { model: data.model, reasoningEffort: data.reasoningEffort ?? null, acceptActual: data.action === "accept-actual" };
+        if (changeModel) await changeModel(selection);
+        else {
+          requireCondition((await getInstallation().read()).status === "ready", "Private runtime must be Ready for model settings.");
+          await requireRuntime().changeModel(selection);
+        }
         return json(response, 200, await settings());
       }
       if (request.method === "GET" && path === "/api/host-state") {
@@ -552,7 +557,7 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
       }
       if (file === resolve(publicRoot, "human-loop.html") && projectHost) {
         const panel = new URL(request.url, url).searchParams.get("panel") ?? "workspace";
-        requireCondition(panel === "workspace", "Unknown project presentation panel.");
+        requireCondition(["workspace", "settings"].includes(panel), "Unknown project presentation panel.");
         content = Buffer.from(content.toString("utf8").replace('class="human-app"',
           `class="human-app" data-project-panel="${panel}" data-project-origin="${projectHost.origin}" data-project-channel="${projectHost.channel}"`));
       }
@@ -574,7 +579,8 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
           } else if (state) outcome.notAccepted = true;
         } catch { /* No read proof means the client must retain its retry identity. */ }
       }
-      json(response, error.code === "ENOENT" ? 404 : 409, { error: error.message, ...outcome });
+      json(response, error.code === "ENOENT" ? 404 : 409, { error: error.message,
+        ...(error.code === "development_model_required" ? { code: error.code } : {}), ...outcome });
     }
   });
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });

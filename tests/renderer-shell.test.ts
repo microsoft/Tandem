@@ -115,16 +115,16 @@ test("header omits maintenance while supported reload belongs to advanced Projec
     assert.equal(h.document.querySelector(".topbar #reload-extension, .topbar #reset-effort"), null);
     assert.ok(h.get("preparation-panel").contains(h.get("reset-effort")));
     assert.equal(text(h, "reset-effort"), "Restart Preparation...");
-    await h.click("project-settings");
-    assert.equal(text(h, "reload-status"), "");
-    assert.equal(text(h, "reload-extension"), "Reload Tandem extension");
-    assert.equal(disabled(h, "reload-extension"), false);
-    assert.ok(h.get("root-maintenance").contains(h.get("reload-extension")));
+    const settings = await h.projectSettings();
+    assert.equal(settings.reload().message, "");
+    assert.equal(settings.reload().label, "Reload Tandem extension");
+    assert.equal(settings.reload().disabled, false);
     const actions = h.document.querySelector(".topbar-actions")!;
     assert.equal(actions.lastElementChild!.className, "build-version");
     h.render({ ...value, revision: 2, reloadReceipt: { status: "error", message: "Could not reload extension." } });
-    assert.equal(text(h, "reload-status"), "Could not reload extension.");
-    assert.equal(h.get("reload-status").dataset.status, "error");
+    await h.flush();
+    assert.equal(settings.reload().message, "Could not reload extension.");
+    assert.equal(settings.reload().error, true);
 });
 
 test("React panels have unique IDs and Radix navigation includes direct Development", async (t) => {
@@ -266,7 +266,9 @@ test("standalone read-only guidance returns to its owning session", async (t) =>
     assert.match(text(h, "usage-message"), /Tandem session that owns this effort/);
     await h.click("project-settings");
     assert.equal(h.document.querySelector("#reload-extension"), null, "Unsupported reload is not a dead primary control.");
-    assert.deepEqual(h.requests.map(request => request.path), ["/api/settings/project-effort"], "Only a settings read is attempted.");
+    assert.equal(h.document.querySelector("#project-settings-frame"), null);
+    assert.match(h.document.querySelector('[role="dialog"]')!.textContent!, /session that owns this project/);
+    assert.deepEqual(h.requests, [], "Read-only settings do not open the writable native provider.");
 });
 
 test("goal entry waits for an explicit valid start and retains drafts, focus and caret", async (t) => {
@@ -328,16 +330,8 @@ test("reset during active work confirms first and only clears local drafts after
     const value = state("prototype"); value.processing = { status: "running" };
     const h = await setup(t, { ...value, preparationRuntime: { liveAgentCount: 2 } });
     assert.equal(disabled(h, "reset-effort"), false);
-    await h.openProcess();
-    await h.input("process-reference", "Previous reference");
-    await h.input("process-repository", "owner/old");
-    await h.click("close-acceptance-delivery");
     await h.click("reset-effort"); await h.confirm(false);
     assert.equal(h.requests.length, 0);
-    await h.openProcess();
-    assert.equal(field(h, "process-reference").value, "Previous reference");
-    assert.equal(field(h, "process-repository").value, "owner/old");
-    await h.click("close-acceptance-delivery");
     let release!: (r: Response) => void;
     h.setFetch(() => new Promise((resolve) => { release = resolve; }));
     await h.click("reset-effort"); await h.confirm();
@@ -354,25 +348,16 @@ test("reset during active work confirms first and only clears local drafts after
     assert.equal(h.document.activeElement, h.get("start-goal"));
     assert.equal(h.render({ ...value, revision: 2 }), false);
     h.render({ ...state("requirements", 5), generation: "reset-generation" }); await h.flush();
-    await h.openProcess();
-    assert.equal(field(h, "process-reference").value, "");
-    assert.equal(field(h, "process-repository").value, "");
     assert.equal(field(h, "usage-input").value, "");
 });
 
 test("reset cancellation failures persist without clearing the effort or its drafts", async (t) => {
     const value = state("prepare"); value.preparation.status = "running";
     const h = await setup(t, value);
-    await h.openProcess();
-    await h.input("process-reference", "Keep this draft");
-    await h.click("close-acceptance-delivery");
     h.setFetch(async () => response({ error: "Worker termination could not be confirmed. Retry Reset." }, 409));
     await h.click("reset-effort"); await h.confirm();
     h.render({ ...value, revision: 2 });
     assert.equal(hidden(h, "start-panel"), true);
-    await h.openProcess();
-    assert.equal(field(h, "process-reference").value, "Keep this draft");
-    await h.click("close-acceptance-delivery");
     assert.equal(disabled(h, "reset-effort"), false);
     assert.match(text(h, "effort-message"), /termination could not be confirmed/);
     assert.equal(h.get("effort-message").dataset.status, "error");
@@ -415,10 +400,10 @@ test("supported diagnostic reload remains a recovery option without clearing a r
     const h = await setup(t, value);
     h.setFetch(async path => path === "/api/reload" ? response({ accepted: true })
         : response({ error: "Effort readback unavailable during recovery." }, 503));
-    await h.click("project-settings");
-    assert.equal(disabled(h, "reload-extension"), false);
-    await h.click("reload-extension");
-    assert.equal(disabled(h, "reload-extension"), true);
+    const settings = await h.projectSettings();
+    assert.equal(settings.reload().disabled, false);
+    await settings.send({ type: "project-reload", id: "recovery-reload", scope: settings.reload().scope });
+    assert.equal(settings.reload().disabled, true);
     assert.deepEqual(h.requests.filter(request => request.path === "/api/reload").map(request => request.body), [{}]);
     assert.equal(current(h).effortReset?.requestId, "pending-reset");
     assert.equal(current(h).goal, value.goal);
@@ -434,8 +419,8 @@ test("snapshots reject older revisions and late equal-revision provider/runtime 
     h.render({ ...newer, provider: { ...newer.provider, canReload: false }, preparationRuntime: { liveAgentCount: 1 } }, 19);
     assert.equal(current(h).provider.canReload, true);
     assert.equal(current(h).preparationRuntime.liveAgentCount, 2);
-    await h.click("project-settings");
-    assert.equal(disabled(h, "reload-extension"), false, "The accepted provider capability is retained; stale runtime counts are not a running-work signal.");
+    const settings = await h.projectSettings();
+    assert.equal(settings.reload().disabled, false, "The accepted provider capability is retained; stale runtime counts are not a running-work signal.");
     const next = { ...newer, revision: 4 }; delete next.provider;
     h.render(next, 21);
     assert.equal(current(h).preparationRuntime.liveAgentCount, 2);
@@ -494,17 +479,14 @@ test("compact context retains drafts and closes on navigation or Escape without 
     const value = state(), h = await setup(t, value); h.setNarrowViewport(true);
     assert.equal(h.get("context-toggle").getAttribute("aria-expanded"), "false");
     assert.equal(text(h, "context-stage"), "Requirements");
-    await h.click("context-toggle"); await h.openProcess();
-    await h.input("process-reference", "Design reference");
-    await h.click("close-acceptance-delivery");
+    await h.input("usage-input", "Retained usage draft");
+    await h.click("context-toggle");
     h.render({ ...value, revision: 2 });
     assert.equal(h.get("context-toggle").getAttribute("aria-expanded"), "true");
     await h.fire(h.get("requirements-pane"), "keydown", { key: "Escape" });
     assert.equal(h.get("studio-workspace").dataset.contextOpen, "false");
     assert.equal(h.document.activeElement, h.get("context-toggle"));
-    await h.openProcess();
-    assert.equal(field(h, "process-reference").value, "Design reference");
-    await h.click("close-acceptance-delivery");
+    assert.equal(field(h, "usage-input").value, "Retained usage draft");
     await h.click("context-toggle"); await browse(h, "prepare");
     assert.equal(h.get("studio-workspace").dataset.contextOpen, "false");
     assert.equal(hidden(h, "preparation-panel"), false);
@@ -536,9 +518,6 @@ test("stage tab toolbar completes the active stage without expanding context or 
     value.requirements.substage = "dag";
     value.decisionGraph.nodes = [decision("accepted", "answered")];
     const h = await setup(t, value);
-    await h.openProcess();
-    await h.input("process-reference", "Design reference");
-    await h.click("close-acceptance-delivery");
     await h.click("toggle-context-pane");
     const button = h.get<HTMLButtonElement>("complete-stage");
     assert.equal(button.hidden, false);
@@ -572,8 +551,6 @@ test("stage tab toolbar completes the active stage without expanding context or 
     await h.click("toggle-context-pane");
     assert.equal(text(h, "complete-stage"), "Finish Drawings and continue");
     assert.ok(button.querySelector('svg.lucide-check[aria-hidden="true"]'));
-    await h.openProcess();
-    assert.equal(field(h, "process-reference").value, "Design reference");
 });
 
 test("collapsed completion retains readiness, provider, busy, and historical-view guards", async (t) => {

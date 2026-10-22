@@ -50,6 +50,33 @@ test("consolidated status is Development-only and rejects previous-generation pr
     assert.deepEqual(h.errors, []);
 });
 
+test("Development startup progress spans verification without premature model prompts or retry state", async t => {
+    const h = await reactHarness(t, undefined, "development"), value = state("prepare");
+    h.render(value); await h.flush();
+    const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
+    let modelChecks = 0;
+    h.setModelSelectionFetch(async () => { modelChecks++; return response({ required: true }); });
+    const send = async (extra: object) => {
+        h.window.dispatchEvent(new h.window.MessageEvent("message", { source: frame.contentWindow, origin: "http://127.0.0.1:8765",
+            data: { protocol: "tandem-project/v1", channel: "fixture-project", type: "status",
+                statusScope: JSON.stringify([value.prototypeId, value.generation]), ...extra } }));
+        await h.flush();
+    };
+    for (const [installationStatus, text] of [["recovering", "Starting Development..."], ["ready", "Verifying Development model..."]]) {
+        await send({ status: "starting", starting: true, installationStatus, active: false,
+            presentation: { kind: "active", text, requestId: null } });
+        assert.equal(h.get("next-action-guide").textContent, text);
+        assert.equal(h.document.querySelector("#start-development-after-model"), null);
+    }
+    assert.equal(modelChecks, 0);
+    await send({ status: "ready", starting: false, installationStatus: "ready", active: true,
+        presentation: { kind: "idle", text: "Ready", requestId: null } });
+    assert.doesNotMatch(h.get("next-action-guide").textContent!, /Starting|Verifying|needs attention/);
+    await send({ status: "unknown", starting: false, installationStatus: "unknown", active: false, reason: "Native creation failed.",
+        presentation: { kind: "attention", text: "Development setup needs attention", requestId: null } });
+    assert.equal(h.get("next-action-guide").textContent, "Development setup needs attention");
+});
+
 test("Discovery and Development artifact groups keep separate disclosure keys through live index updates", async t => {
     const h = await reactHarness(t, undefined, "development"), value = state("development");
     value.artifacts = [{ id: "old", title: "Original discovery Design", stage: "design", kind: "markdown",
@@ -311,33 +338,31 @@ test("direct Development remains the current phase through startup, failure, rea
     assert.equal(h.requests.length, 0);
 });
 
-test("advanced delivery has one accessible panel, retains drafts and preserves confirmation", async t => {
+test("Project settings reuses one settings document across Development and discovery without process controls", async t => {
     const h = await reactHarness(t, undefined, "development");
     const value = state("development");
     value.lifecycle.outputs = [{ stageId: "prototype", path: ".tandem\\prototype-r1.json", completedAt: value.updatedAt }];
     h.render(value); await h.flush();
-    await h.openProcess();
+    await h.click("project-settings");
     const dialog = h.document.querySelector('[role="dialog"]')!;
     assert.ok(dialog);
-    assert.match(dialog.textContent!, /Optional controls/);
-    assert.equal(dialog.querySelectorAll(".process-controls").length, 1);
-    assert.equal(dialog.querySelector(".process-controls > button.ledger-summary"), null);
-    assert.equal(h.document.querySelectorAll("#handoff-approver").length, 1);
-    await h.input("handoff-approver", "Preserved draft");
-    const settings = Array.from(dialog.querySelectorAll("button")).find(button => button.textContent?.includes("Process settings"))!;
-    await h.click(settings);
-    await h.click("save-process");
-    assert.ok(h.document.querySelector('[role="alertdialog"]'));
-    await h.confirm(false);
-    assert.equal(h.requests.length, 0, "Opening or cancelling advanced controls cannot publish or configure.");
-    await h.click("close-acceptance-delivery");
-    assert.equal(h.document.querySelector('[role="dialog"]'), null);
+    const frame = h.get<HTMLIFrameElement>("project-settings-frame");
+    assert.equal(frame.src, "http://127.0.0.1:8765/?panel=settings");
+    assert.equal(h.document.querySelector("#handoff-approver, #acceptance-delivery, #capture-development"), null);
+    await h.click("close-project-settings");
+    assert.equal(dialog.hidden, true);
     assert.equal(h.document.activeElement?.id, "project-settings");
-    await h.openProcess();
-    assert.equal(h.get<HTMLInputElement>("handoff-approver").value, "Preserved draft");
-    await h.fire(h.document.querySelector('[role="dialog"]')!, "keydown", { key: "Escape", code: "Escape" });
-    assert.equal(h.document.querySelector('[role="dialog"]'), null);
+    for (const stage of ["preparation-tab", "design-tree-tab", "sketch-tab", "live-preview-tab", "development-tab"]) {
+        await h.fire(h.get(stage), "mousedown", { button: 0 });
+        await h.click("project-settings");
+        assert.equal(h.get("project-settings-frame"), frame);
+        assert.equal(h.document.querySelectorAll(".project-settings-dialog").length, 1);
+        assert.equal(dialog.hidden, false);
+        await h.fire(dialog, "keydown", { key: "Escape", code: "Escape" });
+        assert.equal(dialog.hidden, true);
+    }
     assert.equal(h.document.activeElement?.id, "project-settings");
+    assert.equal(h.requests.length, 0);
     assert.deepEqual(h.errors, []);
 });
 
@@ -388,9 +413,9 @@ test("fresh projects open Development directly without creating Stage1 state or 
     assert.equal(frame.src, "http://127.0.0.1:8765/?panel=workspace");
     assert.equal(h.document.querySelector("#reset-effort"), null, "Direct Development does not offer a discovery reset starter.");
     assert.equal(h.document.querySelector("#continue-design"), null);
-    await h.openProcess();
-    assert.ok(h.get("capture-development"), "Direct projects retain the explicit capture/delivery controls.");
-    await h.click("close-acceptance-delivery");
+    await h.click("project-settings");
+    assert.equal(h.document.querySelector("#capture-development, #acceptance-delivery"), null);
+    await h.click("close-project-settings");
     await h.fire(h.get("preparation-tab"), "mousedown", { button: 0 });
     assert.equal(h.get("studio-workspace").hidden, false);
     assert.equal(h.document.querySelector("#open-development"), null);
@@ -679,6 +704,9 @@ test("real React Development keeps handoff controls in view across long-status h
             } else if (path === "/api/project-entry/open") {
                 response.writeHead(200, { "Content-Type": "application/json" });
                 response.end(JSON.stringify({ developmentContext: true, developmentStarted: false }));
+            } else if (path === "/api/development/model-selection") {
+                response.writeHead(200, { "Content-Type": "application/json" });
+                response.end(JSON.stringify({ required: false }));
             } else if (path === "/api/development/preflight") {
                 response.writeHead(200, { "Content-Type": "application/json" });
                 response.end(JSON.stringify({ status: "ready", projectPath: "C:\\layout-fixture", initialize: false, message: "Fixture Git working copy is ready." }));

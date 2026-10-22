@@ -13,7 +13,7 @@ import { installComposerEnter } from "../public/composer-enter.js";
 import { createHumanLoopProvider, HumanLoopEvents } from "../src/human-loop-provider.mjs";
 import { openFixtureBrowser, browserAvailable } from "./helpers/browser-fixture.mjs";
 
-async function fixture(t, initial = {}, projectEffortControl = false) {
+async function fixture(t, initial = {}, projectEffortControl = false, open = true) {
   const root = resolve(".settings-fixtures", randomUUID());
   await mkdir(root, { recursive: true }); await git(root, "init", "--quiet");
   t.after(async () => { await getHostStateWal(root).close(); await rm(root, { recursive: true, force: true }); });
@@ -33,11 +33,305 @@ async function fixture(t, initial = {}, projectEffortControl = false) {
   const runtime = new HumanLoopRuntime({ configuration, client, verifyOwnership: async () => {}, onHandoff: async () => {},
     projectEffortControl,
     readDesign: async () => ({ binding: { revisionId: null, digest: null }, content: null }) });
-  await runtime.open();
+  if (open) await runtime.open();
   return { root, preferences, session, runtime, configuration, client,
     actual: (id) => { actual = id; }, effort: (value) => { effort = value; },
     switch: (fn) => { switchImpl = fn; }, list: (fn) => { listImpl = fn; } };
 }
+
+async function unopenedController(t, f, catalog = async () => ({ list: [
+  { id: "one", name: "One", capabilities: { supports: { reasoning_effort: ["low", "high"] } } },
+  { id: "two", name: "Two", capabilities: { supports: { reasoning_effort: [] } } },
+  { id: "disabled", name: "Disabled", policy: { state: "disabled" } },
+] })) {
+  const controller = createHumanLoopController({ workspacePath: f.root, projectEffortControl: true,
+    sdkModulePath: import.meta.resolve("@github/copilot-sdk") });
+  await controller.attach({ sessionId: "main", on() { return () => {}; }, getEvents: async () => [],
+    rpc: { model: { list: catalog, setCurrent() { assert.fail("Private settings must not change the main model."); } } } });
+  t.after(() => controller.close());
+  return controller;
+}
+
+test("unopened model settings save authenticated preferences without reserving a private session and apply at startup", async t => {
+  const f = await fixture(t, {}, true, false), controller = await unopenedController(t, f);
+  const provider = await controller.openView("settings", { surface: "browser" });
+  const get = async () => (await fetch(new URL("api/settings", provider.url))).json();
+  const initial = await get();
+  assert.equal(initial.model.deferred, true);
+  assert.equal(initial.model.canChange, true);
+  assert.equal(initial.model.actual, null);
+  assert.deepEqual(initial.model.models.map(model => model.id), ["one", "two"]);
+  const result = await fetch(new URL("api/settings/model", provider.url), { method: "POST",
+    headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "select", model: "one" }) });
+  assert.equal(result.status, 200, await result.clone().text());
+  assert.equal((await result.json()).model.desired, "one");
+  await controller.selectReasoningEffort("high");
+  assert.equal((await f.preferences.read()).reasoningEffort, "high");
+  assert.equal((await controller.status()).installation.status, "new");
+  assert.equal(controller.installation.runtime, null);
+  assert.equal(controller.installation.configuration, null);
+  assert.equal(await f.preferences.isOnlySavedState(), true);
+  assert.equal(f.session.config, undefined);
+  assert.equal(f.session.sends.length, 0);
+  await controller.close();
+  const restored = await unopenedController(t, f);
+  assert.equal((await restored.modelSettings()).desired, "one");
+  await restored.close();
+  await f.runtime.open();
+  assert.equal(f.session.config.model, "one");
+  assert.equal(f.session.config.reasoningEffort, "high");
+  assert.equal(f.session.config.requestExtensions, false);
+  const actual = await f.runtime.modelSettings();
+  assert.equal(actual.actual, "one");
+  assert.equal(actual.actualReasoningEffort, "high");
+  assert.equal(actual.error, null);
+  assert.equal(f.session.sends.length, 0);
+});
+
+for (const failed of [false, true]) test(`startup projection stays in progress through native model verification (${failed ? "failed readback" : "success"})`, async t => {
+  const f = await fixture(t, { model: "one", reasoningEffort: "low", projectReasoningEffort: "low" }, true);
+  const controller = await unopenedController(t, f);
+  const opening = Promise.withResolvers(), opened = Promise.withResolvers();
+  const verification = Promise.withResolvers(), verifying = Promise.withResolvers();
+  let phase = "new", available = false;
+  t.mock.method(controller.installation, "read", async () => ({
+    status: phase, reason: phase === "creating" ? "Previous attempt failed" : null, canRetry: phase === "creating",
+  }));
+  const runtime = t.mock.getter(controller.installation, "runtime", () => available ? f.runtime : null);
+  t.mock.method(controller.installation, "open", async () => {
+    phase = "creating"; available = true; opened.resolve(); await opening.promise;
+    phase = "ready"; return f.runtime;
+  });
+  const apply = f.runtime.applyProjectEffort.bind(f.runtime);
+  t.mock.method(f.runtime, "applyProjectEffort", async () => {
+    verifying.resolve(); await verification.promise;
+    if (failed) f.actual(undefined);
+    await apply();
+  });
+  t.mock.method(f.runtime, "wake", () => {});
+  const provider = await controller.openView("progress");
+  const snapshot = async () => (await fetch(new URL("api/snapshot", provider.url))).json();
+  let start;
+  try {
+    start = controller.start();
+    await opened.promise;
+    const initial = await snapshot();
+    assert.equal(initial.startup, "starting");
+    assert.equal(initial.workflow, null);
+    assert.equal(initial.installation.reason, "Previous attempt failed", "The diagnostic is retained, not erased.");
+    opening.resolve(); await verifying.promise;
+    const checking = await snapshot();
+    assert.equal(checking.startup, "verifying");
+    assert.equal(checking.installation.status, "ready");
+    assert.equal(checking.workflow, null, "Do not expose partial model readback as a settled workflow failure.");
+    const settings = await controller.modelSettings();
+    assert.equal(settings.startup, "verifying");
+    assert.equal(settings.error, null);
+    assert.equal(settings.actual, null);
+    assert.equal(settings.canChange, false);
+    verification.resolve(); await start;
+    const settled = await snapshot();
+    assert.equal(settled.startup, null);
+    assert.equal(settled.conversationStatus, "verified");
+    assert.equal(settled.workflow.status, failed ? "waiting-runtime" : "ready");
+    if (failed) assert.match(settled.workflow.reason, /pending a verified private model/);
+    else assert.equal(settled.workflow.reason, null);
+    assert.equal(f.session.sends.length, 0);
+  } finally {
+    opening.resolve(); verification.resolve();
+    if (start) await Promise.allSettled([start]);
+    runtime.mock.restore();
+    await controller.close(); controller.events.close();
+  }
+});
+
+test("reusing a ready runtime does not project another initialization or hide its verified history", async t => {
+  const f = await fixture(t, { model: "one" }, true), controller = await unopenedController(t, f);
+  const checking = Promise.withResolvers(), release = Promise.withResolvers();
+  t.mock.method(controller.installation, "read", async () => ({ status: "ready" }));
+  const runtime = t.mock.getter(controller.installation, "runtime", () => f.runtime);
+  t.mock.method(controller.installation, "open", async () => f.runtime);
+  t.mock.method(f.runtime, "applyProjectEffort", async () => { checking.resolve(); await release.promise; });
+  t.mock.method(f.runtime, "wake", () => {});
+  const provider = await controller.openView("already-ready");
+  const start = controller.start();
+  try {
+    await checking.promise;
+    const snapshot = await (await fetch(new URL("api/snapshot", provider.url))).json();
+    assert.equal(snapshot.startup, null);
+    assert.equal(snapshot.conversationStatus, "verified");
+    assert.equal(snapshot.workflow.status, "ready");
+  } finally {
+    release.resolve(); await start; runtime.mock.restore();
+    await controller.close(); controller.events.close();
+  }
+});
+
+test("first Development startup asks for a model before reserving ownership, even with saved effort", async t => {
+  const f = await fixture(t, { projectReasoningEffort: "low" }, true, false), controller = await unopenedController(t, f);
+  assert.equal(await controller.requiresModelSelection(), true);
+  await assert.rejects(controller.start(), error => error.code === "development_model_required");
+  assert.equal((await controller.status()).startup, null, "Failed admission cannot leave a permanent startup indicator.");
+  assert.equal(controller.installation.runtime, null);
+  assert.equal(controller.installation.configuration, null);
+  const provider = await controller.openView("settings");
+  const response = await fetch(new URL("api/runtime/start", provider.url), { method: "POST",
+    headers: { "content-type": "application/json" }, body: "{}" });
+  assert.equal(response.status, 409);
+  assert.equal((await response.json()).code, "development_model_required");
+  await controller.changeModel({ model: "one" });
+  assert.equal(await controller.requiresModelSelection(), false);
+  assert.equal(controller.installation.configuration, null);
+  assert.equal(f.session.sends.length, 0);
+});
+
+test("a ready but unselected private model asks for selection without replacing its existing session", async t => {
+  const f = await fixture(t, {}, true), controller = await unopenedController(t, f);
+  f.actual(undefined);
+  t.mock.method(controller.installation, "read", async () => ({ status: "ready" }));
+  const runtime = t.mock.getter(controller.installation, "runtime", () => f.runtime);
+  assert.equal(await controller.requiresModelSelection(), true);
+  await f.runtime.changeModel({ model: "one" });
+  assert.equal(await controller.requiresModelSelection(), false);
+  assert.equal(f.runtime.sessionId, "private");
+  assert.equal(f.session.sends.length, 0);
+  runtime.mock.restore();
+});
+
+test("unopened model choices reject unsupported, disabled and unverified inputs without changing preferences", async t => {
+  const f = await fixture(t, { projectReasoningEffort: "low" }, true, false), controller = await unopenedController(t, f);
+  const provider = await controller.openView("settings");
+  const before = await f.preferences.read();
+  for (const selection of [{ action: "select", model: "missing" }, { action: "select", model: "disabled" },
+    { action: "select", model: "two" }, { action: "accept-actual", model: null },
+    { action: "select", model: "one", reasoningEffort: "high" }, { action: "select", model: 42 }]) {
+    const result = await fetch(new URL("api/settings/model", provider.url), { method: "POST",
+      headers: { "content-type": "application/json" }, body: JSON.stringify(selection) });
+    assert.equal(result.status, 409, JSON.stringify(selection));
+    assert.deepEqual(await f.preferences.read(), before);
+  }
+  await controller.changeModel({ model: "one" });
+  assert.equal((await f.preferences.read()).reasoningEffort, "low");
+  await assert.rejects(controller.selectReasoningEffort("max"), /saved private model/);
+  assert.equal((await f.preferences.read()).projectReasoningEffort, "low");
+  assert.equal(controller.installation.configuration, null);
+  assert.equal(f.session.sends.length, 0);
+});
+
+test("unopened model save excludes startup and other settings; unavailable catalog remains an explicit error", async t => {
+  const f = await fixture(t, {}, true, false);
+  let release, entered;
+  const listed = new Promise(resolve => { entered = resolve; });
+  const controller = await unopenedController(t, f, () => { entered(); return new Promise(resolve => { release = resolve; }); });
+  const saving = controller.changeModel({ model: "one" });
+  await listed;
+  await assert.rejects(controller.start(), /settings change/);
+  await assert.rejects(controller.changeModel({ model: "two" }), /changing settings/);
+  await assert.rejects(controller.selectReasoningEffort("low"), /changing settings/);
+  release({ list: [{ id: "one" }] });
+  await saving;
+  assert.equal((await f.preferences.read()).model, "one");
+  assert.equal(controller.installation.runtime, null);
+  await controller.close();
+  const unavailable = await unopenedController(t, f, async () => { throw new Error("Catalog unavailable"); });
+  const value = await unavailable.modelSettings();
+  assert.equal(value.canChange, false);
+  assert.equal(value.desired, "one");
+  assert.match(value.error, /Catalog unavailable/);
+  await assert.rejects(unavailable.changeModel({ model: "two" }), /Catalog unavailable/);
+  assert.equal((await f.preferences.read()).model, "one");
+});
+
+test("saving a future model never overwrites retained or changing private ownership", async t => {
+  const f = await fixture(t, {}, true, false);
+  let release, entered;
+  const listed = new Promise(resolve => { entered = resolve; });
+  const controller = await unopenedController(t, f, () => { entered(); return new Promise(resolve => { release = resolve; }); });
+  const saving = controller.changeModel({ model: "one" });
+  await listed;
+  const read = t.mock.method(controller.installation, "read", async () => ({ status: "saved-state" }));
+  release({ list: [{ id: "one" }] });
+  await assert.rejects(saving, /ownership changed/);
+  assert.equal((await f.preferences.read()).model, null);
+  for (const status of ["saved-state", "unknown", "failed", "closed"]) {
+    read.mock.mockImplementation(async () => ({ status }));
+    await assert.rejects(controller.changeModel({ model: "one" }), /original Development owner/);
+    assert.equal((await f.preferences.read()).model, null);
+  }
+});
+
+test("future effort validation holds its saved-model binding until persistence", async t => {
+  const f = await fixture(t, { model: "one" }, true, false);
+  let release, entered;
+  const listed = new Promise(resolve => { entered = resolve; });
+  const controller = await unopenedController(t, f, () => { entered(); return new Promise(resolve => { release = resolve; }); });
+  const saving = controller.selectReasoningEffort("high");
+  await listed;
+  await assert.rejects(controller.changeModel({ model: "two" }), /changing settings/);
+  await assert.rejects(controller.start(), /settings change/);
+  release({ list: [{ id: "one", capabilities: { supports: { reasoning_effort: ["high"] } } }] });
+  await saving;
+  assert.equal((await f.preferences.read()).reasoningEffort, "high");
+  assert.equal((await f.preferences.read()).model, "one");
+});
+
+test("a saved startup model never authorizes fallback or claims a mismatched native readback", async t => {
+  const f = await fixture(t, { model: "two" }, false, false);
+  f.list(async () => [{ id: "one" }]);
+  await assert.rejects(f.runtime.open(), /unavailable.*no fallback/);
+  assert.equal(f.session.config, undefined);
+  assert.equal((await f.preferences.read()).model, "two");
+  const mismatch = await fixture(t, { model: "two" }, false, false);
+  mismatch.client.createSession = async config => { mismatch.session.config = config; return mismatch.session; };
+  await mismatch.runtime.open();
+  assert.equal(mismatch.session.config.model, "two");
+  assert.match((await mismatch.runtime.modelSettings()).error, /differs from the saved/);
+  assert.equal((await mismatch.runtime.readiness()).modelBlocked, true);
+  assert.equal(mismatch.session.sends.length, 0);
+});
+
+test("Settings can save a model before Development exists and retains it across view reload", { skip: !browserAvailable }, async t => {
+  const f = await fixture(t, {}, true, false), controller = await unopenedController(t, f);
+  const provider = await controller.openView("settings", { surface: "browser" });
+  const browser = await openFixtureBrowser(t);
+  await browser.call("Page.navigate", { url: provider.url });
+  await browser.waitFor("!document.querySelector('#setting-model').disabled");
+  assert.equal(await browser.evaluate("document.querySelector('#apply-model').textContent"), "Save model for Development");
+  await browser.evaluate(`document.querySelector('#canvas-settings').open=true;
+    document.querySelector('#setting-model').value='two';
+    document.querySelector('#setting-model').dispatchEvent(new Event('change'));
+    document.querySelector('#apply-model').click();`);
+  await browser.waitFor("document.querySelector('#model-setting-status').textContent.includes('Saved selection: two (applies at startup)')");
+  assert.match(await browser.evaluate("document.querySelector('#model-setting-status').textContent"), /Saving does not start Development/);
+  assert.equal(await browser.evaluate("document.querySelector('#accept-actual-model').hidden"), true);
+  await browser.call("Page.reload");
+  await browser.waitFor("document.querySelector('#setting-model').value==='two'");
+  assert.equal((await controller.modelSettings()).actual, null);
+  assert.equal(controller.installation.configuration, null);
+  assert.equal(f.session.sends.length, 0);
+  assert.deepEqual(browser.exceptions, []);
+});
+
+test("standalone Start Development opens its existing model settings instead of failing after private creation", { skip: !browserAvailable }, async t => {
+  const f = await fixture(t, {}, true, false), controller = await unopenedController(t, f);
+  const provider = await controller.openView("settings", { surface: "browser" });
+  const browser = await openFixtureBrowser(t);
+  await browser.call("Page.navigate", { url: provider.url });
+  await browser.waitFor("document.querySelector('#initialize').checkVisibility() && !document.querySelector('#initialize').disabled && !document.querySelector('#setting-model').disabled");
+  await browser.evaluate("document.querySelector('#initialize').click()");
+  await browser.waitFor("document.querySelector('#canvas-settings').open && !document.querySelector('#setting-model').disabled");
+  assert.equal(controller.installation.configuration, null);
+  assert.equal(controller.installation.runtime, null);
+  assert.match(await browser.evaluate("document.querySelector('#notice').textContent"), /Choose and save a Development model/);
+  await browser.evaluate(`document.querySelector('#setting-model').value='one';
+    document.querySelector('#setting-model').dispatchEvent(new Event('change'));
+    document.querySelector('#apply-model').click();`);
+  await browser.waitFor("document.querySelector('#model-setting-status').textContent.includes('Saved selection: one')");
+  assert.equal(await controller.requiresModelSelection(), false);
+  assert.equal(controller.installation.configuration, null);
+  assert.equal(f.session.sends.length, 0);
+  assert.deepEqual(browser.exceptions, []);
+});
 
 test("composed private effort validates and applies its own intent without changing model or workflow history", async t => {
   const f = await fixture(t, { model: "one", projectReasoningEffort: "low" }, true);
@@ -469,7 +763,7 @@ test("native-unselected model remains explicit in browser Settings until verifie
       document.querySelector('#setting-model').value='two';
       document.querySelector('#setting-model').dispatchEvent(new Event('change'));
       document.querySelector('#apply-model').click();`);
-    await browser.waitFor("document.querySelector('#model-setting-status').textContent.includes('Actual private model: two.')");
+    await browser.waitFor("document.querySelector('#model-setting-status').textContent.includes('Actual private model: two.') && !document.querySelector('#apply-model').disabled");
     assert.equal((await f.preferences.read()).model, "two");
     await browser.evaluate(`document.querySelector('#setting-model').value='one';
       document.querySelector('#setting-model').dispatchEvent(new Event('change'));`);

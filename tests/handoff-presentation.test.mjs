@@ -5,7 +5,7 @@ import { createHumanLoop } from "../development/tandem/runtime-src/domain/human-
 import { DEFAULT_POLICY } from "../development/tandem/runtime-src/domain/workflow/policy.ts";
 import { currentHandoffActivity, handoffProgress, quietHandoff, validHandoffActivity } from "../development/tandem/public/handoff-presentation.js";
 import { createServer } from "node:http";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -55,6 +55,24 @@ test("Development status prioritizes required decisions and exact current activi
   assert.equal(developmentStatus(snapshot, acknowledgement).text, "Connecting to Development...");
   assert.equal(validDevelopmentStatus(developmentStatus(snapshot)), true);
   assert.equal(validDevelopmentStatus({ kind: "active", text: "Pretend", requestId: {} }), false);
+});
+
+test("startup and model verification are progress, while consent and settled failures remain attention", () => {
+  const snapshot = { startup: "starting", installation: { status: "recovering", reason: "Previous attempt failed" },
+    conversationStatus: "unverified", accessRequests: [], workflow: null };
+  assert.deepEqual(developmentStatus(snapshot), { kind: "active", text: "Starting Development...", requestId: null });
+  snapshot.startup = "verifying"; snapshot.installation.status = "ready";
+  assert.equal(developmentStatus(snapshot).text, "Verifying Development model...");
+  snapshot.accessRequests = [{ id: "native-consent" }];
+  assert.equal(developmentStatus(snapshot).text, "Permission response needed");
+  snapshot.accessRequests = []; snapshot.startup = null; snapshot.installation.status = "unknown";
+  assert.equal(developmentStatus(snapshot).kind, "attention");
+  snapshot.installation = { status: "ready", reason: null }; snapshot.conversationStatus = "verified";
+  snapshot.workflow = { status: "waiting-runtime", reason: "Actual model readback failed" };
+  assert.equal(developmentStatus(snapshot).kind, "attention");
+  snapshot.workflow = { status: "ready", reason: null };
+  assert.equal(developmentStatus(snapshot).text, "Ready");
+  assert.equal(developmentStatus({ installation: { status: "attaching", reason: "Attaching the current main session." } }).kind, "active");
 });
 
 export function handoffFixture(kind = "designer-changed") {
@@ -160,6 +178,94 @@ test("completed changed and unchanged handoffs remain quiet after a later verifi
   }
 });
 
+test("Questions button highlights both blocking and advisory questions with readable theme colors and keyboard access",
+  { skip: !browserAvailable, timeout: 90_000 }, async t => {
+    const root = await mkdtemp(join(tmpdir(), "tandem-question-button-"));
+    const f = handoffFixture(), events = new HumanLoopEvents(), cleanups = [];
+    f.state.owner.workspacePath = root;
+    f.design.content = sharedDesignExampleV3();
+    let sends = 0;
+    const runtime = { sessionId: "private", state: async () => structuredClone(f.state), readiness: async () => f.readiness,
+      conversation: async () => [], currentDesign: async () => f.design, commands: { read: async () => ({ apps: [], commands: [] }) },
+      modelSettings: async () => ({ models: [], actual: null, canChange: false }),
+      send: async () => { sends++; throw new Error("Question navigation must not submit work."); } };
+    const provider = await createHumanLoopProvider({ repositoryRoot: root,
+      publicDirectory: process.env.TANDEM_PACKAGED_EXTENSION
+        ? join(dirname(process.env.TANDEM_PACKAGED_EXTENSION), "stage2", "public") : resolve("development", "tandem", "public"),
+      events, getInstallation: () => ({ runtime, read: async () => ({ status: "ready" }) }), permissions: { list: () => [] } });
+    try {
+      const browser = await openFixtureBrowser({ after: cleanup => cleanups.push(cleanup) });
+      await browser.call("Page.navigate", { url: provider.url });
+      await browser.waitFor('document.querySelector("#show-questions")?.textContent==="Questions (0, 0 blockers)"');
+      for (const surface of ["standalone", "composed"]) {
+        await browser.evaluate(`(() => {
+          if (${JSON.stringify(surface)} === "composed") {
+            document.body.dataset.projectPanel="workspace"; document.body.dataset.projectDesign="true";
+          } else { delete document.body.dataset.projectPanel; delete document.body.dataset.projectDesign; }
+        })()`);
+        for (const theme of ["light", "dark"]) for (const width of [1360, 390]) {
+          await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: false });
+          await browser.evaluate(`document.body.dataset.theme=${JSON.stringify(theme)}`);
+          for (const importance of ["advisory", "blocking"]) {
+            const question = { id: "choice", context: "Synthetic behavior", question: "Keep the count?", whyItMatters: "Scope",
+              importance, options: [], allowFreeform: true, state: "open", answerRequestId: null, blockingActive: importance === "blocking",
+              ...(importance === "advisory" ? { unanswered: { action: "keep-current-design", explanation: "Keep current behavior." } } : {}),
+              source: { role: "designer", resultId: f.result.resultId, requestId, requestIds: [requestId], cycleId: null, design: binding, planDigest: null } };
+            f.state.questions = [question]; events.touch();
+            const label = `Questions (1, ${importance === "blocking" ? 1 : 0} blockers)`;
+            await browser.waitFor(`document.querySelector("#show-questions").textContent===${JSON.stringify(label)}`);
+            await browser.call("Input.dispatchMouseEvent", { type: "mouseMoved", x: 0, y: 0 });
+            const visual = await browser.evaluate(`(() => {
+              const button=document.querySelector("#show-questions"); button.scrollIntoView({block:"nearest"});
+              const style=getComputedStyle(button), primary=getComputedStyle(document.querySelector("#apply-model")), rect=button.getBoundingClientRect();
+              const luminance=value=>value.match(/[\\d.]+/g).slice(0,3).map(Number).map(c=>c/255)
+                .map(c=>c<=.04045?c/12.92:((c+.055)/1.055)**2.4).reduce((sum,c,i)=>sum+c*[.2126,.7152,.0722][i],0);
+              const values=[luminance(style.color),luminance(style.backgroundColor)].sort((a,b)=>b-a);
+              return {pending:button.dataset.unanswered,disabled:button.disabled,color:style.color,background:style.backgroundColor,
+                primary:primary.backgroundColor,contrast:(values[0]+.05)/(values[1]+.05),left:rect.left,right:rect.right,width:innerWidth,
+                title:button.title,expanded:button.getAttribute("aria-expanded")};
+            })()`);
+            assert.equal(visual.pending, "true");
+            assert.equal(visual.disabled, false);
+            assert.equal(visual.background, visual.primary, `${surface}/${theme}: use the existing filled action color.`);
+            assert.ok(visual.contrast >= 4.5, `${surface}/${theme}/${width}/${importance}: ${JSON.stringify(visual)}`);
+            assert.ok(visual.left >= 0 && visual.right <= visual.width + 1, JSON.stringify(visual));
+            assert.equal(visual.title, "Review and answer pending questions");
+            assert.equal(visual.expanded, "false", "New questions never switch views automatically.");
+            await browser.evaluate('document.querySelector("#show-questions").focus()');
+            assert.equal(await browser.evaluate('document.activeElement.id'), "show-questions", `${surface}/${theme}/${width}/${importance}`);
+            for (const type of ["keyDown", "keyUp"]) await browser.call("Input.dispatchKeyEvent", {
+              type, key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, ...(type === "keyDown" ? { text: "\r" } : {}),
+            });
+            await browser.waitFor('document.querySelector("#show-questions").getAttribute("aria-expanded")==="true"');
+            assert.equal(await browser.evaluate('document.querySelector("#show-questions").dataset.unanswered'), "true", "Opening the questions does not answer them.");
+            for (const type of ["keyDown", "keyUp"]) await browser.call("Input.dispatchKeyEvent", { type, key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+            await browser.waitFor('document.activeElement.id==="show-questions" && document.querySelector("#question-panel").hidden');
+            assert.equal(await browser.evaluate('document.querySelector("#show-questions").matches(":focus-visible")'), true);
+            assert.notEqual(await browser.evaluate('getComputedStyle(document.querySelector("#show-questions")).outlineStyle'), "none");
+            if (width === 390 && importance === "advisory" && process.env.TANDEM_UI_EVIDENCE) {
+              await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `questions-${surface}-${theme}.png`), await browser.screenshot());
+            }
+            question.state = "answered"; question.blockingActive = false; events.touch();
+            await browser.waitFor('document.querySelector("#show-questions").textContent==="Questions (0, 0 blockers)"');
+            assert.equal(await browser.evaluate('document.querySelector("#show-questions").dataset.unanswered'), "false");
+            assert.equal(await browser.evaluate('document.querySelector("#show-questions").disabled'), false, "Saved questions remain accessible.");
+            assert.notEqual(await browser.evaluate('getComputedStyle(document.querySelector("#show-questions")).backgroundColor'), visual.background);
+            f.state.questions = []; events.touch();
+            await browser.waitFor('document.querySelector("#show-questions").disabled');
+            assert.equal(await browser.evaluate('document.querySelector("#show-questions").dataset.unanswered'), "false");
+          }
+        }
+      }
+      assert.equal(sends, 0);
+      assert.deepEqual(browser.exceptions, []);
+    } finally {
+      for (const cleanup of cleanups) await cleanup();
+      await provider.close(); events.close(); await getHostStateWal(root).close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("actual root and private UI show zero completed banners and one owned active status without resetting Design or drafts",
     { skip: !browserAvailable, timeout: 90_000 }, async t => {
       const root = await mkdtemp(join(tmpdir(), "handoff-presentation-"));
@@ -226,6 +332,7 @@ test("completed changed and unchanged handoffs remain quiet after a later verifi
           request.on("close", () => rootEvents.delete(response));
         } else if (path === "/api/project-entry") json({ projectPath: root, startingPath: "development" });
         else if (path === "/api/project-entry/open") json({ developmentContext: true, developmentStarted: false });
+        else if (path === "/api/development/model-selection") json({ required: false });
         else if (path === "/api/settings/project-effort") json({ desired: null, changing: false,
           stage1: { desired: null, actual: null, model: null, supported: [], status: "pending", error: null },
           stage2: { desired: null, actual: null, model: null, supported: [], status: "pending", error: null } });
@@ -367,14 +474,8 @@ test("completed changed and unchanged handoffs remain quiet after a later verifi
         await waitPrivate('document.querySelector("#backbone-state").textContent==="Current Design"');
         await browser.waitFor(`${visibleRootStatuses}.length===0`);
         await checkEmptyChrome();
-        await browser.evaluate('document.querySelector("#project-settings").click()');
-        await waitPrivate('document.querySelector("#canvas-settings").open');
-        await evaluatePrivate('document.querySelector("#acceptance-delivery").click()');
-        await browser.waitFor('!!document.querySelector(".process-dialog")');
-        await browser.evaluate('[...document.querySelectorAll(".process-dialog details")].forEach(e=>e.open=true)');
-        assert.equal(await browser.evaluate(`document.querySelector(".process-dialog").textContent.includes(${JSON.stringify(requestId)})`), true);
-        assert.equal(await browser.evaluate(`document.querySelector(".process-dialog").textContent.includes(${JSON.stringify(snapshotPath)})`), true);
-        await browser.evaluate('document.querySelector("#close-acceptance-delivery").click()');
+        assert.equal(await browser.evaluate('document.querySelector("#acceptance-delivery, .process-dialog")'), null);
+        assert.equal(f.state.requests.some(request => request.id === requestId), true);
         await checkEmptyChrome();
         f.state.questions.push({ id: "choice", context: "Synthetic behavior", question: "Keep the count?", whyItMatters: "Scope",
           importance: "blocking", options: [], allowFreeform: true, state: "open", answerRequestId: null, blockingActive: true,

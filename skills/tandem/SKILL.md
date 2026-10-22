@@ -305,7 +305,7 @@ an absent session, or reinterpret ordinary Retry as this authorization.
 Recovered Ready preserves audit and the prepared envelope; it does not submit
 the handoff or authorize implementation.
 
-## Reset, history and delivery
+## Settings, reset and history
 
 Lifecycle version 3 separates active stages from historical stage IDs. Old
 snapshots, artifacts, receipts and acceptances stay read-only. Active or
@@ -317,16 +317,24 @@ Unopened saved private state is not automatically quiet. Reset archives upstream
 discovery and does not erase canonical Design, conversation or admitted handoffs.
 For an unrelated canonical project, use another workspace.
 
-Capture a Development outcome, review it and explicitly accept its exact Design,
-cycle, sources, outcome, coverage, native evidence references and verification
-limits. Acceptance is recorded human attribution, not an authenticated code-owner
-approval or a fabricated test pass. Export is a separate explicit operation into
-`tandem-records`; preparing a delivery draft is not export.
+Project settings is the same window in every phase. Appearance, shared reasoning
+effort and native Development settings retain their original owners; opening
+settings does not start Development or grant consent.
+Before first startup, **Save model for Development** records the user's private
+model choice. Startup validates and applies that saved preference, then verifies
+native readback; saving is not proof of a running model. Catalog failures or
+unavailable model/effort choices never authorize a fallback.
+If first startup has no saved private model, ask through Project settings before
+creating the session. Saving the selection alone must not resume startup or
+submit a handoff; the user explicitly continues afterward.
 
-Keep Local/GitHub selections and receipt history behind `ProcessAdapterRegistry`.
-Adapter errors never authorize fallback. Publication remains explicit and never
-implies a Git commit, push, merge or deployment. Legacy auto-start and verification
-settings are retained history only.
+The obsolete acceptance, capture/export, delivery and linked-intake workflow is
+retired, including `process_action`. Do not recreate or relocate those controls.
+Retain historical snapshots, Local/GitHub selections, receipts, acceptances and
+existing `tandem-records` exports without mutation or adapter substitution.
+This is distinct from the explicit Prototype-to-Design handoff and native
+implementation confirmation, which remain supported. Inspect original Design,
+Conversation and results rather than manufacturing acceptance or test evidence.
 
 ## Host/runtime and validation
 

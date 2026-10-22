@@ -51,7 +51,7 @@ export function response(body: unknown, status = 200): Response {
   return { ok: status < 400, status, json: async () => body } as Response;
 }
 
-export async function reactHarness(t?: TestContext, headerHost?: { origin: string; channel: string }, startingPath: "preparation" | "development" | null = "preparation") {
+export async function reactHarness(t?: TestContext, headerHost?: { origin: string; channel: string }, startingPath: "preparation" | "development" | null = "preparation", modelSelectionRequired = false) {
   const hash = headerHost ? "#" + new URLSearchParams({ "tandem-host": headerHost.origin, "header-channel": headerHost.channel }) : "";
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
     url: "http://127.0.0.1:4567/" + hash, runScripts: "outside-only", pretendToBeVisual: true,
@@ -66,8 +66,9 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
   const previewRequests: RequestInit[] = [];
   const previewFetchers = new Map<PrototypePreviewTarget, () => Promise<Response>>();
   let entryOpened = false;
-  let processSettingsFixture = false;
+  let entryGate: ((path: string, options: RequestInit) => Promise<void>) | null = null;
   let gitFetcher: (() => Promise<Response>) | null = null;
+  let modelSelectionFetcher = async () => response({ required: modelSelectionRequired });
   const errors: string[] = [];
   const pngExports: { width: number; height: number; source: string }[] = [];
   const headerMessages: Record<string, any>[] = [];
@@ -88,17 +89,14 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
     PointerEvent: window.MouseEvent,
     fetch: async (input: string | URL | Request, options: RequestInit = {}) => {
       const path = String(input);
-      if (processSettingsFixture && path === "/api/settings/project-effort") {
-        return response({ desired: null, changing: false,
-          stage1: { desired: null, actual: null, model: null, supported: [], status: "pending", error: null },
-          stage2: { desired: null, actual: null, model: null, supported: [], status: "pending", error: null } });
-      }
+      if (path === "/api/development/model-selection") return modelSelectionFetcher();
       if (path === "/api/development/preflight") {
         return gitFetcher ? gitFetcher() : response({ status: "ready", projectPath: "C:\\fixture-project",
           initialize: false, message: "Fixture Git working copy is ready." });
       }
       if (path === "/api/project-entry") {
         entryRequests.push(path + ":" + (options.method || "GET"));
+        if (entryGate) await entryGate(path, options);
         if (options.method === "POST") {
           const choice = JSON.parse(String(options.body)).startingPath;
           if (startingPath && choice !== startingPath) return response({ error: "Starting path already chosen." }, 409);
@@ -108,6 +106,7 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
       }
       if (path === "/api/project-entry/open") {
         entryRequests.push(path);
+        if (entryGate) await entryGate(path, options);
         const developmentStarted = !entryOpened && startingPath === "development";
         entryOpened = true;
         return response({ developmentStarted, developmentContext: startingPath === "development" });
@@ -177,18 +176,22 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
   t?.after(dispose);
   return { presentationRequests, entryRequests, previewRequests,
     window, document, requests, errors, pngExports, store: mounted.store, get, click, input, fire, flush, dispose,
-    async openProcess() {
-      processSettingsFixture = true;
-      try {
-        await click("project-settings");
-        if (document.getElementById("acceptance-delivery")) await click("acceptance-delivery");
-        else {
-          const frame = get<HTMLIFrameElement>("project-conversation-frame");
+    async projectSettings(open = true) {
+      if (open) await click("project-settings");
+      const frame = get<HTMLIFrameElement>("project-settings-frame");
+      const messages: Record<string, any>[] = [];
+      frame.contentWindow!.postMessage = message => { messages.push(JSON.parse(JSON.stringify(message))); };
+      await fire(frame, "load");
+      return {
+        frame, messages,
+        scope: () => messages.findLast(message => message.type === "context")!.settingsScope,
+        reload: () => messages.findLast(message => message.type === "context")!.providerReload,
+        async send(data: object) {
           window.dispatchEvent(new window.MessageEvent("message", { origin: "http://127.0.0.1:8765", source: frame.contentWindow,
-            data: { protocol: "tandem-project/v1", channel: "fixture-project", type: "process-open" } }));
+            data: { protocol: "tandem-project/v1", channel: "fixture-project", ...data } }));
           await flush();
-        }
-      } finally { processSettingsFixture = false; }
+        },
+      };
     },
     render(value: UiState, sequence?: number) {
       let changed = false;
@@ -204,7 +207,9 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
       await click(button);
     },
     setFetch(handler: typeof fetcher) { fetcher = handler; },
+    setEntryGate(handler: typeof entryGate) { entryGate = handler; },
     setGitPreflight(handler: () => Promise<Response>) { gitFetcher = handler; },
+    setModelSelectionFetch(handler: () => Promise<Response>) { modelSelectionFetcher = handler; },
     setPreviewFetch(handler: () => Promise<Response>, target: PrototypePreviewTarget = "current") { previewFetchers.set(target, handler); },
     headerMessages,
     async sendHeaderMessage(data: Record<string, unknown>, origin = headerHost?.origin || "http://127.0.0.1:9000", source: unknown = parent) {

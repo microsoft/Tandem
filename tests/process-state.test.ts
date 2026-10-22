@@ -19,6 +19,35 @@ test("legacy efforts have local adapters and no automatic execution", () => {
     assert.throws(() => normalizeProcessState({ version: 2 }), /Unsupported/);
 });
 
+test("retired process HTTP actions cannot mutate retained history or dispatch work", async () => {
+    const h = await extensionHarness();
+    const state = h.api.createState("retired-process", "Keep saved history");
+    state.process.receipts = [{ id: "saved", adapter: "local", block: "handoff",
+        recordedAt: "2026-10-14T00:00:00Z", reference: "tandem-records\\saved", summary: "Historical receipt", inputHash: "saved-input" }];
+    await h.api.persistState(state);
+    const entry = await h.api.startServer(state.prototypeId, state.prototypeId, "project:tandem", true);
+    try {
+        const saved = await h.api.loadState(state.prototypeId);
+        for (const action of ["configure", "capture-development", "accept", "export", "prepare-handoff", "handoff", "status", "intake", "open-intake"]) {
+            const result = await fetch(new URL("api/process", entry.url), { method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action, expectedRevision: state.revision }) });
+            assert.equal(result.status, 410);
+            assert.equal((await result.json()).code, "process_retired");
+        }
+        assert.deepEqual(await h.api.loadState(state.prototypeId), saved);
+        assert.equal(h.requests.length, 0);
+        assert.equal(h.developmentRequests.length, 0);
+        assert.equal(h.developmentOpens.length, 0);
+        const source = await readFile(new URL("../src/extension.ts", import.meta.url), "utf8");
+        assert.doesNotMatch(source, /name:\s*"process_action"/);
+    } finally {
+        clearInterval(entry.heartbeat);
+        await new Promise<void>((resolve, reject) => entry.server.close(error => error ? reject(error) : resolve()));
+        await h.close();
+    }
+});
+
 test("retired automatic execution settings cannot dispatch and historical profiles survive adapter changes", async () => {
     const h = await extensionHarness();
     try {

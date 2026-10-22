@@ -68,6 +68,23 @@ for (const startingPath of ["preparation", "development"]) test(`packaged guided
                     const before = await readdir(workspace);
                     await browser.call("Page.navigate", { url: server.url });
                     await browser.waitFor('Boolean(document.querySelector("#entry-development"))');
+                    await browser.evaluate(`(() => {
+                        const original = window.fetch.bind(window);
+                        window.entryResponseStage = null;
+                        window.fetch = async (input, options) => {
+                            const response = await original(input, options);
+                            const path = new URL(String(input), location.href).pathname;
+                            const stage = path === "/api/project-entry" && options?.method === "POST" ? "choice"
+                                : path === "/api/project-entry/open" ? "open" : null;
+                            if (stage) {
+                                window.entryResponseStage = stage;
+                                await new Promise(resolve => { window.releaseEntryResponse = resolve; });
+                                window.entryResponseStage = null;
+                            }
+                            return response;
+                        };
+                        return true;
+                    })()`);
                     await browser.evaluate(`document.querySelector("#entry-${startingPath}").click()`);
                     const needsSetup = !["ready", "worktree"].includes(scenario);
                     if (needsSetup) {
@@ -98,6 +115,14 @@ for (const startingPath of ["preparation", "development"]) test(`packaged guided
                             await browser.waitFor('Boolean(document.querySelector("#confirm-git-setup"))');
                             await browser.evaluate('document.querySelector("#confirm-git-setup").click()');
                         }
+                    }
+                    for (const stage of ["choice", "open"]) {
+                        await browser.waitFor(`window.entryResponseStage === "${stage}"`);
+                        assert.equal(await browser.evaluate('document.querySelector("#entry-preparation, #entry-development, #resume-project-entry, #confirm-git-setup") === null'), true);
+                        assert.equal(await browser.evaluate('document.querySelector("#project-entry-progress")?.textContent'), "Opening your selected project...");
+                        assert.equal(await browser.evaluate('document.querySelector("#project-entry-progress").checkVisibility()'), true);
+                        assert.equal(await browser.evaluate('document.querySelector("#studio-workspace").hasAttribute("inert")'), true);
+                        await browser.evaluate("window.releaseEntryResponse(); true");
                     }
                     await waitForEntry();
                     assert.equal(starts, startingPath === "development" ? 1 : 0);

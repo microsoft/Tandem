@@ -24,8 +24,11 @@ export interface HumanLoopController {
   validateReasoningEffort(effort: string): Promise<void>;
   selectReasoningEffort(effort: string): Promise<DevelopmentEffortStatus>;
   reasoningEffortStatus(): Promise<DevelopmentEffortStatus>;
+  requiresModelSelection(): Promise<boolean>;
+  modelSettings(): Promise<DevelopmentModelSettings>;
+  changeModel(selection: { model: string | null; reasoningEffort?: string | null; acceptActual?: boolean }): Promise<DevelopmentModelSettings | void>;
   close(): Promise<{ status: string; warnings: string[] }>;
-  status(): Promise<{ installation: { status: string; reason?: string | null }; workflow: { status: string; reason?: string | null } | null }>;
+  status(): Promise<{ installation: { status: string; reason?: string | null }; startup?: "starting" | "verifying" | null; workflow: { status: string; reason?: string | null } | null }>;
   reportError(error: Error): void;
   installation?: { runtime: HumanLoopRuntimeHandle | null; configuration: { owner: HumanLoopState["owner"] } | null };
 }
@@ -36,6 +39,23 @@ export interface DevelopmentEffortStatus {
   supported: string[];
   status: string;
   error: string | null;
+}
+export interface DevelopmentModelSettings {
+  models: { id: string; name: string; supportedReasoningEfforts: string[] }[];
+  actual: string | null;
+  desired: string | null;
+  pending: string | null;
+  actualReasoningEffort: string | null;
+  desiredReasoningEffort: string | null;
+  pendingReasoningEffort: string | null;
+  projectReasoningEffort: string | null;
+  effortManaged: boolean;
+  canSetReasoningEffort: boolean;
+  canChange: boolean;
+  deferred?: boolean;
+  startup?: "starting" | "verifying";
+  error: string | null;
+  reason: string | null;
 }
 export function createHumanLoopController(options: {
   workspacePath: string;
