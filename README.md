@@ -1,7 +1,9 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="development/tandem/public/branding/tandem-blue-dark.png">
+<a href="development/tandem/public/branding/tandem-blue-light.png#gh-light-mode-only">
   <img src="development/tandem/public/branding/tandem-blue-light.png" alt="Tandem logo: a blue bicycle built for two beside the Tandem wordmark." width="420">
-</picture>
+</a>
+<a href="development/tandem/public/branding/tandem-blue-dark.png#gh-dark-mode-only">
+  <img src="development/tandem/public/branding/tandem-blue-dark.png" alt="Tandem logo: a blue bicycle built for two beside the Tandem wordmark." width="420">
+</a>
 
 # Tandem
 
