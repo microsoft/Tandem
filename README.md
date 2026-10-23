@@ -17,6 +17,17 @@ It is for developers, designers and project owners who want to work with a codin
 agent without leaving product decisions hidden in a prompt.
 The illustration above expresses that vision; it is not a product screenshot.
 
+**Watch the 94-second introduction:**
+
+https://github.com/user-attachments/assets/6b068a9d-1669-47bd-a55d-26ced792145a
+
+**Using Tandem: a two-minute highlights tour**
+
+Follow a weekend-away planner through Requirements, drawings, a UI prototype
+with mocked data, Design discussion, implementation and Review.
+
+https://github.com/user-attachments/assets/ea2c909b-97c7-44b2-adfe-86ff56e4c382
+
 ## Why Tandem?
 
 - **See the idea before committing to it.** Explore requirements, drawings and
