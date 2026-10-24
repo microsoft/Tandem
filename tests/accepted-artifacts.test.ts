@@ -449,7 +449,7 @@ async function assetFixture(t: TestContext) {
     await mkdir(sketchDirectory, { recursive: true });
     for (const [path, bytes] of sources) await writeFile(join(f.input.sharedRoot, ...path.split("/")), bytes);
     const sketchArtifact = (assets = refs) => artifact({
-        id: "sketch-spec", title: "Approved sketch", content: "Approved drawing and screen layout.\n", assets,
+        id: "sketch-spec", title: "Approved sketch", content: "Approved design and screen layout.\n", assets,
     });
     const save = async (assets = refs) => {
         const bytes = Buffer.from(`${JSON.stringify(f.snapshot(7, "requirements", [sketchArtifact(assets)]), null, 2)}\n`);
@@ -506,7 +506,7 @@ test("scene, SVG and PNG are frozen by acceptance and exported from verified arc
     await rm(f.sketchDirectory, { recursive: true });
     const outside = join(f.root, "changed-live-assets");
     await mkdir(outside);
-    await writeFile(join(outside, "document.json"), "a later drawing");
+    await writeFile(join(outside, "document.json"), "a later design");
     await directoryLink(outside, f.sketchDirectory);
     const exported = await exportAcceptedSnapshot(f.input.workspaceRoot, f.input.sharedRoot, "example", record);
     const directory = join(f.input.workspaceRoot, exported.exportPath!);
@@ -526,7 +526,7 @@ test("scene, SVG and PNG are frozen by acceptance and exported from verified arc
     }
     assert.deepEqual(await readFile(join(archive, "manifest.json")), manifestBytes);
     assert.deepEqual(await exportAcceptedSnapshot(f.input.workspaceRoot, f.input.sharedRoot, "example", exported), exported);
-    assert.equal(await readFile(join(outside, "document.json"), "utf8"), "a later drawing");
+    assert.equal(await readFile(join(outside, "document.json"), "utf8"), "a later design");
 });
 
 test("asset reference identities and hashes participate in stage artifact hashes", async (t) => {

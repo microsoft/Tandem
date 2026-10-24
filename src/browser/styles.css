@@ -28,7 +28,7 @@ html, body, #root { height: 100%; margin: 0; padding: 0; overflow: hidden; }
 .host-permissions[data-disabled="true"] { opacity: .5; }
 .host-permissions select:disabled { cursor: default; }
 .host-main { display: flex; flex: 1; min-height: 0; min-width: 0; overflow: auto; }
-.host-main > iframe { width: 100%; min-width: 900px; flex-shrink: 0; height: 100%; border: 0; }
+.host-main > iframe { width: 100%; min-width: 0; flex: 1; height: 100%; border: 0; }
 .host-notice { width: min(640px, 100%); padding: 40px 24px; margin: auto; text-align: center; overflow: auto; max-height: 100%; }
 .host-notice h1 { font-size: 22px; margin: 12px 0; }
 .host-notice p { overflow-wrap: anywhere; }

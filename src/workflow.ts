@@ -3,7 +3,7 @@ import type { HistoricalStageId, LifecycleStageId, TandemArtifact } from "./type
 export const lifecycleStages: { id: LifecycleStageId; label: string }[] = [
     { id: "prepare", label: "Preparation" },
     { id: "requirements", label: "Requirements" },
-    { id: "sketch", label: "Sketch" },
+    { id: "sketch", label: "Designs" },
     { id: "prototype", label: "Prototype" },
     { id: "development", label: "Development" },
 ];

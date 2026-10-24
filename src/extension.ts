@@ -14,6 +14,7 @@ import {
     joinSession,
 } from "@github/copilot-sdk/extension";
 import { renderTandemHtml } from "./renderer.js";
+import { readBrowserDevelopmentAssets } from "./browser/development-assets.js";
 import { chooseProjectEntry, readProjectEntry } from "./project-entry.js";
 import { DevelopmentGit } from "./development-git.js";
 import { PreviewLaunches, type PreviewTarget } from "./preview-launch.js";
@@ -22,14 +23,22 @@ import { isPreferredTandemProvider } from "./provider-identity.js";
 import { resolveSharedProjectRoot } from "./workspace-root.js";
 import { buildDecisionGraphMermaid } from "./decision-diagram.js";
 import {
-    curatedDefault, patchSemanticList, readDefaultBatch, reconciliationInput,
-    requirementsChangeSetSchema, requirementsInputDigest, validateChangeSet,
+    applyRequirementsAnswerChanges, curatedDefault, patchSemanticList, readDefaultBatch,
+    readRequirementsDagChanges, reconciliationInput, requirementsAnswerDigest,
+    requirementsAnswerChangesSchema, requirementsAnswerResultSchema, requirementsDagChangesSchema, requirementsDagResultSchema,
+    requirementsChangeSetSchema, requirementsInputDigest, requirementsResearchDigest, validateChangeSet, validateRequirementsValue,
 } from "./requirements-reconciliation.js";
 import {
-    activateChange, activeChange, changeAssessmentSchema, changeBaselineDigest, pendingChange,
-    preserveUnchangedScreens, prototypeNeedsChangeUpdate, readChangeAssessment, readChangeRequests,
+    assertResearchSourceUrls, researchAnalysisSchema, researchCheckSchema, researchSourceSchema,
+    requirementsResearchInput, requirementsResearchIsCurrent, requirementsResearchSchema,
+    type RequirementsResearch, type RequirementsResearchInput,
+} from "./requirements-research.js";
+import {
+    activateChange, activeChange, changeAssessmentSchema, changeBaselineDigest, completeSavedChange, isLocalChange, nextChangeWork, pendingChange,
+    preserveUnchangedScreens, prototypeNeedsChangeUpdate, readChangeAssessment, readChangeRequests, readSketchChangeContext, sketchChangeContextSchema,
     type ChangeRequest,
 } from "./change-requests.js";
+import { changeReviewBlocksEditing, currentChangeReview } from "./change-request-policy.js";
 import {
     createStageReview, isReviewStage, mergeStageReview, readStageReviewDraft, readStageReviews,
     stageReviewConflict, stageReviewDigest, type StageReviewReference,
@@ -51,8 +60,9 @@ import {
     processEvent, processMetrics,
 } from "./process-state.js";
 import {
-    buildChangeAssessmentPrompt, buildGoalOnlyPreparationPrompt, buildDevelopmentHandoffPrompt, buildPreparationHandoffPrompt,
+    buildChangeAssessmentPrompt, buildPreparationIntentPrompt, buildDevelopmentHandoffPrompt, buildPreparationHandoffPrompt,
     buildPreparationSourcesPrompt, buildPreparationWorkspacePrompt, buildPrototypeCheckpointPrompt,
+    buildRequirementsAnswerPrompt, buildRequirementsDagPrompt, buildRequirementsResearchPrompt,
     buildSketchPrompt, buildUsageSuggestionsPrompt, tandemWorkerInteractionRules,
     type PrototypeSketchInput,
 } from "./planning-prompts.js";
@@ -60,12 +70,13 @@ import { inspectEmptyPreparationWorkspace } from "./preparation.js";
 import { NativeWorkflowActivity, workflowBinding } from "./workflow-activity.js";
 import { MainSessionEffort } from "./main-session-effort.js";
 import {
-    emptySketchState, readSketchState, sketchDocumentSchema, validateSketchDocument,
+    emptySketchState, hasScreenContent, readSketchState, sketchDocumentSchema, validateSketchDocument,
     type SketchDocument, type SketchRevision,
 } from "./sketch.js";
 import { SketchStore } from "./sketch-store.js";
 import type { SketchPreview } from "./sketch-stream.js";
 import { runSketchStreamWorker } from "./sketch-stream-worker.js";
+import { PROMPT_PREFIX as uiDslPrompt } from "./vendor/ui-dsl/index.js";
 import { validateArtifactAssets } from "./artifact-assets.js";
 import { preparePrototypeWorkspace } from "./prototype-workspace.js";
 import { fingerprintPrototypeWorkspace, PROTOTYPE_FINGERPRINT_PREFIX } from "./prototype-runtime.js";
@@ -115,7 +126,7 @@ const STATE_DIRECTORY = join(SHARED_PROJECT_ROOT, ".tandem");
 const sketchStore = new SketchStore(SHARED_PROJECT_ROOT);
 const sketchPreviews = new Map<string, { value: SketchPreview; timer?: ReturnType<typeof setTimeout> }>();
 const MAX_SKETCH_REQUEST_BYTES = 12 * 1024 * 1024;
-const LEGACY_SKETCH_REASON = "This effort entered Prototype before Sketch was introduced. Reopen Requirements to add approved drawings.";
+const LEGACY_SKETCH_REASON = "This effort entered Prototype before Designs was introduced. Reopen Requirements to add approved designs.";
 const CURRENT_STATE_PATH = join(STATE_DIRECTORY, "current.json");
 const LEGACY_STATE_DIRECTORY = join(
     SHARED_PROJECT_ROOT,
@@ -131,7 +142,7 @@ const PROVIDER_SCOPE = providerScopeFromModuleUrl(import.meta.url);
 const textWorkerAgent = {
     name: `tandem-text-worker-${PROVIDER_SCOPE}`,
     displayName: "Tandem context-only worker",
-    description: "Return structured handoffs and usage suggestions from supplied context without tools or user interviews.",
+    description: "Return structured handoffs, usage suggestions and requirements questions from supplied context without tools or user interviews.",
     infer: false,
     tools: [],
     prompt: tandemWorkerInteractionRules,
@@ -159,11 +170,11 @@ const ANSWER_ACTIONS = new Set([
 ]);
 const PROCESSING_MESSAGES = {
     "assess-change": "Checking affected stages while keeping your current work unchanged.",
-    "generate-sketch": "Drawing the primary screens from the accepted requirements.",
-    "revise-sketch": "Revising the drawings without changing accepted requirements.",
+    "generate-sketch": "Designing the primary screens from the accepted requirements.",
+    "revise-sketch": "Revising the designs without changing accepted requirements.",
     "build-prototype": "Building the initial runnable prototype from the accepted requirements.",
     "add-usage": "Saving the usage and generating complementary suggestions.",
-    "generate-dag": "Analyzing usages and building the dependency-aware requirements DAG.",
+    "generate-dag": "Researching missing facts for accepted usages before generating requirements questions.",
     "answer-decision": "Recording the answer and recomputing dependent decisions.",
     "change-answer": "Regenerating every downstream decision affected by this answer.",
     "apply-defaults": "Reconciling the approved whole-graph defaults in one hidden job.",
@@ -181,7 +192,7 @@ const servers = new Map<string, any>();
 const instancePrototypeIds = new Map<string, string>();
 const stateCache = new Map<string, any>();
 const activeAnswerRuns = new Map<string, Promise<any>>();
-const activePrototypeContinuations = new Set<string>();
+const activeWorkContinuations = new Set<string>();
 const activePreparationRuns = new Map<string, Promise<any>>();
 const activeSuggestionRuns = new Map<string, Promise<any>>();
 const activePrototypeCompletions = new Set();
@@ -223,8 +234,10 @@ const nodePermissionOwner = process.env.TANDEM_NODE_MAIN_SESSION_ID;
 const workflowActivity = new NativeWorkflowActivity();
 const mainEffort = new MainSessionEffort(WORKSPACE_ROOT, () => session);
 let projectEffortChanging = false;
+const browserDevelopmentAssets = readBrowserDevelopmentAssets();
 const development = createHumanLoopController({
     workspacePath: WORKSPACE_ROOT,
+    ...(browserDevelopmentAssets ? { publicDirectory: browserDevelopmentAssets.publicDirectory } : {}),
     sdkModulePath: import.meta.resolve("@github/copilot-sdk"),
     privateExtensionPath: fileURLToPath(import.meta.url),
     projectEffortControl: true,
@@ -481,9 +494,9 @@ function preparationWorkItems() {
         },
         {
             id: "sources",
-            title: "Analyze authoritative sources",
+            title: "Clarify the goal if needed",
             status: "pending",
-            detail: "Ground named products, methods, and benchmarks in primary sources.",
+            detail: "Only look up an unfamiliar reference needed to understand the goal. Substantive research follows accepted usages.",
             result: "",
         },
         {
@@ -858,7 +871,17 @@ function normalizeRequirements(value, decisionGraph = { nodes: [] }) {
         .filter((item) => !normalizedUsage.has(item.toLowerCase()))
         .slice(0, 6);
 
-    return { substage, usageItems, suggestions };
+    const research = readRequirementsResearch(isObject(value) ? value.research : null);
+    return { substage, usageItems, suggestions, ...(research ? { research } : {}) };
+}
+
+function readRequirementsResearch(value: unknown): RequirementsResearch | null {
+    if (value === undefined || value === null) return null;
+    validateRequirementsValue(value, requirementsResearchSchema, "requirements research");
+    const research = value as RequirementsResearch;
+    assertResearchSourceUrls(research.sources);
+    assertResearchSourceUrls(research.input.preparation.sources);
+    return research;
 }
 
 function usageQuestion(suggestions) {
@@ -1255,7 +1278,7 @@ function deriveRequirementsState(state) {
         id: "design-tree", title: "Design tree", kind: "design-tree", stage: "requirements",
         path: "", language: "mermaid", mermaid: buildDecisionGraphMermaid(graph.nodes).source,
         content: active ? `Current decision: ${active.text}\n${remaining} decisions remain unanswered.`
-            : state.processing?.status === "running" ? "Requirements reconciliation is in progress."
+            : state.processing?.status === "running" && state.processing.action !== "assess-change" ? "Requirements reconciliation is in progress."
             : "All requirement decisions are answered. Complete Requirements explicitly when ready.",
     };
     return {
@@ -1316,6 +1339,7 @@ function normalizeProcessing(value) {
         defaultBatch: value.defaultBatch == null ? null : readDefaultBatch(value.defaultBatch),
         prototypeCheckpointId: typeof value.prototypeCheckpointId === "string" ? value.prototypeCheckpointId : null,
         sketchRequest: value.sketchRequest == null ? null : readSketchRequest(value.sketchRequest),
+        sketchContext: readSketchChangeContext(value.sketchContext),
         changeRequestId: typeof value.changeRequestId === "string" ? value.changeRequestId : null,
     };
 }
@@ -1693,7 +1717,7 @@ async function recoverRejectedFactoryLaunch(prototypeId: string): Promise<Tandem
     const state = await loadState(prototypeId);
     const processing = state.processing;
     const rejection = processing?.status === "error" && !processing.runId && rejectedFactoryLaunch(processing.message);
-    if (!rejection || state.effortReset || !["build-prototype", "submit-revision", "clarify-revision", "apply-defaults", "generate-sketch", "revise-sketch"].includes(processing.action)) return state;
+    if (!rejection || state.effortReset || !["build-prototype", "submit-revision", "clarify-revision", "apply-defaults", "generate-sketch", "revise-sketch", "assess-change"].includes(processing.action)) return state;
     return withAnswerClaim(prototypeId, async () => {
         const current = await loadState(prototypeId);
         if (current.generation !== state.generation || current.processing?.status !== "error" ||
@@ -1863,6 +1887,16 @@ function publicState(entry, state) {
 const sketchPrototypeId = (state: TandemState) => state.stageReview?.parentId ?? state.prototypeId;
 const previewPrototypeId = (state: TandemState) => state.stageReview?.parentId ?? state.prototypeId;
 
+function reviewDraftRequest(draft: TandemState, request: ChangeRequest): ChangeRequest {
+    const review = draft.stageReview;
+    if (!review || review.changeRequestId !== request.id || !["proposed", "reviewing"].includes(request.status)
+        || request.status === "reviewing" && request.remainingStages[0] !== review.stage) {
+        throw new CanvasError("review_change_invalid", "This request does not own the next stage of the review.");
+    }
+    return { ...structuredClone(request), reviewId: null, baselineDigest: changeBaselineDigest(draft),
+        ...(request.status === "reviewing" ? { status: "active", remainingStages: [review.stage] } : {}) };
+}
+
 async function openStageReview(prototypeId: string, extensionId: string, input: Record<string, unknown>) {
     if (!await isPreferredAnswerProvider(extensionId)) throw new CanvasError("read_only_provider", "Use the owning writable provider to edit a review draft.");
     return projectStore.transaction(prototypeId, async () => {
@@ -1900,11 +1934,12 @@ async function openStageReview(prototypeId: string, extensionId: string, input: 
         const baselinePath = join(STATE_DIRECTORY, "efforts", reference.id, "review-baseline.json");
         await ensureMaterializedDirectories(dirname(baselinePath), true);
         await writeJsonAtomically(baselinePath, parent);
-        if (request?.status === "proposed") {
-            const draftRequest: ChangeRequest = { ...structuredClone(request), reviewId: null,
-                baselineDigest: changeBaselineDigest(draft), status: "proposed" };
+        if (request) {
+            const draftRequest = reviewDraftRequest(draft, request);
             draft.changeRequests = [draftRequest];
-            draft = activateChange(draft, draftRequest, relative(SHARED_PROJECT_ROOT, baselinePath));
+            if (request.status === "proposed") {
+                draft = activateChange(draft, draftRequest, relative(SHARED_PROJECT_ROOT, baselinePath));
+            }
         }
         await persistState(draft);
         await persistState({ ...parent, stageReviews: [...parent.stageReviews ?? [], reference],
@@ -1930,6 +1965,33 @@ async function readReviewState(prototypeId: string, reviewId: unknown) {
     return { parent, reference, draft };
 }
 
+async function restoreReviewDraftRequest(state: TandemState): Promise<TandemState> {
+    const review = state.stageReview;
+    if (!review?.changeRequestId || state.changeRequests?.some(item => item.id === review.changeRequestId)) return state;
+    const { parent } = await readReviewState(review.parentId, state.prototypeId);
+    const conflict = stageReviewConflict(parent, state);
+    if (conflict) throw new CanvasError("review_baseline_stale", conflict);
+    const request = parent.changeRequests?.find(item => item.id === review.changeRequestId);
+    if (!request || request.status !== "reviewing" || request.remainingStages[0] !== review.stage) {
+        throw new CanvasError("review_change_invalid", "The linked change no longer owns this review. Return to the current change review.");
+    }
+    if (activeChange(state)) {
+        throw new CanvasError("review_work_pending", "Finish the draft's active change before continuing the linked review.");
+    }
+    // Older continuation drafts omitted their request and the scope recorded by earlier applied drafts.
+    const scopes = [request];
+    for (const reference of parent.stageReviews ?? []) {
+        if (!reference.appliedAt || reference.generation !== state.generation || reference.changeRequestId !== request.id) continue;
+        const { draft } = await readReviewState(parent.prototypeId, reference.id);
+        const previous = draft.changeRequests?.find(item => item.id === request.id);
+        if (previous) scopes.push(previous);
+    }
+    return { ...state, changeRequests: [...state.changeRequests ?? [], reviewDraftRequest(state, {
+        ...request, affectedDecisionIds: [...new Set(scopes.flatMap(item => item.affectedDecisionIds))],
+        workStarted: [...new Set(scopes.flatMap(item => item.workStarted))],
+    })] };
+}
+
 async function assertStageReviewsQuiet(state: TandemState): Promise<void> {
     for (const review of state.stageReviews ?? []) {
         if (!review.appliedAt && !review.discardedAt && hasActiveWork(await loadState(review.id))) {
@@ -1946,13 +2008,19 @@ function reviewCompletionError(draft: TandemState): string | null {
     return stageCompletionError(draft, draft.stageReview?.stage);
 }
 
+function reviewParentWorkError(parent: TandemState): string | null {
+    if (hasActiveWork(parent)) return "Finish current work before applying. Your draft remains separate.";
+    if (activeChange(parent)) return "Finish the change already being applied before applying this draft. Your draft remains separate.";
+    return null;
+}
+
 async function publicReviewState(entry, reviewId: unknown) {
     const { parent, reference, draft } = await readReviewState(entry.prototypeId, reviewId);
     const editable = !reference.appliedAt && !reference.discardedAt && !parent.effortReset && parent.generation === draft.generation;
     return {
         ...publicState({ ...entry, canSubmitAnswers: entry.canSubmitAnswers && editable }, draft),
         stageReviewStatus: {
-            conflict: stageReviewConflict(parent, draft), blocker: reviewCompletionError(draft),
+            conflict: stageReviewConflict(parent, draft), blocker: reviewParentWorkError(parent) || reviewCompletionError(draft),
             changed: !parent.lifecycle.completedStages.includes(reference.stage)
                 || stageReviewDigest(draft, reference.stage) !== draft.stageReview.baselineDigest,
             appliedAt: reference.appliedAt, discardedAt: reference.discardedAt,
@@ -1971,9 +2039,8 @@ async function applyStageReview(prototypeId: string, extensionId: string, input:
             const conflict = stageReviewConflict(parent, draft);
             if (conflict) throw new CanvasError("review_baseline_stale", conflict);
             if (draft.revision !== input.expectedRevision) throw new CanvasError("review_revision_stale", "The draft changed in another view. Review it before applying.");
-            if (hasActiveWork(parent) || pendingChange(parent)) {
-                throw new CanvasError("review_work_pending", "Finish current work and resolve its pending change request before applying. Your draft remains separate.");
-            }
+            const parentBlocker = reviewParentWorkError(parent);
+            if (parentBlocker) throw new CanvasError("review_work_pending", parentBlocker);
             const blocker = reviewCompletionError(draft);
             if (blocker) throw new CanvasError("review_not_ready", blocker);
             await development.assertQuiet();
@@ -2014,7 +2081,9 @@ function processConfigurationHash(state) {
         version: __TANDEM_VERSION__,
         settings: state.process.settings,
         prompts: [answerFactoryPrompt, buildChangeAssessmentPrompt, buildDevelopmentHandoffPrompt,
-            buildPreparationHandoffPrompt, buildPrototypeCheckpointPrompt, buildSketchPrompt].map((prompt) => prompt.toString()),
+            buildPreparationHandoffPrompt, buildPrototypeCheckpointPrompt, buildSketchPrompt,
+            buildRequirementsAnswerPrompt, buildRequirementsDagPrompt, buildRequirementsResearchPrompt].map((prompt) => prompt.toString()),
+        uiDslPrompt,
     });
 }
 
@@ -2553,7 +2622,7 @@ async function runPreparationFactory(prototypeId, state, resumeFromRunId = null)
         options: {
             limits: {
                 maxConcurrentSubagents: 1,
-                maxTotalSubagents: 3,
+                maxTotalSubagents: 4,
                 maxAiCredits: 1024000,
             },
         },
@@ -3016,7 +3085,7 @@ async function updateTandemLocked(ctx) {
         }
         if (Object.prototype.hasOwnProperty.call(input, "requirements")) {
             next.requirements = normalizeRequirements(
-                input.requirements,
+                { ...input.requirements, research: current.requirements.research },
                 next.decisionGraph,
             );
         }
@@ -3071,7 +3140,7 @@ async function updateTandemLocked(ctx) {
             if (!input.reset && current.sketch.approved &&
                 JSON.stringify(artifacts.find((artifact) => artifact.id === "sketch-spec")) !==
                 JSON.stringify(current.artifacts.find((artifact) => artifact.id === "sketch-spec"))) {
-                throw new CanvasError("sketch_artifact_owned", "Reopen Sketch and approve a new revision instead of replacing its approved handoff.");
+                throw new CanvasError("sketch_artifact_owned", "Reopen Designs and approve a new revision instead of replacing its approved handoff.");
             }
             next.artifacts = [...artifacts, ...historical];
         }
@@ -3169,13 +3238,13 @@ function isSketchAction(action: unknown): boolean {
 
 function sketchApprovalError(state: TandemState): string | null {
     const { current, approved, status } = state.sketch;
-    if (!current) return "Generate or save the app drawings before finishing Sketch.";
+    if (!current) return "Generate or save the app designs before finishing Designs.";
     if (current.requirementsDigest !== requirementsInputDigest(state) || status === "stale") {
-        return "The drawings refer to older requirements. Regenerate and review them before continuing.";
+        return "The designs refer to older requirements. Regenerate and review them before continuing.";
     }
     if (status !== "approved" || !approved || approved.revisionId !== current.id ||
         approved.documentHash !== current.documentHash || approved.requirementsDigest !== current.requirementsDigest) {
-        return "Approve the current drawing revision before finishing Sketch.";
+        return "Approve the current design revision before finishing Designs.";
     }
     return null;
 }
@@ -3193,6 +3262,9 @@ async function approvedSketchInput(state: TandemState): Promise<PrototypeSketchI
     if (blocker) throw new CanvasError("sketch_approval_required", blocker);
     const document = await sketchStore.verifyApproval(sketchPrototypeId(state), state.sketch.current!, state.sketch.approved!);
     validateSketchDocument(document, state.decisionGraph.nodes.map((node) => node.id));
+    if (document.version !== 2) {
+        throw new CanvasError("sketch_dsl_required", "These designs use retired geometry. Reopen Designs, explicitly regenerate UI DSL views and approve them before continuing.");
+    }
     return {
         revisionId: state.sketch.current!.id, documentHash: state.sketch.current!.documentHash,
         requirementsDigest: state.sketch.current!.requirementsDigest, imageTool: SKETCH_IMAGE_TOOL_NAME, document,
@@ -3200,8 +3272,11 @@ async function approvedSketchInput(state: TandemState): Promise<PrototypeSketchI
 }
 
 async function saveSketchRevision(state: TandemState, value: unknown, source: SketchRevision["source"]): Promise<TandemState> {
-    if (state.sketch.history.length >= 200) throw new CanvasError("sketch_history_full", "The drawing revision history is full. Start a new linked effort.");
+    if (state.sketch.history.length >= 200) throw new CanvasError("sketch_history_full", "The design revision history is full. Start a new linked effort.");
     const document = validateSketchDocument(value, state.decisionGraph.nodes.map((node) => node.id));
+    if (document.version !== 2) {
+        throw new CanvasError("sketch_dsl_required", "New design revisions must use UI DSL. Regenerate legacy designs; their saved files remain unchanged.");
+    }
     const revision = await sketchStore.save(sketchPrototypeId(state), document, {
         requirementsDigest: requirementsInputDigest(state), source,
         number: (state.sketch.current?.number || 0) + 1,
@@ -3210,8 +3285,8 @@ async function saveSketchRevision(state: TandemState, value: unknown, source: Sk
         ...state,
         sketch: { ...state.sketch, version: 1, status: "draft", current: revision, approved: null, history: [...state.sketch.history, revision] },
         artifacts: invalidateArtifacts(state.artifacts, "sketch"),
-        status: state.stageReview ? "Draft drawings saved. Review and approve them before applying changes."
-            : "Drawings saved. Review the screens and approve this revision before prototyping.",
+        status: state.stageReview ? "Draft designs saved. Review and approve them before applying changes."
+            : "Designs saved. Review the screens and approve this revision before prototyping.",
         phase: "iterating", updatedAt: revision.createdAt,
     };
 }
@@ -3219,14 +3294,15 @@ async function saveSketchRevision(state: TandemState, value: unknown, source: Sk
 function sketchArtifact(state: TandemState, document: SketchDocument) {
     const approval = state.sketch.approved!;
     return {
-        id: "sketch-spec", title: "Approved app drawings", kind: "sketch", stage: "sketch" as const,
-        path: approval.assets.find((asset) => asset.mediaType === "application/json")!.path,
+        id: "sketch-spec", title: "Approved UI DSL views", kind: "sketch", stage: "sketch" as const,
+        path: approval.assets.find((asset) => asset.id === "document")!.path,
         language: "markdown", mermaid: "", reviewStatus: "current" as const,
         sourceRevision: state.revision,
         assets: approval.assets,
         content: [
-            "# Approved app drawings", "", `Revision: ${approval.revisionId}`,
-            `Requirements SHA256: ${approval.requirementsDigest}`, `Scene SHA256: ${approval.documentHash}`, "",
+            "# Approved UI DSL views", "", `Revision: ${approval.revisionId}`,
+            `Requirements SHA256: ${approval.requirementsDigest}`, `UI DSL SHA256: ${approval.documentHash}`, "",
+            "The bound document.json and per-screen .ui.json assets are the structured UI source for Prototype and Development. PNGs are derived visual references, not editable geometry.", "",
             ...document.screens.flatMap((screen) => [
                 `## ${screen.title}`, "", screen.purpose, "",
                 `Requirement decisions: ${screen.decisionIds.join(", ")}`, "", screen.notes, "",
@@ -3239,17 +3315,20 @@ function sketchArtifact(state: TandemState, document: SketchDocument) {
 }
 
 function readSketchAction(value: unknown): Record<string, unknown> {
-    if (!isObject(value)) throw new CanvasError("sketch_action_invalid", "Supply a drawing action object.");
+    if (!isObject(value)) throw new CanvasError("sketch_action_invalid", "Supply a design action object.");
     const input: Record<string, unknown> = value;
     const keys = {
-        generate: ["action", "expectedRevision"], revise: ["action", "expectedRevision", "instruction", "expectedGeneration"],
+        generate: ["action", "expectedRevision"], update: ["action", "expectedRevision"],
+        revise: ["action", "expectedRevision", "instruction", "expectedGeneration", "sketchContext", "clientRequestId"],
         save: ["action", "expectedRevision", "document", "expectedGeneration"], approve: ["action", "expectedRevision", "previews"],
     };
     if (typeof input.action !== "string" || !Object.hasOwn(keys, input.action) ||
         Object.keys(input).some((key) => !keys[input.action as keyof typeof keys].includes(key)) ||
         !(input.expectedRevision === null || typeof input.expectedRevision === "string")
-        || (Object.hasOwn(input, "expectedGeneration") && typeof input.expectedGeneration !== "string")) {
-        throw new CanvasError("sketch_action_invalid", "Supply a supported drawing action and its current revision.");
+        || (Object.hasOwn(input, "expectedGeneration") && typeof input.expectedGeneration !== "string")
+        || (Object.hasOwn(input, "clientRequestId") && (typeof input.clientRequestId !== "string"
+            || !/^[A-Za-z0-9._-]{1,120}$/.test(input.clientRequestId)))) {
+        throw new CanvasError("sketch_action_invalid", "Supply a supported design action and its current revision.");
     }
     return input;
 }
@@ -3257,51 +3336,61 @@ function readSketchAction(value: unknown): Record<string, unknown> {
 async function requestSketchAction(prototypeId: string, extensionId: string, value: unknown) {
     const input = readSketchAction(value);
     if (input.action !== "revise" || (await loadState(prototypeId)).stageReview) return sketchAction(prototypeId, extensionId, input);
-    if (!(await isPreferredAnswerProvider(extensionId))) throw new CanvasError("read_only_provider", "Edit drawings through the active Tandem provider.");
+    if (!(await isPreferredAnswerProvider(extensionId))) throw new CanvasError("read_only_provider", "Edit designs through the active Tandem provider.");
     await recoverRejectedFactoryLaunch(prototypeId);
     await recoverFailedSketchRun(prototypeId);
     const state = await withAnswerClaim(prototypeId, async () => {
         const current = await loadState(prototypeId);
-        if (hasActiveWork(current)) throw new CanvasError("processing_in_progress", "Wait for active Tandem work before changing drawings.");
+        if (typeof input.clientRequestId === "string"
+            && current.changeRequests?.some(item => item.clientRequestId === input.clientRequestId)) return current;
+        if (hasActiveWork(current)) throw new CanvasError("processing_in_progress", "Wait for active Tandem work before changing designs.");
         if (input.expectedGeneration !== undefined && input.expectedGeneration !== current.generation) {
-            throw new CanvasError("sketch_generation_stale", "The effort changed. The drawing request was not applied.");
+            throw new CanvasError("sketch_generation_stale", "The effort changed. The design request was not applied.");
         }
         if (input.expectedRevision !== (current.sketch.current?.id ?? null)) {
-            throw new CanvasError("sketch_revision_stale", "The drawings changed in another view. Reload before requesting a change.");
+            throw new CanvasError("sketch_revision_stale", "The designs changed in another view. Reload before requesting a change.");
+        }
+        if (current.sketch.current && (await sketchStore.read(sketchPrototypeId(current), current.sketch.current)).version !== 2) {
+            throw new CanvasError("sketch_dsl_required", "Explicitly regenerate legacy designs as UI DSL before requesting revisions.");
         }
         return current;
     });
     const change = activeChange(state);
-    if (change && state.processing?.changeRequestId === change.id && state.processing.status === "error" &&
+    const repeated = state.changeRequests?.some(item => item.clientRequestId === input.clientRequestId);
+    if (!repeated && change && state.processing?.changeRequestId === change.id && state.processing.status === "error" &&
         input.instruction === changeInstruction(change)) return sketchAction(prototypeId, extensionId, input);
     await submitChangeRequest(prototypeId, extensionId, {
         message: input.instruction, originStage: "sketch", expectedRevision: input.expectedRevision, expectedGeneration: input.expectedGeneration,
+        sketchContext: input.sketchContext, clientRequestId: input.clientRequestId,
     });
     return loadState(prototypeId);
 }
 
 async function sketchAction(prototypeId: string, extensionId: string, value: unknown, automatic = false) {
     const input = readSketchAction(value);
-    if (!(await isPreferredAnswerProvider(extensionId))) throw new CanvasError("read_only_provider", "Edit drawings through the active Tandem provider.");
+    if (!(await isPreferredAnswerProvider(extensionId))) throw new CanvasError("read_only_provider", "Edit designs through the active Tandem provider.");
     await recoverRejectedFactoryLaunch(prototypeId);
     await recoverFailedSketchRun(prototypeId);
     let dispatch: { requestId: string; question: any; answer: string; action: string } | null = null;
     const next = await withAnswerClaim(prototypeId, async () => {
-        const state = await loadState(prototypeId);
+        let state = await loadState(prototypeId);
+        if (automatic && changeReviewBlocksEditing(state)) return state;
+        assertChangeReviewAllowsEditing(state);
         if (input.expectedGeneration !== undefined && input.expectedGeneration !== state.generation) {
-            throw new CanvasError("sketch_generation_stale", "The effort changed. The drawing request was not applied.");
+            throw new CanvasError("sketch_generation_stale", "The effort changed. The design request was not applied.");
         }
         if (automatic && (state.lifecycle.currentStage !== "sketch" || hasActiveWork(state) ||
             state.processing?.sketchRequest?.generation === state.generation ||
             (state.sketch.current && state.sketch.status !== "stale"))) return state;
-        if (state.lifecycle.currentStage !== "sketch") throw new CanvasError("stage_not_active", "Reopen Sketch before editing its drawings.");
-        if (hasActiveWork(state)) throw new CanvasError("processing_in_progress", "Wait for active Tandem work before changing drawings.");
+        if (state.lifecycle.currentStage !== "sketch") throw new CanvasError("stage_not_active", "Reopen Designs before editing its designs.");
+        if (hasActiveWork(state)) throw new CanvasError("processing_in_progress", "Wait for active Tandem work before changing designs.");
         if (input.expectedRevision !== (state.sketch.current?.id || null)) {
-            throw new CanvasError("sketch_revision_stale", "The drawings changed in another view. Reload before saving or approving.");
+            throw new CanvasError("sketch_revision_stale", "The designs changed in another view. Reload before saving or approving.");
         }
         if (!["build", "validate-existing"].includes(state.prototypeApproach.mode)) {
             throw new CanvasError("sketch_not_applicable", "Resolve graphical validation in Requirements before sketching.");
         }
+        state = await restoreReviewDraftRequest(state);
         if (input.action === "save") {
             const saved = await saveSketchRevision(state, input.document, "edited");
             saved.processing = null;
@@ -3310,9 +3399,12 @@ async function sketchAction(prototypeId: string, extensionId: string, value: unk
             return saved;
         }
         if (input.action === "approve") {
+            if (activeChange(state) && state.processing?.status === "error" && state.processing.changeRequestId === activeChange(state)!.id) {
+                throw new CanvasError("change_review_required", "Retry or resolve the failed design change before approving. Your saved designs are retained.");
+            }
             const revision = state.sketch.current;
             if (!revision || state.sketch.status === "stale" || revision.requirementsDigest !== requirementsInputDigest(state)) {
-                throw new CanvasError("sketch_stale", "Generate or save drawings for the current requirements before approval.");
+                throw new CanvasError("sketch_stale", "Generate or save designs for the current requirements before approval.");
             }
             if (state.artifacts.length >= 30 && !state.artifacts.some((artifact) => artifact.id === "sketch-spec")) {
                 throw new CanvasError("artifact_limit", "Remove an artifact before approving the sketch handoff.");
@@ -3323,15 +3415,18 @@ async function sketchAction(prototypeId: string, extensionId: string, value: unk
                 throw new CanvasError("sketch_previews_invalid", "Render a PNG preview for each current screen before approval.");
             }
             const document = await sketchStore.read(sketchPrototypeId(state), revision);
-            if (document.screens.some((screen) => screen.shapes.length === 0)) {
-                throw new CanvasError("sketch_empty_screen", "Draw at least one element on every screen before approval.");
+            if (document.version !== 2) {
+                throw new CanvasError("sketch_dsl_required", "Regenerate legacy designs as UI DSL before approving. Saved files and history remain unchanged.");
+            }
+            if (document.screens.some((screen) => !hasScreenContent(screen))) {
+                throw new CanvasError("sketch_empty_screen", "Add UI components to every screen before approval.");
             }
             const previews = input.previews.map((preview) => ({ screenId: String(preview.screenId), data: String(preview.data) }));
             const approved = await sketchStore.approve(sketchPrototypeId(state), revision, previews);
             const saved: TandemState = {
                 ...state, sketch: { ...state.sketch, status: "approved", approved },
-                processing: null, status: state.stageReview ? "Draft drawings approved. Apply changes explicitly to update accepted inputs."
-                    : "Drawings approved. Finish Sketch to build the matching prototype.",
+                processing: null, status: state.stageReview ? "Draft designs approved. Apply changes explicitly to update accepted inputs."
+                    : "Designs approved. Finish Designs to build the matching prototype.",
                 updatedAt: approved.approvedAt,
             };
             saved.artifacts = [...state.artifacts.filter((artifact) => artifact.id !== "sketch-spec"), sketchArtifact(saved, document)];
@@ -3340,24 +3435,42 @@ async function sketchAction(prototypeId: string, extensionId: string, value: unk
             return saved;
         }
         const change = activeChange(state);
+        const incremental = input.action === "revise" || input.action === "update";
         const instruction = change ? changeInstruction(change)
-            : input.action === "revise" ? input.instruction : "Generate the primary app screens from the completed requirements.";
+            : input.action === "revise" ? input.instruction
+            : input.action === "update"
+                ? "Update the existing designs to match the latest accepted requirements and DAG. Preserve reviewed screens, layout, styling, content and user refinements unless a requirement change needs an adjustment. Apply only those adjustments; do not recreate the app."
+                : "Generate the primary app screens from the completed requirements.";
         if (typeof instruction !== "string" || !instruction.trim() || instruction.length > 4000) {
-            throw new CanvasError("sketch_instruction_invalid", "Enter a drawing revision of 1-4000 characters.");
+            throw new CanvasError("sketch_instruction_invalid", "Enter a design revision of 1-4000 characters.");
         }
         if (input.action === "revise" && (!state.sketch.current || state.sketch.status === "stale" ||
             state.sketch.current.requirementsDigest !== requirementsInputDigest(state))) {
-            throw new CanvasError("sketch_draft_required", "Generate drawings for the current requirements before requesting a revision.");
+            throw new CanvasError("sketch_draft_required", "Update designs from latest requirements before requesting a revision.");
         }
+        if (input.action === "update" && !state.sketch.current) {
+            throw new CanvasError("sketch_draft_required", "Generate or save designs before requesting an incremental update.");
+        }
+        if (incremental && state.sketch.current
+            && (await sketchStore.read(sketchPrototypeId(state), state.sketch.current)).version !== 2) {
+            throw new CanvasError("sketch_dsl_required", "Explicitly regenerate legacy designs as UI DSL before requesting revisions.");
+        }
+        const sketchContext = readSketchChangeContext(input.sketchContext, {
+            revisionId: state.sketch.current?.id ?? null,
+            document: input.sketchContext != null && state.sketch.current
+                ? await sketchStore.read(sketchPrototypeId(state), state.sketch.current) : null,
+        });
         const requestId = randomUUID();
-        const action = input.action === "revise" ? "revise-sketch" : "generate-sketch";
-        const question = { id: `sketch-${requestId}`, text: "Draw the accepted app experience.",
+        const action = incremental ? "revise-sketch" : "generate-sketch";
+        const message = input.action === "update"
+            ? "Updating existing designs from the latest accepted requirements." : PROCESSING_MESSAGES[action];
+        const question = { id: `sketch-${requestId}`, text: incremental ? "Update the existing app designs." : "Draw the accepted app experience.",
             rationale: "", choices: [], recommended: null, allowFreeText: false, answerPlaceholder: "" };
         const requestedAt = new Date().toISOString();
         const saved = {
-            ...state, phase: "building" as const, status: PROCESSING_MESSAGES[action],
+            ...state, phase: "building" as const, status: message,
             sketch: { ...state.sketch, requests: [...(state.sketch.requests || []), {
-                requestId, kind: input.action === "revise" ? "revise" as const : "generate" as const,
+                requestId, kind: input.action === "update" ? "update" as const : incremental ? "revise" as const : "generate" as const,
                 instruction: instruction.trim(), requestedAt, baseRevisionId: state.sketch.current?.id || null,
             }] },
             processing: {
@@ -3366,7 +3479,8 @@ async function sketchAction(prototypeId: string, extensionId: string, value: unk
                 runId: null, requestedAt, completedAt: null, originalDecisionGraph: null,
                 sketchRequest: { generation: state.generation, requirementsDigest: requirementsInputDigest(state),
                     baseRevisionId: state.sketch.current?.id || null },
-                message: PROCESSING_MESSAGES[action],
+                sketchContext,
+                message,
             },
             updatedAt: requestedAt,
             changeRequests: state.changeRequests?.map(item => item.id === change?.id
@@ -3385,8 +3499,9 @@ async function ensureSketchStarted(state: TandemState, writable: boolean): Promi
     if (!writable || state.stageReview || state.effortReset || state.lifecycle.currentStage !== "sketch" || hasActiveWork(state) ||
         state.processing?.sketchRequest?.generation === state.generation ||
         (state.sketch.current && state.sketch.status !== "stale")) return state;
+    if (state.sketch.current && (await sketchStore.read(sketchPrototypeId(state), state.sketch.current)).version !== 2) return state;
     return sketchAction(state.prototypeId, PROVIDER_EXTENSION_ID,
-        { action: "generate", expectedRevision: state.sketch.current?.id || null }, true);
+        { action: state.sketch.current ? "update" : "generate", expectedRevision: state.sketch.current?.id || null }, true);
 }
 
 async function readSketchImage(input: unknown) {
@@ -3405,7 +3520,7 @@ async function readSketchImage(input: unknown) {
             state.processing?.prototypeCheckpointId !== checkpoint.id || state.lifecycle.currentStage !== "prototype" ||
             checkpoint.sketchRevisionId !== input.revisionId || state.sketch.approved?.revisionId !== input.revisionId ||
             checkpoint.sketchInputHash !== sketchApprovalHash(state) || sketchApprovalError(state)) {
-            throw new CanvasError("sketch_image_stale", "This image request does not match the active prototype's approved drawings.");
+            throw new CanvasError("sketch_image_stale", "This image request does not match the active prototype's approved designs.");
         }
         const bytes = await sketchStore.readImage(sketchPrototypeId(state), state.sketch.current!, state.sketch.approved!, input.screenId);
         const imagesRead = [...new Set([...(checkpoint.sketchImagesRead || []), input.screenId])];
@@ -3415,7 +3530,7 @@ async function readSketchImage(input: unknown) {
         });
         return {
             resultType: "success" as const,
-            textResultForLlm: `Approved screen ${input.screenId}; sketch ${input.revisionId}; checkpoint ${checkpoint.id}. Match its layout to the structured scene and annotations.`,
+            textResultForLlm: `Approved screen ${input.screenId}; sketch ${input.revisionId}; checkpoint ${checkpoint.id}. Match this rendered reference to the approved UI DSL components, tokens and annotations; do not reconstruct retired geometry.`,
             binaryResultsForLlm: [{ type: "image" as const, mimeType: "image/png", data: bytes.toString("base64"),
                 description: `Approved app sketch: ${input.screenId}` }],
         };
@@ -3425,10 +3540,12 @@ async function readSketchImage(input: unknown) {
 function stageCompletionError(
     state,
     stageId,
-    { requirePrototypeSpec = true } = {},
+    { requirePrototypeSpec = true, changeRequests = state.changeRequests } = {},
 ) {
-    const change = pendingChange(state);
-    if (change && change.status !== "active") return "Resolve the saved change request before finishing this stage.";
+    const change = currentChangeReview({ ...state, changeRequests });
+    if (change && change.status !== "active" && !(change.status === "reviewing" && change.remainingStages[0] === stageId)) {
+        return "Resolve the saved change request before finishing this stage. Open Review to continue.";
+    }
     if (isRetiredStage(stageId) || stageId === "development") return "Use Development requests and native confirmation; there is no downstream stage-completion gate.";
     if (state.lifecycle.reviewId && !state.stageReview && LIFECYCLE_STAGES.some((stage, index) =>
         index < LIFECYCLE_STAGES.findIndex(item => item.id === stageId)
@@ -3476,7 +3593,7 @@ function stageCompletionError(
         const blocker = sketchApprovalError(state);
         if (blocker) return blocker;
         if (!state.artifacts.some((artifact) => artifact.id === "sketch-spec" && artifact.stage === "sketch" &&
-            artifact.reviewStatus !== "stale")) return "Approve the drawing handoff before finishing Sketch.";
+            artifact.reviewStatus !== "stale")) return "Approve the design handoff before finishing Designs.";
     }
     if (stageId === "prototype" && state.previewStatus !== "ready") {
         return "The runnable prototype must be ready before this stage can finish.";
@@ -3625,7 +3742,9 @@ async function completeLifecycleStage(prototypeId, requestedStageId, extensionId
             return state;
         }
 
-        const blocker = reviewDraft && stageId === "prepare" ? reviewCompletionError(reviewDraft) : stageCompletionError(state, stageId);
+        // A pinned Apply resolves its own draft requests, not unapproved proposals in the working project.
+        const blocker = reviewDraft && stageId === "prepare" ? reviewCompletionError(reviewDraft)
+            : stageCompletionError(state, stageId, { changeRequests: reviewDraft ? reviewDraft.changeRequests ?? [] : state.changeRequests });
         if (blocker) {
             throw new CanvasError("stage_not_ready", blocker);
         }
@@ -3777,7 +3896,7 @@ async function completeLifecycleStage(prototypeId, requestedStageId, extensionId
                     : completedStages.length === LIFECYCLE_STAGES.length
                     ? "All lifecycle stages are complete."
                     : skipPrototype
-                      ? `Requirements saved. Sketch and Prototype are not applicable: ${state.prototypeApproach.reason} Continue in Development when you're ready.`
+                      ? `Requirements saved. Designs and Prototype are not applicable: ${state.prototypeApproach.reason} Continue in Development when you're ready.`
                     : currentStage === "development"
                       ? "Prototype saved. Continue in Development when you're ready."
                     : `${LIFECYCLE_STAGES.find((stage) => stage.id === stageId).label} completed. ${LIFECYCLE_STAGES.find((stage) => stage.id === currentStage).label} is now enabled.`,
@@ -3794,6 +3913,7 @@ async function completeLifecycleStage(prototypeId, requestedStageId, extensionId
         return next;
     });
     if (reviewDraft || completed.stageReview) return completed;
+    if (changeReviewBlocksEditing(completed)) return completed;
     if (activeChange(completed)) {
         await continueChangeWork(prototypeId);
         await continuePrototypeWork(prototypeId);
@@ -3837,10 +3957,17 @@ function readChangeInput(value: unknown): Record<string, unknown> {
     return value;
 }
 
+function assertChangeReviewAllowsEditing(state: TandemState) {
+    if (changeReviewBlocksEditing(state)) {
+        throw new CanvasError("change_review_required", "Resolve the current review before changing this work. Open Review to continue; your draft is retained.");
+    }
+}
+
 async function submitChangeRequest(prototypeId: string, extensionId: string, input: Record<string, unknown>, fromDevelopment = false) {
     if (!(await isPreferredAnswerProvider(extensionId))) throw new CanvasError("read_only_provider", "Use the active Tandem provider.");
     const message = typeof input.message === "string" ? input.message.trim() : "";
     const clientRequestId = typeof input.clientRequestId === "string" ? input.clientRequestId : randomUUID();
+    const providedSketchContext = readSketchChangeContext(input.sketchContext);
     if (!message || message.length > 4000 || !/^[A-Za-z0-9._-]{1,120}$/.test(clientRequestId)) {
         throw new CanvasError("change_request_invalid", "Enter a change of 1-4,000 characters with a valid request identity.");
     }
@@ -3850,13 +3977,17 @@ async function submitChangeRequest(prototypeId: string, extensionId: string, inp
         if (typeof originStage !== "string" || !LIFECYCLE_STAGES.some(stage => stage.id === originStage)) throw new CanvasError("change_origin_invalid", "Choose a valid source stage.");
         const previous = state.changeRequests?.find(item => item.clientRequestId === clientRequestId);
         if (previous) {
-            if (previous.message !== message || previous.sourceResultId !== (input.sourceResultId ?? null) ||
+            if (previous.originStage !== originStage || previous.message !== message || previous.sourceResultId !== (input.sourceResultId ?? null) ||
                 JSON.stringify(previous.sourceRequests) !== JSON.stringify(fromDevelopment ? input.sourceRequests ?? [] : []) ||
                 JSON.stringify(previous.visualSelection) !== JSON.stringify(input.visualSelection ?? null) ||
+                JSON.stringify(readSketchChangeContext(previous.sketchContext)) !== JSON.stringify(providedSketchContext) ||
                 input.baseCheckpointId !== undefined && previous.baseCheckpointId !== input.baseCheckpointId) {
                 throw new CanvasError("change_request_conflict", "This request identity is already bound to different content.");
             }
             return { requestId: previous.id };
+        }
+        if (currentChangeReview(state)) {
+            throw new CanvasError("change_review_required", "Resolve the current review before sending another change. Your new message has not been submitted.");
         }
         if (input.expectedGeneration !== undefined && input.expectedGeneration !== state.generation ||
             input.expectedRevision !== undefined && input.expectedRevision !== (state.sketch.current?.id ?? null)) {
@@ -3868,7 +3999,7 @@ async function submitChangeRequest(prototypeId: string, extensionId: string, inp
             throw new CanvasError("change_request_unavailable", "Use Requirements intake or the owning Development conversation before a discovery baseline exists.");
         }
         if ((state.changeRequests?.length ?? 0) >= 200 ||
-            (state.changeRequests ?? []).filter(item => !["completed", "cancelled"].includes(item.status)).length >= 50) {
+            (state.changeRequests ?? []).filter(item => !["completed", "cancelled", "deferred"].includes(item.status)).length >= 50) {
             throw new CanvasError("change_request_limit", "Resolve saved changes before sending more. Your draft has not been discarded.");
         }
         const baseCheckpointId = input.baseCheckpointId === undefined ? state.prototypeFlow?.displayedCheckpointId ?? null : input.baseCheckpointId;
@@ -3876,11 +4007,17 @@ async function submitChangeRequest(prototypeId: string, extensionId: string, inp
             !state.prototypeFlow?.checkpoints.some(item => item.id === baseCheckpointId && item.status === "ready"))) {
             throw new CanvasError("change_source_missing", "This request refers to an unknown prototype version.");
         }
+        const sketchContext = readSketchChangeContext(providedSketchContext, {
+            revisionId: state.sketch.current?.id ?? null,
+            document: input.sketchContext != null && state.sketch.current
+                ? await sketchStore.read(sketchPrototypeId(state), state.sketch.current) : null,
+        });
         const now = new Date().toISOString();
         const request: ChangeRequest = {
             version: 1, id: randomUUID(), clientRequestId, originStage: originStage as LifecycleStageId, message, submittedAt: now,
             baseCheckpointId: typeof baseCheckpointId === "string" ? baseCheckpointId : null,
             baseSketchRevisionId: state.sketch.current?.id ?? null,
+            sketchContext,
             visualSelection: input.visualSelection == null ? null : readVisualSelection(input.visualSelection),
             sourceResultId: fromDevelopment && typeof input.sourceResultId === "string" ? input.sourceResultId : null,
             sourceRequests: fromDevelopment && Array.isArray(input.sourceRequests) ? input.sourceRequests : [],
@@ -3901,13 +4038,26 @@ async function submitChangeRequest(prototypeId: string, extensionId: string, inp
 async function continueChangeWork(prototypeId: string): Promise<void> {
     const snapshot = await loadState(prototypeId);
     if (hasActiveWork(snapshot) || activeAnswerRuns.has(prototypeId) || snapshot.effortReset) return;
-    const first = pendingChange(snapshot);
+    const first = nextChangeWork(snapshot);
     if (!first) return;
     if (first.status === "active") {
+        if (completeSavedChange(snapshot) !== snapshot) {
+            await withAnswerClaim(prototypeId, async () => {
+                const current = await loadState(prototypeId);
+                if (activeChange(current)?.id !== first.id) return;
+                const next = completeSavedChange(current);
+                if (next !== current) {
+                    if (first.originStage === "sketch") await sketchStore.read(sketchPrototypeId(current), current.sketch.current!);
+                    await persistState(next);
+                    publishState(prototypeId);
+                }
+            });
+            return continueChangeWork(prototypeId);
+        }
         if (first.workStarted.includes(snapshot.lifecycle.currentStage)) return;
         if (snapshot.lifecycle.currentStage === "sketch") {
             await sketchAction(prototypeId, PROVIDER_EXTENSION_ID, {
-                action: snapshot.sketch.current && snapshot.sketch.status !== "stale" ? "revise" : "generate",
+                action: !snapshot.sketch.current ? "generate" : snapshot.sketch.status === "stale" ? "update" : "revise",
                 expectedRevision: snapshot.sketch.current?.id ?? null,
                 ...(snapshot.sketch.current && snapshot.sketch.status !== "stale" ? { instruction: changeInstruction(first) } : {}),
             });
@@ -3937,8 +4087,8 @@ async function continueChangeWork(prototypeId: string): Promise<void> {
     let dispatch: { state: TandemState; requestId: string; question: DecisionQuestion; answer: string } | null = null;
     await withAnswerClaim(prototypeId, async () => {
         const current = await loadState(prototypeId);
-        if (hasActiveWork(current) || pendingChange(current)?.id !== first.id ||
-            pendingChange(current)?.status !== "queued") return;
+        if (hasActiveWork(current) || nextChangeWork(current)?.id !== first.id ||
+            nextChangeWork(current)?.status !== "queued") return;
         const requestId = randomUUID(), requestedAt = new Date().toISOString();
         const question = { id: `change-${first.id}`, text: "Assess the affected stages for this change.",
             rationale: "", choices: [], recommended: null, allowFreeText: false, answerPlaceholder: "" };
@@ -3965,9 +4115,10 @@ async function resumeChangeWork(prototypeId: string): Promise<void> {
         const message = `Change continuation paused: ${error instanceof Error ? error.message : String(error)}`;
         await withAnswerClaim(prototypeId, async () => {
             const state = await loadState(prototypeId);
-            const pending = pendingChange(state);
+            const pending = nextChangeWork(state);
             await persistState({ ...state, status: message, changeRequests: state.changeRequests?.map(request =>
-                request.id === pending?.id && request.status === "queued" ? { ...request, status: "failed", error: message.slice(0, 2000) } : request) });
+                request.id === pending?.id ? { ...request, status: request.status === "queued" ? "failed" : request.status,
+                    error: message.slice(0, 2000) } : request) });
             publishState(prototypeId);
         });
         await logSafely(message, "warning");
@@ -4008,13 +4159,16 @@ async function decideChangeRequest(prototypeId: string, extensionId: string, inp
         const request = state.changeRequests?.find(item => item.id === input.requestId);
         if (!request) throw new CanvasError("change_request_missing", "The saved change request was not found.");
         const decision = input.decision;
-        if (!["approve", "cancel", "retry", "clarify", "refine"].includes(String(decision))) {
+        if (!["approve", "cancel", "retry", "clarify", "refine", "defer"].includes(String(decision))) {
             throw new CanvasError("change_decision_invalid", "Choose a supported change decision.");
         }
         if (decision === "cancel" && request.status === "cancelled" ||
             decision === "approve" && ["active", "reviewing", "completed"].includes(request.status)) return state;
         if (hasActiveWork(state)) throw new CanvasError("processing_in_progress", "Wait for current work or stop it before changing this request.");
         if (["completed", "cancelled"].includes(request.status)) throw new CanvasError("change_decision_stale", "This change is already settled.");
+        if (decision === "defer") {
+            throw new CanvasError("change_review_required", "Resolve or cancel this review before starting another change. Closing the dialog keeps the review pending.");
+        }
         if (decision === "cancel") {
             if (request.developmentAdmission) throw new Error("Reconcile this request in Development before cancelling. Its native work was not interrupted.");
             const next = { ...state, changeRequests: state.changeRequests.map(item => item.id === request.id
@@ -4026,7 +4180,14 @@ async function decideChangeRequest(prototypeId: string, extensionId: string, inp
             await persistState(next); publishState(prototypeId); return next;
         }
         if (decision === "retry" || decision === "clarify" || decision === "refine") {
+            const currentReview = currentChangeReview(state);
+            if (currentReview && currentReview.id !== request.id) {
+                throw new CanvasError("change_review_required", "Resolve the current review before resuming another saved request.");
+            }
             if (["active", "reviewing"].includes(request.status)) throw new CanvasError("change_active", "Use the current stage or pinned draft's retry and review controls.");
+            if (request.status === "deferred" && state.changeRequests.filter(item => !["completed", "cancelled", "deferred"].includes(item.status)).length >= 50) {
+                throw new CanvasError("change_request_limit", "Resolve an outstanding change before resuming this saved request. Its details were retained.");
+            }
             const answer = typeof input.answer === "string" ? input.answer.trim() : "";
             if (["clarify", "refine"].includes(String(decision)) && (input.analysisId !== request.analysisId ||
                 input.baselineDigest !== request.baselineDigest)) throw new Error("This question or proposal changed. Review it before adding your answer.");
@@ -4044,10 +4205,11 @@ async function decideChangeRequest(prototypeId: string, extensionId: string, inp
             request.baselineDigest !== input.baselineDigest || request.assessment?.question) {
             throw new CanvasError("change_decision_stale", "Review the current impact proposal before approving it.");
         }
-        const local = request.assessment.stages.length === 1 && request.assessment.startStage === request.originStage &&
-            ["sketch", "prototype"].includes(request.originStage) && !request.assessment.requirements &&
-            !state.lifecycle.completedStages.includes(request.originStage);
+        const local = isLocalChange(state, request);
         if (automatic && !local) throw new CanvasError("change_confirmation_required", "Cross-stage changes require an explicit impact decision.");
+        if (activeChange(state) && activeChange(state)!.id !== request.id) {
+            throw new CanvasError("change_active", "Finish the change already being applied before starting another. This proposal is retained.");
+        }
         if (!state.stageReview) await development.assertQuiet();
         const context = state.stageReview ? null : await changeDevelopmentContext();
         if (request.baselineDigest !== changeBaselineDigest(state, context?.binding ?? null)) {
@@ -4242,6 +4404,7 @@ function prototypeFlowForState(state: TandemState): PrototypeFlow {
 
 async function beginPrototypeBuild(prototypeId, extensionId) {
     const state = await loadState(prototypeId);
+    assertChangeReviewAllowsEditing(state);
     if ((state.stageReview || state.lifecycle.reviewId && prototypeNeedsChangeUpdate(state))
         && !state.prototypeReview.revisions.some(item => ["queued", "failed"].includes(item.status))) {
         if (!prototypeNeedsChangeUpdate(state)) {
@@ -4250,7 +4413,7 @@ async function beginPrototypeBuild(prototypeId, extensionId) {
         const request = state.changeRequests?.find(item => item.status === "reviewing" && item.remainingStages.includes("prototype"));
         await queuePrototypeRevision(prototypeId, extensionId, {
             suggestion: request ? changeInstruction(request)
-                : "Update the retained prototype only where required by the reviewed requirements and approved drawings. Preserve unrelated behavior and source.",
+                : "Update the retained prototype only where required by the reviewed requirements and approved designs. Preserve unrelated behavior and source.",
             clientRequestId: `review-inputs-${state.revision}`, baseCheckpointId: state.prototypeFlow?.displayedCheckpointId ?? null,
         });
     }
@@ -4273,7 +4436,7 @@ async function verifyApplicablePrototypeCheckpoint(state: TandemState, checkpoin
     if (checkpoint.generation !== state.generation ||
         (checkpoint.sketchRevisionId || null) !== (sketchInput?.revisionId || null) ||
         (checkpoint.sketchInputHash || null) !== sketchApprovalHash(state)) {
-        throw new CanvasError("prototype_sketch_stale", "The saved prototype refers to a different effort or different approved drawings.");
+        throw new CanvasError("prototype_sketch_stale", "The saved prototype refers to a different effort or different approved designs.");
     }
     await assertPrototypeCheckpointSources(checkpoint);
     await verifyPreviewIdentity(checkpoint.previewUrl, previewPrototypeId(state), checkpoint.id);
@@ -4289,6 +4452,7 @@ async function dispatchPrototypeCheckpoint(prototypeId: string, extensionId: str
     const pending = await withAnswerClaim(prototypeId, async () => {
         const state = await loadState(prototypeId);
         if (state.lifecycle.currentStage !== "prototype") throw new CanvasError("stage_not_active", "Prototype creation requires the Prototype stage.");
+        assertChangeReviewAllowsEditing(state);
         if (!["build", "validate-existing"].includes(state.prototypeApproach.mode)) {
             throw new CanvasError("prototype_approach_required", "Choose an applicable prototype approach in Requirements before starting a preview.");
         }
@@ -4417,7 +4581,8 @@ async function dispatchPrototypeCheckpoint(prototypeId: string, extensionId: str
 async function continuePrototypeWork(prototypeId: string) {
     const state = await loadState(prototypeId);
     if (state.stageReview) return;
-    if (pendingChange(state) && !["queued", "active"].includes(pendingChange(state)!.status)) return;
+    const change = nextChangeWork(state) ?? pendingChange(state);
+    if (change && !["queued", "active"].includes(change.status)) return;
     const last = state.prototypeFlow?.checkpoints.at(-1);
     const paused = last?.status === "failed" && !last.visualDismissedAt &&
         !state.prototypeReview.revisions.some(item => item.id === last.revisionId && item.status === "dismissed") &&
@@ -4467,6 +4632,7 @@ async function prototypeAction(prototypeId: string, extensionId: string, input: 
     const next = await withAnswerClaim(prototypeId, async () => {
         const state = await loadState(prototypeId);
         if (state.lifecycle.currentStage !== "prototype") throw new CanvasError("stage_not_active", "These controls require the Prototype stage.");
+        if (action !== "visual-preview") assertChangeReviewAllowsEditing(state);
         if (action.startsWith("visual-") && (input.expectedRevision !== undefined || action === "visual-original") && input.expectedRevision !== state.revision) {
             throw new CanvasError("visual_state_stale", "The visual exploration changed. Review the latest state and retry.");
         }
@@ -4634,7 +4800,8 @@ function factoryStateSnapshot(state) {
         prototypeFlow: state.prototypeFlow,
         processing: state.processing?.prototypeCheckpointId ? {
             prototypeCheckpointId: state.processing.prototypeCheckpointId,
-        } : state.processing?.sketchRequest ? { sketchRequest: state.processing.sketchRequest } : null,
+        } : state.processing?.sketchRequest ? { sketchRequest: state.processing.sketchRequest,
+            sketchContext: state.processing.sketchContext ?? null } : null,
         prototypeReview: {
             ...state.prototypeReview,
             revisions: state.prototypeReview.revisions.filter((revision, index, all) =>
@@ -4653,9 +4820,12 @@ function factoryStateSnapshot(state) {
 }
 
 function answerFactoryPrompt(args) {
+    if (args.action === "generate-dag") return buildRequirementsDagPrompt(args);
+    if (["answer-decision", "change-answer"].includes(args.action)) return buildRequirementsAnswerPrompt(args);
     if (args.action === "assess-change") {
         return buildChangeAssessmentPrompt({ request: args.state.changeRequest,
-            project: args.state, drawings: args.sketchDocument, development: args.developmentContext });
+            project: args.state, drawings: args.sketchDocument, submittedDrawings: args.submittedDrawings ?? null,
+            development: args.developmentContext });
     }
     if (isSketchAction(args.action)) {
         return buildSketchPrompt({
@@ -4663,6 +4833,8 @@ function answerFactoryPrompt(args) {
             requirements: { goal: args.state.goal, ...args.state.requirements, decisions: args.state.decisionGraph,
                 confirmed: args.state.confirmed, assumptions: args.state.assumed, deferred: args.state.deferred },
             approach: args.state.prototypeApproach.mode, document: args.sketchDocument || null,
+            context: args.state.changeRequest?.sketchContext ?? args.state.processing?.sketchContext ?? null,
+            submittedDrawings: args.submittedDrawings ?? null,
         }) + (args.state.changeRequest ? "\nSCOPED CHANGE: Preserve every unaffected screen and navigation edge exactly. "
             + "The original request is the only new work; do not repeat completed design work.\n"
             + JSON.stringify(args.state.changeRequest) : "");
@@ -4738,42 +4910,6 @@ function answerFactoryPrompt(args) {
             "be one clickable first-person sentence describing how the user wants to",
             "use the deliverable. Start with 'I want to', not 'I can'.",
         ],
-        "generate-dag": [
-            "Switch requirements.substage to dag and generate the complete requirements",
-            "decision DAG from requirements.usageItems. Cover every listed usage while",
-            "sharing common prerequisites. Give every node its complete question and",
-            "choices now, including toAnswer nodes, so dependents can be regenerated.",
-            "The accepted usageItems define the user's intents. Unselected suggestions",
-            "are not scope. Questions must refine those intents and explicit goal",
-            "constraints, not invent extra locations, ordering, payments, or features.",
-            "Do not conduct a separate interview. Return questions in decisionGraph;",
-            "Tandem presents and records answers after intent collection.",
-            "Defer exact business names, hours, addresses, and other replaceable content",
-            "unless their value materially changes an accepted workflow.",
-            "This is a generation command, not an answer to a requirement. Set answer",
-            "to null on EVERY generated node. Never mark a node answered or treat the",
-            "usage list, recommendations, or generation command as confirmed decisions.",
-            "Do not copy the usage-intake question or node into the decision DAG.",
-            "If prototypeApproach.mode is undecided, include an interface-validation",
-            "decision with id prototype-approach whose choices map clearly to building",
-            "a new GUI, validating an",
-            "existing GUI, or bypassing Prototype. Keep the approach undecided until",
-            "that node is answered.",
-            "Return no usage suggestions.",
-        ],
-        "answer-decision": [
-            "Apply the submitted answer to the active DAG node. Recompute every transitive",
-            "dependent node whose content is affected by the answer; do not carry forward",
-            "static downstream wording that assumed a different answer. Promote the next",
-            "eligible toAnswer node to active.",
-        ],
-        "change-answer": [
-            "The user changed an answered DAG node. Apply the new answer to that",
-            "node and regenerate every transitive dependent node from the changed frontier.",
-            "All descendant answers have already been cleared in the supplied state. Keep",
-            "them unanswered and rewrite their titles, questions, choices, and dependencies",
-            "to match the changed answer. Never preserve stale downstream decisions.",
-        ],
         "submit-revision": [
             "The answer is a prototype revision suggestion. First decide whether a",
             "material product or interaction detail is unclear. If clarification is",
@@ -4793,7 +4929,8 @@ function answerFactoryPrompt(args) {
         "generate-design-spec": [
             "The user has finished prototype iteration. Do not edit prototype files and",
             "do not ask another question. Collect evidence from requirements, the answered",
-            "DAG, approved sketch revision and annotations, prototypeReview revisions and clarifications, preview verification, and",
+            "DAG, approved UI DSL revision and annotations, prototypeReview revisions and clarifications, preview verification, and",
+            "the DSL component hierarchy, typed props, design tokens and transitions, not retired geometry. Use",
             "existing artifacts. Upsert one complete artifact with id draft-feature-spec,",
             "title Draft feature specification, kind feature-spec, stage prototype,",
             "language markdown, and no path or",
@@ -4802,7 +4939,7 @@ function answerFactoryPrompt(args) {
             "evidence, unresolved constraints, labeled mocks/shortcuts and a clear read-only handoff to the native Designer.",
             "If visual alternatives exist, distinguish exploration/refinement from",
             "the displayed checkpoint's explicitly chosen direction and saved default",
-            "settings. Describe that layout and its recorded departures from drawings.",
+            "settings. Describe that layout and its recorded departures from designs.",
             "Unchosen alternatives and dismissed visual feedback are history, not",
             "accepted requirements or permission to replace the selected design.",
             "This feature specification does not authorize implementation or claim that mocked behavior was verified.",
@@ -4825,15 +4962,13 @@ function answerFactoryPrompt(args) {
         "",
         "Current Tandem state:",
         JSON.stringify(args.state, null, 2),
-        ...(args.sketchInput ? ["Approved sketch input:", JSON.stringify(args.sketchInput)] : []),
+        ...(args.sketchInput ? ["Approved UI DSL source (authoritative structured UI input):", JSON.stringify(args.sketchInput)] : []),
         "The snapshot may omit historical discussion or mark content truncated.",
         "Read durableStatePath when more evidence is needed; do not write that file.",
         "",
         ...actionInstructions[args.action],
         "",
-        args.action === "generate-dag"
-            ? "Treat the usage list as scope for questions, not as answers to those questions. Update project files"
-            : "Treat the answer as an authoritative product decision. Update project files",
+        "Treat the answer as an authoritative product decision. Update project files",
         "only when the decision requires a prototype change, following the existing",
         "stack and keeping production integrations, tests, and polish out of scope.",
         "Perform a targeted validation after code changes.",
@@ -4845,7 +4980,9 @@ function answerFactoryPrompt(args) {
         "build, validate-existing, or not-applicable and provide a concise",
         "user-facing reason.",
         "While lifecycle.currentStage is requirements, do not edit prototype files or",
-        "publish a preview. Preserve and return the complete requirements object. During",
+        "publish a preview. Return requirements substage, usageItems, and suggestions",
+        "only. Research records are host-owned: do not return or edit them. Use their",
+        "findings for the recorded inputs, not as verification of changed scope. During",
         "usage intake, the extension creates the intake question from suggestions. Once",
         "the DAG is fully answered, leave question null and report that requirements are",
         "ready to be completed.",
@@ -4874,15 +5011,11 @@ function answerFactoryPrompt(args) {
         "can submit it without entering text. Keep free text available for overrides.",
         "Return a complete decisionGraph whose nodes are the source of truth for question",
         "selection during Requirements only. Outside Requirements preserve it unchanged.",
-        args.action === "generate-dag"
-            ? "Generate new unanswered decisions; do not preserve an intake placeholder from the supplied state."
-            : "Never omit an existing node or invent an answer. Only the extension applies the submitted answer;",
+        "Never omit an existing node or invent an answer. Only the extension applies the submitted answer;",
         "independent and previously confirmed decisions must retain their IDs, answers, and prerequisites.",
         "Each node id is also its question id. dependencies contains parent",
         "node ids that must be answered first.",
-        ["answer-decision", "change-answer"].includes(args.action)
-            ? "Include the submitted answer only on its matching decision node."
-            : "Do not turn this command into an answer on a decision node.",
+        "Do not turn this command into an answer on a decision node.",
         "A node with every dependency answered must include its question and curated",
         "choices so it can be promoted. Keep independent decisions as separate nodes.",
         "The host promotes the next eligible unanswered node and renders its prerequisite DAG locally.",
@@ -4943,6 +5076,46 @@ async function recordFactoryRunId(
     });
 }
 
+async function recordRequirementsResearch(
+    args: { prototypeId: string; requestId: string; generation: string; input: RequirementsResearchInput },
+    runId: string,
+    research: RequirementsResearch | null,
+) {
+    await withAnswerClaim(args.prototypeId, async () => {
+        const current = await loadState(args.prototypeId);
+        if (!(await isPreferredAnswerProvider(PROVIDER_EXTENSION_ID)) ||
+            current.generation !== args.generation ||
+            current.lifecycle.currentStage !== "requirements" || current.requirements.substage !== "usage" ||
+            !current.requirements.usageItems.length ||
+            current.processing?.action !== "generate-dag" || current.processing.status !== "running" ||
+            current.processing.requestId !== args.requestId || current.processing.runId !== runId ||
+            JSON.stringify(requirementsResearchInput(current)) !== JSON.stringify(args.input)) {
+            throw new Error("The research job no longer owns its accepted usages and Preparation context.");
+        }
+        if (research) {
+            readRequirementsResearch(research);
+            const belongsToRequest = research.requestId === args.requestId && research.runId === runId;
+            const retained = current.requirements.research;
+            const reusesSavedResearch = retained &&
+                requirementsResearchDigest(retained) === requirementsResearchDigest(research);
+            if ((!belongsToRequest && !reusesSavedResearch) || !requirementsResearchIsCurrent(current, research)) {
+                throw new Error("The research result does not match this Requirements request.");
+            }
+        }
+        const message = research
+            ? "Research findings are saved. Generating requirements questions from your usages..."
+            : "Researching missing facts for your accepted usages...";
+        await persistState({
+            ...current,
+            requirements: research ? { ...current.requirements, research } : current.requirements,
+            status: message,
+            processing: { ...current.processing, message },
+            updatedAt: new Date().toISOString(),
+        });
+        publishState(args.prototypeId);
+    });
+}
+
 async function applyFactoryResult(prototypeId, requestId, run) {
     if (run.status !== "completed" || !isObject(run.result)) {
         throw new Error(factoryErrorMessage(run));
@@ -4973,7 +5146,7 @@ async function applyFactoryResult(prototypeId, requestId, run) {
             const assessment = readChangeAssessment(result, current);
             const document = current.sketch.current ? await sketchStore.read(sketchPrototypeId(current), current.sketch.current) : null;
             if (assessment.affectedScreenIds.some(id => !document?.screens.some(screen => screen.id === id))) {
-                throw new Error("The change assessment names an unknown drawing. Reference exact existing screen IDs.");
+                throw new Error("The change assessment names an unknown design. Reference exact existing screen IDs.");
             }
             if (request.workStarted.includes("prepare") && assessment.stages.some(stage => stage.stage === "prepare")) {
                 throw new Error("This request's scoped research is already saved. Assess only the remaining impact.");
@@ -4982,17 +5155,18 @@ async function applyFactoryResult(prototypeId, requestId, run) {
             const nextRequest: ChangeRequest = { ...request, assessment,
                 status: assessment.startStage === "none" && !assessment.question ? "completed" : "proposed",
                 completedAt: assessment.startStage === "none" && !assessment.question ? completedAt : null };
+            const local = isLocalChange(current, nextRequest);
             await persistState({ ...current, changeRequests: current.changeRequests.map(item => item.id === request.id ? nextRequest : item),
-                processing: { ...current.processing, status: "success", completedAt, message: "Change impact ready to review." },
+                processing: { ...current.processing, status: "success", completedAt,
+                    message: local ? "Change understood. Preparing the requested update." : "Change impact ready to review." },
                 factoryRuns: (current.factoryRuns || []).map(receipt => receipt.requestId === requestId
                     ? { ...receipt, runId: run.runId, terminal: true } : receipt),
                 status: assessment.question ? "A change needs clarification. Your current work is unchanged."
-                    : nextRequest.status === "completed" ? assessment.summary : "Review affected stages before changing earlier work.",
+                    : nextRequest.status === "completed" ? assessment.summary
+                    : local ? "Preparing your current-stage change. Artifact approval remains separate." : "Review affected stages before changing earlier work.",
                 updatedAt: completedAt });
             publishState(prototypeId);
-            if (!assessment.question && !assessment.requirements && assessment.stages.length === 1 &&
-                assessment.startStage === request.originStage && ["sketch", "prototype"].includes(request.originStage) &&
-                !current.lifecycle.completedStages.includes(request.originStage)) automaticChange = nextRequest;
+            if (local) automaticChange = nextRequest;
             return;
         }
         if (isSketchAction(current.processing.action)) {
@@ -5000,7 +5174,7 @@ async function applyFactoryResult(prototypeId, requestId, run) {
             if (current.lifecycle.currentStage !== "sketch" || current.generation !== token.generation ||
                 requirementsInputDigest(current) !== token.requirementsDigest ||
                 (current.sketch.current?.id || null) !== token.baseRevisionId) {
-                throw new Error("The drawing result belongs to older requirements or a replaced draft.");
+                throw new Error("The design result belongs to older requirements or a replaced draft.");
             }
             const change = activeChange(current);
             if (change && current.sketch.current) preserveUnchangedScreens(
@@ -5010,10 +5184,10 @@ async function applyFactoryResult(prototypeId, requestId, run) {
                 current.processing.action === "revise-sketch" ? "revised" : "generated");
             const completedAt = new Date().toISOString();
             next.processing = { ...current.processing, status: "success", completedAt, answer: null, question: null,
-                message: "App drawings are ready for review and explicit approval." };
+                message: "App designs are ready for review and explicit approval." };
             next.factoryRuns = (current.factoryRuns || []).map((receipt) =>
                 receipt.requestId === requestId ? { ...receipt, runId: run.runId, terminal: true } : receipt);
-            await persistState(next);
+            await persistState(completeSavedChange(next));
             clearSketchPreview(prototypeId, requestId);
             publishState(prototypeId);
             return;
@@ -5089,6 +5263,57 @@ async function applyFactoryResult(prototypeId, requestId, run) {
             publishState(prototypeId);
             return;
         }
+        if (result.kind === "requirements-dag" || result.kind === "requirements-answer") {
+            const action = current.processing.action;
+            const generating = action === "generate-dag";
+            if (current.lifecycle.currentStage !== "requirements" ||
+                (!generating && !["answer-decision", "change-answer"].includes(action))) {
+                throw new Error("The Requirements update no longer owns the active stage and action.");
+            }
+            validateRequirementsValue(result, generating ? requirementsDagResultSchema : requirementsAnswerResultSchema);
+            if (result.generation !== current.generation) throw new Error("The Requirements update belongs to an older generation.");
+            let next: TandemState;
+            if (generating) {
+                const research = current.requirements.research;
+                if (current.requirements.substage !== "usage" || !research ||
+                    !requirementsResearchIsCurrent(current, research) ||
+                    result.researchDigest !== requirementsResearchDigest(research)) {
+                    throw new Error("The generated requirements have no matching research result. Retry requirements DAG.");
+                }
+                const changes = readRequirementsDagChanges(result.changes);
+                const decisionGraph = normalizeDecisionGraph({ nodes: changes.nodes });
+                const graphError = generatedDecisionGraphError(decisionGraph, current.prototypeApproach.mode === "undecided");
+                if (graphError) throw new Error(graphError);
+                next = {
+                    ...current, decisionGraph, assumed: changes.assumed, deferred: changes.deferred,
+                    requirements: { ...current.requirements, substage: "dag", suggestions: [] },
+                    suggestionProcessing: null, status: "Requirements questions are ready.",
+                };
+            } else {
+                const questionId = current.processing.question?.id;
+                const answer = current.processing.answer;
+                if (current.requirements.substage !== "dag" || !questionId || !answer ||
+                    result.inputDigest !== requirementsAnswerDigest(current, questionId, answer, action === "change-answer")) {
+                    throw new Error("The frozen Requirements inputs or submitted answer changed. Review the graph and retry.");
+                }
+                next = {
+                    ...current,
+                    ...applyRequirementsAnswerChanges(current, result.changes, questionId, answer, action === "change-answer"),
+                    status: "Answer recorded and dependent decisions reconciled.",
+                };
+            }
+            const completedAt = new Date().toISOString();
+            await persistState({
+                ...next,
+                factoryRuns: (current.factoryRuns || []).map(receipt => receipt.requestId === requestId &&
+                    (!receipt.runId || receipt.runId === run.runId) ? { ...receipt, runId: run.runId, terminal: true } : receipt),
+                processing: { ...current.processing, status: "success", completedAt, answer: null, question: null,
+                    message: generating ? "Requirements questions are ready." : "Reconciled the affected decisions." },
+                updatedAt: completedAt,
+            });
+            publishState(prototypeId);
+            return;
+        }
         const previewUrl = normalizePreviewUrl(result.previewUrl);
         if (previewUrl && previewUrl !== current.previewUrl) {
             await verifyPreviewIdentity(previewUrl, prototypeId);
@@ -5119,6 +5344,11 @@ async function applyFactoryResult(prototypeId, requestId, run) {
                 current.prototypeApproach.mode === "undecided",
             );
             if (graphError) throw new Error(graphError);
+            const research = current.requirements.research;
+            if (!research || research.requestId !== requestId || research.runId !== run.runId ||
+                !requirementsResearchIsCurrent(current, research)) {
+                throw new Error("The generated requirements have no matching research result. Retry requirements DAG.");
+            }
         }
         const answeredQuestionId = current.processing.question?.id;
         if (
@@ -5138,7 +5368,7 @@ async function applyFactoryResult(prototypeId, requestId, run) {
             }
         }
         let requirements = normalizeRequirements(
-            result.requirements,
+            { ...result.requirements, research: current.requirements.research },
             decisionGraph,
         );
         if (action === "add-usage" && current.processing.answer) {
@@ -5146,6 +5376,7 @@ async function applyFactoryResult(prototypeId, requestId, run) {
                 {
                     ...requirements,
                     substage: "usage",
+                    research: current.requirements.research,
                     usageItems: [
                         ...current.requirements.usageItems,
                         current.processing.answer,
@@ -5159,6 +5390,7 @@ async function applyFactoryResult(prototypeId, requestId, run) {
                 {
                     ...requirements,
                     substage: "dag",
+                    research: current.requirements.research,
                     usageItems: current.requirements.usageItems,
                     suggestions: [],
                 },
@@ -5692,10 +5924,24 @@ async function runAnswerFactory(
     const sketchInput = checkpoint || action === "generate-design-spec" ? await approvedSketchInput(state) : null;
     if (checkpoint && ((checkpoint.sketchRevisionId || null) !== (sketchInput?.revisionId || null) ||
         (checkpoint.sketchInputHash || null) !== sketchApprovalHash(state))) {
-        throw new Error("The prototype request no longer matches its approved drawings.");
+        throw new Error("The prototype request no longer matches its approved designs.");
     }
     const sketchDocument = (isSketchAction(action) || action === "assess-change") && state.sketch.current
         ? await sketchStore.read(sketchPrototypeId(state), state.sketch.current) : null;
+    const changeRequest = state.changeRequests?.find(item => item.id === state.processing?.changeRequestId) ?? activeChange(state) ?? null;
+    let submittedDrawings: { revisionId: string; document: SketchDocument } | null = null;
+    if ((isSketchAction(action) || action === "assess-change") && changeRequest?.baseSketchRevisionId
+        && changeRequest.baseSketchRevisionId !== state.sketch.current?.id) {
+        const source = state.sketch.history.find(item => item.id === changeRequest.baseSketchRevisionId);
+        if (!source) throw new Error("The design revision referenced by this change is missing. Its request was preserved; select the current target in a new request.");
+        submittedDrawings = { revisionId: source.id, document: await sketchStore.read(sketchPrototypeId(state), source) };
+    }
+    if ((isSketchAction(action) || action === "assess-change") && changeRequest?.sketchContext) readSketchChangeContext(changeRequest.sketchContext, {
+        revisionId: changeRequest.baseSketchRevisionId, document: submittedDrawings?.document ?? sketchDocument,
+    });
+    if (isSketchAction(action) && state.processing?.sketchContext) readSketchChangeContext(state.processing.sketchContext, {
+        revisionId: state.sketch.current?.id ?? null, document: sketchDocument,
+    });
     const developmentContext = action === "assess-change" && !state.stageReview ? await changeDevelopmentContext() : null;
     if (action === "assess-change") {
         const request = state.changeRequests?.find(item => item.id === state.processing?.changeRequestId);
@@ -5731,11 +5977,11 @@ async function runAnswerFactory(
             question,
             answer,
             action,
-            state: action === "apply-defaults" ? {
+            state: ["generate-dag", "answer-decision", "change-answer", "apply-defaults"].includes(action) ? {
                 ...reconciliationInput(state), generation: state.generation, revision: state.revision,
-            } : { ...factoryStateSnapshot(state),
-                changeRequest: state.changeRequests?.find(item => item.id === state.processing?.changeRequestId) ?? activeChange(state) ?? null },
-            ...(isSketchAction(action) || action === "assess-change" ? { sketchDocument } : {}),
+                ...(action === "generate-dag" ? { preparation: requirementsResearchInput(state).preparation } : {}),
+            } : { ...factoryStateSnapshot(state), changeRequest },
+            ...(isSketchAction(action) || action === "assess-change" ? { sketchDocument, submittedDrawings } : {}),
             ...(action === "assess-change" ? { developmentContext } : {}),
             ...(sketchInput ? { sketchInput } : {}),
             ...(action === "apply-defaults" ? { defaultBatch: state.processing.defaultBatch } : {}),
@@ -5859,7 +6105,7 @@ async function recoverFailedSketchRun(prototypeId: string, monitor = false): Pro
     if (!receipt) return observed;
     const processing = observed.processing;
     if (receipt.runId && processing.runId && receipt.runId !== processing.runId) {
-        throw new AnswerRequestError(409, "The previous drawing request has conflicting factory run identities. Its saved state was preserved.");
+        throw new AnswerRequestError(409, "The previous design request has conflicting factory run identities. Its saved state was preserved.");
     }
     const runId = processing.runId || receipt.runId;
     let run;
@@ -5876,7 +6122,7 @@ async function recoverFailedSketchRun(prototypeId: string, monitor = false): Pro
         }
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        throw new AnswerRequestError(409, `The previous drawing job could not be verified with the SDK. Saved drawings and run ownership were preserved: ${message}`);
+        throw new AnswerRequestError(409, `The previous design job could not be verified with the SDK. Saved designs and run ownership were preserved: ${message}`);
     }
     if (!isWorkflowRunTerminal(run.status)) return observed;
     return withAnswerClaim(prototypeId, async () => {
@@ -5901,13 +6147,13 @@ async function recoverFailedSketchRun(prototypeId: string, monitor = false): Pro
 }
 
 function recoverAnswerFactory(state, canSubmitAnswers) {
-    if (canSubmitAnswers && !state.effortReset && state.lifecycle.currentStage === "prototype" &&
-        state.prototypeFlow && state.processing?.status !== "running" && !hasActiveWork(state) &&
-        !activePrototypeContinuations.has(state.prototypeId)) {
-        activePrototypeContinuations.add(state.prototypeId);
-        void continuePrototypeWork(state.prototypeId)
-            .catch((error) => logSafely(`Prototype continuation could not resume: ${error.message}`, "warning"))
-            .finally(() => activePrototypeContinuations.delete(state.prototypeId));
+    if (canSubmitAnswers && !state.effortReset && !state.stageReview &&
+        (nextChangeWork(state) || state.lifecycle.currentStage === "prototype" && state.prototypeFlow) &&
+        !hasActiveWork(state) && !activeWorkContinuations.has(state.prototypeId)) {
+        activeWorkContinuations.add(state.prototypeId);
+        void resumeChangeWork(state.prototypeId).then(() => continuePrototypeWork(state.prototypeId))
+            .catch((error) => logSafely(`Saved work could not resume: ${error.message}`, "warning"))
+            .finally(() => activeWorkContinuations.delete(state.prototypeId));
     }
     const processing = state.processing;
     if (
@@ -5994,7 +6240,7 @@ function recoverAnswerFactory(state, canSubmitAnswers) {
             }
             if (["halted", "cancelled"].includes(run.status)) {
                 if (isSketchAction(currentProcessing.action)) {
-                    throw new Error("The prior drawing job stopped. Retry explicitly; the last saved drawings are preserved.");
+                    throw new Error("The prior design job stopped. Retry explicitly; the last saved designs are preserved.");
                 }
                 if (currentProcessing.prototypeCheckpointId) {
                     throw new Error("The previous checkpoint stopped. Retry this step explicitly; the working preview has been preserved.");
@@ -6587,6 +6833,7 @@ async function queuePrototypeRevision(prototypeId: string, extensionId: string, 
             }
             return { revisionId: previous.id };
         }
+        assertChangeReviewAllowsEditing(state);
         if (state.processing?.status === "running" && state.processing.action === "generate-design-spec") {
             throw new AnswerRequestError(409, "The prototype handoff is being finalized. Keep your draft; reopen Prototype to submit more feedback.");
         }
@@ -6848,6 +7095,7 @@ async function submitAnswer(entry, req, res) {
             }
             const submission = await withAnswerClaim(entry.prototypeId, async () => {
                 const state = await loadState(entry.prototypeId);
+                assertChangeReviewAllowsEditing(state);
                 if (state.lifecycle.currentStage !== "requirements" || state.requirements.substage !== "dag") {
                     throw new AnswerRequestError(409, "Whole-graph defaults are only available for the Requirements DAG.");
                 }
@@ -6900,6 +7148,7 @@ async function submitAnswer(entry, req, res) {
             }
             accepted = await withAnswerClaim(entry.prototypeId, async () => {
                 const state = await loadState(entry.prototypeId);
+                assertChangeReviewAllowsEditing(state);
                 // Only our verified receipt/result bookkeeping may advance the
                 // submitted revision. Any intervening edit still invalidates it.
                 if (state.revision !== checked.revision || state.generation !== body.generation) {
@@ -6958,6 +7207,7 @@ async function submitAnswer(entry, req, res) {
                     "Requirement decisions can only change during requirements collection.",
                 );
             }
+            assertChangeReviewAllowsEditing(state);
             if (state.lifecycle.changeRequestId && body.expectedRequirementsDigest !== requirementsInputDigest(state)) {
                 throw new AnswerRequestError(409, "Requirements changed. Review the current decision before submitting an answer.");
             }
@@ -7030,7 +7280,7 @@ async function submitAnswer(entry, req, res) {
                     action === "add-usage"
                         ? "Adding the usage and generating fresh suggestions..."
                         : action === "generate-dag"
-                          ? "Generating the requirements DAG from your usages..."
+                          ? "Researching missing facts for your accepted usages..."
                           : action === "change-answer"
                             ? "Updating this frontier and all dependent decisions..."
                             : "Applying the answer and preparing the next active decision...",
@@ -7916,33 +8166,12 @@ const preparationSchema = {
         checks: {
             type: "array",
             maxItems: 20,
-            items: {
-                type: "object",
-                additionalProperties: false,
-                properties: {
-                    label: { type: "string", minLength: 1, maxLength: 120 },
-                    status: {
-                        type: "string",
-                        enum: ["ready", "missing", "deferred"],
-                    },
-                    detail: { type: "string", maxLength: 500 },
-                },
-                required: ["label", "status", "detail"],
-            },
+            items: researchCheckSchema,
         },
         sources: {
             type: "array",
             maxItems: 20,
-            items: {
-                type: "object",
-                additionalProperties: false,
-                properties: {
-                    title: { type: "string", minLength: 1, maxLength: 160 },
-                    url: { type: "string", minLength: 1, maxLength: 1000 },
-                    purpose: { type: "string", maxLength: 500 },
-                },
-                required: ["title", "url", "purpose"],
-            },
+            items: researchSourceSchema,
         },
         suggestedUsages: {
             type: "array",
@@ -7999,22 +8228,11 @@ const preparationWorkspaceOutputSchema = {
 };
 
 const preparationSourcesOutputSchema = {
-    type: "object",
-    additionalProperties: false,
+    ...researchAnalysisSchema,
     properties: {
-        summary: { type: "string", minLength: 1, maxLength: 4000 },
-        sources: {
-            type: "array",
-            maxItems: 20,
-            items: preparationSourceSchema,
-        },
-        checks: {
-            type: "array",
-            maxItems: 10,
-            items: preparationCheckSchema,
-        },
+        ...researchAnalysisSchema.properties,
+        sources: { type: "array", maxItems: 1, items: preparationSourceSchema },
     },
-    required: ["summary", "sources", "checks"],
 };
 
 const preparationFactoryOutputSchema = {
@@ -8319,15 +8537,15 @@ const preparationFactory = defineWorkflow({
     meta: {
         name: PREPARATION_FACTORY_NAME,
         description:
-            "Inspect the workspace and authoritative sources, then prepare the Requirements handoff.",
+            "Inspect local context, clarify unfamiliar references only if needed, then prepare usage collection.",
         phases: [
             {
                 title: "Inspect workspace",
                 detail: "Identify repository structure, tooling, and execution constraints.",
             },
             {
-                title: "Analyze sources",
-                detail: "Ground named products, methods, and benchmarks in authoritative sources.",
+                title: "Clarify goal",
+                detail: "Use an early lookup only when essential to understand the goal before collecting usages.",
             },
             {
                 title: "Prepare requirements",
@@ -8349,7 +8567,7 @@ const preparationFactory = defineWorkflow({
         },
         limits: {
             maxConcurrentSubagents: 1,
-            maxTotalSubagents: 3,
+            maxTotalSubagents: 4,
             maxAiCredits: 1024000,
         },
     },
@@ -8399,20 +8617,18 @@ const preparationFactory = defineWorkflow({
             workspaceAnalysis.summary,
         );
 
-        ctx.phase("Analyze sources");
-        ctx.log(workspaceAnalysis.emptyWorkspace === true
-            ? "Empty workspace detected. Assessing the goal and drafting a handoff without tool calls."
-            : "Reading authoritative sources for named concepts.");
+        ctx.phase("Clarify goal");
+        ctx.log("Drafting usage suggestions from the goal and workspace context without substantive research.");
         await recordPreparationWorkItem(
             args.prototypeId,
             "sources",
             "running",
             token,
         );
-        const goalOnlyResult: unknown = workspaceAnalysis.emptyWorkspace === true
-            ? await ctx.step(`${token.requestId}:prepare-goal-only`, async () =>
-                jsonResult(await ctx.agent(buildGoalOnlyPreparationPrompt({ goal: args.goal }, workspaceAnalysis), {
-                    label: "prepare:goal-only",
+        const intentResult: unknown = await ctx.step(
+            `${token.requestId}:${workspaceAnalysis.emptyWorkspace === true ? "prepare-goal-only" : "prepare-context"}`, async () =>
+                jsonResult(await ctx.agent(buildPreparationIntentPrompt({ goal: args.goal, intake: args.intake }, workspaceAnalysis), {
+                    label: workspaceAnalysis.emptyWorkspace === true ? "prepare:goal-only" : "prepare:context",
                     agent: textWorkerAgent.name,
                     schema: {
                         type: "object",
@@ -8424,22 +8640,19 @@ const preparationFactory = defineWorkflow({
                         required: ["requiresSourceResearch", "handoff"],
                     },
                     reasoningEffort: await workflowReasoningEffort(session, "low"),
-                })))
-            : null;
-        if (workspaceAnalysis.emptyWorkspace === true &&
-            (!isObject(goalOnlyResult) || typeof goalOnlyResult.requiresSourceResearch !== "boolean" ||
-                (goalOnlyResult.requiresSourceResearch
-                    ? goalOnlyResult.handoff !== null
-                    : !isObject(goalOnlyResult.handoff) || !Array.isArray(goalOnlyResult.handoff.sources) ||
-                        goalOnlyResult.handoff.sources.length !== 0))) {
-            throw new Error("Goal-only preparation returned an invalid source-research decision or unsupported sources.");
+                })));
+        if (!isObject(intentResult) || typeof intentResult.requiresSourceResearch !== "boolean" ||
+            (intentResult.requiresSourceResearch
+                ? intentResult.handoff !== null
+                : !isObject(intentResult.handoff) || !Array.isArray(intentResult.handoff.sources) ||
+                    intentResult.handoff.sources.length !== 0)) {
+            throw new Error("Preparation returned an invalid source-research decision or unsupported sources.");
         }
-        const goalOnlyHandoff = isObject(goalOnlyResult) && !goalOnlyResult.requiresSourceResearch
-            ? goalOnlyResult.handoff : null;
-        if (goalOnlyResult && !goalOnlyHandoff) ctx.log("The goal requires authoritative sources; continuing with source analysis.");
+        const intentHandoff = !intentResult.requiresSourceResearch ? intentResult.handoff : null;
+        if (!intentHandoff) ctx.log("An unfamiliar reference needs one small lookup to understand the goal. Substantive research remains deferred.");
         const sourceAnalysis: any = await ctx.step(`${token.requestId}:analyze-sources`, async () =>
-            goalOnlyHandoff ? {
-                summary: "External research was not needed for this goal-only handoff. No external sources were consulted.",
+            intentHandoff ? {
+                summary: "Substantive research is deferred until usages are accepted. No external sources were consulted.",
                 checks: [],
                 sources: [],
             } :
@@ -8449,6 +8662,8 @@ const preparationFactory = defineWorkflow({
                 reasoningEffort: await workflowReasoningEffort(session, "medium"),
             })),
         );
+        validateRequirementsValue(sourceAnalysis, preparationSourcesOutputSchema, "goal clarification");
+        assertResearchSourceUrls(sourceAnalysis.sources);
         await recordPreparationWorkItem(
             args.prototypeId,
             "sources",
@@ -8466,7 +8681,7 @@ const preparationFactory = defineWorkflow({
             token,
         );
         const handoff: any = await ctx.step(`${token.requestId}:prepare-requirements`, async () =>
-            goalOnlyHandoff || jsonResult(await ctx.agent(
+            intentHandoff || jsonResult(await ctx.agent(
                 preparationHandoffPrompt(
                     args,
                     workspaceAnalysis,
@@ -8587,6 +8802,10 @@ const answerFactory = defineWorkflow({
             "Process one Tandem request; whole-graph defaults return only a focused Requirements change set.",
         phases: [
             {
+                title: "Research accepted usages",
+                detail: "Resolve relevant missing facts before generating Requirements questions.",
+            },
+            {
                 title: "Interpret decision",
                 detail: "Apply the selected product intent to the current prototype.",
             },
@@ -8617,6 +8836,7 @@ const answerFactory = defineWorkflow({
                 state: { type: "object" },
                 defaultBatch: { type: "object" },
                 sketchDocument: { anyOf: [{ type: "object" }, { type: "null" }] },
+                submittedDrawings: { anyOf: [{ type: "object" }, { type: "null" }] },
                 sketchInput: { type: "object" },
                 developmentContext: { anyOf: [{ type: "object" }, { type: "null" }] },
             },
@@ -8652,8 +8872,13 @@ const answerFactory = defineWorkflow({
         ) {
             throw new Error("Tandem factory arguments are invalid.");
         }
+        const requirementsInputs = {
+            goal: args.state.goal, requirements: args.state.requirements,
+            decisionGraph: args.state.decisionGraph, prototypeApproach: args.state.prototypeApproach,
+            assumed: args.state.assumed, deferred: args.state.deferred,
+        };
 
-        ctx.phase("Interpret decision");
+        ctx.phase(args.action === "generate-dag" ? "Research accepted usages" : "Interpret decision");
         if (!(await isPreferredAnswerProvider(PROVIDER_EXTENSION_ID))) {
             throw new Error(
                 "This provider no longer owns hidden answer processing.",
@@ -8676,32 +8901,90 @@ const answerFactory = defineWorkflow({
                 throw new Error("The default batch no longer owns its frozen Requirements inputs.");
             }
         }
+        if (["answer-decision", "change-answer"].includes(args.action)) {
+            const current = await loadState(args.prototypeId);
+            if (current.lifecycle.currentStage !== "requirements" || current.requirements.substage !== "dag" ||
+                current.processing.action !== args.action ||
+                requirementsAnswerDigest(requirementsInputs, args.question.id, args.answer, args.action === "change-answer") !==
+                requirementsAnswerDigest(current, current.processing.question?.id, current.processing.answer, current.processing.action === "change-answer")) {
+                throw new Error("The answer job no longer owns its frozen Requirements inputs.");
+            }
+        }
         if (isSketchAction(args.action)) {
             const current = await loadState(args.prototypeId);
             const token = readSketchRequest(current.processing?.sketchRequest);
             if (token.generation !== args.state.generation || current.lifecycle.currentStage !== "sketch" ||
                 token.requirementsDigest !== requirementsInputDigest(current) ||
                 (current.sketch.current?.id || null) !== token.baseRevisionId) {
-                throw new Error("The drawing job no longer owns its frozen requirements and draft.");
+                throw new Error("The design job no longer owns its frozen requirements and draft.");
             }
         }
-        const result: any = await ctx.step("process-answer", async () => {
+        let workerArgs = args;
+        if (args.action === "generate-dag") {
+            const input = requirementsResearchInput({
+                goal: args.state.goal, requirements: args.state.requirements, preparation: args.state.preparation,
+            });
+            const binding = { prototypeId: args.prototypeId, requestId: args.requestId, generation: args.state.generation, input };
+            const retained = readRequirementsResearch(args.state.requirements.research);
+            const reusable = retained && requirementsResearchIsCurrent({
+                generation: args.state.generation, ...requirementsInputs, preparation: args.state.preparation,
+            }, retained);
+            if (!reusable) await recordRequirementsResearch(binding, ctx.runId, null);
+            const research = readRequirementsResearch(await ctx.step(`${args.requestId}:research-usages`, async () => {
+                if (reusable) {
+                    ctx.log("Reusing saved research for the exact accepted inputs; preserving its original request and run identities.");
+                    return jsonResult(retained);
+                }
+                const analysis = jsonResult(await ctx.agent(buildRequirementsResearchPrompt(input), {
+                    label: "Research accepted usages",
+                    schema: researchAnalysisSchema,
+                    reasoningEffort: await workflowReasoningEffort(session, "medium"),
+                }));
+                validateRequirementsValue(analysis, researchAnalysisSchema, "requirements research findings");
+                if (!isObject(analysis)) throw new Error("Requirements research returned invalid findings.");
+                const result = readRequirementsResearch({
+                    ...analysis, input, generation: args.state.generation,
+                    requestId: args.requestId, runId: ctx.runId, completedAt: new Date().toISOString(),
+                });
+                if (!result) throw new Error("Requirements research returned no findings.");
+                return jsonResult(result);
+            }));
+            if (!research) throw new Error("Requirements research returned no saved findings.");
+            await recordRequirementsResearch(binding, ctx.runId, research);
+            workerArgs = { ...args, state: { ...args.state, requirements: { ...args.state.requirements, research } } };
+            ctx.phase("Interpret decision");
+            ctx.log("Research findings are saved. Generating questions without accepting decisions.");
+        }
+        const answering = ["answer-decision", "change-answer"].includes(args.action);
+        const stepKey = args.action === "generate-dag" ? `${args.requestId}:generate-researched-dag-v2`
+            : answering ? `${args.requestId}:reconcile-answer-v1` : "process-answer";
+        const result: any = await ctx.step(stepKey, async () => {
             if (isSketchAction(args.action)) {
                 const current = await loadState(args.prototypeId);
                 const token = readSketchRequest(current.processing?.sketchRequest);
-                const base = (args.action === "revise-sketch" || activeChange(current)) && current.sketch.current
+                const savedBase = args.action === "revise-sketch" && current.sketch.current
                     ? await sketchStore.read(sketchPrototypeId(current), current.sketch.current) : null;
-                return jsonResult(await runSketchStreamWorker({
+                if (args.action === "revise-sketch" && !savedBase) {
+                    throw new Error("The existing design revision is required for an incremental update.");
+                }
+                if (savedBase?.version === 1 && args.action !== "generate-sketch") {
+                    throw new Error("Legacy designs require explicit UI DSL regeneration before revision.");
+                }
+                const base = savedBase?.version === 2 ? savedBase : null;
+                const decisionIds = current.decisionGraph.nodes.filter((node) => node.status === "answered"
+                    && typeof node.answer === "string" && node.answer.trim()).map((node) => node.id);
+                // Stale baseline references may survive intermediate edits, never a published preview or saved result.
+                const streamDecisionIds = [...new Set([...decisionIds, ...base?.screens.flatMap(screen => screen.decisionIds) ?? []])];
+                const updated = await runSketchStreamWorker({
                     runId: ctx.runId, signal: ctx.signal, base,
-                    decisionIds: current.decisionGraph.nodes.filter((node) => node.status === "answered"
-                        && typeof node.answer === "string" && node.answer.trim()).map((node) => node.id),
+                    decisionIds: streamDecisionIds,
                     subscribe: (handler) => ctx.session.on(handler),
                     getRunDetail: () => ctx.session.workflow.getRunDetail(ctx.runId),
                     run: async () => ctx.agent(answerFactoryPrompt(args), {
-                        label: "Stream app drawings", agent: textWorkerAgent.name,
+                        label: "Stream app designs", agent: textWorkerAgent.name,
                         reasoningEffort: await workflowReasoningEffort(session, "medium"),
                     }),
-                    preview: (document, sequence) => {
+                    preview: (document, sequence, screenStatuses) => {
                         ctx.signal.throwIfAborted();
                         const state = stateCache.get(args.prototypeId);
                         if (!state || state.generation !== token.generation
@@ -8709,25 +8992,30 @@ const answerFactory = defineWorkflow({
                             || state.processing.status !== "running" || state.lifecycle.currentStage !== "sketch"
                             || state.effortReset || requirementsInputDigest(state) !== token.requirementsDigest
                             || (state.sketch.current?.id ?? null) !== token.baseRevisionId) {
-                            throw new Error("The drawing stream no longer owns the current requirements and draft.");
+                            throw new Error("The design stream no longer owns the current requirements and draft.");
                         }
+                        if (document.screens.some(screen => screen.decisionIds.some(id => !decisionIds.includes(id)))) return;
                         publishSketchPreview({
                             prototypeId: args.prototypeId, requestId: args.requestId, runId: ctx.runId,
-                            ...token, sequence, document,
+                            ...token, sequence, document, screenStatuses,
                         });
                     },
                     failed: (error) => {
                         clearSketchPreview(args.prototypeId, args.requestId);
                         publishState(args.prototypeId);
-                        void logSafely(`Drawing preview discarded: ${error.message}`, "warning");
+                        void logSafely(`Design preview discarded: ${error.message}`, "warning");
                     },
-                }));
+                });
+                return jsonResult(validateSketchDocument(updated, decisionIds));
             }
-            return ctx.agent(answerFactoryPrompt(args), {
+            return ctx.agent(answerFactoryPrompt(workerArgs), {
                 label: args.action === "assess-change" ? "Assess change impact" : args.action === "apply-defaults" ? "Reconcile whole-graph defaults" : "Process Tandem answer",
-                ...(args.action === "assess-change" ? { agent: textWorkerAgent.name } : {}),
+                ...(["assess-change", "generate-dag", "answer-decision", "change-answer", "apply-defaults"].includes(args.action)
+                    ? { agent: textWorkerAgent.name } : {}),
                 schema: args.state.processing?.prototypeCheckpointId ? prototypeCheckpointOutputSchema
                     : args.action === "assess-change" ? changeAssessmentSchema
+                    : args.action === "generate-dag" ? requirementsDagChangesSchema
+                    : answering ? requirementsAnswerChangesSchema
                     : args.action === "apply-defaults" ? requirementsChangeSetSchema : answerFactoryOutputSchema,
                 reasoningEffort: await workflowReasoningEffort(session, "medium"),
             }) as Promise<ReturnType<typeof jsonResult>>;
@@ -8739,15 +9027,25 @@ const answerFactory = defineWorkflow({
             validateChangeSet(result, args.state.decisionGraph);
         }
         if (args.action === "generate-dag") {
+            const changes = readRequirementsDagChanges(result);
             const graphError = generatedDecisionGraphError(
-                normalizeDecisionGraph(result.decisionGraph, result.question),
+                normalizeDecisionGraph({ nodes: changes.nodes }),
                 args.state.prototypeApproach?.mode === "undecided",
             );
             if (graphError) throw new Error(graphError);
         }
+        if (answering) applyRequirementsAnswerChanges(requirementsInputs, result, args.question.id, args.answer, args.action === "change-answer");
 
         ctx.phase("Return Tandem update");
         ctx.log(args.action === "apply-defaults" ? "Returning the focused Requirements change set." : "Returning the Tandem update.");
+        if (args.action === "generate-dag") return jsonResult({
+            kind: "requirements-dag", generation: args.state.generation,
+            researchDigest: requirementsResearchDigest(workerArgs.state.requirements.research), changes: result,
+        });
+        if (answering) return jsonResult({
+            kind: "requirements-answer", generation: args.state.generation,
+            inputDigest: requirementsAnswerDigest(requirementsInputs, args.question.id, args.answer, args.action === "change-answer"), changes: result,
+        });
         return result;
     },
 });
@@ -8762,7 +9060,7 @@ session = await joinSession({
     customAgents: [textWorkerAgent],
     tools: [{
         name: SKETCH_IMAGE_TOOL_NAME,
-        description: "Read one approved app drawing as an image for the active Tandem prototype checkpoint. Use the exact identities from the checkpoint prompt.",
+        description: "Read one approved app design as an image for the active Tandem prototype checkpoint. Use the exact identities from the checkpoint prompt.",
         defer: "never",
         skipPermission: true,
         parameters: {
@@ -8967,7 +9265,7 @@ session = await joinSession({
                 },
                 {
                     name: "get_sketch",
-                    description: "Read the current editable drawing document and its revision/approval metadata.",
+                    description: "Read the current editable design document and its revision/approval metadata.",
                     inputSchema: { type: "object", additionalProperties: false,
                         properties: { prototypeId: { type: "string" } } },
                     handler: async (ctx) => {
@@ -8979,13 +9277,15 @@ session = await joinSession({
                 },
                 {
                     name: "sketch_action",
-                    description: "Generate, revise or save app drawings. Approval requires current rendered PNGs from the Sketch workspace and explicit user review.",
+                    description: "Generate app designs from scratch, update existing designs for accepted requirements, revise or save them. Approval requires current rendered PNGs from the Designs workspace and explicit user review.",
                     inputSchema: {
                         type: "object", additionalProperties: false,
                         properties: {
-                            action: { type: "string", enum: ["generate", "revise", "save", "approve"] },
+                            action: { type: "string", enum: ["generate", "update", "revise", "save", "approve"] },
                             expectedRevision: { type: ["string", "null"] },
                             instruction: { type: "string", maxLength: 4000 },
+                            clientRequestId: { type: "string", pattern: "^[A-Za-z0-9._-]{1,120}$" },
+                            sketchContext: sketchChangeContextSchema,
                             document: sketchDocumentSchema,
                             previews: { type: "array", maxItems: 8, items: {
                                 type: "object", additionalProperties: false,
@@ -9023,7 +9323,8 @@ session = await joinSession({
                         type: "object", additionalProperties: false,
                         properties: { prototypeId: { type: "string" }, message: { type: "string", minLength: 1, maxLength: 4000 },
                             clientRequestId: { type: "string", pattern: "^[A-Za-z0-9._-]{1,120}$" },
-                            originStage: { type: "string", enum: ["requirements", "sketch", "prototype"] } },
+                            originStage: { type: "string", enum: ["requirements", "sketch", "prototype"] },
+                            sketchContext: sketchChangeContextSchema },
                         required: ["message", "clientRequestId"],
                     },
                     handler: async ctx => submitChangeRequest(await resolvePrototypeId(ctx.instanceId, ctx.input?.["prototypeId"]),

@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { SketchDocument } from "../src/sketch.js";
+import type { DslSketchDocument } from "../src/sketch.js";
 import type { SketchPreview } from "../src/sketch-stream.js";
-import { createScreen, createShape } from "../src/renderer/sketch-editor.js";
+import { createDslScreen as createScreen } from "../src/renderer/sketch-editor.js";
+import { addUi, buttonScreen } from "./helpers/ui-dsl-fixture.js";
 import { StudioStore } from "../src/renderer/state-store.js";
 import type { UiState } from "../src/renderer/ui-context.js";
 
 function fixture() {
-  const document: SketchDocument = { version: 1, screens: [], transitions: [] };
-  document.screens.push(createScreen(document, ["requirement"]));
-  document.screens[0].shapes.push(createShape(document.screens[0], "rectangle"));
+  const document: DslSketchDocument = { version: 2, screens: [], transitions: [] };
+  document.screens.push(buttonScreen(createScreen(document, ["requirement"])));
   const state = {
     prototypeId: "preview-store", generation: "generation-1", revision: 3, updatedAt: "2026-09-20T00:00:00.000Z",
     lifecycle: { currentStage: "sketch", completedStages: [], skippedStages: [] },
@@ -35,10 +35,10 @@ test("sketch previews publish consecutive SSE chunks at the same persisted revis
     assert.equal(store.accept({ ...state, sketchPreview: preview }), true);
     const next = structuredClone(preview);
     next.sequence++;
-    next.document.screens[0].shapes.push(createShape(next.document.screens[0], "text"));
+    addUi(next.document.screens[0], "label", "Text", { text: "Updated" });
     assert.equal(store.accept({ ...state, sketchPreview: next }), true);
     assert.equal(store.getSnapshot().state!.revision, state.revision);
-    assert.equal(store.getSnapshot().state!.sketchPreview!.document.screens[0].shapes.length, 2);
+    assert.equal(Object.keys(store.getSnapshot().state!.sketchPreview!.document.screens[0].ui.nodes).length, 3);
     assert.equal(publications, 3);
     store.accept({ ...state, revision: 4, processing: { ...state.processing, status }, sketchPreview: null });
     assert.equal(store.getSnapshot().state!.sketchPreview, null);
@@ -73,10 +73,10 @@ test("sketch preview sequences are monotonic, including after an explicit same-r
   next.revision++;
   next.processing.requestId = "request-2";
   store.accept({ ...next, sketchPreview: { ...preview, requestId: "request-2" } });
-  assert.equal(store.getSnapshot().state!.sketchPreview!.sequence, 1, "a new request can start drawing again");
+  assert.equal(store.getSnapshot().state!.sketchPreview!.sequence, 1, "a new request can start design again");
 });
 
-test("startup null snapshots allow the first preview but stale-identity null cannot clear current drawing", () => {
+test("startup null snapshots allow the first preview but stale-identity null cannot clear current design", () => {
   const { state, preview } = fixture();
   const store = new StudioStore();
   store.accept({ ...state, sketchPreview: null });
@@ -164,6 +164,30 @@ test("matching malformed previews are dropped with a connection error without re
   assert.match(store.getSnapshot().connectionError, /preview is invalid/);
 });
 
+test("per-page progress survives preview transport while invalid or stale status payloads cannot replace it", () => {
+  const { state, preview } = fixture();
+  const screenId = preview.document.screens[0].id;
+  const store = new StudioStore();
+  store.accept({ ...state, sketchPreview: { ...preview, screenStatuses: { [screenId]: "processing" } } });
+  store.accept({ ...state, sketchPreview: { ...preview, sequence: 2, screenStatuses: { [screenId]: "ready" } } });
+  assert.deepEqual(store.getSnapshot().state!.sketchPreview!.screenStatuses, { [screenId]: "ready" });
+  store.accept({ ...state, sketchPreview: { ...preview, screenStatuses: { [screenId]: "waiting" } } });
+  assert.deepEqual(store.getSnapshot().state!.sketchPreview!.screenStatuses, { [screenId]: "ready" });
+  for (const screenStatuses of [null, [], {}, { missing: "ready" }, { [screenId]: "approved" },
+    { [screenId]: "processing", extra: "waiting" }]) {
+    const invalid = new StudioStore();
+    invalid.accept({ ...state, sketchPreview: { ...preview, screenStatuses } });
+    assert.equal(invalid.getSnapshot().state!.sketchPreview, null);
+    assert.match(invalid.getSnapshot().connectionError, /preview is invalid/);
+  }
+  const empty = structuredClone(preview);
+  empty.document.screens[0].ui.nodes[empty.document.screens[0].ui.root].children = [];
+  empty.document.screens[0].ui.nodes = { screen: empty.document.screens[0].ui.nodes.screen };
+  const invalid = new StudioStore();
+  invalid.accept({ ...state, sketchPreview: { ...empty, screenStatuses: { [screenId]: "ready" } } });
+  assert.match(invalid.getSnapshot().connectionError, /preview is invalid/);
+});
+
 test("late HTTP snapshots cannot replace a newer SSE preview or erase it with stale null", async () => {
   for (const latePreview of ["older", "null", "missing"]) {
     const { state, preview } = fixture();
@@ -211,7 +235,7 @@ test("reconnect GET can recover a starting generation preview without a saved re
   const store = new StudioStore(async () => new Response(JSON.stringify({ ...state, sketchPreview: preview })));
   await store.refresh();
   assert.equal(store.getSnapshot().state!.sketch.current, null);
-  assert.equal(store.getSnapshot().state!.sketchPreview!.document.screens[0].shapes.length, 1);
+  assert.equal(Object.keys(store.getSnapshot().state!.sketchPreview!.document.screens[0].ui.nodes).length, 2);
 });
 
 test("late HTTP preview cannot resurrect a generation that SSE already replaced", async () => {

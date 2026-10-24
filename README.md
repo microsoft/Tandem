@@ -13,7 +13,7 @@
 
 Tandem is a collaborative workspace for turning ideas and existing code into
 software you understand and intend. Discuss the experience, make decisions
-visible in drawings and Design artifacts, then explicitly approve implementation.
+visible in UI designs and Design artifacts, then explicitly approve implementation.
 
 It is for developers, designers and project owners who want to work with a coding
 agent without leaving product decisions hidden in a prompt.
@@ -32,7 +32,7 @@ https://github.com/user-attachments/assets/ea2c909b-97c7-44b2-adfe-86ff56e4c382
 
 ## Why Tandem?
 
-- **See the idea before committing to it.** Explore requirements, drawings and
+- **See the idea before committing to it.** Explore requirements, UI designs and
   interactive prototypes instead of reconstructing everything from a long spec.
 - **Start where your project is.** Discover a new idea or work directly from an
   existing application; Preparation is optional.
@@ -70,7 +70,7 @@ project or worktree for your first trial.
 
 | Start with Preparation | Go to Development |
 | --- | --- |
-| Clarify an idea through Requirements, Drawings and Prototype, then continue into Development. | Explore existing files or refine a rough idea directly in Design and Conversation. |
+| Clarify an idea through Requirements, Designs and Prototype, then continue into Development. | Explore existing files or refine a rough idea directly in Design and Conversation. |
 
 The choice is saved for that folder. In Development, review the Design and
 answer questions, then request implementation. **Plan and implement** explicitly
@@ -119,6 +119,15 @@ npm run build
 For Stage 2 changes, also follow its [contributor instructions](development/AGENTS.md).
 See the [engineering reference](docs/engineering-reference.md) for architecture
 boundaries, packaging, optional hosts and qualification limits.
+
+For automatic frontend rebuilds and browser refresh:
+
+```powershell
+npm run dev:browser -- --workspace C:\projects\my-app
+```
+
+UI saves refresh the whole page without restarting Copilot runtimes; unsent input
+may be lost. Backend/runtime source changes require restarting the command.
 
 For a bug report or proposed change, describe the expected behavior, what happened,
 and the source/package version. Keep private launch URLs, credentials and

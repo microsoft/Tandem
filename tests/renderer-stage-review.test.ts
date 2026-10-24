@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createStageReview, mergeStageReview, stageReviewDigest, type StageReviewReference } from "../src/stage-review.js";
-import { setup, state, decision, response, browse, disabled, hidden, field, current } from "./renderer-fixtures.test.js";
+import { setup, state, decision, response, browse, disabled, hidden, field, current, sketchSetup } from "./renderer-fixtures.test.js";
 import type { UiState } from "../src/renderer/ui-context.js";
 
-async function fixture(t: Parameters<typeof setup>[0], changed = false, usageMode = false) {
+async function fixture(t: Parameters<typeof setup>[0], changed = false, usageMode = false, blocker: string | null = null) {
     let parent = state("prototype");
     parent.requirements.substage = "dag";
     parent.decisionGraph.nodes = [decision("task", "answered")];
@@ -24,7 +24,7 @@ async function fixture(t: Parameters<typeof setup>[0], changed = false, usageMod
     let mutate = async (path: string, _options: RequestInit): Promise<Response> => { throw new Error("Unexpected draft mutation: " + path); };
     const snapshot = () => structuredClone({
         ...draft, provider: { ...draft.provider, canSubmitAnswers: !reference.appliedAt },
-        stageReviewStatus: { conflict: "", blocker: null,
+        stageReviewStatus: { conflict: "", blocker,
             changed: stageReviewDigest(draft, "requirements") !== draft.stageReview!.baselineDigest,
             currentStage: parent.lifecycle.currentStage, appliedAt: reference.appliedAt, discardedAt: reference.discardedAt },
     });
@@ -112,6 +112,9 @@ test("background draft DAG completion cannot steal the current-work view", async
 test("Apply is explicit, refuses unsent edits, and leaves the reviewed view pinned after updating accepted work", async t => {
     const { h } = await fixture(t, true);
     assert.equal(disabled(h, "apply-stage-review"), false);
+    assert.equal(h.get("apply-stage-review").closest("#stage-input-review") !== null, true);
+    assert.ok(h.get("review-requirement-request").compareDocumentPosition(h.get("apply-stage-review")) & h.window.Node.DOCUMENT_POSITION_FOLLOWING);
+    assert.equal(h.document.querySelector(".previewbar #apply-stage-review"), null);
     await h.input("review-requirement-request", "Unsent requirement");
     assert.equal(disabled(h, "apply-stage-review"), true);
     await h.input("review-requirement-request", "");
@@ -142,6 +145,18 @@ test("a rejected Apply retains the draft and current-stage identity with an expl
     assert.equal(disabled(h, "review-requirement-request"), false);
 });
 
+test("a real parent work blocker is shown before Apply rather than as a failed request afterward", async t => {
+    const blocker = "Finish the change already being applied before applying this draft. Your draft remains separate.";
+    const { h } = await fixture(t, true, false, blocker);
+    assert.equal(disabled(h, "apply-stage-review"), true);
+    assert.equal(h.get("apply-stage-review").title, blocker);
+    assert.match(h.get("stage-input-review").textContent!, /change already being applied/);
+    await h.click("apply-stage-review");
+    assert.equal(h.document.querySelector('[role="alertdialog"]'), null);
+    assert.equal(h.requests.some(item => item.path === "/api/reviews/apply"), false);
+    assert.equal(current(h).lifecycle.currentStage, "prototype");
+});
+
 test("baseline comparison includes usage changes as well as changed decisions", async t => {
     const { h } = await fixture(t, true);
     const comparison = h.document.querySelector<HTMLDetailsElement>(".stage-review-comparison")!;
@@ -160,4 +175,60 @@ test("read-only providers can inspect earlier content but cannot open an editabl
     assert.equal(h.get("live-preview-tab").getAttribute("aria-current"), "step");
     await h.click("review-stage");
     assert.equal(h.requests.some(item => item.path === "/api/reviews/open"), false);
+});
+
+test("stale Designs review exposes a confirmed update scoped to its draft, not current Prototype work", async t => {
+    const { h, value, document } = await sketchSetup(t);
+    const parent: UiState = { ...value, revision: value.revision + 1, stage: "prototype",
+        lifecycle: { ...value.lifecycle, currentStage: "prototype", completedStages: ["prepare", "requirements", "sketch"] },
+        sketch: { ...value.sketch, status: "stale" } };
+    const reference: StageReviewReference = { version: 1, id: "review-22222222-2222-2222-2222-222222222222",
+        stage: "sketch", generation: parent.generation, createdAt: parent.updatedAt, appliedAt: null, discardedAt: null };
+    const draft: UiState = { ...createStageReview(parent, reference), revision: 1, provider: parent.provider };
+    const snapshot = (): UiState => structuredClone({ ...draft, stageReviewStatus: {
+        conflict: "", blocker: "The designs refer to older requirements.", changed: false,
+        appliedAt: null, discardedAt: null, currentStage: "prototype",
+    } });
+    const prefix = `/api/reviews/${reference.id}`;
+    h.setFetch(async (path, options) => {
+        if (path === "/api/reviews/open") {
+            parent.stageReviews = [reference];
+            parent.revision++;
+            return response({ draft: snapshot() });
+        }
+        if (path === "/api/state") return response(parent);
+        if (path === "/api/sketch") return response({ sketch: parent.sketch, document });
+        if (path === `${prefix}/state`) return response(snapshot());
+        if (path === `${prefix}/sketch`) {
+            if (options.method === "POST") {
+                assert.deepEqual(JSON.parse(String(options.body)), { action: "update", expectedRevision: "drawing-1" });
+                draft.processing = { action: "revise-sketch", status: "running", message: "Updating draft designs." };
+                draft.revision++;
+                return response(snapshot());
+            }
+            return response({ sketch: draft.sketch, document });
+        }
+        throw new Error("Unexpected draft request: " + path);
+    });
+    h.render(parent);
+    await h.flush();
+    await browse(h, "sketch");
+    await h.click("review-stage");
+    assert.equal(disabled(h, "sketch-update-requirements"), false);
+    assert.equal(disabled(h, "apply-stage-review"), true);
+    assert.equal(disabled(h, "sketch-approve"), true);
+    assert.equal(h.document.querySelector("#prepare-review-drawings"), null);
+    await h.click("sketch-update-requirements");
+    assert.match(h.document.querySelector('[role="alertdialog"]')!.textContent!, /latest accepted requirements and DAG/);
+    await h.confirm(false);
+    assert.equal(h.requests.some(item => item.path === `${prefix}/sketch` && item.options.method === "POST"), false);
+    await h.click("sketch-update-requirements");
+    await h.confirm(true);
+    assert.equal(h.requests.filter(item => item.path === `${prefix}/sketch` && item.options.method === "POST").length, 1);
+    assert.equal(current(h).lifecycle.currentStage, "prototype");
+    assert.equal(current(h).sketch.current!.id, parent.sketch.current!.id);
+    assert.equal(current(h).sketch.status, "stale");
+    assert.equal(disabled(h, "apply-stage-review"), true);
+    assert.equal(disabled(h, "sketch-approve"), true);
+    assert.equal(h.requests.some(item => item.path === "/api/reviews/apply" || item.path === "/api/stage/complete"), false);
 });

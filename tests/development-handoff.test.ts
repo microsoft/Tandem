@@ -27,6 +27,7 @@ import { createHumanTask, humanTaskPrompt } from "../development/tandem/src/huma
 import { waitFor } from "../development/tandem/test/helpers/native-session-fixture.mjs";
 import { visualManifest } from "./helpers/visual-fixture.js";
 import { visualManifestName } from "../src/visual-directions.js";
+import { sketchDocument } from "./helpers/sketch-lifecycle-fixture.js";
 
 async function fixture(mode: "build" | "validate-existing" | "not-applicable") {
     const root = await mkdtemp(join(tmpdir(), "tandem-handoff-"));
@@ -46,6 +47,13 @@ async function fixture(mode: "build" | "validate-existing" | "not-applicable") {
     await mkdir(join(shared, ".tandem", "efforts", "fixture", "sketches", sketchId), { recursive: true });
     await writeFile(join(shared, ...assetPath.split("/")), png);
     const asset = { id: "home", path: assetPath, hash: createHash("sha256").update(png).digest("hex"), mediaType: "image/png" };
+    const drawing = sketchDocument();
+    drawing.screens[0].decisionIds = ["choice"];
+    const documentBytes = Buffer.from(JSON.stringify(drawing));
+    const documentHash = createHash("sha256").update(documentBytes).digest("hex");
+    const documentPath = `.tandem/efforts/fixture/sketches/${sketchId}/document.json`;
+    await writeFile(join(shared, ...documentPath.split("/")), documentBytes);
+    const documentAsset = { id: "document", path: documentPath, hash: documentHash, mediaType: "application/json" };
     const checkpoint = { id: requestId, requestId, workspacePath: source,
         status: "ready", sketchRevisionId: sketchId, sourceFingerprint: await fingerprintPrototypeWorkspace(source) };
     const result = {
@@ -55,8 +63,8 @@ async function fixture(mode: "build" | "validate-existing" | "not-applicable") {
         prototypeReview: { evidence: [{ type: "shortcut", content: "In-memory state; no backend." }] },
         prototypeFlow: mode === "not-applicable" ? null : { displayedCheckpointId: requestId, checkpoints: [checkpoint] },
         sketch: mode === "not-applicable" ? { current: null, approved: null } : {
-            current: { id: sketchId, requirementsDigest: "requirements", documentHash: "drawing" },
-            approved: { revisionId: sketchId, requirementsDigest: "requirements", documentHash: "drawing", assets: [asset] },
+            current: { id: sketchId, requirementsDigest: "requirements", documentHash },
+            approved: { revisionId: sketchId, requirementsDigest: "requirements", documentHash, assets: [documentAsset, asset] },
         },
         artifacts: [{ id: "draft-feature-spec", stage: "prototype", content: "Exact feature specification", reviewStatus: "current" }],
     };
@@ -878,6 +886,14 @@ for (const mode of ["build", "validate-existing", "not-applicable"] as const) {
             assert.equal(receipt.files.some(file => file.path === "source/src/app.tsx"), mode !== "not-applicable");
             assert.equal(receipt.files.some(file => /node_modules|browser-profile|vite-checkpoint|\.env/.test(file.path)), false);
             assert.equal(receipt.files.some(file => file.path.startsWith("assets/")), mode !== "not-applicable");
+            if (mode !== "not-applicable") {
+                const approved = f.result.sketch.approved!;
+                const path = join(directory, "assets", `${approved.documentHash}.json`);
+                assert.ok(receipt.request.message.includes(path), "Designer receives the bound DSL source path, not only screenshots");
+                assert.match(receipt.request.message, /UI DSL.*exact hash/);
+                assert.match(receipt.request.message, /component hierarchy, typed props, design tokens/);
+                assert.equal(JSON.parse(await readFile(path, "utf8")).version, 2);
+            }
             const duplicate = await Promise.all([f.store.prepare(f.state), f.store.prepare(f.state)]);
             assert.deepEqual(duplicate.map(value => value.request), [receipt.request, receipt.request]);
             await rm(join(f.shared, ".tandem", "efforts", "fixture"), { recursive: true });

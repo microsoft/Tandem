@@ -297,12 +297,6 @@ export function VisualExplorationPanel({ active, connected, inspecting, onInspec
     });
   }
   const previewActions = <>
-    <button id="choose-visual-direction" type="button" className="plan-button preview-accept-action" disabled={choiceBlocked}
-      aria-describedby="visual-choice-help" aria-busy={Boolean(acceptance)}
-      title={!inspecting ? "Accept the original prototype as Default."
-        : !onApply ? "Accept is unavailable in this view." : "Apply the previewed direction and settings."}
-      onClick={() => void accept()}><Check size={14} aria-hidden="true" />
-      {acceptance ? "Accepting..." : "Accept"}</button>
     {inspecting && <Tooltip.Root><Tooltip.Trigger asChild>
       <button id="retry-visual-preview" type="button" className="plan-button secondary preview-recovery-action"
         aria-label="Recheck visual preview" data-error={previewUnavailable || previewError} disabled={availability.busy || !connected}
@@ -358,7 +352,7 @@ export function VisualExplorationPanel({ active, connected, inspecting, onInspec
           <strong>{item.name}</strong><p>{item.summary}</p>
           <dl><dt>Layout</dt><dd>{item.layout}</dd><dt>Typography</dt><dd>{item.typography}</dd>
             <dt>Palette</dt><dd>{item.palette}</dd><dt>Effects</dt><dd>{item.effects}</dd>
-            <dt>Changes from drawings</dt><dd>{item.sketchChanges}</dd></dl>
+            <dt>Changes from designs</dt><dd>{item.sketchChanges}</dd></dl>
         </Tooltip.Content></Tooltip.Portal></Tooltip.Root>)}
         {customSelection && customBase && <Tooltip.Root><Tooltip.Trigger asChild>
           <ToggleGroup.Item id="visual-custom-direction" className="visual-direction-toggle" type="button" value={customOption}
@@ -414,6 +408,14 @@ export function VisualExplorationPanel({ active, connected, inspecting, onInspec
       onLoad={() => setLoaded(value => value + 1)} />
     {inspecting && <VisualFeedback key={direction.id} checkpointId={checkpoint.id} selection={selection} name={previewName}
       disabled={refinementBlocked} />}
+    <div className="prototype-actions">
+      <button id="choose-visual-direction" type="button" className="plan-button preview-accept-action" disabled={choiceBlocked}
+        aria-describedby="visual-choice-help" aria-busy={Boolean(acceptance)}
+        title={!inspecting ? "Accept the original prototype as Default."
+          : !onApply ? "Accept is unavailable in this view." : "Apply the previewed direction and settings."}
+        onClick={() => void accept()}><Check size={14} aria-hidden="true" />
+        {acceptance ? "Accepting..." : "Accept"}</button>
+    </div>
     </section>
   </>;
 }

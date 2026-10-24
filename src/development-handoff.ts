@@ -15,6 +15,7 @@ import { fingerprintPrototypeWorkspace, PROTOTYPE_FINGERPRINT_PREFIX } from "./p
 import { capturePrototypeSourceFiles } from "./prototype-workspace.js";
 import type { TandemState } from "./types.js";
 import { readChangeRequests } from "./change-requests.js";
+import { validateSketchDocument } from "./sketch.js";
 
 const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
 const MAX_SNAPSHOT = 64 * 1024 * 1024;
@@ -148,7 +149,7 @@ export class DevelopmentHandoffs {
             completedAt: String(snapshot.completedAt ?? output.completedAt), workspaceRoot: resolve(this.workspaceRoot),
             goal: String(source.goal ?? ""), prototype: source.prototypeApproach?.mode === "not-applicable"
                 ? `No graphical Prototype: ${source.prototypeApproach.reason || "not applicable"}`
-                : "Saved displayed Prototype source and approved drawings (when used). Scripts will not run.",
+                : "Saved displayed Prototype source and approved designs (when used). Scripts will not run.",
             specification: specification.content, confirmed: strings(source.confirmed), assumed: strings(source.assumed),
             deferred: strings(source.deferred), decisions: Array.isArray(source.decisionGraph?.nodes)
                 ? source.decisionGraph.nodes.filter((node: unknown) => object(node) && typeof node.answer === "string" && node.answer)
@@ -218,12 +219,24 @@ export class DevelopmentHandoffs {
                 if (sha256(bytes) !== asset.hash) return fail("Approved sketch asset changed before handoff.");
                 files.set(`assets/${asset.hash}.${asset.path.split(".").at(-1)}`, bytes);
             }
+            let uiDslPath: string | null = null;
+            if (!noGui && !state.lifecycle.skippedStages.some(entry => entry.stageId === "sketch")) {
+                const asset = validateArtifactAssets(source.sketch?.approved?.assets).find(asset => asset.id === "document");
+                if (!asset) return fail("The approved UI DSL document is missing.");
+                const path = `assets/${asset.hash}.json`;
+                const bytes = files.get(path);
+                if (!bytes || asset.hash !== source.sketch.approved.documentHash) return fail("The approved UI DSL source is not bound to its retained approval.");
+                if (validateSketchDocument(JSON.parse(bytes.toString("utf8"))).version !== 2) {
+                    return fail("This handoff uses retired geometry. Reopen Designs, regenerate and approve UI DSL views, then update Prototype before continuing.");
+                }
+                uiDslPath = safePath(directory, path);
+            }
             if (checkpoint && await fingerprint() !== checkpoint.sourceFingerprint) return fail("Prototype changed during handoff capture.");
             const disposition = String(source.prototypeApproach?.mode);
             const request: HumanRequest = { id, receivedAt: new Date().toISOString(), answers: null,
                 message: buildDevelopmentHandoffPrompt({ handoffId: id, receiptPath: join(directory, "receipt.json"),
                     snapshotPath: join(directory, "snapshot.json"), sourcePath: checkpoint ? join(directory, "source") : null,
-                    disposition, goal: String(source.goal).slice(0, 4000),
+                    disposition, goal: String(source.goal).slice(0, 4000), uiDslPath,
                     changeRequest: readChangeRequests(source.changeRequests).find(request => request.id === state.lifecycle.changeRequestId) ?? null }) };
             const content: Omit<DevelopmentHandoff, "digest"> = {
                 version: 1, id, effortId: state.prototypeId, generation: state.generation,

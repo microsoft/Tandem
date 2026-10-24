@@ -1,22 +1,31 @@
 import {
   createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState,
-  type KeyboardEvent, type PointerEvent, type ReactNode,
+  type KeyboardEvent, type ReactNode,
 } from "react";
-import { Toggle, ToggleGroup } from "radix-ui";
+import { ToggleGroup } from "radix-ui";
 import {
-  ArrowRight, Check, ChevronDown, Circle, History, Minus, Monitor, PanelRight, Pencil, PenTool, Plus, Redo2, RefreshCw, Save, Send, Sparkles, Spline, Square, Trash2, Type, Undo2, Workflow, X,
+  Check, Clock, Hand, History, LoaderCircle, Monitor, MousePointer2, Plus, Redo2, RefreshCw, Save, Send, Sparkles, Trash2, Undo2, Workflow, X,
 } from "lucide-react";
-import { validateSketchDocument } from "../sketch.js";
-import type { SketchCurve, SketchDocument, SketchRevision, SketchScreen, SketchShape, SketchState, SketchTransition } from "../sketch.js";
-import { sketchPathData } from "../sketch-path.js";
-import { createCurveShape, createScreen, createShape, parsePathPoints, renderSketchPng, resizeScreen, setPathPoints, setShapeBounds, shapeBounds, SketchEditor, SKETCH_SIZE_PRESETS } from "./sketch-editor.js";
+import { hasScreenContent, validateSketchDocument } from "../sketch.js";
+import type { DslSketchDocument, DslSketchScreen, SketchRevision, SketchState, SketchTransition } from "../sketch.js";
+import { createDslScreen, renderSketchPng, resizeScreen, SketchEditor, SKETCH_SIZE_PRESETS } from "./sketch-editor.js";
+import { DslView } from "./dsl-view.js";
+import { DslStructure } from "./dsl-structure.js";
 import { SketchViewport } from "./sketch-viewport.js";
 import { readSketchPreview } from "./sketch-preview.js";
+import type { SketchPreview, SketchScreenStatus } from "../sketch-stream.js";
 import { hasActiveJobs, skippedStage, useAction, useDraft, useUi, type UiState } from "./ui-context.js";
+import { changeRequestHistoryStatus, changeRequestResponse } from "./change-request-feedback.js";
+import { currentChangeReview } from "../change-request-policy.js";
 
-// The shell must distinguish completion readiness from pending requests: unsaved drawings
-// block Finish Sketch, but must not disable their own editing controls.
+// The shell must distinguish completion readiness from pending requests: unsaved designs
+// block Finish Designs, but must not disable their own editing controls.
 export const SketchCompletionContext = createContext<(blocked: boolean) => void>(() => {});
+
+export interface DraftDesignApproval {
+  ready: boolean;
+  approve(): Promise<UiState | undefined>;
+}
 
 export function isSketchRevisionApproved(sketch: SketchState): boolean {
   const { current, approved } = sketch;
@@ -27,7 +36,6 @@ export function isSketchRevisionApproved(sketch: SketchState): boolean {
 }
 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
-const clamp = (value: number, max: number) => Math.max(0, Math.min(max, value));
 const identityOf = (state: UiState) => JSON.stringify([state.prototypeId, state.generation]);
 const revisionIdentity = (revision: SketchRevision | null) =>
   JSON.stringify(revision ? [revision.id, revision.documentHash, revision.requirementsDigest] : null);
@@ -40,18 +48,19 @@ const nextId = (prefix: string, ids: string[]) => {
 const acceptedDecisionIds = (state: UiState) => state.decisionGraph.nodes
   .filter((node) => node.status === "answered" && typeof node.answer === "string" && node.answer.trim())
   .map((node) => node.id);
-const errorMessage = (cause: unknown) => cause instanceof Error ? cause.message : "Could not update drawings.";
+const errorMessage = (cause: unknown) => cause instanceof Error ? cause.message : "Could not update designs.";
 
 interface FieldDraft { value: string; error: string }
 interface FieldEdit { key: string; value: string; keepInput?: boolean }
 interface RequestHistoryItem {
   id: string;
   requestId: string;
+  changeRequestId?: string;
   at: string;
-  kind: "generate" | "save" | "approve" | "revise";
+  kind: "generate" | "update" | "save" | "approve" | "revise";
   request: string;
   response: string;
-  status: "running" | "success" | "error";
+  status: "running" | "waiting" | "success" | "error";
 }
 interface LoadState {
   loading: boolean;
@@ -60,111 +69,72 @@ interface LoadState {
   failedKey: string | null;
   conflict: boolean;
 }
-interface Gesture {
-  id: number;
-  x: number;
-  y: number;
-  screen: SketchScreen;
-  shape: SketchShape | null;
-  points: Array<{ x: number; y: number }>;
-  moved: SketchShape | null;
-  pointIndex: number | null;
-}
-
-function freehandShape(screen: SketchScreen, points: Gesture["points"]): SketchShape {
-  const x = Math.min(...points.map((point) => point.x));
-  const y = Math.min(...points.map((point) => point.y));
-  return {
-    ...createShape(screen, "path"), x, y,
-    width: Math.max(...points.map((point) => point.x)) - x,
-    height: Math.max(...points.map((point) => point.y)) - y,
-    points,
-  };
-}
-
-function ShapePrimitive({ shape }: { shape: SketchShape }) {
-  const style = { stroke: shape.stroke, fill: shape.fill, strokeWidth: 2 };
-  if (shape.kind === "rectangle") {
-    return <rect x={shape.x} y={shape.y} width={shape.width} height={shape.height} {...style} />;
-  }
-  if (shape.kind === "ellipse") {
-    return <ellipse cx={shape.x + shape.width / 2} cy={shape.y + shape.height / 2}
-      rx={shape.width / 2} ry={shape.height / 2} {...style} />;
-  }
-  if (shape.kind === "text") {
-    return <text x={shape.x} y={shape.y + Math.min(shape.fontSize, shape.height)}
-      fontFamily="sans-serif" fontSize={shape.fontSize} fill={shape.fill === "none" ? shape.stroke : shape.fill}
-      stroke="none" xmlSpace="preserve">{shape.text}</text>;
-  }
-  if (shape.kind === "path") {
-    return <path d={sketchPathData(shape)} {...style} />;
-  }
-  const [start, end] = shape.points;
-  let head: ReactNode = null;
-  if (shape.kind === "arrow") {
-    const angle = Math.atan2(end.y - start.y, end.x - start.x);
-    const size = Math.min(10, Math.hypot(end.x - start.x, end.y - start.y) / 2);
-    const left = { x: end.x - size * Math.cos(angle - Math.PI / 6), y: end.y - size * Math.sin(angle - Math.PI / 6) };
-    const right = { x: end.x - size * Math.cos(angle + Math.PI / 6), y: end.y - size * Math.sin(angle + Math.PI / 6) };
-    head = <path d={`M ${left.x} ${left.y} L ${end.x} ${end.y} L ${right.x} ${right.y}`}
-      fill="none" stroke={shape.stroke} strokeWidth={2} />;
-  }
-  return <><line x1={start.x} y1={start.y} x2={end.x} y2={end.y} {...style} />{head}</>;
-}
-
-export function SketchSvg({ screen, selectedShape = "", editPoints = false }: {
-  screen: SketchScreen; selectedShape?: string; editPoints?: boolean;
-}) {
-  const selected = screen.shapes.find((shape) => shape.id === selectedShape);
-  return <svg xmlns="http://www.w3.org/2000/svg" width={screen.width} height={screen.height}
-    viewBox={`0 0 ${screen.width} ${screen.height}`}>
-    <title>{screen.title}</title>
-    <rect width={screen.width} height={screen.height} fill="#ffffff" />
-    {screen.shapes.map((shape) => <g key={shape.id} data-shape-id={shape.id}
-      className={shape.id === selectedShape ? "sketch-selected" : undefined}>
-      <ShapePrimitive shape={shape} />
-    </g>)}
-    {editPoints && selected?.kind === "path" && <g className="sketch-path-handles" data-point-shape={selected.id}>
-      {(selected.curve === "quadratic" || selected.curve === "cubic") && <polyline
-        points={selected.points.map((point) => `${point.x},${point.y}`).join(" ")}
-        fill="none" stroke="#777777" strokeDasharray="4 4" vectorEffect="non-scaling-stroke" pointerEvents="none" />}
-      {selected.points.map((point, index) => {
-        const control = selected.curve === "quadratic" ? index % 2 !== 0 : selected.curve === "cubic" && index % 3 !== 0;
-        return <circle key={index} data-point-index={index} cx={point.x} cy={point.y} r={5}
-          fill={control ? "#ffffff" : "#333333"} stroke="#333333" strokeWidth={2} vectorEffect="non-scaling-stroke">
-          <title>{`${control ? "Control point" : "Knot / endpoint"} ${index + 1}: drag to edit`}</title>
-        </circle>;
-      })}
-    </g>}
-  </svg>;
-}
-
-const curveLabels: Record<SketchCurve, string> = {
-  linear: "Linear", quadratic: "Quadratic Bezier", cubic: "Cubic Bezier", "catmull-rom": "Catmull-Rom spline",
-};
-const shapeTools: Array<{
-  id: string; kind: SketchShape["kind"]; curve?: Exclude<SketchCurve, "linear">; label: string; Icon: typeof Square;
-}> = [
-  { id: "rectangle", kind: "rectangle", label: "Rectangle", Icon: Square },
-  { id: "ellipse", kind: "ellipse", label: "Ellipse", Icon: Circle },
-  { id: "text", kind: "text", label: "Text", Icon: Type },
-  { id: "line", kind: "line", label: "Line", Icon: Minus },
-  { id: "arrow", kind: "arrow", label: "Arrow", Icon: ArrowRight },
-  { id: "quadratic", kind: "path", curve: "quadratic", label: "Quadratic Bezier", Icon: PenTool },
-  { id: "cubic", kind: "path", curve: "cubic", label: "Cubic Bezier", Icon: PenTool },
-  { id: "spline", kind: "path", curve: "catmull-rom", label: "Catmull-Rom spline", Icon: Spline },
-];
-const colorChoices = [
-  ["none", "None"], ["#ffffff", "White"], ["#eeeeee", "Light gray"],
-  ["#999999", "Gray"], ["#333333", "Dark gray"], ["#000000", "Black"],
-] as const;
 const sidePanes = [
-  { id: "properties", label: "Object properties", target: "sketch-object-properties", Icon: PanelRight },
   { id: "transitions", label: "Screen transitions", target: "sketch-screen-transitions", Icon: Workflow },
   { id: "history", label: "Revision history", target: "sketch-revision-history", Icon: History },
 ] as const;
 
-export function SketchPanel() {
+const screenStatusLabels: Record<SketchScreenStatus, string> = {
+  waiting: "Waiting", processing: "Processing", ready: "Ready",
+};
+const updateRequirementsLabel = "Update designs from latest requirements";
+
+function ScreenStatusIcon({ status }: { status: SketchScreenStatus }) {
+  return status === "processing" ? <LoaderCircle className="processing-indicator" size={15} aria-hidden="true" />
+    : status === "waiting" ? <Clock size={15} aria-hidden="true" /> : <Check size={15} aria-hidden="true" />;
+}
+
+function SketchGenerationStatus({ processing, preview, hasScreen, dirty }: {
+  processing: { action?: string; status?: string; requestedAt?: string; message?: string };
+  preview: SketchPreview | null;
+  hasScreen: boolean;
+  dirty: boolean;
+}) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const update = () => setNow(Date.now());
+    update();
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  }, [processing.requestedAt]);
+  const started = Date.parse(processing.requestedAt || "");
+  const seconds = Number.isFinite(started) ? Math.max(0, Math.floor((now - started) / 1000)) : null;
+  const updating = processing.action === "revise-sketch";
+  const title = processing.status === "starting" ? updating ? "Starting design update" : "Starting UI design"
+    : updating ? "Updating UI design" : "Generating UI design";
+  const screens = preview?.document.screens.length ?? 0;
+  return <section id="sketch-generation" className="sketch-generation" data-empty={!hasScreen}
+    aria-labelledby="sketch-generation-title">
+    <div className="processing-state">
+      <LoaderCircle className="processing-indicator" size={20} aria-hidden="true" />
+      <div className="processing-copy">
+        <div className="processing-heading">
+          <strong id="sketch-generation-title">{title}</strong>
+          {seconds !== null && <span id="sketch-generation-elapsed" className="muted" role="timer" aria-live="off">
+            {seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`} elapsed
+          </span>}
+        </div>
+        <div id="sketch-generation-status" role="status" aria-live="polite" aria-atomic="true">
+          <p>{processing.message || (updating ? "Updating existing designs while preserving unrelated work." : "Preparing screens from your accepted requirements.")}</p>
+          {preview && <p id="sketch-generation-progress">{updating ? "Updating existing designs" : `${screens} ${screens === 1 ? "screen" : "screens"} received`}
+            {" · "}live update {preview.sequence}</p>}
+        </div>
+        <p className="muted">{dirty
+          ? "Your local edits remain visible. Incoming screens are not saved or approved."
+          : preview ? "You can inspect the live screens below. They are not saved or approved yet."
+          : hasScreen ? updating ? "Your existing designs remain visible. Only the required changes are being prepared."
+            : "Your current designs remain visible while the new design is prepared."
+          : "The first screen will appear here as it arrives. Designs still need your approval."}</p>
+      </div>
+    </div>
+  </section>;
+}
+
+export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprovalChange }: {
+  renderApproval?: (actions: ReactNode) => ReactNode;
+  renderReviewActions?: (actions: ReactNode) => ReactNode;
+  onDraftApprovalChange?: (approval: DraftDesignApproval | null) => void;
+} = {}) {
   const ui = useUi();
   const { state, pending, canEdit, guidance } = ui;
   const action = useAction("sketch");
@@ -178,12 +148,9 @@ export function SketchPanel() {
   const [drafts, setDrafts] = useState<Record<string, FieldDraft>>({});
   const draftsRef = useRef(drafts);
   const [selectedScreen, setSelectedScreen] = useState("");
-  const [selectedShape, setSelectedShape] = useState("");
-  const [sidePane, setSidePane] = useState<"" | "properties" | "transitions" | "history">("");
-  const propertiesOpen = sidePane === "properties";
-  const [drawing, setDrawing] = useState(false);
-  const [gesture, setGesture] = useState<Gesture | null>(null);
-  const gestureRef = useRef(gesture);
+  const [pickingElement, setPickingElement] = useState(true);
+  const [selectedElement, setSelectedElement] = useState<{ key: string | null; screenId: string; nodeId: string } | null>(null);
+  const [sidePane, setSidePane] = useState<"" | "transitions" | "history">("");
   const [instruction, setInstruction] = useDraft("sketch:instruction", "");
   const [historyOpen, setHistoryOpen] = useState(false);
   const [requestHistory, setRequestHistory] = useState<RequestHistoryItem[]>([]);
@@ -195,7 +162,6 @@ export function SketchPanel() {
   const mounted = useRef(true);
   const request = useRef(0);
   const controller = useRef<AbortController | null>(null);
-  const board = useRef<HTMLDivElement>(null);
   const latest = useRef(ui);
   latest.current = ui;
   const stateRef = useRef(state);
@@ -207,7 +173,7 @@ export function SketchPanel() {
   const skipped = skippedStage(state, "sketch");
   const available = Boolean(state.sketch && (state.lifecycle.currentStage === "sketch" || state.sketch.current));
   const invalidFields = Object.values(drafts).some((draft) => Boolean(draft.error));
-  const dirty = editor.dirty || Boolean(gesture) || Object.keys(drafts).length > 0;
+  const dirty = editor.dirty || Object.keys(drafts).length > 0;
   useEffect(() => {
     ui.setReviewDirty?.("drawings", dirty || Boolean(instruction.trim()));
     return () => ui.setReviewDirty?.("drawings", false);
@@ -218,24 +184,66 @@ export function SketchPanel() {
   }, [state]);
   const livePreview = !dirty ? incoming.preview : null;
   // A preview is only a display source: the editor and undo history stay local/saved.
-  const document = livePreview?.document ?? editor.document;
+  const sourceDocument = livePreview?.document ?? editor.document;
+  const legacy = sourceDocument?.version === 1;
+  const document = sourceDocument?.version === 2 ? sourceDocument : null;
   const screen = document?.screens.find((item) => item.id === selectedScreen) ?? document?.screens[0];
-  const shape = screen?.shapes.find((item) => item.id === selectedShape);
+  const selectionKey = livePreview ? JSON.stringify(["preview", livePreview.prototypeId, livePreview.generation,
+    livePreview.requestId, livePreview.runId, livePreview.baseRevisionId, livePreview.requirementsDigest]) : loadState.loadedKey;
+  const selectedNodeId = selectedElement?.key === selectionKey && selectedElement?.screenId === screen?.id
+    && screen && Object.hasOwn(screen.ui.nodes, selectedElement.nodeId) ? selectedElement.nodeId : null;
   const remoteChanged = loadState.loadedKey !== null
     && revisionIdentity(loadState.baseRevision) !== revisionIdentity(state.sketch.current);
   const conflict = loadState.conflict || (!action.busy && remoteChanged && dirty);
-  const emptyScreens = !document?.screens.length || document.screens.some((item) => !item.shapes.length);
+  const emptyScreens = !document?.screens.length || document.screens.some((item) => !hasScreenContent(item));
   const writable = canEdit("sketch") && state.provider?.canSubmitAnswers !== false
     && !skipped && !pending && !hasActiveJobs(state) && !action.busy && !loadState.loading
-    && !gesture && loadState.loadedKey !== null && loadState.failedKey !== key && (!remoteChanged || dirty || loadState.conflict);
+    && loadState.loadedKey !== null && loadState.failedKey !== key && (!remoteChanged || dirty || loadState.conflict);
   const worker = ["generate-sketch", "revise-sketch"].includes(state.processing?.action) ? state.processing : null;
+  const workerRequest = state.sketch.requests?.find(item => item.requestId === worker?.requestId);
+  const generating = state.lifecycle.currentStage === "sketch" && !skipped && !state.effortReset
+    && ["starting", "running"].includes(worker?.status);
+  const screenStatus = (item: DslSketchScreen): SketchScreenStatus | null => {
+    if (!generating || dirty) return null;
+    if (!livePreview && worker?.action === "revise-sketch" && hasScreenContent(item)) return "ready";
+    return livePreview?.screenStatuses?.[item.id]
+      ?? (livePreview && hasScreenContent(item) ? "processing" : "waiting");
+  };
+  const pageStatus = screen ? screenStatus(screen) : null;
+  const drawingChanges = (state.changeRequests ?? []).filter(item => item.originStage === "sketch").map(item =>
+    worker?.status === "error" && worker.changeRequestId === item.id ? { ...item,
+      error: worker.message || "The design revision failed. Open request history to review the failure and retry." } : item);
+  const requiredReview = currentChangeReview(state);
+  const savedHistory: RequestHistoryItem[] = drawingChanges.map(item => ({
+    id: `change:${item.id}`, requestId: item.analysisId ?? "", changeRequestId: item.id, at: item.submittedAt,
+    kind: "revise", request: item.message, response: changeRequestResponse(item), status: changeRequestHistoryStatus(item),
+  }));
+  const history = [...savedHistory, ...requestHistory.filter(item => !drawingChanges.some(change =>
+    change.clientRequestId === item.id || change.id === item.changeRequestId || change.analysisId === item.requestId))]
+    .sort((left, right) => Date.parse(right.at) - Date.parse(left.at)).slice(0, 25);
   const workerErrorKey = worker?.status === "error" ? JSON.stringify([worker.requestId ?? "", worker.message ?? "", worker.answer ?? ""]) : "";
   const workerErrorCleared = Boolean(workerErrorKey && clearedWorkerError === workerErrorKey);
   const failedInstruction = worker?.action === "revise-sketch" && worker.status === "error" && typeof worker.answer === "string"
     && !workerErrorCleared ? worker.answer.trim() : "";
   const retryInstruction = retryDraft || failedInstruction;
+  const failedReviewWork = Boolean(requiredReview && state.processing?.status === "error"
+    && state.processing.changeRequestId === requiredReview.id);
   const completionBlocked = hasActiveJobs(state) || action.busy || loadState.loading || dirty || conflict || !available || Boolean(skipped)
     || loadState.loadedKey !== key || loadState.failedKey === key || emptyScreens || !isSketchRevisionApproved(state.sketch);
+
+  useEffect(() => {
+    if (selectedElement && !selectedNodeId) setSelectedElement(null);
+  }, [selectedElement, selectedNodeId]);
+
+  function selectElement(nodeId: string) {
+    if (!screen || !selectionKey) return;
+    if (nodeId && !Object.hasOwn(screen.ui.nodes, nodeId)) {
+      action.setError("The selected UI element is no longer in this view. Select a current component.");
+      return;
+    }
+    setSelectedElement(nodeId ? { key: selectionKey, screenId: screen.id, nodeId } : null);
+    setPickingElement(true);
+  }
 
   function updateLoad(change: Partial<LoadState>) {
     loadRef.current = { ...loadRef.current, ...change };
@@ -245,12 +253,8 @@ export function SketchPanel() {
     draftsRef.current = next;
     setDrafts(next);
   }
-  function updateGesture(next: Gesture | null) {
-    gestureRef.current = next;
-    setGesture(next);
-  }
   function isDirty() {
-    return editor.dirty || Boolean(gestureRef.current) || Object.keys(draftsRef.current).length > 0;
+    return editor.dirty || Object.keys(draftsRef.current).length > 0;
   }
   function hasInvalidFields() {
     return Object.values(draftsRef.current).some((draft) => Boolean(draft.error));
@@ -266,7 +270,7 @@ export function SketchPanel() {
     const snapshot = stateRef.current;
     return mounted.current && context.canEdit("sketch") && snapshot.provider?.canSubmitAnswers !== false
       && !skippedStage(snapshot, "sketch") && !context.pending && !hasActiveJobs(snapshot)
-      && !operation.current && !loadRef.current.loading && !gestureRef.current
+      && !operation.current && !loadRef.current.loading
       && loadRef.current.loadedKey !== null && loadRef.current.failedKey !== loadKey(snapshot)
       && (loadRef.current.loadedKey === loadKey(snapshot) || isDirty() || loadRef.current.conflict);
   }
@@ -281,18 +285,19 @@ export function SketchPanel() {
     setRequestHistory((items) => items.map((item) => item.id === id ? { ...item, ...change } : item));
   }
   function requestLabel(kind: RequestHistoryItem["kind"], value: string) {
-    if (kind === "revise") return value || "Revise drawings";
-    if (kind === "generate") return editor.document ? "Regenerate drawings" : "Generate drawings";
-    if (kind === "approve") return state.stageReview ? "Approve draft drawings" : "Approve drawings and continue";
-    return "Save drawings";
+    if (kind === "revise") return value || "Revise designs";
+    if (kind === "update") return updateRequirementsLabel;
+    if (kind === "generate") return editor.document ? "Regenerate designs" : "Generate designs";
+    if (kind === "approve") return state.stageReview ? "Approve draft" : "Approve designs and continue";
+    return "Save designs";
   }
   function responseLabel(kind: RequestHistoryItem["kind"], result: UiState | undefined) {
-    if (kind === "save") return `Saved ${result?.sketch.current ? `revision ${result.sketch.current.number}` : "drawings"}.`;
-    if (kind === "approve") return state.stageReview ? "Draft drawings approved. Accepted work is unchanged until Apply changes."
-      : "Approved drawings and continued to the next stage.";
+    if (kind === "save") return `Saved ${result?.sketch.current ? `revision ${result.sketch.current.number}` : "designs"}.`;
+    if (kind === "approve") return state.stageReview ? "Draft designs approved. Accepted work is unchanged until Apply changes."
+      : "Approved designs and continued to the next stage.";
     const processing = result?.processing;
     if (processing?.message) return processing.message;
-    return kind === "revise" ? "Revision request queued." : "Drawing generation queued.";
+    return kind === "revise" || kind === "update" ? "Revision request queued." : "Design generation queued.";
   }
 
   useLayoutEffect(() => {
@@ -307,12 +312,13 @@ export function SketchPanel() {
   }, [identityOf(state)]);
   useEffect(() => {
     if (!worker?.requestId) return;
-    const kind = worker.action === "revise-sketch" ? "revise" : "generate";
+    if (worker.changeRequestId && state.changeRequests?.some(item => item.id === worker.changeRequestId)) return;
+    const kind = workerRequest?.kind ?? (worker.action === "revise-sketch" ? "revise" : "generate");
     const requestText = typeof worker.answer === "string" && worker.answer.trim()
-      ? worker.answer.trim() : kind === "revise" ? "Revise drawings" : "Generate drawings";
+      ? worker.answer.trim() : workerRequest?.instruction || (kind === "update" ? updateRequirementsLabel : kind === "revise" ? "Revise designs" : "Generate designs");
     const status = worker.status === "error" ? "error" : worker.status === "success" ? "success" : "running";
-    const response = worker.message || (status === "error" ? "Drawing request failed."
-      : status === "success" ? "Drawing request completed." : "Drawing request is running.");
+    const response = worker.message || (status === "error" ? "Design request failed."
+      : status === "success" ? "Design request completed." : "Design request is running.");
     const id = `worker:${worker.requestId}`;
     setRequestHistory((items) => {
       const existing = items.find((item) => item.requestId === worker.requestId || item.id === id);
@@ -327,7 +333,7 @@ export function SketchPanel() {
       };
       return [item, ...items].slice(0, 25);
     });
-  }, [worker?.requestId, worker?.action, worker?.status, worker?.message, worker?.answer]);
+  }, [worker?.requestId, worker?.action, worker?.status, worker?.message, worker?.answer, worker?.changeRequestId, workerRequest, state.changeRequests]);
   useEffect(() => {
     mounted.current = true;
     const beforeUnload = (event: BeforeUnloadEvent) => {
@@ -357,19 +363,19 @@ export function SketchPanel() {
     try {
       const response = await fetch(latest.current.apiUrl?.("/api/sketch") ?? "/api/sketch", { cache: "no-store", signal: abort.signal });
       const result = await response.json() as { sketch?: SketchState; document?: unknown; error?: string };
-      if (!response.ok) throw new Error(result.error || "Could not load drawings.");
+      if (!response.ok) throw new Error(result.error || "Could not load designs.");
       if (!mounted.current || sequence !== request.current || startKey !== loadKey(stateRef.current)) return;
       if (!result.sketch || !Object.hasOwn(result.sketch, "current")
         || revisionIdentity(result.sketch.current) !== revisionIdentity(stateRef.current.sketch.current)) {
-        throw new Error("The saved drawing changed while loading. Reload the latest state and drawings.");
+        throw new Error("The saved design changed while loading. Reload the latest state and designs.");
       }
-      if (!Object.hasOwn(result, "document")) throw new Error("The drawing response did not include a document.");
+      if (!Object.hasOwn(result, "document")) throw new Error("The design response did not include a document.");
       if (isDirty() && !discard) {
         updateLoad({ conflict: true });
         return;
       }
-      if (result.sketch.current && !result.document) throw new Error("The saved drawing document is unavailable.");
-      if (!result.sketch.current && result.document) throw new Error("The drawing document has no saved revision identity.");
+      if (result.sketch.current && !result.document) throw new Error("The saved design document is unavailable.");
+      if (!result.sketch.current && result.document) throw new Error("The design document has no saved revision identity.");
       editor.load(result.document ? validateSketchDocument(result.document) : null);
       updateDrafts({});
       updateLoad({
@@ -380,7 +386,7 @@ export function SketchPanel() {
     } catch (cause) {
       if (!mounted.current || sequence !== request.current || startKey !== loadKey(stateRef.current)) return;
       updateLoad({ failedKey: startKey });
-      action.setError(abort.signal.aborted ? "Loading drawings timed out. Reload saved drawings to retry." : errorMessage(cause));
+      action.setError(abort.signal.aborted ? "Loading designs timed out. Reload saved designs to retry." : errorMessage(cause));
     } finally {
       window.clearTimeout(timeout);
       if (mounted.current && sequence === request.current) updateLoad({ loading: false });
@@ -398,10 +404,13 @@ export function SketchPanel() {
     if (!loadRef.current.conflict && loadRef.current.loadedKey !== key && loadRef.current.failedKey !== key) void load();
   }, [key, available, Boolean(skipped), action.busy, loadState.loading, dirty, loadState.conflict]);
 
-  function edit(change: (draft: SketchDocument) => void, field?: FieldEdit) {
+  function edit(change: (draft: DslSketchDocument) => void, field?: FieldEdit) {
     if (!canWrite()) return false;
     try {
-      editor.edit(change);
+      editor.edit((draft) => {
+        if (draft.version !== 2) throw new Error("Regenerate legacy designs as UI DSL before editing.");
+        change(draft);
+      });
       if (field) {
         const next = { ...draftsRef.current };
         if (field.keepInput) next[field.key] = { value: field.value, error: "" };
@@ -418,16 +427,11 @@ export function SketchPanel() {
       return false;
     }
   }
-  function editScreen(change: (item: SketchScreen) => void, field?: FieldEdit) {
+  function editScreen(change: (item: DslSketchScreen) => void, field?: FieldEdit) {
     if (!screen) return false;
     return edit((draft) => {
       const item = draft.screens.find((item) => item.id === screen.id);
       if (item) change(item);
-    }, field);
-  }
-  function editShape(change: (item: SketchShape, owner: SketchScreen) => SketchShape, field?: FieldEdit) {
-    return editScreen((owner) => {
-      owner.shapes = owner.shapes.map((item) => item.id === selectedShape ? change(item, owner) : item);
     }, field);
   }
   function undo() {
@@ -445,22 +449,14 @@ export function SketchPanel() {
     action.setError("");
     redraw((version) => version + 1);
   }
-  function deleteShape() {
-    if (!shape) return;
-    if (editScreen((owner) => { owner.shapes = owner.shapes.filter((item) => item.id !== shape.id); })) {
-      updateDrafts(Object.fromEntries(Object.entries(draftsRef.current).filter(([key]) => !key.startsWith(`shape:${screen!.id}:${shape.id}:`))));
-      setSelectedShape("");
-    }
-  }
-
   function ensureEffort(identity: string) {
     if (!mounted.current || identity !== identityOf(stateRef.current)) {
-      throw new Error("The effort changed. Review drawings before continuing.");
+      throw new Error("The effort changed. Review designs before continuing.");
     }
   }
   function ensureRevision(revision: SketchRevision | null) {
     if (revisionIdentity(revision) !== revisionIdentity(stateRef.current.sketch.current)) {
-      throw new Error("The drawing changed. Your local edits are retained; reload drawings before retrying.");
+      throw new Error("The design changed. Your local edits are retained; reload designs before retrying.");
     }
   }
   function ensureSketchWritable() {
@@ -468,21 +464,21 @@ export function SketchPanel() {
     if (snapshot.lifecycle.currentStage !== "sketch" || snapshot.lifecycle.completedStages.includes("sketch")
       || skippedStage(snapshot, "sketch") || snapshot.provider?.canSubmitAnswers === false || snapshot.effortReset
       || hasActiveJobs(snapshot)) {
-      throw new Error("Sketch is no longer editable. Review the current stage and provider before retrying.");
+      throw new Error("Designs is no longer editable. Review the current stage and provider before retrying.");
     }
   }
   async function post(endpoint: string, body: unknown, identity: string) {
     const result = await latest.current.post(endpoint, body);
     ensureEffort(identity);
     if (!result?.sketch || identityOf(result) !== identity) {
-      throw new Error("The drawing update could not be confirmed. Reload state before retrying.");
+      throw new Error("The design update could not be confirmed. Reload state before retrying.");
     }
     if (result.revision >= stateRef.current.revision) stateRef.current = result;
     return result;
   }
   async function save(identity: string) {
     if (!editor.document) throw new Error("Add a screen before saving.");
-    if (hasInvalidFields()) throw new Error("Complete the invalid drawing fields before saving drawings.");
+    if (hasInvalidFields()) throw new Error("Complete the invalid design fields before saving designs.");
     ensureRevision(loadRef.current.baseRevision);
     const savedDocument = validateSketchDocument(editor.document, acceptedDecisionIds(stateRef.current));
     const result = await post("/api/sketch", {
@@ -495,18 +491,33 @@ export function SketchPanel() {
     updateDrafts({});
     updateLoad({ baseRevision: { ...revision }, loadedKey: loadKey(stateRef.current), failedKey: null, conflict: false });
   }
-  async function submit(kind: "generate" | "save" | "approve" | "revise", retry?: string) {
+  async function submit(kind: RequestHistoryItem["kind"], retry?: string) {
     if (!canWrite() || hasConflict() || hasInvalidFields()) return;
+    if (kind === "revise" && stateRef.current.sketch.status === "stale") {
+      action.setError("Update designs from latest requirements before sending a design revision. Your message is retained.");
+      return;
+    }
+    if (kind === "revise" && retry === undefined && currentChangeReview(stateRef.current)) {
+      action.setError("Resolve the current review before sending another change. Your message is retained.");
+      return;
+    }
     const requestedInstruction = retry ?? instructionRef.current.trim();
+    const retryContext = retry !== undefined && worker?.action === "revise-sketch" && worker.status === "error"
+      && typeof worker.answer === "string" && requestedInstruction === worker.answer.trim()
+      ? worker.sketchContext : null;
     if (kind === "revise" && (!editor.document || !requestedInstruction)) return;
-    if (kind === "generate" && editor.dirty) {
-      action.setError("Save drawings before regenerating. Local edits have been kept.");
+    if (kind === "update" && editor.document?.version !== 2) {
+      action.setError("An update needs existing UI DSL designs. Generate them first or explicitly regenerate legacy designs.");
+      return;
+    }
+    if ((kind === "generate" || kind === "update") && editor.dirty) {
+      action.setError("Save designs before updating or regenerating. Local edits have been kept.");
       return;
     }
     if (kind === "approve" && (emptyScreens || stateRef.current.sketch.status === "stale")) return;
     const identity = identityOf(stateRef.current);
     const startRevision = loadRef.current.baseRevision;
-    const historyId = `${Date.now()}-${kind}`;
+    const historyId = crypto.randomUUID();
     recordHistory({
       id: historyId, requestId: "", kind, at: new Date().toISOString(),
       request: requestLabel(kind, requestedInstruction),
@@ -519,8 +530,11 @@ export function SketchPanel() {
     operation.current = true;
     return action.run(async () => {
       try {
-        if (kind === "generate" && editor.document
-          && !await latest.current.confirm("Generate a new drawing revision? Your saved revision remains in history.", "Regenerate drawings")) {
+        if ((kind === "generate" || kind === "update") && editor.document
+          && !await latest.current.confirm(kind === "update"
+            ? "Update the existing designs for the latest accepted requirements and DAG? Keep reviewed layouts and refinements except where those changes require an adjustment. The updated draft will still need your review and approval."
+            : "Regenerate all designs from scratch? Reviewed layouts and refinements may be replaced. Your saved revision remains in history.",
+          kind === "update" ? updateRequirementsLabel : "Regenerate designs")) {
           updateHistory(historyId, { response: "Request cancelled.", status: "success" });
           return;
         }
@@ -533,32 +547,38 @@ export function SketchPanel() {
         ensureSketchWritable();
         if (kind === "approve") {
           const revision = loadRef.current.baseRevision;
-          if (!revision || !editor.document) throw new Error("Save a drawing revision before approval.");
+          if (!revision || !editor.document) throw new Error("Save a design revision before approval.");
           const approvalDocument = clone(editor.document);
           const previews = [];
           for (const item of approvalDocument.screens) previews.push(await renderSketchPng(item));
           ensureEffort(identity);
           ensureRevision(revision);
           ensureSketchWritable();
-          if (stateRef.current.sketch.status === "stale") throw new Error("Requirements changed during PNG export. Review drawings before approving.");
+          if (stateRef.current.sketch.status === "stale") throw new Error("Requirements changed during PNG export. Review designs before approving.");
           const result = await post("/api/sketch", { action: "approve", expectedRevision: revision.id, previews }, identity);
           ensureRevision(revision);
           if (!isSketchRevisionApproved(result.sketch) || !isSketchRevisionApproved(stateRef.current.sketch)
             || result.sketch.approved?.revisionId !== revision.id) {
-            throw new Error("Drawing approval could not be confirmed.");
+            throw new Error("Design approval could not be confirmed.");
           }
           ensureSketchWritable();
           if (!stateRef.current.stageReview) await post("/api/stage/complete", { stageId: "sketch" }, identity);
           updateHistory(historyId, { response: responseLabel("approve", stateRef.current), status: "success" });
+          return result;
         } else if (kind !== "save") {
           const result = await post("/api/sketch", {
             action: kind, expectedRevision: loadRef.current.baseRevision?.id ?? null,
-            ...(kind === "revise" ? { instruction: requestedInstruction } : {}),
+            ...(kind === "revise" ? { instruction: requestedInstruction, clientRequestId: historyId,
+              ...(retryContext ? { sketchContext: retryContext } : screen && loadRef.current.baseRevision ? { sketchContext: {
+                revisionId: loadRef.current.baseRevision.id, screenId: screen.id, nodeId: selectedNodeId,
+              } } : {}) } : {}),
           }, identity);
+          const change = result.changeRequests?.find(item => item.clientRequestId === historyId);
           updateHistory(historyId, {
+            ...(change ? { changeRequestId: change.id } : {}),
             requestId: typeof result.processing?.requestId === "string" ? result.processing.requestId : "",
-            response: responseLabel(kind, result),
-            status: ["error", "failed"].includes(result.processing?.status) ? "error" : "running",
+            response: change ? changeRequestResponse(change) : responseLabel(kind, result),
+            status: change ? changeRequestHistoryStatus(change) : ["error", "failed"].includes(result.processing?.status) ? "error" : "running",
           });
           if (kind === "revise") {
             setRetryDraft("");
@@ -582,13 +602,13 @@ export function SketchPanel() {
   }
 
   async function reload() {
-    if (operation.current || loadRef.current.loading || gestureRef.current || hasActiveJobs(stateRef.current)) return;
+    if (operation.current || loadRef.current.loading || hasActiveJobs(stateRef.current)) return;
     const identity = identityOf(stateRef.current);
     operation.current = true;
     await action.run(async () => {
       try {
         if (isDirty() && !await latest.current.confirm(
-          "Discard your unsaved drawing edits and load the latest saved revision?", "Reload saved drawings")) return;
+          "Discard your unsaved design edits and load the latest saved revision?", "Reload saved designs")) return;
         ensureEffort(identity);
         await load(true);
       } finally {
@@ -597,92 +617,8 @@ export function SketchPanel() {
     });
   }
 
-  function position(event: PointerEvent<HTMLDivElement>, owner: SketchScreen) {
-    const rect = board.current?.querySelector("svg")?.getBoundingClientRect();
-    if (!rect || !rect.width || !rect.height) throw new Error("The drawing viewport is unavailable. Try again when the Sketch panel is visible.");
-    return {
-      x: clamp((event.clientX - rect.left) * owner.width / rect.width, owner.width),
-      y: clamp((event.clientY - rect.top) * owner.height / rect.height, owner.height),
-    };
-  }
-  function releasePointer(id: number) {
-    if (board.current?.hasPointerCapture(id)) board.current.releasePointerCapture(id);
-  }
-  function cancelGesture() {
-    const current = gestureRef.current;
-    updateGesture(null);
-    if (current) releasePointer(current.id);
-  }
-  function pointerDown(event: PointerEvent<HTMLDivElement>) {
-    if (!canWrite() || !screen || event.button !== 0) return;
-    const element = event.target as Element;
-    const id = element.closest("[data-shape-id]")?.getAttribute("data-shape-id")
-      ?? element.closest("[data-point-shape]")?.getAttribute("data-point-shape");
-    const target = screen.shapes.find((item) => item.id === id);
-    if ((!drawing && !target) || (drawing && screen.shapes.length >= 100)) return;
-    event.preventDefault();
-    try {
-      const point = position(event, screen);
-      board.current!.setPointerCapture(event.pointerId);
-      board.current!.focus();
-      setSelectedShape(drawing ? "" : target!.id);
-      const handle = !drawing && target?.kind === "path" ? element.closest("[data-point-index]") : null;
-      updateGesture({
-        id: event.pointerId, ...point, screen: clone(screen), shape: drawing ? null : clone(target!),
-        points: [point], moved: null, pointIndex: handle ? Number(handle.getAttribute("data-point-index")) : null,
-      });
-    } catch (cause) {
-      action.setError(errorMessage(cause));
-    }
-  }
-  function pointerMove(event: PointerEvent<HTMLDivElement>) {
-    const current = gestureRef.current;
-    if (!current || current.id !== event.pointerId) return;
-    try {
-      const point = position(event, current.screen);
-      if (current.shape) {
-        if (current.pointIndex !== null) {
-          updateGesture({ ...current, moved: setPathPoints(current.shape,
-            current.shape.points.map((original, index) => index === current.pointIndex ? {
-              x: clamp(original.x + point.x - current.x, current.screen.width),
-              y: clamp(original.y + point.y - current.y, current.screen.height),
-            } : original)) });
-        } else {
-          const bounds = shapeBounds(current.shape);
-          updateGesture({ ...current, moved: setShapeBounds(current.screen, current.shape, {
-            x: bounds.x + point.x - current.x, y: bounds.y + point.y - current.y,
-          }) });
-        }
-      } else if (current.points.length < 512) {
-        const last = current.points.at(-1)!;
-        if (Math.hypot(point.x - last.x, point.y - last.y) >= 2) updateGesture({ ...current, points: [...current.points, point] });
-      }
-    } catch (cause) {
-      cancelGesture();
-      action.setError(errorMessage(cause));
-    }
-  }
-  function pointerUp(event: PointerEvent<HTMLDivElement>) {
-    if (gestureRef.current?.id !== event.pointerId) return;
-    pointerMove(event);
-    const current = gestureRef.current;
-    if (!current) return;
-    updateGesture(null);
-    releasePointer(current.id);
-    if (!canWrite()) return;
-    if (current.moved) editShape(() => current.moved!);
-    else if (!current.shape && current.points.length >= 2) {
-      const item = freehandShape(current.screen, current.points);
-      if (editScreen((owner) => { owner.shapes.push(item); })) setSelectedShape(item.id);
-    }
-  }
   function keydown(event: KeyboardEvent<HTMLElement>) {
-    if ((event.target as Element).closest("input, textarea, select, [contenteditable=true]")) return;
-    if (event.key === "Escape") {
-      cancelGesture();
-      setDrawing(false);
-      return;
-    }
+    if ((event.target as Element).closest("input, textarea, select, [contenteditable=true], .dsl-view")) return;
     if (!canWrite()) return;
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
       event.preventDefault();
@@ -690,57 +626,33 @@ export function SketchPanel() {
     } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") {
       event.preventDefault();
       redo();
-    } else if (shape && (event.target as Element).closest("#sketch-board, #sketch-shapes")) {
-      if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)
-        && (event.target as Element).closest("#sketch-board")) {
-        event.preventDefault();
-        const step = event.shiftKey ? 10 : 1;
-        editShape((item, owner) => {
-          const bounds = shapeBounds(item);
-          return setShapeBounds(owner, item, {
-            x: bounds.x + (event.key === "ArrowRight" ? step : event.key === "ArrowLeft" ? -step : 0),
-            y: bounds.y + (event.key === "ArrowDown" ? step : event.key === "ArrowUp" ? -step : 0),
-          });
-        });
-      } else if (event.key === "Delete" || event.key === "Backspace") {
-        event.preventDefault();
-        deleteShape();
-      }
     }
   }
 
-  const status = skipped ? "Sketch disabled: " + skipped.reason
+  const status = skipped ? "Designs disabled: " + skipped.reason
     : incoming.preview ? dirty
-      ? "Live preview pending — local edits are preserved and remain visible. Incoming drawings are not saved or approved."
+      ? "Live preview pending — local edits are preserved and remain visible. Incoming designs are not saved or approved."
       : `Live preview · update ${incoming.preview.sequence} — not saved or approved. You can browse screens while AI draws.`
-    : loadState.loading || (available && !dirty && loadState.loadedKey !== key && loadState.failedKey !== key) ? "Loading saved drawings…"
-    : action.busy ? "Saving drawings or preparing approval…"
-    : worker?.status === "running" || worker?.status === "starting" ? worker.message || "AI is preparing a drawing revision. Existing drawings are retained."
+    : loadState.loading || (available && !dirty && loadState.loadedKey !== key && loadState.failedKey !== key) ? "Loading saved designs…"
+    : action.busy ? "Saving designs or preparing approval…"
+    : worker?.status === "running" || worker?.status === "starting" ? worker.message || "AI is preparing a design revision. Existing designs are retained."
     : conflict ? "Conflict: a newer saved revision exists. Your local edits are retained; load latest explicitly to discard them."
-    : state.provider?.canSubmitAnswers === false ? guidance("edit or approve drawings")
-    : !canEdit("sketch") ? "Read only. Open or reopen Sketch to edit these drawings."
-    : state.sketch.status === "stale" ? "Stale drawings: requirements changed. Regenerate or revise and review before approval."
-    : document && emptyScreens ? "Add at least one shape to every screen before approving. Empty screens can be saved as drafts."
-    : dirty ? "Unsaved drawings — save before leaving this browser. Switching tabs keeps your edits."
-    : isSketchRevisionApproved(state.sketch) ? "Drawings approved. Finish Sketch to continue if the stage has not advanced."
+    : state.provider?.canSubmitAnswers === false ? guidance("edit or approve designs")
+    : !canEdit("sketch") ? "Read only. Open or reopen Designs to edit these designs."
+    : state.sketch.status === "stale" ? "Stale designs: requirements changed. Update designs from the latest requirements, then review and approve."
+    : document && emptyScreens ? "Request UI components for every screen before approving. Empty screens can be saved as drafts."
+    : dirty ? "Unsaved designs — save before leaving this browser. Switching tabs keeps your edits."
+    : isSketchRevisionApproved(state.sketch) ? "Designs approved. Finish Designs to continue if the stage has not advanced."
     : document ? ""
-    : "Generate drawings from the requirements DAG, or add a screen to draw your own.";
+    : "Generate UI views from the requirements DAG, then describe changes below.";
   const message = action.error || incoming.error || Object.values(drafts).find((draft) => draft.error)?.error
-    || (worker?.status === "error" && !workerErrorCleared ? worker.message || "Drawing generation failed. Retry explicitly." : "");
+    || (worker?.status === "error" && !workerErrorCleared ? worker.message || "Design generation failed. Retry explicitly." : "");
   const activeError = Boolean(message || retryInstruction);
   const boardHelp = livePreview
-    ? "Live preview is read only. Browse screens and shapes, or zoom while drawing continues. Nothing here is saved or approved yet."
-    : drawing ? "Freehand: drag on the board to draw. Select Freehand again to stop." : "";
-  const preview = screen && {
-    ...screen,
-    shapes: [
-      ...screen.shapes.map((item) => gesture?.moved?.id === item.id ? gesture.moved : item),
-      ...(gesture && !gesture.shape && gesture.points.length >= 2 ? [freehandShape(screen, gesture.points)] : []),
-    ],
-  };
-  const shapeView = shape ? { ...shape, ...shapeBounds(shape) } : null;
+    ? "Live UI DSL preview. Inspect the structure or select components while generation continues. This selection is not a saved change target."
+    : pickingElement ? "Select an element in the view or Structure, then describe the change. Use Interact to try the controls."
+    : "UI DSL preview. Controls are local examples, not connected services. Describe changes below.";
   const screenFieldKey = (field: string) => `screen:${screen?.id}:${field}`;
-  const shapeFieldKey = (field: string) => `shape:${screen?.id}:${shape?.id}:${field}`;
   const fieldValue = (key: string, value: string | number | undefined) => drafts[key]?.value ?? String(value ?? "");
   const fieldInvalid = (key: string) => Boolean(drafts[key]?.error);
   const canvasPreset = SKETCH_SIZE_PRESETS.find((size) => size.width === screen?.width && size.height === screen?.height);
@@ -752,18 +664,42 @@ export function SketchPanel() {
       event.currentTarget.form?.requestSubmit();
     }
   };
+  const approved = isSketchRevisionApproved(state.sketch) && !dirty && !conflict;
+  const approvalDisabled = !writable || emptyScreens || conflict || state.sketch.status === "stale" || invalidFields || failedReviewWork;
+  useEffect(() => {
+    if (!state.stageReview || !onDraftApprovalChange) return;
+    onDraftApprovalChange({
+      ready: !approvalDisabled,
+      approve: async () => isSketchRevisionApproved(stateRef.current.sketch) && !isDirty() && !hasConflict()
+        ? stateRef.current : submit("approve"),
+    });
+    return () => onDraftApprovalChange(null);
+  }, [onDraftApprovalChange, approvalDisabled, state.revision, state.stageReview]);
+  const approval = state.stageReview ? null : <div className="sketch-approval-actions">
+    <button id="sketch-approve" className="plan-button" type="button"
+      hidden={approved}
+      disabled={approvalDisabled}
+      onClick={() => void submit("approve")}><Check size={14} aria-hidden="true" />Approve designs and continue</button>
+    {document && approved && <span role="status">Saved designs approved</span>}
+  </div>;
+  const updateAction = state.sketch.status === "stale" && canEdit("sketch") && !legacy
+    ? <button id="sketch-update-requirements" className="plan-button" type="button" disabled={!writable || !document || conflict || dirty}
+      title={dirty ? "Save or undo your local design edits before updating from requirements." : updateRequirementsLabel}
+      onClick={() => void submit("update")}><Sparkles size={15} aria-hidden="true" />{updateRequirementsLabel}</button> : null;
 
   return <section className="sketch-stage" onKeyDown={keydown}>
-    <div className="sketch-heading sketch-header-actions" role="group" aria-label="Sketch actions" aria-describedby="sketch-status">
+    {renderApproval ? renderApproval(approval) : approval}
+    {renderReviewActions?.(updateAction)}
+    <div className="sketch-heading sketch-header-actions" role="group" aria-label="Design tools" aria-describedby="sketch-status">
       <button id="sketch-add-screen" className="sketch-icon-button" type="button" title="Add screen" aria-label="Add screen"
-        disabled={!writable || (document?.screens.length ?? 0) >= 8 || !acceptedDecisionIds(state).length}
+        disabled={!writable || legacy || (document?.screens.length ?? 0) >= 8 || !acceptedDecisionIds(state).length}
         onClick={() => {
           let created = "";
           if (edit((draft) => {
-            const item = createScreen(draft, acceptedDecisionIds(stateRef.current).slice(0, 200));
+            const item = createDslScreen(draft, acceptedDecisionIds(stateRef.current).slice(0, 200));
             draft.screens.push(item);
             created = item.id;
-          })) { setSelectedScreen(created); setSelectedShape(""); }
+          })) setSelectedScreen(created);
         }}><Plus size={16} aria-hidden="true" /></button>
       <button id="sketch-undo" className="sketch-icon-button" type="button" title="Undo" aria-label="Undo"
         disabled={!writable || (!editor.canUndo && !invalidFields)} onClick={undo}>
@@ -772,98 +708,90 @@ export function SketchPanel() {
         disabled={!writable || !editor.canRedo || invalidFields} onClick={redo}>
         <Redo2 size={16} aria-hidden="true" /></button>
       <button id="sketch-reload" className="sketch-icon-button" type="button"
-        title={conflict ? "Discard local edits & load latest" : "Reload saved drawings"}
-        aria-label={conflict ? "Discard local edits & load latest" : "Reload saved drawings"}
-        disabled={action.busy || loadState.loading || Boolean(gesture) || hasActiveJobs(state) || !state.sketch}
+        title={conflict ? "Discard local edits & load latest" : "Reload saved designs"}
+        aria-label={conflict ? "Discard local edits & load latest" : "Reload saved designs"}
+        disabled={action.busy || loadState.loading || hasActiveJobs(state) || !state.sketch}
         onClick={() => void reload()}><RefreshCw size={16} aria-hidden="true" /></button>
       <button id="sketch-generate" className="sketch-icon-button" type="button"
-        title={document ? "Regenerate drawings" : "Generate drawings"} aria-label={document ? "Regenerate drawings" : "Generate drawings"}
+        title={sourceDocument ? "Regenerate designs" : "Generate designs"} aria-label={sourceDocument ? "Regenerate designs" : "Generate designs"}
         disabled={!writable || conflict || dirty} onClick={() => void submit("generate")}>
         <Sparkles size={16} aria-hidden="true" />
       </button>
-      <button id="sketch-save" className="sketch-icon-button" type="button" title="Save drawings" aria-label="Save drawings"
+      <button id="sketch-save" className="sketch-icon-button" type="button" title="Save designs" aria-label="Save designs"
         disabled={!writable || !document || !editor.dirty && !(state.stageReview && state.sketch.status === "stale") || conflict || invalidFields} onClick={() => void submit("save")}>
         <Save size={16} aria-hidden="true" />
       </button>
-      <button id="sketch-approve" className="plan-button" type="button"
-        hidden={isSketchRevisionApproved(state.sketch) && !dirty && !conflict}
-        disabled={!writable || emptyScreens || conflict || state.sketch.status === "stale" || invalidFields}
-        onClick={() => void submit("approve")}><Check size={14} aria-hidden="true" />{state.stageReview ? "Approve draft drawings" : "Approve drawings and continue"}</button>
-      {isSketchRevisionApproved(state.sketch) && !dirty && !conflict && <span role="status">Saved drawings approved</span>}
     </div>
-    <p id="sketch-status" className={incoming.preview || loadState.loading || action.busy || conflict || dirty || state.sketch.status === "stale" ? "muted" : "visually-hidden"} role="status" aria-live="polite" hidden={!status}>{status}</p>
-    <p id="sketch-empty" className="sketch-empty" hidden={Boolean(screen)}
-      data-status-help="Generate a first draft or add a screen to begin.">No drawings yet.</p>
+    <div id="sketch-status" className={incoming.preview || loadState.loading || action.busy || conflict || dirty || state.sketch.status === "stale" ? "muted" : "visually-hidden"} role="status" aria-live="polite" hidden={!status || generating}>
+      <span>{status}</span>
+      {!renderReviewActions && updateAction}
+    </div>
+    {generating && <SketchGenerationStatus key={JSON.stringify([state.prototypeId, state.generation, worker.requestId])}
+      processing={worker} preview={incoming.preview} hasScreen={Boolean(screen)} dirty={dirty} />}
+    <p id="sketch-empty" className="sketch-empty" hidden={Boolean(screen) || generating}
+      data-status-help="Generate a first draft or add a screen to begin.">{legacy
+        ? "These designs use the retired geometry format. Reopen Designs if needed, then choose Regenerate designs to create UI DSL views. Saved files and approval history will remain intact."
+        : "No UI views yet. Generate designs to begin."}</p>
     <div id="sketch-workspace" className="sketch-workspace" hidden={!screen}>
-      <aside className="sketch-sidebar" aria-label="Sketch screens and properties">
+      <aside className="sketch-sidebar" aria-label="Design screens and properties">
         <h3>Screens</h3>
         <nav id="sketch-screens" className="sketch-list" aria-label="Screens">
-          {document?.screens.map((item) => <button key={item.id} type="button" disabled={Boolean(gesture)}
-            data-ui-key={`sketch-screen:${item.id}`} aria-pressed={item.id === screen?.id}
-            onClick={() => { setSelectedScreen(item.id); setSelectedShape(""); }}><Monitor size={15} aria-hidden="true" /><span>{item.title || item.id}</span></button>)}
+          {document?.screens.map((item) => {
+            const progress = screenStatus(item);
+            return <button key={item.id} type="button"
+              data-ui-key={`sketch-screen:${item.id}`} aria-pressed={item.id === screen?.id}
+              data-screen-status={progress ?? undefined}
+              onClick={() => setSelectedScreen(item.id)}>
+              {progress ? <ScreenStatusIcon status={progress} /> : <Monitor size={15} aria-hidden="true" />}
+              <span className="sketch-screen-label"><span>{item.title || item.id}</span>
+                {progress && <small>{screenStatusLabels[progress]}</small>}
+              </span>
+            </button>;
+          })}
         </nav>
-        <label htmlFor="sketch-title">Screen title</label>
-        <input id="sketch-title" maxLength={500} disabled={!writable || !screen}
-          value={fieldValue(screenFieldKey("title"), screen?.title)} aria-invalid={fieldInvalid(screenFieldKey("title"))}
-          onChange={(event) => editScreen((item) => { item.title = event.target.value; }, { key: screenFieldKey("title"), value: event.target.value })} />
-        {(["purpose", "notes"] as const).map((field) => <div key={field}>
-          <label htmlFor={`sketch-${field}`}>{field === "purpose" ? "Purpose" : "Notes"}</label>
-          <textarea id={`sketch-${field}`} rows={2} maxLength={field === "purpose" ? 500 : 4000}
-            disabled={!writable || !screen} value={fieldValue(screenFieldKey(field), screen?.[field])}
-            aria-invalid={fieldInvalid(screenFieldKey(field))}
-            onChange={(event) => editScreen((item) => { item[field] = event.target.value; }, { key: screenFieldKey(field), value: event.target.value })} />
-        </div>)}
-        <label htmlFor="sketch-decisions">Requirement decision IDs</label>
-        <input id="sketch-decisions" placeholder="Comma-separated IDs" disabled={!writable || !screen}
-          value={fieldValue(screenFieldKey("decisions"), screen?.decisionIds.join(", "))}
-          aria-invalid={fieldInvalid(screenFieldKey("decisions"))}
-          onBlur={() => finishField(screenFieldKey("decisions"))}
-          onChange={(event) => editScreen((item) => {
-            item.decisionIds = event.target.value.split(",").map((id) => id.trim()).filter(Boolean);
-          }, { key: screenFieldKey("decisions"), value: event.target.value, keepInput: true })} />
-        <details className="sketch-shape-details">
-          <summary data-status-help="Use Up and Down to select shapes, or Home and End to jump through the list. Use the canvas to nudge the selected shape.">
-            <ChevronDown size={14} aria-hidden="true" /><span>Shapes</span>
-            <span className="section-count">{screen?.shapes.length ?? 0}</span>
-          </summary>
-          <div id="sketch-shapes" className="sketch-tree" role="tree" aria-label="Screen shapes"
-            onKeyDown={(event) => {
-              if (event.altKey || event.ctrlKey || event.metaKey
-                || !["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-              event.preventDefault();
-              event.stopPropagation();
-              if (event.key === "ArrowLeft" || event.key === "ArrowRight") return;
-              const rows = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="treeitem"]:not(:disabled)'));
-              const index = rows.findIndex((row) => row === event.target);
-              const next = event.key === "Home" ? 0 : event.key === "End" ? rows.length - 1
-                : Math.max(0, Math.min(rows.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)));
-              rows[next]?.focus({ preventScroll: true });
-              rows[next]?.scrollIntoView({ block: "nearest", inline: "nearest" });
-            }}>
-            {screen?.shapes.map((item) => {
-              const ShapeIcon = shapeTools.find((tool) => tool.kind === item.kind
-                && (item.kind !== "path" || tool.curve === item.curve))?.Icon || Pencil;
-              const kind = item.kind === "path" ? curveLabels[item.curve ?? "linear"] : item.kind;
-              const label = item.text.trim() || item.id;
-              return <button key={item.id} type="button" className="sketch-tree-item" role="treeitem" disabled={Boolean(gesture)}
-                data-ui-key={`sketch-shape:${item.id}`} aria-selected={item.id === selectedShape} aria-level={1}
-                aria-label={`${kind}: ${label}`} title={`${kind} · ${label}${label !== item.id ? " · " + item.id : ""}`}
-                tabIndex={item.id === (shape?.id || screen.shapes[0]?.id) ? 0 : -1}
-                onFocus={() => { setSelectedShape(item.id); setDrawing(false); }}
-                onClick={() => { setSelectedShape(item.id); setDrawing(false); }}>
-                <ShapeIcon size={16} aria-hidden="true" /><span className="sketch-tree-label">{label}</span>
-              </button>;
-            })}
-          </div>
+        <details className="sketch-screen-details">
+          <summary>Screen details</summary>
+          <label htmlFor="sketch-title">Screen title</label>
+          <input id="sketch-title" maxLength={500} disabled={!writable || !screen}
+            value={fieldValue(screenFieldKey("title"), screen?.title)} aria-invalid={fieldInvalid(screenFieldKey("title"))}
+            onChange={(event) => editScreen((item) => { item.title = event.target.value; }, { key: screenFieldKey("title"), value: event.target.value })} />
+          {(["purpose", "notes"] as const).map((field) => <div key={field}>
+            <label htmlFor={`sketch-${field}`}>{field === "purpose" ? "Purpose" : "Notes"}</label>
+            <textarea id={`sketch-${field}`} rows={2} maxLength={field === "purpose" ? 500 : 4000}
+              disabled={!writable || !screen} value={fieldValue(screenFieldKey(field), screen?.[field])}
+              aria-invalid={fieldInvalid(screenFieldKey(field))}
+              onChange={(event) => editScreen((item) => { item[field] = event.target.value; }, { key: screenFieldKey(field), value: event.target.value })} />
+          </div>)}
+          <label htmlFor="sketch-decisions">Requirement decision IDs</label>
+          <input id="sketch-decisions" placeholder="Comma-separated IDs" disabled={!writable || !screen}
+            value={fieldValue(screenFieldKey("decisions"), screen?.decisionIds.join(", "))}
+            aria-invalid={fieldInvalid(screenFieldKey("decisions"))}
+            onBlur={() => finishField(screenFieldKey("decisions"))}
+            onChange={(event) => editScreen((item) => {
+              item.decisionIds = event.target.value.split(",").map((id) => id.trim()).filter(Boolean);
+            }, { key: screenFieldKey("decisions"), value: event.target.value, keepInput: true })} />
         </details>
+        {screen && <DslStructure key={JSON.stringify([selectionKey, screen.id])}
+          screen={screen} selectedId={selectedNodeId} onSelect={selectElement} />}
       </aside>
       <div className="sketch-main" data-side-pane-open={sidePane !== ""}>
         <SketchViewport context={JSON.stringify([identityOf(state), screen?.id])} width={screen?.width ?? 960}
-          height={screen?.height ?? 640} blocked={!screen || Boolean(gesture)} viewActions={
+          height={screen?.height ?? 640} blocked={!screen} tools={
+            <div className="sketch-view-mode" role="group" aria-label="UI preview mode">
+              <button id="sketch-pick-element" className="sketch-icon-button" type="button" aria-pressed={pickingElement} disabled={!screen}
+                aria-label="Select elements" title="Select elements" onClick={() => setPickingElement(true)}>
+                <MousePointer2 size={15} aria-hidden="true" />
+              </button>
+              <button id="sketch-interact" className="sketch-icon-button" type="button" aria-pressed={!pickingElement} disabled={!screen}
+                aria-label="Interact with preview" title="Interact with preview controls" onClick={() => setPickingElement(false)}>
+                <Hand size={15} aria-hidden="true" />
+              </button>
+            </div>
+          } viewActions={
             <ToggleGroup.Root id="sketch-pane-selector" className="sketch-pane-controls" type="single"
-              value={sidePane} aria-label="Sketch side pane" disabled={!screen || Boolean(gesture)}
+              value={sidePane} aria-label="Design side pane" disabled={!screen}
               onValueChange={(value) => {
-                if (value === "" || value === "properties" || value === "transitions" || value === "history") setSidePane(value);
+                if (value === "" || value === "transitions" || value === "history") setSidePane(value);
               }}>
               {sidePanes.map(({ id, label, target, Icon }) => <ToggleGroup.Item key={id} id={`sketch-toggle-${id}`}
                 className="sketch-icon-button" type="button" value={id}
@@ -886,104 +814,29 @@ export function SketchPanel() {
                 {size.label} ({size.width} × {size.height})
               </option>)}
             </select>
-          } tools={
-          <div id="sketch-tools" className="sketch-actions" role="group" aria-label="Drawing tools">
-          {shapeTools.map(({ id, kind, curve, label, Icon }) => <button id={`sketch-add-${id}`} key={id} type="button"
-            className="sketch-icon-button" title={label} aria-label={label}
-            disabled={!writable || !screen || screen.shapes.length >= 100} onClick={() => {
-              let created = "";
-              if (editScreen((owner) => {
-                const item = curve ? createCurveShape(owner, curve) : createShape(owner, kind);
-                owner.shapes.push(item);
-                created = item.id;
-              })) { setSelectedShape(created); setDrawing(false); }
-            }}><Icon size={20} aria-hidden="true" /></button>)}
-          <Toggle.Root id="sketch-freehand" className="sketch-icon-button" type="button" pressed={drawing}
-            title="Freehand" aria-label="Freehand"
-            disabled={!writable || !screen || screen.shapes.length >= 100} onPressedChange={setDrawing}>
-            <Pencil size={20} aria-hidden="true" />
-          </Toggle.Root>
-        </div>
-        } help={boardHelp ? <p id="sketch-board-help" className="visually-hidden">{boardHelp}</p> : null}>
-          <div ref={board} id="sketch-board" className={`sketch-board${drawing ? " sketch-drawing" : ""}`}
-            tabIndex={0} role="group" aria-label={livePreview ? "Live preview screen drawing (read only)" : "Editable screen drawing"} aria-describedby={boardHelp ? "sketch-board-help" : undefined}
-            onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp}
-            onPointerCancel={(event) => { if (gestureRef.current?.id === event.pointerId) cancelGesture(); }}
-            onLostPointerCapture={(event) => { if (gestureRef.current?.id === event.pointerId) cancelGesture(); }}>
-            {preview && <SketchSvg screen={preview} selectedShape={selectedShape} editPoints={!drawing && (writable || Boolean(gesture))} />}
+          } help={<div className="sketch-page-heading">
+            {pageStatus && screen && <div id="sketch-page-status" className="sketch-page-status"
+              role="status" aria-live="polite" aria-atomic="true" data-status={pageStatus}>
+              <ScreenStatusIcon status={pageStatus} /><strong>{screen.title}</strong>
+              <span>{pageStatus === "waiting" ? "Waiting for design"
+                : pageStatus === "processing" ? "Design in progress" : "Preview ready - not saved or approved"}</span>
+            </div>}
+            <p id="sketch-board-help" className="visually-hidden">{boardHelp}</p>
+          </div>}>
+          <div id="sketch-board" className="sketch-board" tabIndex={0} role="group"
+            aria-busy={pageStatus === "waiting" || pageStatus === "processing"}
+            aria-label={livePreview ? "Live UI DSL preview (not saved)" : "UI DSL screen view"} aria-describedby="sketch-board-help">
+            {screen && <DslView key={screen.id} screen={screen} selection={{
+              nodeId: selectedNodeId, picking: pickingElement, onSelect: selectElement,
+            }} />}
+            {screen && pageStatus && pageStatus !== "ready" && !hasScreenContent(screen)
+              && <div className="sketch-page-placeholder" aria-hidden="true">
+                <ScreenStatusIcon status={pageStatus} />
+                <strong>{screen.title}</strong>
+                <span>{pageStatus === "waiting" ? "Waiting for design" : "Design in progress"}</span>
+              </div>}
           </div>
         </SketchViewport>
-        <aside id="sketch-object-properties" className="sketch-side-pane" aria-label="Object properties" hidden={!propertiesOpen}>
-        <h3>Object properties</h3>
-        <fieldset className="sketch-inspector">
-          <legend id="sketch-shape-label">{shape ? `${shape.kind} · ${shape.id}` : "Select a shape to edit"}</legend>
-          {(["x", "y", "width", "height"] as const).map((field) => <label key={field}>
-            {field === "x" || field === "y" ? field.toUpperCase() : field[0].toUpperCase() + field.slice(1)}
-            <input id={`sketch-${field}`} type="number" step="1"
-              min={["width", "height"].includes(field) && shape && !["line", "arrow", "path"].includes(shape.kind) ? 1 : 0}
-              disabled={!writable || !shape} value={fieldValue(shapeFieldKey(field), shapeView?.[field])}
-              aria-invalid={fieldInvalid(shapeFieldKey(field))}
-              onBlur={() => finishField(shapeFieldKey(field))}
-              onChange={(event) => {
-                const value = event.target.value;
-                editShape((item, owner) => setShapeBounds(owner, item, { [field]: value.trim() ? Number(value) : NaN }),
-                  { key: shapeFieldKey(field), value, keepInput: true });
-              }} />
-          </label>)}
-          <label className="sketch-label-input">Text tool label
-            <input id="sketch-text" maxLength={500} disabled={!writable || shape?.kind !== "text"}
-              value={fieldValue(shapeFieldKey("text"), shape?.text)} aria-invalid={fieldInvalid(shapeFieldKey("text"))}
-              onChange={(event) => editShape((item) => ({ ...item, text: event.target.value }), { key: shapeFieldKey("text"), value: event.target.value })} />
-          </label>
-          <label>Font size<input id="sketch-font-size" type="number" min={1} max={500}
-            disabled={!writable || shape?.kind !== "text"} value={fieldValue(shapeFieldKey("fontSize"), shape?.fontSize)}
-            aria-invalid={fieldInvalid(shapeFieldKey("fontSize"))}
-            onBlur={() => finishField(shapeFieldKey("fontSize"))}
-            onChange={(event) => editShape((item) => ({ ...item, fontSize: event.target.value.trim() ? Number(event.target.value) : NaN }),
-              { key: shapeFieldKey("fontSize"), value: event.target.value, keepInput: true })} /></label>
-          {(["fill", "stroke"] as const).map((field) => <label key={field}>{field === "fill" ? "Fill" : "Stroke"}
-            <select id={`sketch-${field}`} disabled={!writable || !shape} value={shape?.[field] ?? ""}
-              onChange={(event) => editShape((item) => ({ ...item, [field]: event.target.value }))}>
-              {!shape && <option value="">Select a shape</option>}
-              {shape && !colorChoices.some(([value]) => value === shape[field]) && <option value={shape[field]}>{shape[field]}</option>}
-              {colorChoices.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-            </select>
-          </label>)}
-          <button id="sketch-delete-shape" type="button" disabled={!writable || !shape} onClick={deleteShape}>
-            <Trash2 size={14} aria-hidden="true" /> Delete shape</button>
-        </fieldset>
-        {shape?.kind === "path" && <fieldset className="sketch-inspector sketch-path-inspector">
-          <legend>{curveLabels[shape.curve ?? "linear"]} path</legend>
-          <label>Closed path
-            <select id="sketch-path-closed" disabled={!writable} value={String(shape.closed ?? false)}
-              onChange={(event) => editShape((item) => ({ ...item, closed: event.target.value === "true" }))}>
-              <option value="false">Open</option><option value="true">Closed</option>
-            </select>
-          </label>
-          {shape.curve === "catmull-rom" && <label>Spline tension (0-1)
-            <input id="sketch-path-tension" type="number" min={0} max={1} step={0.05} disabled={!writable}
-              value={fieldValue(shapeFieldKey("tension"), shape.tension ?? 0)} aria-invalid={fieldInvalid(shapeFieldKey("tension"))}
-              onBlur={() => finishField(shapeFieldKey("tension"))}
-              onChange={(event) => editShape((item) => ({ ...item, tension: event.target.value.trim() ? Number(event.target.value) : NaN }),
-                { key: shapeFieldKey("tension"), value: event.target.value, keepInput: true })} />
-          </label>}
-          <label className="sketch-path-points">Points (one x, y pair per line)
-            <textarea id="sketch-path-points" rows={5} disabled={!writable} aria-describedby="sketch-path-help"
-              value={fieldValue(shapeFieldKey("points"), shape.points.map((point) => `${point.x}, ${point.y}`).join("\n"))}
-              aria-invalid={fieldInvalid(shapeFieldKey("points"))}
-              onBlur={() => finishField(shapeFieldKey("points"))}
-              onChange={(event) => editShape((item) => setPathPoints(item, parsePathPoints(event.target.value)),
-                { key: shapeFieldKey("points"), value: event.target.value, keepInput: true })} />
-          </label>
-          <p id="sketch-path-help" className="visually-hidden">
-            {shape.curve === "quadratic" ? "Start point, then control/end pairs. Append complete pairs to add segments."
-              : shape.curve === "cubic" ? "Start point, then control/control/end triples. Append complete triples to add segments."
-              : shape.curve === "catmull-rom" ? "Knots only; the spline passes through each one. Closed splines wrap smoothly without repeating the first knot. Tension 0 is smooth; 1 gives straight segments."
-              : "Points are joined by straight segments."}
-            {" "}Drag knots or control points on the board, or edit their coordinates here. Paths allow 2-512 points.
-          </p>
-        </fieldset>}
-        </aside>
         <aside id="sketch-screen-transitions" className="sketch-side-pane" aria-label="Screen transitions" hidden={sidePane !== "transitions"}>
       <h3>Screen transitions</h3>
       <div id="sketch-transitions">
@@ -1032,7 +885,7 @@ export function SketchPanel() {
     </div>
     <div className="sketch-input-pane">
     <section id="sketch-request-history-pane" className="sketch-request-history-pane"
-      aria-label="Drawing request history" hidden={!historyOpen}>
+      aria-label="Design request history" hidden={!historyOpen}>
       <div className="sketch-history-heading">
         <h3>Request history</h3>
         <button type="button" aria-label="Close request history" onClick={() => setHistoryOpen(false)}>
@@ -1040,42 +893,49 @@ export function SketchPanel() {
         </button>
       </div>
       <p id="sketch-message" className="sketch-error" role="alert" hidden={!message}>{message}</p>
-      <section id="sketch-failed-revision" className="sketch-details" aria-label="Failed drawing revision" hidden={!retryInstruction}>
+      <section id="sketch-failed-revision" className="sketch-details" aria-label="Failed design revision" hidden={!retryInstruction}>
         <p id="sketch-failed-instruction" className="muted">{retryInstruction ? "Failed revision instruction: " + retryInstruction : ""}</p>
         <button id="sketch-retry-revision" type="button" aria-describedby="sketch-retry-help"
-          disabled={!writable || !document || conflict || !retryInstruction || invalidFields} onClick={() => void submit("revise", retryInstruction)}>
-          <RefreshCw size={14} aria-hidden="true" /> Retry same revision</button>
-        <p id="sketch-retry-help" className="visually-hidden">Retries the original instruction against these drawings. Local edits are saved first; any new instruction below is kept.</p>
+          disabled={!writable || !document || conflict || !retryInstruction || invalidFields || workerRequest?.kind === "update" && dirty}
+          onClick={() => void submit(workerRequest?.kind === "update" ? "update" : "revise", retryInstruction)}>
+          <RefreshCw size={14} aria-hidden="true" />{workerRequest?.kind === "update" ? "Retry update" : "Retry same revision"}</button>
+        <p id="sketch-retry-help" className="visually-hidden">{workerRequest?.kind === "update"
+          ? "Retries the incremental update against saved designs. Save or undo local edits first; any new instruction below is kept."
+          : "Retries the original instruction against these designs. Local edits are saved first; any new instruction below is kept."}</p>
       </section>
       <ol id="sketch-request-history" className="sketch-request-history">
-        {requestHistory.map((item) => <li key={item.id} data-status={item.status}>
+        {history.map((item) => <li key={item.id} data-status={item.status}>
           <div><strong>{item.kind === "revise" ? "Revision" : item.kind[0].toUpperCase() + item.kind.slice(1)}</strong>
             <span>{new Date(item.at).toLocaleTimeString()}</span></div>
           <p><b>Request:</b> {item.request}</p>
           <p><b>Response:</b> {item.response}</p>
+          {item.changeRequestId && ui.changeRequestDialog && <button className="plan-button secondary" type="button"
+            onClick={event => ui.changeRequestDialog!.open(item.changeRequestId!, event.currentTarget)}>View this request</button>}
         </li>)}
       </ol>
-      <p className="muted" hidden={Boolean(requestHistory.length || message || retryInstruction)}>
-        No drawing requests yet.
+      <p className="muted" hidden={Boolean(history.length || message || retryInstruction)}>
+        No design requests yet.
       </p>
     </section>
     <form id="sketch-revise-form" className="sketch-revise-form sketch-composer" onSubmit={(event) => { event.preventDefault(); void submit("revise"); }}>
-      <label className="visually-hidden" htmlFor="sketch-instruction">Describe a drawing change</label>
-      <textarea className="composer-input" id="sketch-instruction" rows={1} maxLength={4000} disabled={!writable}
+      <label className="visually-hidden" htmlFor="sketch-instruction">Describe a design change</label>
+      <textarea className="composer-input" id="sketch-instruction" rows={1} maxLength={4000} disabled={!writable || Boolean(requiredReview)}
         value={instruction} onChange={(event) => setInstruction(event.currentTarget.value)} onKeyDown={sendShortcut}
-        aria-describedby="sketch-status" placeholder="Describe a drawing change... (Ctrl+Enter)" />
+        aria-describedby="sketch-status sketch-review-required" placeholder="Describe a design change... (Ctrl+Enter)" />
       <button id="sketch-revise" className="plan-button sketch-send" type="submit"
-        title="Send drawing revision (Ctrl+Enter)"
-        disabled={!writable || !document || conflict || !instruction.trim() || invalidFields}>
+        title={state.sketch.status === "stale" ? "Update designs from latest requirements before sending a revision." : "Send design revision (Ctrl+Enter)"}
+        disabled={!writable || !document || conflict || !instruction.trim() || invalidFields || Boolean(requiredReview) || state.sketch.status === "stale"}>
         <Send size={15} aria-hidden="true" /> Send
       </button>
       <button id="sketch-history-toggle" className="sketch-history-toggle" type="button"
         data-status={activeError ? "error" : "idle"}
-        aria-label={activeError ? "Open request history and drawing errors" : "Open request history"}
-        title={activeError ? "Drawing request failed. Open request history." : "Request history"}
+        aria-label={activeError ? "Open request history and design errors" : "Open request history"}
+        title={activeError ? "Design request failed. Open request history." : "Request history"}
         aria-expanded={historyOpen} aria-controls="sketch-request-history-pane"
         onClick={() => setHistoryOpen((open) => !open)}><History size={17} aria-hidden="true" /></button>
     </form>
+    <p id="sketch-review-required" className="visually-hidden" role="status">{requiredReview
+      ? "Review required. New changes are paused until this review is resolved. You can still inspect screens and history." : ""}</p>
     </div>
   </section>;
 }

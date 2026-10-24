@@ -6,7 +6,8 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { desktopRuntimeEnvironment } from "../desktop/environment.js";
 import { parseDesktopModelSelection } from "../desktop/runtime.js";
-import { page, scriptHash } from "./assets.js";
+import { getBrowserAssets, page, scriptHash } from "./assets.js";
+import { readBrowserDevelopmentAssets } from "./development-assets.js";
 import { createBrowserHost } from "./server.js";
 import { errorMessage, redactDiagnostic } from "./local-state.js";
 
@@ -59,9 +60,16 @@ async function main(): Promise<void> {
         return;
     }
     const modelSelection = parseDesktopModelSelection(values.model, values["reasoning-effort"]);
+    const developmentAssets = readBrowserDevelopmentAssets();
     const host = await createBrowserHost({
         runtimeDirectory: dirname(fileURLToPath(import.meta.url)), version: __TANDEM_VERSION__,
         workspace: resolve(values.workspace || process.cwd()), initialDirectory: process.cwd(), page, scriptHash,
+        assets: getBrowserAssets,
+        ...(developmentAssets ? { developmentRevision: () => {
+            const current = readBrowserDevelopmentAssets();
+            if (!current) throw new Error("The browser development assets configuration is no longer available.");
+            return current.revision;
+        } } : {}),
         ...(modelSelection ? { modelSelection } : {}),
     });
     const stop = () => { void host.close().catch((error: unknown) => {
@@ -70,6 +78,11 @@ async function main(): Promise<void> {
     }); };
     process.on("SIGINT", stop);
     process.on("SIGTERM", stop);
+    const developmentStop = (message: unknown) => { if (message === "tandem:development:stop") stop(); };
+    if (developmentAssets && process.send) {
+        process.on("message", developmentStop);
+        process.on("disconnect", stop);
+    }
     try {
         console.info(`Tandem ${__TANDEM_VERSION__}\nOpen this private local URL:\n${host.launchUrl}\n\nKeep this terminal open. Use Stop in Tandem or Ctrl+C to exit.`);
         host.start();
@@ -84,6 +97,9 @@ async function main(): Promise<void> {
     } finally {
         process.off("SIGINT", stop);
         process.off("SIGTERM", stop);
+        process.off("message", developmentStop);
+        process.off("disconnect", stop);
+        if (developmentAssets && process.connected) process.disconnect?.();
     }
 }
 

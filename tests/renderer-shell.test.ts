@@ -31,7 +31,7 @@ test("root branding embeds the existing Tandem bicycle artwork with accessible n
 test("compact workflow exposes progress and labeled stage icons without changing navigation", async (t) => {
     const value = state("prototype");
     value.lifecycle.completedStages = value.lifecycle.completedStages.filter((id: string) => id !== "sketch");
-    value.lifecycle.skippedStages = [{ stageId: "sketch", reason: "Existing drawings were supplied." }];
+    value.lifecycle.skippedStages = [{ stageId: "sketch", reason: "Existing designs were supplied." }];
     const h = await setup(t, value);
     assert.equal(h.get("project-contents").querySelectorAll("[data-stage-id]").length, 5);
     assert.equal(h.document.querySelectorAll('[data-stage-id="design"], [data-stage-id="plan"], [data-stage-id="implement"], [data-stage-id="test"]').length, 0);
@@ -41,7 +41,7 @@ test("compact workflow exposes progress and labeled stage icons without changing
     }
     const skipped = h.document.querySelector<HTMLButtonElement>('[data-stage-id="sketch"]')!;
     assert.equal(skipped.disabled, true);
-    assert.match(skipped.getAttribute("aria-label")!, /not applicable.*Existing drawings/);
+    assert.match(skipped.getAttribute("aria-label")!, /not applicable.*Existing designs/);
     await browse(h, "requirements");
     assert.equal(hidden(h, "design-tree-panel"), false);
     assert.equal(current(h).lifecycle.currentStage, "prototype");
@@ -162,7 +162,7 @@ test("horizontal stage tabs retain drafts and current-stage identity without sub
     const value = state(), h = await setup(t, value);
     const tabs = h.get("stage-workspace-tabs");
     assert.deepEqual(Array.from(tabs.querySelectorAll('[role="tab"]'), tab => tab.textContent),
-        ["Preparation", "Requirements", "Drawings", "Prototype"]);
+        ["Preparation", "Requirements", "Designs", "Prototype"]);
     assert.equal(tabs.getAttribute("aria-label"), "Pre-development stages");
     assert.equal(h.document.querySelector("#development-workspace-tab"), null);
     assert.equal(disabled(h, "sketch-workspace-tab"), true);
@@ -185,14 +185,17 @@ test("horizontal stage tabs retain drafts and current-stage identity without sub
     assert.deepEqual(h.requests, []);
 });
 
-test("workflow actions follow the stage tabs outside every tab content view", async t => {
+test("workflow actions stay beside the stage tabs outside every tab content view", async t => {
     const h = await setup(t, state("prototype"));
-    for (const [stage, label] of [["prepare", "Preparation"], ["requirements", "Requirements"], ["sketch", "Drawings"], ["prototype", "Prototype"]]) {
+    for (const [stage, label] of [["prepare", "Preparation"], ["requirements", "Requirements"], ["sketch", "Designs"], ["prototype", "Prototype"]]) {
         await browse(h, stage);
         const tabs = h.get("stage-workspace-tabs");
-        const actions = h.document.querySelector(".previewbar > .phase-actions")!;
+        const actions = h.get("stage-workflow-actions");
         assert.ok(actions);
-        assert.equal(tabs.nextElementSibling, actions, "Actions follow, rather than belong to, the tab list.");
+        assert.equal(tabs.parentElement!.contains(actions), true, "Stage completion and reopening belong beside the tabs.");
+        assert.equal(tabs.contains(actions), false, "Actions stay outside the tablist's keyboard navigation.");
+        assert.equal(h.get("stage-input-review").contains(h.get("complete-stage")), false);
+        assert.ok(tabs.compareDocumentPosition(actions) & h.window.Node.DOCUMENT_POSITION_FOLLOWING);
         assert.equal(actions.getAttribute("aria-label"), `${label} actions`);
         assert.ok(actions.contains(h.get("complete-stage")));
         assert.ok(actions.contains(h.get("reopen-stage")));
@@ -209,10 +212,10 @@ test("workflow actions follow the stage tabs outside every tab content view", as
 
 test("horizontal keyboard navigation skips unavailable stages and stays separate from Development", async t => {
     const value = state("prototype");
-    value.lifecycle.skippedStages = [{ stageId: "sketch", reason: "Existing drawings were supplied." }];
+    value.lifecycle.skippedStages = [{ stageId: "sketch", reason: "Existing designs were supplied." }];
     const h = await setup(t, value);
     assert.equal(disabled(h, "sketch-workspace-tab"), true);
-    assert.match(h.get("sketch-workspace-tab").getAttribute("aria-label")!, /not applicable.*Existing drawings/);
+    assert.match(h.get("sketch-workspace-tab").getAttribute("aria-label")!, /not applicable.*Existing designs/);
     h.get("preparation-workspace-tab").focus();
     await h.fire(h.document.activeElement!, "keydown", { key: "End" });
     assert.equal(h.document.activeElement?.id, "live-preview-workspace-tab");
@@ -513,7 +516,7 @@ test("next-step guidance navigates and focuses without executing its mutation", 
     assert.equal(h.requests.length, 0);
 });
 
-test("stage tab toolbar completes the active stage without expanding context or losing drafts", async (t) => {
+test("tab-bar controls complete the active stage without expanding context or losing drafts", async (t) => {
     const value = state();
     value.requirements.substage = "dag";
     value.decisionGraph.nodes = [decision("accepted", "answered")];
@@ -526,7 +529,7 @@ test("stage tab toolbar completes the active stage without expanding context or 
     assert.equal(button.title, button.getAttribute("aria-label"));
     assert.ok(button.querySelector('svg.lucide-check[aria-hidden="true"]'));
     assert.equal(button.closest('[role="tabpanel"]'), null);
-    assert.equal(button.closest(".phase-actions")?.previousElementSibling, h.get("stage-workspace-tabs"));
+    assert.equal(button.closest(".phase-actions")?.parentElement, h.get("stage-workspace-tabs").parentElement);
     assert.equal(h.get("requirements-pane").contains(button), false);
     assert.doesNotMatch(h.get("requirements-pane").textContent || "", /Discovery actions/);
     button.focus();
@@ -549,7 +552,7 @@ test("stage tab toolbar completes the active stage without expanding context or 
     assert.equal(h.get("toggle-context-pane").getAttribute("aria-expanded"), "false");
     assert.equal(button.disabled, true, "The new stage still requires its own completion evidence");
     await h.click("toggle-context-pane");
-    assert.equal(text(h, "complete-stage"), "Finish Drawings and continue");
+    assert.equal(text(h, "complete-stage"), "Finish Designs and continue");
     assert.ok(button.querySelector('svg.lucide-check[aria-hidden="true"]'));
 });
 

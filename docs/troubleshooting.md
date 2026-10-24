@@ -95,6 +95,11 @@ error rather than clearing session state or retrying an unrelated task.
 
 ## Startup and connection problems
 
+Requirements adapts to the available workspace width. In narrower windows, the
+selected question appears above the scrollable decision graph and list. Scroll
+the Requirements workspace to reach answer controls; the standalone page does
+not require horizontal scrolling to reach the workspace.
+
 | Symptom | Next step |
 | --- | --- |
 | Runtime requirement error / npm `EBADENGINE` | For source builds, use actual Node 24.15+ (24.x LTS) or Node 26+ and rerun the [source quick start](quick-start.md). A successful install with an engine warning does not establish support. |
@@ -104,6 +109,7 @@ error rather than clearing session state or retrying an unrelated task.
 | Application state must be ignored by Git | Review the offered setup to add `.tandem/`, or use the [manual alternative](quick-start.md). Check `git status` before committing. |
 | Git tracks `.tandem/` state | An ignore rule does not untrack existing files. Deliberately untrack that state yourself after reviewing it, without deleting local session data. Tandem never automatically untracks or deletes files. |
 | Older installation conflicts | Review its version and arrange an explicit stopped-host update with the complete package. Building source does not update it. |
+| Design generation reports an unknown Lucide icon | Updated source runtimes provide valid bundled icon names and accept known older aliases. Restart the current source browser/dev launcher to load backend changes, then use **Generate designs** to retry. A page reload or **Dismiss** alone does not restart generation. Saved designs and history are retained. |
 | Composer disabled / no Ready | Inspect setup, model and permission status. Unverified history is not empty state. |
 | Model/effort pending, busy or unavailable | Read both stage results in Settings, wait for idle and explicitly apply/reconcile a supported selection. |
 | Contextual **Retry runtime** / **Retry Development** | Inspect the failure and retry there; this does not authorize replacement history or replay. |
@@ -160,7 +166,7 @@ Failures remain in the root status bar/hosted error banners after Settings close
 
 **Restart Preparation...** lives in **Preparation > Advanced Preparation actions**,
 not empty goal entry or direct Development without discovery. After confirmation,
-it stops discovery, archives Preparation/Requirements/Drawings/Prototype state and
+it stops discovery, archives Preparation/Requirements/Designs/Prototype state and
 files, and returns to goal entry. Unconfirmed stopping leaves recovery visible.
 
 Close Development first. Its Design, Conversation, app files, handoffs and the

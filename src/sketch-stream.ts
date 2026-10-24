@@ -1,10 +1,14 @@
 import {
+    hasScreenContent,
     validateSketchDocument,
     type SketchDocument,
-    type SketchScreen,
-    type SketchShape,
+    type DslSketchDocument,
+    type DslSketchScreen,
     type SketchTransition,
 } from "./sketch.js";
+import { applyOperations, createDocument, validateOperation, type UiDocument } from "./vendor/ui-dsl/index.js";
+
+export type SketchScreenStatus = "waiting" | "processing" | "ready";
 
 export interface SketchPreview {
     prototypeId: string;
@@ -15,15 +19,24 @@ export interface SketchPreview {
     requirementsDigest: string;
     sequence: number;
     document: SketchDocument;
+    screenStatuses?: Record<string, SketchScreenStatus>;
 }
 
 export const MAX_SKETCH_STREAM_RESPONSE_BYTES = 512 * 1024;
 export const MAX_SKETCH_STREAM_RECORD_BYTES = 256 * 1024;
-// The terminal done record does not count as a document-changing operation.
+// The terminal done record does not count toward the operation limit.
 export const MAX_SKETCH_STREAM_OPERATIONS = 1024;
 
 const encoder = new TextEncoder();
 const screenKeys = ["id", "title", "purpose", "decisionIds", "width", "height", "notes"];
+// Official renamed Lucide exports, not substitutes for unknown icons.
+const iconAliases: Readonly<Record<string, string>> = Object.freeze({
+    "trash-2": "trash", filter: "funnel", "more-horizontal": "ellipsis", "more-vertical": "ellipsis-vertical",
+    home: "house", edit: "square-pen", "edit-2": "pen", "edit-3": "pen-line",
+    "help-circle": "circle-question-mark", "alert-circle": "circle-alert", "alert-triangle": "triangle-alert",
+    "check-circle": "circle-check-big", "check-circle-2": "circle-check", "x-circle": "circle-x",
+    "user-circle": "circle-user", "user-circle-2": "circle-user-round",
+});
 
 function invalid(message: string): never {
     throw new Error(`Invalid sketch operation stream: ${message}`);
@@ -47,6 +60,20 @@ function identifier(value: unknown, label: string): string {
     return value;
 }
 
+function canonicalIconEdit(value: unknown, document: UiDocument): unknown {
+    const edit = object(value, "UI edit");
+    const component = edit.op === "add" ? object(edit.component, "UI component") : null;
+    const type = component?.type ?? (edit.op === "update" && typeof edit.id === "string" && Object.hasOwn(document.nodes, edit.id)
+        ? document.nodes[edit.id].type : null);
+    const field = type === "Icon" ? "name" : type === "Button" || type === "Link" ? "icon" : null;
+    if (!field) return edit;
+    const props = object(component ? component.props : edit.props, "UI props");
+    const name = props[field];
+    if (typeof name !== "string" || !Object.hasOwn(iconAliases, name)) return edit;
+    const normalized = { ...props, [field]: iconAliases[name] };
+    return component ? { ...edit, component: { ...component, props: normalized } } : { ...edit, props: normalized };
+}
+
 function highSurrogate(code: number): boolean {
     return code >= 0xd800 && code <= 0xdbff;
 }
@@ -59,10 +86,12 @@ function additionalBytes(fragment: string, previousHighSurrogate: boolean): numb
 }
 
 export class SketchOperationStream {
-    #document: SketchDocument | null;
+    #document: DslSketchDocument | null;
     #decisionIds: string[];
-    #onChange?: (document: SketchDocument, sequence: number) => void;
+    #onChange?: (document: SketchDocument, sequence: number, screenStatuses: Record<string, SketchScreenStatus>) => void;
+    #screenStatuses: Record<string, SketchScreenStatus>;
     #sequence = 0;
+    #changes = 0;
     #done = false;
     #failure: Error | null = null;
     #responseBytes = 0;
@@ -70,18 +99,25 @@ export class SketchOperationStream {
     #record = "";
     #recordBytes = 0;
     #recordHighSurrogate = false;
+    #recordDepth = 0;
+    #recordQuoted = false;
+    #recordEscaped = false;
     #line = 0;
 
     constructor(
         base: SketchDocument | null,
         decisionIds: string[],
-        onChange?: (document: SketchDocument, sequence: number) => void,
+        onChange?: (document: SketchDocument, sequence: number, screenStatuses: Record<string, SketchScreenStatus>) => void,
     ) {
         if (!Array.isArray(decisionIds) || decisionIds.some((id) => typeof id !== "string")) {
             invalid("accepted decision IDs must be an array of strings.");
         }
         this.#decisionIds = [...decisionIds];
-        this.#document = base === null ? null : validateSketchDocument(base, this.#decisionIds);
+        const document = base === null ? null : validateSketchDocument(base, this.#decisionIds);
+        if (document?.version === 1) invalid("legacy geometry cannot be edited. Explicitly regenerate designs as UI DSL.");
+        this.#document = document;
+        this.#screenStatuses = Object.fromEntries((document?.screens ?? [])
+            .map(screen => [screen.id, hasScreenContent(screen) ? "ready" : "waiting"]));
         this.#onChange = onChange;
     }
 
@@ -115,9 +151,24 @@ export class SketchOperationStream {
                 if (piece.length) {
                     this.#recordHighSurrogate = highSurrogate(piece.charCodeAt(piece.length - 1));
                     this.#record += piece;
+                    for (const character of piece) {
+                        if (this.#recordQuoted) {
+                            if (this.#recordEscaped) this.#recordEscaped = false;
+                            else if (character === "\\") this.#recordEscaped = true;
+                            else if (character === '"') this.#recordQuoted = false;
+                        } else if (character === '"') this.#recordQuoted = true;
+                        else if (character === "{" || character === "[") this.#recordDepth++;
+                        else if (character === "}" || character === "]") this.#recordDepth--;
+                    }
                 }
                 if (newline === -1) break;
-                this.#consumeRecord();
+                if (this.#recordDepth > 0 && !this.#recordQuoted) {
+                    // Formatting whitespace is legal JSON; never repair syntax or discard prose.
+                    this.#record += "\n";
+                    this.#recordBytes++;
+                    if (this.#recordBytes > MAX_SKETCH_STREAM_RECORD_BYTES) invalid("record exceeds 256 KiB.");
+                    this.#recordHighSurrogate = false;
+                } else this.#consumeRecord();
                 start = newline + 1;
             }
         } catch (error) {
@@ -130,7 +181,7 @@ export class SketchOperationStream {
         try {
             if (this.#record.length) this.#consumeRecord();
             if (!this.#done) invalid("missing done record; the operation stream is incomplete.");
-            if (!this.#document || this.#sequence === 0) invalid("at least one document-changing operation is required before done.");
+            if (!this.#document || this.#changes === 0) invalid("at least one document-changing operation is required before done.");
             return validateSketchDocument(this.#document, this.#decisionIds);
         } catch (error) {
             return this.#fail(error);
@@ -147,6 +198,9 @@ export class SketchOperationStream {
         this.#record = "";
         this.#recordBytes = 0;
         this.#recordHighSurrogate = false;
+        this.#recordDepth = 0;
+        this.#recordQuoted = false;
+        this.#recordEscaped = false;
         this.#line++;
         if (!line.trim()) return;
         if (this.#done) invalid("no content is allowed after done.");
@@ -162,17 +216,19 @@ export class SketchOperationStream {
             this.#done = true;
             return;
         }
-        if (this.#sequence >= MAX_SKETCH_STREAM_OPERATIONS) invalid("stream exceeds 1024 document-changing operations.");
-        const next: SketchDocument = this.#document === null
-            ? { version: 1, screens: [], transitions: [] }
-            : structuredClone(this.#document);
+        if (this.#sequence >= MAX_SKETCH_STREAM_OPERATIONS) invalid("stream exceeds 1024 operations.");
+        const next: DslSketchDocument = this.#document === null
+            ? { version: 2, screens: [], transitions: [] }
+            : { ...this.#document, screens: this.#document.screens.map(screen => ({ ...screen })),
+                transitions: [...this.#document.transitions] };
+        const statuses = { ...this.#screenStatuses };
         switch (operation.op) {
             case "upsert-screen": {
                 exactKeys(operation, ["op", "screen"], "upsert-screen");
                 const metadata = object(operation.screen, "screen metadata");
                 exactKeys(metadata, screenKeys, "screen metadata");
                 const index = next.screens.findIndex((screen) => screen.id === metadata.id);
-                const screen: SketchScreen = {
+                const screen: DslSketchScreen = {
                     id: metadata.id as string,
                     title: metadata.title as string,
                     purpose: metadata.purpose as string,
@@ -180,10 +236,11 @@ export class SketchOperationStream {
                     width: metadata.width as number,
                     height: metadata.height as number,
                     notes: metadata.notes as string,
-                    shapes: index === -1 ? [] : next.screens[index].shapes,
+                    ui: index === -1 ? createDocument() : next.screens[index].ui,
                 };
                 if (index === -1) next.screens.push(screen);
                 else next.screens[index] = screen;
+                statuses[screen.id] = index === -1 ? "waiting" : "processing";
                 break;
             }
             case "remove-screen": {
@@ -192,24 +249,26 @@ export class SketchOperationStream {
                 if (next.screens.length === 1) invalid("cannot remove the last screen; add its replacement first.");
                 next.screens = next.screens.filter((item) => item.id !== screen.id);
                 next.transitions = next.transitions.filter((item) => item.fromScreenId !== screen.id && item.toScreenId !== screen.id);
+                delete statuses[screen.id];
                 break;
             }
-            case "upsert-shape": {
-                exactKeys(operation, ["op", "screenId", "shape"], "upsert-shape");
+            case "ui": {
+                exactKeys(operation, ["op", "screenId", "edit"], "ui");
                 const screen = this.#screen(next, operation.screenId);
-                const shape = object(operation.shape, "shape") as unknown as SketchShape;
-                const index = screen.shapes.findIndex((item) => item.id === shape.id);
-                if (index === -1) screen.shapes.push(shape);
-                else screen.shapes[index] = shape;
+                screen.ui = applyOperations(screen.ui, [validateOperation(canonicalIconEdit(operation.edit, screen.ui))]);
+                statuses[screen.id] = "processing";
                 break;
             }
-            case "remove-shape": {
-                exactKeys(operation, ["op", "screenId", "shapeId"], "remove-shape");
+            case "screen-status": {
+                exactKeys(operation, ["op", "screenId", "status"], "screen-status");
                 const screen = this.#screen(next, operation.screenId);
-                const shapeId = identifier(operation.shapeId, "shapeId");
-                const index = screen.shapes.findIndex((shape) => shape.id === shapeId);
-                if (index === -1) invalid(`cannot remove unknown shape "${shapeId}" from screen "${screen.id}".`);
-                screen.shapes.splice(index, 1);
+                if (operation.status !== "processing" && operation.status !== "ready") {
+                    invalid("screen-status must be processing or ready.");
+                }
+                if (operation.status === "ready" && !hasScreenContent(screen)) {
+                    invalid(`screen "${screen.id}" cannot be ready without UI content.`);
+                }
+                statuses[screen.id] = operation.status;
                 break;
             }
             case "upsert-transition": {
@@ -229,15 +288,18 @@ export class SketchOperationStream {
                 break;
             }
             default:
-                invalid("unknown operation; expected upsert-screen, remove-screen, upsert-shape, remove-shape, upsert-transition, remove-transition, or done.");
+                invalid("unknown operation; expected upsert-screen, remove-screen, ui, screen-status, upsert-transition, remove-transition, or done.");
         }
         const validated = validateSketchDocument(next, this.#decisionIds);
+        if (validated.version !== 2) return invalid("expected a UI DSL document.");
         this.#document = validated;
+        this.#screenStatuses = statuses;
         this.#sequence++;
-        this.#onChange?.(structuredClone(validated), this.#sequence);
+        if (operation.op !== "screen-status") this.#changes++;
+        this.#onChange?.(structuredClone(validated), this.#sequence, { ...statuses });
     }
 
-    #screen(document: SketchDocument, value: unknown): SketchScreen {
+    #screen(document: DslSketchDocument, value: unknown): DslSketchScreen {
         const id = identifier(value, "screenId");
         const screen = document.screens.find((item) => item.id === id);
         if (!screen) return invalid(`unknown screen "${id}"; upsert the screen before referencing it.`);

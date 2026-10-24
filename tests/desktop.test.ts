@@ -137,7 +137,7 @@ test("desktop sessions disable untracked question tools without changing tool pe
     const f = protocolFixture();
     try {
         const config = desktopSessionConfig("workspace", "runtime", f.protocol);
-        assert.equal(config.streaming, true, "drawing workers inherit streaming from the desktop session");
+        assert.equal(config.streaming, true, "design workers inherit streaming from the desktop session");
         assert.equal(config.includeSubAgentStreamingEvents, true);
         assert.equal(config.extensionSdkPath, dirname(fileURLToPath(import.meta.resolve("@github/copilot-sdk"))),
             "Composed extensions must receive the host SDK that preserves terminal declarations.");

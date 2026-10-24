@@ -101,12 +101,13 @@ test("compact prototype layout retains expanded details, drafts and iframe acros
     assert.equal(frame(h), displayed);
 });
 
-test("prototype preview controls share the stage tab toolbar without remounting the preview", async t => {
+test("prototype completion stays in the tab bar while preview controls stay below the inputs without remounting", async t => {
     const value = readyPrototype();
     const h = await setup(t, value), displayed = frame(h);
-    const actions = h.document.querySelector(".previewbar > .phase-actions")!;
+    const actions = h.document.querySelector("#stage-input-review > .phase-actions")!;
     const open = h.get<HTMLAnchorElement>("open-preview");
-    assert.ok(actions.contains(h.get("complete-stage")));
+    assert.ok(h.document.querySelector(".previewbar")!.contains(h.get("complete-stage")));
+    assert.equal(actions.contains(h.get("complete-stage")), false);
     assert.ok(actions.contains(open));
     assert.equal(open.href, value.previewUrl);
     assert.equal(h.get("live-preview-panel").querySelector(".prototype-preview-actions"), null);

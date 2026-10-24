@@ -8,6 +8,8 @@ import {
 import type { VisualSelection } from "./visual-directions.js";
 import { readVisualSelection, visualSelectionSchema } from "./visual-directions.js";
 import type { SketchDocument } from "./sketch.js";
+import { currentChangeReview, isCurrentStageChange, isLocalChange } from "./change-request-policy.js";
+export { isLocalChange } from "./change-request-policy.js";
 
 export interface RequirementsDelta {
     usages: { add: string[]; remove: string[] };
@@ -30,7 +32,13 @@ export interface ChangeAssessment {
     requirements: RequirementsDelta | null;
 }
 
-export type ChangeStatus = "queued" | "analyzing" | "proposed" | "reviewing" | "active" | "completed" | "cancelled" | "failed";
+export interface SketchChangeContext {
+    revisionId: string;
+    screenId: string;
+    nodeId: string | null;
+}
+
+export type ChangeStatus = "queued" | "analyzing" | "proposed" | "reviewing" | "active" | "deferred" | "completed" | "cancelled" | "failed";
 export interface ChangeRequest {
     version: 1;
     id: string;
@@ -40,6 +48,7 @@ export interface ChangeRequest {
     submittedAt: string;
     baseCheckpointId: string | null;
     baseSketchRevisionId: string | null;
+    sketchContext?: SketchChangeContext | null;
     visualSelection: VisualSelection | null;
     sourceResultId: string | null;
     sourceRequests: Array<{ id: string; message: string; receivedAt: string; context: string }>;
@@ -60,9 +69,9 @@ export interface ChangeRequest {
 }
 
 const text = (maxLength = 4000, minLength = 1) => ({ type: "string", minLength, maxLength });
-const nullable = (schema: object) => ({ anyOf: [schema, { type: "null" }] });
-const array = (items: object, maxItems = 200) => ({ type: "array", items, maxItems });
-const object = (properties: Record<string, object>) => ({
+const nullable = <T extends object>(schema: T) => ({ anyOf: [schema, { type: "null" }] });
+const array = <T extends object>(items: T, maxItems = 200) => ({ type: "array", items, maxItems });
+const object = <T extends Record<string, object>>(properties: T) => ({
     type: "object", additionalProperties: false, properties, required: Object.keys(properties),
 });
 const stageSchema = { type: "string", enum: lifecycleStages.map(stage => stage.id) };
@@ -83,15 +92,19 @@ export const changeAssessmentSchema = object({
     preserved: strings(20, 500), affectedScreenIds: strings(8, 120),
     question: nullable(text(2000)), requirements: nullable(requirementsDeltaSchema),
 });
+export const sketchChangeContextSchema = object({
+    revisionId: text(120), screenId: text(120), nodeId: nullable(text(120)),
+});
 const changeRequestSchema = object({
     version: { type: "integer", const: 1 }, id: text(120), clientRequestId: text(120),
     originStage: stageSchema, message: text(), submittedAt: text(100),
     baseCheckpointId: nullable(text(120)), baseSketchRevisionId: nullable(text(120)), visualSelection: nullable(visualSelectionSchema),
+    sketchContext: nullable(sketchChangeContextSchema),
     sourceResultId: nullable(text(500)),
     sourceRequests: array(object({ id: text(500), message: text(65536), receivedAt: text(100), context: text(524288) }), 50),
     baselineDigest: nullable(text(64)), analysisId: nullable(text(120)),
     assessment: nullable(changeAssessmentSchema),
-    status: { type: "string", enum: ["queued", "analyzing", "proposed", "reviewing", "active", "completed", "cancelled", "failed"] },
+    status: { type: "string", enum: ["queued", "analyzing", "proposed", "reviewing", "active", "deferred", "completed", "cancelled", "failed"] },
     reviewId: nullable(text(120)),
     error: text(2000, 0), clarifications: array(object({ question: text(2000), answer: text() }), 20),
     remainingStages: array(stageSchema, 5), workStarted: array(stageSchema, 5), affectedDecisionIds: strings(200, 120),
@@ -102,7 +115,7 @@ const changeRequestSchema = object({
 export function readChangeRequests(value: unknown): ChangeRequest[] {
     if (value === undefined) return [];
     if (Array.isArray(value)) value = value.map(item => item && typeof item === "object" && !Array.isArray(item)
-        && !Object.hasOwn(item, "reviewId") ? { ...item, reviewId: null } : item);
+        ? { reviewId: null, sketchContext: null, ...item } : item);
     validateRequirementsValue(value, array(changeRequestSchema, 200), "change requests");
     const requests = value as ChangeRequest[];
     if (new Set(requests.map(request => request.id)).size !== requests.length ||
@@ -120,6 +133,9 @@ export function readChangeRequests(value: unknown): ChangeRequest[] {
             || request.reviewId != null && !/^review-[a-f0-9-]{36}$/.test(request.reviewId)) {
             throw new Error("Saved change request provenance is invalid. Its data was preserved.");
         }
+        if (request.sketchContext && request.sketchContext.revisionId !== request.baseSketchRevisionId) {
+            throw new Error("The saved design context does not match the request's source revision.");
+        }
         if (request.visualSelection) readVisualSelection(request.visualSelection);
         if (Boolean(request.developmentAdmission) !== Boolean(request.developmentRequest) ||
             request.developmentRequest && request.developmentRequest.id !== `change-${request.id}`) {
@@ -134,7 +150,51 @@ export function activeChange(state: Pick<TandemState, "changeRequests">): Change
 }
 
 export function pendingChange(state: Pick<TandemState, "changeRequests">): ChangeRequest | undefined {
-    return state.changeRequests?.find(request => !["completed", "cancelled", "reviewing"].includes(request.status));
+    return state.changeRequests?.find(request => ["queued", "analyzing", "proposed", "failed"].includes(request.status)) ?? activeChange(state);
+}
+
+export function nextChangeWork(state: Pick<TandemState, "changeRequests">): ChangeRequest | undefined {
+    const request = currentChangeReview(state);
+    return request && ["active", "analyzing", "queued"].includes(request.status) ? request : undefined;
+}
+
+export function completeSavedChange(state: TandemState): TandemState {
+    const request = activeChange(state), processing = state.processing, revision = state.sketch.current;
+    if (!request || !isCurrentStageChange(state, request)) return state;
+    // Requirements deltas were saved atomically with activation; answering their questions is separate work.
+    const requirementsSaved = request.originStage === "requirements" && request.assessment?.requirements && request.snapshotPath
+        && state.factoryRuns?.some(receipt => receipt.requestId === request.analysisId
+            && receipt.generation === state.generation && receipt.runId && receipt.terminal && !receipt.recovery && !receipt.launchRejection);
+    if (!requirementsSaved && (request.originStage !== "sketch" || !isLocalChange(state, request)
+        || !request.workStarted.includes("sketch") || processing?.action !== "revise-sketch"
+        || processing.status !== "success" || processing.changeRequestId !== request.id || !processing.completedAt
+        || !revision || revision.source !== "revised" || revision.id === processing.sketchRequest?.baseRevisionId
+        || revision.requirementsDigest !== processing.sketchRequest?.requirementsDigest
+        || revision.requirementsDigest !== requirementsInputDigest(state)
+        || !state.sketch.requests?.some(item => item.requestId === processing.requestId
+            && item.baseRevisionId === processing.sketchRequest.baseRevisionId)
+        || !state.factoryRuns?.some(receipt => receipt.requestId === processing.requestId
+            && receipt.generation === state.generation && receipt.runId === processing.runId
+            && receipt.runId && receipt.terminal && !receipt.recovery && !receipt.launchRejection))) return state;
+    return { ...state, changeRequests: state.changeRequests!.map(item => item.id === request.id
+        ? { ...item, status: "completed", remainingStages: [],
+            completedAt: requirementsSaved ? new Date().toISOString() : processing.completedAt, error: "" } : item) };
+}
+
+export function readSketchChangeContext(value: unknown, source?: {
+    revisionId: string | null; document: SketchDocument | null;
+}): SketchChangeContext | null {
+    if (value == null) return null;
+    validateRequirementsValue(value, sketchChangeContextSchema, "design change context");
+    const context = structuredClone(value as SketchChangeContext);
+    if (source) {
+        const screen = source.document?.screens.find(item => item.id === context.screenId);
+        if (context.revisionId !== source.revisionId || !screen
+            || context.nodeId !== null && (!("ui" in screen) || !Object.hasOwn(screen.ui.nodes, context.nodeId))) {
+            throw new Error("The selected design screen or element changed. Select it in the current revision before sending.");
+        }
+    }
+    return { revisionId: context.revisionId, screenId: context.screenId, nodeId: context.nodeId };
 }
 
 export function prototypeNeedsChangeUpdate(state: TandemState): boolean {
@@ -212,15 +272,15 @@ export function readChangeAssessment(value: unknown, state: TandemState): Change
         if (!stages.includes("requirements")) throw new Error("A Requirements change must explicitly include Requirements.");
         // Existing approval is bound to the complete requirements digest, even when screen bytes can be reused.
         if (state.sketch.current && !stages.includes("sketch")) {
-            assessment.stages.push({ stage: "sketch", reason: "Review the retained drawings against the changed requirements; unchanged screens are preserved." });
+            assessment.stages.push({ stage: "sketch", reason: "Review the retained designs against the changed requirements; unchanged screens are preserved." });
         }
         if (state.prototypeFlow?.displayedCheckpointId && !stages.includes("prototype")) {
-            assessment.stages.push({ stage: "prototype", reason: "Update the saved prototype against the revised requirements and drawings." });
+            assessment.stages.push({ stage: "prototype", reason: "Update the saved prototype against the revised requirements and designs." });
         }
     }
     if (assessment.stages.some(item => item.stage === "sketch") && state.prototypeFlow?.displayedCheckpointId &&
         !assessment.stages.some(item => item.stage === "prototype")) {
-        assessment.stages.push({ stage: "prototype", reason: "Bring the retained prototype into line with the reviewed drawings." });
+        assessment.stages.push({ stage: "prototype", reason: "Bring the retained prototype into line with the reviewed designs." });
     }
     if (assessment.stages.some(item => item.stage === "requirements") && !assessment.requirements && !assessment.question) {
         throw new Error("Describe the Requirements delta or ask a concrete clarification before changing Requirements.");
@@ -245,6 +305,7 @@ export function activateChange(state: TandemState, request: ChangeRequest, snaps
     const stages = new Set(assessment.stages.map(item => item.stage));
     const graph = delta?.graph ?? state.decisionGraph;
     const approach = assessment.requirements?.prototypeApproach ?? state.prototypeApproach;
+    const requirementsSaved = assessment.startStage === "requirements" && isCurrentStageChange(state, request);
     const next: TandemState = {
         ...state, stage: assessment.startStage, phase: assessment.startStage === "requirements" ? "discovery" : "iterating",
         lifecycle: { ...state.lifecycle, currentStage: assessment.startStage, changeRequestId: request.id,
@@ -260,9 +321,12 @@ export function activateChange(state: TandemState, request: ChangeRequest, snaps
             status: !state.sketch.current ? "empty" : stages.has("requirements") ? "stale" : "draft" } : state.sketch,
         prototypeReview: { ...state.prototypeReview, designSpecArtifactId: stages.has("prototype") ? null : state.prototypeReview.designSpecArtifactId },
         processing: null, suggestionProcessing: null,
-        changeRequests: (state.changeRequests ?? []).map(item => item.id === request.id ? { ...item, status: "active",
-            remainingStages: [...stages], affectedDecisionIds: delta?.affected ?? [], snapshotPath, error: "" } : item),
-        status: `Updating ${assessment.startStage === "sketch" ? "Drawings" : assessment.startStage} for your request. Previous work is retained.`,
+        changeRequests: (state.changeRequests ?? []).map(item => item.id === request.id ? { ...item,
+            status: requirementsSaved ? "completed" : "active", remainingStages: requirementsSaved ? [] : [...stages],
+            completedAt: requirementsSaved ? new Date().toISOString() : null,
+            affectedDecisionIds: delta?.affected ?? [], snapshotPath, error: "" } : item),
+        status: requirementsSaved ? "Requirements updated. Review the remaining decisions before continuing."
+            : `Updating ${lifecycleStages.find(stage => stage.id === assessment.startStage)?.label ?? assessment.startStage} for your request. Previous work is retained.`,
     };
     if (!state.stageReview) delete next.lifecycle.reviewId;
     return next;
@@ -273,7 +337,7 @@ export function preserveUnchangedScreens(previous: SketchDocument, proposed: Ske
     for (const screen of previous.screens) {
         if (affected.has(screen.id) || screen.decisionIds.some(id => request.affectedDecisionIds.includes(id))) continue;
         if (JSON.stringify(screen) !== JSON.stringify(proposed.screens.find(item => item.id === screen.id))) {
-            throw new Error(`The drawing update changed unrelated screen "${screen.id}". Preserve its exact content.`);
+            throw new Error(`The design update changed unrelated screen "${screen.id}". Preserve its exact content.`);
         }
     }
     for (const transition of previous.transitions) {
@@ -281,7 +345,7 @@ export function preserveUnchangedScreens(previous: SketchDocument, proposed: Ske
             previous.screens.some(screen => [transition.fromScreenId, transition.toScreenId].includes(screen.id) &&
                 screen.decisionIds.some(id => request.affectedDecisionIds.includes(id)))) continue;
         if (JSON.stringify(transition) !== JSON.stringify(proposed.transitions.find(item => item.id === transition.id))) {
-            throw new Error(`The drawing update changed unrelated navigation "${transition.id}".`);
+            throw new Error(`The design update changed unrelated navigation "${transition.id}".`);
         }
     }
 }

@@ -37,6 +37,8 @@ export interface BrowserHostOptions {
     initialDirectory: string;
     page: string;
     scriptHash: string;
+    assets?: () => { page: string; scriptHash: string };
+    developmentRevision?: () => string;
     preferencesPath?: string;
     backendFactory?: BackendFactory;
     startupTimeoutMs?: number;
@@ -299,15 +301,18 @@ export async function createBrowserHost(options: BrowserHostOptions) {
         if (!canvasRequestAllowed(request, url)) throw new HostError(403, "This request did not originate from the local host.");
         const address = new URL(request.url || "/", url);
         if (request.method === "GET" && address.pathname === "/") {
-            response.setHeader("Content-Security-Policy", `default-src 'none'; script-src '${options.scriptHash}'; style-src 'unsafe-inline'; connect-src 'self'; img-src data:; frame-src http://127.0.0.1:*; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`);
+            const assets = options.assets ? options.assets() : options;
+            response.setHeader("Content-Security-Policy", `default-src 'none'; script-src '${assets.scriptHash}'; style-src 'unsafe-inline'; connect-src 'self'; img-src data:; frame-src http://127.0.0.1:*; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`);
             response.setHeader("Permissions-Policy", "camera=(), geolocation=(), display-capture=()");
             response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-            response.end(options.page);
+            response.end(assets.page);
             return;
         }
         authorize(request);
         if (request.method === "GET" && address.pathname === "/host/state") {
             sendJsonResponse(response, 200, snapshot());
+        } else if (request.method === "GET" && address.pathname === "/host/development" && options.developmentRevision) {
+            sendJsonResponse(response, 200, { revision: options.developmentRevision() });
         } else if (request.method === "GET" && address.pathname === "/host/events") {
             if (clients.size >= 32) throw new HostError(429, "Too many host connections. Close unused Tandem tabs.");
             response.writeHead(200, { "Content-Type": "text/event-stream", Connection: "keep-alive" });

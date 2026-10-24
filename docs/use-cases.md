@@ -5,17 +5,19 @@
 For a first idea or existing app, use the [two-path quick start](quick-start.md).
 The recipes below cover the next tasks.
 
-## Revise requirements or drawings
+<a id="revise-requirements-or-drawings"></a>
+
+## Revise requirements or designs
 
 **Use when:** a behavior or screen needs to change.
 
-1. Describe the change in Prototype Feedback, the drawing revision input, or
+1. Describe the change in Prototype Feedback, the design revision input, or
    the Development conversation. Tandem assesses the affected stages against
    retained decisions and work before changing earlier stages.
 2. Review **Project changes**: where the change starts, what needs an update,
    and what stays unchanged. Clarify or refine the request if necessary.
 3. Approve the impact proposal. Answer only new or affected Requirements
-   questions, then review the affected drawings and prototype update.
+   questions, then review the affected designs and prototype update.
 4. Use **Apply update** for the prepared prototype. If Development is affected,
    use **Continue change in Development**; implementation still needs its own
    confirmation.
@@ -31,10 +33,10 @@ For direct edits rather than a chat request:
    broader warning; settle/close Development first if required.
 2. In Requirements, choose the answered question and **Update answer and
    dependents**. Review affected decisions.
-3. In Drawings, edit and **Save drawings**, or type a precise change and use
+3. In Designs, edit and **Save designs**, or type a precise change and use
    **Send** (**Ctrl+Enter** or **Command+Enter**). Inspect
    **Revision history** if a request failed; retry the recorded request deliberately.
-4. Approve the new drawings before using them for Prototype.
+4. Approve the new designs before using them for Prototype.
 
 **Result:** revised evidence with history retained. Reopening marks affected
 outputs stale, so old approvals may no longer apply. For a normal Development

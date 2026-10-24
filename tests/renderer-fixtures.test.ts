@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import type { TestContext } from "node:test";
 import { reactHarness, state as initialState, decision, response } from "./helpers/react-harness.js";
-import { createScreen, createShape } from "../src/renderer/sketch-editor.js";
-import type { SketchDocument } from "../src/sketch.js";
+import { createDslScreen as createScreen } from "../src/renderer/sketch-editor.js";
+import type { DslSketchDocument } from "../src/sketch.js";
+import { addUi, buttonScreen, createDocument } from "./helpers/ui-dsl-fixture.js";
 
-export { reactHarness, decision, response, createScreen, createShape };
+export { reactHarness, decision, response, createScreen, addUi, createDocument };
 export type Harness = Awaited<ReturnType<typeof reactHarness>>;
 export const state = (stage: Parameters<typeof initialState>[0] = "requirements", revision = 1): any => initialState(stage, revision);
 export const text = (h: Harness, id: string) => h.get(id).textContent!;
@@ -61,9 +62,8 @@ export function sketchFixture(revision = 1) {
     value.sketch.current = { id: "drawing-" + revision, number: revision, requirementsDigest: "requirements-digest",
         documentHash: "document-" + revision, createdAt: value.updatedAt, source: "generated" };
     value.sketch.status = "draft";
-    const document: SketchDocument = { version: 1, screens: [], transitions: [] };
-    document.screens.push(createScreen(document, ["accepted"]));
-    document.screens[0].shapes.push(createShape(document.screens[0], "rectangle"));
+    const document: DslSketchDocument = { version: 2, screens: [], transitions: [] };
+    document.screens.push(buttonScreen(createScreen(document, ["accepted"])));
     return { value, document };
 }
 export async function sketchSetup(t: TestContext, fixture = sketchFixture()) {

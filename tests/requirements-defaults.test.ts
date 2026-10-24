@@ -66,6 +66,7 @@ function worker(h: Awaited<ReturnType<typeof extensionHarness>>, result: (reques
                     step: (_name: string, run: () => Promise<unknown>) => run(),
                     agent: async (_prompt: string, options: any) => {
                         agents++;
+                        assert.equal(options.agent, h.api.textWorkerAgent.name);
                         if (request.args.action === "apply-defaults") {
                             assert.equal(options.schema.additionalProperties, false);
                             assert.equal(options.schema.properties.decisionGraph, undefined);
@@ -172,7 +173,7 @@ test("one bounded factory reconciles every dependent snapshot default without du
         f.h.api.setSession(f.h.session);
         const completed = await f.h.api.completeLifecycleStage("sample", "requirements", "project:tandem");
         assert.equal(completed.lifecycle.currentStage, "sketch", "completion remains an explicit separate operation");
-        assert.equal(completed.processing.action, "generate-sketch", "completion schedules drawings before a prototype");
+        assert.equal(completed.processing.action, "generate-sketch", "completion schedules designs before a prototype");
         await f.h.waitForRequests(2);
     } finally { await f.close(); }
 });
@@ -644,12 +645,14 @@ test("custom single answers and edits continue to regenerate transitive descenda
         assert.equal((await f.post(snapshot(f.initial))).status, 202);
         await f.h.waitForRequests(); await f.h.api.waitForAnswer("sample");
         worker(f.h, (request) => ({
-            ...request.args.state,
-            decisionGraph: { nodes: request.args.state.decisionGraph.nodes.map((node: any) =>
-                ["child", "grandchild"].includes(node.id) ? { ...node, title: `${node.id} regenerated`,
+            upsert: request.args.state.decisionGraph.nodes
+                .filter((node: any) => ["child", "grandchild"].includes(node.id) && node.id !== request.args.question.id)
+                .map((node: any) => ({
+                    id: node.id, dependencies: node.dependencies, title: `${node.id} regenerated`,
                     question: { ...node.question, text: `Reconsider ${node.id} after ${request.args.answer}`,
-                        choices: ["New default", "Another", "Minimal"], recommended: "New default" } } : node) },
-            artifactChanges: { upsert: [], remove: [] },
+                        choices: ["New default", "Another", "Minimal"], recommended: "New default" },
+                })),
+            assumptions: { add: [], remove: [] }, deferred: { add: [], remove: [] }, prototypeApproach: null,
         }));
         assert.equal((await f.post({ action: "change-answer", questionId: "root", answer: "Custom changed intent" })).status, 202);
         await f.h.waitForRequests(2); await f.h.api.waitForAnswer("sample");

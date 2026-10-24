@@ -251,7 +251,7 @@ export function installProjectPresentation({ document, window, changed, settings
       && /^handoff-[a-f0-9]{64}$/.test(context.handoffStatusOwner) ? context.handoffStatusOwner : null,
     placeholder: () => conflicted() ? `Draft for ${draftContext.label}`
       : current()?.stage === "development" ? "Ask about the Design, or describe the work you want."
-        : ({ goal: "Describe your project goal.", usage: "Describe a requirement usage.", sketch: "Describe a drawing revision.", prototype: "Describe prototype feedback." }[context?.discovery?.action] ?? "Use this phase's controls to continue."),
+        : ({ goal: "Describe your project goal.", usage: "Describe a requirement usage.", sketch: "Describe a design revision.", prototype: "Describe prototype feedback." }[context?.discovery?.action] ?? "Use this phase's controls to continue."),
     canSend: () => !pending && !conflicted() && (current()?.stage === "development" || context?.discovery?.enabled === true),
     entries: () => [],
     submit(text) {

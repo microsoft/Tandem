@@ -11,7 +11,7 @@ export function SketchViewport({ context, width, height, blocked, sizeControl, t
   height: number;
   blocked: boolean;
   sizeControl: ReactNode;
-  tools: ReactNode;
+  tools?: ReactNode;
   viewActions?: ReactNode;
   help: ReactNode;
   children: ReactNode;
@@ -85,8 +85,8 @@ export function SketchViewport({ context, width, height, blocked, sizeControl, t
   const stepZoom = (factor: number) => zoom("custom", Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, scale * factor)));
   return <>
     <div className="sketch-toolbar">
-      {tools}
       <div className="sketch-view-controls">
+        {tools}
         {sizeControl}
         <div id="sketch-zoom-tools" className="sketch-actions" role="group" aria-label="Canvas view controls">
           <button id="sketch-zoom-out" className="sketch-icon-button" type="button" title="Zoom out" aria-label="Zoom out"
@@ -109,7 +109,9 @@ export function SketchViewport({ context, width, height, blocked, sizeControl, t
     {help}
     <div ref={shell} id="sketch-board-wrap" className="sketch-board-wrap">
       <div ref={canvas} id="sketch-canvas" className="sketch-canvas" style={{ width: view.width * scale, height: view.height * scale }}>
-        {children}
+        <div style={{ position: "absolute", width: view.width, height: view.height, transform: `scale(${scale})`, transformOrigin: "top left" }}>
+          {children}
+        </div>
       </div>
     </div>
   </>;

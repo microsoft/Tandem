@@ -192,8 +192,11 @@ export function mergeStageReview(parent: TandemState, draft: TandemState, applie
     next.stageReviews = parent.stageReviews?.map(item => item.id === draft.prototypeId ? { ...item, appliedAt } : item);
     next.changeRequests = parent.changeRequests?.map(request => {
         if (request.id !== draft.stageReview?.changeRequestId || request.status !== "reviewing") return request;
+        const draftRequest = draft.changeRequests?.find(item => item.id === request.id);
         const remainingStages = request.remainingStages.filter(item => item !== stage);
         return { ...request, remainingStages, status: remainingStages.length ? "reviewing" : "completed",
+            affectedDecisionIds: [...new Set([...request.affectedDecisionIds, ...draftRequest?.affectedDecisionIds ?? []])],
+            workStarted: [...new Set([...request.workStarted, ...draftRequest?.workStarted ?? []])],
             completedAt: remainingStages.length ? null : appliedAt };
     });
     next.updatedAt = appliedAt;

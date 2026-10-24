@@ -872,7 +872,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         if (phase === "sketch") {
           await browser.waitFor('!document.querySelector("#complete-stage").disabled');
           assert.equal(await browser.evaluate('document.querySelector("#sketch-approve").hidden'), true,
-            "A clean approved drawing revision offers Finish, not another primary approval.");
+            "A clean approved design revision offers Finish, not another primary approval.");
           const beforeHistory = await browser.evaluate('({artifact:document.querySelector("#preview-pane").clientWidth,history:document.querySelector("#project-conversation").clientWidth})');
           assert.ok(beforeHistory.artifact > beforeHistory.history);
           await clickRoot("#toggle-discovery-history");
@@ -1379,7 +1379,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       for (const width of [1360, 920, 390]) {
         await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 1000, deviceScaleFactor: 1, mobile: false });
         assert.deepEqual(await browser.evaluate('Array.from(document.querySelectorAll("#stage-workspace-tabs [role=tab]"), tab => tab.textContent)'),
-          ["Preparation", "Requirements", "Drawings", "Prototype"]);
+          ["Preparation", "Requirements", "Designs", "Prototype"]);
         for (const tab of ["#preparation-workspace-tab", "#design-tree-workspace-tab", "#sketch-workspace-tab", "#live-preview-workspace-tab"]) {
           await click(tab);
           const layout = await browser.evaluate(`(() => {

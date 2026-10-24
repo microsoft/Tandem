@@ -23,7 +23,7 @@ test("responsive layout and graph keyboard focus have explicit accessible styles
     assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.processing-indicator/);
 });
 
-test("stage tab headers wrap right-aligned actions without content divider lines", async () => {
+test("navigation headers and below-input actions retain bounded independent layout", async () => {
     const css = await readFile(new URL("../src/renderer/styles.css", import.meta.url), "utf8");
     const header = css.match(/\.previewbar\s*\{([^}]+)\}/)![1];
     const actions = css.match(/\.phase-actions\s*\{([^}]+)\}/)![1];
@@ -32,6 +32,9 @@ test("stage tab headers wrap right-aligned actions without content divider lines
     assert.match(actions, /justify-content:\s*flex-end/);
     assert.match(actions, /max-width:\s*100%/);
     assert.doesNotMatch(header + actions, /border(?:-bottom|-top)?:/);
+    assert.match(css, /\.stage-input-review\s*\{[^}]*grid-row:\s*3;[^}]*overflow:\s*auto/);
+    assert.match(css, /\.project-workspace > \.preview > \.previewbar\s*\{\s*grid-row:\s*1/);
+    assert.match(css, /\.project-workspace > \.preview > \[role="tabpanel"\]\s*\{\s*grid-row:\s*2/);
 });
 
 test("compact density is shared by all stage headers, panels, controls, and composers", async () => {
@@ -106,7 +109,12 @@ test("renderer asset injection does not interpret dollar substitution sequences"
     const source = (await readFile(new URL("../src/renderer.ts", import.meta.url), "utf8")).replace(/^import .+;\r?$/gm, "");
     const code = (await transform(source + "\nglobalThis.render = renderTandemHtml;", { loader: "ts", format: "cjs" })).code;
     const payload = "$& $$ $` $'";
-    const context: any = { module: { exports: {} }, styles: payload, clientScript: payload, htmlTemplate: "__TANDEM_STYLES__ | __TANDEM_CLIENT__ | v__TANDEM_VERSION__" };
+    const context: any = { module: { exports: {} }, styles: payload, clientScript: payload, htmlTemplate: "__TANDEM_STYLES__ | __TANDEM_CLIENT__ | v__TANDEM_VERSION__",
+        readBrowserDevelopmentAssets: () => undefined };
     runInNewContext(code, context);
     assert.equal(context.render("0.0.0-test"), payload + " | " + payload + " | v0.0.0-test");
+    context.readBrowserDevelopmentAssets = () => ({
+        renderer: { template: "__TANDEM_STYLES__ / __TANDEM_CLIENT__ / __TANDEM_VERSION__", styles: "new styles", script: "new </script>" },
+    });
+    assert.equal(context.render("0.0.1-test"), "new styles / new <\\/script> / 0.0.1-test");
 });

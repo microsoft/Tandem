@@ -8,7 +8,7 @@ For the idea behind the product, read [the Tandem story](the-tandem-story.md).
 | Open my first project | [Quick start](quick-start.md) |
 | Understand the vision and shared-agreement approach | [The Tandem story](the-tandem-story.md) |
 | Learn the workspace | [User manual](user-manual.md) |
-| Revise drawings, refine Design or share output | [Task recipes](use-cases.md) |
+| Revise designs, refine Design or share output | [Task recipes](use-cases.md) |
 | Judge results and choose a follow-up | [Outcome reading](user-manual.md#read-an-outcome-and-decide-what-comes-next) and [follow-up recipe](use-cases.md#inspect-a-result-and-request-the-right-follow-up) |
 | Stop work, return later or recover a preview | [Troubleshooting](troubleshooting.md) |
 | Package Tandem or understand runtime and recovery contracts | [Engineering reference](engineering-reference.md) |

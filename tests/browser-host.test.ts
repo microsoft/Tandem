@@ -217,7 +217,7 @@ test("native notifications dismiss only their occurrence, retaining diagnostics 
     const protocol = new DesktopProtocol(input, output, () => { shutdowns++; });
     t.after(() => protocol.close());
     output.on("data", (data: Buffer) => f.event(parseBackendEvent(JSON.parse(data.toString()))));
-    const message = "Tandem request failed: The saved prototype preview is unavailable. Existing drawings, decisions, and draft text are unchanged.";
+    const message = "Tandem request failed: The saved prototype preview is unavailable. Existing designs, decisions, and draft text are unchanged.";
     const report = (id: string) => protocol.reportSessionError({ id, data: { errorType: "notification", message } });
     report("notice-one");
     const before = f.host.snapshot();

@@ -58,6 +58,7 @@ export interface UiContextValue {
   apiUrl?: (endpoint: string) => string;
   setReviewDirty?: (key: string, dirty: boolean) => void;
   reviewStage?: (stage: LifecycleStageId, request?: import("../change-requests.js").ChangeRequest) => Promise<void>;
+  changeRequestDialog?: ReturnType<typeof useChangeRequestDialog>;
 }
 
 export const UiContext = createContext<UiContextValue | null>(null);
@@ -66,6 +67,26 @@ export function useUi(): UiContextValue {
   const context = useContext(UiContext);
   if (!context) throw new Error("Tandem UI components require a UiContext provider.");
   return context;
+}
+
+export function useChangeRequestDialog() {
+  const [requestId, setRequestId] = useState<string | null>(null);
+  const opener = useRef<HTMLElement | null>(null);
+  return {
+    requestId,
+    open(id: string, source: Element | null = document.activeElement) {
+      if (requestId === null) opener.current = source instanceof HTMLElement && source !== document.body ? source : null;
+      setRequestId(id);
+    },
+    close() { setRequestId(null); },
+    restoreFocus() {
+      const target = opener.current;
+      opener.current = null;
+      if (!target?.isConnected || target.closest("[hidden], [inert]")) return false;
+      target.focus({ preventScroll: true });
+      return true;
+    },
+  };
 }
 
 function statusHelp(target: Element | null): string {

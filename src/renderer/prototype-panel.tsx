@@ -8,6 +8,7 @@ import { PreviewRestart } from "./preview-restart.js";
 import { awaitingVisualChoice, originalPrototypeCheckpointId, visualExplorationIsCurrent } from "../visual-directions.js";
 import { VisualExplorationPanel } from "./visual-exploration-panel.js";
 import { HandoffControls } from "./handoff-review.js";
+import { currentChangeReview } from "../change-request-policy.js";
 
 const milestones = [
   { id: "structure", label: "Structure" }, { id: "interaction", label: "Interaction" }, { id: "visual", label: "Visual exploration" },
@@ -113,13 +114,16 @@ function Clarification({ question }: { question: DecisionQuestion }) {
   </div>;
 }
 
-export function PrototypePanel({ active: visible, connected, renderActions }: {
-  active: boolean; connected: boolean; renderActions?: (actions: ReactNode) => ReactNode;
+export function PrototypePanel({ active: visible, connected, renderStageActions, renderReviewActions }: {
+  active: boolean; connected: boolean;
+  renderStageActions?: (actions: ReactNode) => ReactNode;
+  renderReviewActions?: (actions: ReactNode) => ReactNode;
 }) {
   const ui = useUi();
   const { state, pending, post, canEdit, guidance } = ui;
   const previewOwner = state.stageReview?.parentId ?? state.prototypeId;
   const canRequestChange = state.provider?.canSubmitAnswers !== false && !state.effortReset
+    && !currentChangeReview(state)
     && (canEdit("prototype") || state.lifecycle.completedStages.includes("prototype"));
   const latest = useRef(state);
   latest.current = state;
@@ -349,14 +353,25 @@ export function PrototypePanel({ active: visible, connected, renderActions }: {
     </a>}
   </div>;
 
+  const visualAction = <button id="request-prototype-visual" className="plan-button" hidden={!visualVisible}
+    disabled={blocked || unresolved.length > 0} onClick={() => void submitAction("visual")}>
+    <Sparkles size={16} />{visualStale ? "Explore current prototype" : "Explore visual directions (optional)"}</button>;
+  const reviewControls = <div className="prototype-actions">
+    <button id="apply-prototype-update" className="plan-button" hidden={!candidate || chosenCandidate && Boolean(flow?.visualExploration)} disabled={blocked}
+      title="Switch the displayed preview to this saved version." onClick={() => void submitAction("apply-update")}><ArrowUpRight size={16} />{switchLabel}</button>
+    <button id="visual-back" className="plan-button secondary" hidden={!chosenCandidate || Boolean(flow?.visualExploration)} disabled={blocked}
+      onClick={() => void submitAction("visual-back")}>Back to alternatives</button>
+    {!renderStageActions && visualAction}
+    <button id="skip-prototype-visual" className="plan-button secondary" hidden={!skipVisible} disabled={blocked}
+      onClick={() => void submitAction("skip-visual")}><SkipForward size={16} aria-hidden="true" />Skip visual direction</button>
+    <button id="retry-prototype-checkpoint" className="plan-button" hidden={!retryVisible || Boolean(state.stageReview)} disabled={blocked}
+      onClick={() => void submitAction("retry")}><RefreshCw size={16} />{failed ? "Retry " + milestones.find((item) => item.id === failed.milestone)?.label
+        : failedRevision ? "Retry failed revision" : state.prototypeNeedsUpdate ? "Update for reviewed inputs" : "Continue prototype work"}</button>
+  </div>;
   return <>
-    {renderActions ? renderActions(previewActions) : previewActions}
+    {renderStageActions?.(visualAction)}
+    {renderReviewActions?.(reviewControls)}
     <div className="preview-surface">
-      {savedOnly && state.lifecycle.outputs.some(output => output.stageId === "prototype") && !finalizing && <section className="prototype-progress" aria-label="Saved Prototype next step">
-        {!state.stageReview && <HandoffControls prototype active={visible} />}
-        <button className="plan-button secondary" type="button" onClick={() => ui.browseStage("development")}>Open Development</button>
-        <details><summary>Returning later</summary><p>The saved Prototype remains available for review in Development. Opening Development does not submit it; confirm the handoff when ready.</p></details>
-      </section>}
       <span id="preview-status" className="visually-hidden" role="status">{unavailable ? "not applicable" : finalizing ? "Finishing prototype..."
           : readyUrl && state.prototypeNeedsUpdate
             ? "Saved prototype - requested update pending"
@@ -378,8 +393,9 @@ export function PrototypePanel({ active: visible, connected, renderActions }: {
       <PendingPreviewAvailability active={visible} connected={connected} />
       <section id="prototype-progress" className="prototype-progress" aria-label="Prototype progress"
         aria-describedby={importantProgress ? "prototype-progress-message" : undefined}
-        hidden={Boolean(unavailable) || (!flow && ((Boolean(readyUrl) && !failedRevision) || state.lifecycle.currentStage !== "prototype"))}>
-        <ol id="prototype-milestones" className="prototype-milestones" aria-label="Prototype substages" hidden={!flow && Boolean(readyUrl)}>
+        hidden={Boolean(unavailable) || (!flow && !readyUrl && !failedRevision && state.lifecycle.currentStage !== "prototype")}>
+        <div className="prototype-substage-bar">
+          <ol id="prototype-milestones" className="prototype-milestones" aria-label="Prototype substages" hidden={!flow && Boolean(readyUrl)}>
           {milestones.map((milestone) => {
             const latest = checkpoints.filter((checkpoint) => checkpoint.milestone === milestone.id && !checkpoint.visualDismissedAt).at(-1)
               || checkpoints.filter(checkpoint => checkpoint.milestone === milestone.id).at(-1);
@@ -392,16 +408,8 @@ export function PrototypePanel({ active: visible, connected, renderActions }: {
               <strong>{milestone.label}</strong><span>{label}</span>
             </li>;
           })}
-        </ol>
-        <div className="prototype-actions">
-          <button id="apply-prototype-update" className="plan-button" hidden={!candidate || chosenCandidate && Boolean(flow?.visualExploration)} disabled={blocked}
-            title="Switch the displayed preview to this saved version." onClick={() => void submitAction("apply-update")}><ArrowUpRight size={16} />{switchLabel}</button>
-          <button id="visual-back" className="plan-button secondary" hidden={!chosenCandidate || Boolean(flow?.visualExploration)} disabled={blocked}
-            onClick={() => void submitAction("visual-back")}>Back to alternatives</button>
-          <button id="request-prototype-visual" className="plan-button" hidden={!visualVisible} disabled={blocked || unresolved.length > 0} onClick={() => void submitAction("visual")}><Sparkles size={16} />{visualStale ? "Explore current prototype" : "Explore visual directions (optional)"}</button>
-          <button id="skip-prototype-visual" className="plan-button secondary" hidden={!skipVisible} disabled={blocked}
-            onClick={() => void submitAction("skip-visual")}><SkipForward size={16} aria-hidden="true" />Skip visual direction</button>
-          <button id="retry-prototype-checkpoint" className="plan-button" hidden={!retryVisible || Boolean(state.stageReview)} disabled={blocked} onClick={() => void submitAction("retry")}><RefreshCw size={16} />{failed ? "Retry " + milestones.find((item) => item.id === failed.milestone)?.label : failedRevision ? "Retry failed revision" : state.prototypeNeedsUpdate ? "Update for reviewed inputs" : "Continue prototype work"}</button>
+          </ol>
+          {previewActions}
         </div>
         {importantProgress && <p id="prototype-progress-message" className="muted"
           role="status" data-essential="true">{message}</p>}
@@ -472,6 +480,7 @@ export function PrototypePanel({ active: visible, connected, renderActions }: {
           rows={1} maxLength={4000} disabled={Boolean(state.effortReset)} placeholder="Describe one change you want to see in the prototype." aria-label="Prototype revision suggestion" aria-describedby="revision-status" />
         <button id="submit-revision" type="submit" aria-describedby="revision-status" disabled={pending || !canRequestChange || finalizing || unresolved.length >= 50}><Send size={16} />{revisionAction.busy ? state.stageReview ? "Saving..." : "Sending..." : state.stageReview ? "Save draft feedback" : hasActiveJobs(state) || question || candidate || !readyUrl ? "Queue change" : "Send change"}</button>
       </form>
+      {!renderReviewActions && reviewControls}
       {question && <Clarification key={JSON.stringify(question)} question={question} />}
       <details id="revision-history-details" className="revision-history-details" hidden={!revisions.length}>
         <summary>Revision history <span id="revision-queue-summary" className="muted" role="status">{unresolved.length ? `${revisions.filter((item) => item.status === "queued").length} queued · ${unresolved.length} unresolved / 50` : ""}</span></summary>
@@ -482,5 +491,10 @@ export function PrototypePanel({ active: visible, connected, renderActions }: {
       <p id="revision-status" className={revisionAction.error || unresolved.length >= 50 || finalizing || question ? "revision-status" : "visually-hidden"} role="status" data-status={revisionAction.error || unresolved.length >= 50 ? "error" : "idle"}
         data-essential={Boolean(revisionAction.error || unresolved.length >= 50 || !canEdit("prototype") || finalizing || question)}>{revisionMessage}</p>
     </section>
+    {savedOnly && state.lifecycle.outputs.some(output => output.stageId === "prototype") && !finalizing && <section className="prototype-progress" aria-label="Saved Prototype next step">
+      {!state.stageReview && <HandoffControls prototype active={visible} />}
+      <button className="plan-button secondary" type="button" onClick={() => ui.browseStage("development")}>Open Development</button>
+      <details><summary>Returning later</summary><p>The saved Prototype remains available for review in Development. Opening Development does not submit it; confirm the handoff when ready.</p></details>
+    </section>}
   </>;
 }

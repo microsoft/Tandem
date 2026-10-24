@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createCurveShape, createScreen, createShape, parsePathPoints, resizeScreen, setPathPoints, setShapeBounds, shapeBounds, SketchEditor, SKETCH_SIZE_PRESETS } from "../src/renderer/sketch-editor.js";
+import { createCurveShape, createDslScreen, createScreen, createShape, parsePathPoints, resizeScreen, setPathPoints, setShapeBounds, shapeBounds, SketchEditor, SKETCH_SIZE_PRESETS } from "../src/renderer/sketch-editor.js";
 import { validateSketchDocument } from "../src/sketch.js";
 import type { SketchDocument } from "../src/sketch.js";
 
@@ -168,7 +168,10 @@ test("invalid edits are atomic and do not enter undo history", () => {
 
 test("undoing the first manually created screen restores an empty workspace", () => {
     const editor = new SketchEditor();
-    editor.edit((draft) => { draft.screens.push(createScreen(draft, ["accepted"])); });
+    editor.edit((draft) => {
+        assert.equal(draft.version, 2);
+        draft.screens.push(createDslScreen(draft, ["accepted"]));
+    });
     assert.equal(editor.dirty, true);
     editor.undo();
     assert.equal(editor.document, null);
