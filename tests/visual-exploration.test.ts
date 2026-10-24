@@ -367,16 +367,17 @@ test("React visual controls switch and persist per direction without changing th
     assert.equal(h.document.querySelectorAll(".visual-direction-toggle").length, 4);
     assert.equal(h.get("compare-current-prototype").dataset.applied, "true");
     assert.equal(h.get("compare-current-prototype").getAttribute("aria-checked"), "true");
-    assert.ok(h.document.querySelector(".previewbar > .phase-actions")!.contains(h.get("choose-visual-direction")));
+    assert.equal(h.get("choose-visual-direction").closest(".visual-exploration") !== null, true);
     assert.equal(h.document.querySelector(".visual-selection-actions"), null);
     await h.input("revision-input", "Keep this current-prototype draft.");
     await h.click("visual-direction-canvas");
+    assert.ok(h.get("visual-feedback-input").compareDocumentPosition(h.get("choose-visual-direction")) & h.window.Node.DOCUMENT_POSITION_FOLLOWING);
     assert.equal(h.get("preview-frame"), accepted);
     assert.equal(accepted.src, acceptedUrl);
     assert.equal(accepted.hidden, true);
     assert.match(text(h, "visual-selection-status"), /Previewing Canvas first.*Accept to apply/);
     assert.equal(h.document.querySelector("#restart-original-preview"), null);
-    assert.ok(h.document.querySelector(".previewbar > .phase-actions")!.contains(h.get("restart-exploration-preview")));
+    assert.ok(h.document.querySelector("#stage-input-review > .phase-actions")!.contains(h.get("restart-exploration-preview")));
     assert.equal(h.document.querySelector(".visual-exploration .preview-recovery-action"), null);
     const frame = h.get<HTMLIFrameElement>("visual-preview-frame"), frameUrl = frame.src;
     await h.input("visual-setting-textSize", "large");
@@ -414,7 +415,7 @@ test("React visual controls switch and persist per direction without changing th
     assert.equal(h.get("preview-frame"), accepted);
     assert.equal(accepted.src, acceptedUrl);
     assert.equal(h.get("compare-current-prototype").getAttribute("aria-checked"), "true");
-    assert.ok(h.document.querySelector(".previewbar > .phase-actions")!.contains(h.get("restart-original-preview")));
+    assert.ok(h.document.querySelector("#stage-input-review > .phase-actions")!.contains(h.get("restart-original-preview")));
     assert.equal(h.document.querySelector("#restart-exploration-preview"), null);
     assert.equal(h.get<HTMLTextAreaElement>("revision-input").value, "Keep this current-prototype draft.");
     assert.equal(current(h).prototypeFlow!.displayedCheckpointId, "interaction");

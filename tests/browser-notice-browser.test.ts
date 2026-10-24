@@ -19,7 +19,7 @@ test("real browser dismissal preserves the embedded workspace, accessible contro
         t.after(async () => { await closeHost(); await rm(root, { recursive: true, force: true }); });
         const value = state();
         value.goal = "I hope to build a markdown viewer";
-        const failure = "Tandem request failed: The saved prototype preview is unavailable. Restart the saved preview from its workspace controls, then retry the operation. Existing drawings, decisions, and draft text are unchanged.";
+        const failure = "Tandem request failed: The saved prototype preview is unavailable. Restart the saved preview from its workspace controls, then retry the operation. Existing designs, decisions, and draft text are unchanged.";
         const source = fileURLToPath(new URL("../src/", import.meta.url));
         const [hostCss, appCss, hostBundle, appBundle] = await Promise.all([
             build({ entryPoints: [join(source, "browser", "styles.css")], bundle: true, write: false, logLevel: "silent" }),

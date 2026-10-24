@@ -7,7 +7,7 @@ function decision(id: string, answer: string | null = null) {
     return {
         id, title: id, answer, dependencies: [], status: answer ? "answered" : "active",
         question: { id, text: `Choose ${id}`, choices: ["Recommended", "Alternative", "Minimal"],
-            recommended: "Recommended", allowFreeText: true },
+            recommended: "Recommended", allowFreeText: true, rationale: "", answerPlaceholder: "" },
     };
 }
 
@@ -28,6 +28,7 @@ test("DAG generation does not turn usage intake into a decision, and a rejected 
         await h.api.persistState(initial);
         let fail = true;
         let attempts = 0;
+        let researchCalls = 0;
         h.api.setSession({ ...h.session, rpc: { ...h.session.rpc, model: {
             getCurrent: async () => ({ modelId: "fixture-model", reasoningEffort: "low" }),
         }, workflow: {
@@ -37,11 +38,11 @@ test("DAG generation does not turn usage intake into a decision, and a rejected 
                 assert.equal(request.args.state.decisionGraph.nodes.length, 0);
                 assert.deepEqual(Array.from(request.args.state.requirements.usageItems), initial.requirements.usageItems);
                 const result = {
-                    ...request.args.state,
-                    requirements: { substage: "dag", usageItems: ["Worker rewrote scope"], suggestions: [] },
-                    decisionGraph: { nodes: [decision("fidelity", fail ? "Worker-selected answer" : null), decision("navigation")] },
-                    question: decision("fidelity").question,
-                    artifactChanges: { upsert: [], remove: [] },
+                    nodes: ["fidelity", "navigation"].map(id => {
+                        const { answer, status, ...node } = decision(id);
+                        return fail && id === "fidelity" ? { ...node, answer: "Worker-selected answer" } : node;
+                    }),
+                    assumed: [], deferred: [],
                 };
                 const runId = `dag-run-${attempts}`;
                 try {
@@ -49,8 +50,16 @@ test("DAG generation does not turn usage intake into a decision, and a rejected 
                         args: request.args, runId,
                         phase() {}, log() {},
                         step: (_name: string, run: () => Promise<unknown>) => run(),
-                        agent: async (_prompt, options) => {
+                        agent: async (prompt, options) => {
                             assert.equal(options.reasoningEffort, "low");
+                            if (options.label === "Research accepted usages") {
+                                researchCalls++;
+                                assert.equal(options.agent, undefined);
+                                assert.match(prompt, /I want to explore the exterior/);
+                                return { summary: "Ordinary interaction patterns need no external lookup.", checks: [], sources: [] };
+                            }
+                            assert.equal(options.agent, h.api.textWorkerAgent.name);
+                            assert.match(prompt, /Ordinary interaction patterns need no external lookup/);
                             return result;
                         },
                     });
@@ -72,21 +81,28 @@ test("DAG generation does not turn usage intake into a decision, and a rejected 
         await generate();
         const failed = await h.api.loadState("sample");
         assert.equal(failed.processing!.status, "error");
-        assert.match(failed.processing!.message, /answered by the user/);
+        assert.match(failed.processing!.message, /unexpected fields/);
         assert.equal(failed.requirements.substage, "usage");
         assert.equal(failed.decisionGraph.nodes.length, 0);
         assert.equal(failed.jobOwner, null);
         assert.deepEqual(Array.from(failed.requirements.usageItems), initial.requirements.usageItems);
+        assert.equal(failed.requirements.research?.requestId, failed.processing.requestId);
+        assert.equal(failed.requirements.research?.runId, "dag-run-1");
         fail = false;
         await generate();
         const ready = await h.api.loadState("sample");
         assert.equal(attempts, 2);
+        assert.equal(researchCalls, 1, "Retry reuses completed research when its exact inputs have not changed.");
         assert.equal(ready.processing!.status, "success", ready.status);
         assert.equal(ready.requirements.substage, "dag");
         assert.equal(ready.question!.id, "fidelity");
         assert.equal(ready.decisionGraph.nodes[0].status, "active");
         assert.ok(ready.decisionGraph.nodes.every((node) => node.answer === null));
         assert.deepEqual(Array.from(ready.requirements.usageItems), initial.requirements.usageItems);
+        assert.equal(ready.requirements.research?.requestId, failed.processing.requestId);
+        assert.equal(ready.requirements.research?.runId, "dag-run-1", "Reuse preserves original source identities.");
+        assert.equal(ready.requirements.research?.completedAt, failed.requirements.research?.completedAt);
+        assert.deepEqual(Array.from(ready.requirements.research!.input.usageItems), initial.requirements.usageItems);
         const snapshot = await fetch(new URL("api/state", entry.url)).then((result) => result.json()) as any;
         assert.equal(snapshot.requirements.substage, "dag");
         assert.equal(snapshot.processing.status, "success");
@@ -137,15 +153,18 @@ test("generation prompts distinguish commands from authoritative decision answer
             question: { id: "usage-intake", text: "Add usages" }, answer: "Generate the DAG.",
         };
         const prompt = h.api.answerFactoryPrompt({ ...args, action: "generate-dag" });
-        assert.match(prompt, /Set answer\nto null on EVERY generated node/);
+        assert.match(prompt, /Never return answers or statuses/);
         assert.match(prompt, /Do not copy the usage-intake question or node/);
-        assert.match(prompt, /Unselected suggestions\nare not scope/);
+        assert.match(prompt, /Unselected\nsuggestions are not scope/);
         assert.match(prompt, /Do not conduct a separate interview/);
         assert.match(prompt, /Defer exact business names, hours, addresses/);
+        assert.match(prompt, /Use only the frozen inputs and completed research/);
+        assert.match(prompt, /Do not use tools,\nrepeat research/);
         assert.doesNotMatch(prompt, /Ask exactly one next high-impact question/);
         assert.doesNotMatch(prompt, /Include the submitted answer|Treat the answer as an authoritative/);
         const answerPrompt = h.api.answerFactoryPrompt({ ...args, action: "answer-decision" });
-        assert.match(answerPrompt, /Include the submitted answer only on its matching decision node/);
+        assert.match(answerPrompt, /submitted answer is authoritative only for its matching decision/);
+        assert.match(answerPrompt, /Return only changed descendant questions/);
     } finally { await h.close(); }
 });
 

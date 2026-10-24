@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { reactHarness, state, decision, response, sketchFixture, sketchSetup, createScreen, createShape,
+import { reactHarness, state, decision, response, sketchFixture, sketchSetup, createScreen, addUi, createDocument,
     text, field, disabled, hidden, current, submit, browse, waitFor, type Harness } from "./renderer-fixtures.test.js";
 
-const shapes = (h: Harness) => h.get("sketch-board").querySelectorAll("[data-shape-id]");
-const rect = (h: Harness) => shapes(h)[0].querySelector("rect")!;
-const selectShape = (h: Harness, index: number) => h.click(h.get("sketch-shapes").querySelectorAll("button")[index]);
+const components = (h: Harness) => h.get("sketch-board").querySelector(".dsl-view")?.shadowRoot
+    ?.querySelectorAll("[data-ui-id]:not([data-type=Screen])") ?? [];
 
 test("Sketch is first-class after Requirements, loads separately, and never auto-generates", async (t) => {
     const h = await reactHarness(t);
@@ -26,77 +25,53 @@ test("Sketch is first-class after Requirements, loads separately, and never auto
     assert.equal(h.requests[0].path, "/api/sketch");
     release(response({ sketch: value.sketch, document }));
     await h.flush();
-    assert.equal(shapes(h).length, 1);
+    assert.equal(components(h).length, 1);
     assert.equal(disabled(h, "sketch-approve"), false);
     assert.equal(disabled(h, "complete-stage"), true);
-    assert.equal(hidden(h, "complete-stage"), true, "Unapproved drawings must not show a duplicate Finish action.");
-    assert.match(text(h, "next-action-guide"), /Approve drawings/);
+    assert.equal(hidden(h, "complete-stage"), true, "Unapproved designs must not show a duplicate Finish action.");
+    assert.match(text(h, "next-action-guide"), /Approve designs/);
     assert.match(text(h, "sketch-history"), /Revision 2.*generated.*current/);
     assert.equal(h.requests.length, 1);
     assert.deepEqual(h.errors, []);
 });
 
-test("Sketch manual screens, every shape tool, inspector, transitions and undo redo serialize correctly", async (t) => {
-    const fixture = sketchFixture();
-    fixture.value.sketch.current = null;
-    fixture.value.sketch.status = "empty";
-    fixture.document.screens = [];
-    const { h, value } = await sketchSetup(t, fixture);
-    await h.click("sketch-add-screen");
-    assert.equal(h.get("sketch-screens").querySelectorAll("button").length, 1);
-    for (const kind of ["rectangle", "ellipse", "text", "line", "arrow"]) await h.click("sketch-add-" + kind);
-    assert.equal(shapes(h).length, 5);
-    await selectShape(h, 2);
-    await h.input("sketch-text", "Go next");
-    assert.equal(shapes(h)[2].querySelector("text")!.textContent, "Go next");
-    await selectShape(h, 4);
-    await h.input("sketch-x", "10000");
-    assert.equal(Number(shapes(h)[4].querySelector("line")!.getAttribute("x2")), 960);
-    await h.click("sketch-undo");
-    assert.equal(field(h, "sketch-x").value, "40");
-    await h.click("sketch-redo");
-    for (const [name, value] of [["title", "Home"], ["purpose", "Overview"], ["notes", "Keep it compact"]]) {
-        await h.input("sketch-" + name, value);
-    }
-    await h.click("sketch-add-screen");
-    await h.click("sketch-add-transition");
-    await h.input(h.get("sketch-transitions").querySelector("input")!, "Open home");
-    assert.equal(disabled(h, "sketch-save"), false);
-    assert.equal(disabled(h, "sketch-generate"), true);
-    h.setFetch(async () => response({ ...value, revision: 2 }));
-    await h.click("sketch-save");
-    const document = h.requests.at(-1)!.body.document;
-    assert.equal(document.screens[0].title, "Home");
-    assert.equal(document.screens[0].purpose, "Overview");
-    assert.equal(document.screens[0].notes, "Keep it compact");
-    assert.deepEqual(document.screens[0].shapes.map((shape: any) => shape.kind), ["rectangle", "ellipse", "text", "line", "arrow"]);
-    assert.equal(document.transitions[0].trigger, "Open home");
-    assert.equal(document.transitions[0].fromScreenId, "screen-2");
-    assert.equal(document.transitions[0].toScreenId, "screen-1");
+test("Designs naming covers actions, accessible copy and activity without renaming saved IDs or user history", async t => {
+    const { h, value } = await sketchSetup(t);
+    const assertNames = () => {
+        const root = h.get("studio-workspace");
+        const copy = [root.textContent, ...Array.from(root.querySelectorAll("[aria-label], [title], [placeholder], [data-status-help]"))
+            .flatMap(element => ["aria-label", "title", "placeholder", "data-status-help"].map(name => element.getAttribute(name)))]
+            .filter(Boolean).join("\n");
+        assert.doesNotMatch(copy, /\bdrawings?\b/i, "Feature names must use Designs, including screen-reader and tooltip copy.");
+    };
+    assertNames();
+    assert.equal(h.get("sketch-generate").getAttribute("aria-label"), "Regenerate designs");
+    assert.equal(h.get("sketch-save").getAttribute("aria-label"), "Save designs");
+    assert.equal(text(h, "sketch-approve"), "Approve designs and continue");
+    assert.equal(field(h, "sketch-instruction").placeholder, "Describe a design change... (Ctrl+Enter)");
+    await h.click("sketch-history-toggle");
+    assert.equal(h.get("sketch-request-history-pane").getAttribute("aria-label"), "Design request history");
+    h.render({ ...value, revision: value.revision + 1, processing: {
+        action: "generate-sketch", status: "running", requestId: "design-name-request", runId: "design-name-run",
+        requestedAt: new Date().toISOString(),
+    } });
+    await h.flush();
+    assert.match(text(h, "workflow-activity-title"), /Updating designs/);
+    assertNames();
+    const instruction = "Keep the original drawings as a reference.";
+    const original = { requestId: "legacy-drawing-request", kind: "revise" as const, instruction,
+        requestedAt: value.updatedAt, baseRevisionId: value.sketch.current!.id };
+    h.render({ ...value, revision: value.revision + 2, sketch: { ...value.sketch, requests: [original] } });
+    await h.flush();
+    assert.ok(h.get("project-conversation").textContent!.includes(instruction), "User-authored historical text is not relabeled.");
+    assert.deepEqual(current(h).sketch.requests, [original]);
+    assert.equal(current(h).sketch.current!.id, "drawing-1");
+    assert.ok(h.requests.every(request => request.path === "/api/sketch" && request.body === null), "Renaming copy performs no mutations.");
 });
 
-test("Sketch drag, keyboard nudging, bounded freehand and grouped undo use actual pointer events", async (t) => {
-    const { h } = await sketchSetup(t);
-    const board = h.get("sketch-board");
-    await h.fire(shapes(h)[0], "pointerdown", { pointerId: 1, button: 0, clientX: 50, clientY: 50 });
-    await h.fire(board, "pointermove", { pointerId: 1, clientX: 70, clientY: 80 });
-    await h.fire(board, "pointerup", { pointerId: 1, clientX: 70, clientY: 80 });
-    assert.equal(rect(h).getAttribute("x"), "60");
-    assert.equal(rect(h).getAttribute("y"), "70");
-    await h.fire(board, "keydown", { key: "ArrowRight", shiftKey: true });
-    assert.equal(rect(h).getAttribute("x"), "70");
-    await h.fire(board, "keydown", { key: "z", ctrlKey: true });
-    assert.equal(rect(h).getAttribute("x"), "60");
-    await h.click("sketch-freehand");
-    await h.fire(board, "pointerdown", { pointerId: 2, button: 0, clientX: 10, clientY: 10 });
-    await h.fire(board, "pointermove", { pointerId: 2, clientX: 25, clientY: 25 });
-    await h.fire(board, "pointerup", { pointerId: 2, clientX: 10000, clientY: 10000 });
-    assert.match(shapes(h)[1].querySelector("path")!.getAttribute("d")!, /960 640$/);
-    await h.click("sketch-undo");
-    assert.equal(shapes(h).length, 1);
-    await h.fire(board, "keydown", { key: "Escape" });
-    assert.equal(h.get("sketch-freehand").getAttribute("aria-pressed"), "false");
-});
+
+
+
 
 test("Sketch retains drafts, focus and caret through SSE and tabs, with explicit conflict reload", async (t) => {
     const { h, value, document } = await sketchSetup(t);
@@ -171,7 +146,7 @@ test("Sketch save errors retain edits; approving an older revision does not perm
     fixture.value.sketch.approved = { revisionId: "older", requirementsDigest: "requirements-digest", documentHash: "older" };
     const { h, value } = await sketchSetup(t, fixture);
     await h.input("sketch-title", "Keep this");
-    h.setFetch(async () => response({ error: "The drawing revision changed. Reload drawings." }, 409));
+    h.setFetch(async () => response({ error: "The design revision changed. Reload designs." }, 409));
     await h.click("sketch-save");
     assert.equal(h.requests[1].body.expectedRevision, "drawing-1");
     assert.equal(h.requests[1].body.action, "save");
@@ -186,8 +161,8 @@ test("Sketch approval saves first, exports every canonical viewport, escapes tex
     const fixture = sketchFixture();
     fixture.document.screens.push(createScreen(fixture.document, ["accepted"]));
     Object.assign(fixture.document.screens[1], { width: 375, height: 812 });
-    fixture.document.screens[1].shapes.push(createShape(fixture.document.screens[1], "text"));
-    fixture.document.screens[0].shapes.push({ ...createShape(fixture.document.screens[0], "text"), text: "<script>&unsafe" });
+    addUi(fixture.document.screens[1], "label", "Text", { text: "Mobile" });
+    addUi(fixture.document.screens[0], "label", "Text", { text: "<script>&unsafe" });
     const { h, value } = await sketchSetup(t, fixture);
     let server = value;
     h.enablePngExport();
@@ -214,16 +189,16 @@ test("Sketch approval saves first, exports every canonical viewport, escapes tex
 });
 
 test("blank Sketch screens save as drafts but cannot approve or complete", async (t) => {
-    const fixture = sketchFixture(); fixture.document.screens[0].shapes = [];
+    const fixture = sketchFixture(); fixture.document.screens[0].ui = createDocument();
     const { h, value } = await sketchSetup(t, fixture);
     h.enablePngExport();
     assert.equal(disabled(h, "sketch-approve"), true);
-    assert.match(text(h, "sketch-status"), /at least one shape.*Empty screens can be saved/);
+    assert.match(text(h, "sketch-status"), /UI components.*Empty screens can be saved/);
     await h.input("sketch-notes", "Draft layout pending");
     await h.click("sketch-approve"); assert.equal(h.requests.length, 1);
     h.setFetch(async () => response({ ...value, revision: 2 }));
     await h.click("sketch-save");
-    assert.equal(h.requests[1].body.document.screens[0].shapes.length, 0);
+    assert.deepEqual(h.requests[1].body.document.screens[0].ui.nodes.screen.children, []);
     assert.equal(disabled(h, "sketch-approve"), true);
     assert.equal(disabled(h, "complete-stage"), true);
     assert.equal(h.pngExports.length, 0);
@@ -255,7 +230,7 @@ test("failed Sketch continuation retains approval; Finish retries without anothe
     assert.equal(current(h).sketch.status, "approved");
     assert.match(text(h, "sketch-message"), /Continuation failed/);
     assert.equal(disabled(h, "complete-stage"), false);
-    assert.equal(hidden(h, "complete-stage"), false, "Retain Finish for retrying already-approved drawings.");
+    assert.equal(hidden(h, "complete-stage"), false, "Retain Finish for retrying already-approved designs.");
     assert.equal(hidden(h, "sketch-approve"), true);
     await h.click("complete-stage");
     assert.equal(current(h).lifecycle.currentStage, "prototype");
@@ -270,15 +245,17 @@ test("Sketch gates provider ownership, historical stages, workers, stale require
     await h.click("sketch-approve"); await h.click("sketch-add-screen");
     assert.equal(h.requests.length, 1);
     h.render({ ...value, revision: 3, lifecycle: { ...value.lifecycle, currentStage: "prototype" } });
+    assert.equal(hidden(h, "sketch-approve"), true, "The Designs approval does not appear in another stage's header.");
+    await browse(h, "sketch");
     assert.equal(disabled(h, "sketch-approve"), true);
     assert.match(text(h, "sketch-status"), /Read only/);
-    h.render({ ...value, revision: 4, processing: { action: "revise-sketch", status: "running", message: "Drawing new screens" } });
+    h.render({ ...value, revision: 4, processing: { action: "revise-sketch", status: "running", message: "Designing new screens" } });
     assert.equal(disabled(h, "sketch-approve"), true);
     assert.equal(hidden(h, "next-action-bar"), false, "The footer remains available for worker status.");
     assert.equal(hidden(h, "show-next-action"), true);
     await h.click("show-next-action");
     assert.equal(h.requests.length, 1, "Running work must not dispatch through next-action navigation.");
-    assert.match(text(h, "sketch-status"), /Drawing new screens/);
+    assert.match(text(h, "sketch-status"), /Designing new screens/);
     h.render({ ...value, revision: 5, sketch: { ...value.sketch, status: "stale" } });
     assert.equal(disabled(h, "sketch-generate"), false);
     assert.match(text(h, "sketch-status"), /Stale.*requirements changed/);
@@ -295,15 +272,18 @@ test("Sketch generation is explicit; revisions retain instructions and block dup
     h.setFetch(async () => response({ ...value, revision: 2, processing: { action: "generate-sketch", status: "running" } }));
     await h.click("sketch-generate"); await h.confirm();
     assert.deepEqual(h.requests[1].body, { action: "generate", expectedRevision: "drawing-1" });
-    h.render({ ...value, revision: 3, processing: { action: "generate-sketch", status: "error", message: "Drawing worker failed" } });
-    assert.match(text(h, "sketch-message"), /Drawing worker failed/);
+    h.render({ ...value, revision: 3, processing: { action: "generate-sketch", status: "error", message: "Design worker failed" } });
+    assert.match(text(h, "sketch-message"), /Design worker failed/);
     await h.input("sketch-instruction", "Move navigation left");
     let release!: (r: Response) => void;
     h.setFetch(() => new Promise((resolve) => { release = resolve; }));
     await submit(h, "sketch-revise-form");
     await submit(h, "sketch-revise-form"); await h.click("sketch-approve");
     assert.equal(h.requests.length, 3);
-    assert.deepEqual(h.requests[2].body, { action: "revise", expectedRevision: "drawing-1", instruction: "Move navigation left" });
+    assert.deepEqual(h.requests[2].body, { action: "revise", expectedRevision: "drawing-1", instruction: "Move navigation left",
+        clientRequestId: h.requests[2].body.clientRequestId,
+        sketchContext: { revisionId: "drawing-1", screenId: "screen-1", nodeId: null } });
+    assert.match(h.requests[2].body.clientRequestId, /^[a-f0-9-]{36}$/);
     release(response({ error: "Cannot start revision." }, 500));
     await waitFor(h, () => /Cannot start revision/.test(text(h, "sketch-message")));
     assert.equal(field(h, "sketch-instruction").value, "Move navigation left");
@@ -317,7 +297,7 @@ test("failed Sketch revisions retry persisted instruction and retain new unsent 
     await h.input("sketch-instruction", "A different unsent instruction");
     assert.equal(hidden(h, "sketch-failed-revision"), false);
     assert.match(text(h, "sketch-failed-instruction"), /Move navigation left/);
-    assert.match(text(h, "next-action-guide"), /Retry the failed drawing revision/);
+    assert.match(text(h, "next-action-guide"), /Retry the failed design revision/);
     assert.equal(hidden(h, "sketch-request-history-pane"), true);
     await h.click("show-next-action");
     await new Promise((resolve) => h.window.requestAnimationFrame(resolve)); await h.flush();
@@ -332,11 +312,14 @@ test("failed Sketch revisions retry persisted instruction and retain new unsent 
     h.setFetch(() => new Promise((resolve) => { release = resolve; }));
     await h.click("sketch-retry-revision"); await h.click("sketch-retry-revision");
     assert.equal(h.requests.length, 2);
-    assert.deepEqual(h.requests[1].body, { action: "revise", expectedRevision: "drawing-1", instruction: "Move navigation left" });
+    assert.deepEqual(h.requests[1].body, { action: "revise", expectedRevision: "drawing-1", instruction: "Move navigation left",
+        clientRequestId: h.requests[1].body.clientRequestId,
+        sketchContext: { revisionId: "drawing-1", screenId: "screen-1", nodeId: null } });
+    assert.match(h.requests[1].body.clientRequestId, /^[a-f0-9-]{36}$/);
     release(response({ ...value, revision: 2, processing: { ...value.processing, status: "running" } })); await h.flush();
     assert.equal(field(h, "sketch-instruction").value, "A different unsent instruction");
     assert.equal(hidden(h, "sketch-failed-revision"), true);
-    assert.equal(shapes(h).length, 1);
+    assert.equal(components(h).length, 1);
 });
 
 test("Sketch retry retains its failed instruction after transport errors and unrelated SSE", async (t) => {
@@ -350,7 +333,7 @@ test("Sketch retry retains its failed instruction after transport errors and unr
     assert.match(text(h, "sketch-failed-instruction"), /Keep exact instruction/);
     await h.click("sketch-retry-revision");
     assert.equal(h.requests[2].body.instruction, h.requests[1].body.instruction);
-    assert.equal(shapes(h).length, 1);
+    assert.equal(components(h).length, 1);
 });
 
 test("Sketch retry captures failed instructions before saving edits clears worker state", async (t) => {
@@ -376,23 +359,10 @@ test("Sketch retry captures failed instructions before saving edits clears worke
     assert.equal(disabled(h, "sketch-save"), true);
 });
 
-test("remote Sketch revisions cannot overwrite or rebase an active pointer gesture", async (t) => {
-    const { h, value } = await sketchSetup(t);
-    await h.fire(shapes(h)[0], "pointerdown", { pointerId: 1, button: 0, clientX: 50, clientY: 50 });
-    h.render({ ...value, revision: 2, sketch: { ...value.sketch, current: { ...value.sketch.current, id: "remote" } } });
-    assert.equal(h.requests.length, 1);
-    assert.match(text(h, "sketch-status"), /Conflict/);
-    await h.fire(h.get("sketch-board"), "pointerup", { pointerId: 1, clientX: 70, clientY: 80 });
-    assert.equal(rect(h).getAttribute("x"), "60");
-    assert.equal(disabled(h, "sketch-save"), true);
-    assert.equal(disabled(h, "sketch-approve"), true);
-});
 
-test("Sketch clean revisions refresh, gestures cancel safely, and no-GUI approaches skip drawings", async (t) => {
+
+test("Sketch clean DSL revisions refresh and no-GUI approaches skip designs", async (t) => {
     const { h, value, document } = await sketchSetup(t);
-    await h.fire(shapes(h)[0], "pointerdown", { pointerId: 1, button: 0, clientX: 50, clientY: 50 });
-    assert.equal(disabled(h, "sketch-approve"), true);
-    await h.fire(h.get("sketch-board"), "pointercancel", { pointerId: 1 });
     assert.equal(disabled(h, "sketch-approve"), false);
     assert.equal(disabled(h, "sketch-save"), true);
     const saved = { ...value.sketch, current: { ...value.sketch.current, id: "updated" } };
@@ -410,9 +380,9 @@ test("Sketch clean revisions refresh, gestures cancel safely, and no-GUI approac
 test("Sketch document errors stay visible until explicit reload", async (t) => {
     const h = await reactHarness(t);
     const { value, document } = sketchFixture();
-    h.setFetch(async () => response({ error: "Drawing storage unavailable" }, 500));
+    h.setFetch(async () => response({ error: "Design storage unavailable" }, 500));
     h.render(value); await h.flush();
-    assert.match(text(h, "sketch-message"), /Drawing storage unavailable/);
+    assert.match(text(h, "sketch-message"), /Design storage unavailable/);
     h.render({ ...value, revision: 2 }); await h.flush();
     assert.equal(h.requests.length, 1);
     assert.equal(disabled(h, "sketch-approve"), true);

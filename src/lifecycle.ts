@@ -2,7 +2,7 @@ import { ProjectStoreError } from "./project-store.js";
 import type { LifecycleOutput, LifecycleStageId, LifecycleState, TandemState } from "./types.js";
 import { hasActiveWork, hasUnconfirmedExecution, isRetiredStage, lifecycleStages, parseHistoricalStageId } from "./workflow.js";
 
-export const LEGACY_SKETCH_REASON = "This effort entered Prototype before Sketch was introduced. Reopen Requirements to add approved drawings.";
+export const LEGACY_SKETCH_REASON = "This effort entered Prototype before Designs was introduced. Reopen Requirements to add approved designs.";
 const record = (value: unknown): value is Record<string, any> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
 /** Historical records never pass through the active-stage filter. */

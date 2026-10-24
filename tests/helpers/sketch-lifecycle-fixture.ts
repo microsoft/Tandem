@@ -1,17 +1,15 @@
 import { deflateSync } from "node:zlib";
-import type { SketchDocument } from "../../src/sketch.js";
+import type { DslSketchDocument } from "../../src/sketch.js";
+import { buttonScreen, createDocument } from "./ui-dsl-fixture.js";
 
-export function sketchDocument(): SketchDocument {
+export function sketchDocument(): DslSketchDocument {
     return {
-        version: 1,
-        screens: [{
+        version: 2,
+        screens: [buttonScreen({
             id: "main", title: "Main", purpose: "Complete the primary task.", decisionIds: ["usage"],
             width: 320, height: 240, notes: "Keep the primary action visible.",
-            shapes: [{
-                id: "primary-action", kind: "rectangle", x: 20, y: 20, width: 120, height: 40,
-                text: "", points: [], stroke: "#333333", fill: "#eeeeee", fontSize: 16,
-            }],
-        }],
+            ui: createDocument({ tokens: { "space.1": 20 } }),
+        })],
         transitions: [],
     };
 }

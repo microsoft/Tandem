@@ -29,7 +29,7 @@ invocation:
 
 This is the loaded Tandem skill. Do not invoke the skill again.
 
-Stage 1 is optional: **Preparation -> Requirements -> Sketch -> Prototype**
+Stage 1 is optional: **Preparation -> Requirements -> Designs -> Prototype**
 collects Q&A and prototype evidence, not formal Design. Stage 2 can open directly
 or later with saved Stage 1 files as explicit input. Development is PR #14's
 original human-loop application, not a renamed version of the old
@@ -84,13 +84,15 @@ must not be presented as private Development controls.
 
 ## Preparation
 
-Preparation checks the workspace, researches only necessary authoritative
-sources, and produces a Requirements handoff. For ordinary goals in an empty
-workspace, the existing lightweight goal-only path is sufficient; do not add
-unnecessary research. Named products, repositories or specialized methods may
-require primary sources, within the worker's existing budget.
+Preparation checks local workspace context and produces a lightweight handoff
+for usage collection. Empty folders remain eligible for local inspection when
+they contain only Git/Tandem metadata and the setup-only `.gitignore` rule.
+Do not perform substantive domain/product research before accepted usages.
+Only an unfamiliar reference essential to understanding the goal permits a
+small early lookup, bounded to one authoritative source call. A named API,
+repository, method or research request alone does not justify it.
 
-The visible work items are workspace inspection, authoritative-source analysis
+The visible work items are workspace inspection, goal clarification if needed,
 and Requirements handoff. Preserve sources, readiness checks, suggested usages,
 assumptions and deferrals. Missing tooling or credentials are not fabricated
 successes. `needs-attention` may proceed to Requirements with explicit deferrals;
@@ -109,7 +111,17 @@ Do not call stage completion to bypass it.
 ## Requirements
 
 Let the user add usages and optional suggestions before explicitly generating
-the DAG. Each decision has prerequisites, a clear question, three to five curated
+the DAG. **Generate requirements DAG** first researches missing facts relevant
+to accepted usages, reusing sufficient Preparation findings. Ordinary concepts
+need no external lookup; necessary research uses at most four authoritative
+source calls. Unselected suggestions are not research scope. Defer pure
+implementation research to Development unless it affects a requirements decision.
+Progress and retained **Research and sources** belong inside Requirements, not
+a new stage. Question generation and answer reconciliation use focused, tool-free
+workers; the host preserves independent decisions and derives graph presentation.
+Research informs choices; it never accepts answers or adds features.
+
+Each decision has prerequisites, a clear question, three to five curated
 choices, a recommended default where appropriate, and mutually exclusive free
 text. Questions should affect observable behavior or the primary workflow.
 
@@ -122,20 +134,42 @@ one-question approvals. Conflicts and changed questions require review.
 After generation, verify `requirements.substage === "dag"`, the decision graph,
 the active question and processing receipt before claiming readiness. Failed
 generation/reconciliation retains the user's inputs for explicit retry.
+Completed research retains its exact inputs, generation, request and run IDs
+even if question generation fails. An unchanged retry reuses that saved record
+without another research worker and preserves its original identities. Changed
+inputs require fresh research. Never substitute stale or worker-invented findings;
+question results must bind the exact saved research record.
 
-## Sketch
+## Designs
 
-Keep the existing screen editor, shapes, transitions, undo/redo, streamed
-revisions and approval flow. Drawings describe the actual primary
-journey, not one screen per decision. Preserve stable screen/shape IDs and exact
-accepted decision references. Do not invent a sketch approval.
+Designs uses version-2 multi-screen documents containing UI DSL v1 component
+trees and design tokens, not geometric shapes. Use streamed `ui` records wrapping
+one validated DSL edit, plus screen/transition metadata operations. Preserve
+screen/node IDs, accepted decision references, size/zoom controls, undo/redo,
+revision history and explicit approval. Do not restore shape/freehand tools.
+Keep the DSL Structure tree and view selection synchronized. Select is persistent;
+Interact is an explicit mode for trying controls. Selection is view state,
+not edits or approval. Live-preview selections must
+not become saved revision targets or appear in exported approval images.
+Views describe the primary journey, not one screen per decision. Legacy geometry
+files remain readable for integrity/history, but active views require explicit
+regeneration as DSL; never silently convert or overwrite an old approval.
 
-Only explicit user approval of the current rendered drawings creates the
+Update existing Designs incrementally after accepted requirements change.
+Use `sketch_action` with `action: "update"` and the saved revision; it retains
+reviewed screens and UI nodes while applying only required adjustments.
+`action: "generate"` is a separate, explicit start-over choice, not a refresh.
+
+Only explicit user approval of the current rendered designs creates the
 approved document/image handoff. A changed requirements digest, revision or
 document hash invalidates approval. Prototype workers use the exact approved
-revision and the owned image-reading tool; do not substitute a different drawing.
+revision's DSL source and the owned image-reading tool. Per-screen `.ui.json`
+files are authoritative structured inputs; PNGs are derived visual references.
+Prototype, the feature specification and the Development handoff must carry
+component hierarchy, typed props, tokens and transitions, not reconstruct shapes
+from screenshots. Do not substitute a different design.
 
-No-GUI efforts skip Sketch and Prototype with a retained reason and feature
+No-GUI efforts skip Designs and Prototype with a retained reason and feature
 specification, not invented screens.
 
 ## Prototype
@@ -151,7 +185,7 @@ pass. Build two or three distinct working layout/style directions in the same
 app, preserving the primary journey and mock contracts. Use the production
 checkpoint prompt and validated `tandem-visual-directions.json` contract; do not
 maintain a separate prompt or theme protocol here. Explain layout departures
-from the approved drawings without changing navigation or adding features.
+from the approved designs without changing navigation or adding features.
 
 Comparison and per-direction appearance settings are not acceptance. Scoped
 feedback refines one alternative while retaining the others and the current
@@ -209,10 +243,10 @@ Use `decide_change` only with the displayed request, analysis and baseline
 identities and the user's actual decision. A stale proposal needs another impact
 assessment, not inferred approval.
 
-The original message, clarifications, independent answers, drawing revisions and
+The original message, clarifications, independent answers, design revisions and
 displayed prototype remain retained. Ask only new or affected decisions. A
 Requirements change updates its graph incrementally; do not regenerate the whole
-interview or resubmit historical work as new tasks. Approval of changed drawings
+interview or resubmit historical work as new tasks. Approval of changed designs
 and application of a prepared prototype remain explicit. Cancellation after
 partial progress keeps saved changes; it is not rollback.
 
@@ -305,7 +339,7 @@ an absent session, or reinterpret ordinary Retry as this authorization.
 Recovered Ready preserves audit and the prepared envelope; it does not submit
 the handoff or authorize implementation.
 
-## Reset, history and delivery
+## Settings, reset and history
 
 Lifecycle version 3 separates active stages from historical stage IDs. Old
 snapshots, artifacts, receipts and acceptances stay read-only. Active or
@@ -317,16 +351,24 @@ Unopened saved private state is not automatically quiet. Reset archives upstream
 discovery and does not erase canonical Design, conversation or admitted handoffs.
 For an unrelated canonical project, use another workspace.
 
-Capture a Development outcome, review it and explicitly accept its exact Design,
-cycle, sources, outcome, coverage, native evidence references and verification
-limits. Acceptance is recorded human attribution, not an authenticated code-owner
-approval or a fabricated test pass. Export is a separate explicit operation into
-`tandem-records`; preparing a delivery draft is not export.
+Project settings is the same window in every phase. Appearance, shared reasoning
+effort and native Development settings retain their original owners; opening
+settings does not start Development or grant consent.
+Before first startup, **Save model for Development** records the user's private
+model choice. Startup validates and applies that saved preference, then verifies
+native readback; saving is not proof of a running model. Catalog failures or
+unavailable model/effort choices never authorize a fallback.
+If first startup has no saved private model, ask through Project settings before
+creating the session. Saving the selection alone must not resume startup or
+submit a handoff; the user explicitly continues afterward.
 
-Keep Local/GitHub selections and receipt history behind `ProcessAdapterRegistry`.
-Adapter errors never authorize fallback. Publication remains explicit and never
-implies a Git commit, push, merge or deployment. Legacy auto-start and verification
-settings are retained history only.
+The obsolete acceptance, capture/export, delivery and linked-intake workflow is
+retired, including `process_action`. Do not recreate or relocate those controls.
+Retain historical snapshots, Local/GitHub selections, receipts, acceptances and
+existing `tandem-records` exports without mutation or adapter substitution.
+This is distinct from the explicit Prototype-to-Design handoff and native
+implementation confirmation, which remain supported. Inspect original Design,
+Conversation and results rather than manufacturing acceptance or test evidence.
 
 ## Host/runtime and validation
 

@@ -6,6 +6,8 @@ import { extensionHarness } from "./helpers/extension-harness.js";
 import { sketchDocument, screenPng } from "./helpers/sketch-lifecycle-fixture.js";
 import type { SketchWorkerEvent } from "../src/sketch-stream-worker.js";
 import { SketchStore } from "../src/sketch-store.js";
+import { requirementsInputDigest } from "../src/requirements-reconciliation.js";
+import { applyOperations } from "./helpers/ui-dsl-fixture.js";
 
 function deferred<T>() {
     let resolve!: (value: T) => void;
@@ -13,7 +15,7 @@ function deferred<T>() {
     return { resolve, promise };
 }
 
-async function setup(legacyEvents = false) {
+async function setup(legacyEvents = false, document = sketchDocument()) {
     const h = await extensionHarness();
     const state = h.api.createState("sample", "A task app");
     state.stage = state.lifecycle.currentStage = "sketch";
@@ -27,15 +29,16 @@ async function setup(legacyEvents = false) {
     }] };
     await h.api.persistState(state);
     const saved = await h.api.sketchAction("sample", "project:tandem", {
-        action: "save", expectedRevision: null, document: sketchDocument(),
+        action: "save", expectedRevision: null, document,
     });
     const before = await h.api.sketchAction("sample", "project:tandem", {
         action: "approve", expectedRevision: saved.sketch.current!.id,
-        previews: [{ screenId: "main", data: screenPng() }],
+        previews: document.screens.map(screen => ({ screenId: screen.id, data: screenPng(screen.width, screen.height) })),
     });
     const ready = deferred<void>();
     const output = deferred<string>();
     const listeners = new Set<(event: SketchWorkerEvent) => void>();
+    const prompts: string[] = [];
     const signal = new AbortController().signal;
     const runtime = {
         ...h.session,
@@ -57,10 +60,11 @@ async function setup(legacyEvents = false) {
                     log() {}, phase() {},
                     step: async (_key: string, producer: () => Promise<unknown>) => producer(),
                     agent: async (prompt: string, options: { schema?: unknown; agent?: string; reasoningEffort: string }) => {
+                        prompts.push(prompt);
                         assert.equal(options.schema, undefined, "a whole-document schema would buffer the response");
                         assert.equal(options.agent, h.api.textWorkerAgent.name);
                         assert.equal(options.reasoningEffort, "low");
-                        assert.match(prompt, /newline-delimited JSON drawing operations/);
+                        assert.match(prompt, /newline-delimited JSON design operations/);
                         ready.resolve();
                         return output.promise;
                     },
@@ -80,15 +84,17 @@ async function setup(legacyEvents = false) {
         data: { messageId: "drawing-message", deltaContent: text },
     });
     const operation = (x: number) => JSON.stringify({
-        op: "upsert-shape", screenId: "main", shape: { ...sketchDocument().screens[0].shapes[0], x },
+        op: "ui", screenId: "main", edit: { op: "setToken", key: "space.1", value: x },
     }) + "\n";
-    const start = async (action: "revise" | "generate" = "revise") => {
-        const pending = await h.api.sketchAction("sample", "project:tandem", {
+    const start = async (action: "revise" | "generate" | "update" | "automatic" = "revise", prototypeId = "sample") => {
+        const pending = action === "automatic"
+            ? await h.api.ensureSketchStarted(await h.api.loadState(prototypeId), true)
+            : await h.api.sketchAction(prototypeId, "project:tandem", {
             action, expectedRevision: before.sketch.current!.id,
             ...(action === "revise" ? { instruction: "Move the primary action right." } : {}),
         });
-        await Promise.race([ready.promise, h.api.waitForAnswer("sample").then(() => {
-            throw new Error(`Drawing worker did not start: ${h.logs.join("\n")}`);
+        await Promise.race([ready.promise, h.api.waitForAnswer(prototypeId).then(() => {
+            throw new Error(`Design worker did not start: ${h.logs.join("\n")}`);
         })]);
         emit({ type: "subagent.started", agentId: "bg-stream-tool",
             data: { ...(legacyEvents ? {} : { workflowRunId: "stream-run" }), toolCallId: "bg-stream-tool" } });
@@ -96,7 +102,7 @@ async function setup(legacyEvents = false) {
             data: { messageId: "drawing-message", phase: "final_answer" } });
         return pending;
     };
-    return { h, before, url: opened.url, start, delta, operation, output, listeners };
+    return { h, before, url: opened.url, start, delta, operation, output, listeners, prompts };
 }
 
 async function eventReader(url: string, signal: AbortSignal) {
@@ -117,7 +123,7 @@ async function eventReader(url: string, signal: AbortSignal) {
                 continue;
             }
             const result = await reader.read();
-            if (result.done) throw new Error("Drawing event stream closed before the expected update.");
+            if (result.done) throw new Error("Design event stream closed before the expected update.");
             buffer += decoder.decode(result.value, { stream: true });
         }
     };
@@ -136,7 +142,7 @@ for (const legacyEvents of [false, true]) test(`a sketch factory streams interme
         const first = await next((state) => state.sketchPreview?.sequence === 1);
         assert.equal(first.processing.status, "running");
         assert.equal(first.revision, running.revision, "preview transport must not create state revisions");
-        assert.equal(first.sketchPreview.document.screens[0].shapes[0].x, 90);
+        assert.equal(first.sketchPreview.document.screens[0].ui.tokens["space.1"], 90);
         assert.equal(first.sketchPreview.requestId, pending.processing.requestId);
         assert.equal(first.sketchPreview.baseRevisionId, f.before.sketch.current!.id);
         assert.equal(first.sketch.current.id, f.before.sketch.current!.id);
@@ -145,7 +151,7 @@ for (const legacyEvents of [false, true]) test(`a sketch factory streams interme
 
         f.delta(f.operation(110));
         const second = await next((state) => state.sketchPreview?.sequence === 2);
-        assert.equal(second.sketchPreview.document.screens[0].shapes[0].x, 110);
+        assert.equal(second.sketchPreview.document.screens[0].ui.tokens["space.1"], 110);
         const reconnected = await (await fetch(new URL("api/state", f.url))).json();
         assert.equal(reconnected.sketchPreview.sequence, 2, "a reconnect receives the latest preview");
         f.output.resolve(f.operation(90) + f.operation(110) + '{"op":"done"}');
@@ -157,8 +163,8 @@ for (const legacyEvents of [false, true]) test(`a sketch factory streams interme
         assert.equal(completed.lifecycle.currentStage, "sketch");
         assert.equal(f.listeners.size, 0);
         const store = new SketchStore(f.h.root);
-        assert.equal((await store.read("sample", completed.sketch.current)).screens[0].shapes[0].x, 110);
-        assert.equal((await store.read("sample", f.before.sketch.current!)).screens[0].shapes[0].x, 20);
+        assert.equal((await store.read("sample", completed.sketch.current)).screens[0].ui.tokens["space.1"], 110);
+        assert.equal((await store.read("sample", f.before.sketch.current!)).screens[0].ui.tokens["space.1"], 20);
     } finally {
         connection.abort();
         f.output.resolve("");
@@ -167,18 +173,19 @@ for (const legacyEvents of [false, true]) test(`a sketch factory streams interme
     }
 });
 
-test("regeneration streams a fresh drawing rather than carrying forward old shapes", { timeout: 15_000 }, async () => {
+test("regeneration streams a fresh UI document rather than carrying forward old components", { timeout: 15_000 }, async () => {
     const f = await setup();
     try {
         await f.start("generate");
-        const { shapes, ...screen } = sketchDocument().screens[0];
+        const { ui, ...screen } = sketchDocument().screens[0];
         const first = JSON.stringify({ op: "upsert-screen", screen }) + "\n";
         f.delta(first);
         const preview = await (await fetch(new URL("api/state", f.url))).json();
-        assert.equal(preview.sketchPreview.document.screens[0].shapes.length, 0);
+        assert.deepEqual(preview.sketchPreview.document.screens[0].ui.nodes.screen.children, []);
         assert.equal(preview.sketch.current.id, f.before.sketch.current!.id);
         const second = JSON.stringify({
-            op: "upsert-shape", screenId: screen.id, shape: { ...shapes[0], id: "replacement-action" },
+            op: "ui", screenId: screen.id, edit: { op: "add", parent: "screen",
+                component: { id: "replacement-action", type: "Button", props: ui.nodes["primary-action"].props } },
         }) + "\n";
         f.delta(second);
         f.output.resolve(first + second + '{"op":"done"}');
@@ -187,7 +194,7 @@ test("regeneration streams a fresh drawing rather than carrying forward old shap
         assert.equal(saved.processing.status, "success", saved.processing.message);
         assert.equal(saved.sketch.current!.source, "generated");
         const document = await new SketchStore(f.h.root).read("sample", saved.sketch.current!);
-        assert.deepEqual(Array.from(document.screens[0].shapes, (shape) => shape.id), ["replacement-action"]);
+        assert.deepEqual(document.screens[0].ui.nodes.screen.children, ["replacement-action"]);
     } finally {
         f.output.resolve("");
         await f.h.api.waitForAnswer("sample");
@@ -195,7 +202,149 @@ test("regeneration streams a fresh drawing rather than carrying forward old shap
     }
 });
 
-test("a malformed drawing tail discards previews while preserving the previously approved revision", { timeout: 15_000 }, async () => {
+for (const pinned of [false, true]) test(`requirements updates preserve the reviewed design set ${pinned ? "in an unlinked review" : "in the current stage"}`, {
+    timeout: 15_000,
+}, async () => {
+    const document = sketchDocument();
+    document.screens[0].notes = "Reviewed spacing and primary action.";
+    document.screens.push({ ...structuredClone(document.screens[0]), id: "help", title: "Reviewed help", width: 480 });
+    const f = await setup(false, document);
+    let prototypeId = "sample";
+    try {
+        const parent = await f.h.api.loadState("sample");
+        parent.assumed.push("Show updated task details.");
+        parent.sketch = { ...parent.sketch, status: "stale", approved: null };
+        if (pinned) {
+            parent.stage = parent.lifecycle.currentStage = "prototype";
+            parent.lifecycle.completedStages = ["prepare", "requirements", "sketch"];
+        }
+        await f.h.api.persistState(parent);
+        if (pinned) {
+            const draft = await f.h.api.openStageReview("sample", "project:tandem", {
+                stageId: "sketch", expectedGeneration: parent.generation,
+            });
+            prototypeId = draft.prototypeId;
+            assert.equal(draft.stageReview!.changeRequestId, undefined);
+            assert.deepEqual(JSON.parse(JSON.stringify(draft.changeRequests)), []);
+        }
+        await assert.rejects(f.h.api.sketchAction(prototypeId, "project:tandem", {
+            action: "update", expectedRevision: "replaced-revision",
+        }), /another view/);
+        assert.equal(f.h.requests.length, 0);
+        const pending = await f.start(pinned ? "update" : "automatic", prototypeId);
+        assert.equal(pending.processing.action, "revise-sketch");
+        assert.match(pending.processing.message, /Updating existing designs/);
+        assert.equal(pending.sketch.requests!.at(-1)!.kind, "update");
+        assert.match(f.prompts[0], /INCREMENTAL UPDATE/);
+        assert.match(f.prompts[0], /"title":"Reviewed help"/);
+        assert.doesNotMatch(f.prompts[0], /Start from an empty sketch set|TITLE-FIRST ORDER/);
+        f.delta(f.operation(90));
+        const endpoint = pinned ? `/api/reviews/${prototypeId}/state` : "/api/state";
+        const response = await fetch(new URL(endpoint, f.url));
+        assert.equal(response.status, 200);
+        const preview = await response.json();
+        assert.equal(preview.sketchPreview.document.screens.length, 2);
+        assert.deepEqual(preview.sketchPreview.document.screens[0].ui.nodes, document.screens[0].ui.nodes);
+        assert.equal(preview.sketchPreview.document.screens[0].ui.tokens["space.1"], 90);
+        assert.deepEqual(preview.sketchPreview.document.screens[1], document.screens[1]);
+        assert.deepEqual(preview.sketchPreview.screenStatuses, { main: "processing", help: "ready" });
+        assert.equal(preview.sketchPreview.baseRevisionId, f.before.sketch.current!.id);
+        assert.equal(preview.sketch.current.id, f.before.sketch.current!.id);
+        f.output.resolve(f.operation(90) + '{"op":"done"}');
+        await f.h.api.waitForAnswer(prototypeId);
+        const saved = await f.h.api.loadState(prototypeId);
+        assert.equal(saved.processing.status, "success", saved.processing.message);
+        assert.equal(saved.sketch.current!.source, "revised");
+        assert.equal(saved.sketch.current!.requirementsDigest, requirementsInputDigest(parent));
+        assert.equal(saved.sketch.status, "draft");
+        assert.equal(saved.sketch.approved, null);
+        const expected = structuredClone(document);
+        expected.screens[0].ui = applyOperations(expected.screens[0].ui, [{ op: "setToken", key: "space.1", value: 90 }]);
+        const store = new SketchStore(f.h.root);
+        assert.deepEqual(await store.read("sample", saved.sketch.current!), expected);
+        assert.deepEqual(await store.read("sample", f.before.sketch.current!), document);
+        assert.equal((await f.h.api.loadState("sample")).lifecycle.currentStage, pinned ? "prototype" : "sketch");
+        if (pinned) assert.equal((await f.h.api.loadState("sample")).sketch.current!.id, f.before.sketch.current!.id);
+        assert.equal(f.h.requests.length, 1);
+    } finally {
+        f.output.resolve("");
+        await f.h.api.waitForAnswer(prototypeId);
+        await f.h.close();
+    }
+});
+
+test("legacy Lucide names survive the real design factory as canonical previews and immutable saved revisions", { timeout: 15_000 }, async () => {
+    const f = await setup();
+    try {
+        const pending = await f.start();
+        const operation = JSON.stringify({
+            op: "ui", screenId: "main", edit: { op: "update", id: "primary-action", props: { icon: "trash-2" } },
+        }) + "\n";
+        f.delta(operation);
+        const preview = await (await fetch(new URL("api/state", f.url))).json();
+        assert.equal(preview.sketchPreview.document.screens[0].ui.nodes["primary-action"].props.icon, "trash");
+        assert.equal(preview.sketchPreview.requestId, pending.processing.requestId);
+        assert.equal(preview.sketch.current.id, f.before.sketch.current!.id, "A preview does not replace accepted designs.");
+        f.output.resolve(operation + '{"op":"done"}');
+        await f.h.api.waitForAnswer("sample");
+        const saved = await f.h.api.loadState("sample");
+        assert.equal(saved.processing.status, "success", saved.processing.message);
+        assert.equal(saved.sketch.approved, null, "Canonicalizing an alias does not approve the new revision.");
+        assert.equal(saved.sketch.history.length, 2);
+        assert.equal(saved.lifecycle.currentStage, "sketch");
+        const store = new SketchStore(f.h.root);
+        assert.equal((await store.read("sample", saved.sketch.current!)).screens[0].ui.nodes["primary-action"].props.icon, "trash");
+        assert.equal((await store.read("sample", f.before.sketch.current!)).screens[0].ui.nodes["primary-action"].props.icon, "");
+        assert.equal(f.listeners.size, 0);
+    } finally {
+        f.output.resolve("");
+        await f.h.api.waitForAnswer("sample");
+        await f.h.close();
+    }
+});
+
+test("formatted title-first generation publishes per-page progress before saving through the real factory", { timeout: 15_000 }, async () => {
+    const f = await setup();
+    try {
+        await f.start("generate");
+        const { ui, ...screen } = sketchDocument().screens[0];
+        const record = (value: unknown) => JSON.stringify(value, null, 2) + "\n";
+        const titles = record({ op: "upsert-screen", screen: { ...screen, title: "Menu" } })
+            + record({ op: "upsert-screen", screen: { ...screen, id: "details", title: "Drink details" } });
+        f.delta(titles);
+        const read = async () => (await (await fetch(new URL("api/state", f.url))).json()).sketchPreview;
+        const outlined = await read();
+        assert.deepEqual(outlined.document.screens.map(item => item.title), ["Menu", "Drink details"]);
+        assert.deepEqual(outlined.screenStatuses, { main: "waiting", details: "waiting" });
+        const first = record({ op: "screen-status", screenId: "main", status: "processing" })
+            + record({ op: "ui", screenId: "main", edit: { op: "add", parent: "screen",
+                component: { id: "primary-action", type: "Button", props: ui.nodes["primary-action"].props } } })
+            + record({ op: "screen-status", screenId: "main", status: "ready" });
+        f.delta(first);
+        assert.deepEqual((await read()).screenStatuses, { main: "ready", details: "waiting" });
+        const second = record({ op: "screen-status", screenId: "details", status: "processing" })
+            + record({ op: "ui", screenId: "details", edit: { op: "add", parent: "screen",
+                component: { id: "heading", type: "Heading", props: { text: "Drink details" } } } })
+            + record({ op: "screen-status", screenId: "details", status: "ready" });
+        f.delta(second);
+        assert.deepEqual((await read()).screenStatuses, { main: "ready", details: "ready" });
+        f.output.resolve(titles + first + second + '{"op":"done"}');
+        await f.h.api.waitForAnswer("sample");
+        const saved = await f.h.api.loadState("sample");
+        assert.equal(saved.processing.status, "success", saved.processing.message);
+        assert.equal(await read(), null);
+        const document = await new SketchStore(f.h.root).read("sample", saved.sketch.current!);
+        assert.deepEqual(document.screens.map(item => item.title), ["Menu", "Drink details"]);
+        assert.equal(Object.hasOwn(document, "screenStatuses"), false);
+        assert.equal(saved.sketch.approved, null);
+    } finally {
+        f.output.resolve("");
+        await f.h.api.waitForAnswer("sample");
+        await f.h.close();
+    }
+});
+
+test("a malformed design tail discards previews while preserving the previously approved revision", { timeout: 15_000 }, async () => {
     const f = await setup();
     try {
         const assets = await Promise.all(f.before.sketch.approved!.assets.map(async asset =>
@@ -230,7 +379,7 @@ test("a malformed drawing tail discards previews while preserving the previously
     }
 });
 
-test("requirements replaced during streaming reject late drawing output and hide its preview", { timeout: 15_000 }, async () => {
+test("requirements replaced during streaming reject late design output and hide its preview", { timeout: 15_000 }, async () => {
     const f = await setup();
     try {
         await f.start();

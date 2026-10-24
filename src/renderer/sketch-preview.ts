@@ -1,5 +1,5 @@
-import { validateSketchDocument } from "../sketch.js";
-import type { SketchPreview } from "../sketch-stream.js";
+import { hasScreenContent, validateSketchDocument } from "../sketch.js";
+import type { SketchPreview, SketchScreenStatus } from "../sketch-stream.js";
 import type { UiState } from "./ui-context.js";
 
 const identityFields = ["prototypeId", "generation", "requestId", "runId", "baseRevisionId", "requirementsDigest"] as const;
@@ -32,7 +32,7 @@ export function sketchPreviewIdentity(state: UiState): string | null {
 export function readSketchPreview(state: UiState, value: unknown, afterSequence = -1): SketchPreview | null {
   const identity = activeIdentity(state);
   if (!identity || value === null || value === undefined) return null;
-  const invalid = () => { throw new Error("The live sketch preview is invalid. Saved drawings are unchanged; reload or retry the drawing request."); };
+  const invalid = () => { throw new Error("The live sketch preview is invalid. Saved designs are unchanged; reload or retry the design request."); };
   if (typeof value !== "object" || Array.isArray(value)) return invalid();
   const candidate = value as Record<string, unknown>;
   // Obsolete requests are not errors, even if their unfinished payload is malformed.
@@ -43,7 +43,7 @@ export function readSketchPreview(state: UiState, value: unknown, afterSequence 
     && Number(candidate.sequence) <= afterSequence) return null;
   const prototype = Object.getPrototypeOf(candidate);
   if ((prototype !== null && Object.getPrototypeOf(prototype) !== null)
-    || Object.keys(candidate).length !== previewFields.length
+    || Object.keys(candidate).some(field => !previewFields.includes(field) && field !== "screenStatuses")
     || previewFields.some((field) => !Object.hasOwn(candidate, field))
     || identityFields.some((field) => candidate[field] !== identity[field])
     || !Number.isSafeInteger(candidate.sequence) || Number(candidate.sequence) < 0) return invalid();
@@ -51,7 +51,23 @@ export function readSketchPreview(state: UiState, value: unknown, afterSequence 
     const decisionIds = (state.decisionGraph?.nodes ?? [])
       .filter((node) => node.status === "answered" && typeof node.answer === "string" && node.answer.trim())
       .map((node) => node.id);
-    return { ...identity, sequence: Number(candidate.sequence), document: validateSketchDocument(candidate.document, decisionIds) };
+    const document = validateSketchDocument(candidate.document, decisionIds);
+    if (document.version !== 2) return invalid();
+    let screenStatuses: Record<string, SketchScreenStatus> | undefined;
+    if (Object.hasOwn(candidate, "screenStatuses")) {
+      const statuses = candidate.screenStatuses;
+      if (!statuses || typeof statuses !== "object" || Array.isArray(statuses)
+        || Object.keys(statuses).length !== document.screens.length) return invalid();
+      screenStatuses = {};
+      for (const screen of document.screens) {
+        if (!Object.hasOwn(statuses, screen.id)) return invalid();
+        const status: unknown = Reflect.get(statuses, screen.id);
+        if (status !== "waiting" && status !== "processing" && status !== "ready") return invalid();
+        if (status === "ready" && !hasScreenContent(screen)) return invalid();
+        screenStatuses[screen.id] = status;
+      }
+    }
+    return { ...identity, sequence: Number(candidate.sequence), document, ...(screenStatuses ? { screenStatuses } : {}) };
   } catch {
     return invalid();
   }
@@ -73,7 +89,7 @@ export class SketchPreviewTracker {
     }
     if (!identity || value === undefined) return this.result;
     if (value === null) {
-      // Startup nulls precede drawing; a null after activity closes this request's preview.
+      // Startup nulls precede preview updates; a null after activity closes this request's preview.
       this.cleared ||= this.sequence >= 0 || Boolean(this.result.error);
       this.result = { preview: null, error: "" };
       return this.result;

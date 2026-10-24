@@ -91,11 +91,13 @@ Use this path to clarify requirements and UX.
 1. Enter a goal such as "A keyboard-friendly counter with increment, decrement
    and reset" and select **Start project**.
 2. In **Requirements**, **Add usage** entries you care about, then **Generate
-   requirements DAG**. Answer the connected decisions with **Use this answer**
-   and finish the phase when ready. Recommendations are not accepted automatically.
-3. **Finish requirements** opens **Drawings** and starts the first generation
-   automatically. Wait for it to finish; use **Generate drawings** if no generation
-   is running and you need drawings. Review/edit them, then **Approve drawings
+   requirements DAG**. Tandem researches relevant missing facts for those usages
+   before generating questions; **Research and sources** retains its findings.
+   Answer the connected decisions with **Use this answer** and finish the phase
+   when ready. Recommendations are not accepted automatically.
+3. **Finish requirements** opens **Designs** and starts the first generation
+   automatically. Wait for it to finish; use **Generate designs** if no generation
+   is running and you need designs. Review/edit them, then **Approve designs
    and continue**.
 4. In **Prototype**, select **Start prototype** if no build is running.
    Structure and Interaction are automatic milestones. Try the current preview;

@@ -2,25 +2,27 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { createPortal } from "react-dom";
 import { ArrowRight, Check, Pin, Play, X } from "lucide-react";
 import type { LifecycleStageId } from "../types.js";
-import { renderSketchSvg, type SketchDocument } from "../sketch.js";
+import type { SketchDocument } from "../sketch.js";
+import { DslView } from "./dsl-view.js";
 import { lifecycleStages, type DecisionNode } from "../workflow.js";
 import { StudioStore } from "./state-store.js";
-import { DraftProvider, hasActiveJobs, UiContext, useAction, useDraft, useUi, type UiContextValue, type UiState } from "./ui-context.js";
+import { DraftProvider, hasActiveJobs, UiContext, useAction, useChangeRequestDialog, useDraft, useUi, type UiContextValue, type UiState } from "./ui-context.js";
 import { PreparationPanel } from "./preparation-panel.js";
 import { RequirementsPanel } from "./requirements-panel.js";
 import { SketchCompletionContext, SketchPanel } from "./sketch-panel.js";
 import { PrototypePanel, prototypeCompletionBlocked } from "./prototype-panel.js";
 import { ChangeRequestsPanel } from "./change-requests-panel.js";
 import { DiscoveryRecovery } from "./discovery-recovery.js";
+import { changeReviewBlocksEditing } from "../change-request-policy.js";
 
-export const reviewStageLabel = (stage: LifecycleStageId) => stage === "sketch" ? "Drawings"
-  : lifecycleStages.find(item => item.id === stage)?.label ?? stage;
+export const reviewStageLabel = (stage: LifecycleStageId) => lifecycleStages.find(item => item.id === stage)?.label ?? stage;
 
 interface Props {
   initial: UiState;
   parent: UiContextValue;
   active: boolean;
   actionsContainer: HTMLElement | null;
+  approvalContainer?: HTMLElement | null;
   workingStage: LifecycleStageId;
   onExit(): void;
   onReturn(): void;
@@ -39,6 +41,7 @@ export function StageReviewWorkspace(props: Props) {
   });
   const { state, connectionError } = useSyncExternalStore(store.subscribe, store.getSnapshot);
   const [busy, setBusyKeys] = useState<Set<string>>(() => new Set());
+  const changeRequestDialog = useChangeRequestDialog();
   const [dirty, setDirtyKeys] = useState<Set<string>>(() => new Set());
   const setBusy = useCallback((key: string, value: boolean) => setBusyKeys(previous => {
     if (previous.has(key) === value) return previous;
@@ -60,9 +63,10 @@ export function StageReviewWorkspace(props: Props) {
   useEffect(() => store.connect(), [store]);
   if (!state?.stageReview) return <p role="alert">The saved review draft is unavailable.</p>;
   const value: UiContextValue = {
-    ...props.parent, state, post, refresh: store.refresh, apiUrl, setBusy, setReviewDirty,
+    ...props.parent, state, post, refresh: store.refresh, apiUrl, setBusy, setReviewDirty, changeRequestDialog,
     pending: busy.size > 0,
     canEdit: stage => stage === state.stageReview?.stage && state.lifecycle.currentStage === stage
+      && !changeReviewBlocksEditing(state)
       && state.provider?.canSubmitAnswers !== false && !props.parent.state.effortReset,
     guidance: () => "This review draft is read-only. Accepted work has not been changed.",
     browseStage: stage => {
@@ -75,7 +79,7 @@ export function StageReviewWorkspace(props: Props) {
   </DraftProvider></UiContext.Provider>;
 }
 
-function ReviewEditor({ parent, active, actionsContainer, workingStage, onExit, onReturn, dirty, connectionError }: Props & {
+function ReviewEditor({ parent, active, actionsContainer, approvalContainer, workingStage, onExit, onReturn, dirty, connectionError }: Props & {
   dirty: boolean; connectionError: string;
 }) {
   const ui = useUi();
@@ -125,13 +129,13 @@ function ReviewEditor({ parent, active, actionsContainer, workingStage, onExit, 
         disabled={blocked || !prototypeReady} onClick={() => void action.run(() => post("/api/stage/complete", { stageId: "prototype" }))}>
         Save draft outputs</button>}
     </>}
-    {stage === "sketch" && requestedChange && !requestedChange.workStarted.includes("sketch") && !settled
+    {stage === "sketch" && state.sketch.status !== "stale" && requestedChange && !requestedChange.workStarted.includes("sketch") && !settled
       && <button id="prepare-review-drawings" className="complete-stage" type="button" disabled={blocked || dirty}
         onClick={() => void action.run(() => post("/api/sketch", {
-          action: state.sketch.status === "stale" || !state.sketch.current ? "generate" : "revise",
+          action: !state.sketch.current ? "generate" : state.sketch.status === "stale" ? "update" : "revise",
           expectedRevision: state.sketch.current?.id ?? null,
           ...(state.sketch.status !== "stale" && state.sketch.current ? { instruction: requestedChange.message } : {}),
-        }))}>Prepare draft drawings</button>}
+        }))}>Prepare draft designs</button>}
     <button id="return-to-current-stage" className="complete-stage review-secondary" type="button" onClick={onReturn}>
       <ArrowRight size={15} aria-hidden="true" />Current work</button>
     <button id="exit-stage-review" className="complete-stage review-secondary" type="button" onClick={async () => {
@@ -139,26 +143,31 @@ function ReviewEditor({ parent, active, actionsContainer, workingStage, onExit, 
       onExit();
     }}><X size={15} aria-hidden="true" />Exit review</button>
   </>;
+  const reviewActions = <section className="pinned-review-actions" aria-label={`${label} review and approval`}>
+    <ChangeRequestsPanel compact showTrigger={stage !== "sketch"} />
+    <div className="pinned-review-buttons">{controls}</div>
+    {error && <p id="stage-review-error" role="alert">{error}</p>}
+    {!settled && status?.conflict && <p role="alert">{status.conflict}</p>}
+    {!settled && !status?.conflict && status?.blocker && <p role="status">{status.blocker}</p>}
+    <div className="stage-review-tools"><BaselineComparison />
+      {!settled && <button id="discard-stage-review" className="plan-button secondary" type="button" disabled={blocked}
+        onClick={() => void discard()}>Discard draft</button>}</div>
+  </section>;
   return <div className="stage-review-workspace" data-review-stage={stage}>
-    {active && actionsContainer && createPortal(controls, actionsContainer)}
+    {active && actionsContainer && createPortal(reviewActions, actionsContainer)}
     <section className="stage-review-banner" aria-label={`${label} draft review`}>
       <strong><Pin size={14} aria-hidden="true" />{label} - {status?.appliedAt ? "Applied review" : "Pinned draft review"}</strong>
       <span>Current work: {reviewStageLabel(workingStage)}</span>
       <p>{status?.appliedAt ? "Changes applied. This review stays pinned until you leave it."
         : "Draft only. Apply changes updates accepted work without moving the current stage."}</p>
       {requestedChange && <p><strong>Requested change:</strong> {requestedChange.message}</p>}
-      {error && <p id="stage-review-error" role="alert">{error}</p>}
-      {!settled && status?.conflict && <p role="alert">{status.conflict}</p>}
-      {!settled && !status?.conflict && status?.blocker && <p role="status">{status.blocker}</p>}
       {hasActiveJobs(state) && <p role="status">{state.status}</p>}
-      <div className="stage-review-tools"><BaselineComparison />
-        {!settled && <button id="discard-stage-review" className="plan-button secondary" type="button" disabled={blocked}
-          onClick={() => void discard()}>Discard draft</button>}</div>
     </section>
     <DiscoveryRecovery />
-    {stage === "prepare" ? <><DraftBrief /><PreparationPanel /></>
-      : stage === "requirements" ? <><DraftRequirementRequest /><ChangeRequestsPanel /><RequirementsPanel /></>
-        : stage === "sketch" ? <SketchCompletionContext.Provider value={setSketchBlocked}><SketchPanel /></SketchCompletionContext.Provider>
+    {stage === "prepare" ? <><PreparationPanel /><DraftBrief /></>
+      : stage === "requirements" ? <><RequirementsPanel /><DraftRequirementRequest /></>
+        : stage === "sketch" ? <SketchCompletionContext.Provider value={setSketchBlocked}><SketchPanel
+            renderApproval={approvalContainer ? actions => active ? createPortal(actions, approvalContainer) : null : undefined} /></SketchCompletionContext.Provider>
           : <PrototypePanel active={active} connected={!connectionError}
               renderActions={active && actionsContainer ? actions => createPortal(actions, actionsContainer) : undefined} />}
   </div>;
@@ -265,9 +274,11 @@ function BaselineComparison() {
       {stage === "requirements" ? changed.length ? <table><thead><tr><th>Requirement</th><th>Accepted</th><th>Draft</th></tr></thead>
         <tbody>{changed.map(row => <tr key={row.id}><th>{row.title}</th><td>{row.before}</td><td>{row.after}</td></tr>)}</tbody>
       </table> : <p>No requirement changes saved in this draft.</p>
-        : stage === "sketch" ? baseline.document?.screens.map(screen => <figure key={screen.id}>
-          <img alt={`Accepted drawing: ${screen.title}`} src={"data:image/svg+xml;charset=utf-8," + encodeURIComponent(renderSketchSvg(screen))} />
-          <figcaption>{screen.title} - accepted baseline</figcaption></figure>)
+        : stage === "sketch" ? baseline.document?.version === 1
+          ? <p>The accepted baseline uses retired geometry. Its files and approval remain in history; regenerate UI DSL views in the draft.</p>
+          : baseline.document?.screens.map(screen => <figure key={screen.id} style={{ overflow: "auto" }}>
+            <div style={{ width: screen.width, height: screen.height }}><DslView screen={screen} /></div>
+            <figcaption>{screen.title} - accepted UI DSL baseline</figcaption></figure>)
           : stage === "prepare" ? <><h3>Accepted brief</h3><p>{baseline.state.goal}</p><p>{baseline.state.preparation.summary}</p></>
             : <><p>{baseline.state.prototypeFlow?.checkpoints.find(item => item.id === baseline.state.prototypeFlow?.displayedCheckpointId)?.summary}</p>
               {baseline.state.previewUrl && <a href={baseline.state.previewUrl} target="_blank" rel="noreferrer">Open accepted preview</a>}</>}

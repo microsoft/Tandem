@@ -16,7 +16,7 @@ contradictory choices; invalid, unreadable, aliased or foreign-folder metadata i
 reported and preserved. There is no editable mode switch or inferred default.
 
 That choice drives setup. Preparation preserves its original valid-goal form,
-requirements inputs, drawings/editor controls and Prototype feedback/Apply flow.
+requirements inputs, Designs/editor controls and Prototype feedback/Apply flow.
 It needs no Stage2 renderer/provider to show its saved project history or shared
 effort setting. A Development choice prepares the existing correctly owned
 runtime and enables its original composer only when usable. It sends no project
@@ -70,7 +70,7 @@ controls had disjoint hit targets at desktop, constrained and 390px widths.
 No model request was submitted.
 
 That preflight also exposed a presentation regression: the new phase toolbar
-consumed Drawings' horizontal layout and Prototype's reserved preview row.
+consumed Designs' horizontal layout and Prototype's reserved preview row.
 The follow-up gives these toolbars a compact top row, retains the original
 full-width body, and focuses the actual implementation receipt when selected.
 Startup failure handling now consumes the installation's public retry/reopen
@@ -82,7 +82,7 @@ The follow-up native package (`440de43`) also passed a fresh empty-folder
 Development choice: automatic Ready, no competing Preparation starter, no chooser
 on refresh, zero native conversation messages and zero Stage1 factory runs.
 The used checklist reopened with the same main/private owners and all 31 message
-IDs/texts and the canonical Design unchanged. Its original Drawings/Prototype
+IDs/texts and the canonical Design unchanged. Its original Designs/Prototype
 views, implementation-result focus and disjoint effort controls were physically
 checked at 1440, 920 and 390px. Both bounded hosts were normally closed; captured
 PID/creation-time identities were verified absent.
@@ -491,11 +491,11 @@ candidates, including the original `8316fe4` evidence, were not overwritten.
 
 | Journey | Observed result | Boundary |
 | --- | --- | --- |
-| Live Stage 1 | Preparation, accepted Q&A, approved drawings, Structure, Interaction and draft feature specification completed. Physical Apply update published Interaction. | The prior Preparation/Prototype failures remain failures, not erased retries. |
+| Live Stage 1 | Preparation, accepted Q&A, approved designs, Structure, Interaction and draft feature specification completed. Physical Apply update published Interaction. | The prior Preparation/Prototype failures remain failures, not erased retries. |
 | No arbitrary execution cap | The new native run's declared and approved limits both omitted timeout; Structure completed beyond the former 300 seconds. Historical Prototype accounting reached 1555/900 without gating new work. | Explicit limits and bounded startup/RPC/Close observations remain separate. |
 | Independent Stage 1 completion | `prototype-r109.json` and prior stage snapshots were saved; Development remained uninitialized. The main host and preview processes actually exited before later Stage 2 entry. | No automatic private creation, handoff importer or replacement identity was used. |
 | One effort choice, independent implementations | A physical project-control Low selection applied to the actual owning main session and retained unopened private intent. Explicit private model selection later applied the same Low through Stage 2's own implementation. Both real readbacks and every observed worker configuration/inference reported Astra/Low. | Model choices remain independent; an absent model leaves intent pending, never a substituted default. |
-| Formal Design from saved files | A new private conversation read explicit snapshots, drawings and all named mock-source files, then published canonical Design. | Stage 1 mock behavior was not promoted to implementation or test evidence. |
+| Formal Design from saved files | A new private conversation read explicit snapshots, designs and all named mock-source files, then published canonical Design. | Stage 1 mock behavior was not promoted to implementation or test evidence. |
 | Implementation and whole-plan Review | Separate request and physical Design-bound confirmation preceded Planner. Five implementation tasks, aggregate validation and three substantive native read-only Review scopes completed. Parent consolidation reported no supported material conformance/over-engineering findings. | Review explicitly distinguished source coverage from runtime acceptance. No broad permission grants were used. |
 | Independent final-app acceptance | Physical mouse/keyboard/file-selection cases covered CRUD, dates, combined filters/counts, named deletion, actual downloads, invalid/cancelled/confirmed imports, recovery bytes, network failures, two-browser stale writes/imports, reload and 390px layout. A separate full application test invocation passed 48, with zero failures/skips, including real Edge. | These are generated-app results, not a rerun of the historical Tandem suites above. |
 | Real Stop with pending native consent | A separate no-code verification request reached three live Review workers. Physical Stop now cancelled their native workflow and all three workers; pending native permissions ended denied with parent-authorization-ended feedback. Cards disappeared and no late Review was published. | A new post-Stop question completed under a distinct request; stopped work was not resumed. |
@@ -728,13 +728,13 @@ labels and accessible names only; stage/runtime/storage identities and passive
 browsing semantics are unchanged.
 
 At the native Stage1-close boundary, evidence inspection found mutable projection
-rows still displaying their initial `running` text and a completed drawing
+rows still displaying their initial `running` text and a completed design
 instruction absent from the shared timeline. Saved-evidence rows now refresh
-independently of immutable native messages. Stage1 now records accepted drawing
+independently of immutable native messages. Stage1 now records accepted design
 instructions with their original request/time/base-revision identity before
 dispatch and preserves them through success/failure. No earlier missing text is
 backfilled from E2E receipts or native-session history. The existing checklist's
-missing historical drawing instruction remains an explicit coverage limitation;
+missing historical design instruction remains an explicit coverage limitation;
 new-request persistence is supplemented by focused lifecycle tests.
 
 The native implementation run also exposed a stale root status: the saved

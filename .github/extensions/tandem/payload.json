@@ -4,8 +4,8 @@
   "files": [
     {
       "path": "extension.mjs",
-      "bytes": 1968917,
-      "sha256": "a5171111577b5158e19909f3b3c73c6a0ad84deb0da85b42bdd8114ac1bb40f3"
+      "bytes": 2896146,
+      "sha256": "b13d6f3ace507c72542fffeaf2bca8a16ffc927e9e5911dbb554a94dad709325"
     },
     {
       "path": "preview-launcher.mjs",
@@ -14,8 +14,8 @@
     },
     {
       "path": "skills/tandem/SKILL.md",
-      "bytes": 19048,
-      "sha256": "de04b34ca5e2b8c3f4a36f71bb63a5c5563dfb86403d0ab558dfa7230299542d"
+      "bytes": 22142,
+      "sha256": "81c0c5e4fce917986d488ec78dfd6e717a34bb4e5b24aa8bb70405655ecc68a4"
     },
     {
       "path": "stage2/INSTALL.md",
@@ -30,7 +30,7 @@
     {
       "path": "stage2/manifest.json",
       "bytes": 25434,
-      "sha256": "3d76d7d942bb9296ebc645be8863943f2666fb4d8d644f14fb4c68c6b3dc9d2c"
+      "sha256": "44e87cc068c33b3b4908c13831b82af995c53bf299b77957e04f76f3a0e35243"
     },
     {
       "path": "stage2/package.json",
@@ -164,13 +164,13 @@
     },
     {
       "path": "stage2/public/development-status.d.ts",
-      "bytes": 335,
-      "sha256": "5d684312287578359b78199374d205e68ad5d8254a040d80c349dd147b5015ba"
+      "bytes": 424,
+      "sha256": "c75302c021e5983511de7bb7d11911267e505127f67620ebd2af1af24de1fcb4"
     },
     {
       "path": "stage2/public/development-status.js",
-      "bytes": 3127,
-      "sha256": "3ac33b73e444f0119cc0c1053eadb87ba321b7d097e0023a306cfb617ce06d96"
+      "bytes": 3663,
+      "sha256": "e8a2259ad62ad2d4c4eeff8046ff08fd4f92f3b3ce3bc00ee86920ef8fcbc2b5"
     },
     {
       "path": "stage2/public/experience.css",
@@ -189,18 +189,18 @@
     },
     {
       "path": "stage2/public/human-loop-app.js",
-      "bytes": 59962,
-      "sha256": "2d09fc92cf5c1168fd833e17a04e4e1b062f7740d5fd6bcacb65974d4518f6eb"
+      "bytes": 62878,
+      "sha256": "959838de05fe058b61ed63a29d2cc7feb9d07c952e672b1bb80d00daed02c6f1"
     },
     {
       "path": "stage2/public/human-loop-shell.css",
-      "bytes": 49263,
-      "sha256": "19764c0f0d12cc23f6509933fbebf7fcd4ffe2873d94b78ac530ba9d495fb5d9"
+      "bytes": 50184,
+      "sha256": "46b38bc22dcced90def8ef29fd17c77457ee8af91ee7b57f3c1521411ae10004"
     },
     {
       "path": "stage2/public/human-loop.html",
-      "bytes": 17136,
-      "sha256": "776c30298ef4e86033d2821b33fb250e97261503068d62756300a582c9511ad6"
+      "bytes": 16932,
+      "sha256": "b3beb87fdce5d86bf29ca8043fdc2f4be5c1f34c95ed2d78567eb0cfd58def42"
     },
     {
       "path": "stage2/public/implementation-confirmation.js",
@@ -234,8 +234,8 @@
     },
     {
       "path": "stage2/public/project-presentation.js",
-      "bytes": 17789,
-      "sha256": "3fc03ab1ba30261ec5edd1b01644c26d902bf61773aaa6450d80ca62784237f3"
+      "bytes": 20035,
+      "sha256": "f8bb1f250f16659e8fbad3f7b6aa6295464d41f39cbe093674e15e04901f4bb5"
     },
     {
       "path": "stage2/public/project-theme.css",
@@ -254,8 +254,8 @@
     },
     {
       "path": "stage2/public/prompts/human-loop.json",
-      "bytes": 54221,
-      "sha256": "32d64b25a218f6dd20aeb603e45630e6d20b39db815f01a6c3de66539fef4899"
+      "bytes": 54220,
+      "sha256": "a69e0d62a4be0a362ca9c85e89e3ad3dc5ac8f89c87ce93166fac094282f5cba"
     },
     {
       "path": "stage2/public/question-presentation.js",
@@ -574,8 +574,8 @@
     },
     {
       "path": "stage2/skills/gui-designer/SKILL.md",
-      "bytes": 1871,
-      "sha256": "f04811f39647a5e2499f88638cc3efe2c458564167368d7d6f90229a62d3efb7"
+      "bytes": 1873,
+      "sha256": "f4eb6a05b39fcba62e3aa540ae757df79dad2842975d7e6b9ff5222881bdff89"
     },
     {
       "path": "stage2/skills/implementation-gap-reviewer/SKILL.md",
@@ -649,8 +649,8 @@
     },
     {
       "path": "stage2/src/human-loop-controller.mjs",
-      "bytes": 13733,
-      "sha256": "6167a003716acbf3a2fe62a9f2543533b785830ca769b998d3483a5a98a97dbd"
+      "bytes": 20509,
+      "sha256": "07d7c0900a11e87d8d52ee40c5f6cb5eb6fd83a9cdcd91e92063d497f090b68f"
     },
     {
       "path": "stage2/src/human-loop-design-store.mjs",
@@ -689,13 +689,13 @@
     },
     {
       "path": "stage2/src/human-loop-preferences.mjs",
-      "bytes": 3177,
-      "sha256": "a72616f022d46bfe3c062e5f16a76cfd4d96d89d1f3efd27c2fdf07bedb90d24"
+      "bytes": 4256,
+      "sha256": "3f2d68312f38184f489e80952d86e8b24d290ed99daa9d14d6283f85a62dfdec"
     },
     {
       "path": "stage2/src/human-loop-provider.mjs",
-      "bytes": 45113,
-      "sha256": "25456bbd4421581ae6ad3e07188d427a354b0712191cc8aeb965c1f7fbecfc1d"
+      "bytes": 45482,
+      "sha256": "b8955e48a432036258e7cecaf2091b58f58b672b8b5a2b50f4e636a14572c509"
     },
     {
       "path": "stage2/src/human-loop-recovery.mjs",
@@ -729,8 +729,8 @@
     },
     {
       "path": "stage2/src/human-loop-transport.mjs",
-      "bytes": 89807,
-      "sha256": "221e41c7901be6cbef481717336de41acc6939949eb3070e8907c95d625ce11e"
+      "bytes": 88981,
+      "sha256": "248c9527a8c18e600d782b86c4110016f5099fd2909b6627de7fffa4569ad36a"
     },
     {
       "path": "stage2/src/human-loop-workspace.mjs",
@@ -778,5 +778,5 @@
       "sha256": "92b92e76eb4ac3bee96c6bbdde06ed1f7d9c0088576a51db1276c567dbb207f8"
     }
   ],
-  "digest": "d55d64bc2d6411267146f8b4d2c1d98234f47066d8a9d86c8d9772d47b50250c"
+  "digest": "32ee3e26f0f913e6b43148417b63a07efae72240f3523bea07de873cbcbbf4b4"
 }

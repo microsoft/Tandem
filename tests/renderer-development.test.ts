@@ -905,14 +905,14 @@ test("real React Development keeps handoff controls in view across long-status h
                 footerWidth: document.querySelector("#next-action-bar").getBoundingClientRect().width,
                 buttonRight: button.right, x: button.left + button.width / 2, y: button.top + button.height / 2 };
         })()`);
-        t.diagnostic(JSON.stringify({ step: "640-host-retains-900-application-viewport", hostLayout, nested }));
+        t.diagnostic(JSON.stringify({ step: "640-host-fits-application-viewport", hostLayout, nested }));
         assert.equal(hostLayout.viewport, 640);
-        assert.equal(hostLayout.appWidth, 900, "Keep the browser host's deliberate minimum application viewport.");
-        assert.equal(hostLayout.scrollLeft, 260, "The original host remains horizontally scrollable.");
-        assert.equal(nested.viewport, 900);
-        assert.equal(nested.workspaceWidth, 900);
-        assert.ok(nested.frameWidth > 0 && nested.frameWidth < 900);
-        assert.equal(nested.footerWidth, 900);
+        assert.equal(hostLayout.appWidth, 640, "The application adapts to the browser instead of forcing a wider viewport.");
+        assert.equal(hostLayout.scrollLeft, 0, "The host must not need horizontal scrolling to reach its controls.");
+        assert.equal(nested.viewport, 640);
+        assert.equal(nested.workspaceWidth, 640);
+        assert.ok(nested.frameWidth > 0 && nested.frameWidth < 640);
+        assert.equal(nested.footerWidth, 640);
         assert.ok(nested.buttonRight + hostLayout.appLeft <= hostLayout.viewport);
         await browser.call("Input.dispatchMouseEvent", { type: "mouseMoved", x: nested.x + hostLayout.appLeft, y: nested.y });
         assert.equal(requests.filter(request => request.path === "/api/development/continue").length, 1);

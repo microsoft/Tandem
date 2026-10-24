@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { JSDOM } from "jsdom";
-import type { SketchDocument } from "../src/sketch.js";
-import { renderSketchSvg } from "../src/sketch.js";
+import type { DslSketchDocument as SketchDocument, LegacySketchDocument } from "../src/sketch.js";
 import type { UiContextValue, UiState } from "../src/renderer/ui-context.js";
-import { createCurveShape, createScreen, createShape } from "../src/renderer/sketch-editor.js";
+import { createDslScreen as createScreen } from "../src/renderer/sketch-editor.js";
+import { addUi, buttonScreen, createDocument, applyOperations } from "./helpers/ui-dsl-fixture.js";
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost" });
 const globals = new Map<string, PropertyDescriptor | undefined>();
@@ -33,9 +33,8 @@ after(() => {
 });
 
 function fixture() {
-  const document: SketchDocument = { version: 1, screens: [], transitions: [] };
-  document.screens.push(createScreen(document, ["Requirement.Main_1"]));
-  document.screens[0].shapes.push(createShape(document.screens[0], "rectangle"));
+  const document: SketchDocument = { version: 2, screens: [], transitions: [] };
+  document.screens.push(buttonScreen(createScreen(document, ["Requirement.Main_1"])));
   const state = {
     version: 1, prototypeId: "react-sketch", generation: "first", revision: 1,
     lifecycle: { currentStage: "sketch", completedStages: ["prepare", "requirements"], skippedStages: [], outputs: [], history: [] },
@@ -49,7 +48,7 @@ function fixture() {
   return { document, state };
 }
 
-async function harness(initial = fixture()) {
+async function harness(initial: { state: UiState; document: SketchDocument | LegacySketchDocument | null } = fixture()) {
   const fetchDescriptor = Object.getOwnPropertyDescriptor(globalThis, "fetch");
   const imageDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Image");
   const observerDescriptor = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
@@ -60,7 +59,7 @@ async function harness(initial = fixture()) {
     disconnect() { measureViewport = () => {}; }
   });
   let server = initial.state;
-  let stored = initial.document as SketchDocument | null;
+  let stored = initial.document;
   let visible = initial.state;
   let update!: (state: UiState) => void;
   let show!: (shown: boolean) => void;
@@ -108,7 +107,7 @@ async function harness(initial = fixture()) {
       state, pending, setBusy, refresh: async () => update(server),
       canEdit: (stage) => state.lifecycle.currentStage === stage && !state.lifecycle.completedStages.includes(stage)
         && state.provider?.canSubmitAnswers !== false && !state.lifecycle.skippedStages.some((item) => item.stageId === stage),
-      guidance: () => "Return to the session that owns this effort to edit or approve drawings.",
+      guidance: () => "Return to the session that owns this effort to edit or approve designs.",
       confirm: async () => confirm, browseStage() {}, selectArtifact() {},
       post: async <T,>(endpoint: string, value: unknown): Promise<T> => {
         const body = value as Record<string, any>;
@@ -127,7 +126,7 @@ async function harness(initial = fixture()) {
           server = { ...server, revision: server.revision + 1, lifecycle: { ...server.lifecycle, currentStage: "prototype",
             completedStages: [...server.lifecycle.completedStages, "sketch"] } };
         } else server = { ...server, revision: server.revision + 1, processing: {
-          action: body.action === "revise" ? "revise-sketch" : "generate-sketch", status: "running", answer: body.instruction,
+          action: ["revise", "update"].includes(body.action) ? "revise-sketch" : "generate-sketch", status: "running", answer: body.instruction,
         } };
         update(server);
         return server as T;
@@ -152,6 +151,19 @@ async function harness(initial = fixture()) {
   }
   return {
     requests, exports, element,
+    treeNode(id: string) {
+      const node = element("structure-tree").querySelector<HTMLButtonElement>(`[data-node-id="${id}"]`);
+      assert.ok(node, `Missing structure node ${id}`);
+      return node;
+    },
+    selectedNodeId() {
+      return element("structure-tree").querySelector<HTMLElement>('[aria-selected="true"]')?.dataset.nodeId ?? null;
+    },
+    preview() { return element("board").querySelector(".dsl-view")!.shadowRoot!.querySelector<HTMLElement>(".uidl-surface")!; },
+    viewSize() {
+      const view = element("canvas").firstElementChild as HTMLElement;
+      return [Number.parseFloat(view.style.width), Number.parseFloat(view.style.height)];
+    },
     get state() { return visible; },
     get server() { return server; },
     get completionBlocked() { return completionBlocked; },
@@ -173,9 +185,6 @@ async function harness(initial = fixture()) {
         : node instanceof dom.window.HTMLSelectElement ? dom.window.HTMLSelectElement.prototype : dom.window.HTMLInputElement.prototype;
       Object.getOwnPropertyDescriptor(prototype, "value")!.set!.call(node, value);
       await event(node, node instanceof dom.window.HTMLSelectElement ? "change" : "input");
-    },
-    async selectShape(index: number) {
-      await act(async () => element("shapes").querySelectorAll<HTMLButtonElement>("button")[index].click());
     },
     async selectScreen(index: number) {
       await act(async () => element("screens").querySelectorAll<HTMLButtonElement>("button")[index].click());
@@ -205,7 +214,7 @@ async function harness(initial = fixture()) {
     setPost(value: typeof postHandler) { postHandler = value; },
     setReadError(value: string) { readError = value; },
     setReadGate(value: Promise<void> | null) { readGate = value; },
-    setDocument(value: SketchDocument | null) { stored = value; },
+    setDocument(value: SketchDocument | LegacySketchDocument | null) { stored = value; },
     enablePng() {
       globalValue("Image", class {
         onload: (() => void) | null = null;
@@ -231,93 +240,204 @@ function streaming(state: UiState, document: SketchDocument, sequence = 1): UiSt
   return { ...state, processing: {
     action: state.sketch.current ? "revise-sketch" : "generate-sketch", status: "running",
     requestId: "stream-request", runId: "stream-run", sketchRequest: request,
-    answer: "Move the navigation", message: "Drawing screens",
+    answer: "Move the navigation", message: "Designing screens",
   }, sketchPreview: {
     prototypeId: state.prototypeId, ...request, requestId: "stream-request", runId: "stream-run", sequence, document,
   } };
 }
 
-test("React sketch displays incremental screens and shapes before a first saved revision without refetching", async () => {
+test("React sketch shows generation in the main area before the first screen with a request-based elapsed timer", async t => {
+  const initial = fixture();
+  initial.state.sketch.current = null;
+  initial.state.sketch.status = "empty";
+  let now = Date.parse("2026-10-23T11:12:00.000Z");
+  t.mock.method(Date, "now", () => now);
+  const intervals = new Map<number, () => void>();
+  let intervalId = 0;
+  t.mock.method(dom.window, "setInterval", (callback: TimerHandler, delay?: number) => {
+    assert.equal(typeof callback, "function");
+    assert.equal(delay, 1000);
+    const id = ++intervalId;
+    intervals.set(id, () => { if (typeof callback === "function") callback(); });
+    return id;
+  });
+  t.mock.method(dom.window, "clearInterval", (id?: number) => { if (id !== undefined) intervals.delete(id); });
+  initial.state.processing = {
+    action: "generate-sketch", status: "starting", requestId: "first-design",
+    requestedAt: new Date(now - 65_000).toISOString(), message: "Designing the primary screens from the accepted requirements.",
+  };
+  const h = await harness({ state: initial.state, document: null });
+  try {
+    assert.equal(h.element("generation").dataset.empty, "true");
+    assert.equal(h.element("generation-title").textContent, "Starting UI design");
+    assert.equal(h.element("generation-elapsed").textContent, "1m 5s elapsed");
+    assert.equal(h.element("generation-elapsed").getAttribute("aria-live"), "off");
+    assert.equal(h.element("generation-status").getAttribute("role"), "status");
+    assert.match(h.element("generation-status").textContent!, /Designing the primary screens/);
+    assert.equal(h.element("empty").hidden, true, "Do not tell users to generate while generation is already running.");
+    assert.equal(h.element("status").hidden, true, "The main indicator replaces duplicate status copy.");
+    assert.equal(h.element<HTMLButtonElement>("generate").disabled, true);
+    assert.equal(h.element<HTMLButtonElement>("approve").disabled, true);
+    assert.doesNotMatch(h.element("generation").textContent!, /%|complete/i);
+    assert.deepEqual(h.requests, [{ path: "/api/sketch", body: null }]);
+    now += 2000;
+    await act(async () => { for (const update of intervals.values()) update(); });
+    assert.equal(h.element("generation-elapsed").textContent, "1m 7s elapsed");
+    await h.sse({ ...h.server, revision: 2, processing: { ...h.server.processing, status: "running" } });
+    assert.equal(h.element("generation-title").textContent, "Generating UI design");
+    assert.equal(h.element("generation-elapsed").textContent, "1m 7s elapsed", "Polling does not restart the request clock.");
+    await h.sse({ ...h.server, revision: 3, processing: { ...h.server.processing, status: "cancelled" } });
+    assert.equal(h.element("empty").hidden, false);
+    assert.equal(h.element("empty").parentElement!.querySelector("#sketch-generation"), null);
+    assert.equal(intervals.size, 0, "Stopping generation clears its timer.");
+  } finally { await h.close(); }
+});
+
+test("React sketch does not invent an elapsed time when the generation timestamp is missing", async () => {
+  const initial = fixture();
+  initial.state.sketch.current = null;
+  initial.state.processing = { action: "generate-sketch", status: "running" };
+  const h = await harness({ state: initial.state, document: null });
+  try {
+    assert.equal(h.element("generation-title").textContent, "Generating UI design");
+    assert.equal(h.element("generation").querySelector('[role="timer"]'), null);
+    assert.match(h.element("generation-status").textContent!, /Preparing screens from your accepted requirements/);
+  } finally { await h.close(); }
+});
+
+test("React sketch displays incremental DSL components before a first saved revision without refetching", async () => {
   const initial = fixture();
   initial.state.sketch.current = null;
   initial.state.sketch.status = "empty";
   const h = await harness({ ...initial, document: null as unknown as SketchDocument });
   try {
     const document = structuredClone(initial.document);
-    document.screens[0].shapes = [];
+    document.screens[0].ui = createDocument();
     document.screens[0].title = "Incoming screen";
     await h.sse(streaming(h.server, document));
+    assert.equal(h.element("generation").dataset.empty, "false");
+    assert.match(h.element("generation-progress").textContent!, /1 screen received.*live update 1/);
     assert.equal(h.element<HTMLInputElement>("title").value, "Incoming screen");
     assert.equal(h.element("workspace").hidden, false);
-    assert.equal(h.element("board").querySelectorAll("[data-shape-id]").length, 0);
+    assert.equal(h.preview().querySelectorAll("[data-ui-id]:not([data-type=Screen])").length, 0);
     const second = structuredClone(document);
-    second.screens[0].shapes.push(createShape(second.screens[0], "rectangle"));
+    buttonScreen(second.screens[0]);
     await h.sse(streaming(h.server, second, 2));
-    assert.equal(h.element("board").querySelectorAll("[data-shape-id]").length, 1);
+    assert.equal(h.preview().querySelectorAll("[data-ui-id]:not([data-type=Screen])").length, 1);
     const third = structuredClone(second);
-    third.screens[0].shapes.push({ ...createShape(third.screens[0], "text"), text: "Already visible" });
+    addUi(third.screens[0], "label", "Text", { text: "Already visible" });
     await h.sse(streaming(h.server, third, 3));
-    assert.equal(h.element("board").querySelectorAll("[data-shape-id]").length, 2);
-    assert.match(h.element("board").textContent!, /Already visible/);
+    assert.equal(h.preview().querySelectorAll("[data-ui-id]:not([data-type=Screen])").length, 2);
+    assert.match(h.preview().textContent!, /Already visible/);
     assert.match(h.element("status").textContent!, /Live preview.*update 3.*not saved or approved/);
+    assert.match(h.element("generation-progress").textContent!, /1 screen received.*live update 3/);
     assert.equal(h.state.sketch.current, null);
-    assert.deepEqual(h.requests, [{ path: "/api/sketch", body: null }], "preview updates never load saved drawings");
+    assert.deepEqual(h.requests, [{ path: "/api/sketch", body: null }], "preview updates never load saved designs");
     assert.equal(h.completionBlocked, true);
-    for (const id of ["save", "approve", "generate", "add-screen", "add-rectangle", "undo", "redo", "reload",
+    for (const id of ["save", "approve", "generate", "add-screen", "undo", "redo", "reload",
       "title", "size-preset", "add-transition"]) {
       assert.equal(h.element<HTMLButtonElement>(id).disabled, true, id);
     }
     await h.input("title", "Cannot mutate a preview");
-    await h.click("add-rectangle");
+    await h.click("add-screen");
     assert.equal(h.element<HTMLInputElement>("title").value, "Incoming screen");
-    assert.equal(h.element("board").querySelectorAll("[data-shape-id]").length, 2);
+    assert.equal(h.preview().querySelectorAll("[data-ui-id]:not([data-type=Screen])").length, 2);
     await h.sse({ ...h.server, processing: { ...h.server.processing, status: "error", message: "Stream failed. Retry explicitly." },
       sketchPreview: null });
     assert.equal(h.element("empty").hidden, false);
+    assert.equal(h.element("empty").parentElement!.querySelector("#sketch-generation"), null);
     assert.equal(h.element<HTMLButtonElement>("undo").disabled, true);
     assert.equal(h.element<HTMLButtonElement>("save").disabled, true);
     assert.match(h.element("message").textContent!, /Stream failed/);
   } finally { await h.close(); }
 });
 
-test("React sketch streaming screens stay navigable across updates and failure restores saved drawings without undo entries", async () => {
+test("React sketch lists titled waiting pages first and keeps each page's progress until its preview is ready", async () => {
+  const initial = fixture();
+  initial.state.sketch.current = null;
+  initial.state.sketch.status = "empty";
+  const h = await harness({ state: initial.state, document: null });
+  try {
+    const document = structuredClone(initial.document);
+    const first = document.screens[0];
+    first.ui = createDocument();
+    first.title = "Menu";
+    const second = createScreen(document, ["Requirement.Main_1"]);
+    second.title = "Drink details";
+    document.screens.push(second);
+    const initialPreview = streaming(h.server, document);
+    const update = async (sequence: number, screenStatuses: Record<string, "waiting" | "processing" | "ready">) =>
+      h.sse({ ...initialPreview, sketchPreview: { ...initialPreview.sketchPreview!, sequence,
+        document: structuredClone(document), screenStatuses } });
+    await update(1, { [first.id]: "waiting", [second.id]: "waiting" });
+    const buttons = () => [...h.element("screens").querySelectorAll<HTMLButtonElement>("button")];
+    assert.deepEqual(buttons().map(button => button.textContent), ["MenuWaiting", "Drink detailsWaiting"]);
+    assert.ok(buttons().every(button => button.dataset.screenStatus === "waiting" && !button.disabled));
+    assert.equal(h.element("page-status").dataset.status, "waiting");
+    assert.match(h.element("board").textContent!, /Menu.*Waiting for design/);
+    assert.equal(h.element("board").getAttribute("aria-busy"), "true");
+    await update(2, { [first.id]: "processing", [second.id]: "waiting" });
+    assert.ok(buttons()[0].querySelector(".processing-indicator"));
+    assert.match(h.element("page-status").textContent!, /Menu.*Design in progress/);
+    buttonScreen(first);
+    await update(3, { [first.id]: "processing", [second.id]: "waiting" });
+    assert.equal(h.element("board").querySelector(".sketch-page-placeholder"), null, "Keep streamed UI visible under its progress heading.");
+    await h.selectScreen(1);
+    assert.match(h.element("page-status").textContent!, /Drink details.*Waiting for design/);
+    await update(4, { [first.id]: "ready", [second.id]: "processing" });
+    assert.equal(buttons()[0].dataset.screenStatus, "ready");
+    assert.equal(buttons()[0].querySelector(".processing-indicator"), null);
+    assert.match(h.element("page-status").textContent!, /Drink details.*Design in progress/);
+    await h.selectScreen(0);
+    assert.match(h.element("page-status").textContent!, /Menu.*Preview ready - not saved or approved/);
+    assert.equal(h.element("board").getAttribute("aria-busy"), "false");
+    assert.equal(h.element<HTMLButtonElement>("approve").disabled, true);
+    assert.equal(h.completionBlocked, true);
+    assert.deepEqual(h.requests, [{ path: "/api/sketch", body: null }]);
+    await h.sse({ ...h.server, processing: { ...h.server.processing, status: "cancelled" }, sketchPreview: null });
+    assert.equal(h.element("empty").parentElement!.querySelector("#sketch-page-status"), null);
+  } finally { await h.close(); }
+});
+
+test("React sketch streaming screens stay navigable across updates and failure restores saved designs without undo entries", async () => {
   const initial = fixture();
   const h = await harness(initial);
   try {
     const document = structuredClone(initial.document);
-    document.screens[0].shapes[0].x = 250;
+    document.screens[0].ui = applyOperations(document.screens[0].ui, [
+      { op: "update", id: "primary-action", props: { label: "Live action" } },
+    ]);
     const second = createScreen(document, ["Requirement.Main_1"]);
     second.title = "Second live screen";
-    second.shapes.push({ ...createShape(second, "text"), text: "Streaming label" });
+    addUi(second, "label", "Text", { text: "Streaming label" });
     document.screens.push(second);
     await h.sse(streaming(h.server, document));
+    assert.equal(h.element("generation-title").textContent, "Updating UI design");
+    assert.match(h.element("generation-progress").textContent!, /Updating existing designs.*live update 1/);
     await h.selectScreen(1);
     assert.equal(h.element<HTMLInputElement>("title").value, "Second live screen");
-    assert.match(h.element("board").textContent!, /Streaming label/);
-    await h.selectShape(0);
-    assert.equal(h.element<HTMLInputElement>("text").value, "Streaming label");
-    assert.equal(h.element<HTMLInputElement>("text").disabled, true);
+    assert.match(h.preview().textContent!, /Streaming label/);
     await h.click("zoom-actual");
     await h.click("zoom-out");
     assert.equal(h.element("zoom").textContent, "80%");
     const next = structuredClone(document);
-    next.screens[1].shapes.push(createShape(next.screens[1], "ellipse"));
+    addUi(next.screens[1], "hint", "Text", { text: "Another component" });
     await h.sse(streaming(h.server, next, 2));
     assert.equal(h.element<HTMLInputElement>("title").value, "Second live screen");
-    assert.equal(h.element("board").querySelectorAll("[data-shape-id]").length, 2);
+    assert.equal(h.preview().querySelectorAll("[data-ui-id]:not([data-type=Screen])").length, 2);
     assert.equal(h.element("zoom").textContent, "80%", "incremental chunks do not reset navigation");
-    await h.sse({ ...h.server, processing: { ...h.server.processing, status: "error", message: "Drawing worker failed. Retry explicitly." },
+    await h.sse({ ...h.server, processing: { ...h.server.processing, status: "error", message: "Design worker failed. Retry explicitly." },
       sketchPreview: null });
     assert.equal(h.element<HTMLInputElement>("title").value, "Screen 1");
-    assert.equal(h.element("board").querySelector("[data-shape-id] rect")!.getAttribute("x"), "40");
-    assert.equal(h.element("board").querySelectorAll("[data-shape-id]").length, 1);
+    assert.equal(h.preview().querySelector("[data-ui-id='primary-action']")!.textContent, "Continue");
+    assert.equal(h.preview().querySelectorAll("[data-ui-id]:not([data-type=Screen])").length, 1);
     assert.equal(h.element<HTMLButtonElement>("save").disabled, true);
     assert.equal(h.element<HTMLButtonElement>("undo").disabled, true);
     assert.equal(h.element<HTMLButtonElement>("redo").disabled, true);
     assert.equal(h.requests.length, 1);
     assert.match(h.element("failed-instruction").textContent!, /Move the navigation/);
     assert.equal(h.element<HTMLButtonElement>("retry-revision").disabled, false);
-    assert.equal(h.element("board").getAttribute("aria-label"), "Editable screen drawing");
+    assert.equal(h.element("board").getAttribute("aria-label"), "UI DSL screen view");
   } finally { await h.close(); }
 });
 
@@ -328,11 +448,13 @@ test("React sketch incoming preview never obscures local edits or changes their 
     await h.input("title", "My unsaved title");
     const document = structuredClone(initial.document);
     document.screens[0].title = "Incoming AI title";
-    document.screens[0].shapes.push(createShape(document.screens[0], "text"));
+    addUi(document.screens[0], "label", "Text", { text: "Incoming component" });
     await h.sse(streaming(h.server, document));
     assert.equal(h.element<HTMLInputElement>("title").value, "My unsaved title");
-    assert.equal(h.element("board").querySelectorAll("[data-shape-id]").length, 1);
+    assert.equal(h.preview().querySelectorAll("[data-ui-id]:not([data-type=Screen])").length, 1);
     assert.match(h.element("status").textContent!, /Live preview pending.*local edits are preserved.*not saved or approved/);
+    assert.match(h.element("generation").textContent!, /Your local edits remain visible.*not saved or approved/);
+    assert.equal(h.element("workspace").querySelector("#sketch-page-status"), null, "Incoming progress must not label unsaved local edits.");
     assert.equal(h.element<HTMLButtonElement>("reload").disabled, true);
     assert.equal(h.element<HTMLButtonElement>("save").disabled, true);
     await h.sse({ ...h.server, processing: { ...h.server.processing, status: "cancelled" }, sketchPreview: null });
@@ -347,7 +469,7 @@ test("React sketch incoming preview never obscures local edits or changes their 
     await h.click("save");
     const saved = h.requests.find((request) => request.body?.action === "save")!.body!.document as SketchDocument;
     assert.equal(saved.screens[0].title, "My unsaved title");
-    assert.deepEqual(saved.screens[0].shapes, initial.document.screens[0].shapes);
+    assert.deepEqual(saved.screens[0].ui, initial.document.screens[0].ui);
   } finally { await h.close(); }
 });
 
@@ -373,11 +495,11 @@ test("React sketch ignores late request and generation previews and reports malf
     await h.sse({ ...active, sketchPreview: { ...active.sketchPreview!, document: {} as SketchDocument } });
     assert.equal(h.element<HTMLInputElement>("title").value, "Screen 1");
     assert.match(h.element("message").textContent!, /preview is invalid.*unchanged.*retry/);
-    assert.equal(h.element("board").querySelectorAll("[data-shape-id]").length, 1);
+    assert.equal(h.preview().querySelectorAll("[data-ui-id]:not([data-type=Screen])").length, 1);
   } finally { await h.close(); }
 });
 
-test("React sketch blocks completion of previously approved drawings until streaming ends and loads only the saved success revision", async () => {
+test("React sketch blocks completion of previously approved designs until streaming ends and loads only the saved success revision", async () => {
   const initial = fixture();
   initial.state.sketch.status = "approved";
   initial.state.sketch.approved = {
@@ -401,7 +523,8 @@ test("React sketch blocks completion of previously approved drawings until strea
       sketch: { ...h.server.sketch, status: "draft", approved: null, current: {
         ...h.server.sketch.current!, id: "drawing-success", documentHash: "saved-hash", number: 2,
       } } });
-    assert.match(h.element("status").textContent!, /Loading saved drawings/);
+    assert.match(h.element("status").textContent!, /Loading saved designs/);
+    assert.equal(h.element("status").parentElement!.querySelector("#sketch-generation"), null);
     assert.doesNotMatch(h.element("status").textContent!, /approved/);
     assert.notEqual(h.element<HTMLInputElement>("title").value, "Unsaved live result");
     assert.equal(h.element<HTMLButtonElement>("approve").disabled, true);
@@ -412,7 +535,7 @@ test("React sketch blocks completion of previously approved drawings until strea
     assert.equal(h.element<HTMLButtonElement>("undo").disabled, true);
     assert.equal(h.element<HTMLButtonElement>("approve").disabled, false);
     assert.equal(h.completionBlocked, true, "new saved revision still needs explicit approval");
-    assert.equal(h.requests.length, 2, "only the final saved revision triggers another drawing read");
+    assert.equal(h.requests.length, 2, "only the final saved revision triggers another design read");
   } finally { release(); await h.close(); }
 });
 
@@ -438,8 +561,12 @@ test("React sketch composer keeps only text, Send and history, with explicit key
       await h.event(input, "keydown", { key: "Enter", [modifier]: true, isComposing: true });
       assert.equal(h.requests.filter(request => request.body).length, 0);
       await h.event(input, "keydown", { key: "Enter", [modifier]: true });
-      assert.deepEqual(h.requests.filter(request => request.body).map(request => request.body), [{
+      const writes = h.requests.filter(request => request.body);
+      assert.match(writes[0].body!.clientRequestId, /^[a-f0-9-]{36}$/);
+      assert.deepEqual(writes.map(request => request.body), [{
         action: "revise", expectedRevision: "drawing-1", instruction: "Move the primary action\nbelow the heading.",
+        clientRequestId: writes[0].body!.clientRequestId,
+        sketchContext: { revisionId: "drawing-1", screenId: "screen-1", nodeId: null },
       }]);
       assert.equal(input.value, "");
       assert.equal(h.state.sketch.approved, null);
@@ -448,7 +575,7 @@ test("React sketch composer keeps only text, Send and history, with explicit key
   }
 });
 
-test("React sketch loads separately without generating, and all manual tools preserve bounded documents", async () => {
+test("React sketch creates empty DSL screens and preserves metadata and transitions without geometry tools", async () => {
   const initial = fixture();
   initial.state.sketch.current = null;
   initial.state.sketch.status = "empty";
@@ -456,18 +583,8 @@ test("React sketch loads separately without generating, and all manual tools pre
   try {
     assert.deepEqual(h.requests, [{ path: "/api/sketch", body: null }]);
     await h.click("add-screen");
-    for (const kind of ["rectangle", "ellipse", "text", "line", "arrow"]) await h.click("add-" + kind);
-    assert.equal(h.element("board").querySelectorAll("[data-shape-id]").length, 5);
-    await h.selectShape(2);
-    await h.input("text", "<script>&text");
-    assert.equal(h.element("board").querySelector("script"), null);
-    await h.selectShape(4);
-    await h.input("x", "10000");
-    await h.event(h.element("x"), "focusout");
-    assert.equal(h.element<HTMLInputElement>("x").value, "800");
-    await h.click("undo");
-    assert.equal(h.element<HTMLInputElement>("x").value, "40");
-    await h.click("redo");
+    assert.equal(h.preview().querySelectorAll("[data-ui-id]").length, 1);
+    assert.equal(h.element("workspace").querySelector("#sketch-tools"), null);
     await h.input("title", "Home");
     await h.click("add-screen");
     await h.click("add-transition");
@@ -477,7 +594,8 @@ test("React sketch loads separately without generating, and all manual tools pre
     await h.click("save");
     const document = h.requests.at(-1)!.body!.document as SketchDocument;
     assert.equal(document.screens[0].title, "Home");
-    assert.equal(document.screens[0].shapes[4].x, 800);
+    assert.equal(document.version, 2);
+    assert.deepEqual(document.screens[0].ui.nodes.screen.children, []);
     assert.deepEqual(document.screens[0].decisionIds, ["Requirement.Main_1"]);
     assert.equal(document.transitions[0].trigger, "Open home");
     assert.equal(h.completionBlocked, true);
@@ -485,12 +603,10 @@ test("React sketch loads separately without generating, and all manual tools pre
   } finally { await h.close(); }
 });
 
-test("React sketch preserves invalid screen, shape and transition fields across SSE and hidden tabs", async () => {
+test("React sketch preserves invalid screen and transition fields across SSE and hidden tabs", async () => {
   const h = await harness();
   try {
     await h.input("purpose", "");
-    await h.selectShape(0);
-    await h.input("x", "");
     await h.click("add-transition");
     const trigger = h.element("transitions").querySelector("input")!;
     Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")!.set!.call(trigger, "");
@@ -499,132 +615,22 @@ test("React sketch preserves invalid screen, shape and transition fields across 
     await h.sse({ ...h.server, revision: 2 });
     await h.hidden(false);
     assert.equal(h.element<HTMLInputElement>("purpose").value, "");
-    assert.equal(h.element<HTMLInputElement>("x").value, "");
     assert.equal(h.element("purpose").getAttribute("aria-invalid"), "true");
     assert.equal(trigger.value, "");
     assert.equal(h.element<HTMLButtonElement>("save").disabled, true);
     await h.click("undo");
     assert.equal(h.element<HTMLInputElement>("purpose").value, "Support the selected requirements.");
-    assert.equal(h.element<HTMLInputElement>("x").value, "40");
     assert.equal(trigger.value, "Continue");
   } finally { await h.close(); }
 });
 
-test("React sketch creates Bezier and spline paths, edits knots, and exports the same curves without handles", async () => {
-  const h = await harness();
-  try {
-    h.enablePng();
-    const board = h.element("board");
-    for (const id of ["quadratic", "cubic", "spline"]) await h.click("add-" + id);
-    assert.equal(board.querySelectorAll("[data-shape-id]").length, 4);
-    assert.equal(board.querySelectorAll("[data-point-index]").length, 4);
-    await h.input("path-points", "6, 6\n12, 18\n24, 6");
-    await h.event(h.element("path-points"), "focusout");
-    await h.input("path-closed", "true");
-    await h.input("path-tension", "0.5");
-    await h.event(h.element("path-tension"), "focusout");
-    const rendered = [...board.querySelectorAll("[data-shape-id] path")].map((path) => path.getAttribute("d"));
-    assert.match(rendered[0]!, / Q /);
-    assert.match(rendered[1]!, / C /);
-    assert.match(rendered[2]!, / C .* Z$/);
-    await h.click("approve");
-    const saved = h.requests.find((request) => request.body?.action === "save")!.body!.document as SketchDocument;
-    assert.deepEqual(saved.screens[0].shapes.slice(1).map((shape) => shape.curve), ["quadratic", "cubic", "catmull-rom"]);
-    assert.equal(saved.screens[0].shapes[3].tension, 0.5);
-    assert.equal(saved.screens[0].shapes[3].closed, true);
-    const source = h.exports[0].source;
-    const svg = decodeURIComponent(source.slice(source.indexOf(",") + 1));
-    assert.equal(svg, renderSketchSvg(saved.screens[0]));
-    assert.doesNotMatch(svg, /data-point-index|sketch-path-handles|polyline/);
-    const exported = new dom.window.DOMParser().parseFromString(svg, "image/svg+xml");
-    assert.deepEqual([...exported.querySelectorAll("[data-shape-id] path")].map((path) => path.getAttribute("d")), rendered);
-  } finally { await h.close(); }
-});
 
-test("React sketch drags Bezier controls in scene coordinates, groups undo, and cancels pointer edits", async () => {
-  const h = await harness();
-  try {
-    await h.click("add-cubic");
-    await h.click("zoom-actual");
-    await h.click("zoom-out");
-    const board = h.element("board");
-    const path = () => board.querySelector("[data-shape-id='path-1'] path")!.getAttribute("d")!;
-    const handle = () => board.querySelector("[data-point-index='1']")!;
-    const original = path();
-    await h.event(handle(), "pointerdown", { pointerId: 10, button: 0, clientX: 34, clientY: 34 });
-    await h.event(board, "pointerup", { pointerId: 10, clientX: 34, clientY: 34 });
-    assert.equal(path(), original, "clicking off-center on a control must not move it");
-    await h.event(handle(), "pointerdown", { pointerId: 11, button: 0, clientX: 32, clientY: 32 });
-    await h.event(board, "pointermove", { pointerId: 11, clientX: 64, clientY: 16 });
-    assert.match(path(), / C 80 20 200 40 200 120/);
-    assert.equal(h.element<HTMLButtonElement>("save").disabled, true);
-    await h.event(board, "pointerup", { pointerId: 11, clientX: 64, clientY: 16 });
-    assert.equal(h.element<HTMLTextAreaElement>("path-points").value.split("\n")[1], "80, 20");
-    await h.click("undo");
-    assert.equal(path(), original);
-    await h.click("redo");
-    const edited = path();
-    await h.event(handle(), "pointerdown", { pointerId: 12, button: 0, clientX: 64, clientY: 16 });
-    await h.event(board, "pointermove", { pointerId: 12, clientX: 96, clientY: 8 });
-    assert.notEqual(path(), edited);
-    await h.event(board, "pointercancel", { pointerId: 12 });
-    assert.equal(path(), edited);
-    await h.click("undo");
-    assert.equal(path(), original, "cancellation must not enter undo history");
-  } finally { await h.close(); }
-});
 
-test("React sketch keeps malformed curve edits visible and blocks save until valid complete segments are supplied", async () => {
-  const h = await harness();
-  try {
-    await h.click("add-quadratic");
-    const path = () => h.element("board").querySelector("[data-shape-id='path-1'] path")!.getAttribute("d")!;
-    const original = path();
-    await h.input("path-points", "10, 20\n30, 40");
-    assert.equal(h.element("path-points").getAttribute("aria-invalid"), "true");
-    assert.equal(h.element<HTMLButtonElement>("save").disabled, true);
-    assert.equal(h.element<HTMLButtonElement>("approve").disabled, true);
-    assert.match(h.element("message").textContent!, /quadratic.*pairs/);
-    await h.sse({ ...h.server, revision: 2 });
-    assert.equal(h.element<HTMLTextAreaElement>("path-points").value, "10, 20\n30, 40");
-    assert.equal(path(), original);
-    await h.input("path-points", "10, 20\n30, 40\n50, 20\n70, 40\n90, 20");
-    assert.equal(h.element("path-points").getAttribute("aria-invalid"), "false");
-    assert.equal(path(), "M 10 20 Q 30 40 50 20 Q 70 40 90 20");
-    await h.click("add-spline");
-    await h.input("path-tension", "1.01");
-    assert.equal(h.element("path-tension").getAttribute("aria-invalid"), "true");
-    assert.equal(h.element<HTMLButtonElement>("save").disabled, true);
-    await h.click("undo");
-    assert.equal(h.element<HTMLInputElement>("path-tension").value, "0");
-    await h.sse({ ...h.server, revision: 3, provider: { ...h.server.provider, canSubmitAnswers: false } });
-    assert.equal(h.element<HTMLInputElement>("path-tension").disabled, true);
-    assert.equal(h.element<HTMLTextAreaElement>("path-points").disabled, true);
-    assert.equal(h.element("board").querySelector("[data-point-index]"), null);
-  } finally { await h.close(); }
-});
 
-test("React sketch renders streamed curve previews without exposing editable handles or replacing saved shapes", async () => {
-  const initial = fixture();
-  const h = await harness(initial);
-  try {
-    const document = structuredClone(initial.document);
-    const screen = document.screens[0];
-    for (const curve of ["quadratic", "cubic", "catmull-rom"] as const) screen.shapes.push(createCurveShape(screen, curve));
-    await h.sse(streaming(h.server, document));
-    await h.selectShape(3);
-    const board = h.element("board");
-    const paths = [...board.querySelectorAll("[data-shape-id] path")].map((path) => path.getAttribute("d"));
-    assert.match(paths[0]!, / Q /);
-    assert.match(paths[1]!, / C /);
-    assert.match(paths[2]!, / C /);
-    assert.equal(board.querySelector("[data-point-index]"), null);
-    assert.equal(h.element<HTMLTextAreaElement>("path-points").disabled, true);
-    await h.sse({ ...initial.state, revision: 2 });
-    assert.equal(board.querySelectorAll("[data-shape-id]").length, 1);
-    assert.equal(board.querySelector("path"), null);
-  } finally { await h.close(); }
-});
+
+
+
+
 
 test("React sketch retains local edits on remote conflict and only discards after explicit confirmation", async () => {
   const h = await harness();
@@ -644,55 +650,16 @@ test("React sketch retains local edits on remote conflict and only discards afte
   } finally { await h.close(); }
 });
 
-test("React sketch commits drag and bounded freehand as single undo steps, cancels and nudges by keyboard", async () => {
-  const h = await harness();
-  try {
-    const board = h.element("board");
-    const shape = () => board.querySelector("[data-shape-id]")!;
-    await h.event(shape(), "pointerdown", { pointerId: 1, button: 0, clientX: 50, clientY: 50 });
-    await h.event(board, "pointermove", { pointerId: 1, clientX: 70, clientY: 80 });
-    await h.event(board, "pointerup", { pointerId: 1, clientX: 70, clientY: 80 });
-    assert.equal(h.element<HTMLInputElement>("x").value, "60");
-    await h.event(board, "keydown", { key: "ArrowRight", shiftKey: true });
-    assert.equal(h.element<HTMLInputElement>("x").value, "70");
-    await h.event(board, "keydown", { key: "z", ctrlKey: true });
-    assert.equal(h.element<HTMLInputElement>("x").value, "60");
-    await h.event(shape(), "pointerdown", { pointerId: 2, button: 0, clientX: 70, clientY: 80 });
-    await h.event(board, "pointermove", { pointerId: 2, clientX: 90, clientY: 90 });
-    await h.event(board, "pointercancel", { pointerId: 2 });
-    assert.equal(h.element<HTMLInputElement>("x").value, "60");
-    await h.click("freehand");
-    await h.event(board, "pointerdown", { pointerId: 3, button: 0, clientX: 10, clientY: 10 });
-    await h.event(board, "pointerup", { pointerId: 3, clientX: 10000, clientY: 10000 });
-    assert.equal(board.querySelectorAll("[data-shape-id]").length, 2);
-    assert.match(board.querySelector("path")!.getAttribute("d")!, /960 640/);
-    await h.click("undo");
-    assert.equal(board.querySelectorAll("[data-shape-id]").length, 1);
-    await h.event(board, "keydown", { key: "Escape" });
-    assert.equal(h.element("freehand").getAttribute("aria-pressed"), "false");
-  } finally { await h.close(); }
-});
 
-test("React sketch does not replace or rebase a pointer gesture when a remote revision arrives", async () => {
-  const h = await harness();
-  try {
-    const board = h.element("board");
-    await h.event(board.querySelector("[data-shape-id]")!, "pointerdown", { pointerId: 1, button: 0, clientX: 50, clientY: 50 });
-    await h.sse({ ...h.server, revision: 2, sketch: { ...h.server.sketch, current: { ...h.server.sketch.current!, id: "remote" } } });
-    await h.event(board, "pointerup", { pointerId: 1, clientX: 70, clientY: 80 });
-    assert.equal(h.element<HTMLInputElement>("x").value, "60");
-    assert.match(h.element("status").textContent!, /Conflict/);
-    assert.equal(h.element<HTMLButtonElement>("save").disabled, true);
-    assert.equal(h.requests.length, 1);
-  } finally { await h.close(); }
-});
+
+
 
 test("React sketch saves then exports every canonical screen before approving the exact revision", async () => {
   const initial = fixture();
   const second = createScreen(initial.document, ["Requirement.Main_1"]);
   second.width = 375;
   second.height = 812;
-  second.shapes.push({ ...createShape(second, "text"), text: "<script>&unsafe" });
+  addUi(second, "label", "Text", { text: "<script>&unsafe" });
   initial.document.screens.push(second);
   const h = await harness(initial);
   try {
@@ -759,11 +726,11 @@ test("React sketch PNG failures, load failures and provider or worker gates rema
     await h.click("approve");
     assert.match(h.element("message").textContent!, /PNG export is unavailable.*not approved/);
     assert.equal(h.requests.length, 1);
-    h.setReadError("Drawing storage unavailable");
+    h.setReadError("Design storage unavailable");
     await h.click("reload");
     await h.sse({ ...h.server, revision: 2 });
     assert.equal(h.requests.length, 2);
-    assert.match(h.element("message").textContent!, /Drawing storage unavailable/);
+    assert.match(h.element("message").textContent!, /Design storage unavailable/);
     h.setReadError("");
     await h.click("reload");
     assert.equal(h.element<HTMLButtonElement>("approve").disabled, false);
@@ -771,9 +738,9 @@ test("React sketch PNG failures, load failures and provider or worker gates rema
     assert.equal(h.element<HTMLButtonElement>("approve").disabled, true);
     assert.match(h.element("status").textContent!, /session that owns this effort/);
     await h.sse({ ...h.server, revision: 4, provider: { canSubmitAnswers: true },
-      processing: { action: "generate-sketch", status: "running", message: "Drawing new screens" } });
+      processing: { action: "generate-sketch", status: "running", message: "Designing new screens" } });
     assert.equal(h.element<HTMLButtonElement>("add-screen").disabled, true);
-    assert.match(h.element("status").textContent!, /Drawing new screens/);
+    assert.match(h.element("status").textContent!, /Designing new screens/);
   } finally { await h.close(); }
 });
 
@@ -814,10 +781,214 @@ test("React sketch revision requests are explicit, duplicate-safe and keep unsen
     await h.click("revise");
     await h.click("approve");
     assert.equal(h.requests.length, 2);
-    assert.deepEqual(h.requests[1].body, { action: "revise", expectedRevision: "drawing-1", instruction: "Move navigation" });
+    assert.deepEqual(h.requests[1].body, { action: "revise", expectedRevision: "drawing-1", instruction: "Move navigation",
+      clientRequestId: h.requests[1].body!.clientRequestId,
+      sketchContext: { revisionId: "drawing-1", screenId: "screen-1", nodeId: null } });
+    assert.match(h.requests[1].body!.clientRequestId, /^[a-f0-9-]{36}$/);
     await act(async () => reject(new Error("Cannot start revision")));
     assert.match(h.element("message").textContent!, /Cannot start revision/);
     assert.equal(h.element<HTMLTextAreaElement>("instruction").value, "Move navigation");
+  } finally { await h.close(); }
+});
+
+test("design requests bind the viewed screen and explicitly picked element without editing the DSL", async () => {
+  const initial = fixture();
+  initial.document.screens.push(buttonScreen(createScreen(initial.document, ["Requirement.Main_1"]), "Another action"));
+  const h = await harness(initial);
+  try {
+    await h.input("change-target", "primary-action");
+    assert.equal(h.preview().querySelector('[data-ui-id="primary-action"]')!.getAttribute("data-selected"), "true");
+    await h.selectScreen(1);
+    assert.equal(h.element<HTMLSelectElement>("change-target").value, "", "Identical node IDs on another screen are not the same selection.");
+    assert.equal(h.preview().querySelector("[data-selected]"), null);
+    await h.click("pick-element");
+    assert.equal(h.element("pick-element").getAttribute("aria-pressed"), "true");
+    await h.event(h.preview().querySelector('[data-ui-id="primary-action"]')!, "click");
+    assert.equal(h.element("pick-element").getAttribute("aria-pressed"), "true", "Selection mode stays active after picking.");
+    assert.equal(h.element<HTMLSelectElement>("change-target").value, "primary-action");
+    assert.equal(h.element<HTMLButtonElement>("save").disabled, true);
+    assert.equal(h.element<HTMLButtonElement>("undo").disabled, true);
+    await h.input("instruction", "Replace this block with an icon.");
+    await h.click("revise");
+    assert.deepEqual(h.requests.at(-1)!.body!.sketchContext, {
+      revisionId: "drawing-1", screenId: initial.document.screens[1].id, nodeId: "primary-action",
+    });
+    assert.equal(h.state.sketch.approved, null);
+    assert.equal(h.requests.filter(request => request.body).length, 1, "Selecting a target is view context, not a saved edit or approval.");
+  } finally { await h.close(); }
+});
+
+test("design selection survives view updates but cannot silently target a new saved revision", async () => {
+  const initial = fixture();
+  const h = await harness(initial);
+  try {
+    await h.input("change-target", "primary-action");
+    await h.hidden(true); await h.hidden(false);
+    await h.sse({ ...h.server, revision: 2 });
+    assert.equal(h.element<HTMLSelectElement>("change-target").value, "primary-action");
+    const newer = structuredClone(initial.document);
+    newer.screens[0].notes = "Newer design";
+    h.setDocument(newer);
+    await h.sse({ ...h.server, revision: 3, sketch: { ...h.server.sketch,
+      current: { ...h.server.sketch.current!, id: "drawing-new", documentHash: "new-hash" },
+    } });
+    assert.equal(h.element<HTMLSelectElement>("change-target").value, "");
+    assert.equal(h.preview().querySelector("[data-selected]"), null);
+    await h.input("instruction", "Adjust this screen.");
+    await h.click("revise");
+    assert.deepEqual(h.requests.at(-1)!.body!.sketchContext, {
+      revisionId: "drawing-new", screenId: initial.document.screens[0].id, nodeId: null,
+    });
+  } finally { await h.close(); }
+});
+
+test("Structure follows Screen details without a Selection section and preserves persistent view selection", async () => {
+  const initial = fixture(), screen = initial.document.screens[0];
+  screen.ui = applyOperations(screen.ui, [
+    { op: "add", parent: "screen", component: { id: "layout", type: "Stack", props: {} } },
+    { op: "add", parent: "layout", component: { id: "heading", type: "Heading", props: { text: "Your workspace" } } },
+    { op: "add", parent: "layout", component: { id: "form", type: "Card", props: {} } },
+    { op: "add", parent: "form", component: { id: "entry", type: "Input", props: { label: "Name" } } },
+    { op: "move", id: "primary-action", parent: "form" },
+  ]);
+  const original = JSON.stringify(initial.document);
+  const h = await harness(initial);
+  try {
+    assert.equal(h.element<HTMLDetailsElement>("structure").open, true);
+    assert.equal(h.element("structure").previousElementSibling?.className, "sketch-screen-details");
+    assert.equal(h.element("workspace").querySelector("#sketch-selection"), null);
+    assert.deepEqual([...h.element("structure-tree").querySelectorAll<HTMLButtonElement>("[data-node-id]")]
+      .map(node => node.dataset.nodeId), ["screen", "layout", "heading", "form", "entry", "primary-action"]);
+    assert.equal(h.treeNode("primary-action").getAttribute("aria-level"), "4");
+    assert.equal(h.preview().dataset.mode, "select", "The integrated editor defaults to selection, not interaction.");
+    assert.equal(h.selectedNodeId(), null);
+
+    await h.event(h.preview().querySelector('[data-ui-id="heading"]')!, "click");
+    assert.equal(h.treeNode("heading").getAttribute("aria-selected"), "true");
+    assert.equal(h.selectedNodeId(), "heading");
+    assert.equal(h.element<HTMLSelectElement>("change-target").value, "heading");
+    assert.equal(h.preview().dataset.mode, "select");
+    await h.event(h.preview().querySelector('[data-ui-id="primary-action"] span')!, "click");
+    assert.equal(h.selectedNodeId(), "primary-action", "Selecting again does not require rearming a picker.");
+    assert.equal(h.treeNode("heading").getAttribute("aria-selected"), "false");
+    assert.equal(h.treeNode("primary-action").getAttribute("aria-selected"), "true");
+
+    await h.click("interact");
+    assert.equal(h.preview().dataset.mode, "interact");
+    await h.event(h.preview().querySelector('[data-ui-id="heading"]')!, "click");
+    assert.equal(h.selectedNodeId(), "primary-action", "Trying controls does not retarget a request.");
+    await h.event(h.treeNode("entry"), "click");
+    assert.equal(h.preview().dataset.mode, "select", "Selecting in Structure restores the visible selection outline.");
+    assert.equal(h.preview().querySelector('[data-ui-id="entry"]')!.getAttribute("data-selected"), "true");
+    assert.equal(h.element<HTMLSelectElement>("change-target").value, "entry");
+    await h.input("change-target", "");
+    assert.equal(h.selectedNodeId(), null);
+    assert.equal(h.preview().querySelector("[data-selected]"), null);
+    assert.equal(h.element<HTMLButtonElement>("save").disabled, true);
+    assert.equal(h.element<HTMLButtonElement>("undo").disabled, true);
+    assert.equal(JSON.stringify(initial.document), original);
+    assert.equal(h.requests.length, 1);
+  } finally { await h.close(); }
+});
+
+test("Structure supports keyboard traversal, collapse and revealing an element selected in the view", async () => {
+  const initial = fixture(), screen = initial.document.screens[0];
+  screen.ui = applyOperations(screen.ui, [
+    { op: "add", parent: "screen", component: { id: "card", type: "Card", props: {} } },
+    { op: "move", id: "primary-action", parent: "card" },
+  ]);
+  const h = await harness(initial);
+  try {
+    await act(async () => h.treeNode("screen").focus());
+    await h.event(h.treeNode("screen"), "keydown", { key: "ArrowRight" });
+    assert.equal(dom.window.document.activeElement, h.treeNode("card"));
+    await h.event(h.treeNode("card"), "keydown", { key: "ArrowDown" });
+    assert.equal(dom.window.document.activeElement, h.treeNode("primary-action"));
+    assert.equal(h.selectedNodeId(), "primary-action");
+    await h.event(h.treeNode("primary-action"), "keydown", { key: "ArrowLeft" });
+    assert.equal(dom.window.document.activeElement, h.treeNode("card"));
+    await h.event(h.treeNode("card"), "keydown", { key: "ArrowLeft" });
+    assert.equal(h.treeNode("card").getAttribute("aria-expanded"), "false");
+    assert.equal(h.element("structure-tree").querySelector('[data-node-id="primary-action"]'), null);
+    await h.event(h.preview().querySelector('[data-ui-id="primary-action"]')!, "click");
+    assert.equal(h.treeNode("card").getAttribute("aria-expanded"), "true");
+    assert.equal(h.treeNode("primary-action").getAttribute("aria-selected"), "true");
+    await act(async () => h.treeNode("primary-action").focus());
+    await h.event(h.treeNode("primary-action"), "keydown", { key: "Home" });
+    assert.equal(dom.window.document.activeElement, h.treeNode("screen"));
+    await h.event(h.treeNode("screen"), "keydown", { key: "End" });
+    assert.equal(dom.window.document.activeElement, h.treeNode("primary-action"));
+    assert.equal(h.requests.length, 1);
+  } finally { await h.close(); }
+});
+
+test("Structure remains inspectable in read-only and streaming views without reusing transient selections", async () => {
+  const initial = fixture();
+  const h = await harness(initial);
+  try {
+    await h.sse({ ...h.server, revision: 2, provider: { canSubmitAnswers: false } });
+    await h.event(h.treeNode("primary-action"), "click");
+    assert.equal(h.selectedNodeId(), "primary-action");
+    assert.equal(h.element<HTMLButtonElement>("save").disabled, true);
+    assert.equal(h.element<HTMLButtonElement>("revise").disabled, true);
+    assert.equal(h.preview().dataset.mode, "select");
+    await h.click("zoom-actual"); await h.click("zoom-out");
+    assert.equal(h.element("zoom").textContent, "80%");
+    await h.sse(streaming({ ...h.server, revision: 3, provider: { canSubmitAnswers: true } }, initial.document));
+    assert.equal(h.preview().querySelector("[data-selected]"), null, "Saved selection cannot identify an uncommitted preview.");
+    await h.event(h.treeNode("primary-action"), "click");
+    const changed = structuredClone(initial.document);
+    changed.screens[0].ui = applyOperations(changed.screens[0].ui, [
+      { op: "update", id: "primary-action", props: { label: "Streamed change" } },
+    ]);
+    await h.sse(streaming(h.server, changed, 2));
+    assert.equal(h.selectedNodeId(), "primary-action");
+    assert.match(h.treeNode("primary-action").textContent!, /Streamed change/);
+    assert.equal(h.element<HTMLButtonElement>("revise").disabled, true);
+    await h.sse({ ...h.server, revision: 4, processing: null, sketchPreview: null });
+    assert.equal(h.selectedNodeId(), null, "Preview selection cannot silently target saved content.");
+    await h.input("instruction", "Adjust this screen.");
+    await h.click("revise");
+    assert.deepEqual(h.requests.at(-1)!.body!.sketchContext, {
+      revisionId: "drawing-1", screenId: "screen-1", nodeId: null,
+    });
+  } finally { await h.close(); }
+});
+
+test("saving local design edits before revision binds the selected element to the saved revision", async () => {
+  const h = await harness();
+  try {
+    await h.input("change-target", "primary-action");
+    await h.input("notes", "Keep these unsaved annotations.");
+    await h.input("instruction", "Use an icon for this action.");
+    await h.click("revise");
+    const writes = h.requests.filter(request => request.body);
+    assert.deepEqual(writes.map(request => request.body!.action), ["save", "revise"]);
+    assert.deepEqual(writes[1].body!.sketchContext, {
+      revisionId: "drawing-2", screenId: "screen-1", nodeId: "primary-action",
+    });
+    assert.equal(writes[0].body!.document.screens[0].notes, "Keep these unsaved annotations.");
+  } finally { await h.close(); }
+});
+
+test("retrying a failed design request preserves its original target instead of the newly viewed screen", async () => {
+  const initial = fixture();
+  initial.document.screens.push(buttonScreen(createScreen(initial.document, ["Requirement.Main_1"]), "Another action"));
+  const context = { revisionId: "drawing-1", screenId: initial.document.screens[1].id, nodeId: "primary-action" };
+  initial.state.processing = { action: "revise-sketch", status: "error", answer: "Replace this action with an icon.",
+    message: "The design worker failed.", sketchContext: context };
+  const h = await harness(initial);
+  try {
+    assert.equal(h.element<HTMLSelectElement>("change-target").value, "");
+    await h.input("instruction", "Keep this different unsent request.");
+    h.setPost(async () => { throw new Error("Retry transport unavailable."); });
+    await h.click("retry-revision");
+    assert.deepEqual(h.requests.at(-1)!.body!.sketchContext, context);
+    assert.equal(h.requests.at(-1)!.body!.instruction, initial.state.processing.answer);
+    await h.sse({ ...h.server, revision: 2 });
+    await h.click("retry-revision");
+    assert.deepEqual(h.requests.at(-1)!.body!.sketchContext, context, "A transport retry cannot replace the saved target with current view context.");
+    assert.equal(h.element<HTMLTextAreaElement>("instruction").value, "Keep this different unsent request.");
   } finally { await h.close(); }
 });
 
@@ -837,7 +1008,7 @@ test("React sketch aborts approval if immutable revision metadata changes during
     } } });
     await act(async () => rendered());
     assert.equal(h.requests.filter((request) => request.body).length, 0);
-    assert.match(h.element("message").textContent!, /drawing changed/i);
+    assert.match(h.element("message").textContent!, /design changed/i);
     assert.equal(h.completionBlocked, true);
   } finally { await h.close(); }
 });
@@ -854,7 +1025,6 @@ test("React sketch stays unloaded before Sketch is available and honors historic
     await h.sse({ ...h.server, revision: 2, lifecycle: { ...h.server.lifecycle, currentStage: "sketch" } });
     assert.equal(h.requests.length, 1);
     await h.click("add-screen");
-    await h.click("add-rectangle");
     await h.sse({ ...h.server, revision: 3, sketch: { ...h.server.sketch, status: "stale" } });
     assert.equal(h.element<HTMLButtonElement>("approve").disabled, true);
     assert.match(h.element("status").textContent!, /Stale/);
@@ -864,25 +1034,119 @@ test("React sketch stays unloaded before Sketch is available and honors historic
   } finally { await h.close(); }
 });
 
-test("React sketch drawing tools are larger icon-only buttons with accessible names and tooltips", async () => {
+test("React sketch explicitly updates stale requirements without applying or losing draft edits", async () => {
+  const initial = fixture();
+  initial.state.sketch.status = "stale";
+  initial.state.stageReview = { version: 1, parentId: "parent", stage: "sketch",
+    baselineDigest: "a".repeat(64), baselineRevision: 1 };
+  const h = await harness(initial);
+  try {
+    const update = h.element<HTMLButtonElement>("update-requirements");
+    assert.equal(update.textContent, "Update designs from latest requirements");
+    assert.equal(update.closest("#sketch-status"), h.element("status"));
+    assert.equal(update.disabled, false);
+    assert.equal(h.element<HTMLButtonElement>("approve").disabled, true);
+    await h.input("instruction", "Keep this follow-up instruction.");
+    assert.equal(h.element<HTMLButtonElement>("revise").disabled, true);
+    h.setConfirm(false);
+    await h.click("update-requirements");
+    assert.equal(h.requests.filter(item => item.body).length, 0);
+    h.setConfirm(true);
+    await h.click("update-requirements");
+    assert.deepEqual(h.requests.filter(item => item.body).map(item => ({ path: item.path, body: item.body })),
+      [{ path: "/api/sketch", body: { action: "update", expectedRevision: "drawing-1" } }]);
+    assert.equal(h.element("generation-title").textContent, "Updating UI design");
+    assert.match(h.element("generation").textContent!, /existing designs remain visible/);
+    assert.equal(h.element("screens").querySelector("button")!.getAttribute("data-screen-status"), "ready");
+    assert.equal(h.element<HTMLInputElement>("instruction").value, "Keep this follow-up instruction.");
+    assert.equal(h.element<HTMLButtonElement>("approve").disabled, true);
+    assert.equal(h.completionBlocked, true);
+    assert.equal(h.state.lifecycle.currentStage, "sketch");
+    await h.sse({ ...h.server, revision: h.server.revision + 1,
+      processing: { ...h.server.processing, status: "error", message: "Update failed. Retry explicitly." } });
+    assert.equal(h.element<HTMLButtonElement>("update-requirements").disabled, false);
+    await h.input("title", "Keep this local screen title");
+    assert.equal(h.element<HTMLButtonElement>("update-requirements").disabled, true);
+    assert.match(h.element("update-requirements").title, /Save or undo/);
+    await h.click("update-requirements");
+    assert.equal(h.requests.filter(item => item.body).length, 1);
+    await h.click("undo");
+    assert.equal(h.element<HTMLButtonElement>("update-requirements").disabled, false);
+    await h.sse({ ...h.server, revision: h.server.revision + 1, provider: { canSubmitAnswers: false } });
+    assert.equal(h.element("status").querySelector("#sketch-update-requirements"), null);
+    assert.equal(h.requests.filter(item => item.body).length, 1);
+  } finally { await h.close(); }
+});
+
+test("React sketch retains all reviewed screens while an incremental update streams", async () => {
+  const initial = fixture();
+  initial.document.screens.push(buttonScreen(createScreen(initial.document, ["Requirement.Main_1"])));
+  const h = await harness(initial);
+  try {
+    const next = structuredClone(initial.document);
+    next.screens[0].ui = applyOperations(next.screens[0].ui, [{ op: "setToken", key: "space.1", value: 24 }]);
+    const update = streaming(h.server, next);
+    update.sketchPreview!.screenStatuses = {
+      [next.screens[0].id]: "processing", [next.screens[1].id]: "ready",
+    };
+    await h.sse(update);
+    assert.equal(h.element("generation-title").textContent, "Updating UI design");
+    assert.match(h.element("generation-progress").textContent!, /Updating existing designs/);
+    assert.doesNotMatch(h.element("generation-progress").textContent!, /screens received/);
+    const screens = h.element("screens").querySelectorAll("button");
+    assert.equal(screens.length, 2);
+    assert.equal(screens[0].getAttribute("data-screen-status"), "processing");
+    assert.equal(screens[1].getAttribute("data-screen-status"), "ready");
+    await h.selectScreen(1);
+    assert.ok(h.preview().querySelector('[data-ui-id="primary-action"]'));
+    assert.equal(h.requests.filter(item => item.body).length, 0);
+  } finally { await h.close(); }
+});
+
+test("React sketch retries failed requirements updates as incremental updates after reload", async () => {
+  const initial = fixture();
+  const instruction = "Update existing designs for the latest requirements.";
+  initial.state.sketch.status = "stale";
+  initial.state.sketch.requests = [{
+    requestId: "update-request", kind: "update", instruction, requestedAt: "2026-10-24T00:00:00Z", baseRevisionId: "drawing-1",
+  }];
+  initial.state.processing = {
+    action: "revise-sketch", status: "error", requestId: "update-request", answer: instruction, message: "Update failed.",
+  };
+  const h = await harness(initial);
+  try {
+    assert.equal(h.requests.filter(item => item.body).length, 0);
+    assert.equal(h.element("retry-revision").textContent, "Retry update");
+    await h.input("instruction", "Keep this new unsent request.");
+    await h.click("retry-revision");
+    assert.deepEqual(h.requests.filter(item => item.body).map(item => item.body), [
+      { action: "update", expectedRevision: "drawing-1" },
+    ]);
+    assert.equal(h.element<HTMLInputElement>("instruction").value, "Keep this new unsent request.");
+    assert.equal(h.element("generation-title").textContent, "Updating UI design");
+  } finally { await h.close(); }
+});
+
+test("React sketch removes all geometry tools and inspector but keeps accessible size and zoom controls", async () => {
   const h = await harness();
   try {
     for (const [id, label] of [["add-rectangle", "Rectangle"], ["add-ellipse", "Ellipse"], ["add-text", "Text"],
       ["add-line", "Line"], ["add-arrow", "Arrow"], ["add-quadratic", "Quadratic Bezier"],
       ["add-cubic", "Cubic Bezier"], ["add-spline", "Catmull-Rom spline"], ["freehand", "Freehand"]]) {
-      const button = h.element(id);
-      assert.equal(button.textContent, "");
-      assert.equal(button.getAttribute("aria-label"), label);
-      assert.equal(button.getAttribute("title"), label);
-      assert.ok(button.classList.contains("sketch-icon-button"));
-      assert.equal(button.querySelector("svg")?.getAttribute("width"), "20");
+      assert.equal(h.element("workspace").querySelector(`#sketch-${id}`), null, label);
+    }
+    assert.equal(h.element("workspace").querySelector("#sketch-object-properties"), null);
+    assert.equal(h.element("workspace").querySelector("#sketch-shapes"), null);
+    assert.equal(h.element("size-preset").getAttribute("aria-label"), "Canvas size");
+    for (const id of ["zoom-in", "zoom-out", "zoom-fit", "zoom-actual"]) {
+      assert.ok(h.element(id).getAttribute("aria-label"));
+      assert.ok(h.element(id).getAttribute("title"));
     }
   } finally { await h.close(); }
 });
 
-test("React sketch presets apply both dimensions atomically, preserve clipped shapes, and save canonical export sizes", async () => {
+test("React sketch presets apply both dimensions atomically, preserve DSL nodes, and save canonical export sizes", async () => {
   const initial = fixture();
-  initial.document.screens[0].shapes[0].x = 800;
   const h = await harness(initial);
   try {
     h.enablePng();
@@ -899,24 +1163,23 @@ test("React sketch presets apply both dimensions atomically, preserve clipped sh
     assert.equal(preset.options.length, 8);
     assert.equal(preset.value, "tandem");
     await h.input("size-preset", "hd-portrait");
-    assert.equal(h.element("board").querySelector("svg")!.getAttribute("width"), "1080");
-    assert.equal(h.element("board").querySelector("svg")!.getAttribute("height"), "1920");
+    assert.equal(h.viewSize()[0], 1080);
+    assert.equal(h.viewSize()[1], 1920);
     assert.equal(h.element<HTMLButtonElement>("save").disabled, false);
     assert.equal(h.element<HTMLButtonElement>("approve").disabled, false, "presets need no separate Apply step");
     await h.click("undo");
-    assert.equal(h.element("board").querySelector("svg")!.getAttribute("viewBox"), "0 0 960 640");
+    assert.deepEqual(h.viewSize(), [960, 640]);
     assert.equal(preset.value, "tandem");
     assert.equal(h.element<HTMLButtonElement>("undo").disabled, true);
     await h.click("redo");
     assert.equal(preset.value, "hd-portrait");
     await h.input("size-preset", "a4-portrait");
-    assert.equal(h.element("board").querySelector("svg")!.getAttribute("viewBox"), "0 0 794 1123");
-    assert.equal(h.element("board").querySelector("[data-shape-id] rect")!.getAttribute("x"), "800");
-    assert.equal(h.element("board").querySelector("[data-shape-id] rect")!.getAttribute("width"), "160");
+    assert.deepEqual(h.viewSize(), [794, 1123]);
+    assert.equal(h.preview().querySelector("[data-ui-id='primary-action']")!.textContent, "Continue");
     await h.click("save");
     const clipped = h.requests.at(-1)!.body!.document as SketchDocument;
     assert.equal(clipped.screens[0].width, 794);
-    assert.deepEqual(clipped.screens[0].shapes, initial.document.screens[0].shapes);
+    assert.deepEqual(clipped.screens[0].ui, initial.document.screens[0].ui);
     await h.click("reload");
     assert.equal(preset.value, "a4-portrait");
     await h.input("size-preset", "hd-landscape");
@@ -927,7 +1190,7 @@ test("React sketch presets apply both dimensions atomically, preserve clipped sh
     assert.deepEqual(h.requests.filter((request) => request.body).map((request) => request.body!.action || request.body!.stageId),
       ["save", "save", "approve", "sketch"]);
     assert.deepEqual((h.requests.filter((request) => request.body?.action === "save").at(-1)!.body!.document as SketchDocument)
-      .screens[0].shapes, initial.document.screens[0].shapes);
+      .screens[0].ui, initial.document.screens[0].ui);
   } finally { await h.close(); }
 });
 
@@ -944,10 +1207,10 @@ test("React sketch dropdown preserves existing custom dimensions without exposin
     assert.equal(h.element<HTMLButtonElement>("save").disabled, true);
     await h.input("size-preset", "square");
     assert.equal(preset.value, "square");
-    assert.equal(h.element("board").querySelector("svg")!.getAttribute("viewBox"), "0 0 1080 1080");
+    assert.deepEqual(h.viewSize(), [1080, 1080]);
     await h.click("undo");
     assert.equal(preset.value, "custom");
-    assert.equal(h.element("board").querySelector("svg")!.getAttribute("viewBox"), "0 0 375 812");
+    assert.deepEqual(h.viewSize(), [375, 812]);
     assert.equal(h.element<HTMLButtonElement>("save").disabled, true);
   } finally { await h.close(); }
 });
@@ -961,7 +1224,7 @@ test("React sketch preset changes survive hidden tabs and SSE and respect edit g
     await h.sse({ ...h.server, revision: 2 });
     await h.hidden(false);
     assert.equal(h.element<HTMLSelectElement>("size-preset").value, "hd-portrait");
-    assert.equal(h.element("board").querySelector("svg")!.getAttribute("viewBox"), "0 0 1080 1920");
+    assert.deepEqual(h.viewSize(), [1080, 1920]);
     assert.equal(h.element<HTMLButtonElement>("save").disabled, false);
     await h.click("undo");
     assert.equal(h.element<HTMLSelectElement>("size-preset").value, "tandem");
@@ -970,11 +1233,11 @@ test("React sketch preset changes survive hidden tabs and SSE and respect edit g
     await h.sse({ ...h.server, revision: 3, provider: { canSubmitAnswers: false } });
     assert.equal(h.element<HTMLSelectElement>("size-preset").disabled, true);
     await h.input("size-preset", "square");
-    assert.equal(h.element("board").querySelector("svg")!.getAttribute("viewBox"), "0 0 1080 1920", "read-only presets cannot change geometry");
+    assert.deepEqual(h.viewSize(), [1080, 1920], "read-only presets cannot change geometry");
     await h.click("zoom-actual");
     assert.equal(h.element("zoom").textContent, "100%");
     await h.click("zoom-out");
-    assert.equal(h.element("zoom").textContent, "80%", "read-only drawings remain zoomable");
+    assert.equal(h.element("zoom").textContent, "80%", "read-only designs remain zoomable");
   } finally { await h.close(); }
 });
 
@@ -1007,7 +1270,7 @@ test("React sketch fit measures both viewport axes, tracks resize, and zoom pres
     await h.click("undo");
     assert.equal(h.element<HTMLButtonElement>("undo").disabled, true);
     assert.equal(h.element<HTMLButtonElement>("save").disabled, true);
-    assert.equal(h.requests.length, 1, "zoom never writes or loads drawings");
+    assert.equal(h.requests.length, 1, "zoom never writes or loads designs");
     for (let count = 0; count < 30; count++) await h.click("zoom-in");
     assert.equal(h.element("zoom").textContent, "800%");
     assert.equal(h.element<HTMLButtonElement>("zoom-in").disabled, true);
@@ -1022,7 +1285,7 @@ test("React sketch switches screens into fit and keeps per-screen preset and cus
   const second = createScreen(initial.document, ["Requirement.Main_1"]);
   second.width = 375;
   second.height = 812;
-  second.shapes.push(createShape(second, "text"));
+  addUi(second, "label", "Text", { text: "Mobile view" });
   initial.document.screens.push(second);
   const h = await harness(initial);
   try {
@@ -1032,7 +1295,7 @@ test("React sketch switches screens into fit and keeps per-screen preset and cus
     await h.selectScreen(1);
     assert.equal(h.element("zoom-fit").getAttribute("aria-pressed"), "true");
     assert.equal(h.element<HTMLSelectElement>("size-preset").value, "custom");
-    assert.equal(h.element("board").querySelector("svg")!.getAttribute("width"), "375");
+    assert.equal(h.viewSize()[0], 375);
     assert.equal(h.element("canvas").style.height, "320px");
     assert.equal(h.element<HTMLButtonElement>("approve").disabled, false);
     await h.selectScreen(0);
@@ -1060,6 +1323,7 @@ test("React sketch captures the zoom anchor before shrinking content clamps brow
       get: () => scroll = clampScroll(scroll),
       set: (value: number) => { scroll = clampScroll(value); },
     });
+
     await h.click("zoom-actual");
     shell.scrollLeft = 450;
     await h.click("zoom-out");
@@ -1072,33 +1336,53 @@ test("React sketch captures the zoom anchor before shrinking content clamps brow
   } finally { await h.close(); }
 });
 
-test("React sketch maps pointer gestures through fitted and scrolled zoom without scaling saved geometry", async () => {
-  const h = await harness();
+test("legacy geometry shows only explicit regeneration and never appears or counts as completed DSL", async () => {
+  const initial = fixture();
+  const { ui: _ui, ...metadata } = initial.document.screens[0];
+  const document: LegacySketchDocument = { version: 1, screens: [{
+    ...metadata, shapes: [{ id: "old-label", kind: "text", text: "Do not render legacy geometry",
+      x: 1, y: 1, width: 200, height: 40, fontSize: 20, fill: "#333333", stroke: "none", points: [] }],
+  }], transitions: [] };
+  initial.state.sketch.status = "approved";
+  initial.state.sketch.approved = { revisionId: "drawing-1", documentHash: "hash-1", requirementsDigest: "requirements-1",
+    approvedAt: "2026-09-20T00:01:00.000Z", assets: [] };
+  const before = JSON.stringify(document);
+  const h = await harness({ state: initial.state, document });
   try {
-    await h.resizeViewport(506, 346);
-    const board = h.element("board");
-    const rect = () => board.querySelector("[data-shape-id]")!;
-    await h.event(rect(), "pointerdown", { pointerId: 1, button: 0, clientX: 25, clientY: 25 });
-    assert.equal(h.element<HTMLButtonElement>("zoom-in").disabled, true);
-    assert.equal(h.element<HTMLSelectElement>("size-preset").disabled, true);
-    await h.event(board, "pointerup", { pointerId: 1, clientX: 45, clientY: 55 });
-    assert.equal(h.element<HTMLInputElement>("x").value, "80");
-    assert.equal(h.element<HTMLInputElement>("y").value, "100");
-    await h.click("zoom-actual");
-    await h.click("zoom-in");
-    const bounds = board.querySelector("svg")!.getBoundingClientRect();
-    assert.ok(bounds.left < 0, "zoomed viewport has scrolled");
-    await h.event(rect(), "pointerdown", { pointerId: 2, button: 0, clientX: bounds.left + 100, clientY: bounds.top + 125 });
-    await h.event(board, "pointerup", { pointerId: 2, clientX: bounds.left + 125, clientY: bounds.top + 150 });
-    assert.equal(h.element<HTMLInputElement>("x").value, "100");
-    assert.equal(h.element<HTMLInputElement>("y").value, "120");
-    await h.click("zoom-fit");
-    await h.click("freehand");
-    await h.event(board, "pointerdown", { pointerId: 3, button: 0, clientX: 5, clientY: 5 });
-    await h.event(board, "pointerup", { pointerId: 3, clientX: 10, clientY: 15 });
-    await h.click("save");
-    const saved = h.requests.at(-1)!.body!.document as SketchDocument;
-    assert.equal(saved.screens[0].shapes[0].width, 160);
-    assert.deepEqual(saved.screens[0].shapes[1].points, [{ x: 10, y: 10 }, { x: 20, y: 30 }]);
+    assert.equal(h.element("workspace").hidden, true);
+    assert.equal(h.element("board").querySelector("svg, .dsl-view"), null);
+    assert.match(h.element("empty").textContent!, /retired geometry.*Regenerate designs.*history will remain intact/);
+    assert.equal(h.completionBlocked, true);
+    assert.equal(h.element<HTMLButtonElement>("revise").disabled, true);
+    assert.equal(h.element<HTMLButtonElement>("add-screen").disabled, true);
+    assert.equal(h.requests.length, 1, "opening old data must not regenerate or rewrite it");
+    h.setConfirm(false);
+    await h.click("generate");
+    assert.equal(h.requests.length, 1);
+    h.setConfirm(true);
+    await h.click("generate");
+    assert.deepEqual(h.requests.at(-1)!.body, { action: "generate", expectedRevision: "drawing-1" });
+    assert.equal(JSON.stringify(document), before);
+  } finally { await h.close(); }
+});
+
+test("local DSL preview controls preserve focus and values without creating design edits", async () => {
+  const initial = fixture();
+  addUi(initial.document.screens[0], "name", "Input", { label: "Name", value: "Saved example" });
+  const h = await harness(initial);
+  try {
+    const input = h.preview().querySelector("input")!;
+    input.focus(); input.value = "Local example"; input.setSelectionRange(2, 5);
+    const next = structuredClone(initial.document);
+    next.screens[0].ui = applyOperations(next.screens[0].ui, [
+      { op: "update", id: "primary-action", props: { label: "Updated" } },
+    ]);
+    await h.sse(streaming(h.server, next));
+    assert.equal(h.preview().querySelector("input"), input);
+    assert.equal(input.value, "Local example");
+    assert.equal(input.selectionStart, 2);
+    assert.equal((input.getRootNode() as ShadowRoot).activeElement, input);
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.element<HTMLButtonElement>("save").disabled, true);
   } finally { await h.close(); }
 });

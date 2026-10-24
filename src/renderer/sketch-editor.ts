@@ -1,5 +1,7 @@
-import { MAX_SKETCH_DIMENSION, renderSketchSvg, validateSketchDocument, validSketchDimension } from "../sketch.js";
-import type { SketchCurve, SketchDocument, SketchPoint, SketchScreen, SketchShape } from "../sketch.js";
+import { isDslScreen, MAX_SKETCH_DIMENSION, renderSketchSvg, validateSketchDocument, validSketchDimension } from "../sketch.js";
+import type { DrawingScreen, DslSketchDocument, DslSketchScreen, SketchCurve, SketchDocument, SketchPoint, SketchScreen, SketchShape } from "../sketch.js";
+import { createDocument } from "../vendor/ui-dsl/index.js";
+import { renderDslSvg } from "./dsl-view.js";
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
@@ -20,12 +22,17 @@ export const SKETCH_SIZE_PRESETS = [
   { id: "a4-landscape", label: "A4 landscape (96 dpi)", width: 1123, height: 794 },
 ] as const;
 
-export function resizeScreen(screen: SketchScreen, width: number, height: number): void {
+export function resizeScreen(screen: DrawingScreen, width: number, height: number): void {
   if (!validSketchDimension(width) || !validSketchDimension(height)) {
     throw new Error("Canvas dimensions must be whole numbers from 1 to 10,000.");
   }
   screen.width = width;
   screen.height = height;
+}
+
+export function createDslScreen(document: DslSketchDocument, decisionIds: string[]): DslSketchScreen {
+  const { shapes: _shapes, ...metadata } = createScreen(document, decisionIds);
+  return { ...metadata, ui: createDocument() };
 }
 
 export function createScreen(document: SketchDocument, decisionIds: string[]): SketchScreen {
@@ -124,7 +131,7 @@ export class SketchEditor {
   }
   markSaved() { this.saved = JSON.stringify(this.document); }
   edit(change: (document: SketchDocument) => void) {
-    const next = clone(this.document || { version: 1, screens: [], transitions: [] } as SketchDocument);
+    const next = clone(this.document || { version: 2, screens: [], transitions: [] } as SketchDocument);
     change(next);
     validateSketchDocument(next);
     if (JSON.stringify(next) === JSON.stringify(this.document)) return;
@@ -145,26 +152,26 @@ export class SketchEditor {
   }
 }
 
-export async function renderSketchPng(screen: SketchScreen): Promise<{ screenId: string; data: string }> {
-  if (typeof Image === "undefined") throw new Error("PNG export is unavailable in this browser. Drawings were not approved.");
+export async function renderSketchPng(screen: DrawingScreen): Promise<{ screenId: string; data: string }> {
+  if (typeof Image === "undefined") throw new Error("PNG export is unavailable in this browser. Designs were not approved.");
   const canvas = document.createElement("canvas");
   canvas.width = screen.width;
   canvas.height = screen.height;
   const context = canvas.getContext("2d");
-  if (!context) throw new Error("PNG export is unavailable in this browser. Drawings were not approved.");
+  if (!context) throw new Error("PNG export is unavailable in this browser. Designs were not approved.");
   const image = new Image();
   await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("PNG export timed out. Drawings were not approved.")), 15000);
+    const timer = setTimeout(() => reject(new Error("PNG export timed out. Designs were not approved.")), 15000);
     image.onload = () => { clearTimeout(timer); resolve(); };
-    image.onerror = () => { clearTimeout(timer); reject(new Error("Could not render the drawing for PNG export.")); };
-    image.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(renderSketchSvg(screen));
+    image.onerror = () => { clearTimeout(timer); reject(new Error("Could not render the design for PNG export.")); };
+    image.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(isDslScreen(screen) ? renderDslSvg(screen) : renderSketchSvg(screen));
   });
   context.fillStyle = "#ffffff";
   context.fillRect(0, 0, canvas.width, canvas.height);
   context.drawImage(image, 0, 0, canvas.width, canvas.height);
   const data = canvas.toDataURL("image/png");
   if (!data.startsWith("data:image/png;base64,") || data.length <= 22) {
-    throw new Error("PNG export failed. Drawings were not approved.");
+    throw new Error("PNG export failed. Designs were not approved.");
   }
   return { screenId: screen.id, data: data.slice("data:image/png;base64,".length) };
 }

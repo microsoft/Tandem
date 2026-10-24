@@ -75,7 +75,7 @@ export function readVisualManifest(value: unknown): VisualManifest {
         if (!object(entry) || !exactKeys(entry, ["id", "defaults", ...textKeys]) || !id(entry.id) ||
             textKeys.some(key => typeof entry[key] !== "string" || !entry[key].trim() ||
                 entry[key].length > (key === "name" ? 80 : 600))) {
-            throw new Error("Each visual direction needs a stable ID, name, layout, style, effects and drawing-change description.");
+            throw new Error("Each visual direction needs a stable ID, name, layout, style, effects and design-change description.");
         }
         return {
             id: entry.id, name: String(entry.name).trim(), summary: String(entry.summary).trim(),

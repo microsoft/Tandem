@@ -182,7 +182,7 @@ test("operation failure can be dismissed while the production workspace retains 
     assert.equal(app.document.querySelector(".speech-toggle, .speech-sign-in, #sketch-live-toggle, #sketch-voice-options"), null);
     await app.input(input, "Continue by typing");
     const frame = h.document.querySelector("#tandem-application");
-    const message = "Tandem request failed: The saved prototype preview is unavailable. Existing drawings, decisions, and draft text are unchanged.";
+    const message = "Tandem request failed: The saved prototype preview is unavailable. Existing designs, decisions, and draft text are unchanged.";
     await app.fire(app.get("preparation-tab"), "mousedown", { button: 0, ctrlKey: false });
     assert.equal(preparation.hidden, false);
     await h.accept(state({ revision: 2, notice: { id: "notice-one", message } }));
@@ -610,7 +610,72 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
             assert.equal(geometry.title, longStatus);
             assert.equal(geometry.hintVisible, width > 680);
         }
-        const usageIntake = rendererState("requirements", 3);
+        const activeRequirements = rendererState("requirements", 3);
+        activeRequirements.requirements = {
+            substage: "dag", usageItems: ["Browse the menu and inspect drink details.", "Place a pickup order."], suggestions: [],
+        };
+        activeRequirements.decisionGraph.nodes = Array.from({ length: 16 }, (_, index) => ({
+            ...decision(index ? `Pickup ordering decision ${index}` : "Menu browsing and drink details", index ? "toAnswer" : "active"),
+            dependencies: index ? ["Menu browsing and drink details"] : [],
+            question: {
+                id: `question-${index}`, text: "How should customers browse the menu and inspect each drink?",
+                choices: [
+                    "Show a menu list with prices and an expandable detail view for each drink.",
+                    "Group the menu into categories, with prices and separate drink detail views.",
+                    "Show prices and complete drink details inline in one menu.",
+                ],
+                recommended: "Show a menu list with prices and an expandable detail view for each drink.",
+                allowFreeText: true,
+            },
+        }));
+        await browser.evaluate(`(() => {
+            const frame = document.querySelector("#tandem-application").contentWindow;
+            frame.__renderMermaid = async () => ({ svg: '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1600" viewBox="0 0 1200 1600"><rect width="1200" height="1600" fill="white" /></svg>' });
+            frame.workspaceFixture.flushSync(() => frame.workspaceFixture.store.accept(${JSON.stringify(activeRequirements)}));
+        })()`);
+        await browser.waitFor('Boolean(document.querySelector("#tandem-application").contentDocument.querySelector("#decision-submit"))');
+        for (const width of [1920, 1280, 1024, 942, 768, 375]) {
+            await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 760, deviceScaleFactor: 1, mobile: false });
+            const layout = await browser.evaluate(`(() => {
+                const frame = document.querySelector("#tandem-application"), inner = frame.contentDocument;
+                const panel = inner.querySelector("#design-tree-panel"), card = inner.querySelector("#design-tree-card");
+                const question = inner.querySelector(".design-tree-inspector"), graph = inner.querySelector(".design-tree-body");
+                const bounds = element => { const r = element.getBoundingClientRect(); return { left:r.left, right:r.right, top:r.top, bottom:r.bottom, width:r.width, height:r.height }; };
+                return { frame:bounds(frame), panel:bounds(panel), card:bounds(card), question:bounds(question), graph:bounds(graph),
+                    header:bounds(inner.querySelector(".previewbar")), finish:bounds(inner.querySelector("#complete-stage")),
+                    review:bounds(inner.querySelector("#stage-input-review")),
+                    outerFits: document.querySelector(".host-main").scrollWidth <= document.querySelector(".host-main").clientWidth + 1,
+                    panelFits:panel.scrollWidth <= panel.clientWidth + 1, cardFits:card.scrollWidth <= card.clientWidth + 1 };
+            })()`);
+            assert.equal(layout.outerFits, true, `The browser frame must fit the window at ${width}: ${JSON.stringify(layout)}`);
+            assert.equal(layout.panelFits, true, `Requirements must not clip horizontally at ${width}: ${JSON.stringify(layout)}`);
+            assert.equal(layout.cardFits, true, `The question and DAG must fit their card at ${width}: ${JSON.stringify(layout)}`);
+            assert.equal(layout.review.height, 0, "An empty review area must not leave a bottom action strip.");
+            assert.ok(layout.finish.left >= layout.header.left - 1 && layout.finish.right <= layout.header.right + 1
+                && layout.finish.top >= layout.header.top - 1 && layout.finish.bottom <= layout.header.bottom + 1,
+                `Finish requirements stays inside the tab bar at ${width}: ${JSON.stringify(layout)}`);
+            if (layout.panel.width <= 900) {
+                assert.ok(layout.question.bottom <= layout.graph.top + 1, `The question comes before the long DAG on narrow workspaces: ${JSON.stringify(layout)}`);
+            } else {
+                assert.ok(layout.question.width >= 360, "The answer inspector has enough room for realistic choices.");
+            }
+            for (const selector of ["#decision-question-title", "#decision-submit", ".all-recommended", "#decision-list li:last-child button"]) {
+                const reachable = await browser.evaluate(`(() => {
+                    const inner = document.querySelector("#tandem-application").contentDocument, target = inner.querySelector(${JSON.stringify(selector)});
+                    target.scrollIntoView({block:"center", inline:"nearest"});
+                    const r = target.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
+                    const hit = inner.elementFromPoint(x, y);
+                    return { visible: Boolean(hit && (hit === target || target.contains(hit))), disabled: target.disabled };
+                })()`);
+                assert.equal(reachable.visible, true, `${selector} must be reachable without an overlapping panel at ${width}.`);
+                assert.notEqual(reachable.disabled, true);
+            }
+            if (process.env.TANDEM_UI_EVIDENCE) {
+                await browser.evaluate('document.querySelector("#tandem-application").contentDocument.querySelector("#decision-question-title").scrollIntoView({block:"center"})');
+                await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `requirements-active-${width}.png`), await browser.screenshot());
+            }
+        }
+        const usageIntake = rendererState("requirements", 4);
         usageIntake.requirements.suggestions = [
             "I want to organize image-transition filter plugins so I can find and manage my work.",
             "I want to preview a transition between two images and adjust its progress and parameters.",
@@ -653,7 +718,7 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
         await browser.call("Emulation.setDeviceMetricsOverride", { width: 1920, height: 800, deviceScaleFactor: 1, mobile: false });
         await browser.call("Page.navigate", { url: `${origin}/host` });
         await browser.waitFor('Boolean(document.querySelector("#tandem-application")?.contentWindow.workspaceFixture?.store.getSnapshot().state)');
-        const savedRequirements = rendererState("prototype", 4);
+        const savedRequirements = rendererState("prototype", 5);
         savedRequirements.requirements = { substage: "dag", usageItems: ["Validate the simulator's interaction and visualization."], suggestions: [] };
         savedRequirements.decisionGraph.nodes = [decision("Interface validation approach", "answered")];
         await browser.evaluate(`(() => {
@@ -710,14 +775,14 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
                     const rect = inner.querySelector(selector).getBoundingClientRect();
                     return { top: rect.top, bottom: rect.bottom, height: rect.height };
                 };
-                return { actions: bounds(".previewbar > .phase-actions"), intake: bounds("#requirements-substage-section"),
+                return { actions: bounds("#stage-workflow-actions"), intake: bounds("#requirements-substage-section"),
                     trigger: bounds("#requirements-substage-section .usage-suggestion[aria-expanded]"), graph: bounds("#design-tree-card"),
                     panel: bounds("#design-tree-panel") };
             })()`);
             assert.ok(layout.trigger.height > 0, "Accepted usages remain accessible.");
             assert.ok(layout.intake.height > layout.trigger.height, `Usage history must not collapse into a border strip: ${JSON.stringify(layout)}`);
             assert.ok(layout.trigger.bottom <= layout.intake.bottom, "The accepted usages control remains visible.");
-            assert.ok(layout.actions.bottom <= layout.intake.top, "Stage actions do not overlap usage history.");
+            assert.ok(layout.actions.bottom <= layout.panel.top + 1, "Stage actions stay in the tab bar above the input workspace.");
             assert.ok(layout.intake.bottom <= layout.graph.top, "The decision card does not overlap usage history.");
             assert.ok(layout.graph.bottom <= layout.panel.bottom, "The decision card stays within its stage workspace.");
         }
@@ -739,7 +804,7 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
                 await browser.waitFor(`(document.querySelector("#tandem-application")?.contentDocument ?? document).querySelector("#${tab}-workspace-tab")?.getAttribute("aria-selected") === "true"`);
                 const layout = await browser.evaluate(`(() => {
                     const inner = document.querySelector("#tandem-application")?.contentDocument ?? document;
-                    const header = inner.querySelector(".previewbar"), actions = header.querySelector(".phase-actions");
+                    const header = inner.querySelector(".previewbar"), actions = inner.querySelector("#stage-workflow-actions");
                     const tabs = inner.querySelector("#stage-workspace-tabs"), selected = inner.querySelector("#${tab}-workspace-tab");
                     const panel = inner.getElementById(selected.getAttribute("aria-controls"));
                     const bounds = element => {
@@ -762,6 +827,8 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
                 assert.equal(layout.inPanel, false);
                 assert.ok(layout.actions.height > 0 && layout.controls.length > 0);
                 assert.ok(layout.actions.left >= layout.header.left && layout.actions.right <= layout.header.right + 1);
+                assert.ok(layout.actions.top >= layout.header.top - 1 && layout.actions.bottom <= layout.header.bottom + 1,
+                    "Stage controls remain inside the tab bar, not in a bottom strip.");
                 assert.ok(layout.selected.left >= layout.tabs.left - 1 && layout.selected.right <= layout.tabs.right + 1,
                     "The focused stage tab stays visible in the horizontal scroller.");
                 assert.ok(layout.panel.top >= layout.header.bottom - 1, "Content begins below the shared header.");
@@ -770,8 +837,7 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
                     assert.ok(control.top >= layout.actions.top - 1 && control.bottom <= layout.actions.bottom + 1);
                 }
                 if (width === 1920) {
-                    assert.ok(layout.actions.left >= layout.tabs.right, "Wide layouts keep actions to the right of the tabs.");
-                    assert.ok(layout.actions.top < layout.tabs.bottom && layout.actions.bottom > layout.tabs.top);
+                    assert.ok(layout.actions.bottom <= layout.panel.top + 1, "Wide layouts keep stage controls above the inputs.");
                     if (tab === "preparation" && process.env.TANDEM_UI_EVIDENCE) {
                         await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "preparation-workflow-actions-1920.png"), await browser.screenshot());
                     }

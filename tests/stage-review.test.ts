@@ -8,6 +8,8 @@ import { SketchStore } from "../src/sketch-store.js";
 import { newPrototypeFlow } from "../src/prototype-flow.js";
 import { fingerprintPrototypeWorkspace } from "../src/prototype-runtime.js";
 import { requirementsInputDigest } from "../src/requirements-reconciliation.js";
+import { changeBaselineDigest, type ChangeRequest } from "../src/change-requests.js";
+import type { TandemState } from "../src/types.js";
 import { executionDigest } from "../src/execution.js";
 import { DevelopmentHandoffs } from "../src/development-handoff.js";
 import { extensionHarness } from "./helpers/extension-harness.js";
@@ -16,7 +18,7 @@ import { sketchDocument, screenPng } from "./helpers/sketch-lifecycle-fixture.js
 const provider = "project:tandem";
 const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 
-async function fixture() {
+async function fixture(includeIndependentScreen = false) {
     const h = await extensionHarness();
     const state = h.api.createState("sample", "A task app");
     state.stage = state.lifecycle.currentStage = "sketch";
@@ -27,17 +29,24 @@ async function fixture() {
     state.decisionGraph = { nodes: [{ id: "usage", title: "Task behavior", dependencies: [], answer: "Keep",
         status: "answered", question: { id: "usage", text: "Choose task behavior", choices: ["Keep", "Change", "Minimal"],
             recommended: "Keep", allowFreeText: true, answerPlaceholder: "", rationale: "Task behavior" } }] };
+    const document = sketchDocument();
+    if (includeIndependentScreen) {
+        const decision = structuredClone(state.decisionGraph.nodes[0]);
+        decision.id = decision.question!.id = "help";
+        state.decisionGraph.nodes.push(decision);
+        document.screens.push({ ...structuredClone(document.screens[0]), id: "help", title: "Help", decisionIds: ["help"] });
+    }
     await h.api.persistState(state);
-    const saved = await h.api.sketchAction("sample", provider, { action: "save", expectedRevision: null, document: sketchDocument() });
+    const saved = await h.api.sketchAction("sample", provider, { action: "save", expectedRevision: null, document });
     const approved = await h.api.sketchAction("sample", provider, { action: "approve", expectedRevision: saved.sketch.current!.id,
-        previews: [{ screenId: "main", data: screenPng() }] });
+        previews: document.screens.map(screen => ({ screenId: screen.id, data: screenPng() })) });
     approved.stage = approved.lifecycle.currentStage = "prototype";
     approved.lifecycle.completedStages = ["prepare", "requirements", "sketch"];
     approved.lifecycle.outputs = [{ stageId: "sketch", path: "retained-sketch-r1.json", completedAt: approved.updatedAt }];
     approved.previewUrl = "http://127.0.0.1:4321/";
     approved.previewStatus = "ready";
     await h.api.persistState(approved);
-    return { h, parent: await h.api.loadState("sample") };
+    return { h, parent: await h.api.loadState("sample"), document };
 }
 
 test("opening and resuming a review while current work runs copies no sources and does not move the lifecycle", async t => {
@@ -64,7 +73,7 @@ test("opening and resuming a review while current work runs copies no sources an
     await assert.rejects(h.api.applyStageReview("sample", provider, { reviewId: draft.prototypeId, expectedRevision: draft.revision }), /Finish current work/);
 });
 
-test("drawing edits and approvals stay isolated until Apply; Apply preserves current stage, old files and receipts", async t => {
+test("design edits and approvals stay isolated until Apply; Apply preserves current stage, old files and receipts", async t => {
     const { h, parent } = await fixture(); t.after(() => h.close());
     const original = parent.sketch.current!;
     const draft = await h.api.openStageReview("sample", provider, { stageId: "sketch", expectedGeneration: parent.generation });
@@ -88,7 +97,7 @@ test("drawing edits and approvals stay isolated until Apply; Apply preserves cur
     await assert.rejects(h.api.sketchAction(draft.prototypeId, provider, {
         action: "save", expectedRevision: approved.sketch.current!.id, document,
     }), /no longer editable/);
-    assert.equal(h.requests.length, 0, "Applying a drawing draft cannot automatically build a prototype.");
+    assert.equal(h.requests.length, 0, "Applying a design draft cannot automatically build a prototype.");
     const reopened = await h.api.reopenLifecycleStage("sample", "requirements", provider);
     assert.equal(reopened.lifecycle.currentStage, "requirements", "Explicit Reopen remains a distinct lifecycle transition.");
     assert.notEqual(reopened.generation, parent.generation);
@@ -113,6 +122,158 @@ test("earlier-stage Apply preserves newer current-stage work and records depende
     assert.equal((await h.api.loadState("sample")).lifecycle.currentStage, "prototype");
     assert.match(h.api.stageCompletionError(result, "prototype")!, /earlier-stage drafts/);
     assert.equal(h.requests.length, 0);
+});
+
+test("Requirements-to-Designs review preserves request scope and explicitly updates new and older saved drafts", async t => {
+    for (const mode of ["new draft", "older saved draft", "replaced requirement"] as const) await t.test(mode, async t => {
+        const legacy = mode === "older saved draft";
+        const replaced = mode === "replaced requirement";
+        const { h, parent, document } = await fixture(true); t.after(() => h.close());
+        const addedUsage = "I want to inspect task details.";
+        const originalDecision = parent.decisionGraph.nodes.find(item => item.id === "usage")!;
+        const decisionId = replaced ? "task-details" : originalDecision.id;
+        const affectedDecisionIds = replaced ? ["usage", "task-details"] : ["usage"];
+        const request: ChangeRequest = {
+            version: 1, id: "change-details", clientRequestId: "client-details", originStage: "prototype",
+            message: "Add task details.", submittedAt: parent.updatedAt, baseCheckpointId: null,
+            baseSketchRevisionId: parent.sketch.current!.id, visualSelection: null, sourceResultId: null, sourceRequests: [],
+            baselineDigest: changeBaselineDigest(parent), analysisId: "analysis-details", status: "proposed", error: "",
+            clarifications: [{ question: "Which tasks?", answer: "The existing task list." }],
+            remainingStages: [], workStarted: [], affectedDecisionIds: [], snapshotPath: null,
+            completedAt: null, developmentAdmission: null, developmentRequest: null,
+            assessment: { version: 1, summary: "Show task details", reason: "Adds task information", startStage: "requirements",
+                stages: [{ stage: "requirements", reason: "Confirm task details" }, { stage: "sketch", reason: "Update the task screen" },
+                    { stage: "prototype", reason: "Update the preview" }],
+                preserved: ["Help screen"], affectedScreenIds: [], question: null,
+                requirements: { usages: { add: [addedUsage], remove: [] },
+                    upsert: [{ id: decisionId, title: originalDecision.title, dependencies: [],
+                        question: { ...originalDecision.question!, id: decisionId, text: "Choose the task details behavior" } }],
+                    remove: replaced ? ["usage"] : [], assumptions: { add: [], remove: [] }, deferred: { add: [], remove: [] }, prototypeApproach: null } },
+        };
+        await h.api.persistState({ ...parent, changeRequests: [request] });
+        const requirements = await h.api.openStageReview("sample", provider, { stageId: "requirements",
+            expectedGeneration: parent.generation, changeRequestId: request.id, analysisId: request.analysisId,
+            baselineDigest: request.baselineDigest });
+        const changedDecision = requirements.decisionGraph.nodes.find(item => item.id === decisionId)!;
+        assert.equal(changedDecision.answer, null);
+        changedDecision.answer = "Change";
+        changedDecision.status = "answered";
+        await h.api.persistState(requirements);
+        const accepted = await h.api.applyStageReview("sample", provider, {
+            reviewId: requirements.prototypeId, expectedRevision: requirements.revision,
+        });
+        const pending = accepted.changeRequests!.find(item => item.id === request.id)!;
+        assert.deepEqual(plain(pending.affectedDecisionIds), affectedDecisionIds);
+        assert.deepEqual(plain(pending.remainingStages), ["sketch", "prototype"]);
+        assert.equal(accepted.sketch.status, "stale");
+        const draft = await h.api.openStageReview("sample", provider, { stageId: "sketch",
+            expectedGeneration: accepted.generation, changeRequestId: pending.id,
+            analysisId: pending.analysisId, baselineDigest: pending.baselineDigest });
+        const continued = draft.changeRequests!.find(item => item.id === request.id)!;
+        assert.equal(continued.status, "active");
+        assert.deepEqual(plain(continued.remainingStages), ["sketch"]);
+        assert.deepEqual(plain(continued.affectedDecisionIds), affectedDecisionIds);
+        assert.equal(continued.analysisId, request.analysisId);
+        assert.equal(continued.baseSketchRevisionId, request.baseSketchRevisionId);
+        assert.deepEqual(plain(continued.clarifications), request.clarifications);
+        assert.deepEqual(plain(draft.decisionGraph), plain(accepted.decisionGraph), "Do not reapply the delta and clear reviewed answers.");
+        assert.equal(draft.requirements.usageItems.filter(item => item === addedUsage).length, 1);
+        if (legacy) {
+            draft.changeRequests = [];
+            await h.api.persistState(draft);
+            const current = await h.api.loadState("sample");
+            current.changeRequests![0].affectedDecisionIds = [];
+            current.assumed.push("A conflicting accepted constraint");
+            await h.api.persistState(current);
+            await assert.rejects(h.api.sketchAction(draft.prototypeId, provider, {
+                action: "update", expectedRevision: draft.sketch.current!.id,
+            }), /Accepted inputs changed/);
+            assert.deepEqual(plain((await h.api.loadState(draft.prototypeId)).changeRequests), []);
+            current.assumed.pop();
+            current.changeRequests![0].status = "cancelled";
+            await h.api.persistState(current);
+            await assert.rejects(h.api.sketchAction(draft.prototypeId, provider, {
+                action: "update", expectedRevision: draft.sketch.current!.id,
+            }), /linked change no longer owns/);
+            assert.deepEqual(plain((await h.api.loadState(draft.prototypeId)).changeRequests), []);
+            current.changeRequests![0].status = "reviewing";
+            await h.api.persistState(current);
+        }
+        await h.api.ensureSketchStarted(draft, true);
+        await h.api.continueChangeWork(draft.prototypeId);
+        assert.equal(h.requests.length, 0, "Opening or recovering a pinned draft cannot start work.");
+        let changeUnrelatedScreen = true;
+        let updateReferences = !replaced;
+        h.api.setSession({ ...h.session, rpc: { ...h.session.rpc, workflow: { run: async (launch: {
+            args: { action: string; state: TandemState & { changeRequest: ChangeRequest } };
+        }) => {
+            h.requests.push(launch);
+            assert.equal(launch.args.action, "revise-sketch");
+            assert.equal(launch.args.state.changeRequest.id, request.id);
+            assert.deepEqual(plain(launch.args.state.changeRequest.affectedDecisionIds), affectedDecisionIds);
+            assert.ok(launch.args.state.requirements.usageItems.includes(addedUsage));
+            const updated = structuredClone(document);
+            updated.screens[0].title = "Task details";
+            if (updateReferences) updated.screens[0].decisionIds = [decisionId];
+            if (changeUnrelatedScreen) updated.screens[1].title = "Unrequested rewrite";
+            const operations = updated.screens.slice(0, changeUnrelatedScreen ? 2 : 1)
+                .map(({ ui: _ui, ...screen }) => JSON.stringify({ op: "upsert-screen", screen }));
+            const runId = `draft-design-${h.requests.length}`;
+            try {
+                const result = await h.api.answerFactory.run({
+                    args: launch.args, runId, signal: new AbortController().signal,
+                    session: { on: () => () => {}, workflow: { getRunDetail: async () => ({ runId, agents: [] }) } },
+                    phase() {}, log() {}, step: (_key: string, work: () => Promise<unknown>) => work(),
+                    agent: async (prompt: string) => {
+                        assert.match(prompt, /INCREMENTAL UPDATE/);
+                        assert.doesNotMatch(prompt, /Start from an empty sketch set|TITLE-FIRST ORDER/);
+                        return [...operations, '{"op":"done"}'].join("\n");
+                    },
+                });
+                return { runId, status: "completed", result };
+            } catch (error) {
+                return { runId, status: "failed", error: error instanceof Error ? error.message : String(error) };
+            }
+        } } } });
+        const update = async () => {
+            await h.api.sketchAction(draft.prototypeId, provider, { action: "update", expectedRevision: draft.sketch.current!.id });
+            await h.api.waitForAnswer(draft.prototypeId);
+            return h.api.loadState(draft.prototypeId);
+        };
+        if (replaced) {
+            const obsolete = await update();
+            assert.equal(obsolete.processing.status, "error");
+            assert.match(obsolete.processing.message, /requirement|decision/i);
+            assert.equal(obsolete.sketch.current!.id, parent.sketch.current!.id);
+            updateReferences = true;
+        }
+        const rejected = await update();
+        assert.equal(rejected.processing.status, "error");
+        assert.match(rejected.processing.message, /unrelated screen "help"/);
+        assert.equal(rejected.sketch.current!.id, parent.sketch.current!.id);
+        changeUnrelatedScreen = false;
+        const generated = await update();
+        assert.equal(generated.sketch.status, "draft", generated.processing.message);
+        assert.equal(generated.sketch.current!.source, "revised");
+        assert.equal(generated.sketch.requests!.at(-1)!.kind, "update");
+        assert.equal(generated.processing.changeRequestId, request.id);
+        assert.equal(generated.sketch.current!.requirementsDigest, requirementsInputDigest(accepted));
+        assert.deepEqual(plain(generated.changeRequests![0].affectedDecisionIds), affectedDecisionIds);
+        assert.equal((await h.api.loadState("sample")).sketch.current!.id, parent.sketch.current!.id);
+        const approved = await h.api.sketchAction(draft.prototypeId, provider, { action: "approve",
+            expectedRevision: generated.sketch.current!.id,
+            previews: document.screens.map(screen => ({ screenId: screen.id, data: screenPng() })) });
+        const applied = await h.api.applyStageReview("sample", provider, {
+            reviewId: draft.prototypeId, expectedRevision: approved.revision,
+        });
+        assert.equal(applied.lifecycle.currentStage, "prototype");
+        assert.equal(applied.previewUrl, parent.previewUrl);
+        assert.equal(applied.sketch.status, "approved");
+        assert.deepEqual(plain(applied.changeRequests![0].remainingStages), ["prototype"]);
+        assert.ok(applied.changeRequests![0].workStarted.includes("sketch"));
+        assert.deepEqual(await new SketchStore(h.root).read("sample", parent.sketch.current!), document);
+        assert.equal(h.requests.length, replaced ? 3 : 2);
+    });
 });
 
 test("stale inputs, stale draft revisions and active draft work cannot be applied or silently overwrite accepted work", async t => {
@@ -190,7 +351,7 @@ test("Preparation drafts analyze only on request and Apply preserves the working
             suggestedUsages: ["I want to share my task list."], prototypeApproach: parent.prototypeApproach, assumed: [], deferred: [] };
         const result = await h.api.preparationFactory.run({
             args: request.args, runId, phase() {}, log() {}, step: (_key: string, work: () => Promise<unknown>) => work(),
-            agent: async (_prompt: string, options: { label: string }) => options.label === "prepare:goal-only"
+            agent: async (_prompt: string, options: { label: string }) => ["prepare:goal-only", "prepare:context"].includes(options.label)
                 ? { requiresSourceResearch: false, handoff } : options.label === "prepare:requirements" ? handoff
                     : { summary: "Synthetic fixture inspection", checks: [], sources: [] },
         });

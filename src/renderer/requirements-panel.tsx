@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, Check, ChevronDown, CircleDot, GitBranch, LoaderCircle, LockKeyhole, Plus, RefreshCw, Send, Sparkles } from "lucide-react";
+import { ArrowRight, Check, ChevronDown, CircleDot, ExternalLink, GitBranch, LoaderCircle, LockKeyhole, Plus, RefreshCw, Send, Sparkles } from "lucide-react";
 import { Collapsible, RadioGroup } from "radix-ui";
 import { buildDecisionGraphMermaid } from "../decision-diagram.js";
 import type { DecisionNode } from "../workflow.js";
 import { Diagram } from "./diagram.js";
 import { skippedStage, useAction, useDraft, useUi, type UiContextValue, type UiState } from "./ui-context.js";
 import { requirementDraftKey, requirementNodes, selectedRequirement, wholeGraphDefaults } from "./requirements-model.js";
+import { requirementsResearchIsCurrent } from "../requirements-research.js";
 
 interface AnswerDraft {
     choice: string;
@@ -24,7 +25,7 @@ interface RequirementsProcessing {
 
 const processingTitles: Record<string, string> = {
     "add-usage": "Updating usage guidance",
-    "generate-dag": "Building requirements DAG",
+    "generate-dag": "Researching usages and preparing questions",
     "answer-decision": "Applying your decision",
     "change-answer": "Revising dependent decisions",
     "apply-defaults": "Reconciling whole-graph defaults",
@@ -236,6 +237,8 @@ export function RequirementsPanel() {
     const busy = pending || action.busy || workerBusy;
     const usageItems = state.requirements?.usageItems || [];
     const suggestions = state.requirements?.suggestions || [];
+    const research = state.requirements?.research;
+    const researchIsCurrent = requirementsResearchIsCurrent(state);
     const suggestionsLoading = state.suggestionProcessing?.status === "running";
     const unsavedReview = Boolean(usageDraft.value.trim()) || nodes.some(node => {
         const saved = answerDrafts[requirementDraftKey(state, node)];
@@ -417,7 +420,7 @@ export function RequirementsPanel() {
 
     const usageMessage = usageError || (!canEdit ? guidance
         : dagFailed ? `${processing?.message || "The requirements DAG could not be generated."} Your usages are saved. Retry requirements DAG to continue.`
-            : activeAction === "generate-dag" ? "Generating the DAG from your usage list..."
+            : activeAction === "generate-dag" ? "Researching relevant missing facts before generating your questions..."
                 : activeAction === "add-usage" ? "Adding usage and generating suggestions..."
                     : workerBusy && isUsage ? state.status || "Updating requirements..."
                         : suggestionsLoading && isUsage ? usageItems.length
@@ -475,6 +478,7 @@ export function RequirementsPanel() {
                 </form>
                 <button id="generate-dag" className="generate-dag" type="button" disabled={busy || !canEdit || !usageItems.length || !isUsage}
                     aria-describedby="usage-message"
+                    data-status-help="Research relevant missing facts for your accepted usages, then generate questions. Findings do not accept decisions or add features."
                     onClick={() => void submitUsage("generate-dag")}>
                     {dagFailed ? <RefreshCw size={16} aria-hidden="true" /> : <GitBranch size={16} aria-hidden="true" />}
                     {activeAction === "generate-dag" || processing?.action === "generate-dag" && workerBusy
@@ -509,6 +513,23 @@ export function RequirementsPanel() {
             <p id="usage-message" className={usageError || dagFailed || activeAction || workerBusy || suggestionsLoading ? "usage-message" : "visually-hidden"} role={usageError || dagFailed ? "alert" : "status"} aria-live="polite"
                 data-status={usageError || dagFailed ? "error" : "idle"}>{usageMessage}</p>
         </section>
+        {research && <details id="requirements-research" className="section">
+            <summary>{researchIsCurrent ? "Research and sources" : "Earlier research and sources"}</summary>
+            {!researchIsCurrent && <p className="muted">These findings belong to earlier inputs and are retained for reference.</p>}
+            <p>{research.summary}</p>
+            {!!research.checks.length && <div className="preparation-result-list">
+                {research.checks.map((check, index) => <div className="preparation-result-item" key={`${index}:${check.label}`} data-status={check.status}>
+                    <strong>{check.label} · {check.status}</strong><span>{check.detail}</span>
+                </div>)}
+            </div>}
+            <div className="preparation-result-sources">
+                {research.sources.map((source, index) => <a key={`${index}:${source.url}`} href={source.url}
+                    target="_blank" rel="noreferrer" title={source.purpose || source.url}>
+                    {source.title} <ExternalLink size={14} aria-hidden="true" />
+                </a>)}
+                {!research.sources.length && <p className="muted">No external sources recorded.</p>}
+            </div>
+        </details>}
         <div id="design-tree-card" className="design-tree-card" hidden={!nodes.length}>
             <div className="design-tree-heading">
                 <div className="design-tree-location">

@@ -13,7 +13,7 @@ Existing repositories are reused, and Preparation never starts private Developme
 
 | Area | Your work | Output |
 | --- | --- | --- |
-| Preparation, Requirements, Drawings, Prototype | Describe a goal, decide behavior, edit drawings and try a prototype. | Discovery evidence and a feature specification. |
+| Preparation, Requirements, Designs, Prototype | Describe a goal, decide behavior, edit designs and try a prototype. | Discovery evidence and a feature specification. |
 | Development | Refine Design, answer questions, approve implementation and inspect results. | Canonical Design, project code, plans and Review outcomes. |
 
 **Canonical Design** is the current agreement used for implementation and Review.
@@ -30,12 +30,13 @@ Hosted windows keep the folder identity in the host header rather than repeating
 it in the sidebar; an unhosted canvas retains the sidebar name and full-path tooltip.
 Use the left navigation to browse, **Current work** to find ongoing work/attention,
 and **Project settings** to configure the project. Before Development, the
-workspace also has **Preparation**, **Requirements**, **Drawings** and
+workspace also has **Preparation**, **Requirements**, **Designs** and
 **Prototype** tabs. Use them to revisit available stages without changing the
 current phase or losing drafts; unavailable stages stay disabled. Development
 remains a separate left-navigation entry. Browsing does not authorize work.
-**Finish** and **Reopen** actions for the selected stage appear to the right of
-the tabs, wrapping below them when space is limited.
+**Finish** and **Reopen** sit on the right of the stage tab bar; pinned-draft
+**Apply changes** remains below the selected stage's inputs.
+**Approve designs and continue** shares the Designs tab header.
 Development Conversation appears only in Development; its draft and
 attachments stay hidden when you browse other phases, not moved to their inputs.
 Parent Copilot chat is not a Development submission.
@@ -57,8 +58,21 @@ does not switch the pinned tab.
 
 **Compare with the accepted baseline** shows what the draft started from.
 If accepted inputs changed meanwhile, the draft is kept but cannot overwrite
-them: compare it, discard it, then start a fresh review. Drawings drafts support
+them: compare it, discard it, then start a fresh review. Designs drafts support
 direct editing and typed revision instructions.
+
+After applying a Requirements review, affected Designs are marked stale.
+In the Designs draft, choose **Update designs from latest requirements** beside
+the warning. This updates the existing saved designs against the accepted
+requirements and DAG, rather than starting with empty pages. Reviewed layouts,
+styling, content and refinements remain unless the changed requirements need an
+adjustment. Existing screens stay visible while the update arrives, including
+when the review was opened without a linked change request.
+Review the result, choose **Approve draft designs**, then **Apply changes**.
+Current Prototype work and saved revisions stay intact. **Reload saved designs**
+only reloads the saved revision; it does not incorporate requirement changes.
+**Regenerate designs** is the separate, confirmed start-over action; it may
+replace reviewed layouts and refinements, while retaining saved history.
 
 ## Find saved work
 
@@ -75,14 +89,22 @@ Implementation or Review view/history, without copying stores together.
 | **needs attention**, questions or permissions | Input or investigation is needed. |
 | Unverified/unavailable history | Access is not verified, not that saved work was deleted. |
 
-## Requirements and Drawings
+## Requirements and Designs
 
 Preparation starts from **Start project**, reports its results and advances
-automatically. Its original brief stays there. A reported failure can offer
-**Retry preparation**; quiet progress alone is not a reason to retry.
+automatically. It checks workspace context; an early lookup is only for an
+unfamiliar reference needed to understand the goal. Its original brief stays
+there. A reported failure can offer **Retry preparation**; quiet progress alone
+is not a reason to retry.
 
 In Requirements, **Add usage** accepts a usage, then **Generate requirements DAG**
-creates connected decisions. Answer active decisions with **Use this answer**.
+researches relevant missing facts before creating connected decisions. Progress
+appears here; expand **Research and sources** to inspect findings and references.
+Research informs questions, not accepted features or answers. Failed generation
+keeps your usages and any completed findings for **Retry requirements DAG**.
+An unchanged retry reuses those findings instead of repeating the research.
+Answer active decisions with **Use this answer**; processing reviews affected
+decisions without rewriting unrelated questions.
 Prerequisites hold dependent questions. Free text, when offered, replaces the
 selected option rather than adding a second answer.
 
@@ -91,25 +113,85 @@ recommendations, including downstream choices. Recommendations and suggestions
 are not already accepted answers. **Update answer and dependents** can invalidate
 dependent decisions while retaining independent answers.
 
-Finishing Requirements opens Drawings and generates the initial screens
+Finishing Requirements opens Designs and generates the initial screens
 automatically; generation controls are disabled while that work is running.
-Drawings retains the Sketch editor: generate screens, edit shapes/transitions,
-use Undo/Redo, or send a revision instruction. **Save drawings** saves edits;
-**Approve drawings and continue** explicitly approves that revision.
-Already-approved, unchanged drawings may show **Finish Drawings and continue**
+The main Designs area shows a processing indicator, the current generation
+message and elapsed time when a request timestamp is available. Incoming screens
+appear live with a received-screen count and update number; these are not a
+percentage complete or approval. The agent lists page titles first, then fills
+one page at a time. Each page shows **Waiting**, **Processing**, or **Ready** in
+the screen list; the selected page also shows its progress above the preview.
+**Ready** means that page's preview is ready, not saved or approved.
+Existing designs and local edits stay visible
+while a new design is prepared.
+Designs displays UI DSL screens: structured components, layout and design tokens
+rendered by a fixed local renderer. Describe UI changes in the composer; freehand,
+shape tools and the geometry inspector are no longer available. Screen metadata,
+transitions, Undo/Redo, canvas size presets and view zoom remain available.
+**Screen details** contains screen metadata; **Structure**, below it, shows the
+component hierarchy. Select an element there or directly in the view.
+Selection stays active until you choose **Interact** to try the preview controls.
+Use arrow keys to browse, expand and collapse the hierarchy.
+
+Requests include the viewed screen and selected element. The **Element for
+change** list is an alternative picker. Selecting or inspecting components does
+not edit or approve the design, including in read-only views. Live-preview
+selections are for inspection only and never become saved revision targets.
+Sizing changes the responsive viewport; zoom changes only the view.
+**Save designs** saves edits;
+**Approve designs and continue** explicitly approves that revision.
+Already-approved, unchanged designs may show **Finish Designs and continue**
 instead. A saved/streamed revision alone is not approval.
 
-For chat changes, **Project changes** starts as a compact status above the editor.
-Choose **Review change** or **View details** to inspect the earliest affected stage,
-the proposed updates and the work that stays unchanged in a popup dialog.
+Older geometry-based designs show a **Regenerate designs** prompt instead of a
+view. Reopen Designs if needed, regenerate and approve the DSL revision, then
+update Prototype. Existing files and approval history remain intact. Prototype
+and Development receive the approved DSL source; rendered images are visual
+references, not a replacement for its component structure.
+
+In Designs, the **Review** icon is on the input row immediately after **History**.
+Its icon and border turn red, with an accessible **Review required** label, when
+your decision is needed. One review stays current until you resolve or cancel it.
+New change requests and unrelated edits/Continue actions are blocked; the work
+needed to complete that review remains available in its owning stage or draft.
+The inline review-status card is omitted so the design keeps its space.
+The popup separates your request, the proposed update, impact details and the
+decision controls. A new required decision opens it automatically once; routine
+updates and loaded history do not reopen it.
+Design request history and Discovery history retain requests and their responses
+when you reopen the project.
 **Close** or **Escape** dismisses it without discarding your clarification or
-resizing the editor; errors remain visible in the compact status.
-**Review draft changes** opens an earlier-stage proposal without reopening that
+resizing the editor and returns focus to Review. You may still inspect screens,
+zoom and history, but closing does not resolve the review or enable new changes.
+**Cancel request** leaves unapproved work unchanged; a saved draft is never
+silently applied.
+Clear edits within the current Designs or Prototype stage prepare a draft without
+an extra impact-approval step. Saving a design revision releases the request so
+you can keep editing; approving designs or applying a prototype update remains
+explicit.
+In the current Requirements stage, clear additions are saved directly and new
+questions remain unanswered. Changes to accepted answers, removals or existing
+constraints still need impact review. Once its patch is saved, the request no
+longer holds up additional Requirements edits.
+
+A genuine ambiguity asks one focused question in this same review. Submit the
+detail, review the proposal or cancel the request before sending another change.
+Older projects with multiple saved requests retain their full history: already
+admitted work is completed first, then pending requests are reviewed one at a
+time. Earlier deferred records remain saved, but new reviews cannot be put aside
+with **Keep for later**. Reopening never replays unanswered or failed work.
+
+**Review Requirements draft** (or the named affected stage) opens an earlier-stage proposal without reopening that
 stage; only **Apply
 changes** updates its accepted content. Requirements keeps independent answers and shows previous
 answers for decisions that need review. The saved prototype remains available
-while its update is prepared. **Check impact again** refreshes a stale proposal;
+while its update is prepared. **Recheck impact** refreshes a stale proposal;
 it does not approve it.
+An unanswered or unapplied request in current work does not prevent applying a
+separate ready draft. Those requests stay saved and are not approved, cancelled
+or deferred by Apply; an older proposal must be checked again if accepted inputs
+have changed. Running work, a change already being applied, conflicting inputs
+or unfinished work inside the draft still blocks Apply with a visible reason.
 
 Cancel before approval leaves accepted work unchanged. Cancelling remaining
 work afterwards retains already saved changes rather than rolling them back.
@@ -118,7 +200,7 @@ direct Development continues to own its Design without mandatory discovery.
 Returning a change to Development never substitutes for implementation confirmation.
 
 **Reopen** remains a broader manual operation: affected outputs become stale and
-may need completion/approval again. See [revision recipes](use-cases.md#revise-requirements-or-drawings).
+may need completion/approval again. See [revision recipes](use-cases.md#revise-requirements-or-designs).
 
 ## Prototype versions
 
@@ -134,7 +216,7 @@ milestones are not feedback you submitted.
 
 Use **Feedback** to **Send change** or **Queue change**, then inspect its
 status and clarifications. Finish requires the necessary milestones, current
-drawing approval and resolved submitted feedback. **Finish Prototype and save
+design approval and resolved submitted feedback. **Finish Prototype and save
 outputs** retains evidence; it starts neither Design nor implementation.
 Non-GUI work can retain a reason/specification without fabricating screens.
 
@@ -144,7 +226,7 @@ After applying Interaction, choose **Explore visual directions (optional)**.
 The agent builds two or three working alternatives with different layouts,
 typography, colors and restrained effects. They keep the same primary workflow
 and mock data. **What differs** explains each direction, including layout
-departures from the approved drawings; visual exploration does not authorize
+departures from the approved designs; visual exploration does not authorize
 new navigation or features.
 
 1. **Default** shows the exact original prototype from before visual exploration,
@@ -208,7 +290,7 @@ Acknowledgments clear on the next interaction or relevant workflow change;
 editing a draft, switching project generation, or reconnecting cannot revive an
 old acknowledgment. Detailed errors, consent, questions, implementation decisions,
 attachment validation and Settings feedback remain with their owning controls.
-Preparation, Requirements, Drawings and Prototype keep their existing status UX.
+Preparation, Requirements, Designs and Prototype keep their existing status UX.
 
 UI Design should preserve the accepted displayed Prototype's appearance and
 interactions, not redesign it from prose. Missing evidence or necessary UX changes

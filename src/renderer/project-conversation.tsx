@@ -7,23 +7,25 @@ import type { StartingPath } from "../project-entry.js";
 import { useDevelopmentGit } from "./development-git.js";
 import { validHandoffActivity, validHandoffDesign, type HandoffActivity, type HandoffDesign } from "../../development/tandem/public/handoff-presentation.js";
 import { validDevelopmentStatus, type DevelopmentStatus } from "../../development/tandem/public/development-status.js";
+import { changeRequestActionLabel, changeRequestResponse, changeRequestStatus } from "./change-request-feedback.js";
+import { currentChangeReview } from "../change-request-policy.js";
 
-type Entry = { id: string; kind: "user" | "status"; role: string; text: string; timestamp: string };
+type Entry = { id: string; kind: "user" | "status"; role: string; text: string; timestamp: string; changeRequestId?: string };
 export function projectDiscovery(state: UiState, busy: boolean, viewedStage: LifecycleStageId = state.lifecycle.currentStage) {
     const stage = state.lifecycle.currentStage;
-    const writable = state.provider?.canSubmitAnswers !== false && !state.effortReset && !busy;
+    const writable = state.provider?.canSubmitAnswers !== false && !state.effortReset && !busy && !currentChangeReview(state);
     const active = hasActiveJobs(state);
     const action = viewedStage !== stage ? "none" : !state.goal.trim() ? "goal" : stage === "requirements" && state.requirements.substage === "usage" ? "usage"
         : stage === "requirements" && state.requirements.substage === "dag" ? "change"
         : stage === "sketch" ? "sketch" : stage === "prototype" ? "prototype" : "none";
-    const label = { goal: "Start discovery", usage: "Add requirement usage", sketch: "Revise saved drawings",
+    const label = { goal: "Start discovery", usage: "Add requirement usage", sketch: "Revise saved designs",
         prototype: "Prototype feedback", change: "Request a requirement change", none: "Discovery (use artifact controls)" }[action];
     const key = JSON.stringify([state.prototypeId, state.generation, viewedStage, action, state.sketch?.current?.id,
         state.prototypeFlow?.displayedCheckpointId, state.lifecycle.completedStages]);
     return { stage: viewedStage, action, key, label, enabled: writable && action !== "none" && !state.lifecycle.completedStages.includes(stage)
         && (action === "prototype" ? state.processing?.action !== "generate-design-spec" : !active),
         help: action === "change" ? "Review a scoped requirements change without repeating completed decisions."
-            : action === "sketch" ? "Revise the saved drawing revision; unsaved canvas edits are not included."
+            : action === "sketch" ? "Revise the saved design revision; unsaved canvas edits are not included."
             : action === "prototype" ? "Queue feedback against the displayed prototype. Applying an update remains explicit."
                 : action === "usage" ? "Add a first-person usage to Requirements. Answer existing questions in the Requirements view."
                     : action === "goal" ? "Start optional discovery with this goal. This runs Preparation, not implementation."
@@ -31,8 +33,9 @@ export function projectDiscovery(state: UiState, busy: boolean, viewedStage: Lif
 }
 export function discoveryEntries(state: UiState): Entry[] {
     const entries: Entry[] = [];
-    const push = (id: string, kind: Entry["kind"], text: string, timestamp = state.updatedAt) => {
-        if (text) entries.push({ id: `discovery:${state.generation}:${id}`, kind, role: "Discovery evidence", text: text.slice(0, 20000), timestamp });
+    const push = (id: string, kind: Entry["kind"], text: string, timestamp = state.updatedAt, changeRequestId?: string) => {
+        if (text) entries.push({ id: `discovery:${state.generation}:${id}`, kind, role: "Discovery evidence", text: text.slice(0, 20000), timestamp,
+            ...(changeRequestId ? { changeRequestId } : {}) });
     };
     push("goal", "user", state.goal);
     state.requirements.usageItems.forEach((text, index) => push(`usage:${index}`, "user", text));
@@ -56,6 +59,12 @@ export function discoveryEntries(state: UiState): Entry[] {
         push(`recovery:${receipt.recovery.decisionId}`, "status",
             `Request ${receipt.requestId} explicitly abandoned with uncertain outcome. Saved work retained; nothing replayed.`,
             receipt.recovery.recordedAt);
+    }
+    for (const request of state.changeRequests ?? []) {
+        push(`change:${request.id}`, "user", [
+            request.message, changeRequestStatus(request), changeRequestResponse(request),
+            ...request.clarifications.map(item => `${item.question}\n${item.answer}`),
+        ].join("\n\n"), request.submittedAt, request.id);
     }
     return entries.slice(-1000);
 }
@@ -229,7 +238,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
     function sync() {
         const { state, pending, view, designVisible } = latest.current;
         const workingStage = view.developmentEntered ? "development" : state.lifecycle.currentStage;
-        const viewLabel = { prepare: "Preparation", requirements: "Requirements", sketch: "Drawings", prototype: "Prototype", development: "Development" }[workingStage];
+        const viewLabel = { prepare: "Preparation", requirements: "Requirements", sketch: "Designs", prototype: "Prototype", development: "Development" }[workingStage];
         send({ type: "context", entries: [], discovery: projectDiscovery(state, pending, workingStage), viewedStage: workingStage, viewLabel,
             statusScope: JSON.stringify([state.prototypeId, state.generation]), statusBarOwner: designVisible,
             developmentEntered: view.developmentEntered,
@@ -454,7 +463,8 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
                     else if (context.action === "usage") await post("/api/answer", { questionId: "usage-intake", answer: text, action: "add-usage" });
                     else if (context.action === "change") await post("/api/change-requests", { message: text, clientRequestId: message.id,
                         originStage: context.stage, expectedGeneration: state.generation });
-                    else if (context.action === "sketch") await post("/api/sketch", { action: "revise", expectedRevision: state.sketch.current?.id ?? null, expectedGeneration: state.generation, instruction: text });
+                    else if (context.action === "sketch") await post("/api/sketch", { action: "revise", clientRequestId: message.id,
+                        expectedRevision: state.sketch.current?.id ?? null, expectedGeneration: state.generation, instruction: text });
                     else if (context.action === "prototype") await post("/api/revision", { suggestion: text, clientRequestId: message.id,
                         baseCheckpointId: state.prototypeFlow?.displayedCheckpointId ?? null });
                 })();
@@ -515,7 +525,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
 }
 export function ProjectConversation() {
     const view = useProjectView();
-    const { state } = useUi();
+    const { state, changeRequestDialog } = useUi();
     const [historyChoice, setHistoryChoice] = useState<boolean | null>(null);
     const [narrowHistory, setNarrowHistory] = useState(() => window.innerWidth < 1000);
     const historyCollapsed = historyChoice ?? narrowHistory;
@@ -557,7 +567,11 @@ export function ProjectConversation() {
             hidden={!view.visible} src={`${view.url}?panel=workspace`} onLoad={view.sync} allow="clipboard-read; clipboard-write" />}
         {!view.visible && <div id="discovery-history" className="discovery-history" aria-label="Discovery history" hidden={historyCollapsed}>
                 {discoveryEntries(state).map(item => <article key={item.id} data-entry-id={item.id}>
-                    <details><summary>{item.id.endsWith(":goal") ? "Original project brief" : item.text.split("\n")[0]!.slice(0, 100) + (item.text.length > 100 ? "..." : "")}</summary><p>{item.text}</p></details>
+                    <details><summary>{item.id.endsWith(":goal") ? "Original project brief" : item.text.split("\n")[0]!.slice(0, 100) + (item.text.length > 100 ? "..." : "")}</summary><p>{item.text}</p>
+                        {item.changeRequestId && changeRequestDialog && <button type="button" className="plan-button secondary"
+                            onClick={event => changeRequestDialog.open(item.changeRequestId!, event.currentTarget)}>
+                            {changeRequestActionLabel(state.changeRequests!.find(request => request.id === item.changeRequestId)!)}</button>}
+                    </details>
                 </article>)}
                 {!state.goal && <p>{view.entry.startingPath === "development" ? "Preparation was not used for this project."
                     : "Project history will appear here. Use Preparation's goal form to begin."}</p>}

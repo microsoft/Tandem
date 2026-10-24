@@ -31,7 +31,7 @@ export function WorkflowActivity() {
     const title = binding.kind === "preparation" ? "Preparing project" : binding.kind === "suggestions" ? "Refreshing suggestions"
         : state.processing?.action === "generate-design-spec" ? "Finishing prototype"
         : state.lifecycle.currentStage === "prototype" ? "Building prototype"
-        : state.lifecycle.currentStage === "sketch" ? "Updating drawings" : "Updating requirements";
+        : state.lifecycle.currentStage === "sketch" ? "Updating designs" : "Updating requirements";
     const permissions = current?.agents.reduce((count, agent) => count + agent.pendingPermissions, 0) ?? 0;
     const savedStatus = binding.kind === "preparation" ? state.preparation.status
         : binding.kind === "suggestions" ? state.suggestionProcessing?.status : state.processing?.status;

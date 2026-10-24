@@ -1,5 +1,6 @@
 import type { ArtifactAsset } from "./artifact-assets.js";
 import { sketchPathData } from "./sketch-path.js";
+import { CATALOG, TOKEN_DEFINITIONS, validateDocument, type UiDocument } from "./vendor/ui-dsl/index.js";
 
 export const SKETCH_CURVES = ["linear", "quadratic", "cubic", "catmull-rom"] as const;
 export type SketchCurve = typeof SKETCH_CURVES[number];
@@ -41,10 +42,31 @@ export interface SketchTransition {
     description: string;
 }
 
-export interface SketchDocument {
+export interface LegacySketchDocument {
     version: 1;
     screens: SketchScreen[];
     transitions: SketchTransition[];
+}
+
+export interface DslSketchScreen extends Omit<SketchScreen, "shapes"> {
+    ui: UiDocument;
+}
+
+export interface DslSketchDocument {
+    version: 2;
+    screens: DslSketchScreen[];
+    transitions: SketchTransition[];
+}
+
+export type SketchDocument = LegacySketchDocument | DslSketchDocument;
+export type DrawingScreen = SketchScreen | DslSketchScreen;
+
+export function isDslScreen(screen: DrawingScreen): screen is DslSketchScreen {
+    return "ui" in screen;
+}
+
+export function hasScreenContent(screen: DrawingScreen): boolean {
+    return isDslScreen(screen) ? screen.ui.nodes[screen.ui.root].children.length > 0 : screen.shapes.length > 0;
 }
 
 export interface SketchRevision {
@@ -72,7 +94,7 @@ export interface SketchState {
     history: SketchRevision[];
     requests?: Array<{
         requestId: string;
-        kind: "generate" | "revise";
+        kind: "generate" | "update" | "revise";
         instruction: string;
         requestedAt: string;
         baseRevisionId: string | null;
@@ -223,8 +245,12 @@ function screen(value: unknown): SketchScreen {
 
 export function validateSketchDocument(value: unknown, decisionIds?: string[]): SketchDocument {
     const item = object(value, ["version", "screens", "transitions"]);
-    if (item.version !== 1) return invalid("unsupported document version.");
-    const screens = list(item.screens, "screens", 1, 8).map(screen);
+    if (item.version !== 1 && item.version !== 2) return invalid("unsupported document version.");
+    const values = list(item.screens, "screens", 1, 8);
+    const result: SketchDocument = item.version === 2
+        ? { version: 2, screens: values.map(dslScreen), transitions: [] }
+        : { version: 1, screens: values.map(screen), transitions: [] };
+    const { screens } = result;
     unique(screens.map((screen) => screen.id), "screen IDs");
     const screenIds = new Set(screens.map((screen) => screen.id));
     if (decisionIds !== undefined) {
@@ -248,9 +274,33 @@ export function validateSketchDocument(value: unknown, decisionIds?: string[]): 
         };
     });
     unique(transitions.map((transition) => transition.id), "transition IDs");
-    const result: SketchDocument = { version: 1, screens, transitions };
+    result.transitions = transitions;
     if (new TextEncoder().encode(JSON.stringify(result)).length > MAX_DOCUMENT_BYTES) return invalid("document exceeds 256 KiB.");
     return result;
+}
+
+function localJson(value: unknown, depth = 0): unknown {
+    // Recreate plain JSON locally because the shared DSL rejects foreign prototypes.
+    if (depth > 10) return invalid("UI DSL JSON nesting exceeds its supported depth.");
+    if (Array.isArray(value)) return value.map(item => localJson(item, depth + 1));
+    if (value && typeof value === "object") {
+        const plain = object(value, Object.keys(value));
+        return Object.fromEntries(Object.entries(plain).map(([key, item]) => [key, localJson(item, depth + 1)]));
+    }
+    return value;
+}
+
+function dslScreen(value: unknown): DslSketchScreen {
+    const item = object(value, ["id", "title", "purpose", "decisionIds", "width", "height", "ui", "notes"]);
+    const { shapes: _shapes, ...metadata } = screen({
+        id: item.id, title: item.title, purpose: item.purpose, decisionIds: item.decisionIds,
+        width: item.width, height: item.height, notes: item.notes, shapes: [],
+    });
+    try {
+        return { ...metadata, ui: validateDocument(localJson(item.ui)) };
+    } catch (cause) {
+        return invalid(`screen "${metadata.id}" UI DSL: ${cause instanceof Error ? cause.message : String(cause)}`);
+    }
 }
 
 const idSchema = { type: "string", minLength: 1, maxLength: 80, pattern: SLUG };
@@ -282,7 +332,7 @@ const shapeSchema = {
 };
 
 // Cross-field geometry and references are checked by validateSketchDocument.
-export const sketchDocumentSchema = {
+export const legacySketchDocumentSchema = {
     type: "object", additionalProperties: false, required: ["version", "screens", "transitions"],
     properties: {
         version: { type: "integer", enum: [1] },
@@ -313,6 +363,48 @@ export const sketchDocumentSchema = {
                     id: idSchema, fromScreenId: idSchema, toScreenId: idSchema,
                     trigger: { ...labelSchema, minLength: 1 }, description: labelSchema,
                 },
+            },
+        },
+    },
+};
+
+const uiId = { type: "string", pattern: "^[A-Za-z][A-Za-z0-9_-]{0,63}$", maxLength: 64 };
+const uiDocumentSchema = {
+    type: "object", additionalProperties: false, required: ["version", "revision", "root", "tokens", "nodes"],
+    properties: {
+        version: { const: 1 }, revision: { type: "integer", minimum: 0 }, root: uiId,
+        tokens: {
+            type: "object", additionalProperties: false, required: Object.keys(TOKEN_DEFINITIONS),
+            properties: Object.fromEntries(Object.entries(TOKEN_DEFINITIONS).map(([key, rule]) => [key,
+                rule.kind === "color" ? { type: "string", pattern: "^#[0-9a-fA-F]{6}$" }
+                    : { type: "integer", minimum: rule.min, maximum: rule.max, ...(rule.kind === "weight" ? { multipleOf: 100 } : {}) },
+            ])),
+        },
+        nodes: {
+            type: "object", minProperties: 1, maxProperties: 2000, propertyNames: uiId,
+            additionalProperties: { oneOf: Object.entries(CATALOG).map(([type, definition]) => ({
+                type: "object", additionalProperties: false, required: ["id", "type", "parent", "children", "props"],
+                properties: {
+                    id: uiId, type: { const: type }, parent: { anyOf: [uiId, { type: "null" }] },
+                    children: { type: "array", maxItems: definition.container ? 2000 : 0, items: uiId },
+                    props: definition.props,
+                },
+            })) },
+        },
+    },
+};
+const { shapes: _shapeSchema, ...screenProperties } = legacySketchDocumentSchema.properties.screens.items.properties;
+export const sketchDocumentSchema = {
+    ...legacySketchDocumentSchema,
+    properties: {
+        ...legacySketchDocumentSchema.properties,
+        version: { type: "integer", enum: [2] },
+        screens: {
+            type: "array", minItems: 1, maxItems: 8,
+            items: {
+                type: "object", additionalProperties: false,
+                required: ["id", "title", "purpose", "decisionIds", "width", "height", "ui", "notes"],
+                properties: { ...screenProperties, ui: uiDocumentSchema },
             },
         },
     },
@@ -406,9 +498,11 @@ function approval(value: unknown): SketchApproval {
     });
     unique(assets.map((asset) => asset.id), "asset IDs");
     unique(assets.map((asset) => asset.path.replace(/\\/g, "/")), "asset paths");
-    const documents = assets.filter((asset) => asset.mediaType === "application/json");
-    if (documents.length !== 1 || !documents[0].path.replace(/\\/g, "/").endsWith("/document.json") ||
+    const documents = assets.filter((asset) => asset.path.replace(/\\/g, "/").endsWith("/document.json"));
+    if (documents.length !== 1 || documents[0].mediaType !== "application/json" ||
         documents[0].hash !== documentHash) return invalid("approval must bind its document JSON and hash.");
+    if (assets.some(asset => asset.mediaType === "application/json" && asset !== documents[0]
+        && !asset.path.endsWith(".ui.json"))) return invalid("unsupported screen source asset.");
     return {
         revisionId, requirementsDigest: hash(item.requirementsDigest, "requirements digest"),
         documentHash, approvedAt: timestamp(item.approvedAt), assets,
@@ -446,11 +540,11 @@ export function readSketchState(value: unknown): SketchState {
     }
     const requests = item.requests === undefined ? undefined : list(item.requests, "request history", 0, Infinity).map((value): NonNullable<SketchState["requests"]>[number] => {
         const request = object(value, ["requestId", "kind", "instruction", "requestedAt", "baseRevisionId"]);
-        if (request.kind !== "generate" && request.kind !== "revise") return invalid("unsupported drawing request kind.");
+        if (request.kind !== "generate" && request.kind !== "update" && request.kind !== "revise") return invalid("unsupported design request kind.");
         return { requestId: uuid(request.requestId), kind: request.kind,
             instruction: text(request.instruction, "request instruction", 4000), requestedAt: timestamp(request.requestedAt),
             baseRevisionId: request.baseRevisionId === null ? null : uuid(request.baseRevisionId) };
     });
-    if (requests) unique(requests.map(request => request.requestId), "drawing request IDs");
+    if (requests) unique(requests.map(request => request.requestId), "design request IDs");
     return { version: 1, status: item.status as SketchState["status"], current, approved, history, ...(requests ? { requests } : {}) };
 }

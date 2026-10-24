@@ -26,7 +26,7 @@ All source paths and command working directories below are relative to the
 
 Tandem can open **Development directly** for a new or existing Git project.
 Optional Stage 1 collects Q&A, confirmed intent and prototype evidence through
-**Preparation -> Requirements -> Sketch -> Prototype**. It does not own formal
+**Preparation -> Requirements -> Designs -> Prototype**. It does not own formal
 Design. Stage 2 Development owns canonical Design, confirmed implementation and
 Review, using its original Design/Conversation UI and native role workflow.
 The former Design, Plan, Implement and Test stage engine is retired.
@@ -131,7 +131,7 @@ Retained Stage 1 coordinators use the public Dynamic Workflows API. Existing
 names are historical, not an alternate legacy execution path.
 The answer workflow's `action` schema is derived from `ANSWER_ACTIONS`, the same
 set used for runtime validation. This includes the `assess-change` prerequisite
-for drawing and prototype revision requests.
+for design and prototype revision requests.
 
 Creating a tarball does not publish it. Root `package.json` is the release-version
 authority. Before an authorized release, bump with
@@ -151,15 +151,91 @@ its conversation only when ready. Startup consent, model validation, recovery an
 implementation confirmation remain explicit. Preparation can progress normally
 into Development using saved outputs; choosing a starting path never erases history.
 
-Preparation inspects the workspace and necessary authoritative sources, then
-offers optional first-person usages. Generic goals in an empty workspace do not
-require external research. Requirements collects accepted usages and a
-dependency-aware decision graph; recommendations are not answers until selected.
+Preparation inspects local workspace context and offers optional first-person
+usages. Empty folders, including those with only Git/Tandem metadata and the
+setup-generated `.gitignore` containing `.tandem/`, use local inspection and one
+tool-free handoff worker instead of separate workspace and source workers.
+Other ignore rules, guidance, project files and linked metadata still require
+workspace inspection. Only an unfamiliar reference essential to understanding
+the goal can trigger an early lookup, bounded to one authoritative source call.
+Named APIs, repositories or research goals alone do not trigger substantive research.
+
+After the user accepts usages, **Generate requirements DAG** runs targeted
+research before generating the dependency-aware questions. Research uses accepted
+usages and relevant Preparation findings, not unselected suggestions, with at
+most four authoritative source calls and no external lookup for ordinary concepts
+when none is needed. Pure implementation research waits for Development unless
+it changes a requirements decision. Question generation and answer reconciliation
+use tool-free workers with Requirements-only context. Generation returns nodes
+and semantic lists; individual answers return only changed dependent questions,
+necessary new nodes and list patches. The host applies the exact submitted answer,
+retains independent decisions and derives statuses, the next question and diagram.
+Findings and sources are saved with the exact input snapshot, generation,
+request and run identities; stale results cannot advance Requirements. Failed
+generation retains usages and any completed research for explicit retry.
+A retry reuses research only when the goal, accepted usages, Preparation evidence
+and generation still match. Reuse preserves its original request, run and completion
+identities; generated questions bind the exact retained research digest. Answer
+patches bind the frozen Requirements inputs and submitted answer. Versioned workflow
+steps prevent replaying older full-state outputs as focused patches; already-running
+legacy results remain recoverable.
+Progress and **Research and sources** stay inside Requirements, without a new
+user-facing stage. Recommendations and research findings are not accepted answers.
 Whole-graph defaults require explicit confirmation and one bounded reconciliation.
 Failed or conflicting answers remain visible, not silently accepted.
 
-Sketch retains its editable screen drawings, revision history, explicit approval
-and approved image assets. Next-action guidance opens request history and focuses
+Designs (internal stage ID `sketch`) uses a version-2 multi-screen envelope with UI DSL v1 documents, while
+retaining revision history, explicit approval, size/zoom and screen/transition
+metadata controls. Use Designs consistently in user-facing labels, status messages
+and help. Internal IDs and saved paths retain their existing names; Development's
+formal artifact remains Design. The shape toolbar, freehand gestures and geometry inspector are
+removed. `src/vendor/ui-dsl` is a hash-recorded, unmodified snapshot of the local
+`chat-ui-dsl` library, not its standalone canvas, server or persistence. Refresh
+it with `node --import tsx scripts\sync-ui-dsl.ts C:\projects\dsl`; builds do not
+depend on that neighboring checkout. Bundled icon licenses are retained in both
+source and built payloads.
+
+Production prompts in `src/planning-prompts.ts` use the shared DSL catalog and
+operation rules, with a bounded, validated icon-name palette for the tool-free
+design worker. That worker cannot call the library's optional icon lookup tools.
+Tandem's stream boundary canonicalizes known official Lucide aliases such as
+`trash-2` to `trash` before normal validation, without modifying the vendor
+snapshot. Unknown icons still fail atomically; previews and saved documents
+contain only canonical names. The existing bounded stream applies one `ui.edit` at a time to
+the named screen; Tandem still owns request identity, transient previews, final
+commit, approval and immutable history. Generation emits all `upsert-screen`
+titles before UI edits, then builds pages sequentially with `screen-status`
+processing/ready records. The host initializes new pages as waiting, validates
+ready pages have UI content, and resets a page to processing on a later edit.
+Per-page statuses travel only in the request-bound preview, never the saved
+document or approval. Older previews without statuses remain readable and do not
+claim partial content is ready. JSON records can span formatting line breaks;
+only complete, valid operations are applied, with unchanged size limits and
+strict rejection of prose, malformed JSON and invalid operations.
+Verified workers without native phase metadata can stream JSON-prefixed data
+without waiting for the final message; prose still requires native commentary
+classification and cannot be silently dropped from a design result.
+A shadow-root renderer isolates artifact
+styling from the editor. PNG approval previews use the same renderer and CSS at
+the saved viewport, independent of view zoom.
+
+The integrated Structure tree appears after Screen details, follows the DSL's
+ordered child IDs and synchronizes with the rendered selection. Select is the
+default persistent mode; Interact is explicit. Tree navigation and selection are
+view state, not edits or approval. Saved change targets retain their revision,
+screen and node identities; transient preview selections use a separate request
+identity and are never carried into saved revision requests. Selection outlines
+are excluded from approval images.
+
+New revisions save `document.json` and per-screen `.ui.json` sources instead of
+SVG geometry. Approval binds their hashes and derived PNGs. Prototype and the
+Development handoff consume these exact DSL inputs; images are additional visual
+evidence. Version-1 geometry remains readable for archive integrity, but is not
+rendered in active Designs or accepted as a new downstream input. Users must
+explicitly regenerate and approve DSL views; no files or old approvals migrate
+implicitly.
+
+Next-action guidance opens request history and focuses
 a failed revision's Retry control without resubmitting it or replacing an unsent
 instruction. Prototype keeps the existing staged structure,
 interaction, optional visual refinement, queued feedback and Apply update flow.
@@ -173,13 +249,68 @@ Chat changes use the additive `changeRequests` ledger and the production
 `buildChangeAssessmentPrompt`, not the broad stage-reopen/reset path. HTTP and
 canvas entry points share assessment and decision handlers; the original stage
 engines remain independently usable. The change ledger, stage tabs and active
-editor occupy separate workspace rows; absent headers collapse without overlapping
-stage controls. Impact details open in a bounded modal dialog outside the workspace
+editor occupy separate workspace rows. The top row holds stage navigation,
+completion/reopen controls and Designs approval on the right. Pinned draft Apply
+and preview recovery controls retain their below-input placement; an empty
+review row occupies no space. Designs places its Review icon
+immediately after History on the composer row. A newly returned proposal or
+failure opens the bounded review popup once. A shared, browser-safe policy excludes
+changes that proceed automatically; refreshes, loaded history and an already open review do not
+steal focus. Impact details open in a bounded modal dialog outside the workspace
 grid, so reviewing them never resizes the editor. Closing the dialog restores focus
-to its trigger and retains clarification drafts. Errors remain visible in the
-dialog and the compact status bar. Drawing completion is shown only
+to its trigger and retains clarification drafts. The red icon and border use the
+semantic danger token plus an accessible Review-required label. Closing permits
+inspection but does not release the review gate. Errors remain visible in the
+dialog and status area. Design completion is shown only
 after approval, while a failed continuation remains explicitly retryable.
-Assessment is context-only and preserves accepted state. Approval binds the exact
+The popup presents one current review with request, impact and clarification
+sections and a fixed action footer. There is no request selector or inline
+reviewing-status card. Shared
+request-status presentation distinguishes an unapplied proposal, missing detail,
+saved design draft and Development admission without implying implementation.
+Design submission IDs bind composer history to the ledger, whose responses
+survive reload. Composer and Discovery-history actions open the exact record and
+restore focus to their original control. Older errors cannot label newer requests
+as blocked. Completed records remain inspectable without mutation controls.
+Pinned Apply gates on active/uncertain parent work and approved active changes,
+not queued assessments, unapproved proposals or failed/deferred requests.
+Both the Apply endpoint and its public readiness state use the same parent-work
+check. Saving a reviewed stage checks pending requests in that draft while still
+validating the merged stage's artifacts and source bindings. Unrelated parent
+requests and their baseline digests remain unchanged; changed inputs invalidate
+old proposals rather than implicitly approving or discarding them.
+The shared review policy chooses admitted work first, otherwise the pending
+request. New independent submissions are rejected atomically while that request
+is outstanding, including the HTTP and canvas paths; duplicate submission IDs
+remain idempotent. Unrelated edits and stage completion stay gated, while the
+current review's required stage updates and pinned-draft work remain possible.
+Older queues and deferred records are preserved rather than cancelled or merged;
+they resume one at a time after the current review resolves. New deferral is not
+an escape from required review. Rehydration continues eligible queued work only through
+the writable provider and existing ownership checks, never by taking over a
+foreign or unverified worker.
+
+Current-stage design-only changes settle when their revised draft and matching
+terminal run receipt have been saved, not when the whole Designs stage is
+approved. Current-stage Requirements patches settle when saved; purely additive
+requests can proceed without another impact decision, while edits to existing
+decisions, removals and assumption/deferral changes still require review.
+New questions never acquire automatic answers. Rehydration can settle older
+requests left active by these behaviors using their bound receipts and saved
+state, verifying design source bytes where applicable; it never reapplies,
+regenerates or approves them. Prototype
+updates still require their existing explicit Apply action. Cross-stage and
+consequential Requirements changes retain impact review and sparse reconciliation.
+
+Design requests bind the viewed screen and optional explicitly picked UI node
+to the source revision. Both HTTP and canvas actions validate those identities.
+Assessments receive the full current DSL and, if it changed, the original source
+DSL as well. Production prompts resolve visual descriptions using components and
+their properties, avoid incidental cosmetic questions, and retain genuine target
+or behavior ambiguities rather than silently choosing another element.
+Assessment is context-only and preserves accepted state, including the derived
+Requirements diagram. Impact-check progress stays in processing state instead of
+rewriting that artifact and invalidating its own baseline. Approval binds the exact
 analysis ID and semantic baseline digest,
 including current Development Design/code when available. It saves a complete
 baseline snapshot before applying a sparse Requirements patch and marking only
@@ -265,9 +396,9 @@ Unavailable or silent activity is reported honestly and never triggers automatic
 failure, retry or cancellation. Short public model updates are requested at
 meaningful milestones. Reasoning and raw prompts are not projected, and progress
 is never completion or verification evidence. Native commentary stays separate
-from final structured output and drawing NDJSON; untagged prose is not guessed
+from final structured output and design NDJSON; untagged prose is not guessed
 away to make an invalid result pass.
-Explicitly tagged drawing data still streams immediately. If native message
+Explicitly tagged design data still streams immediately. If native message
 phase is absent or arrives later, text is buffered until message classification
 or the authoritative result instead of guessing whether prose is progress.
 
@@ -284,7 +415,7 @@ upstream view; reopening completed Stage 1 without a handoff shows its saved
 artifacts. You may shut down at this point.
 
 Later, open Development explicitly and reference the saved Q&A, snapshot,
-approved drawings or prototype source files in a normal message. Stage 1's
+approved designs or prototype source files in a normal message. Stage 1's
 connection need not survive: these files are input/evidence, not permission to
 adopt a previous Stage 2 run, its canonical Design or session authority. Existing
 used Stage 2 work still requires its original owner and same-ID recovery; this
@@ -298,7 +429,7 @@ inputs fail before admission. Cancel has no backend mutation.
 **Create Design from Prototype** (or **Refine Design from Prototype**) asks the current
 host to retain an immutable bounded handoff under the **target worktree's**
 `.tandem\living-canvas\handoffs`. It includes exact completed snapshot bytes,
-artifact hashes, confirmed/assumed/deferred decisions, approved drawings/assets,
+artifact hashes, confirmed/assumed/deferred decisions, approved designs/assets,
 mock shortcuts and the displayed multi-file source. Dependency installations,
 browser/runtime caches, credential-like files and unrelated operational state
 are excluded. Missing, changed or aliased input fails explicitly.
@@ -339,8 +470,8 @@ Settings trigger); it does not save, apply, discard, stop work or close the runt
 
 The main framework is one project workspace: project navigation and Settings
 on the left and the selected phase's own workspace and history.
-Requirements, drawings and Prototype retain their specialized inputs and controls.
-Discovery views also expose horizontal Preparation, Requirements, Drawings and
+Requirements, designs and Prototype retain their specialized inputs and controls.
+Discovery views also expose horizontal Preparation, Requirements, Designs and
 Prototype tabs above the workspace. They share the sidebar's browsing selection
 and availability guards, but sidebar styling stays bound to lifecycle progress:
 the current phase stays highlighted and completed inputs stay visibly locked.
@@ -354,7 +485,23 @@ parent generation, stage and eventual Apply/discard outcome; the draft's
 immutable baseline live under `.tandem/efforts/review-<id>/`. Opening a draft copies
 only state metadata, not application source, and dispatches no worker.
 
-Drawing revisions and prototype candidates use new immutable paths in the
+Continuing a change into another pinned stage copies its original request,
+source identities and accumulated affected-decision scope into a stage-local
+active request. It does not reapply the Requirements delta or restart earlier
+stages. Applying a draft carries its recorded scope forward. An explicit Designs
+action also restores missing request context in older linked drafts from their
+parent and applied review records, after checking that the baseline still matches.
+Stale Designs exposes **Update designs from latest requirements**; preparing the
+draft, approving it and applying it remain separate actions.
+The `update` design action always runs an incremental `revise-sketch` worker from
+the current saved DSL, whether or not a change request is linked. It records an
+`update` request and a `revised` result so retries retain that intent. The prompt
+edits existing node IDs without a fresh page outline; only explicit `generate`
+starts an empty stream. Current-stage stale-design continuation also uses `update`.
+The stream may retain obsolete decision references from its immutable baseline
+while editing; previews and completed revisions must use current accepted IDs.
+
+Design revisions and prototype candidates use new immutable paths in the
 parent effort's existing asset namespaces. This preserves the exact asset,
 checkpoint and preview identities required by restart, acceptance and Development
 handoffs without copying or rewriting an accepted revision. Prototype feedback
@@ -374,7 +521,7 @@ separate from normal current-stage work and broader Reopen operations.
 Review editors use scoped API routes and an independent store, busy state and
 draft-input provider. Navigating to current work hides rather than remounts the
 pinned editor. Applying does not close it or authorize Development implementation.
-Draft Drawings uses direct edits or explicitly requested revisions.
+Draft Designs uses direct edits or explicitly requested revisions.
 The **Development** navigation entry contains formal Design, planning,
 implementation and Review; it is not an additional Stage1 Design phase.
 **Saved artifacts** is the cross-project library entry in the separate
@@ -405,7 +552,7 @@ Prototype preview controls when applicable, not in the tab content or sidebar.
 The header has no horizontal divider lines; controls wrap on narrow screens.
 Secondary history starts compact in constrained panels and can collapse to a
 small keyboard-accessible rail; reopening restores its prior sizing. Already
-approved, unchanged drawings show one Finish action rather than another primary
+approved, unchanged designs show one Finish action rather than another primary
 approval. Development keeps Design and conversation side by side where they fit,
 and an empty/unverified Design does not reserve a large blank pane on narrow screens.
 The original brief is readable in Preparation, not duplicated in a global Project
@@ -480,7 +627,7 @@ two or three working directions, not parallel replacement applications.
 `src/planning-prompts.ts` owns the generation/refinement instructions.
 `src/visual-directions.ts` validates the bounded manifest, exact setting enums
 and stable direction identities. Each direction describes layout, typography,
-palette, effects and departures from approved drawings; palette-only duplicates
+palette, effects and departures from approved designs; palette-only duplicates
 are rejected at the contract level. Descriptions are not proof of visual quality:
 workers must exercise the actual alternatives and report observations separately.
 
@@ -499,7 +646,7 @@ Comparison state lives in `prototypeFlow.visualExploration`, independently of
 or starts model work. **Default** is the exact original checkpoint, not a neutral
 appearance preset of a generated direction. Its identity follows the exploration's
 original base through scoped refinements, even after accepting another direction.
-Accepting Default requires the current revision, unchanged source and drawings,
+Accepting Default requires the current revision, unchanged source and designs,
 and a verified preview identity; it restores that retained checkpoint without
 generation or deleting alternatives. Scoped refinement uses the existing durable feedback
 queue and latest exploration source, retaining the submitted direction/settings
@@ -566,9 +713,9 @@ Closing the owning host stops its own launches; no unrelated
 server is terminated. A failed or uncertain attempt can be inspected/reconciled,
 not silently replaced with another command.
 Saved-evidence rows refresh when their source changes; native conversation records
-remain immutable. New drawing requests retain their exact accepted instruction,
+remain immutable. New design requests retain their exact accepted instruction,
 request ID, time and base revision in Stage1's own state, including failed requests.
-Older drawing instruction text that was never persisted is not reconstructed.
+Older design instruction text that was never persisted is not reconstructed.
 Question answers and implementation decisions retain their original bound forms.
 If a discovery result is delayed, **Check submission** reads the same in-memory
 receipt without repeating the action. After a lost presentation session, inspect
@@ -723,7 +870,7 @@ cannot reuse its consumed confirmation.
 ## Project settings and retained history
 
 **Project settings** opens the same window in Preparation, Requirements,
-Drawings, Prototype and Development. Its isolated settings document reuses the
+Designs, Prototype and Development. Its isolated settings document reuses the
 native renderer for appearance, shared reasoning effort, private model, session
 access and diagnostics. Opening it does not start the private runtime or submit
 work. Main-session and private Development model/permission ownership remain
@@ -791,6 +938,25 @@ process termination.
 
 Maintain root TypeScript/renderer assets under `src` and Stage 2 implementation
 under `development\tandem`. Never hand-edit the generated extension.
+
+For live frontend editing, run:
+
+```powershell
+npm run dev:browser -- --workspace C:\projects\my-app
+```
+
+This builds the standalone app, opens it, and watches the Preparation renderer,
+browser shell, their frontend dependencies/styles/templates, and Development's
+`development\tandem\public` assets. Successful edits refresh connected development
+tabs at the same URL. It is a full-page refresh, not React Fast Refresh: unsent
+form input and local UI state may be lost, but the existing Copilot runtimes,
+pending permissions, saved history, and running work are not restarted.
+Frontend compilation errors appear in the terminal; the last successful bundle
+stays available until a build succeeds. Development's unbundled public assets are
+served directly from source. Backend/runtime code changes require stopping and
+restarting the command. Normal browser launches and installed extensions do not
+watch these development assets. Stop in the app or Ctrl+C closes the owned host
+and watcher. The existing `npm run dev` remains the extension-only build watcher.
 
 ```powershell
 npm run check

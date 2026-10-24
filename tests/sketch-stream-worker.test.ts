@@ -7,7 +7,7 @@ import { sketchDocument } from "./helpers/sketch-lifecycle-fixture.js";
 
 function operation(x = 90) {
     return JSON.stringify({
-        op: "upsert-shape", screenId: "main", shape: { ...sketchDocument().screens[0].shapes[0], x },
+        op: "ui", screenId: "main", edit: { op: "setToken", key: "space.1", value: x },
     }) + "\n";
 }
 const done = '{"op":"done"}\n';
@@ -42,7 +42,7 @@ function harness(base: SketchDocument | null = sketchDocument(), getRunDetail = 
         get unsubscribed() { return unsubscribed; } };
 }
 
-test("drawing operations become visible before the worker settles and full messages do not replay them", async () => {
+test("design operations become visible before the worker settles and full messages do not replay them", async () => {
     const h = harness();
     h.start();
     const first = operation();
@@ -50,7 +50,7 @@ test("drawing operations become visible before the worker settles and full messa
     assert.equal(h.previews.length, 0);
     h.delta(first.slice(45));
     assert.equal(h.previews.length, 1);
-    assert.equal(h.previews[0].document.screens[0].shapes[0].x, 90);
+    assert.equal(h.previews[0].document.screens[0].ui.tokens["space.1"], 90);
     assert.equal(h.unsubscribed, false, "the worker has not resolved yet");
     h.delta(operation(100) + done);
     assert.deepEqual(h.previews.map((preview) => preview.sequence), [1, 2]);
@@ -59,13 +59,27 @@ test("drawing operations become visible before the worker settles and full messa
         type: "assistant.message", agentId: "drawing-agent", data: { messageId: "drawing-message", content: full },
     });
     h.resolve(full.trimEnd());
-    assert.equal((await h.result).screens[0].shapes[0].x, 100);
+    assert.equal((await h.result).screens[0].ui.tokens["space.1"], 100);
     assert.equal(h.previews.length, 2);
     assert.equal(h.unsubscribed, true);
     assert.equal(h.failures.length, 0);
 });
 
-test("explicit native commentary stays separate from drawing deltas and authoritative final NDJSON", async () => {
+test("a legacy Lucide icon cannot abort an otherwise valid design worker", async () => {
+    const h = harness();
+    h.start();
+    const source = JSON.stringify({
+        op: "ui", screenId: "main", edit: { op: "update", id: "primary-action", props: { icon: "trash-2" } },
+    }) + "\n" + done;
+    h.delta(source);
+    h.resolve(source);
+    assert.equal((await h.result).screens[0].ui.nodes["primary-action"].props.icon, "trash");
+    assert.equal(h.previews[0].document.screens[0].ui.nodes["primary-action"].props.icon, "trash");
+    assert.equal(h.failures.length, 0);
+    assert.equal(h.unsubscribed, true);
+});
+
+test("explicit native commentary stays separate from design deltas and authoritative final NDJSON", async () => {
     const h = harness();
     h.start();
     h.emit({ type: "assistant.intent", agentId: "drawing-agent", data: { intent: "Laying out the screens." } });
@@ -80,7 +94,7 @@ test("explicit native commentary stays separate from drawing deltas and authorit
     h.delta(operation() + done);
     assert.equal(h.previews.length, 1);
     h.resolve(operation() + done);
-    assert.equal((await h.result).screens[0].shapes[0].x, 90);
+    assert.equal((await h.result).screens[0].ui.tokens["space.1"], 90);
     assert.equal(h.failures.length, 0);
 });
 
@@ -93,7 +107,7 @@ test("untagged prose cannot be guessed away as progress or rescued by a valid fi
     assert.equal(h.previews.length, 0);
 });
 
-test("optional or later native phase buffers commentary without parsing it as drawing operations", async () => {
+test("optional or later native phase buffers commentary without parsing it as design operations", async () => {
     const h = harness();
     h.emit({ type: "subagent.started", agentId: "drawing-agent", data: { workflowRunId: "drawing-run", toolCallId: "drawing-tool" } });
     h.emit({ type: "assistant.message_start", agentId: "drawing-agent", data: { messageId: "late-phase" } });
@@ -106,11 +120,11 @@ test("optional or later native phase buffers commentary without parsing it as dr
         data: { messageId: "drawing-message", phase: "final_answer" } });
     h.delta(operation() + done);
     h.resolve(operation() + done);
-    assert.equal((await h.result).screens[0].shapes[0].x, 90);
+    assert.equal((await h.result).screens[0].ui.tokens["space.1"], 90);
     assert.equal(h.failures.length, 0);
 });
 
-test("root, unrelated factories and nested agents cannot contribute drawing commands", async () => {
+test("root, unrelated factories and nested agents cannot contribute design commands", async () => {
     const h = harness();
     h.start("other-run", "other");
     h.delta("malformed", "other");
@@ -121,21 +135,52 @@ test("root, unrelated factories and nested agents cannot contribute drawing comm
     h.start();
     h.delta(operation());
     h.resolve(operation() + done);
-    assert.equal((await h.result).screens[0].shapes[0].x, 90);
+    assert.equal((await h.result).screens[0].ui.tokens["space.1"], 90);
     assert.equal(h.failures.length, 0);
 });
 
-test("drawing streams support tool-call correlation on runtimes without an agent ID", async () => {
+test("design streams support tool-call correlation on runtimes without an agent ID", async () => {
     const h = harness();
     h.emit({ type: "subagent.started", data: { workflowRunId: "drawing-run", toolCallId: "drawing-tool" } });
     h.emit({ type: "assistant.message_delta",
         data: { messageId: "drawing-message", parentToolCallId: "drawing-tool", deltaContent: operation() } });
-    assert.equal(h.previews.length, 0, "Unphased text waits for completed-message classification.");
+    assert.equal(h.previews.length, 1, "Protocol-shaped unphased data streams without waiting for the completed message.");
     h.emit({ type: "assistant.message",
         data: { messageId: "drawing-message", parentToolCallId: "drawing-tool", content: operation() } });
     assert.equal(h.previews.length, 1);
     h.resolve(operation() + done);
     await h.result;
+});
+
+test("unphased workers publish formatted page titles before any page design or final result arrives", async () => {
+    const h = harness(null);
+    h.emit({ type: "subagent.started", agentId: "drawing-agent",
+        data: { workflowRunId: "drawing-run", toolCallId: "drawing-tool" } });
+    h.emit({ type: "assistant.message_start", agentId: "drawing-agent", data: { messageId: "drawing-message" } });
+    const { ui: _ui, ...screen } = sketchDocument().screens[0];
+    const titles = [screen, { ...screen, id: "details", title: "Details" }]
+        .map(screen => JSON.stringify({ op: "upsert-screen", screen }, null, 2) + "\n").join("");
+    for (const character of titles) h.delta(character);
+    assert.equal(h.previews.length, 2);
+    assert.deepEqual(h.previews[1].document.screens.map(item => item.title), ["Main", "Details"]);
+    assert.ok(h.previews[1].document.screens.every(item => item.ui.nodes.screen.children.length === 0));
+    assert.equal(h.unsubscribed, false);
+    assert.equal(h.failures.length, 0);
+    h.resolve(titles + done);
+    await h.result;
+});
+
+test("a later commentary phase cannot reclassify JSON that already contributed to a preview", async () => {
+    const h = harness();
+    h.emit({ type: "subagent.started", agentId: "drawing-agent",
+        data: { workflowRunId: "drawing-run", toolCallId: "drawing-tool" } });
+    h.delta(operation());
+    assert.equal(h.previews.length, 1);
+    h.emit({ type: "assistant.message", agentId: "drawing-agent",
+        data: { messageId: "drawing-message", phase: "commentary", content: operation() } });
+    h.resolve(operation() + done);
+    await assert.rejects(h.result, /changed its native commentary\/data phase/);
+    assert.equal(h.failures.length, 1);
 });
 
 test("worker starts without factory IDs stream after verified factory lookup, before completion", async () => {
@@ -146,16 +191,16 @@ test("worker starts without factory IDs stream after verified factory lookup, be
     h.emit({ type: "assistant.message_start", agentId: "drawing-agent", data: { messageId: "drawing-message", phase: "final_answer" } });
     h.delta(operation().slice(0, 45));
     h.delta(operation().slice(45));
-    assert.equal(h.previews.length, 0, "unverified workers must not publish drawings");
+    assert.equal(h.previews.length, 0, "unverified workers must not publish designs");
     verify({ runId: "drawing-run", agents: [{ runId: "drawing-run", toolCallId: "drawing-tool" }] });
     await setImmediate();
     assert.equal(h.previews.length, 1, "buffered operations appear without waiting for the final answer");
-    assert.equal(h.previews[0].document.screens[0].shapes[0].x, 90);
+    assert.equal(h.previews[0].document.screens[0].ui.tokens["space.1"], 90);
     assert.equal(h.unsubscribed, false);
     h.delta(operation(100) + done);
     assert.deepEqual(h.previews.map((preview) => preview.sequence), [1, 2]);
     h.resolve(operation() + operation(100) + done);
-    assert.equal((await h.result).screens[0].shapes[0].x, 100);
+    assert.equal((await h.result).screens[0].ui.tokens["space.1"], 100);
     assert.equal(h.previews.length, 2);
     assert.equal(h.failures.length, 0);
     assert.equal(h.unsubscribed, true);
@@ -166,11 +211,11 @@ test("factory lookup excludes unrelated and nested workers even if their labels 
     for (const [agentId, toolCallId] of [["other-agent", "other-tool"], ["drawing-agent", "drawing-tool"]]) {
         h.emit({ type: "subagent.started", agentId, data: { toolCallId, agentName: "general-purpose" } });
         h.emit({ type: "assistant.message_start", agentId, data: { messageId: "drawing-message", phase: "final_answer" } });
-        h.delta(agentId === "drawing-agent" ? operation() : "not drawing operations\n", agentId);
+        h.delta(agentId === "drawing-agent" ? operation() : "not design operations\n", agentId);
     }
     h.emit({ type: "subagent.started", agentId: "nested",
         data: { toolCallId: "nested-tool", parentId: "drawing-agent" } });
-    h.delta("not drawing operations\n", "nested");
+    h.delta("not design operations\n", "nested");
     await setImmediate();
     assert.equal(h.previews.length, 1);
     assert.equal(h.failures.length, 0);
@@ -192,7 +237,7 @@ test("legacy worker lookup retains parent-tool correlation and completed-message
     assert.equal(h.previews.length, 1);
 });
 
-test("a failed or wrong-run identity lookup cannot fall back to a successful final drawing", async () => {
+test("a failed or wrong-run identity lookup cannot fall back to a successful final design", async () => {
     for (const getRunDetail of [
         async () => { throw new Error("Factory lookup unavailable"); },
         async () => ({ runId: "another-run", agents: [{ runId: "drawing-run", toolCallId: "drawing-tool" }] }),
@@ -208,7 +253,7 @@ test("a failed or wrong-run identity lookup cannot fall back to a successful fin
     }
 });
 
-test("an agent record from another run does not authorize uncorrelated drawing events", async () => {
+test("an agent record from another run does not authorize uncorrelated design events", async () => {
     const h = harness(sketchDocument(), async () => ({
         runId: "drawing-run", agents: [{ runId: "other-run", toolCallId: "drawing-tool" }],
     }));
@@ -280,10 +325,10 @@ test("unverified stream buffers are bounded and two verified workers are rejecte
 test("completed-only and journaled worker output still undergoes operation validation", async () => {
     const h = harness();
     h.resolve(operation() + done);
-    assert.equal((await h.result).screens[0].shapes[0].x, 90);
+    assert.equal((await h.result).screens[0].ui.tokens["space.1"], 90);
     const empty = harness();
     empty.resolve(null);
-    await assert.rejects(empty.result, /no drawing operations/);
+    await assert.rejects(empty.result, /no design operations/);
     assert.equal(empty.unsubscribed, true);
 });
 
@@ -292,7 +337,7 @@ test("SDK trimming of outer whitespace cannot reject an otherwise identical stre
     h.start();
     h.delta("\n  " + operation() + done);
     h.resolve((operation() + done).trim());
-    assert.equal((await h.result).screens[0].shapes[0].x, 90);
+    assert.equal((await h.result).screens[0].ui.tokens["space.1"], 90);
     assert.equal(h.previews.length, 1);
 });
 
