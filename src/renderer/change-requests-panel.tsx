@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Dialog } from "radix-ui";
-import { ArrowRight, Check, ListChecks, RefreshCw, X } from "lucide-react";
+import { ArrowRight, Check, ListChecks, RefreshCw, ShieldCheck, X } from "lucide-react";
 import type { LifecycleStageId } from "../types.js";
+import type { ChangeRequest } from "../change-requests.js";
 import { lifecycleStages } from "../workflow.js";
 import { changeReviewNeedsAttention, currentChangeReview } from "../change-request-policy.js";
 import { hasActiveJobs, useAction, useChangeRequestDialog, useDraft, useUi, type UiState } from "./ui-context.js";
@@ -10,7 +11,34 @@ import { changeRequestResponse, changeRequestStatus } from "./change-request-fee
 
 const label = (stage: LifecycleStageId) => lifecycleStages.find(item => item.id === stage)?.label || stage;
 
-export function ChangeRequestsPanel({ compact = false, showTrigger = true }: { compact?: boolean; showTrigger?: boolean }) {
+export function ChangeReviewPath({ request, reviewingStage, detailed = false }: {
+    request: ChangeRequest; reviewingStage?: LifecycleStageId; detailed?: boolean;
+}) {
+    const plan = request.assessment;
+    if (!plan?.stages.length) return null;
+    const inProgress = ["active", "reviewing"].includes(request.status);
+    const next = inProgress ? request.remainingStages[0] : request.status === "proposed" ? plan.startStage : null;
+    const settled = ["completed", "cancelled"].includes(request.status);
+    return <ol className="change-stage-path" aria-label="Affected stages">
+        {plan.stages.map((item, index) => {
+            const saved = request.status === "completed" || inProgress && !request.remainingStages.includes(item.stage);
+            const current = !settled && !saved && (reviewingStage ? reviewingStage === item.stage : next === item.stage);
+            const status = saved ? "Saved" : request.status === "cancelled" ? "Recorded"
+                : current ? reviewingStage ? "Reviewing draft" : request.status === "proposed" ? "Starts here" : "Up next"
+                    : request.status === "proposed" ? "Then review" : "Pending";
+            return <li key={item.stage} data-status={saved ? "saved" : current ? "current" : "pending"}
+                aria-current={current ? "step" : undefined} aria-label={`${label(item.stage)}: ${status}`}>
+                <span className="change-step-marker" aria-hidden="true">{saved ? <Check size={13} /> : index + 1}</span>
+                <div className="change-step-copy"><strong>{label(item.stage)}</strong>
+                    {detailed && <p>{item.reason}</p>}</div>
+            </li>;
+        })}
+    </ol>;
+}
+
+export function ChangeRequestsPanel({ compact = false, showTrigger = true }: {
+    compact?: boolean; showTrigger?: boolean;
+}) {
     const { state, post, pending, browseStage, reviewStage, changeRequestDialog } = useUi();
     const project = useProjectView();
     const action = useAction("change-request");
@@ -35,7 +63,9 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: { c
         if (pending || working) return;
         const timer = window.setTimeout(() => {
             seenReviews.current.add(reviewKey);
-            dialogRef.current.open(current.id, document.getElementById(showTrigger ? "toggle-change-details" : "sketch-review-change"));
+            const opener = showTrigger ? document.getElementById("toggle-change-details")
+                : document.getElementById("continue-pending-review") ?? document.querySelector(".pinned-review-buttons button:not(:disabled)");
+            dialogRef.current.open(current.id, opener);
         }, 0);
         return () => window.clearTimeout(timer);
     }, [current?.id, reviewKey, pending, working, dialog.requestId, showTrigger]);
@@ -108,18 +138,22 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: { c
         }
     }
     const waiting = ["queued", "analyzing"].includes(current.status);
-    const title = needsDetail ? "Clarify this change" : current.status === "reviewing" ? "Complete change review"
-        : current.status === "failed" || error ? "Review needs attention" : settled ? "Saved change"
-        : waiting ? "Checking your request" : current.status === "active" ? "Preparing your update" : "Review this change";
+    const title = needsDetail ? "Clarify this change" : current.status === "reviewing" ? "Continue change review"
+        : current.status === "failed" || error ? "Review needs attention"
+        : current.status === "completed" ? "Change review complete" : settled ? "Cancelled change"
+        : waiting ? "Checking your request" : current.status === "active" ? "Preparing your update" : "Review change impact";
     const primaryLabel = opensDraft && plan?.startStage !== "none" && plan
         ? `Review ${label(plan.startStage)} draft`
         : state.stageReview ? "Update this draft" : plan?.startStage === "development" ? "Review in Development" : "Apply change";
+    const nextStage = current.remainingStages[0];
+    const continueLabel = nextStage ? `Review ${label(nextStage)}${earlier(nextStage) ? " draft" : " update"}` : "Continue review";
     return <Dialog.Root open={dialog.requestId !== null} onOpenChange={open => open ? dialog.open(current.id) : dialog.close()}>
-        <section className="change-requests" aria-label="Project changes" hidden={!showTrigger && !error} data-compact={compact || undefined}>
+        <section className="change-requests" aria-label="Project changes"
+            hidden={!showTrigger && !error} data-compact={compact || undefined}>
             <div className="change-summary" hidden={!showTrigger}>
                 <h2 id="change-impact-title" className="visually-hidden">{changeRequestStatus(current)}</h2>
                 <Dialog.Trigger asChild>
-                    <button id="toggle-change-details" type="button" className="plan-button secondary review-trigger"
+                    <button id="toggle-change-details" type="button" className={`plan-button${compact || !attention ? " secondary" : ""} review-trigger`}
                         aria-controls="change-request-details" data-status={attention ? "attention" : "idle"}
                         aria-label={attention ? "Review required" : "Open change review"}>
                         <ListChecks size={16} aria-hidden="true" />Review
@@ -143,7 +177,9 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: { c
                 </header>
                 <Dialog.Description className="review-description">{required
                     ? waiting ? "Your request is being checked. You can close this dialog and inspect your work while it runs."
-                        : "Resolve this review before sending another change. You can close this dialog to inspect your work."
+                        : opensDraft || current.status === "reviewing"
+                            ? "Review the affected stages in order. Each draft is separate from accepted work until you apply it."
+                            : "Review the proposed update before continuing. Resolve this request before sending another change."
                     : "This saved record is read-only. Your decisions and previous versions are retained."}</Dialog.Description>
                 <div className="change-request-details">
                     {error && <p id="change-dialog-error" className="review-error" role="alert">{error}</p>}
@@ -155,19 +191,19 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: { c
                         {plan ? <section className="review-proposal" aria-label="Proposed update">
                             <h3>{settled ? "Recorded outcome" : "Proposed update"}</h3>
                             <p>{plan.summary}</p>
-                            <ol className="change-stage-path" aria-label="Affected stages">
-                                {plan.stages.map(item => <li key={item.stage}>
-                                    <strong>{label(item.stage)}</strong>
-                                    <span>{["active", "reviewing"].includes(current.status)
-                                        ? current.remainingStages.includes(item.stage) ? "Review pending" : "Saved"
-                                        : settled ? "Recorded" : item.stage === plan.startStage ? "Starts here" : "Updates after review"}</span>
-                                </li>)}
-                            </ol>
+                            {plan.stages.length > 0 && <div className="review-path-heading"><h3>Review path</h3>
+                                <span>{plan.stages.length} affected {plan.stages.length === 1 ? "stage" : "stages"}</span></div>}
+                            <ChangeReviewPath request={current} detailed />
+                            {plan.preserved.length > 0 && <section className="review-preserved" aria-label="Kept unchanged">
+                                <h3><ShieldCheck size={15} aria-hidden="true" />Kept unchanged</h3>
+                                <ul>{plan.preserved.map(item => <li key={item}>{item}</li>)}</ul>
+                            </section>}
                             <details className="review-supporting"><summary>Impact details</summary>
                                 <p>{plan.reason}</p>
                                 {plan.stages.map(item => <p key={item.stage}><strong>{label(item.stage)}:</strong> {item.reason}</p>)}
-                                {plan.preserved.length > 0 && <><h4>Preserved</h4><ul>{plan.preserved.map(item => <li key={item}>{item}</li>)}</ul></>}
                                 {plan.requirements && <p>{plan.requirements.usages.add.length} added usages and {plan.requirements.upsert.length} new or revised decisions. Independent answers stay unchanged.</p>}
+                                {current.status === "proposed" && <button id="recheck-change" className="plan-button secondary" disabled={busy}
+                                    onClick={() => void decide("retry")}><RefreshCw size={14} aria-hidden="true" />Recheck impact</button>}
                             </details>
                         </section> : <p role="status">{changeRequestResponse(current)}</p>}
                         {needsDetail && <form id="change-detail-form" className="change-detail-form" onSubmit={event => {
@@ -204,15 +240,13 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: { c
                     <div className="review-footer-actions">
                         {current.status === "proposed" && !needsDetail && <button className="plan-button secondary" disabled={busy}
                             onClick={() => setRefining(current.id)}>Edit request</button>}
-                        {current.status === "proposed" && <button id="recheck-change" className="plan-button secondary" disabled={busy}
-                            onClick={() => void decide("retry")}><RefreshCw size={14} aria-hidden="true" />Recheck impact</button>}
                         {needsDetail ? <button className="plan-button" form="change-detail-form" type="submit"
                             disabled={busy || !drafts[current.id]?.trim()}><ArrowRight size={15} aria-hidden="true" />Submit detail</button>
                             : current.status === "proposed" && plan ? <button id="approve-change" className="plan-button" disabled={opensDraft ? draftBusy : busy}
-                                onClick={() => void approve()}><Check size={15} aria-hidden="true" />{primaryLabel}</button>
+                                onClick={() => void approve()}>{opensDraft ? <ArrowRight size={15} aria-hidden="true" /> : <Check size={15} aria-hidden="true" />}{primaryLabel}</button>
                             : ["active", "reviewing"].includes(current.status) ? <button id="continue-change-review" className="plan-button"
                                 disabled={current.status === "reviewing" ? draftBusy : busy} onClick={() => void continueReview()}>
-                                <ArrowRight size={15} aria-hidden="true" />Continue review</button>
+                                <ArrowRight size={15} aria-hidden="true" />{continueLabel}</button>
                             : ["failed", "deferred"].includes(current.status) ? <button className="plan-button" disabled={busy}
                                 onClick={() => void decide("retry")}><RefreshCw size={15} aria-hidden="true" />{current.status === "failed" ? "Retry review" : "Resume request"}</button>
                             : settled ? <Dialog.Close asChild><button className="plan-button" type="button">Done</button></Dialog.Close>

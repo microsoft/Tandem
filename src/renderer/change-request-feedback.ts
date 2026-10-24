@@ -1,4 +1,11 @@
 import type { ChangeRequest } from "../change-requests.js";
+import type { LifecycleStageId } from "../types.js";
+
+export function changeRequestReviewStage(request: ChangeRequest | undefined): LifecycleStageId | undefined {
+    if (!request || ["completed", "cancelled", "deferred"].includes(request.status)) return undefined;
+    const stage = ["active", "reviewing"].includes(request.status) ? request.remainingStages[0] : request.assessment?.startStage;
+    return stage === "none" ? undefined : stage;
+}
 
 const statuses: Record<ChangeRequest["status"], string> = {
     queued: "Request queued", analyzing: "Checking your request", proposed: "Review change impact",

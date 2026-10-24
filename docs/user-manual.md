@@ -43,8 +43,17 @@ Parent Copilot chat is not a Development submission.
 
 ### Review an earlier stage without moving current work
 
-Open an earlier stage's tab and choose **Review changes**. Its existing editor
-opens in a separate, pinned draft. **Current work** returns to the working stage;
+When work needs review, a highlighted panel appears at the bottom of
+**Preparation**, **Requirements**, **Designs** and **Prototype**. It identifies
+the next stage to review. In that tab, follow its guidance and use the draft's
+approval controls; from another tab, use the panel's button to open or resume
+the required review. Opening a review does not apply changes.
+When a change-triggered review targets another stage, the viewed stage's content
+is dimmed and inactive. Stage tabs and the bottom review panel remain available.
+
+For an available earlier **Prototype** stage, you can also choose
+**Review changes** in its header. Its existing editor
+opens in a separate, pinned draft. **Return to Prototype** (or your current stage) returns to the working stage;
 coming back to the review keeps its editor and unsent input. Background progress
 does not switch the pinned tab.
 
@@ -53,24 +62,29 @@ does not switch the pinned tab.
 | Save or edit a draft | Changes only the draft, not accepted inputs or current work. |
 | **Build draft preview** | Copies the saved prototype into a new candidate workspace and runs the requested update. Merely opening review does neither. |
 | **Apply changes** | Updates accepted content after checking the draft's baseline and waiting for active work to settle. The current stage stays in place; affected downstream outputs need review. |
-| **Exit review** | Leaves the editor. Saved edits remain available through **Resume draft review**. |
+| **Close review** | Leaves the editor. Saved edits remain available through **Resume draft review**. |
 | **Reopen** | Makes the earlier stage current again and marks dependent outputs stale. Use it only when you intend to restart that part of the workflow. |
 
-**Compare with the accepted baseline** shows what the draft started from.
+Every review panel has a **Details** button that opens the change context in a
+popup. In a draft review, the same popup includes **Compare with the accepted baseline**,
+showing what the draft started from.
 If accepted inputs changed meanwhile, the draft is kept but cannot overwrite
 them: compare it, discard it, then start a fresh review. Designs drafts support
 direct editing and typed revision instructions.
 
 After applying a Requirements review, affected Designs are marked stale.
-In the Designs draft, choose **Update designs from latest requirements** beside
-the warning. This updates the existing saved designs against the accepted
+In the Designs draft, choose **Update designs from latest requirements** in the
+review pane when designs are stale. This updates the existing saved designs against the accepted
 requirements and DAG, rather than starting with empty pages. Reviewed layouts,
 styling, content and refinements remain unless the changed requirements need an
 adjustment. Existing screens stay visible while the update arrives, including
 when the review was opened without a linked change request.
-Review the result, choose **Approve draft designs**, then **Apply changes**.
+Review the result, then choose **Apply changes** in the bottom review pane.
+For Designs, this approves the saved draft and applies it in one confirmation.
 Current Prototype work and saved revisions stay intact. **Reload saved designs**
 only reloads the saved revision; it does not incorporate requirement changes.
+Prototype's **Update for reviewed inputs** and prepared-version actions also
+appear in its review pane.
 **Regenerate designs** is the separate, confirmed start-over action; it may
 replace reviewed layouts and refinements, while retaining saved history.
 
@@ -133,8 +147,7 @@ component hierarchy. Select an element there or directly in the view.
 Selection stays active until you choose **Interact** to try the preview controls.
 Use arrow keys to browse, expand and collapse the hierarchy.
 
-Requests include the viewed screen and selected element. The **Element for
-change** list is an alternative picker. Selecting or inspecting components does
+Requests include the viewed screen and selected element. Selecting or inspecting components does
 not edit or approve the design, including in read-only views. Live-preview
 selections are for inspection only and never become saved revision targets.
 Sizing changes the responsive viewport; zoom changes only the view.

@@ -18,9 +18,9 @@ import { WorkflowActivity } from "./workflow-activity.js";
 import { ProjectConversation, ProjectConversationProvider, useProjectView } from "./project-conversation.js";
 import { DiscoveryRecovery } from "./discovery-recovery.js";
 import { ChangeRequestsPanel } from "./change-requests-panel.js";
-import { changeRequestActionLabel } from "./change-request-feedback.js";
+import { changeRequestActionLabel, changeRequestReviewStage } from "./change-request-feedback.js";
 import { changeReviewBlocksEditing, currentChangeReview } from "../change-request-policy.js";
-import { StageReviewWorkspace } from "./stage-review.js";
+import { PendingReviewPane, StageReviewWorkspace } from "./stage-review.js";
 import { Brand } from "./brand.js";
 import { useStandaloneHeader, type ApplicationStatus, type StandaloneHosting } from "./standalone-header.js";
 
@@ -286,6 +286,8 @@ function Workspace(props: WorkspaceProps) {
   const [review, setReview] = useDraft<UiState | null>("pinned-stage-review", null);
   const workspace = useRef<HTMLElement>(null);
   const [stageActionsContainer, setStageActionsContainer] = useState<HTMLElement | null>(null);
+  const [reviewControlsContainer, setReviewControlsContainer] = useState<HTMLElement | null>(null);
+  const [prototypeHeaderActions, setPrototypeHeaderActions] = useState<HTMLElement | null>(null);
   const [approvalContainer, setApprovalContainer] = useState<HTMLElement | null>(null);
   const [width, setWidth] = useState(minimumContextWidth);
   const [contextCollapsed, setContextCollapsed] = useState(false);
@@ -307,6 +309,8 @@ function Workspace(props: WorkspaceProps) {
   const current = state.lifecycle.currentStage;
   const viewed = stageTabs.find((tab) => tab.value === activeTab)?.stage
     || state.artifacts.find((artifact) => artifact.id === selectedArtifact)?.stage || current;
+  const requiredReviewStage = changeRequestReviewStage(currentChangeReview(state));
+  const contentBlockedByReview = Boolean(showStageTabs && requiredReviewStage && viewed !== requiredReviewStage);
   const reviewing = review?.stageReview?.stage === viewed;
   const reviewTarget = lifecycleStages.find(stage => stage.id === viewed)?.id;
   const earlierStage = reviewTarget !== undefined
@@ -325,7 +329,7 @@ function Workspace(props: WorkspaceProps) {
   const finalizingPrototype = current === "prototype" && state.processing?.action === "generate-design-spec"
     && ["starting", "running"].includes(state.processing.status);
   const completionLabel = finalizingPrototype ? "Finishing prototype..." : allComplete ? "All stages complete" : stageAction.busy ? "Saving stage output..."
-    : current === "prototype" ? "Finish Prototype and save outputs"
+    : current === "prototype" ? "Finish Prototype"
     : current === "requirements" && state.prototypeApproach.mode === "not-applicable" ? "Finish Requirements and save outputs"
     : current === "sketch" ? "Finish Designs and continue"
     : current === "prepare" ? "Preparation runs automatically" : "Finish " + (lifecycleStages.find((stage) => stage.id === current)?.label || current).toLowerCase();
@@ -355,7 +359,9 @@ function Workspace(props: WorkspaceProps) {
   const narrow = () => window.matchMedia("(max-width: 760px)").matches;
   const showNextAction = () => {
     if (!nextAction) return;
-    if (nextAction.id === "complete-stage") { setContextCollapsed(false); onTabChange(tabFor(current)); if (narrow()) setContextOpen(true); }
+    if (["continue-pending-review", "continue-stage-review", "apply-stage-review"].includes(nextAction.id)
+      || nextAction.id === "sketch-update-requirements" && (reviewing || reviewControlsContainer)) setContextOpen(false);
+    else if (nextAction.id === "complete-stage") { setContextCollapsed(false); onTabChange(tabFor(current)); if (narrow()) setContextOpen(true); }
     else { onTabChange(tabFor(current)); setContextOpen(false); }
     const reveal = nextAction.revealId ? document.getElementById(nextAction.revealId) : null;
     if (reveal?.getAttribute("aria-expanded") === "false") reveal.click();
@@ -382,10 +388,13 @@ function Workspace(props: WorkspaceProps) {
   }, [dragging]);
   useLayoutEffect(() => {
     const latestChange = currentChangeReview(state);
-    const changeAction: [string, string, string?][] = latestChange && ["proposed", "failed"].includes(latestChange.status)
-      ? [[current === "sketch" && latestChange.originStage === "sketch" ? "sketch-review-change" : "toggle-change-details",
+    const changeAction: [string, string, string?][] = latestChange && ["proposed", "reviewing", "failed"].includes(latestChange.status)
+      ? [[showStageTabs ? "continue-pending-review" : "toggle-change-details",
         changeRequestActionLabel(latestChange)]] : [];
-    const candidates: [string, string, string?][] = pending || atStart || state.provider?.canSubmitAnswers === false ? [] : [...changeAction, ...{
+    const reviewActions: [string, string][] = showStageTabs ? reviewing
+      ? [["continue-stage-review", "Continue to the next review"], ["sketch-update-requirements", "Update designs for reviewed requirements"], ["apply-stage-review", "Apply the reviewed draft"]]
+      : [["continue-pending-review", "Continue the required review"], ["sketch-update-requirements", "Update designs for reviewed requirements"]] : [];
+    const candidates: [string, string, string?][] = pending || atStart || state.provider?.canSubmitAnswers === false ? [] : [...reviewActions, ...changeAction, ...{
       prepare: [["retry-preparation", "Retry preparation"]],
       requirements: state.requirements?.substage !== "dag" ? state.requirements?.usageItems?.length
         ? [["generate-dag", state.processing?.action === "generate-dag" && state.processing.status === "error"
@@ -418,7 +427,7 @@ function Workspace(props: WorkspaceProps) {
       subtree: true, childList: true, attributes: true, attributeFilter: ["hidden", "disabled"],
     });
     return () => observer.disconnect();
-  }, [state, pending, atStart, current]);
+  }, [state, pending, atStart, current, showStageTabs, reviewing]);
   function navigate(tab: string) {
     const target = stageTabs.find((item) => item.value === tab);
     if (target && !canBrowseStage(state, target.stage)) return;
@@ -426,6 +435,7 @@ function Workspace(props: WorkspaceProps) {
     setContextOpen(false);
   }
   const phaseActions = <section id="stage-workflow-actions" className="phase-actions" aria-label={`${selectedLabel} actions`} aria-describedby="stage-browsing stage-message">
+    <div className="stage-primary-actions" ref={setPrototypeHeaderActions} />
     <button id="complete-stage" className="complete-stage" type="button" hidden={reviewing || projectView.developmentEntered
       || current === "prepare" || current === "development" || (current === "sketch" && sketchBlocked)
       || viewed !== current || Boolean(skippedStage(state, current))} aria-describedby="stage-message"
@@ -454,9 +464,9 @@ function Workspace(props: WorkspaceProps) {
       <Check size={16} aria-hidden="true" /><span className="complete-stage-label">{completionLabel}</span>
     </button>
     <p id="stage-browsing" className="visually-hidden">{reviewing ? `Pinned ${selectedLabel} draft review. ${current} remains the current stage.`
-      : readOnly ? `Viewing ${selectedLabel} · read only. Review changes in an isolated draft, or explicitly reopen the stage.` : ""}</p>
+      : readOnly ? `Viewing ${selectedLabel} · read only. Use the review panel for pending changes, or explicitly reopen the stage.` : ""}</p>
     <button id="review-stage" className="complete-stage" type="button"
-      hidden={reviewing || !earlierStage || !reviewTarget || Boolean(skippedStage(state, viewed)) || !canBrowseStage(state, reviewTarget)}
+      hidden={reviewing || ["prepare", "requirements", "sketch"].includes(viewed) || !earlierStage || !reviewTarget || Boolean(skippedStage(state, viewed)) || !canBrowseStage(state, reviewTarget)}
       disabled={pending || state.provider?.canSubmitAnswers === false}
       onClick={() => { if (reviewTarget) void reviewAction.run(() => openReview(reviewTarget)); }}><Pin size={15} aria-hidden="true" />{state.stageReviews?.some(item => item.stage === viewed
         && item.generation === state.generation && !item.appliedAt && !item.discardedAt) ? "Resume draft review" : "Review changes"}</button>
@@ -600,14 +610,18 @@ function Workspace(props: WorkspaceProps) {
               {stageTabs.filter(tab => tab.stage !== "development").map(tab => {
                 const skipped = skippedStage(state, tab.stage);
                 const label = tab.stage === "prototype" ? "Prototype" : tab.label;
+                const change = currentChangeReview(state);
+                const pendingReview = change?.remainingStages.includes(tab.stage)
+                  && ["active", "reviewing"].includes(change.status);
                 return <Tabs.Trigger key={tab.value} value={tab.value} id={tab.id + "-workspace-tab"}
                   className="preview-tab" disabled={!canBrowseStage(state, tab.stage)}
                   title={skipped?.reason || label} aria-label={skipped ? `${label}, not applicable. ${skipped.reason}`
-                    : label + (review?.stageReview?.stage === tab.stage ? ", pinned draft review" : "")}
+                    : label + (review?.stageReview?.stage === tab.stage ? ", pinned draft review" : pendingReview ? ", change review pending" : "")}
                   aria-controls={tab.id + "-panel"}
                   onFocus={event => event.currentTarget.scrollIntoView?.({ block: "nearest", inline: "nearest" })}>
                   <tab.icon size={15} aria-hidden="true" /><span>{label}</span>
                   {review?.stageReview?.stage === tab.stage && <Pin size={12} aria-hidden="true" />}
+                  {pendingReview && review?.stageReview?.stage !== tab.stage && <span className="review-tab-indicator" aria-hidden="true" />}
                 </Tabs.Trigger>;
               })}
             </Tabs.List>
@@ -616,9 +630,12 @@ function Workspace(props: WorkspaceProps) {
           </div>}
           {stageTabs.map((tab) => <Tabs.Content key={tab.value} value={tab.value} forceMount hidden={activeTab !== tab.value}
             id={tab.id + "-panel"} className={tab.className}
+            inert={contentBlockedByReview && activeTab === tab.value}
+            aria-disabled={contentBlockedByReview && activeTab === tab.value || undefined}
             aria-labelledby={tab.id + (showStageTabs && tab.stage !== "development" ? "-workspace-tab" : "-tab")} tabIndex={0}>
-            {review?.stageReview?.stage === tab.stage ? <StageReviewWorkspace key={review.prototypeId} initial={review} parent={ui}
-              active={activeTab === tab.value} actionsContainer={stageActionsContainer} approvalContainer={approvalContainer}
+            {review?.stageReview?.stage === tab.stage ? <StageReviewWorkspace key={review.prototypeId} initial={review} parent={{ ...ui, reviewStage: openReview }}
+              active={activeTab === tab.value} actionsContainer={stageActionsContainer}
+              headerActionsContainer={prototypeHeaderActions}
               workingStage={projectView.developmentEntered ? "development" : current}
               onExit={() => {
                 setReview(null);
@@ -636,15 +653,23 @@ function Workspace(props: WorkspaceProps) {
               ? <div className="start-panel"><h2>Preparation was not used</h2><p>This project is working in Development. Its conversation remains alongside the project artifacts.</p></div>
               : <GoalEntry /> : <PreparationPanel /> : tab.stage === "requirements" ? <RequirementsPanel />
               : tab.stage === "sketch" ? <SketchCompletionContext.Provider value={props.onSketchBlocked}><SketchPanel
+                renderReviewActions={activeTab === "sketch" && reviewControlsContainer
+                  ? actions => createPortal(actions, reviewControlsContainer) : undefined}
                 renderApproval={actions => activeTab === "sketch" && approvalContainer ? createPortal(actions, approvalContainer) : null} /></SketchCompletionContext.Provider>
               : tab.stage === "prototype" ? <PrototypePanel active={activeTab === "preview" && projectView.entry.ready}
-                connected={!props.connectionError} renderActions={activeTab === "preview" && !atStart
-                  ? actions => stageActionsContainer ? createPortal(actions, stageActionsContainer) : null : undefined} /> : <DevelopmentPanel active={developmentView} />}
+                renderReviewActions={activeTab === "preview" && reviewControlsContainer
+                  ? actions => createPortal(actions, reviewControlsContainer) : undefined}
+                renderStageActions={activeTab === "preview" && prototypeHeaderActions
+                  ? actions => createPortal(actions, prototypeHeaderActions) : undefined}
+                connected={!props.connectionError} /> : <DevelopmentPanel active={developmentView} />}
             </UiContext.Provider>}
           </Tabs.Content>)}
           <Tabs.Content value="content" forceMount hidden={activeTab !== "content"} id="content-panel" className="content-panel" aria-labelledby="content-tab" tabIndex={0}><ArtifactsPanel selectedArtifactId={selectedArtifact} /></Tabs.Content>
+          {contentBlockedByReview && <div className="stage-content-overlay" aria-hidden="true" />}
           <div id="stage-input-review" className="stage-input-review" aria-label="Review and approval">
-            {!reviewing && <ChangeRequestsPanel compact showTrigger={activeTab !== "sketch"} />}
+            {!reviewing && <ChangeRequestsPanel compact showTrigger={!["preparation", "design-tree", "preview", "sketch"].includes(activeTab)} />}
+            {showStageTabs && !reviewing && <PendingReviewPane viewedStage={reviewTarget ?? current} pinnedReview={review}
+              onActionsContainer={setReviewControlsContainer} />}
             {showStageTabs && <section id="stage-review-actions" ref={setStageActionsContainer} className="phase-actions"
               aria-label={`${selectedLabel} review and preview actions`} />}
           </div>

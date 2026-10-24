@@ -4,23 +4,28 @@ import {
 } from "react";
 import { ToggleGroup } from "radix-ui";
 import {
-  Check, Clock, Hand, History, ListChecks, LoaderCircle, Monitor, MousePointer2, Plus, Redo2, RefreshCw, Save, Send, Sparkles, Trash2, Undo2, Workflow, X,
+  Check, Clock, Hand, History, LoaderCircle, Monitor, MousePointer2, Plus, Redo2, RefreshCw, Save, Send, Sparkles, Trash2, Undo2, Workflow, X,
 } from "lucide-react";
 import { hasScreenContent, validateSketchDocument } from "../sketch.js";
 import type { DslSketchDocument, DslSketchScreen, SketchRevision, SketchState, SketchTransition } from "../sketch.js";
 import { createDslScreen, renderSketchPng, resizeScreen, SketchEditor, SKETCH_SIZE_PRESETS } from "./sketch-editor.js";
-import { DslView, uiNodeLabel } from "./dsl-view.js";
+import { DslView } from "./dsl-view.js";
 import { DslStructure } from "./dsl-structure.js";
 import { SketchViewport } from "./sketch-viewport.js";
 import { readSketchPreview } from "./sketch-preview.js";
 import type { SketchPreview, SketchScreenStatus } from "../sketch-stream.js";
 import { hasActiveJobs, skippedStage, useAction, useDraft, useUi, type UiState } from "./ui-context.js";
 import { changeRequestHistoryStatus, changeRequestResponse } from "./change-request-feedback.js";
-import { changeReviewNeedsAttention, currentChangeReview } from "../change-request-policy.js";
+import { currentChangeReview } from "../change-request-policy.js";
 
 // The shell must distinguish completion readiness from pending requests: unsaved designs
 // block Finish Designs, but must not disable their own editing controls.
 export const SketchCompletionContext = createContext<(blocked: boolean) => void>(() => {});
+
+export interface DraftDesignApproval {
+  ready: boolean;
+  approve(): Promise<UiState | undefined>;
+}
 
 export function isSketchRevisionApproved(sketch: SketchState): boolean {
   const { current, approved } = sketch;
@@ -125,7 +130,11 @@ function SketchGenerationStatus({ processing, preview, hasScreen, dirty }: {
   </section>;
 }
 
-export function SketchPanel({ renderApproval }: { renderApproval?: (actions: ReactNode) => ReactNode } = {}) {
+export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprovalChange }: {
+  renderApproval?: (actions: ReactNode) => ReactNode;
+  renderReviewActions?: (actions: ReactNode) => ReactNode;
+  onDraftApprovalChange?: (approval: DraftDesignApproval | null) => void;
+} = {}) {
   const ui = useUi();
   const { state, pending, canEdit, guidance } = ui;
   const action = useAction("sketch");
@@ -205,8 +214,6 @@ export function SketchPanel({ renderApproval }: { renderApproval?: (actions: Rea
     worker?.status === "error" && worker.changeRequestId === item.id ? { ...item,
       error: worker.message || "The design revision failed. Open request history to review the failure and retry." } : item);
   const requiredReview = currentChangeReview(state);
-  const reviewRequest = requiredReview ?? drawingChanges.at(-1);
-  const reviewAttention = changeReviewNeedsAttention(state);
   const savedHistory: RequestHistoryItem[] = drawingChanges.map(item => ({
     id: `change:${item.id}`, requestId: item.analysisId ?? "", changeRequestId: item.id, at: item.submittedAt,
     kind: "revise", request: item.message, response: changeRequestResponse(item), status: changeRequestHistoryStatus(item),
@@ -281,7 +288,7 @@ export function SketchPanel({ renderApproval }: { renderApproval?: (actions: Rea
     if (kind === "revise") return value || "Revise designs";
     if (kind === "update") return updateRequirementsLabel;
     if (kind === "generate") return editor.document ? "Regenerate designs" : "Generate designs";
-    if (kind === "approve") return state.stageReview ? "Approve draft designs" : "Approve designs and continue";
+    if (kind === "approve") return state.stageReview ? "Approve draft" : "Approve designs and continue";
     return "Save designs";
   }
   function responseLabel(kind: RequestHistoryItem["kind"], result: UiState | undefined) {
@@ -557,6 +564,7 @@ export function SketchPanel({ renderApproval }: { renderApproval?: (actions: Rea
           ensureSketchWritable();
           if (!stateRef.current.stageReview) await post("/api/stage/complete", { stageId: "sketch" }, identity);
           updateHistory(historyId, { response: responseLabel("approve", stateRef.current), status: "success" });
+          return result;
         } else if (kind !== "save") {
           const result = await post("/api/sketch", {
             action: kind, expectedRevision: loadRef.current.baseRevision?.id ?? null,
@@ -656,16 +664,32 @@ export function SketchPanel({ renderApproval }: { renderApproval?: (actions: Rea
       event.currentTarget.form?.requestSubmit();
     }
   };
-  const approval = <div className="sketch-approval-actions">
+  const approved = isSketchRevisionApproved(state.sketch) && !dirty && !conflict;
+  const approvalDisabled = !writable || emptyScreens || conflict || state.sketch.status === "stale" || invalidFields || failedReviewWork;
+  useEffect(() => {
+    if (!state.stageReview || !onDraftApprovalChange) return;
+    onDraftApprovalChange({
+      ready: !approvalDisabled,
+      approve: async () => isSketchRevisionApproved(stateRef.current.sketch) && !isDirty() && !hasConflict()
+        ? stateRef.current : submit("approve"),
+    });
+    return () => onDraftApprovalChange(null);
+  }, [onDraftApprovalChange, approvalDisabled, state.revision, state.stageReview]);
+  const approval = state.stageReview ? null : <div className="sketch-approval-actions">
     <button id="sketch-approve" className="plan-button" type="button"
-      hidden={isSketchRevisionApproved(state.sketch) && !dirty && !conflict}
-      disabled={!writable || emptyScreens || conflict || state.sketch.status === "stale" || invalidFields || failedReviewWork}
-      onClick={() => void submit("approve")}><Check size={14} aria-hidden="true" />{state.stageReview ? "Approve draft designs" : "Approve designs and continue"}</button>
-    {document && isSketchRevisionApproved(state.sketch) && !dirty && !conflict && <span role="status">Saved designs approved</span>}
+      hidden={approved}
+      disabled={approvalDisabled}
+      onClick={() => void submit("approve")}><Check size={14} aria-hidden="true" />Approve designs and continue</button>
+    {document && approved && <span role="status">Saved designs approved</span>}
   </div>;
+  const updateAction = state.sketch.status === "stale" && canEdit("sketch") && !legacy
+    ? <button id="sketch-update-requirements" className="plan-button" type="button" disabled={!writable || !document || conflict || dirty}
+      title={dirty ? "Save or undo your local design edits before updating from requirements." : updateRequirementsLabel}
+      onClick={() => void submit("update")}><Sparkles size={15} aria-hidden="true" />{updateRequirementsLabel}</button> : null;
 
   return <section className="sketch-stage" onKeyDown={keydown}>
     {renderApproval ? renderApproval(approval) : approval}
+    {renderReviewActions?.(updateAction)}
     <div className="sketch-heading sketch-header-actions" role="group" aria-label="Design tools" aria-describedby="sketch-status">
       <button id="sketch-add-screen" className="sketch-icon-button" type="button" title="Add screen" aria-label="Add screen"
         disabled={!writable || legacy || (document?.screens.length ?? 0) >= 8 || !acceptedDecisionIds(state).length}
@@ -700,10 +724,7 @@ export function SketchPanel({ renderApproval }: { renderApproval?: (actions: Rea
     </div>
     <div id="sketch-status" className={incoming.preview || loadState.loading || action.busy || conflict || dirty || state.sketch.status === "stale" ? "muted" : "visually-hidden"} role="status" aria-live="polite" hidden={!status || generating}>
       <span>{status}</span>
-      {state.sketch.status === "stale" && canEdit("sketch") && !legacy && <button id="sketch-update-requirements"
-        className="plan-button" type="button" disabled={!writable || !document || conflict || dirty}
-        title={dirty ? "Save or undo your local design edits before updating from requirements." : updateRequirementsLabel}
-        onClick={() => void submit("update")}><Sparkles size={15} aria-hidden="true" />{updateRequirementsLabel}</button>}
+      {!renderReviewActions && updateAction}
     </div>
     {generating && <SketchGenerationStatus key={JSON.stringify([state.prototypeId, state.generation, worker.requestId])}
       processing={worker} preview={incoming.preview} hasScreen={Boolean(screen)} dirty={dirty} />}
@@ -863,14 +884,6 @@ export function SketchPanel({ renderApproval }: { renderApproval?: (actions: Rea
       </div>
     </div>
     <div className="sketch-input-pane">
-    {screen && !livePreview && <div className="sketch-change-context">
-      <span title={screen.title}>Change context: {screen.title}</span>
-      <select id="sketch-change-target" aria-label="Element for change" value={selectedNodeId ?? ""}
-        onChange={event => selectElement(event.currentTarget.value)}>
-        <option value="">No element selected</option>
-        {Object.values(screen.ui.nodes).map(node => <option key={node.id} value={node.id}>{uiNodeLabel(node)}</option>)}
-      </select>
-    </div>}
     <section id="sketch-request-history-pane" className="sketch-request-history-pane"
       aria-label="Design request history" hidden={!historyOpen}>
       <div className="sketch-history-heading">
@@ -920,15 +933,6 @@ export function SketchPanel({ renderApproval }: { renderApproval?: (actions: Rea
         title={activeError ? "Design request failed. Open request history." : "Request history"}
         aria-expanded={historyOpen} aria-controls="sketch-request-history-pane"
         onClick={() => setHistoryOpen((open) => !open)}><History size={17} aria-hidden="true" /></button>
-      {ui.changeRequestDialog && <button id="sketch-review-change" className="sketch-review-toggle" type="button"
-        aria-label={reviewAttention ? "Review required" : "Open change review"}
-        title={requiredReview ? "Resolve the current review before sending another change" : "Review"}
-        aria-haspopup="dialog" aria-controls="change-request-details"
-        aria-expanded={ui.changeRequestDialog.requestId !== null}
-        data-status={reviewAttention ? "attention" : "idle"}
-        disabled={!reviewRequest} onClick={event => {
-          if (reviewRequest) ui.changeRequestDialog!.open(reviewRequest.id, event.currentTarget);
-        }}><ListChecks size={17} aria-hidden="true" /></button>}
     </form>
     <p id="sketch-review-required" className="visually-hidden" role="status">{requiredReview
       ? "Review required. New changes are paused until this review is resolved. You can still inspect screens and history." : ""}</p>
