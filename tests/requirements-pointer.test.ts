@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { state } from "./helpers/react-harness.js";
 import { browserAvailable, openFixtureBrowser } from "../development/tandem/test/helpers/browser-fixture.mjs";
+import { curatedDefault } from "../src/workflow.js";
 
 test("defaults mouse activation stays on its button when focus leaves the answer form",
     { skip: !browserAvailable, timeout: 60_000 }, async t => {
@@ -19,6 +21,16 @@ test("defaults mouse activation stays on its button when focus leaves the answer
                 recommended: "Trim whitespace, reject empty names and allow duplicates.", allowFreeText: true,
                 answerPlaceholder: "Override the shared text-validation policy." },
         }];
+        const first = value.decisionGraph.nodes[0];
+        value.decisionGraph.nodes.push(
+            { ...first, id: "payment", title: "Payment boundary for pickup orders", status: "toAnswer", dependencies: ["validation"],
+                question: { ...first.question!, id: "payment", text: "How should pickup orders be paid for?",
+                    choices: ["Pay at pickup", "Pay when ordering", "Do not collect payments"], recommended: null } },
+            { ...first, id: "confirmation", title: "Pickup confirmation", status: "toAnswer", dependencies: ["payment"],
+                question: { ...first.question!, id: "confirmation" } },
+            { ...first, id: "jurisdiction", title: "Governing shop jurisdiction", status: "toAnswer", dependencies: ["confirmation"],
+                question: { ...first.question!, id: "jurisdiction", recommended: null } },
+        );
         const css = (await build({ entryPoints: [fileURLToPath(new URL("../src/renderer/styles.css", import.meta.url))],
             bundle: true, write: false, logLevel: "silent" })).outputFiles[0].text;
         const bundle = await build({ stdin: { contents: `
@@ -41,6 +53,7 @@ test("defaults mouse activation stays on its button when focus leaves the answer
             .replace("__TANDEM_STYLES__", () => css).replace("__TANDEM_VERSION__", "pointer-test")
             .replace("<script>__TANDEM_CLIENT__</script>", '<script type="module" src="/app.js"></script>');
         let answers = 0;
+        let submittedDefaults: { nodeId: string; answer: string }[] = [];
         const server = createServer((request, response) => {
             if (request.url === "/") { response.setHeader("Content-Type", "text/html"); response.end(template); }
             else if (request.url === "/app.js") { response.setHeader("Content-Type", "text/javascript"); response.end(bundle.outputFiles[0].text); }
@@ -48,8 +61,22 @@ test("defaults mouse activation stays on its button when focus leaves the answer
                 response.setHeader("Content-Type", "application/json");
                 response.end(JSON.stringify({ projectPath: "C:\\pointer-fixture", startingPath: "preparation", developmentContext: false, developmentStarted: false }));
             }
-            else {
-                if (request.url === "/api/answer") answers++;
+            else if (request.url === "/api/answer") {
+                answers++;
+                let body = "";
+                request.on("data", chunk => { body += chunk; });
+                request.on("end", () => {
+                    submittedDefaults = JSON.parse(body).defaults;
+                    value.decisionGraph.nodes = value.decisionGraph.nodes.map(node => {
+                        const answer = curatedDefault(node.question);
+                        return { ...node, answer, status: answer ? "answered" : node.id === "payment" ? "active" : "toAnswer" };
+                    });
+                    value.processing = { action: "apply-defaults", status: "success" };
+                    value.revision++;
+                    response.setHeader("Content-Type", "application/json");
+                    response.end(JSON.stringify(value));
+                });
+            } else {
                 response.setHeader("Content-Type", "application/json");
                 response.end(JSON.stringify(request.url === "/api/state" ? value : { url: "http://127.0.0.1:1/", channel: "pointer-test" }));
             }
@@ -88,5 +115,43 @@ test("defaults mouse activation stays on its button when focus leaves the answer
         await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", windowsVirtualKeyCode: 27 });
         await browser.waitFor('!document.querySelector("[role=alertdialog]")');
         assert.equal(answers, 0);
+        for (const width of [1440, 760, 400]) {
+            await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 1100, deviceScaleFactor: 1, mobile: false });
+            await browser.evaluate('document.querySelector("#decision-list").scrollIntoView({block:"center"})');
+            const markers = await browser.evaluate(`Array.from(document.querySelectorAll("#decision-list .explicit-answer-badge"),badge=>{
+                const box=badge.getBoundingClientRect(), parent=badge.closest("button"), bounds=parent.getBoundingClientRect();
+                return {text:badge.textContent, visible:box.width>0&&box.height>0, contained:box.right<=bounds.right&&box.left>=bounds.left,
+                    border:getComputedStyle(parent).borderStyle, overflow:parent.scrollWidth>parent.clientWidth};
+            })`);
+            assert.equal(markers.length, 2);
+            assert.ok(markers.every(marker => marker.visible && marker.contained && marker.border === "dashed" && !marker.overflow), JSON.stringify({ width, markers }));
+            if (process.env.TANDEM_REQUIREMENTS_SCREENSHOTS) {
+                await writeFile(join(process.env.TANDEM_REQUIREMENTS_SCREENSHOTS, `requirements-explicit-${width}.png`), await browser.screenshot());
+            }
+        }
+        await browser.call("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1100, deviceScaleFactor: 1, mobile: false });
+        await click(".all-recommended");
+        await browser.waitFor('Boolean(document.querySelector("[role=alertdialog]"))');
+        assert.match(await browser.evaluate('document.querySelector("[role=alertdialog]").textContent'), /2 questions need an explicit answer/);
+        await click('[role="alertdialog"] .plan-button:not(.secondary)');
+        await browser.waitFor('document.querySelector("[data-decision-id=payment]").getAttribute("aria-pressed")==="true"');
+        await browser.waitFor('document.activeElement===document.querySelector("#question-host textarea")');
+        assert.equal(answers, 1);
+        assert.deepEqual(submittedDefaults.map(item => item.nodeId), ["validation", "confirmation"]);
+        assert.equal(await browser.evaluate('document.querySelectorAll("#question-host [role=radio][data-state=checked]").length'), 0);
+        assert.equal(await browser.evaluate('document.querySelector(".all-recommended").disabled'), true);
+        if (process.env.TANDEM_REQUIREMENTS_SCREENSHOTS) {
+            await writeFile(join(process.env.TANDEM_REQUIREMENTS_SCREENSHOTS, "requirements-explicit-focused.png"), await browser.screenshot());
+        }
+        await click('[data-decision-id="jurisdiction"]');
+        await browser.waitFor('document.querySelector("#design-tree-current").textContent.includes("Ready to answer")');
+        assert.equal(await browser.evaluate('document.querySelector("#question-host textarea").disabled'), false);
+        assert.equal(await browser.evaluate('document.querySelector("#decision-submit").disabled'), false);
+        assert.equal(await browser.evaluate('document.querySelectorAll("#question-host [role=radio][data-state=checked]").length'), 0);
+        assert.doesNotMatch(await browser.evaluate('document.querySelector("#question-host").textContent'), /Waiting for prerequisites|cannot answer it yet/);
+        assert.equal(answers, 1, "selecting another ready explicit question does not submit it");
+        if (process.env.TANDEM_REQUIREMENTS_SCREENSHOTS) {
+            await writeFile(join(process.env.TANDEM_REQUIREMENTS_SCREENSHOTS, "requirements-explicit-ready.png"), await browser.screenshot());
+        }
         assert.deepEqual(browser.exceptions, []);
     });

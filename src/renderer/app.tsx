@@ -402,7 +402,8 @@ function Workspace(props: WorkspaceProps) {
         : state.decisionGraph.nodes.some((node) => node.status === "active")
           ? [["decision-submit", "Answer the active requirement decision"], ["complete-stage", "Finish requirements collection"]]
           : [["complete-stage", "Finish requirements collection"]],
-      sketch: [["sketch-retry-revision", "Retry the failed design revision", "sketch-history-toggle"], ["complete-stage", "Finish Designs and continue to Prototype"],
+      sketch: [["sketch-retry-generation", "Continue the failed design generation"],
+        ["sketch-retry-revision", "Retry the failed design revision", "sketch-history-toggle"], ["complete-stage", "Finish Designs and continue to Prototype"],
         ["sketch-approve", "Approve designs and continue"], ["sketch-generate", "Generate screen designs"]],
       prototype: [["apply-prototype-update", "Show the prepared prototype version"], ["extend-prototype-budget", "Review an additional prototype work window"],
         ["retry-prototype-checkpoint", "Retry incomplete prototype work"], ["start-prototype", "Start the prototype build"],

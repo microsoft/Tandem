@@ -6,7 +6,7 @@ import { extensionHarness } from "./helpers/extension-harness.js";
 import { buildDecisionGraphMermaid } from "../src/decision-diagram.js";
 import { requirementsInputDigest, validateChangeSet } from "../src/requirements-reconciliation.js";
 import type { TandemState } from "../src/types.js";
-import type { DecisionNode } from "../src/workflow.js";
+import { curatedDefault, type DecisionNode } from "../src/workflow.js";
 
 const plain = (value: unknown) => JSON.parse(JSON.stringify(value));
 function decision(id: string, dependencies: string[] = [], answer: string | null = null): DecisionNode {
@@ -51,7 +51,7 @@ async function setup() {
 }
 function snapshot(state: TandemState) {
     return plain({ action: "apply-defaults", expectedRevision: state.revision, generation: state.generation,
-        defaults: state.decisionGraph.nodes.filter((node) => !node.answer)
+        defaults: state.decisionGraph.nodes.filter((node) => !node.answer && curatedDefault(node.question))
             .map((node) => ({ nodeId: node.id, answer: node.question!.recommended })) });
 }
 function worker(h: Awaited<ReturnType<typeof extensionHarness>>, result: (request: any) => any = changes, factory?: any) {
@@ -193,11 +193,125 @@ test("snapshot drift, unknown choices and non-curated recommendations cannot lau
             const state = await f.h.api.loadState("sample");
             state.decisionGraph.nodes[2].question!.choices = choices;
             await f.h.api.persistState(state);
-            const response = await f.post(snapshot(state));
+            const valid = snapshot(state);
+            const response = await f.post({ ...valid, defaults: [...valid.defaults, { nodeId: "child", answer: "Recommended" }] });
             assert.equal(response.status, 409);
-            assert.match((await response.json() as any).error, /curated recommended/);
+            assert.match((await response.json() as any).error, /exactly all current unanswered whole-graph recommendations/);
         }
         assert.equal(f.h.requests.length, 0);
+    } finally { await f.close(); }
+});
+
+test("mixed defaults accept all curated descendants, retain explicit blockers and persist the next question", async () => {
+    const f = await setup();
+    try {
+        const state = await f.h.api.loadState("sample");
+        state.decisionGraph.nodes[2].question!.recommended = null;
+        state.decisionGraph.nodes.push({ ...decision("last", ["grandchild"]),
+            question: { ...decision("last").question!, recommended: null } });
+        await f.h.api.persistState(state);
+        const approved = snapshot(await f.h.api.loadState("sample"));
+        assert.deepEqual(approved.defaults, [{ nodeId: "root", answer: "Recommended" }, { nodeId: "grandchild", answer: "Recommended" }]);
+        const agents = worker(f.h);
+        assert.equal((await f.post(approved)).status, 202);
+        await f.h.waitForRequests(); await f.h.api.waitForAnswer("sample");
+        const next = await f.h.api.loadState("sample");
+        assert.equal(next.processing.status, "success", next.processing.message);
+        assert.equal(next.question!.id, "child");
+        assert.equal(next.decisionGraph.nodes[2].answer, null);
+        assert.equal(next.decisionGraph.nodes[2].status, "active");
+        assert.equal(next.decisionGraph.nodes[3].answer, "Recommended");
+        assert.equal(next.decisionGraph.nodes[4].answer, null);
+        assert.equal(next.decisionGraph.nodes[0].answer, "Custom accepted intent");
+        assert.equal(agents(), 1);
+        assert.deepEqual(plain(next.processing.defaultBatch.defaults), approved.defaults);
+        assert.match(next.status, /2 questions still need an explicit answer/);
+        assert.doesNotMatch(next.status, /ready for explicit completion/);
+        assert.deepEqual(plain(next.confirmed), ["existing: Custom accepted intent", "root: Recommended", "grandchild: Recommended"]);
+        assert.match(next.artifacts.find(item => item.id === "design-tree")!.mermaid, /class Decision2,Decision4 explicitAnswer/);
+        await assert.rejects(f.h.api.completeLifecycleStage("sample", "requirements", "project:tandem"), /remain unanswered/);
+    } finally { await f.close(); }
+});
+
+test("only explicit questions cannot launch an empty batch or accept fabricated defaults", async () => {
+    const f = await setup();
+    try {
+        const state = await f.h.api.loadState("sample");
+        for (const node of state.decisionGraph.nodes) if (!node.answer) node.question!.recommended = null;
+        await f.h.api.persistState(state);
+        const body = snapshot(await f.h.api.loadState("sample"));
+        for (const defaults of [[], [{ nodeId: "root", answer: "Recommended" }]]) {
+            const response = await f.post({ ...body, defaults });
+            assert.equal(response.status, 409);
+            assert.match((await response.json()).error, /No recommended answers are available/);
+        }
+        assert.equal(f.h.requests.length, 0);
+    } finally { await f.close(); }
+});
+
+test("a non-active explicit question is answerable once its prerequisites are satisfied", async () => {
+    const f = await setup();
+    try {
+        const state = await f.h.api.loadState("sample");
+        state.decisionGraph.nodes.push({ ...decision("jurisdiction", ["existing"]),
+            question: { ...decision("jurisdiction").question!, recommended: null } });
+        await f.h.api.persistState(state);
+        const before = await f.h.api.loadState("sample");
+        assert.equal(before.question!.id, "root");
+        assert.equal(before.decisionGraph.nodes.find(node => node.id === "jurisdiction")!.status, "toAnswer");
+        const agents = worker(f.h, () => ({
+            upsert: [], assumptions: { add: [], remove: [] }, deferred: { add: [], remove: [] }, prototypeApproach: null,
+        }));
+        const rejected = await f.post({ action: "answer-decision", questionId: "child", answer: "Premature answer" });
+        assert.equal(rejected.status, 409);
+        assert.match((await rejected.json()).error, /Complete its prerequisites first/);
+        assert.equal(f.h.requests.length, 0);
+        assert.equal((await f.post({ action: "answer-decision", questionId: "jurisdiction",
+            answer: "The shop operates in Washington, USA." })).status, 202);
+        await f.h.waitForRequests(); await f.h.api.waitForAnswer("sample");
+        const next = await f.h.api.loadState("sample");
+        assert.equal(next.processing.status, "success", next.processing.message);
+        assert.equal(next.decisionGraph.nodes.find(node => node.id === "jurisdiction")!.answer, "The shop operates in Washington, USA.");
+        assert.equal(next.question!.id, "root");
+        assert.equal(next.decisionGraph.nodes[1].answer, null);
+        assert.equal(next.decisionGraph.nodes[2].answer, null);
+        assert.equal(next.decisionGraph.nodes[0].answer, "Custom accepted intent");
+        assert.equal(agents(), 1);
+        assert.equal((await f.post({ action: "answer-decision", questionId: "jurisdiction",
+            answer: "Another answer without change consent" })).status, 409);
+    } finally { await f.close(); }
+});
+
+test("answering an explicit blocker reopens changed saved downstream defaults, retaining their prior answers", async () => {
+    const f = await setup();
+    try {
+        const state = await f.h.api.loadState("sample");
+        state.decisionGraph.nodes[1].question!.recommended = null;
+        await f.h.api.persistState(state);
+        worker(f.h);
+        assert.equal((await f.post(snapshot(await f.h.api.loadState("sample")))).status, 202);
+        await f.h.waitForRequests(); await f.h.api.waitForAnswer("sample");
+        const batched = await f.h.api.loadState("sample");
+        assert.equal(batched.question!.id, "root");
+        assert.equal(batched.decisionGraph.nodes[2].answer, "Recommended");
+        worker(f.h, () => ({
+            upsert: [{ id: "child", title: "Review child", dependencies: ["root"],
+                question: { ...decision("child").question!, text: "Which behavior fits the explicit answer?" } }],
+            assumptions: { add: [], remove: [] }, deferred: { add: [], remove: [] }, prototypeApproach: null,
+        }));
+        assert.equal((await f.post({ action: "answer-decision", questionId: "root", answer: "Explicit constraint" })).status, 202);
+        await f.h.waitForRequests(2); await f.h.api.waitForAnswer("sample");
+        const next = await f.h.api.loadState("sample");
+        assert.equal(next.processing.status, "success", next.processing.message);
+        assert.equal(next.decisionGraph.nodes[1].answer, "Explicit constraint");
+        assert.equal(next.decisionGraph.nodes[0].answer, "Custom accepted intent");
+        for (const node of next.decisionGraph.nodes.slice(2)) {
+            assert.equal(node.answer, null);
+            assert.equal(node.review?.previousAnswer, "Recommended");
+        }
+        assert.equal(next.question!.id, "child");
+        assert.deepEqual(plain(next.confirmed), ["existing: Custom accepted intent", "root: Explicit constraint"]);
+        assert.equal(f.h.requests.length, 2);
     } finally { await f.close(); }
 });
 
