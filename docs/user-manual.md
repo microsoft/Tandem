@@ -264,8 +264,9 @@ and any already-running work remain intact and appear under the combined tab.
 An old Structure-only preview is partial, not proof of a complete prototype.
 
 **Prototype** focuses on task flow and behavior; **Visual exploration** focuses
-on appearance without adding workflows. Feedback continues to target the
-accepted version, including when inspecting a saved result or comparing styles.
+on appearance without adding workflows. Feedback targets the accepted version
+when inspecting a saved result or **Default**. When comparing a named direction
+or **Custom**, the same feedback box refines only that alternative.
 
 Use the **Prototype** and **Visual exploration** tabs to revisit
 each saved result, including after continuing into a later stage.
@@ -300,10 +301,13 @@ new navigation or features.
 2. Expand **Advanced settings** for light/dark, accent, density, text size and
    effects on a named direction. Changed settings appear as **Custom** and switch
    in place without an agent run. Reduced-motion preferences always turn motion off.
-3. Use **Refine direction** to request a change to that alternative only.
-   Ordinary **Feedback** still targets the current prototype and waits until
-   exploration is applied or put aside.
-4. Use **Accept** in the top toolbar to apply the previewed direction and settings.
+3. Use the shared **Feedback** box and **Refine direction** to request a change
+   to the alternative on screen. Its heading identifies the target, and drafts
+   are retained separately for each direction and the accepted prototype.
+   Return to **Default** or the **Prototype** tab for ordinary feedback, which
+   waits until exploration is applied or put aside.
+4. Use **Accept** at the top right of **Compare visual directions** to apply the
+   previewed direction and settings.
    Accepting **Default** restores the saved original without regenerating it.
    Alternatives, settings and checkpoint history are retained.
 
