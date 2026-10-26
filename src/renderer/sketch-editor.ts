@@ -1,6 +1,5 @@
-import { isDslScreen, MAX_SKETCH_DIMENSION, renderSketchSvg, validateSketchDocument, validSketchDimension } from "../sketch.js";
+import { createSketchUi, isDslScreen, MAX_SKETCH_DIMENSION, renderSketchSvg, validateSketchDocument, validSketchDimension } from "../sketch.js";
 import type { DrawingScreen, DslSketchDocument, DslSketchScreen, SketchCurve, SketchDocument, SketchPoint, SketchScreen, SketchShape } from "../sketch.js";
-import { createDocument } from "../vendor/ui-dsl/index.js";
 import { renderDslSvg } from "./dsl-view.js";
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -32,7 +31,7 @@ export function resizeScreen(screen: DrawingScreen, width: number, height: numbe
 
 export function createDslScreen(document: DslSketchDocument, decisionIds: string[]): DslSketchScreen {
   const { shapes: _shapes, ...metadata } = createScreen(document, decisionIds);
-  return { ...metadata, ui: createDocument() };
+  return { ...metadata, ui: createSketchUi(document.fidelity) };
 }
 
 export function createScreen(document: SketchDocument, decisionIds: string[]): SketchScreen {

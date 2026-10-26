@@ -7,9 +7,10 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { browserAvailable, openFixtureBrowser } from "../development/tandem/test/helpers/browser-fixture.mjs";
 import { sketchDocument } from "./helpers/sketch-lifecycle-fixture.js";
-import { addUi, createDocument } from "./helpers/ui-dsl-fixture.js";
+import { addUi } from "./helpers/ui-dsl-fixture.js";
 import { decision, rendererFixtureScript, state } from "./helpers/react-harness.js";
 import { SketchOperationStream } from "../src/sketch-stream.js";
+import { createSketchUi } from "../src/sketch.js";
 
 test("real browser shows design generation before the first view and keeps live feedback clear of the canvas", {
     skip: !browserAvailable, timeout: 60_000,
@@ -87,9 +88,10 @@ test("real browser shows design generation before the first view and keeps live 
             join(process.env.TANDEM_UI_EVIDENCE, `design-generation-${width}.png`), await browser.screenshot());
     }
     const outline = sketchDocument();
+    outline.fidelity = "wireframe";
     outline.screens[0].title = "Menu";
-    outline.screens[0].ui = createDocument();
-    outline.screens.push({ ...outline.screens[0], id: "details", title: "Drink details", ui: createDocument() });
+    outline.screens[0].ui = createSketchUi("wireframe");
+    outline.screens.push({ ...outline.screens[0], id: "details", title: "Drink details", ui: createSketchUi("wireframe") });
     const waiting = { ...initial, revision: 2, sketchPreview: {
         prototypeId: initial.prototypeId, ...initial.processing.sketchRequest,
         requestId: "design-request", runId: "design-run", sequence: 1, document: outline,
@@ -122,7 +124,7 @@ test("real browser shows design generation before the first view and keeps live 
     await browser.evaluate('document.querySelectorAll("#sketch-screens button")[0].click()');
     await browser.waitFor('document.querySelector("#sketch-page-status").textContent.includes("Menu")');
     await browser.call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 760, deviceScaleFactor: 1, mobile: false });
-    outline.screens[0].ui = sketchDocument().screens[0].ui;
+    addUi(outline.screens[0], "primary-action", "Button", { label: "Continue" });
     const live = { ...initial, revision: 2, sketchPreview: {
         prototypeId: initial.prototypeId, ...initial.processing.sketchRequest,
         requestId: "design-request", runId: "design-run", sequence: 2, document: outline,
@@ -140,6 +142,9 @@ test("real browser shows design generation before the first view and keeps live 
     assert.match(layout.message, /2 screens received.*live update 2/);
     assert.ok(layout.statusBottom <= layout.workspaceTop + 1, "The indicator must not overlay the arriving UI.");
     assert.equal(layout.busy, true, "Live updates are not saved approval.");
+    assert.match(await browser.evaluate('document.querySelector("#sketch-focus").textContent'), /Wireframes: layout & navigation/);
+    assert.equal(await browser.evaluate('getComputedStyle(document.querySelector("#sketch-board .dsl-view").shadowRoot.querySelector("button")).backgroundColor'),
+        "rgb(51, 51, 51)", "New wireframes use the shared neutral kit, not a generated palette.");
     assert.equal(await browser.evaluate('document.querySelector("#sketch-screens button").dataset.screenStatus'), "processing");
     assert.equal(await browser.evaluate('document.querySelector(".sketch-page-placeholder")'), null);
     await browser.call("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });

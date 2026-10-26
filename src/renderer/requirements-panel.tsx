@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, Check, ChevronDown, CircleDot, ExternalLink, GitBranch, LoaderCircle, LockKeyhole, Plus, RefreshCw, Send, Sparkles } from "lucide-react";
-import { Collapsible, RadioGroup } from "radix-ui";
+import { Collapsible, RadioGroup, Tabs } from "radix-ui";
 import { buildDecisionGraphMermaid } from "../decision-diagram.js";
 import { decisionIsReady, requiresExplicitAnswer, type DecisionNode } from "../workflow.js";
 import { Diagram } from "./diagram.js";
@@ -212,7 +212,8 @@ export function RequirementsPanel() {
     const [defaultsError, setDefaultsError] = useState("");
     const [activeAction, setActiveAction] = useState<"add-usage" | "generate-dag" | "answer" | "defaults" | null>(null);
     const [selection, setSelection] = useState<{ id: string | null; followActive: boolean }>({ id: null, followActive: true });
-    const [usagesExpanded, setUsagesExpanded] = useDraft("requirements:accepted-usages-expanded", false);
+    const [usagesExpanded, setUsagesExpanded] = useDraft("requirements:accepted-usages-expanded", true);
+    const [substageTab, setSubstageTab] = useDraft<"usage" | "dag" | null>("requirements:substage-tab", null);
     const [focusRequest, setFocusRequest] = useState(0);
     const [expandedQuestion, setExpandedQuestion] = useState<string | null>(null);
     const latest = useRef(ui);
@@ -236,6 +237,7 @@ export function RequirementsPanel() {
     const draftKey = selected ? requirementDraftKey(state, selected) : "";
     const draft = selected ? answerDrafts[draftKey] || initialAnswer(selected) : null;
     const isUsage = (state.requirements?.substage || (nodes.length ? "dag" : "usage")) === "usage";
+    const viewedSubstage = substageTab === "dag" && !nodes.length ? "usage" : substageTab ?? (isUsage ? "usage" : "dag");
     const canEdit = editable(ui);
     const guidance = canEdit ? "" : writeGuidance(ui);
     const processing = state.processing as RequirementsProcessing | null;
@@ -281,6 +283,7 @@ export function RequirementsPanel() {
             && priorSubstage.current.substage === "usage" && substage === "dag";
         if (generated && (busy || processing?.status === "error")) return;
         priorSubstage.current = { identity, substage };
+        if (generated && nodes.length) setSubstageTab("dag");
         if (!generated || !nodes.some((node) => node.status === "active")) return;
         setSelection({ id: null, followActive: true });
         browseStage("requirements");
@@ -312,7 +315,7 @@ export function RequirementsPanel() {
         target.focus({ preventScroll: true });
         decisionList.current?.querySelector<HTMLElement>('[aria-pressed="true"]')?.scrollIntoView?.({ block: "nearest" });
         questionHost.current?.scrollIntoView?.({ block: "nearest" });
-    }, [focusRequest, draftKey, busy]);
+    }, [focusRequest, draftKey, busy, viewedSubstage]);
 
     function stillCurrent(snapshot: UiState, sequence: number): boolean {
         return mounted.current && requestSequence.current === sequence
@@ -466,17 +469,23 @@ export function RequirementsPanel() {
                     ? "The remaining decisions are blocked. Review their prerequisites before continuing."
                     : explicitQuestions.length ? `${explicitQuestions.length} ${explicitQuestions.length === 1 ? "question needs" : "questions need"} an explicit answer. Whole-graph defaults will skip ${explicitQuestions.length === 1 ? "it" : "them"}.` : "");
 
-    return <>
+    return <Tabs.Root className="requirements-workspace" value={viewedSubstage} onValueChange={(value) => {
+        if (value === "usage" || value === "dag") setSubstageTab(value);
+    }}>
+        <Tabs.List className="preview-tabs requirements-substages" aria-label="Requirements substages">
+            <Tabs.Trigger id="usage-substage" value="usage" className="preview-tab requirements-substage"
+                data-status={isUsage ? "active" : "complete"} aria-controls="requirements-usage-panel">
+                <span className="requirements-substage-index">1</span><span>Usage list</span>
+            </Tabs.Trigger>
+            <Tabs.Trigger id="dag-substage" value="dag" className="preview-tab requirements-substage"
+                data-status={isUsage ? "locked" : "active"} disabled={!nodes.length} aria-controls="requirements-dag-panel">
+                <span className="requirements-substage-index">2</span><span>Decision DAG</span>
+            </Tabs.Trigger>
+        </Tabs.List>
+        <Tabs.Content id="requirements-usage-panel" value="usage" forceMount hidden={viewedSubstage !== "usage"}
+            className="requirements-usage-panel" aria-labelledby="usage-substage">
         <section id="requirements-substage-section" className="section requirements-intake-panel" aria-label="Requirements" aria-describedby="usage-message" data-substage={isUsage ? "usage" : "dag"}>
-            <div className="requirements-intake-heading"><p className="eyebrow"><GitBranch size={14} aria-hidden="true" />Requirements</p>
-            <ol className="requirements-substages" aria-label="Requirements substages">
-                <li id="usage-substage" className="requirements-substage" data-status={isUsage ? "active" : "complete"}>
-                    <span className="requirements-substage-index">1</span><span>Usage list</span>
-                </li>
-                <li id="dag-substage" className="requirements-substage" data-status={isUsage ? "locked" : "active"}>
-                    <span className="requirements-substage-index">2</span><span>Decision DAG</span>
-                </li>
-            </ol></div>
+            <div className="requirements-intake-heading"><p className="eyebrow"><GitBranch size={14} aria-hidden="true" />Requirements</p></div>
             <div id="usage-intake" className="usage-intake" hidden={!isUsage}>
                 <div className="usage-entry">
                 <h2 className="usage-title">What should this help you do?</h2>
@@ -560,6 +569,9 @@ export function RequirementsPanel() {
                 {!research.sources.length && <p className="muted">No external sources recorded.</p>}
             </div>
         </details>}
+        </Tabs.Content>
+        <Tabs.Content id="requirements-dag-panel" value="dag" forceMount hidden={viewedSubstage !== "dag"}
+            className="requirements-dag-panel" aria-labelledby="dag-substage">
         <div id="design-tree-card" className="design-tree-card" hidden={!nodes.length}>
             <div className="design-tree-heading">
                 <div className="design-tree-location">
@@ -585,24 +597,26 @@ export function RequirementsPanel() {
                         </div>}
                         label="Requirements decision DAG" />
                 </div>}
-                <ol id="decision-list" className="decision-list" aria-label="Requirement decisions" ref={decisionList}>
-                    {nodes.map((node) => <li key={node.id}>
-                        <button type="button" data-ui-key={`decision-text:${node.id}`} data-decision-id={node.id}
-                            data-explicit-answer={requiresExplicitAnswer(node) || undefined}
-                            data-status={node.status} aria-pressed={node.id === selected?.id} onClick={() => selectDecision(node.id)}>
-                            {node.status === "answered" ? <Check size={15} aria-hidden="true" /> : decisionIsReady(node, nodes)
-                                ? <CircleDot size={15} aria-hidden="true" /> : <LockKeyhole size={15} aria-hidden="true" />}
-                            <span>{node.title} · {node.status === "toAnswer"
-                                ? decisionIsReady(node, nodes) ? "Ready to answer" : "To answer" : node.status}
-                                {node.review ? " · Review required" : ""}</span>
-                            {requiresExplicitAnswer(node) && <span className="explicit-answer-badge">Explicit answer</span>}
-                        </button>
-                    </li>)}
-                </ol>
-                <p id="design-tree-status" className="diagram-status" role={defaultsError || action.error || defaultsFailed ? "alert" : "status"}
-                    aria-live="polite" data-status={defaultsError || action.error || defaultsFailed ? "error" : "idle"}>{graphStatus}</p>
+                <div className="decision-list-pane" role="region" aria-label="Requirement decision list" tabIndex={0}>
+                    <ol id="decision-list" className="decision-list" aria-label="Requirement decisions" ref={decisionList}>
+                        {nodes.map((node) => <li key={node.id}>
+                            <button type="button" data-ui-key={`decision-text:${node.id}`} data-decision-id={node.id}
+                                data-explicit-answer={requiresExplicitAnswer(node) || undefined}
+                                data-status={node.status} aria-pressed={node.id === selected?.id} onClick={() => selectDecision(node.id)}>
+                                {node.status === "answered" ? <Check size={15} aria-hidden="true" /> : decisionIsReady(node, nodes)
+                                    ? <CircleDot size={15} aria-hidden="true" /> : <LockKeyhole size={15} aria-hidden="true" />}
+                                <span>{node.title} · {node.status === "toAnswer"
+                                    ? decisionIsReady(node, nodes) ? "Ready to answer" : "To answer" : node.status}
+                                    {node.review ? " · Review required" : ""}</span>
+                                {requiresExplicitAnswer(node) && <span className="explicit-answer-badge">Explicit answer</span>}
+                            </button>
+                        </li>)}
+                    </ol>
+                    <p id="design-tree-status" className="diagram-status" role={defaultsError || action.error || defaultsFailed ? "alert" : "status"}
+                        aria-live="polite" data-status={defaultsError || action.error || defaultsFailed ? "error" : "idle"}>{graphStatus}</p>
+                </div>
             </div>
-            <aside className="design-tree-inspector" aria-label="Selected decision" data-status-help={guidance}>
+            <aside className="design-tree-inspector" aria-label="Selected decision" tabIndex={0} data-status-help={guidance}>
                 <p className="eyebrow">Selected question</p>
                 <div id="question-host" className="question-card" ref={questionHost}
                     data-composer-expanded={expandedQuestion === draftKey || undefined}
@@ -643,5 +657,6 @@ export function RequirementsPanel() {
         <div id="design-tree-empty" className="visually-hidden" hidden={nodes.length > 0}>
             <p>The requirements DAG will appear after the usage list is captured.</p>
         </div>
-    </>;
+        </Tabs.Content>
+    </Tabs.Root>;
 }

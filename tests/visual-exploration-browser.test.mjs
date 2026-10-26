@@ -11,7 +11,7 @@ import { browserAvailable, openFixtureBrowser } from "../development/tandem/test
 
 const previewHtml = checkpointId => `<!doctype html><html><head>
 <meta name="tandem-prototype-id" content="fixture"><meta name="tandem-prototype-checkpoint" content="${checkpointId}">
-${checkpointId === "interaction" ? "" : '<meta name="tandem-visual-exploration" content="1">'}
+${["structure", "interaction"].includes(checkpointId) ? "" : '<meta name="tandem-visual-exploration" content="1">'}
 <style>
 :root{--tandem-text-scale:1;--tandem-spacing-scale:1;--tandem-accent:#1d4ed8;--tandem-accent-contrast:#fff;--tandem-motion-duration:0ms}
 *{box-sizing:border-box}body{margin:0;background:#f8fafc;color:#182235;font:calc(16px * var(--tandem-text-scale))/1.5 system-ui}
@@ -90,7 +90,7 @@ test("real browser keeps the original as Default, shares the toolbar and explici
           state.previewUrl = state.prototypeFlow.checkpoints.find(item => item.id === input.checkpointId).previewUrl;
         } else throw new Error("Unexpected browser action: " + input.action);
         json({ ...state, revision: ++state.revision });
-      } else if (/^\/(?:interaction|visual-bundle|chosen)\//.test(url.pathname)) {
+      } else if (/^\/(?:structure|interaction|visual-bundle|chosen)\//.test(url.pathname)) {
         const id = url.pathname.split("/")[1];
         if (url.pathname.endsWith("tandem-visual-directions.json")) json(manifests.get(id));
         else if (url.pathname.endsWith("tandem-preview-bridge.js")) { res.writeHead(200, { "Content-Type": "text/javascript" }); res.end(prototypePreviewBridgeSource); }
@@ -100,7 +100,7 @@ test("real browser keeps the original as Default, shares the toolbar and explici
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   origin = `http://127.0.0.1:${server.address().port}`;
-  for (const checkpoint of state.prototypeFlow.checkpoints) checkpoint.previewUrl = origin + "/" + (checkpoint.id === "structure" ? "interaction" : checkpoint.id) + "/";
+  for (const checkpoint of state.prototypeFlow.checkpoints) checkpoint.previewUrl = origin + "/" + checkpoint.id + "/";
   state.previewUrl = origin + "/interaction/";
   t.after(() => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }));
   const browser = await openFixtureBrowser(t);
@@ -133,6 +133,18 @@ const r=e.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,disab
   await choose("precision");
   await browser.evaluate('window.originalCurrent=document.querySelector("#preview-frame");window.originalVisual=document.querySelector("#visual-preview-frame");void 0;');
   await frameValue('w.document.querySelector("#select-shape").click()');
+  const beforeTabs = actions.length;
+  await click("#prototype-prototype-tab");
+  await browser.waitFor('!document.querySelector("#preview-frame").hidden');
+  assert.equal(state.prototypeFlow.displayedCheckpointId, "interaction");
+  assert.deepEqual(await browser.evaluate('[...document.querySelectorAll("#prototype-milestones [role=tab]")].map(el=>el.dataset.milestone)'), ["prototype", "visual"]);
+  assert.equal(await browser.evaluate('document.querySelector("#preview-frame").contentDocument.querySelector("#shape-name").value'), "Original draft");
+  if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "combined-prototype.png"), await browser.screenshot());
+  await click("#prototype-visual-tab");
+  await browser.waitFor('document.querySelector("#visual-preview-frame").getBoundingClientRect().height>0');
+  assert.equal(await frameValue('w.document.querySelector("#result").textContent'), "Selected 1");
+  assert.equal(await browser.evaluate('window.originalVisual===document.querySelector("#visual-preview-frame") && window.originalCurrent===document.querySelector("#preview-frame")'), true);
+  assert.equal(actions.length, beforeTabs, "Substage browsing never applies a checkpoint or changes the visual selection.");
   const geometry = async () => frameValue(`(() => {const t=w.document.querySelector("#tools").getBoundingClientRect(),s=w.document.querySelector("#scene").getBoundingClientRect();return {toolX:t.x,toolY:t.y,sceneX:s.x,sceneY:s.y};})()`);
   const precision = await geometry();
   await choose("canvas");
@@ -188,7 +200,7 @@ const r=e.getBoundingClientRect();return {left:r.left,right:r.right,width:innerW
     if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `prototype-toolbar-${width}.png`), await browser.screenshot());
   }
   await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 960, deviceScaleFactor: 1, mobile: false });
-  assert.equal(await browser.evaluate('document.querySelectorAll(".phase-actions .preview-recovery-action").length'), 2);
+  assert.equal(await browser.evaluate('document.querySelectorAll(".prototype-substage-bar .preview-recovery-action").length'), 2);
   assert.equal(await browser.evaluate('document.querySelector(".visual-exploration .preview-recovery-action")'), null);
   await click("#choose-visual-direction");
   await browser.waitFor('document.querySelector("#visual-custom-direction")?.dataset.applied==="true" && document.querySelector("#choose-visual-direction").disabled');
@@ -206,7 +218,7 @@ const r=e.getBoundingClientRect();return {left:r.left,right:r.right,width:innerW
   assert.equal(await browser.evaluate('document.querySelector("#preview-frame").contentDocument.querySelector("#shape-name").value'), "Original draft");
   assert.equal(await browser.evaluate('document.querySelector("#preview-frame").contentDocument.querySelector("#result").textContent'), "Selected 1");
   assert.equal(state.prototypeFlow.displayedCheckpointId, "chosen", "Default previews the original without implicitly accepting it.");
-  assert.equal(await browser.evaluate('!!document.querySelector(".phase-actions #restart-original-preview") && !document.querySelector("#restart-exploration-preview")'), true);
+  assert.equal(await browser.evaluate('!!document.querySelector(".prototype-substage-bar #restart-original-preview") && !document.querySelector("#restart-exploration-preview")'), true);
   if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "prototype-default.png"), await browser.screenshot());
   await click("#choose-visual-direction");
   await browser.waitFor('document.querySelector("#compare-current-prototype").dataset.applied==="true" && document.querySelector("#choose-visual-direction").disabled');

@@ -17,7 +17,7 @@ import { renderTandemHtml } from "./renderer.js";
 import { readBrowserDevelopmentAssets } from "./browser/development-assets.js";
 import { chooseProjectEntry, readProjectEntry } from "./project-entry.js";
 import { DevelopmentGit } from "./development-git.js";
-import { PreviewLaunches, type PreviewTarget } from "./preview-launch.js";
+import { PreviewLaunches } from "./preview-launch.js";
 import { previewStartSchema, verifyPreviewStart } from "./preview-start.js";
 import { isPreferredTandemProvider } from "./provider-identity.js";
 import { resolveSharedProjectRoot } from "./workspace-root.js";
@@ -38,7 +38,7 @@ import {
     preserveUnchangedScreens, prototypeNeedsChangeUpdate, readChangeAssessment, readChangeRequests, readSketchChangeContext, sketchChangeContextSchema,
     type ChangeRequest,
 } from "./change-requests.js";
-import { changeReviewBlocksEditing, currentChangeReview } from "./change-request-policy.js";
+import { changeReviewBlocksEditing, currentChangeReview, isDiscoveryChangeRequest } from "./change-request-policy.js";
 import {
     createStageReview, isReviewStage, mergeStageReview, readStageReviewDraft, readStageReviews,
     stageReviewConflict, stageReviewDigest, type StageReviewReference,
@@ -61,7 +61,7 @@ import {
 } from "./process-state.js";
 import {
     buildChangeAssessmentPrompt, buildPreparationIntentPrompt, buildDevelopmentHandoffPrompt, buildPreparationHandoffPrompt,
-    buildPreparationSourcesPrompt, buildPreparationWorkspacePrompt, buildPrototypeCheckpointPrompt,
+    buildPreparationSourcesPrompt, buildPreparationWorkspacePrompt, buildPrototypeCheckpointPrompt, buildPrototypeContinuationPrompt, prototypeInteractionInstructions,
     buildRequirementsAnswerPrompt, buildRequirementsDagPrompt, buildRequirementsResearchPrompt,
     buildSketchPrompt, buildUsageSuggestionsPrompt, tandemWorkerInteractionRules,
     type PrototypeSketchInput,
@@ -70,7 +70,7 @@ import { inspectEmptyPreparationWorkspace } from "./preparation.js";
 import { NativeWorkflowActivity, workflowBinding } from "./workflow-activity.js";
 import { MainSessionEffort } from "./main-session-effort.js";
 import {
-    emptySketchState, hasScreenContent, readSketchState, sketchDocumentSchema, validateSketchDocument,
+    emptySketchState, hasScreenContent, readSketchState, sketchDocumentSchema, validateSketchDocument, sketchApprovalScope, sketchFidelity,
     type SketchDocument, type SketchRevision,
 } from "./sketch.js";
 import { SketchStore } from "./sketch-store.js";
@@ -81,9 +81,9 @@ import { validateArtifactAssets } from "./artifact-assets.js";
 import { preparePrototypeWorkspace } from "./prototype-workspace.js";
 import { fingerprintPrototypeWorkspace, PROTOTYPE_FINGERPRINT_PREFIX } from "./prototype-runtime.js";
 import {
-    newPrototypeFlow, nextPrototypeMilestone, prototypeCheckpoint, prototypeFlowCompletionError, prototypeRetrySource,
-    prototypeMilestoneLabels, promotePrototypeCheckpoint, restoreOriginalPrototype, readPrototypeFlow,
-    reservePrototypeCheckpoint, settlePrototypeCheckpoint, awaitingVisualChoice, updateVisualSelection, visualExplorationIsCurrent, prototypePreviewCheckpointId,
+    newPrototypeFlow, nextPrototypeMilestone, prototypeCheckpoint, prototypeFlowCompletionError, prototypeRetrySource, prototypeSketchEvidenceCheckpoint,
+    prototypeMilestoneLabels, prototypeMilestoneReady, prototypeSubstage, promotePrototypeCheckpoint, restoreOriginalPrototype, readPrototypeFlow,
+    reservePrototypeCheckpoint, settlePrototypeCheckpoint, awaitingVisualChoice, updateVisualSelection, visualExplorationIsCurrent, prototypePreviewCheckpointId, isPrototypePreviewTarget,
     type PrototypeCheckpoint, type PrototypeFlow, type PrototypeMilestone,
 } from "./prototype-flow.js";
 import { isVisualExploration, readVisualSelection, visualSelectionSchema, type VisualCheckpoint } from "./visual-directions.js";
@@ -149,6 +149,7 @@ const textWorkerAgent = {
     prompt: tandemWorkerInteractionRules,
 };
 const SKETCH_IMAGE_TOOL_NAME = `tandem_read_sketch_image_${PROVIDER_SCOPE}`;
+const PROTOTYPE_STRUCTURE_TOOL_NAME = `tandem_publish_structure_${PROVIDER_SCOPE}`;
 const ANSWER_FACTORY_NAME = `tandem-process-answer-${PROVIDER_SCOPE}`;
 const PREPARATION_FACTORY_NAME =
     `tandem-prepare-environment-${PROVIDER_SCOPE}`;
@@ -249,39 +250,7 @@ const development = createHumanLoopController({
         await developmentGit.requireReady();
         await assertDevelopmentAvailable();
     },
-    contextProvider: async () => {
-        const sources = await handoffs.context();
-        const id = await loadCurrentPrototypeId();
-        if (!id) return sources;
-        const state = await loadState(id);
-        if (!state.decisionGraph.nodes.length) return sources;
-        return [...sources, { kind: "discovery-baseline", prototypeId: id, sourceDigest: changeBaselineDigest(state),
-            requirements: reconciliationInput(state), sketch: state.sketch,
-            prototype: state.prototypeFlow?.checkpoints.find(item => item.id === state.prototypeFlow?.displayedCheckpointId) ?? null,
-            instruction: "These are retained discovery inputs, not current code or implementation authority." }];
-    },
-    onHandoffSettled: async handoff => {
-        if (handoff.result.outcome.kind === "discovery-change") {
-            const runtime = development.installation?.runtime;
-            if (!runtime) throw new Error("The original Development runtime is unavailable; no replacement owner was created.");
-            const state = await runtime.store.load();
-            const originals = handoff.requestIds.map(id => state.requests.find(request => request.id === id));
-            if (originals.some(request => !request || request.status !== "completed")) {
-                throw new Error("The originating requests are not settled; no upstream work was submitted.");
-            }
-            const sourceRequests = originals.map(request => ({ id: request.id, message: request.message, receivedAt: request.receivedAt,
-                context: JSON.stringify({ answers: request.answers, attachments: request.attachments ?? [], roleHint: request.roleHint ?? null,
-                    nativeProposal: handoff.result.outcome }) }));
-            const message = originals.map(request => request.message).join("\n\n");
-            await submitChangeRequest(handoff.result.outcome.prototypeId, PROVIDER_EXTENSION_ID, {
-                message: message.length <= 4000 ? message : handoff.result.outcome.summary,
-                clientRequestId: `native-${executionDigest({ resultId: handoff.result.resultId })}`,
-                sourceResultId: handoff.result.resultId, sourceRequests,
-            }, true);
-        }
-        const id = await loadCurrentPrototypeId();
-        if (id) await continueChangeWork(id);
-    },
+    contextProvider: () => handoffs.context(),
     inspectRepairAdmissions: () => handoffs.inspectUnadmitted(),
     withEmptyRepairExclusion: operation => developmentTransition.run(async () => {
         if (projectEffortChanging) throw new Error("Wait for the project effort choice before repairing Development.");
@@ -1905,6 +1874,7 @@ async function openStageReview(prototypeId: string, extensionId: string, input: 
             throw new CanvasError("review_target_stale", "Choose an available earlier stage of the current effort.");
         }
         const request = input.changeRequestId === undefined ? undefined : parent.changeRequests?.find(item => item.id === input.changeRequestId);
+        if (request) assertDiscoveryChangeRequest(request);
         if (input.changeRequestId !== undefined && (!request || !["proposed", "reviewing"].includes(request.status)
             || request.analysisId !== input.analysisId || request.baselineDigest !== input.baselineDigest || request.assessment?.question
             || request.status === "proposed" && request.assessment?.startStage !== input.stageId
@@ -2080,9 +2050,9 @@ function processConfigurationHash(state) {
         version: __TANDEM_VERSION__,
         settings: state.process.settings,
         prompts: [answerFactoryPrompt, buildChangeAssessmentPrompt, buildDevelopmentHandoffPrompt,
-            buildPreparationHandoffPrompt, buildPrototypeCheckpointPrompt, buildSketchPrompt,
+            buildPreparationHandoffPrompt, buildPrototypeCheckpointPrompt, buildPrototypeContinuationPrompt, buildSketchPrompt,
             buildRequirementsAnswerPrompt, buildRequirementsDagPrompt, buildRequirementsResearchPrompt].map((prompt) => prompt.toString()),
-        uiDslPrompt,
+        uiDslPrompt, prototypeInteractionInstructions,
     });
 }
 
@@ -3324,6 +3294,7 @@ function sketchArtifact(state: TandemState, document: SketchDocument) {
             "# Approved UI DSL views", "", `Revision: ${approval.revisionId}`,
             `Requirements SHA256: ${approval.requirementsDigest}`, `UI DSL SHA256: ${approval.documentHash}`, "",
             "The bound document.json and per-screen .ui.json assets are the structured UI source for Prototype and Development. PNGs are derived visual references, not editable geometry.", "",
+            sketchApprovalScope(document), "",
             ...document.screens.flatMap((screen) => [
                 `## ${screen.title}`, "", screen.purpose, "",
                 `Requirement decisions: ${screen.decisionIds.join(", ")}`, "", screen.notes, "",
@@ -3934,7 +3905,7 @@ async function completeLifecycleStage(prototypeId, requestedStageId, extensionId
                     : `${LIFECYCLE_STAGES.find((stage) => stage.id === stageId).label} completed. ${LIFECYCLE_STAGES.find((stage) => stage.id === currentStage).label} is now enabled.`,
             updatedAt: completedAt,
             changeRequests: state.changeRequests?.map(request => {
-                if (!["active", "reviewing"].includes(request.status)) return request;
+                if (!isDiscoveryChangeRequest(request) || !["active", "reviewing"].includes(request.status)) return request;
                 const remainingStages = request.remainingStages.filter(stage => !completedStageIds.includes(stage));
                 return { ...request, remainingStages, status: remainingStages.length ? request.status : "completed",
                     completedAt: remainingStages.length ? null : completedAt };
@@ -3989,13 +3960,19 @@ function readChangeInput(value: unknown): Record<string, unknown> {
     return value;
 }
 
+function assertDiscoveryChangeRequest(request: ChangeRequest) {
+    if (!isDiscoveryChangeRequest(request)) {
+        throw new CanvasError("change_request_unavailable", "This saved Development request is read-only. Upstream impact review ends at Prototype; continue in the Development conversation.");
+    }
+}
+
 function assertChangeReviewAllowsEditing(state: TandemState) {
     if (changeReviewBlocksEditing(state)) {
         throw new CanvasError("change_review_required", "Resolve the current review before changing this work. Open Review to continue; your draft is retained.");
     }
 }
 
-async function submitChangeRequest(prototypeId: string, extensionId: string, input: Record<string, unknown>, fromDevelopment = false) {
+async function submitChangeRequest(prototypeId: string, extensionId: string, input: Record<string, unknown>) {
     if (!(await isPreferredAnswerProvider(extensionId))) throw new CanvasError("read_only_provider", "Use the active Tandem provider.");
     const message = typeof input.message === "string" ? input.message.trim() : "";
     const clientRequestId = typeof input.clientRequestId === "string" ? input.clientRequestId : randomUUID();
@@ -4005,12 +3982,15 @@ async function submitChangeRequest(prototypeId: string, extensionId: string, inp
     }
     const result = await withAnswerClaim(prototypeId, async () => {
         const state = await loadState(prototypeId);
-        const originStage = fromDevelopment ? "development" : input.originStage ?? state.lifecycle.currentStage;
+        const originStage = input.originStage ?? state.lifecycle.currentStage;
         if (typeof originStage !== "string" || !LIFECYCLE_STAGES.some(stage => stage.id === originStage)) throw new CanvasError("change_origin_invalid", "Choose a valid source stage.");
+        if (state.lifecycle.currentStage === "development" || !["requirements", "sketch", "prototype"].includes(originStage)) {
+            throw new CanvasError("change_request_unavailable", "Impact review is available in Requirements, Designs and Prototype. Use the Development conversation for Development changes.");
+        }
         const previous = state.changeRequests?.find(item => item.clientRequestId === clientRequestId);
         if (previous) {
             if (previous.originStage !== originStage || previous.message !== message || previous.sourceResultId !== (input.sourceResultId ?? null) ||
-                JSON.stringify(previous.sourceRequests) !== JSON.stringify(fromDevelopment ? input.sourceRequests ?? [] : []) ||
+                JSON.stringify(previous.sourceRequests) !== JSON.stringify([]) ||
                 JSON.stringify(previous.visualSelection) !== JSON.stringify(input.visualSelection ?? null) ||
                 JSON.stringify(readSketchChangeContext(previous.sketchContext)) !== JSON.stringify(providedSketchContext) ||
                 input.baseCheckpointId !== undefined && previous.baseCheckpointId !== input.baseCheckpointId) {
@@ -4025,13 +4005,12 @@ async function submitChangeRequest(prototypeId: string, extensionId: string, inp
             input.expectedRevision !== undefined && input.expectedRevision !== (state.sketch.current?.id ?? null)) {
             throw new CanvasError("change_request_stale", "The viewed source changed. Your request was not applied; inspect it before sending.");
         }
-        if (!fromDevelopment && !["requirements", "sketch", "prototype"].includes(originStage) ||
-            originStage === "requirements" && state.requirements.substage !== "dag" ||
-            fromDevelopment && !state.decisionGraph.nodes.length) {
-            throw new CanvasError("change_request_unavailable", "Use Requirements intake or the owning Development conversation before a discovery baseline exists.");
+        if (originStage === "requirements" && state.requirements.substage !== "dag") {
+            throw new CanvasError("change_request_unavailable", "Use Requirements intake before a discovery baseline exists.");
         }
         if ((state.changeRequests?.length ?? 0) >= 200 ||
-            (state.changeRequests ?? []).filter(item => !["completed", "cancelled", "deferred"].includes(item.status)).length >= 50) {
+            (state.changeRequests ?? []).filter(item => isDiscoveryChangeRequest(item)
+                && !["completed", "cancelled", "deferred"].includes(item.status)).length >= 50) {
             throw new CanvasError("change_request_limit", "Resolve saved changes before sending more. Your draft has not been discarded.");
         }
         const baseCheckpointId = input.baseCheckpointId === undefined ? state.prototypeFlow?.displayedCheckpointId ?? null : input.baseCheckpointId;
@@ -4051,8 +4030,7 @@ async function submitChangeRequest(prototypeId: string, extensionId: string, inp
             baseSketchRevisionId: state.sketch.current?.id ?? null,
             sketchContext,
             visualSelection: input.visualSelection == null ? null : readVisualSelection(input.visualSelection),
-            sourceResultId: fromDevelopment && typeof input.sourceResultId === "string" ? input.sourceResultId : null,
-            sourceRequests: fromDevelopment && Array.isArray(input.sourceRequests) ? input.sourceRequests : [],
+            sourceResultId: null, sourceRequests: [],
             baselineDigest: null, analysisId: null, assessment: null, status: "queued", error: "",
             clarifications: [], remainingStages: [], workStarted: [], affectedDecisionIds: [], snapshotPath: null, completedAt: null,
             developmentAdmission: null, developmentRequest: null,
@@ -4161,6 +4139,7 @@ async function decideChangeRequest(prototypeId: string, extensionId: string, inp
     if (!(await isPreferredAnswerProvider(extensionId))) throw new CanvasError("read_only_provider", "Use the active Tandem provider.");
     const origin = await loadState(prototypeId);
     const proposal = origin.changeRequests?.find(item => item.id === input.requestId);
+    if (proposal) assertDiscoveryChangeRequest(proposal);
     if (!origin.stageReview && proposal?.status === "reviewing" && input.decision === "cancel") {
         return projectStore.transaction(prototypeId, async () => {
             const state = await loadState(prototypeId);
@@ -4190,6 +4169,7 @@ async function decideChangeRequest(prototypeId: string, extensionId: string, inp
         const state = await loadState(prototypeId);
         const request = state.changeRequests?.find(item => item.id === input.requestId);
         if (!request) throw new CanvasError("change_request_missing", "The saved change request was not found.");
+        assertDiscoveryChangeRequest(request);
         const decision = input.decision;
         if (!["approve", "cancel", "retry", "clarify", "refine", "defer"].includes(String(decision))) {
             throw new CanvasError("change_decision_invalid", "Choose a supported change decision.");
@@ -4217,7 +4197,8 @@ async function decideChangeRequest(prototypeId: string, extensionId: string, inp
                 throw new CanvasError("change_review_required", "Resolve the current review before resuming another saved request.");
             }
             if (["active", "reviewing"].includes(request.status)) throw new CanvasError("change_active", "Use the current stage or pinned draft's retry and review controls.");
-            if (request.status === "deferred" && state.changeRequests.filter(item => !["completed", "cancelled", "deferred"].includes(item.status)).length >= 50) {
+            if (request.status === "deferred" && state.changeRequests.filter(item => isDiscoveryChangeRequest(item)
+                && !["completed", "cancelled", "deferred"].includes(item.status)).length >= 50) {
                 throw new CanvasError("change_request_limit", "Resolve an outstanding change before resuming this saved request. Its details were retained.");
             }
             const answer = typeof input.answer === "string" ? input.answer.trim() : "";
@@ -4288,16 +4269,17 @@ async function decideChangeRequest(prototypeId: string, extensionId: string, inp
 
 async function sendChangeToDevelopment(prototypeId: string, extensionId: string, requestId: unknown) {
     if (!(await isPreferredAnswerProvider(extensionId))) throw new CanvasError("read_only_provider", "Use the active Tandem provider.");
-    await developmentGit.requireReady();
     return developmentTransition.run(async () => {
         const state = await loadState(prototypeId);
         const request = state.changeRequests?.find(item => item.id === requestId);
         if (!request) throw new Error("The saved change request was not found.");
+        assertDiscoveryChangeRequest(request);
         if (request.developmentAdmission === "admitted") return state;
         if (!["active", "reviewing"].includes(request.status) || request.remainingStages.some(stage => stage !== "development") ||
             !request.remainingStages.includes("development") || hasActiveWork(state)) {
             throw new Error("Finish the accepted discovery changes before continuing in Development.");
         }
+        await developmentGit.requireReady();
         const runtime = await development.start();
         const native = await runtime.store.load();
         const envelope = request.developmentRequest ?? {
@@ -4356,7 +4338,7 @@ async function reopenLifecycleStageLocked(prototypeId, stageId, extensionId) {
         await development.assertQuiet();
         const state = await loadState(prototypeId);
         await assertStageReviewsQuiet(state);
-        if (pendingChange(state) || state.changeRequests?.some(request => request.status === "reviewing")) {
+        if (pendingChange(state) || state.changeRequests?.some(request => isDiscoveryChangeRequest(request) && request.status === "reviewing")) {
             throw new CanvasError("change_pending", "Finish or cancel the saved change request before broadly reopening a stage.");
         }
         if (hasActiveWork(state)) throw new CanvasError("processing_in_progress", "Finish or stop active work before reopening a stage.");
@@ -4420,17 +4402,16 @@ function prototypeFlowForState(state: TandemState): PrototypeFlow {
     if (state.prototypeFlow?.checkpoints.length) return state.prototypeFlow;
     const flow = state.prototypeFlow || newPrototypeFlow();
     if (state.previewStatus !== "ready" || !state.previewUrl) return flow;
-    for (const milestone of ["structure", "interaction"] as const) {
-        const id = `legacy-${milestone}-${state.generation}`;
-        flow.checkpoints.push({
-            id, requestId: id, generation: state.generation, milestone, revisionId: null,
-            baseCheckpointId: null, sourceCheckpointId: null, workspacePath: WORKSPACE_ROOT,
-            workspacePrepared: true, status: "ready", previewUrl: state.previewUrl,
-            summary: "Existing runnable prototype retained.", focus: "Try the primary workflow.",
-            requestedAt: state.updatedAt, completedAt: state.updatedAt, timeoutSeconds: 0,
-        });
-        flow.displayedCheckpointId = id;
-    }
+    // Preserve the historical accepted preview identity when adding checkpoint tracking.
+    const id = `legacy-interaction-${state.generation}`;
+    flow.checkpoints.push({
+        id, requestId: id, generation: state.generation, milestone: "prototype", revisionId: null,
+        baseCheckpointId: null, sourceCheckpointId: null, workspacePath: WORKSPACE_ROOT,
+        workspacePrepared: true, status: "ready", previewUrl: state.previewUrl,
+        summary: "Existing runnable prototype retained.", focus: "Try the primary workflow.",
+        requestedAt: state.updatedAt, completedAt: state.updatedAt, timeoutSeconds: 0,
+    });
+    flow.displayedCheckpointId = id;
     return flow;
 }
 
@@ -4442,7 +4423,8 @@ async function beginPrototypeBuild(prototypeId, extensionId) {
         if (!prototypeNeedsChangeUpdate(state)) {
             throw new CanvasError("review_preview_unchanged", "Save draft feedback before building a new preview. The accepted preview remains available.");
         }
-        const request = state.changeRequests?.find(item => item.status === "reviewing" && item.remainingStages.includes("prototype"));
+        const request = state.changeRequests?.find(item => isDiscoveryChangeRequest(item)
+            && item.status === "reviewing" && item.remainingStages.includes("prototype"));
         await queuePrototypeRevision(prototypeId, extensionId, {
             suggestion: request ? changeInstruction(request)
                 : "Update the retained prototype only where required by the reviewed requirements and approved designs. Preserve unrelated behavior and source.",
@@ -4532,8 +4514,8 @@ async function dispatchPrototypeCheckpoint(prototypeId: string, extensionId: str
         const base = prototypeCheckpoint(flow, flow.displayedCheckpointId);
         const retrying = Boolean(failed && options.retry && !options.exploreVisual);
         const milestone: PrototypeMilestone | null = options.visualChoice || options.exploreVisual || revision?.visualSelection ? "visual"
-            : retrying ? failed.milestone
-            : revision && base ? base.milestone : nextPrototypeMilestone(flow);
+            : retrying ? prototypeSubstage(failed.milestone)
+            : revision && base ? prototypeSubstage(base.milestone) : nextPrototypeMilestone(flow);
         if (!milestone) return state;
         let visual: VisualCheckpoint | undefined;
         const exploration = flow.visualExploration && prototypeCheckpoint(flow, flow.visualExploration.checkpointId);
@@ -4707,8 +4689,8 @@ async function prototypeAction(prototypeId: string, extensionId: string, input: 
         } else if (action === "visual") {
             const displayed = prototypeCheckpoint(flow, flow.displayedCheckpointId);
             if (flow.pendingCheckpointId || !displayed || displayed.milestone === "structure" ||
-                !flow.checkpoints.some((item) => item.milestone === "interaction" && item.status === "ready")) {
-                throw new CanvasError("prototype_interaction_required", "Apply the Interaction checkpoint before choosing Visual direction.");
+                !prototypeMilestoneReady(flow, "prototype")) {
+                throw new CanvasError("prototype_required", "Apply the Prototype before choosing Visual exploration.");
             }
             flow = { ...flow, visualRequested: true };
         } else if (action === "skip-visual") {
@@ -4884,6 +4866,9 @@ function answerFactoryPrompt(args) {
         const feedbackBase = revision && prototypeCheckpoint(flow, revision.baseCheckpointId);
         const visualBase = checkpoint.visual?.operation === "preserve" ? base
             : checkpoint.visual?.explorationCheckpointId ? prototypeCheckpoint(flow, checkpoint.visual.explorationCheckpointId) : null;
+        const imageEvidence = prototypeSketchEvidenceCheckpoint(flow, checkpoint);
+        const runId = args.workflowRunId ?? args.state.processing.runId;
+        if (checkpoint.continuation && !runId) throw new Error("A progressive prototype requires its bound workflow run.");
         return buildPrototypeCheckpointPrompt({
             prototypeId: args.prototypeId, previewPrototypeId: args.state.previewPrototypeId,
             projectRoot: args.projectRoot, checkpoint,
@@ -4898,6 +4883,8 @@ function answerFactoryPrompt(args) {
             sketch: args.sketchInput || null,
             visualBase: visualBase?.visual?.manifest || null,
             changeRequest: args.state.changeRequest ?? null,
+            ...(checkpoint.continuation ? { progressive: { tool: PROTOTYPE_STRUCTURE_TOOL_NAME, runId } } : {}),
+            ...(imageEvidence.id !== checkpoint.id ? { imageEvidenceCheckpointId: imageEvidence.id } : {}),
         });
     }
     if (args.action === "apply-defaults") {
@@ -5632,12 +5619,16 @@ async function applyFactoryResult(prototypeId, requestId, run) {
     }
 }
 
-async function applyPrototypeCheckpointResult(current: TandemState, run) {
+async function applyPrototypeCheckpointResult(current: TandemState, run, intermediate = false) {
     const flow = current.prototypeFlow;
     const checkpoint = flow && prototypeCheckpoint(flow, current.processing.prototypeCheckpointId);
     if (!flow || !checkpoint || checkpoint.generation !== current.generation ||
         flow.activeCheckpointId !== checkpoint.id || checkpoint.requestId !== current.processing.requestId ||
         current.lifecycle.currentStage !== "prototype") throw new Error("The prototype result is stale.");
+    if (intermediate !== (checkpoint.continuation === "interaction")) {
+        throw new Error(intermediate ? "Only the first progressive Structure checkpoint can be published early."
+            : "Publish the Structure preview through its checkpoint tool, then complete Interaction in the same worker.");
+    }
     const result = run.result;
     if (typeof result.summary !== "string" || !result.summary.trim() || typeof result.focus !== "string" ||
         !Array.isArray(result.evidence) || result.evidence.some((item) => typeof item !== "string") ||
@@ -5654,12 +5645,14 @@ async function applyPrototypeCheckpointResult(current: TandemState, run) {
     let visual = checkpoint.visual;
     if (question && previewUrl) throw new Error("A clarification cannot also publish an unapproved prototype revision.");
     if (!question) {
+        await assertPrototypeCheckpointSources(prototypeCheckpoint(flow, checkpoint.sourceCheckpointId));
         const sketchInput = await approvedSketchInput(current);
         if ((checkpoint.sketchRevisionId || null) !== (sketchInput?.revisionId || null) ||
             (checkpoint.sketchInputHash || null) !== sketchApprovalHash(current)) {
             throw new Error("The prototype checkpoint's approved sketch inputs changed.");
         }
-        if (sketchInput && sketchInput.document.screens.some((screen) => !checkpoint.sketchImagesRead?.includes(screen.id))) {
+        const imageEvidence = prototypeSketchEvidenceCheckpoint(flow, checkpoint);
+        if (sketchInput && sketchInput.document.screens.some((screen) => !imageEvidence.sketchImagesRead?.includes(screen.id))) {
             throw new Error("The prototype worker did not read every approved sketch image. Retry with the sketch-image tool available.");
         }
         if (!previewUrl) throw new Error("The checkpoint did not return a running preview. Retry this checkpoint to continue.");
@@ -5696,7 +5689,7 @@ async function applyPrototypeCheckpointResult(current: TandemState, run) {
         throw new Error("A prototype checkpoint cannot replace another stage's artifacts.");
     }
     const completedAt = new Date().toISOString();
-    const updatedFlow = settlePrototypeCheckpoint(flow, checkpoint.id, {
+    let updatedFlow = settlePrototypeCheckpoint(flow, checkpoint.id, {
         status: question ? "clarifying" : "ready", previewUrl,
         summary: result.summary.trim().slice(0, 4000), focus: result.focus.trim().slice(0, 1000),
         ...(visual ? { visual } : {}),
@@ -5707,6 +5700,20 @@ async function applyPrototypeCheckpointResult(current: TandemState, run) {
             savedCheckpoint.previewStart = await verifyPreviewStart(checkpoint.workspacePath, result.previewStart);
         }
         savedCheckpoint.sourceFingerprint = await fingerprintPrototypeWorkspace(checkpoint.workspacePath);
+    }
+    let continuation: PrototypeCheckpoint | undefined;
+    if (intermediate) {
+        const id = randomUUID();
+        updatedFlow = reservePrototypeCheckpoint(updatedFlow, {
+            id, requestId: checkpoint.requestId, generation: current.generation,
+            milestone: "interaction", revisionId: null, baseCheckpointId: checkpoint.id, sourceCheckpointId: checkpoint.id,
+            workspacePath: join(STATE_DIRECTORY, "efforts", previewPrototypeId(current), "previews", id),
+            workspacePrepared: false, status: "running", previewUrl: null, summary: "", focus: "",
+            requirementsDigest: checkpoint.requirementsDigest,
+            sketchRevisionId: checkpoint.sketchRevisionId, sketchInputHash: checkpoint.sketchInputHash, sketchImagesRead: [],
+            requestedAt: completedAt, completedAt: null,
+        });
+        continuation = prototypeCheckpoint(updatedFlow, id)!;
     }
     const review = normalizePrototypeReview(current.prototypeReview);
     if (checkpoint.revisionId) {
@@ -5739,18 +5746,72 @@ async function applyPrototypeCheckpointResult(current: TandemState, run) {
         previewUrl: displayed?.previewUrl || current.previewUrl,
         previewStatus: displayed ? "ready" : current.previewStatus, phase: "iterating",
         artifacts: applyArtifactChanges(current.artifacts, result.artifactChanges),
-        status: question ? "A clarification is ready. You can keep queuing feedback."
+        status: continuation ? "An early prototype preview is ready. The worker is completing behavior without changing this preview."
+            : question ? "A clarification is ready. You can keep queuing feedback."
             : isVisualExploration(checkpoint) ? "Visual alternatives are ready to compare. Switching and adjusting them does not change the current prototype."
             : checkpoint.visual?.operation === "choose" ? "Chosen visual direction prepared with saved defaults. Review and apply it explicitly."
             : updatedFlow.pendingCheckpointId ? `${prototypeMilestoneLabels[checkpoint.milestone]} update ready. Apply it when you reach a natural pause.`
             : `${prototypeMilestoneLabels[checkpoint.milestone]} is ready. ${result.focus}`,
-        processing: { ...current.processing, status: "success", completedAt, question: null, answer: null,
-            message: question ? "Prototype feedback needs clarification." : "The checkpoint preview is ready." },
-        factoryRuns: (current.factoryRuns || []).map((receipt) => receipt.requestId === checkpoint.requestId
+        processing: continuation ? { ...current.processing, prototypeCheckpointId: continuation.id,
+            message: "Early preview saved. Completing prototype behavior and state feedback." }
+            : { ...current.processing, status: "success", completedAt, question: null, answer: null,
+                message: question ? "Prototype feedback needs clarification." : "The checkpoint preview is ready." },
+        factoryRuns: (current.factoryRuns || []).map((receipt) => !continuation && receipt.requestId === checkpoint.requestId
             ? { ...receipt, runId: run.runId, terminal: true } : receipt),
         updatedAt: completedAt,
     });
     publishState(current.prototypeId);
+}
+
+async function publishPrototypeStructure(input: unknown) {
+    if (!isObject(input) || Object.keys(input).some(key => !["prototypeId", "checkpointId", "runId", "result"].includes(key)) ||
+        ["prototypeId", "checkpointId", "runId"].some(key => typeof input[key] !== "string" || !input[key] || input[key].length > 120) ||
+        !isObject(input.result) || input.result.question !== null) {
+        throw new CanvasError("prototype_publication_invalid", "Supply the exact active Structure checkpoint, run identity and complete preview result.");
+    }
+    if (!await isPreferredAnswerProvider(PROVIDER_EXTENSION_ID)) throw new CanvasError("read_only_provider", "Publish through the owning prototype provider.");
+    return withAnswerClaim(input.prototypeId, async () => {
+        let state = await loadState(input.prototypeId);
+        const source = prototypeCheckpoint(state.prototypeFlow, input.checkpointId);
+        const active = prototypeCheckpoint(state.prototypeFlow, state.prototypeFlow?.activeCheckpointId);
+        if (!source || source.continuation !== "interaction" || !source.workspacePrepared ||
+            source.generation !== state.generation || source.requestId !== state.processing?.requestId ||
+            state.processing.status !== "running" || state.processing.runId !== input.runId ||
+            state.lifecycle.currentStage !== "prototype" || state.effortReset || !active ||
+            state.processing.prototypeCheckpointId !== active.id ||
+            (source.id !== active.id && (source.status !== "ready" || active.sourceCheckpointId !== source.id ||
+                active.requestId !== source.requestId || active.milestone !== "interaction" ||
+                normalizePreviewUrl(input.result.previewUrl) !== source.previewUrl))) {
+            throw new CanvasError("prototype_publication_stale", "This publication no longer owns the active progressive build.");
+        }
+        if (source.id === active.id) {
+            await applyPrototypeCheckpointResult(state, { runId: input.runId, result: input.result }, true);
+            state = await loadState(input.prototypeId);
+        }
+        const checkpoint = prototypeCheckpoint(state.prototypeFlow, state.prototypeFlow.activeCheckpointId)!;
+        await assertPrototypeCheckpointSources(prototypeCheckpoint(state.prototypeFlow, checkpoint.sourceCheckpointId));
+        if (!checkpoint.workspacePrepared) {
+            await preparePrototypeWorkspace({
+                projectRoot: WORKSPACE_ROOT, storageRoot: STATE_DIRECTORY,
+                checkpointRoot: checkpoint.workspacePath, sourceRoot: source.workspacePath,
+            });
+            await persistState({ ...state, prototypeFlow: { ...state.prototypeFlow,
+                checkpoints: state.prototypeFlow.checkpoints.map(item => item.id === checkpoint.id ? { ...item, workspacePrepared: true } : item) } });
+            state = await loadState(input.prototypeId);
+        }
+        return {
+            resultType: "success" as const,
+            textResultForLlm: JSON.stringify({
+                checkpointId: checkpoint.id, workspacePath: checkpoint.workspacePath,
+                sourceCheckpointId: source.id, sourceReadOnly: true,
+                prompt: buildPrototypeContinuationPrompt({
+                    prototypeId: input.prototypeId, previewPrototypeId: previewPrototypeId(state),
+                    checkpoint, source: prototypeCheckpoint(state.prototypeFlow, source.id)!,
+                    sketch: await approvedSketchInput(state),
+                }),
+            }),
+        };
+    });
 }
 
 async function recordFactoryFailure(prototypeId, requestId, error) {
@@ -7871,8 +7932,8 @@ async function handleRequest(entry, req, res) {
     if (req.method === "GET" && requestUrl.pathname === "/api/prototype/preview-status") {
         const state = await loadState(entry.prototypeId);
         const target = requestUrl.searchParams.get("target") ?? "current";
-        if (!["current", "pending", "exploration", "original"].includes(target)) throw new Error("Choose the current, original, pending or visual exploration preview.");
-        const selectedId = prototypePreviewCheckpointId(state.prototypeFlow, target as PreviewTarget);
+        if (!isPrototypePreviewTarget(target)) throw new Error("Choose a saved prototype preview.");
+        const selectedId = prototypePreviewCheckpointId(state.prototypeFlow, target);
         const checkpoint = state.prototypeFlow?.checkpoints.find(item => item.id === selectedId);
         const url = checkpoint?.previewUrl || (target === "current" ? state.previewUrl : null);
         const binding = { generation: state.generation, url: url || null, checkpointId: checkpoint?.id ?? null,
@@ -7894,7 +7955,7 @@ async function handleRequest(entry, req, res) {
             const state = await loadState(entry.prototypeId);
             if (hasActiveWork(state)) throw new Error("Wait for current phase work before restarting a saved preview.");
             if (requestUrl.pathname.endsWith("/inspect")) {
-                if (!isObject(input) || !["current", "pending", "exploration", "original"].includes(input.target)
+                if (!isObject(input) || !isPrototypePreviewTarget(input.target)
                     || Object.keys(input).some(key => !["target", "generation", "checkpointId", "entrypoint", "args", "workingDirectory", "choiceId"].includes(key))
                     || input.generation !== state.generation
                     || input.checkpointId !== prototypePreviewCheckpointId(state.prototypeFlow, input.target)
@@ -7905,7 +7966,7 @@ async function handleRequest(entry, req, res) {
                     || input.args !== undefined && (!Array.isArray(input.args) || input.args.some(arg => typeof arg !== "string"))) {
                     throw new Error("Supply the explicit saved-version target and an optional reviewed Node entrypoint/argument list.");
                 }
-                return ownedPreviewLaunches().inspect(state, input.target as PreviewTarget, input.entrypoint, input.args, input.workingDirectory, input.choiceId);
+                return ownedPreviewLaunches().inspect(state, input.target, input.entrypoint, input.args, input.workingDirectory, input.choiceId);
             }
             if (!isObject(input) || Object.keys(input).sort().join(",") !== "approve,confirmationId"
                 || typeof input.confirmationId !== "string" || typeof input.approve !== "boolean") {
@@ -9051,6 +9112,7 @@ const answerFactory = defineWorkflow({
                             return await runSketchStreamWorker({
                                 runId: ctx.runId, signal: ctx.signal, base: phaseBase, phase, screenStatuses,
                                 allowUnchanged: Boolean(retained),
+                                fidelity: sketchFidelity(phaseBase ?? base, args.state.prototypeApproach.mode),
                                 decisionIds: streamDecisionIds,
                                 subscribe: (handler) => ctx.session.on(handler),
                                 getRunDetail: () => ctx.session.workflow.getRunDetail(ctx.runId),
@@ -9106,7 +9168,30 @@ const answerFactory = defineWorkflow({
                 }
                 return jsonResult(validateSketchDocument(updated, decisionIds));
             }
-            return ctx.agent(answerFactoryPrompt(workerArgs), {
+            if (args.state.processing?.prototypeCheckpointId) {
+                const current = await withAnswerClaim(args.prototypeId, async () => {
+                    const state = await loadState(args.prototypeId);
+                    const checkpoint = prototypeCheckpoint(state.prototypeFlow, state.prototypeFlow?.activeCheckpointId);
+                    if (state.generation !== args.state.generation || state.processing?.requestId !== args.requestId ||
+                        state.processing.runId !== ctx.runId || state.processing.status !== "running" || !checkpoint) {
+                        throw new Error("The prototype worker no longer owns its active checkpoint.");
+                    }
+                    if (!checkpoint.workspacePrepared) {
+                        const source = prototypeCheckpoint(state.prototypeFlow, checkpoint.sourceCheckpointId);
+                        if (source?.status === "ready") await assertPrototypeCheckpointSources(source);
+                        await preparePrototypeWorkspace({ projectRoot: WORKSPACE_ROOT, storageRoot: STATE_DIRECTORY,
+                            checkpointRoot: checkpoint.workspacePath, sourceRoot: source?.workspacePath });
+                        const prepared = { ...state, prototypeFlow: { ...state.prototypeFlow,
+                            checkpoints: state.prototypeFlow.checkpoints.map(item => item.id === checkpoint.id ? { ...item, workspacePrepared: true } : item) } };
+                        await persistState(prepared);
+                        return prepared;
+                    }
+                    return state;
+                });
+                workerArgs = { ...workerArgs, state: { ...factoryStateSnapshot(current), changeRequest: args.state.changeRequest },
+                    sketchInput: await approvedSketchInput(current) };
+            }
+            return ctx.agent(answerFactoryPrompt({ ...workerArgs, workflowRunId: ctx.runId }), {
                 label: args.action === "assess-change" ? "Assess change impact" : args.action === "apply-defaults" ? "Reconcile whole-graph defaults" : "Process Tandem answer",
                 ...(["assess-change", "generate-dag", "answer-decision", "change-answer", "apply-defaults"].includes(args.action)
                     ? { agent: textWorkerAgent.name } : {}),
@@ -9170,6 +9255,20 @@ session = await joinSession({
             required: ["prototypeId", "checkpointId", "revisionId", "screenId"],
         },
         handler: readSketchImage,
+    }, {
+        name: PROTOTYPE_STRUCTURE_TOOL_NAME,
+        description: "Publish the first verified Structure preview during an active progressive prototype build. Returns the isolated Interaction continuation for the SAME worker; never approves later versions.",
+        defer: "never",
+        skipPermission: true,
+        parameters: {
+            type: "object", additionalProperties: false,
+            properties: {
+                prototypeId: { type: "string" }, checkpointId: { type: "string" }, runId: { type: "string" },
+                result: prototypeCheckpointOutputSchema,
+            },
+            required: ["prototypeId", "checkpointId", "runId", "result"],
+        },
+        handler: publishPrototypeStructure,
     }],
     workflows: [
         preparationFactory,

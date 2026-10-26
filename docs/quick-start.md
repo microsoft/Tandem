@@ -97,11 +97,14 @@ Use this path to clarify requirements and UX.
    when ready. Recommendations are not accepted automatically.
 3. **Finish requirements** opens **Designs** and starts the first generation
    automatically. Wait for it to finish; use **Generate designs** if no generation
-   is running and you need designs. Review/edit them, then **Approve designs
+   is running and you need designs. For new concepts, focus on wireframe layout,
+   content and navigation; use **Interact** to follow screen transitions.
+   Existing designs keep their styling. Review/edit them, then **Approve designs
    and continue**.
 4. In **Prototype**, select **Start prototype** if no build is running.
-   Structure and Interaction are automatic milestones. Try the current preview;
-   use **Show Interaction prototype** when you want to display that ready version.
+   The **Prototype** sub-stage builds layout, navigation and the primary task's
+   behavior together. Try the current preview; use **Show Prototype** or
+   **Show requested revision** when you want to accept a waiting version.
    Feedback is optional. For distinct layouts and styles, use
    **Explore visual directions (optional)** and [compare, refine and apply a
    direction](user-manual.md#explore-visual-directions).

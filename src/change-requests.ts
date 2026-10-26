@@ -8,7 +8,7 @@ import {
 import type { VisualSelection } from "./visual-directions.js";
 import { readVisualSelection, visualSelectionSchema } from "./visual-directions.js";
 import type { SketchDocument } from "./sketch.js";
-import { currentChangeReview, isCurrentStageChange, isLocalChange } from "./change-request-policy.js";
+import { currentChangeReview, isCurrentStageChange, isDiscoveryChangeRequest, isLocalChange } from "./change-request-policy.js";
 export { isLocalChange } from "./change-request-policy.js";
 
 export interface RequirementsDelta {
@@ -120,7 +120,7 @@ export function readChangeRequests(value: unknown): ChangeRequest[] {
     const requests = value as ChangeRequest[];
     if (new Set(requests.map(request => request.id)).size !== requests.length ||
         new Set(requests.map(request => request.clientRequestId)).size !== requests.length ||
-        requests.filter(request => request.status === "active").length > 1) {
+        requests.filter(request => isDiscoveryChangeRequest(request) && request.status === "active").length > 1) {
         throw new Error("Saved change requests have conflicting identities or active work.");
     }
     for (const request of requests) {
@@ -146,11 +146,12 @@ export function readChangeRequests(value: unknown): ChangeRequest[] {
 }
 
 export function activeChange(state: Pick<TandemState, "changeRequests">): ChangeRequest | undefined {
-    return state.changeRequests?.find(request => request.status === "active");
+    return state.changeRequests?.find(request => isDiscoveryChangeRequest(request) && request.status === "active");
 }
 
 export function pendingChange(state: Pick<TandemState, "changeRequests">): ChangeRequest | undefined {
-    return state.changeRequests?.find(request => ["queued", "analyzing", "proposed", "failed"].includes(request.status)) ?? activeChange(state);
+    return state.changeRequests?.find(request => isDiscoveryChangeRequest(request)
+        && ["queued", "analyzing", "proposed", "failed"].includes(request.status)) ?? activeChange(state);
 }
 
 export function nextChangeWork(state: Pick<TandemState, "changeRequests">): ChangeRequest | undefined {
@@ -297,6 +298,9 @@ export function stageIndex(stage: LifecycleStageId): number {
 }
 
 export function activateChange(state: TandemState, request: ChangeRequest, snapshotPath: string): TandemState {
+    if (!isDiscoveryChangeRequest(request)) {
+        throw new Error("Development requests no longer enter upstream impact review. Continue in the Development conversation.");
+    }
     const assessment = request.assessment;
     if (!assessment || assessment.question || assessment.startStage === "none" || assessment.startStage === "development") {
         throw new Error("Review or clarify this change before starting upstream work.");

@@ -232,6 +232,60 @@ async function harness(initial: { state: UiState; document: SketchDocument | Leg
   };
 }
 
+test("wireframe Designs explains its approval scope and previews saved navigation without edits or worker requests", async () => {
+  const initial = fixture();
+  initial.document.fidelity = "wireframe";
+  const first = initial.document.screens[0];
+  const second = buttonScreen(createScreen(initial.document, ["Requirement.Main_1"]));
+  second.title = "Task details";
+  initial.document.screens.push(second);
+  initial.document.transitions.push({ id: "open-task", fromScreenId: first.id, toScreenId: second.id,
+    trigger: "Open task", description: "Preview the task details, without running application logic." });
+  first.ui = applyOperations(first.ui, [{ op: "update", id: "primary-action", props: { label: "Open task", action: "open-task" } }]);
+  const h = await harness(initial);
+  try {
+    assert.match(h.element("focus").textContent!, /Wireframes: layout & navigation/);
+    assert.match(h.element("approve").title, /Appearance is deferred/);
+    assert.match(h.element<HTMLTextAreaElement>("instruction").placeholder, /layout, label or navigation/);
+    const requests = h.requests.length;
+    await h.click("interact");
+    await h.event(h.preview().querySelector('[data-ui-id="primary-action"]')!, "click");
+    assert.equal(h.element<HTMLInputElement>("title").value, "Task details");
+    await h.selectScreen(0);
+    const flow = h.element("board-help").parentElement!.querySelector('nav[aria-label="Preview screen flow"]')!;
+    assert.match(flow.textContent!, /Navigation preview only/);
+    await h.event(flow.querySelector("button")!, "click");
+    assert.equal(h.element<HTMLInputElement>("title").value, "Task details");
+    assert.equal(h.element<HTMLButtonElement>("save").disabled, true, "Browsing cannot dirty the saved design.");
+    assert.equal(h.requests.length, requests, "Click-through must not start generation, save or approve.");
+  } finally { await h.close(); }
+});
+
+test("unchanged selected-screen content is not rerendered by another screen's streamed update", async () => {
+  const initial = fixture();
+  addUi(initial.document.screens[0], "task-name", "Input", { label: "Task name", placeholder: "Name" });
+  initial.document.screens.push(buttonScreen(createScreen(initial.document, ["Requirement.Main_1"])));
+  const h = await harness(initial);
+  try {
+    await h.sse(streaming(h.state, initial.document, 1));
+    await h.click("interact");
+    const input = h.preview().querySelector<HTMLInputElement>("input")!;
+    input.value = "Local preview input";
+    await h.event(input, "input");
+    let mutations = 0;
+    const observer = new dom.window.MutationObserver(records => { mutations += records.length; });
+    observer.observe(h.preview(), { subtree: true, childList: true, attributes: true, characterData: true });
+    const otherScreen = structuredClone(initial.document);
+    otherScreen.screens[1].ui = applyOperations(otherScreen.screens[1].ui,
+      [{ op: "update", id: "primary-action", props: { label: "Other page updated" } }]);
+    await h.sse(streaming(h.state, otherScreen, 2));
+    observer.disconnect();
+    assert.equal(h.preview().querySelector("input"), input);
+    assert.equal(input.value, "Local preview input");
+    assert.equal(mutations, 0, "An unrelated page update should not touch the selected preview DOM.");
+  } finally { await h.close(); }
+});
+
 function streaming(state: UiState, document: SketchDocument, sequence = 1): UiState {
   const request = {
     generation: state.generation, baseRevisionId: state.sketch.current?.id ?? null,

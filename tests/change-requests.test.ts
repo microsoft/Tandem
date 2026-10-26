@@ -4,7 +4,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
     activateChange, applyRequirementsDelta, changeBaselineDigest, readChangeAssessment, readChangeRequests, preserveUnchangedScreens,
-    prototypeNeedsChangeUpdate, pendingChange, nextChangeWork, readSketchChangeContext, isLocalChange,
+    prototypeNeedsChangeUpdate, activeChange, pendingChange, nextChangeWork, readSketchChangeContext, isLocalChange,
     type ChangeAssessment, type ChangeRequest, type RequirementsDelta,
 } from "../src/change-requests.js";
 import { migrateLifecycle } from "../src/lifecycle.js";
@@ -143,6 +143,34 @@ test("runnable work and stage-completion blockers remain distinct when changes c
         "Saved queued work waits behind the single pending review.");
 });
 
+function historicalDevelopmentChange(status: ChangeRequest["status"] = "queued"): ChangeRequest {
+    return { ...proposed(), id: "old-development", clientRequestId: "old-development-client", originStage: "development",
+        status, sourceResultId: "old-router-result", sketchContext: null,
+        sourceRequests: [{ id: "original-development-request", message: "Add saving while keeping joint controls.",
+            receivedAt: "2026-10-19T00:00:00Z", context: JSON.stringify({ answers: null, attachments: [] }) }],
+        reviewId: status === "reviewing" ? "review-11111111-1111-4111-8111-111111111111" : null,
+        remainingStages: ["requirements", "prototype"] };
+}
+
+test("historical Development impact requests are readable but never own discovery work or review gates", () => {
+    for (const status of ["queued", "analyzing", "proposed", "reviewing", "active", "failed", "deferred", "completed", "cancelled"] as const) {
+        const historical = historicalDevelopmentChange(status);
+        const state = { ...baseState(), changeRequests: readChangeRequests([historical]) };
+        assert.deepEqual(state.changeRequests, [historical], status);
+        assert.equal(currentChangeReview(state), undefined, status);
+        assert.equal(activeChange(state), undefined, status);
+        assert.equal(pendingChange(state), undefined, status);
+        assert.equal(nextChangeWork(state), undefined, status);
+        assert.equal(changeReviewBlocksEditing(state), false, status);
+        assert.equal(changeReviewNeedsAttention(state), false, status);
+        assert.throws(() => activateChange(state, historical, "changes\\unused.json"), /Development requests no longer enter upstream impact review/);
+        const current = { ...proposed(), status: "active" as const };
+        state.changeRequests = readChangeRequests([historical, current]);
+        assert.equal(activeChange(state)!.id, current.id, status);
+        assert.equal(nextChangeWork(state)!.id, current.id, status);
+    }
+});
+
 test("the single review gate permits inspection and the work needed to finish its own stage", () => {
     const state = baseState();
     const review: ChangeRequest = { ...proposed(), status: "reviewing", remainingStages: ["requirements", "prototype"] };
@@ -218,6 +246,72 @@ async function assess(f: Awaited<ReturnType<typeof fixture>>, result = assessmen
 function approval(request: ChangeRequest) {
     return { requestId: request.id, analysisId: request.analysisId, baselineDigest: request.baselineDigest, decision: "approve" };
 }
+
+test("composed Development receives retained handoffs without a live baseline or settlement callback", async () => {
+    const f = await fixture();
+    try {
+        await writeFile(join(f.h.root, ".tandem", "current.json"), JSON.stringify({ version: 1, prototypeId: "sample" }));
+        assert.equal("onHandoffSettled" in f.h.developmentOptions, false);
+        assert.deepEqual(plain(await f.h.developmentOptions.contextProvider()), []);
+        assert.equal(f.h.requests.length, 0);
+        assert.equal(f.h.developmentRequests.length, 0);
+        assert.deepEqual(plain((await f.h.api.loadState("sample")).decisionGraph), plain(f.initial.decisionGraph));
+    } finally { await f.h.close(); }
+});
+
+test("Development cannot submit a new impact request through either the host or HTTP path", async () => {
+    const f = await fixture();
+    try {
+        const initial: typeof f.initial = { ...f.initial, stage: "development", lifecycle: { ...f.initial.lifecycle,
+            currentStage: "development" as const, completedStages: ["prepare", "requirements", "sketch", "prototype"] } };
+        await f.h.api.persistState(initial);
+        const input = { message: "Add saving and loading.", clientRequestId: "from-development" };
+        await assert.rejects(f.h.api.submitChangeRequest("sample", "project:tandem", input), /Development conversation/);
+        await assert.rejects(f.h.api.submitChangeRequest("sample", "project:tandem", { ...input, originStage: "prototype" }),
+            /Development conversation/, "A stale Prototype control cannot submit impact review after the Development transition.");
+        const server = await f.h.api.startServer("development-review-boundary", "sample", "project:tandem", true);
+        try {
+            const response = await fetch(new URL("/api/change-requests", server.url), {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ ...input, originStage: "development" }),
+            });
+            assert.equal(response.ok, false);
+            assert.match((await response.json()).error, /Development conversation/);
+        } finally {
+            clearInterval(server.heartbeat);
+            await new Promise<void>(resolve => { server.server.close(() => resolve()); server.server.closeAllConnections(); });
+        }
+        assert.equal(f.h.requests.length, 0);
+        assert.equal(f.h.developmentRequests.length, 0);
+        assert.deepEqual(plain((await f.h.api.loadState("sample")).changeRequests), []);
+    } finally { await f.h.close(); }
+});
+
+test("retained Development requests do not resume, block a Prototype request or expose old mutation paths", async () => {
+    const f = await fixture();
+    try {
+        const historical = historicalDevelopmentChange();
+        await f.h.api.persistState({ ...f.initial, changeRequests: [historical] });
+        await f.h.api.continueChangeWork("sample");
+        assert.equal(f.h.requests.length, 0, "Loading an old Development queue must not schedule an upstream assessment.");
+        for (const decision of ["approve", "retry", "cancel", "clarify", "refine", "defer"]) {
+            await assert.rejects(f.h.api.decideChangeRequest("sample", "project:tandem", {
+                ...approval(historical), decision, answer: "Retained context, not a new request.",
+            }), /read-only/);
+        }
+        await assert.rejects(f.h.api.openStageReview("sample", "project:tandem", {
+            stageId: "requirements", expectedGeneration: f.initial.generation, changeRequestId: historical.id,
+            analysisId: historical.analysisId, baselineDigest: historical.baselineDigest,
+        }), /read-only/);
+        await assert.rejects(f.h.api.sendChangeToDevelopment("sample", "project:tandem", historical.id), /read-only/);
+        assert.equal(f.h.developmentRequests.length, 0);
+        const { receipt, state } = await assess(f);
+        assert.equal(state.changeRequests!.find(item => item.id === receipt.requestId)!.status, "proposed");
+        assert.equal(f.h.requests.length, 1, "Only the new Prototype request receives impact review.");
+        assert.deepEqual(plain(state.changeRequests!.find(item => item.id === historical.id)), historical);
+        assert.deepEqual(plain(state.decisionGraph), plain(f.initial.decisionGraph));
+    } finally { await f.h.close(); }
+});
 
 test("prototype feedback assesses once and opens a pinned draft without changing accepted work", async () => {
     const f = await fixture();
@@ -857,7 +951,7 @@ test("applying a draft usage keeps Prototype current and builds a delta only whe
         const ready = await f.h.api.loadState("sample");
         const checkpoint = ready.prototypeFlow!.checkpoints.at(-1)!;
         assert.equal(checkpoint.sourceCheckpointId, "old-interaction");
-        assert.equal(checkpoint.milestone, "interaction");
+        assert.equal(checkpoint.milestone, "prototype");
         assert.equal(checkpoint.requirementsDigest, requirementsInputDigest(ready));
         assert.equal(ready.prototypeFlow!.displayedCheckpointId, "old-interaction");
         assert.deepEqual(plain(ready.decisionGraph), plain(f.initial.decisionGraph));

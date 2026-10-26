@@ -103,6 +103,41 @@ test("cancel and already-live preview never launch duplicate servers", async t =
     assert.equal(f.operations.length, 0);
 });
 
+test("combined Prototype restart uses the checkpoint path even when a legacy progressive worker shared its request ID", async t => {
+    const f = await fixture(t);
+    const saved = f.value.prototypeFlow.checkpoints[1];
+    saved.requestId = f.value.prototypeFlow.checkpoints[0].requestId;
+    f.value.prototypeFlow.displayedCheckpointId = saved.id;
+    f.value.prototypeFlow.pendingCheckpointId = null;
+    const before = structuredClone(f.value);
+    const proposal = await f.launches.inspect(f.value, "prototype", "server.mjs");
+    assert.equal(proposal.checkpointId, saved.id);
+    assert.equal(proposal.cwd, saved.workspacePath);
+    assert.equal(proposal.target, "prototype");
+    f.setRunning();
+    await f.launches.decide(proposal.confirmationId!, true);
+    assert.deepEqual(f.value, before);
+    assert.deepEqual(f.operations, []);
+});
+
+test("historical milestone restart binds its saved source and never promotes it", async t => {
+    const f = await fixture(t);
+    f.value.prototypeFlow.displayedCheckpointId = "pending";
+    f.value.prototypeFlow.pendingCheckpointId = null;
+    const before = structuredClone(f.value);
+    const proposal = await f.launches.inspect(f.value, "structure", "server.mjs");
+    assert.equal(proposal.checkpointId, "current");
+    assert.equal(proposal.target, "structure");
+    f.setRunning();
+    await f.launches.decide(proposal.confirmationId!, true);
+    assert.deepEqual(f.value, before);
+    assert.deepEqual(f.operations, []);
+    const stale = await f.launches.inspect(f.value, "structure", "server.mjs");
+    f.value.prototypeFlow.checkpoints.push({ ...f.value.prototypeFlow.checkpoints[0], id: "replacement-structure" });
+    await assert.rejects(f.launches.decide(stale.confirmationId!, true), /reviewed saved version changed|exact project-owned saved workspace/i);
+    assert.deepEqual(f.operations, []);
+});
+
 test("preview launch checks foreground admission before dispatch but not during its own readiness observation", async t => {
     const f = await fixture(t), before = structuredClone(f.value);
     const proposal = await f.launches.inspect(f.value, "current", "server.mjs");

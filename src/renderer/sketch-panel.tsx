@@ -6,7 +6,7 @@ import { ToggleGroup } from "radix-ui";
 import {
   Check, CircleAlert, Clock, Hand, History, LoaderCircle, Monitor, MousePointer2, Plus, Redo2, RefreshCw, Save, Send, Sparkles, Trash2, Undo2, Workflow, X,
 } from "lucide-react";
-import { hasScreenContent, validateSketchDocument } from "../sketch.js";
+import { hasScreenContent, sketchApprovalScope, sketchFidelity, validateSketchDocument } from "../sketch.js";
 import type { DslSketchDocument, DslSketchScreen, SketchRevision, SketchState, SketchTransition } from "../sketch.js";
 import { createDslScreen, renderSketchPng, resizeScreen, SketchEditor, SKETCH_SIZE_PRESETS } from "./sketch-editor.js";
 import { DslView } from "./dsl-view.js";
@@ -192,6 +192,7 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
   const sourceDocument = livePreview?.document ?? editor.document;
   const legacy = sourceDocument?.version === 1;
   const document = sourceDocument?.version === 2 ? sourceDocument : null;
+  const wireframe = sketchFidelity(document, state.prototypeApproach?.mode) === "wireframe";
   const screen = document?.screens.find((item) => item.id === selectedScreen) ?? document?.screens[0];
   const selectionKey = livePreview ? previewKey : loadState.loadedKey;
   const selectedNodeId = selectedElement?.key === selectionKey && selectedElement?.screenId === screen?.id
@@ -706,10 +707,11 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
   }, [onDraftApprovalChange, approvalDisabled, state.revision, state.stageReview]);
   const approval = state.stageReview ? null : <div className="sketch-approval-actions">
     <button id="sketch-approve" className="plan-button" type="button"
+      title={document ? sketchApprovalScope(document) : undefined} aria-describedby="sketch-focus"
       hidden={approved}
       disabled={approvalDisabled}
       onClick={() => void submit("approve")}><Check size={14} aria-hidden="true" />Approve designs and continue</button>
-    {document && approved && <span role="status">Saved designs approved</span>}
+    {document && approved && <span role="status">{wireframe ? "Layout and navigation approved" : "Saved designs approved"}</span>}
   </div>;
   const updateAction = state.sketch.status === "stale" && canEdit("sketch") && !legacy
     ? <button id="sketch-update-requirements" className="plan-button" type="button" disabled={!requestWritable || !document || conflict || dirty}
@@ -719,6 +721,11 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
   return <section className="sketch-stage" onKeyDown={keydown}>
     {renderApproval ? renderApproval(approval) : approval}
     {renderReviewActions?.(updateAction)}
+    <p id="sketch-focus" className="stage-focus">
+      <strong>{wireframe ? "Wireframes: layout & navigation" : "Designs: layout & existing appearance"}</strong>
+      <span>{wireframe ? "Review screens, content and the path through the task. Behavior comes in Prototype; appearance can be refined later."
+        : "Refine the existing screens without restyling unrelated work. Application behavior comes in Prototype."}</span>
+    </p>
     <div className="sketch-heading sketch-header-actions" role="group" aria-label="Design tools" aria-describedby="sketch-status">
       <button id="sketch-add-screen" className="sketch-icon-button" type="button" title="Add screen" aria-label="Add screen"
         disabled={!writable || legacy || (document?.screens.length ?? 0) >= 8 || !acceptedDecisionIds(state).length}
@@ -858,12 +865,23 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
                 : pageStatus === "stopped" ? "Generation stopped - partial content retained" : "Preview ready - not saved or approved"}</span>
             </div>}
             <p id="sketch-board-help" className="visually-hidden">{boardHelp}</p>
+            {!pickingElement && document && screen && <nav className="sketch-flow-preview" aria-label="Preview screen flow">
+              <span className="muted">Navigation preview only</span>
+              {document.transitions.filter(item => item.fromScreenId === screen.id).map(transition =>
+                <button key={transition.id} type="button" title={transition.description}
+                  onClick={() => setSelectedScreen(transition.toScreenId)}>
+                  {transition.trigger} &rarr; {document.screens.find(item => item.id === transition.toScreenId)?.title}
+                </button>)}
+            </nav>}
           </div>}>
           <div id="sketch-board" className="sketch-board" tabIndex={0} role="group"
             aria-busy={generating && (pageStatus === "waiting" || pageStatus === "processing")}
             aria-label={livePreview ? "Live UI DSL preview (not saved)" : "UI DSL screen view"} aria-describedby="sketch-board-help">
             {screen && <DslView key={screen.id} screen={screen} selection={{
               nodeId: selectedNodeId, picking: pickingElement, onSelect: selectElement,
+            }} onNavigate={transitionId => {
+              const transition = document?.transitions.find(item => item.id === transitionId && item.fromScreenId === screen.id);
+              if (transition) setSelectedScreen(transition.toScreenId);
             }} />}
             {screen && pageStatus && pageStatus !== "ready" && !hasScreenContent(screen)
               && <div className="sketch-page-placeholder" aria-hidden="true">
@@ -957,7 +975,8 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
       <label className="visually-hidden" htmlFor="sketch-instruction">Describe a design change</label>
       <textarea className="composer-input" id="sketch-instruction" rows={1} maxLength={4000} disabled={!writable || Boolean(requiredReview)}
         value={instruction} onChange={(event) => setInstruction(event.currentTarget.value)} onKeyDown={sendShortcut}
-        aria-describedby="sketch-status sketch-review-required" placeholder="Describe a design change... (Ctrl+Enter)" />
+        aria-describedby="sketch-focus sketch-status sketch-review-required"
+        placeholder={wireframe ? "Change a layout, label or navigation path... (Ctrl+Enter)" : "Describe a design change... (Ctrl+Enter)"} />
       <button id="sketch-revise" className="plan-button sketch-send" type="submit"
         title={state.sketch.status === "stale" ? "Update designs from latest requirements before sending a revision." : "Send design revision (Ctrl+Enter)"}
         disabled={!writable || !document || conflict || !instruction.trim() || invalidFields || Boolean(requiredReview) || state.sketch.status === "stale"}>

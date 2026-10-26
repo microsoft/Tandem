@@ -4,7 +4,7 @@ import { ArrowRight, Check, ListChecks, RefreshCw, ShieldCheck, X } from "lucide
 import type { LifecycleStageId } from "../types.js";
 import type { ChangeRequest } from "../change-requests.js";
 import { lifecycleStages } from "../workflow.js";
-import { changeReviewNeedsAttention, currentChangeReview } from "../change-request-policy.js";
+import { changeReviewNeedsAttention, currentChangeReview, isDiscoveryChangeRequest } from "../change-request-policy.js";
 import { hasActiveJobs, useAction, useChangeRequestDialog, useDraft, useUi, type UiState } from "./ui-context.js";
 import { useProjectView } from "./project-conversation.js";
 import { changeRequestResponse, changeRequestStatus } from "./change-request-feedback.js";
@@ -16,14 +16,15 @@ export function ChangeReviewPath({ request, reviewingStage, detailed = false }: 
 }) {
     const plan = request.assessment;
     if (!plan?.stages.length) return null;
-    const inProgress = ["active", "reviewing"].includes(request.status);
-    const next = inProgress ? request.remainingStages[0] : request.status === "proposed" ? plan.startStage : null;
-    const settled = ["completed", "cancelled"].includes(request.status);
+    const historical = !isDiscoveryChangeRequest(request);
+    const inProgress = !historical && ["active", "reviewing"].includes(request.status);
+    const next = inProgress ? request.remainingStages[0] : !historical && request.status === "proposed" ? plan.startStage : null;
+    const settled = historical || ["completed", "cancelled"].includes(request.status);
     return <ol className="change-stage-path" aria-label="Affected stages">
         {plan.stages.map((item, index) => {
-            const saved = request.status === "completed" || inProgress && !request.remainingStages.includes(item.stage);
+            const saved = !historical && (request.status === "completed" || inProgress && !request.remainingStages.includes(item.stage));
             const current = !settled && !saved && (reviewingStage ? reviewingStage === item.stage : next === item.stage);
-            const status = saved ? "Saved" : request.status === "cancelled" ? "Recorded"
+            const status = historical ? "Recorded" : saved ? "Saved" : request.status === "cancelled" ? "Recorded"
                 : current ? reviewingStage ? "Reviewing draft" : request.status === "proposed" ? "Starts here" : "Up next"
                     : request.status === "proposed" ? "Then review" : "Pending";
             return <li key={item.stage} data-status={saved ? "saved" : current ? "current" : "pending"}
@@ -70,13 +71,14 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: {
         return () => window.clearTimeout(timer);
     }, [current?.id, reviewKey, pending, working, dialog.requestId, showTrigger]);
     if (!current) return null;
-    const settled = ["completed", "cancelled"].includes(current.status);
+    const historical = !isDiscoveryChangeRequest(current);
+    const settled = historical || ["completed", "cancelled"].includes(current.status);
     const plan = current.assessment;
     const error = (actionRequestId === current.id ? action.error : "") || current.error
         || (state.processing?.changeRequestId === current.id && state.processing.status === "error" ? state.processing.message : "");
     const busy = pending || working || state.provider?.canSubmitAnswers === false;
     const draftBusy = pending || state.provider?.canSubmitAnswers === false;
-    const needsDetail = current.status === "proposed" && Boolean(plan?.question || refining === current.id);
+    const needsDetail = !settled && current.status === "proposed" && Boolean(plan?.question || refining === current.id);
     const earlier = (stage: string) => stage !== "none" && lifecycleStages.findIndex(item => item.id === stage)
         < lifecycleStages.findIndex(item => item.id === state.lifecycle.currentStage);
     const opensDraft = Boolean(!state.stageReview && reviewStage && plan && earlier(plan.startStage));
@@ -138,7 +140,7 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: {
         }
     }
     const waiting = ["queued", "analyzing"].includes(current.status);
-    const title = needsDetail ? "Clarify this change" : current.status === "reviewing" ? "Continue change review"
+    const title = historical ? "Development request history" : needsDetail ? "Clarify this change" : current.status === "reviewing" ? "Continue change review"
         : current.status === "failed" || error ? "Review needs attention"
         : current.status === "completed" ? "Change review complete" : settled ? "Cancelled change"
         : waiting ? "Checking your request" : current.status === "active" ? "Preparing your update" : "Review change impact";
@@ -149,7 +151,7 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: {
     const continueLabel = nextStage ? `Review ${label(nextStage)}${earlier(nextStage) ? " draft" : " update"}` : "Continue review";
     return <Dialog.Root open={dialog.requestId !== null} onOpenChange={open => open ? dialog.open(current.id) : dialog.close()}>
         <section className="change-requests" aria-label="Project changes"
-            hidden={!showTrigger && !error} data-compact={compact || undefined}>
+            hidden={!showTrigger && (!error || historical)} data-compact={compact || undefined}>
             <div className="change-summary" hidden={!showTrigger}>
                 <h2 id="change-impact-title" className="visually-hidden">{changeRequestStatus(current)}</h2>
                 <Dialog.Trigger asChild>
@@ -160,7 +162,7 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: {
                     </button>
                 </Dialog.Trigger>
             </div>
-            {error && <p id="change-action-status" className="error change-summary-error" role="alert">{error}</p>}
+            {!historical && error && <p id="change-action-status" className="error change-summary-error" role="alert">{error}</p>}
         </section>
         <Dialog.Portal><Dialog.Overlay className="dialog-overlay" />
             <Dialog.Content id="change-request-details" className="dialog-content change-details-dialog" aria-modal="true"
@@ -175,7 +177,9 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: {
                         <X size={18} aria-hidden="true" />
                     </button></Dialog.Close>
                 </header>
-                <Dialog.Description className="review-description">{required
+                <Dialog.Description className="review-description">{historical
+                    ? "This Development request is retained as read-only history and no longer starts an upstream review. Continue in the Development conversation."
+                    : required
                     ? waiting ? "Your request is being checked. You can close this dialog and inspect your work while it runs."
                         : opensDraft || current.status === "reviewing"
                             ? "Review the affected stages in order. Each draft is separate from accepted work until you apply it."
@@ -189,8 +193,9 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: {
                     </section>
                     <div className="change-impact" data-status={current.status}>
                         {plan ? <section className="review-proposal" aria-label="Proposed update">
-                            <h3>{settled ? "Recorded outcome" : "Proposed update"}</h3>
+                            <h3>{historical ? "Recorded proposal" : settled ? "Recorded outcome" : "Proposed update"}</h3>
                             <p>{plan.summary}</p>
+                            {historical && plan.question && <p><strong>Recorded question:</strong> {plan.question}</p>}
                             {plan.stages.length > 0 && <div className="review-path-heading"><h3>Review path</h3>
                                 <span>{plan.stages.length} affected {plan.stages.length === 1 ? "stage" : "stages"}</span></div>}
                             <ChangeReviewPath request={current} detailed />
@@ -202,7 +207,7 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: {
                                 <p>{plan.reason}</p>
                                 {plan.stages.map(item => <p key={item.stage}><strong>{label(item.stage)}:</strong> {item.reason}</p>)}
                                 {plan.requirements && <p>{plan.requirements.usages.add.length} added usages and {plan.requirements.upsert.length} new or revised decisions. Independent answers stay unchanged.</p>}
-                                {current.status === "proposed" && <button id="recheck-change" className="plan-button secondary" disabled={busy}
+                                {!settled && current.status === "proposed" && <button id="recheck-change" className="plan-button secondary" disabled={busy}
                                     onClick={() => void decide("retry")}><RefreshCw size={14} aria-hidden="true" />Recheck impact</button>}
                             </details>
                         </section> : <p role="status">{changeRequestResponse(current)}</p>}
@@ -219,7 +224,7 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: {
                                     setDrafts(previous => ({ ...previous, [current.id]: value }));
                                 }} />
                         </form>}
-                        {["active", "reviewing"].includes(current.status) && <p className="review-next-step">
+                        {!settled && ["active", "reviewing"].includes(current.status) && <p className="review-next-step">
                             {current.status === "reviewing"
                                 ? "Open the draft to review it, then apply its changes. Accepted work stays unchanged until you apply."
                                 : "Review the updated work before continuing. Existing versions remain available."}
@@ -238,9 +243,10 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: {
                         {current.status === "active" ? "Cancel remaining change" : "Cancel request"}
                     </button>}
                     <div className="review-footer-actions">
-                        {current.status === "proposed" && !needsDetail && <button className="plan-button secondary" disabled={busy}
+                        {!settled && current.status === "proposed" && !needsDetail && <button className="plan-button secondary" disabled={busy}
                             onClick={() => setRefining(current.id)}>Edit request</button>}
-                        {needsDetail ? <button className="plan-button" form="change-detail-form" type="submit"
+                        {settled ? <Dialog.Close asChild><button className="plan-button" type="button">Done</button></Dialog.Close>
+                            : needsDetail ? <button className="plan-button" form="change-detail-form" type="submit"
                             disabled={busy || !drafts[current.id]?.trim()}><ArrowRight size={15} aria-hidden="true" />Submit detail</button>
                             : current.status === "proposed" && plan ? <button id="approve-change" className="plan-button" disabled={opensDraft ? draftBusy : busy}
                                 onClick={() => void approve()}>{opensDraft ? <ArrowRight size={15} aria-hidden="true" /> : <Check size={15} aria-hidden="true" />}{primaryLabel}</button>
@@ -249,7 +255,6 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: {
                                 <ArrowRight size={15} aria-hidden="true" />{continueLabel}</button>
                             : ["failed", "deferred"].includes(current.status) ? <button className="plan-button" disabled={busy}
                                 onClick={() => void decide("retry")}><RefreshCw size={15} aria-hidden="true" />{current.status === "failed" ? "Retry review" : "Resume request"}</button>
-                            : settled ? <Dialog.Close asChild><button className="plan-button" type="button">Done</button></Dialog.Close>
                             : <button className="plan-button" disabled>Checking request...</button>}
                     </div>
                 </footer>

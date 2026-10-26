@@ -75,12 +75,11 @@ export class HumanLoopRuntime {
   #compactionBusy = false;
   #compactionApproval = null;
   #contextProvider;
-  #onHandoffSettled;
   #withRequestAdmission;
 
   constructor({ configuration, client, workflowBootstrap, verifyOwnership, verifyAdmission, permissionHandler, onHandoff, onProgress,
     readDesign, designer, reviewEffects, now, contextProvider, withRequestAdmission = operation => operation(), createPrivateSession,
-    beforeNativeCreate, afterNativeCreate, projectEffortControl = false, onHandoffSettled }) {
+    beforeNativeCreate, afterNativeCreate, projectEffortControl = false }) {
     requireCondition(configuration?.schemaVersion === "human-loop-runtime/v1" && typeof onHandoff === "function",
       "The new runtime needs versioned one-copy configuration and a real handoff presenter.");
     this.#configuration = configuration; this.#owner = configuration.owner;
@@ -89,7 +88,6 @@ export class HumanLoopRuntime {
     this.#verify = verifyOwnership; this.#verifyAdmission = verifyAdmission ?? verifyOwnership;
     this.#onHandoff = onHandoff; this.#onProgress = onProgress;
     this.#contextProvider = contextProvider;
-    this.#onHandoffSettled = onHandoffSettled;
     this.#withRequestAdmission = withRequestAdmission;
     this.#store = new HumanLoopStore(this.#owner);
     this.#workspace = new HumanLoopWorkspace({ owner: this.#owner, verifyOwnership });
@@ -113,13 +111,6 @@ export class HumanLoopRuntime {
       validateResult: async (packet, result) => {
         const conflict = this.#fences.get(packet.binding.id)?.conflict;
         requireCondition(!conflict, conflict ?? "Tool conflict prevents completion.");
-        if (result.outcome.kind === "discovery-change") {
-          const sources = packet.context.sourceHandoffs;
-          const source = Array.isArray(sources) && sources.find(item => item.kind === "discovery-baseline"
-            && item.prototypeId === result.outcome.prototypeId && item.sourceDigest === result.outcome.sourceDigest);
-          requireCondition(source && this.#onHandoffSettled,
-            "Upstream discovery is unavailable or the source identity is stale. Use the normal Development route.");
-        }
         if (result.outcome.kind === "review-result") requireCondition(result.outcome.reviewFormat === "decision-review/v2",
           "New Whole Reviews must use decision-review/v2; historical formats are read-only.");
         if (packet.binding.role === "designer") await this.#designer.validateOutcome(packet, result);
@@ -989,6 +980,7 @@ export class HumanLoopRuntime {
       const changes = await this.#workspace.changes(cycle.baseline, cycle.current);
       content += `\n\n${outcome.reason}\n\n${changes.length} changed path(s) are retained in the project. This work cycle is unfinished; no whole-plan Review or automatic Designer was started.`;
     } else if (outcome.kind === "discovery-change") {
+      // Keep historical handoff bytes stable; no upstream callback is registered.
       content += `\n\n${outcome.reason}\n\nReview the affected discovery stages in Project changes. Existing Design and code are unchanged; implementation has not been authorized.`;
     } else if (outcome.kind === "stopped-partial") {
       content = `Stopped with partial work retained. This role did not complete its requested outcome; no completion or Review is inferred.\n\n${content}`;
@@ -1012,15 +1004,6 @@ export class HumanLoopRuntime {
     });
     if (confirmAfterDesign) this.#notify({ kind: "implementation-confirmation", requestId: request.id });
     this.#presentationError = null;
-    if (this.#onHandoffSettled) {
-      // A host follow-up does not change the native role's already durable completion.
-      void Promise.resolve().then(() => this.#onHandoffSettled(handoff)).catch(async error => {
-        const reason = `Project change handoff needs attention: ${error.message}`;
-        await this.#store.recordMessage({ id: `followup-error:${handoff.id}`, requestId: handoff.requestId,
-          role: "host", kind: "status", content: reason, timestamp: new Date().toISOString() });
-        this.#notify({ kind: "handoff-followup-failed", requestId: handoff.requestId, reason });
-      });
-    }
   }
 
   async stop(stopId = randomUUID(), mode = "after-step") {

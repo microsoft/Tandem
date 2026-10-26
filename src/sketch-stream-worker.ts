@@ -1,4 +1,4 @@
-import type { SketchDocument } from "./sketch.js";
+import type { SketchDocument, SketchFidelity } from "./sketch.js";
 import { MAX_SKETCH_STREAM_RESPONSE_BYTES, SketchOperationStream, type SketchScreenStatus, type SketchStreamPhase } from "./sketch-stream.js";
 
 export interface SketchWorkerEvent {
@@ -14,6 +14,7 @@ interface SketchWorkerOptions {
     phase?: SketchStreamPhase;
     screenStatuses?: Record<string, SketchScreenStatus>;
     allowUnchanged?: boolean;
+    fidelity?: SketchFidelity;
     decisionIds: string[];
     subscribe: (handler: (event: SketchWorkerEvent) => void) => () => void;
     getRunDetail: () => Promise<{
@@ -33,7 +34,7 @@ function record(value: unknown): value is Record<string, unknown> {
 export async function runSketchStreamWorker(options: SketchWorkerOptions): Promise<SketchDocument> {
     options.signal.throwIfAborted();
     const stream = new SketchOperationStream(options.base, options.decisionIds, options.preview,
-        options.phase, options.screenStatuses, options.allowUnchanged);
+        options.phase, options.screenStatuses, options.allowUnchanged, options.fidelity);
     const messages = new Map<string, { text: string; completed: boolean; commentary: boolean | undefined; appended: number }>();
     let agentId: string | undefined;
     let toolCallId: string | undefined;

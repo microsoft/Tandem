@@ -146,7 +146,21 @@ export function originalPrototypeCheckpointId(flow: PrototypeFlow | null | undef
     return isVisualExploration(checkpoint) ? checkpoint?.baseCheckpointId ?? null : null;
 }
 
+export function isPrototypePreviewTarget(value: unknown): value is PrototypePreviewTarget {
+    return typeof value === "string" && ["current", "pending", "exploration", "original", "prototype", "structure", "interaction", "visual"].includes(value);
+}
+
 export function prototypePreviewCheckpointId(flow: PrototypeFlow | null | undefined, target: PrototypePreviewTarget): string | null {
+    if (target === "prototype") {
+        const available = flow?.checkpoints.filter(item => item.milestone !== "visual" && item.status === "ready" && item.previewUrl);
+        return available?.find(item => item.id === flow?.displayedCheckpointId)?.id
+            ?? available?.filter(item => item.milestone !== "structure").at(-1)?.id ?? available?.at(-1)?.id ?? null;
+    }
+    if (target === "structure" || target === "interaction" || target === "visual") {
+        const available = flow?.checkpoints.filter(item => item.milestone === target && item.status === "ready"
+            && item.previewUrl && !item.visualDismissedAt);
+        return available?.find(item => item.id === flow?.displayedCheckpointId)?.id ?? available?.at(-1)?.id ?? null;
+    }
     return (target === "current" ? flow?.displayedCheckpointId
         : target === "pending" ? flow?.pendingCheckpointId
         : target === "original" ? originalPrototypeCheckpointId(flow) : flow?.visualExploration?.checkpointId) ?? null;

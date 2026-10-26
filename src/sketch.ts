@@ -1,6 +1,6 @@
 import type { ArtifactAsset } from "./artifact-assets.js";
 import { sketchPathData } from "./sketch-path.js";
-import { CATALOG, TOKEN_DEFINITIONS, validateDocument, type UiDocument } from "./vendor/ui-dsl/index.js";
+import { CATALOG, TOKEN_DEFINITIONS, createDocument, validateDocument, type UiDocument } from "./vendor/ui-dsl/index.js";
 
 export const SKETCH_CURVES = ["linear", "quadratic", "cubic", "catmull-rom"] as const;
 export type SketchCurve = typeof SKETCH_CURVES[number];
@@ -54,12 +54,35 @@ export interface DslSketchScreen extends Omit<SketchScreen, "shapes"> {
 
 export interface DslSketchDocument {
     version: 2;
+    fidelity?: SketchFidelity;
     screens: DslSketchScreen[];
     transitions: SketchTransition[];
 }
 
 export type SketchDocument = LegacySketchDocument | DslSketchDocument;
 export type DrawingScreen = SketchScreen | DslSketchScreen;
+export type SketchFidelity = "wireframe" | "styled";
+
+export function sketchFidelity(document: SketchDocument | null, approach = "build"): SketchFidelity {
+    if (document) return document.version === 2 ? document.fidelity ?? "styled" : "styled";
+    return approach === "validate-existing" ? "styled" : "wireframe";
+}
+
+export function createSketchUi(fidelity: SketchFidelity = "styled"): UiDocument {
+    return createDocument(fidelity === "wireframe" ? { tokens: {
+        "color.background": "#f5f5f5", "color.surface": "#ffffff", "color.text": "#262626",
+        "color.muted": "#595959", "color.primary": "#333333", "color.onPrimary": "#ffffff",
+        "color.border": "#d4d4d4", "color.subtle": "#ededed", "color.success": "#333333",
+        "color.warning": "#333333", "color.danger": "#333333",
+        "radius.sm": 2, "radius.md": 4, "radius.lg": 4,
+    } } : undefined);
+}
+
+export function sketchApprovalScope(document: SketchDocument): string {
+    return sketchFidelity(document) === "wireframe"
+        ? "Approve layout, content and navigation. Appearance is deferred; local controls do not prove application behavior."
+        : "Approve the saved layout and appearance. Application behavior is reviewed in Prototype.";
+}
 
 export function isDslScreen(screen: DrawingScreen): screen is DslSketchScreen {
     return "ui" in screen;
@@ -244,11 +267,14 @@ function screen(value: unknown): SketchScreen {
 }
 
 export function validateSketchDocument(value: unknown, decisionIds?: string[]): SketchDocument {
-    const item = object(value, ["version", "screens", "transitions"]);
+    const item = object(value, ["version", "screens", "transitions"], ["fidelity"]);
     if (item.version !== 1 && item.version !== 2) return invalid("unsupported document version.");
+    if (Object.hasOwn(item, "fidelity") && (item.version !== 2 ||
+        item.fidelity !== "wireframe" && item.fidelity !== "styled")) return invalid("unsupported design fidelity.");
     const values = list(item.screens, "screens", 1, 8);
     const result: SketchDocument = item.version === 2
-        ? { version: 2, screens: values.map(dslScreen), transitions: [] }
+        ? { version: 2, ...(item.fidelity === "wireframe" || item.fidelity === "styled" ? { fidelity: item.fidelity } : {}),
+            screens: values.map(dslScreen), transitions: [] }
         : { version: 1, screens: values.map(screen), transitions: [] };
     const { screens } = result;
     unique(screens.map((screen) => screen.id), "screen IDs");
@@ -399,6 +425,7 @@ export const sketchDocumentSchema = {
     properties: {
         ...legacySketchDocumentSchema.properties,
         version: { type: "integer", enum: [2] },
+        fidelity: { type: "string", enum: ["wireframe", "styled"] },
         screens: {
             type: "array", minItems: 1, maxItems: 8,
             items: {
