@@ -5,9 +5,9 @@ import {
     originalPrototypeCheckpointId, visualExplorationIsCurrent,
     type VisualCheckpoint, type VisualExploration, type VisualSelection,
 } from "./visual-directions.js";
-export { awaitingVisualChoice, visualExplorationIsCurrent, prototypePreviewCheckpointId } from "./visual-directions.js";
-
-export type PrototypeMilestone = "structure" | "interaction" | "visual";
+export { awaitingVisualChoice, visualExplorationIsCurrent, prototypePreviewCheckpointId, isPrototypePreviewTarget } from "./visual-directions.js";
+import { prototypeMilestoneLabels, prototypeMilestoneReady, type PrototypeMilestone, type PrototypeSubstage } from "./prototype-milestones.js";
+export { prototypeMilestoneLabels, prototypeMilestoneReady, prototypeSubstage, type PrototypeMilestone, type PrototypeSubstage } from "./prototype-milestones.js";
 export interface PrototypeCheckpoint {
     id: string;
     requestId: string;
@@ -33,6 +33,7 @@ export interface PrototypeCheckpoint {
     sketchImagesRead?: string[];
     visual?: VisualCheckpoint;
     visualDismissedAt?: string;
+    continuation?: "interaction";
 }
 
 export interface PrototypeFlow {
@@ -45,12 +46,6 @@ export interface PrototypeFlow {
     visualExploration?: VisualExploration | null;
     budget: { limitSeconds: number | null; usedSeconds: number };
 }
-
-export const prototypeMilestoneLabels: Record<PrototypeMilestone, string> = {
-    structure: "Structure",
-    interaction: "Interaction",
-    visual: "Visual exploration",
-};
 
 export function newPrototypeFlow(): PrototypeFlow {
     return {
@@ -80,7 +75,7 @@ export function readPrototypeFlow(value: unknown): PrototypeFlow | null {
     const checkpoints = value.checkpoints.map((entry): PrototypeCheckpoint => {
         if (!record(entry) || typeof entry.id !== "string" || !entry.id ||
             typeof entry.requestId !== "string" || typeof entry.generation !== "string" ||
-            (entry.milestone !== "structure" && entry.milestone !== "interaction" && entry.milestone !== "visual") ||
+            (entry.milestone !== "prototype" && entry.milestone !== "structure" && entry.milestone !== "interaction" && entry.milestone !== "visual") ||
             (entry.status !== "running" && entry.status !== "ready" && entry.status !== "failed" && entry.status !== "clarifying") ||
             !nullableString(entry.revisionId) || !nullableString(entry.baseCheckpointId) ||
             !nullableString(entry.sourceCheckpointId) || typeof entry.workspacePath !== "string" ||
@@ -99,6 +94,8 @@ export function readPrototypeFlow(value: unknown): PrototypeFlow | null {
                 entry.sketchImagesRead.length > 8 || entry.sketchImagesRead.some((id) => typeof id !== "string") ||
                 new Set(entry.sketchImagesRead).size !== entry.sketchImagesRead.length)) ||
             (!entry.sketchRevisionId && Array.isArray(entry.sketchImagesRead) && entry.sketchImagesRead.length > 0) ||
+            (entry.continuation !== undefined && (entry.continuation !== "interaction" ||
+                entry.milestone !== "structure" || entry.revisionId !== null)) ||
             (entry.timeoutSeconds !== null && (entry.timeoutSeconds < 0 || entry.timeoutSeconds > 300))) throw invalid();
         if (entry.visualDismissedAt !== undefined && (entry.milestone !== "visual" ||
             !["failed", "ready"].includes(String(entry.status)) || typeof entry.visualDismissedAt !== "string" ||
@@ -126,6 +123,7 @@ export function readPrototypeFlow(value: unknown): PrototypeFlow | null {
             ...(Array.isArray(entry.sketchImagesRead) ? { sketchImagesRead: entry.sketchImagesRead.map((id: string) => id) } : {}),
             ...(entry.visual !== undefined ? { visual: readVisualCheckpoint(entry.visual) } : {}),
             ...(typeof entry.visualDismissedAt === "string" ? { visualDismissedAt: entry.visualDismissedAt } : {}),
+            ...(entry.continuation === "interaction" ? { continuation: "interaction" as const } : {}),
         };
     });
     if (new Set(checkpoints.map((item) => item.id)).size !== checkpoints.length) throw invalid();
@@ -178,7 +176,7 @@ export function prototypeCheckpoint(flow: PrototypeFlow, id: string | null): Pro
     return flow.checkpoints.find((item) => item.id === id) || null;
 }
 
-export type PrototypePreviewTarget = "current" | "pending" | "exploration" | "original";
+export type PrototypePreviewTarget = "current" | "pending" | "exploration" | "original" | PrototypeMilestone;
 
 export function prototypeRetrySource(flow: PrototypeFlow, failed: PrototypeCheckpoint): PrototypeCheckpoint | null {
     const visited = new Set<string>();
@@ -196,12 +194,18 @@ export function prototypeRetrySource(flow: PrototypeFlow, failed: PrototypeCheck
     return null;
 }
 
-export function nextPrototypeMilestone(flow: PrototypeFlow): PrototypeMilestone | null {
-    for (const milestone of ["structure", "interaction", "visual"] as const) {
-        if (milestone === "visual" && !flow.visualRequested) return null;
-        if (!flow.checkpoints.some((item) => item.milestone === milestone && item.status === "ready")) return milestone;
-    }
-    return null;
+export function nextPrototypeMilestone(flow: PrototypeFlow): PrototypeSubstage | null {
+    if (!prototypeMilestoneReady(flow, "prototype")) return "prototype";
+    return flow.visualRequested && !prototypeMilestoneReady(flow, "visual") ? "visual" : null;
+}
+
+export function prototypeSketchEvidenceCheckpoint(flow: PrototypeFlow, checkpoint: PrototypeCheckpoint): PrototypeCheckpoint {
+    const source = prototypeCheckpoint(flow, checkpoint.sourceCheckpointId);
+    // Reused reads retain their original checkpoint and are limited to this progressive request and approval.
+    return source?.continuation === "interaction" && source.status === "ready" && checkpoint.milestone === "interaction"
+        && source.requestId === checkpoint.requestId && source.generation === checkpoint.generation
+        && source.sketchRevisionId === checkpoint.sketchRevisionId && source.sketchInputHash === checkpoint.sketchInputHash
+        ? source : checkpoint;
 }
 
 export function reservePrototypeCheckpoint(flow: PrototypeFlow, checkpoint: Omit<PrototypeCheckpoint, "timeoutSeconds">): PrototypeFlow {

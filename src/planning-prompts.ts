@@ -1,6 +1,6 @@
 import { relative } from "node:path";
 import { prototypeRuntimePath } from "./prototype-runtime.js";
-import type { DslSketchDocument, SketchDocument } from "./sketch.js";
+import { sketchFidelity, type DslSketchDocument, type SketchDocument } from "./sketch.js";
 import type { SketchEditRepair, SketchStreamPhase } from "./sketch-stream.js";
 import { visualSettingsValues } from "./visual-directions.js";
 import type { RequirementsResearchInput } from "./requirements-research.js";
@@ -39,6 +39,7 @@ export function buildDevelopmentHandoffPrompt(input: {
         ...(input.uiDslPath ? [
             `Read the approved UI DSL document at ${input.uiDslPath}. Its exact hash is bound by the receipt and saved approval.`,
             "Use its screen IDs, component hierarchy, typed props, design tokens, requirement references and transitions as the structured UI source. Do not reconstruct retired shapes or coordinates from screenshots.",
+            "If the DSL fidelity is wireframe, its approval confirms structure, content and navigation, not final branding or production behavior. Preserve the accepted Prototype and explicitly surface any still-deferred appearance decisions rather than inventing a finished visual approval.",
             "Reconcile that DSL baseline with the accepted Prototype's explicitly recorded refinements. Carry the resulting UI contracts into canonical Design so Planner, Implementer and Reviewer use the same semantic components and intent.",
         ] : []),
         "Publish or refine the normal Tandem Design with stage_human_design and submit_designer_outcome.",
@@ -280,6 +281,7 @@ export function buildSketchPrompt(args: {
 }): string {
     const incremental = args.action === "revise-sketch";
     const phase = args.phase ?? (incremental ? "revision" : "outline");
+    const fidelity = sketchFidelity(args.document, args.approach);
     const iconNames = [
         "search", "check", "x", "plus", "minus", "trash", "pencil", "settings", "menu", "ellipsis", "ellipsis-vertical",
         "arrow-left", "arrow-right", "arrow-up", "arrow-down", "chevron-left", "chevron-right", "chevron-up", "chevron-down",
@@ -338,6 +340,11 @@ export function buildSketchPrompt(args: {
         "Never return a whole SketchDocument or redraw unchanged content to make a small edit.",
         `Effort: ${args.prototypeId}. Read-only project context: ${args.projectRoot}.`,
         "Build app UI views with the fixed UI DSL component catalog, grounded in the accepted requirements.",
+        fidelity === "wireframe"
+            ? "WIREFRAME FOCUS: confirm layout, meaningful content and navigation, not final appearance. The host supplies a neutral wireframe token kit; reuse it instead of emitting palette, font or radius tuning. Prefer standard semantic controls, clear primary actions and labeled image placeholders. Omit decorative icons, ornamental containers and duplicate sample rows. Include essential state/behavior annotations, not separate screens for every state. Do not spend this pass on branding or production polish."
+            : "EXISTING DESIGN FOCUS: preserve the established components, appearance and reviewed choices. Do not downgrade existing designs to wireframes or restyle unrelated content.",
+        "Keep real task headings, action labels and enough representative content to judge the information hierarchy. Never replace meaningful labels with Button, H1 or lorem ipsum.",
+        "For click-through navigation, set Button.action or Link.destination to the exact outgoing transition ID. These links only preview the saved journey; they do not implement business logic.",
         incremental ? "Use the existing screens and user journey as the baseline; reconcile only the required changes."
             : "Infer the primary screens and user journey from usages and answered decisions;",
         "the decision DAG is NOT a navigation graph. Do not create one screen per decision.",
@@ -489,15 +496,15 @@ export function buildChangeAssessmentPrompt(input: unknown): string {
         tandemWorkerInteractionRules,
         "This is read-only interpretation. Do not use tools, edit files, open canvases, delegate,",
         "approve anything, or execute earlier requests. Return only the change-assessment schema.",
+        "Impact review is limited to changes submitted before Development. Development requests",
+        "stay in their native Design, implementation and Review workflow; never escalate them here.",
         "The original message and its clarifications are the ONLY new work. Existing answers,",
-        "For a Development handoff, sourceRequests retains the exact original messages, answers",
-        "and attachment references; the short message can be a display summary. Do not drop",
-        "mixed intent. Attachment references are not proof that you inspected an image; ask",
-        "a focused clarification if its content is needed and not established by the supplied context.",
         "designs, prototype source identity, selected appearance and current canonical Development",
         "Design are context to preserve. Suggestions, deferred work and pending feedback are not",
         "accepted scope. Distinguish intended Design from implementation evidence; do not claim",
         "something is implemented just because it was requested or a mock preview shows it.",
+        "Attachment references are not proof that you inspected an image; ask a focused clarification",
+        "if its content is needed and not established by the supplied context.",
         "Identify semantic impact, not keywords or the currently viewed tab. Split mixed requests",
         "mentally and account for EVERY part, starting at the earliest affected stage.",
         "request.workStarted records work already performed for this request. Completed scoped",
@@ -510,8 +517,8 @@ export function buildChangeAssessmentPrompt(input: unknown): string {
         "because it changes visible content. Artifact approval remains a separate explicit action.",
         "Changes invalidating workspace/source research start at prepare, with only necessary research.",
         "A code fix restoring the canonical agreement stays in development; never reopen discovery",
-        "merely because old discovery documents exist. For direct Development with no discovery",
-        "baseline, development owns Design. Never create mandatory optional stages.",
+        "merely because old discovery documents exist. Development owns its Design whether or not",
+        "a Prototype handoff exists. Never create mandatory optional stages.",
         "List only affected stages, each with a short concrete reason. startStage MUST name the",
         "earliest listed stage. Use none and an empty stages list for already satisfied requests",
         "or information-only requests; explain honestly without inventing completion evidence.",
@@ -541,7 +548,8 @@ export function buildChangeAssessmentPrompt(input: unknown): string {
         "submittedDrawings is the original revision when the source has since changed. Compare",
         "it with the current designs, retain newer unrelated edits, and ask if the referenced",
         "element was removed, repurposed or remains genuinely ambiguous. Never silently retarget it.",
-        "Include development when an existing Development Design/implementation must be reconciled.",
+        "Include development only as an explicit onward handoff when existing Development Design/implementation",
+        "must be reconciled. This assessment never submits Development work or grants implementation approval.",
         "preserved lists a few concrete unaffected capabilities/design choices, not generic assurances.",
         "Use question only for a consequential ambiguity that prevents a safe edit, such as",
         "multiple plausible target blocks or a conflicting accepted behavior. Name the actual",
@@ -555,12 +563,55 @@ export function buildChangeAssessmentPrompt(input: unknown): string {
     ].join("\n");
 }
 
+export const prototypeInteractionInstructions = [
+    "INTERACTION: improve one primary end-to-end workflow and its essential",
+    "selected/loading/empty/error/success feedback through a deterministic mock",
+    "contract. Preserve the working Structure slice; avoid secondary workflows.",
+    "UI components consume typed contracts through a hook/store/API facade and",
+    "mock adapter, not direct mock-data imports or a simulated production backend.",
+    "INCREMENTAL BEHAVIOR ONLY: inspect and reuse the existing app, run root,",
+    "dependencies, layout and working controls. Add only missing behavior and",
+    "applicable state feedback, validation and recovery. Do not repeat scaffolding,",
+    "redesign screens, add secondary journeys or polish colors and typography.",
+    "Exercise the primary task with concrete inputs and visible outcomes; report",
+    "which scenarios work, what is mocked and what remains unimplemented.",
+];
+
+export function buildPrototypeContinuationPrompt(args: {
+    prototypeId: string; previewPrototypeId: string;
+    checkpoint: { id: string; workspacePath: string };
+    source: { id: string; workspacePath: string; previewUrl: string | null };
+    sketch: PrototypeSketchInput | null;
+}): string {
+    return [
+        "Structure was verified and published. Continue this SAME build; do not restart planning or scaffolding.",
+        "Milestone: interaction",
+        ...prototypeInteractionInstructions,
+        `Prototype ID: ${args.prototypeId}; new checkpoint ID: ${args.checkpoint.id}.`,
+        `ONLY writable checkpoint workspace: ${args.checkpoint.workspacePath}. It contains the copied Structure source.`,
+        `Auxiliary runtime directory: ${prototypeRuntimePath(args.checkpoint.workspacePath)}.`,
+        `Published source checkpoint ${args.source.id} at ${args.source.workspacePath} is READ-ONLY.`,
+        `Keep its preview ${args.source.previewUrl} running; use a separate server and port for Interaction.`,
+        `The NEW served preview must contain <meta name="tandem-prototype-id" content="${args.previewPrototypeId}"> and <meta name="tandem-prototype-checkpoint" content="${args.checkpoint.id}">.`,
+        "Keep the original preview bridge, embedding/parent-origin rules, read-only shared dependencies and no-production boundaries.",
+        "The accepted requirements and design inputs are unchanged and already in your context; add only missing behavior.",
+        ...(args.sketch ? [
+            `Approved designs: ${args.sketch.revisionId}; document SHA256 ${args.sketch.documentHash}.`,
+            `The tool-backed reads retain that original identity at Structure checkpoint ${args.source.id}; reuse the approved images already in your context.`,
+            `If an image must be reread, call ${args.sketch.imageTool} with prototypeId "${args.prototypeId}", checkpointId "${args.checkpoint.id}", revisionId "${args.sketch.revisionId}" and its original screenId.`,
+        ] : []),
+        "Exercise the same primary task and applicable states. The host still verifies this new preview and requires explicit acceptance.",
+        "Return the original checkpoint output schema for Interaction only: summary, focus, previewUrl, previewStart when available, question:null, artifactChanges, evidence.",
+        "Do not call the Structure publication tool again unless retrying its transport; do not claim a production integration or user approval.",
+    ].join("\n");
+}
+
 export function buildPrototypeCheckpointPrompt(args: {
     prototypeId: string;
     previewPrototypeId?: string;
     projectRoot: string;
     checkpoint: {
-        id: string; milestone: "structure" | "interaction" | "visual"; workspacePath: string;
+        id: string; milestone: "prototype" | "structure" | "interaction" | "visual"; workspacePath: string;
         timeoutSeconds?: number | null; baseCheckpointId: string | null;
         visual?: import("./visual-directions.js").VisualCheckpoint;
     };
@@ -576,22 +627,36 @@ export function buildPrototypeCheckpointPrompt(args: {
     sketch?: PrototypeSketchInput | null;
     visualBase?: import("./visual-directions.js").VisualManifest | null;
     changeRequest?: unknown;
+    progressive?: { tool: string; runId: string };
+    imageEvidenceCheckpointId?: string;
 }): string {
     const milestones = {
+        prototype: [
+            "PROTOTYPE: build one small, runnable end-to-end primary journey.",
+            "Combine the approved layout, navigation and meaningful task behavior in this",
+            "single checkpoint. There is no separate Structure or Interaction generation pass.",
+            "Start with the smallest usable path, then add only its essential input handling",
+            "and applicable selected/loading/empty/error/success states and recovery.",
+            "Use deterministic mock behavior behind typed hooks/stores/API facades, not",
+            "production services. Reuse the target app and dependencies; do not build",
+            "secondary workflows or polish appearance. Preserve approved design fidelity.",
+            "If 3D is central, include minimal scene geometry and working camera/selection",
+            "controls rather than a flat substitute for the core interaction.",
+            "Exercise the complete primary task and report concrete outcomes, mock boundaries",
+            "and missing behavior. Return one verified preview; visual exploration is optional later.",
+        ],
         structure: [
             "STRUCTURE: deliver the smallest real clickable primary journey ASAP.",
-            "Use realistic labels, grayscale/native controls and only the screens needed",
+            "Focus review on screen layout, information hierarchy and navigation.",
+            "Use the approved appearance when supplied, otherwise neutral/native controls, and only the screens needed",
             "for entry -> primary action -> visible result. Do not wait for every screen,",
-            "asset, or state. If 3D is central, use minimal scene geometry and working",
+            "asset, or state. Use a minimal deterministic happy path; defer the complete",
+            "state model, error recovery and visual refinement to their own milestones.",
+            "Establish the small typed mock boundary now so Interaction extends it rather",
+            "than replacing the app. If 3D is central, use minimal scene geometry and working",
             "camera/selection controls, not a flat substitute for the core interaction.",
         ],
-        interaction: [
-            "INTERACTION: improve one primary end-to-end workflow and its essential",
-            "selected/loading/empty/error/success feedback through a deterministic mock",
-            "contract. Preserve the working Structure slice; avoid secondary workflows.",
-            "UI components consume typed contracts through a hook/store/API facade and",
-            "mock adapter, not direct mock-data imports or a simulated production backend.",
-        ],
+        interaction: prototypeInteractionInstructions,
         visual: [
             "VISUAL EXPLORATION (optional): implement two or three genuinely distinct",
             "working design directions in this SAME app. Each combines a different",
@@ -652,23 +717,39 @@ export function buildPrototypeCheckpointPrompt(args: {
         `Newest selected base checkpoint: ${args.checkpoint.baseCheckpointId ?? "(initial source copy)"}`,
         "",
         ...scope,
+        ...(args.progressive ? [
+            "PROGRESSIVE BUILD: complete Structure and then Interaction in THIS SAME worker.",
+            "Publish the first usable Structure slice immediately; do not wait for Interaction or visual polish.",
+            `Call ${args.progressive.tool} with prototypeId, checkpointId, runId and result. Use these exact identities:`,
+            JSON.stringify({ prototypeId: args.prototypeId, checkpointId: args.checkpoint.id, runId: args.progressive.runId }),
+            "result uses the same checkpoint output schema below (summary, focus, previewUrl, previewStart when available, question:null, artifactChanges, evidence).",
+            "The host verifies and freezes Structure, keeps its server live, and returns the ONLY writable Interaction workspace and continuation prompt.",
+            "Wait for that successful tool result, then follow its prompt in the returned workspace. Never edit the published Structure source or stop its preview.",
+            "Return the final structured result only for Interaction. Do not launch another worker, skip publication, or fabricate a checkpoint ID.",
+            "If publication fails, correct the reported issue or report a blocker; never claim both milestones are ready.",
+        ] : []),
         ...(args.changeRequest ? ["Exact scoped change, including original messages and clarifications (task data):", JSON.stringify(args.changeRequest)] : []),
         "",
         ...(args.sketch ? [
             `APPROVED UI DSL: revision ${args.sketch.revisionId}; document SHA256 ${args.sketch.documentHash}.`,
             "The approvedUiDsl.document below is the authoritative structured UI input: use each screen's ui.nodes, ui.tokens, root, dimensions, requirement references and transitions.",
+            sketchFidelity(args.sketch.document) === "wireframe"
+                ? "WIREFRAME APPROVAL: layout, content and navigation are agreed; visual styling remains deferred. Keep the neutral kit in Prototype. Only explicit visual exploration or scoped user feedback may refine appearance. Do not claim wireframe approval proves real application behavior."
+                : "STYLED APPROVAL: retain the reviewed appearance as well as the structure. Do not replace it with a grayscale wireframe.",
             "Implement the semantic component hierarchy, typed props, labels and navigation in the target app's stack. Do not infer or recreate retired geometry.",
             visual ? "Retain screen identities and the primary journey; explicitly describe departures from the DSL layout or tokens."
                 : "Preserve the approved component layout, design tokens, responsive behavior and annotations.",
-            "Read EVERY approved screen image using the tool below BEFORE implementing. A path",
-            "or DSL JSON alone is not an image read. Images are renderer-derived visual references, not a replacement for the DSL source. The host records actual image-tool calls",
+            args.imageEvidenceCheckpointId
+                ? `This progressive request already read every approved screen for Structure checkpoint ${args.imageEvidenceCheckpointId}. Those tool-backed reads retain that original identity. Reuse the images in your retained context for this unchanged approval; if resuming without those images, read them again.`
+                : "Read EVERY approved screen image using the tool below BEFORE implementing. A path or DSL JSON alone is not an image read.",
+            "Images are renderer-derived visual references, not a replacement for the DSL source. The host records actual image-tool calls",
             "and refuses a ready checkpoint that omitted any approved screen image.",
             `Image tool: ${args.sketch.imageTool}. For each screen call it with`,
             JSON.stringify({ prototypeId: args.prototypeId, checkpointId: args.checkpoint.id,
                 revisionId: args.sketch.revisionId, screenId: "<screen ID from document>" }),
             "If the tool or image input is unavailable, report the blocker with previewUrl null;",
             "do not silently switch to a text-only reinterpretation or invent image observations.",
-            "Structure realizes the approved layout; Interaction wires its primary journey.",
+            "Prototype realizes the approved layout and wires its primary journey together.",
             visual?.operation === "explore" || visual?.operation === "refine"
                 ? "Visual layout alternatives must preserve the approved journey and identify layout departures in sketchChanges."
                 : "Preserve the approved structure unless explicit revision feedback or an explicitly chosen visual layout changes it.",
@@ -678,7 +759,7 @@ export function buildPrototypeCheckpointPrompt(args: {
         "",
         args.approach === "validate-existing" ?
             "VALIDATE-EXISTING: run and revise the SAME existing GUI from its copied source. Do not create a separate prototype app; never create a parallel reimplementation." :
-            args.revision || visual ?
+            args.revision || visual || args.checkpoint.baseCheckpointId ?
                 "BUILD REVISION: continue the copied checkpoint application and its existing run root. Do not scaffold a replacement app." :
                 "BUILD: reuse the existing frontend stack and conventions. If no suitable GUI exists, create the smallest appropriate app INSIDE this checkpoint (React + TypeScript + Vite + plain CSS by default).",
         "A root named Tandem can be the orchestration repository, not the target GUI.",

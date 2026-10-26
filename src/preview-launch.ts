@@ -7,7 +7,7 @@ import { fingerprintWorkspace } from "./execution.js";
 import { readJsonFile, writeJsonAtomically } from "./project-store.js";
 import { ensureMaterializedDirectories, readRetainedFile } from "./accepted-artifacts.js";
 import type { TandemState } from "./types.js";
-import { prototypePreviewCheckpointId, type PrototypePreviewTarget } from "./prototype-flow.js";
+import { isPrototypePreviewTarget, prototypePreviewCheckpointId, type PrototypePreviewTarget } from "./prototype-flow.js";
 import {
     discoverPreviewStarts, insidePreviewPath, materialized, samePreviewPath, verifyPreviewStart,
     type PreviewStartChoice,
@@ -86,13 +86,13 @@ export class PreviewLaunches {
         guard(): Promise<void>;
     }) {}
     async binding(state: TandemState, target: PreviewTarget): Promise<PreviewLaunchBinding> {
-        if (!["current", "pending", "exploration", "original"].includes(target)) throw new Error("Choose the current, original, pending or visual exploration saved version.");
+        if (!isPrototypePreviewTarget(target)) throw new Error("Choose a saved prototype preview.");
         const flow = state.prototypeFlow;
         const id = prototypePreviewCheckpointId(flow, target);
         const checkpoint = flow?.checkpoints.find(item => item.id === id);
         if (!checkpoint || checkpoint.status !== "ready" || !checkpoint.previewUrl || !checkpoint.sourceFingerprint
             || checkpoint.generation !== state.generation) throw new Error("This saved version lacks a verified checkpoint/source identity. It cannot be restarted.");
-        const expected = join(this.options.storageRoot, "efforts", state.stageReview?.parentId ?? state.prototypeId, "previews", checkpoint.requestId);
+        const expected = join(this.options.storageRoot, "efforts", state.stageReview?.parentId ?? state.prototypeId, "previews", checkpoint.id);
         if (!samePreviewPath(expected, checkpoint.workspacePath)) throw new Error("The checkpoint is not in its exact project-owned saved workspace.");
         await materialized(checkpoint.workspacePath, "directory");
         return { prototypeId: state.prototypeId, generation: state.generation, checkpointId: checkpoint.id,

@@ -76,7 +76,7 @@ export function Diagram({ id, source, onNodeSelect, legend, label = "Diagram", l
     if (nodeId) onNodeSelect?.(nodeId);
   };
   const zoom = (scale: number) => setView({ mode: "scale", scale: Math.max(.25, Math.min(4, scale)) });
-  return <>
+  return <div className="diagram">
     {(legend || svg) && <div className="diagram-header">
       {legend}
       {svg && <div className="diagram-toolbar" role="toolbar" aria-label="Diagram zoom controls">
@@ -87,12 +87,17 @@ export function Diagram({ id, source, onNodeSelect, legend, label = "Diagram", l
         <span className="diagram-toolbar-output" aria-live="polite">{view.mode === "fit" ? "Fit" : Math.round(view.scale * 100) + "%"}</span>
       </div>}
     </div>}
-    <div id={id} ref={host} className="mermaid-host react-diagram" role={onNodeSelect ? "group" : "img"} aria-label={label}
-      style={{ "--diagram-width": view.mode === "fit" ? "100%" : naturalWidth * view.scale + "px" } as CSSProperties}
-      onClick={(event) => select(event.target)}
-      onKeyDown={(event) => { if (onNodeSelect && ["Enter", " "].includes(event.key)) { event.preventDefault(); select(event.target); } }}
-      dangerouslySetInnerHTML={{ __html: svg }} />
+    <div className="diagram-scroll-area" role="region" aria-label={`${label} content`} tabIndex={0}>
+      <div id={id} ref={host} className="mermaid-host react-diagram" role={onNodeSelect ? "group" : "img"} aria-label={label}
+        style={{ "--diagram-width": view.mode === "fit" ? "100%" : naturalWidth * view.scale + "px" } as CSSProperties}
+        onClick={(event) => select(event.target)}
+        onKeyDown={(event) => { if (onNodeSelect && ["Enter", " "].includes(event.key)) { event.preventDefault(); select(event.target); } }}
+        dangerouslySetInnerHTML={{ __html: svg }} />
+    </div>
     <p className="diagram-status" role="status" data-status={error ? "error" : "idle"}>{error}</p>
-    <details className="diagram-source" open={error ? true : undefined}><summary>Mermaid source</summary><pre>{source}</pre></details>
-  </>;
+    <details className="diagram-source" open={error ? true : undefined}>
+      <summary id={`${id}-source-label`}>Mermaid source</summary>
+      <pre tabIndex={0} role="region" aria-labelledby={`${id}-source-label`}>{source}</pre>
+    </details>
+  </div>;
 }

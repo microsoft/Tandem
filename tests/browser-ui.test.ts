@@ -12,6 +12,7 @@ import { test, type TestContext } from "node:test";
 import { BrowserStore, parseHostSnapshot, readLaunchCapability } from "../src/browser/client.js";
 import type { HostSnapshot } from "../src/browser/contracts.js";
 import type { ApplicationHeader } from "../src/renderer/standalone-header.js";
+import { requirementsResearchInput } from "../src/requirements-research.js";
 import { decision, reactHarness, rendererFixtureScript, state as rendererState } from "./helpers/react-harness.js";
 import { browserAvailable, openFixtureBrowser } from "../development/tandem/test/helpers/browser-fixture.mjs";
 
@@ -611,6 +612,7 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
             assert.equal(geometry.hintVisible, width > 680);
         }
         const activeRequirements = rendererState("requirements", 3);
+        activeRequirements.goal = "Build a menu and ordering app.\n" + "Keep the accepted workflow and earlier decisions available for reference. ".repeat(40);
         activeRequirements.requirements = {
             substage: "dag", usageItems: ["Browse the menu and inspect drink details.", "Place a pickup order."], suggestions: [],
         };
@@ -645,19 +647,25 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
                     header:bounds(inner.querySelector(".previewbar")), finish:bounds(inner.querySelector("#complete-stage")),
                     review:bounds(inner.querySelector("#stage-input-review")),
                     outerFits: document.querySelector(".host-main").scrollWidth <= document.querySelector(".host-main").clientWidth + 1,
-                    panelFits:panel.scrollWidth <= panel.clientWidth + 1, cardFits:card.scrollWidth <= card.clientWidth + 1 };
+                    panelFits:panel.scrollWidth <= panel.clientWidth + 1, cardFits:card.scrollWidth <= card.clientWidth + 1,
+                    noOuterScroll: inner.documentElement.scrollHeight <= inner.documentElement.clientHeight + 1
+                        && inner.querySelector("#studio-workspace").scrollHeight <= inner.querySelector("#studio-workspace").clientHeight + 1
+                        && panel.scrollHeight <= panel.clientHeight + 1,
+                    dagPanel:bounds(inner.querySelector("#requirements-dag-panel")) };
             })()`);
             assert.equal(layout.outerFits, true, `The browser frame must fit the window at ${width}: ${JSON.stringify(layout)}`);
             assert.equal(layout.panelFits, true, `Requirements must not clip horizontally at ${width}: ${JSON.stringify(layout)}`);
             assert.equal(layout.cardFits, true, `The question and DAG must fit their card at ${width}: ${JSON.stringify(layout)}`);
+            assert.equal(layout.noOuterScroll, true, `Only the inner panes scroll at ${width}: ${JSON.stringify(layout)}`);
+            assert.ok(Math.abs(layout.card.height - layout.dagPanel.height) <= 1, "The DAG fills its tab's remaining height.");
             assert.equal(layout.review.height, 0, "An empty review area must not leave a bottom action strip.");
             assert.ok(layout.finish.left >= layout.header.left - 1 && layout.finish.right <= layout.header.right + 1
                 && layout.finish.top >= layout.header.top - 1 && layout.finish.bottom <= layout.header.bottom + 1,
                 `Finish requirements stays inside the tab bar at ${width}: ${JSON.stringify(layout)}`);
-            if (layout.panel.width <= 900) {
+            if (layout.panel.width <= 680) {
                 assert.ok(layout.question.bottom <= layout.graph.top + 1, `The question comes before the long DAG on narrow workspaces: ${JSON.stringify(layout)}`);
             } else {
-                assert.ok(layout.question.width >= 360, "The answer inspector has enough room for realistic choices.");
+                assert.ok(layout.question.width >= 260, "The answer inspector has enough room for realistic choices.");
             }
             for (const selector of ["#decision-question-title", "#decision-submit", ".all-recommended", "#decision-list li:last-child button"]) {
                 const reachable = await browser.evaluate(`(() => {
@@ -669,6 +677,93 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
                 })()`);
                 assert.equal(reachable.visible, true, `${selector} must be reachable without an overlapping panel at ${width}.`);
                 assert.notEqual(reachable.disabled, true);
+            }
+            const scroll = await browser.evaluate(`(() => {
+                const inner = document.querySelector("#tandem-application").contentDocument;
+                const diagram = inner.querySelector(".design-tree-host .diagram-scroll-area");
+                const question = inner.querySelector(".design-tree-inspector");
+                const toolbar = inner.querySelector(".design-tree-host .diagram-toolbar");
+                const history = inner.querySelector("#discovery-history");
+                const context = inner.querySelector("#requirements-pane");
+                inner.querySelector('[aria-label="Actual size"]').click();
+                diagram.scrollTop = 0; question.scrollTop = 0; history.scrollTop = 0;
+                const top = toolbar.getBoundingClientRect().top, contextTop = context.scrollTop;
+                diagram.scrollTop = diagram.scrollHeight;
+                const independent = question.scrollTop === 0 && history.scrollTop === 0 && context.scrollTop === contextTop;
+                const diagramTop = diagram.scrollTop;
+                question.scrollTop = question.scrollHeight;
+                return { diagramTop, questionTop:question.scrollTop, independent,
+                    toolbarFixed: toolbar.getBoundingClientRect().top === top,
+                    diagramUnchanged: diagram.scrollTop === diagramTop,
+                    diagramStyle: inner.defaultView.getComputedStyle(diagram).overflowY,
+                    questionStyle: inner.defaultView.getComputedStyle(question).overflowY };
+            })()`);
+            assert.ok(scroll.diagramTop > 0, `The diagram has its own scrolling area at ${width}: ${JSON.stringify(scroll)}`);
+            assert.equal(scroll.independent, true);
+            assert.equal(scroll.toolbarFixed, true, "Zoom controls stay fixed when the diagram scrolls.");
+            assert.equal(scroll.diagramUnchanged, true, "Question scrolling does not move the diagram.");
+            assert.equal(scroll.diagramStyle, "auto");
+            assert.equal(scroll.questionStyle, "auto");
+            await browser.evaluate(`(() => {
+                const inner = document.querySelector("#tandem-application").contentDocument;
+                inner.querySelector(".design-tree-host .diagram-source").open = true;
+            })()`);
+            const fixedPanes = await browser.evaluate(`(() => {
+                const inner = document.querySelector("#tandem-application").contentDocument;
+                const selectors = [".design-tree-host .diagram-scroll-area", ".design-tree-host .diagram-source pre",
+                    ".decision-list-pane", ".design-tree-inspector"];
+                const panes = selectors.map(selector => inner.querySelector(selector));
+                const toolbar = inner.querySelector(".diagram-toolbar"), summary = inner.querySelector(".diagram-source summary");
+                const top = toolbar.getBoundingClientRect().top, sourceTop = summary.getBoundingClientRect().top;
+                panes.forEach(pane => { pane.scrollTop = 0; });
+                const independent = panes.map((pane, index) => {
+                    const before = panes.map(other => other.scrollTop);
+                    pane.scrollTop = pane.scrollHeight;
+                    return panes.every((other, otherIndex) => index === otherIndex || other.scrollTop === before[otherIndex]);
+                });
+                return {
+                    heights: panes.map(pane => pane.getBoundingClientRect().height),
+                    scrolled: panes.map(pane => pane.scrollTop), independent,
+                    scrollStyles: panes.map(pane => inner.defaultView.getComputedStyle(pane).overflowY),
+                    headersFixed: top === toolbar.getBoundingClientRect().top && sourceTop === summary.getBoundingClientRect().top,
+                    noOuterScroll: inner.querySelector("#design-tree-panel").scrollHeight <= inner.querySelector("#design-tree-panel").clientHeight + 1
+                        && inner.querySelector(".design-tree-body").scrollHeight <= inner.querySelector(".design-tree-body").clientHeight + 1,
+                };
+            })()`);
+            assert.ok(fixedPanes.heights.every((height: number) => height >= 20), `Every pane retains usable height at ${width}: ${JSON.stringify(fixedPanes)}`);
+            assert.ok(fixedPanes.independent.every(Boolean), `All pane scroll positions are independent at ${width}: ${JSON.stringify(fixedPanes)}`);
+            assert.ok(fixedPanes.scrolled.slice(0, 3).every((top: number) => top > 0), "Graph, source and decision list each scroll their own content.");
+            assert.deepEqual(fixedPanes.scrollStyles, ["auto", "auto", "auto", "auto"]);
+            assert.equal(fixedPanes.headersFixed, true);
+            assert.equal(fixedPanes.noOuterScroll, true);
+            const afterGrowth = await browser.evaluate(`(async () => {
+                const inner = document.querySelector("#tandem-application").contentDocument;
+                const source = inner.querySelector(".design-tree-host .diagram-source pre"), saved = source.textContent;
+                source.textContent += "\\n" + "Additional source line\\n".repeat(300);
+                inner.querySelector(".design-tree-host [aria-label='Zoom in']").click();
+                await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                const heights = [".design-tree-host .diagram-scroll-area", ".design-tree-host .diagram-source pre",
+                    ".decision-list-pane", ".design-tree-inspector"].map(selector => inner.querySelector(selector).getBoundingClientRect().height);
+                source.textContent = saved;
+                return heights;
+            })()`);
+            assert.deepEqual(afterGrowth, fixedPanes.heights, `Zoom and long source must not resize panes at ${width}.`);
+            if (process.env.TANDEM_UI_EVIDENCE) {
+                await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `requirements-independent-panes-${width}.png`), await browser.screenshot());
+            }
+            await browser.evaluate('document.querySelector("#tandem-application").contentDocument.querySelector(".design-tree-host .diagram-source").open = false');
+            if (width >= 1000) {
+                const historyScroll = await browser.evaluate(`(() => {
+                    const inner = document.querySelector("#tandem-application").contentDocument;
+                    const history = inner.querySelector("#discovery-history"), diagram = inner.querySelector(".diagram-scroll-area");
+                    const question = inner.querySelector(".design-tree-inspector"), context = inner.querySelector("#requirements-pane");
+                    history.querySelector("details").open = true;
+                    const before = [diagram.scrollTop, question.scrollTop, context.scrollTop];
+                    history.scrollTop = history.scrollHeight;
+                    return {top:history.scrollTop, independent:JSON.stringify(before) === JSON.stringify([diagram.scrollTop, question.scrollTop, context.scrollTop])};
+                })()`);
+                assert.ok(historyScroll.top > 0, "Discovery history owns its scrolling area.");
+                assert.equal(historyScroll.independent, true, "History scrolling does not move the other panes.");
             }
             if (process.env.TANDEM_UI_EVIDENCE) {
                 await browser.evaluate('document.querySelector("#tandem-application").contentDocument.querySelector("#decision-question-title").scrollIntoView({block:"center"})');
@@ -720,6 +815,11 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
         await browser.waitFor('Boolean(document.querySelector("#tandem-application")?.contentWindow.workspaceFixture?.store.getSnapshot().state)');
         const savedRequirements = rendererState("prototype", 5);
         savedRequirements.requirements = { substage: "dag", usageItems: ["Validate the simulator's interaction and visualization."], suggestions: [] };
+        savedRequirements.requirements.research = {
+            generation: savedRequirements.generation, requestId: "research", runId: "research",
+            input: requirementsResearchInput(savedRequirements), completedAt: savedRequirements.updatedAt,
+            summary: "Retained findings for the accepted usages.", checks: [], sources: [],
+        };
         savedRequirements.decisionGraph.nodes = [decision("Interface validation approach", "answered")];
         await browser.evaluate(`(() => {
             const frame = document.querySelector("#tandem-application").contentWindow;
@@ -764,10 +864,16 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
             }
         }
         await browser.call("Emulation.setDeviceMetricsOverride", { width: 1920, height: 800, deviceScaleFactor: 1, mobile: false });
+        await browser.evaluate(`(() => {
+            const frame = document.querySelector("#tandem-application").contentWindow;
+            frame.document.querySelector("#usage-substage").dispatchEvent(new frame.MouseEvent("mousedown", { bubbles: true, button: 0 }));
+        })()`);
+        await browser.waitFor('document.querySelector("#tandem-application").contentDocument.querySelector("#usage-substage").getAttribute("aria-selected") === "true"');
         for (const expanded of [false, true]) {
-            if (expanded) {
+            const initiallyExpanded = await browser.evaluate('document.querySelector("#tandem-application").contentDocument.querySelector("#requirements-substage-section .usage-suggestion[aria-expanded]").getAttribute("aria-expanded") === "true"');
+            if (initiallyExpanded !== expanded) {
                 await browser.evaluate('document.querySelector("#tandem-application").contentDocument.querySelector("#requirements-substage-section .usage-suggestion[aria-expanded]").click()');
-                await browser.waitFor('document.querySelector("#tandem-application").contentDocument.querySelector("#requirements-substage-section .usage-suggestion[aria-expanded]")?.getAttribute("aria-expanded") === "true"');
+                await browser.waitFor(`document.querySelector("#tandem-application").contentDocument.querySelector("#requirements-substage-section .usage-suggestion[aria-expanded]")?.getAttribute("aria-expanded") === "${expanded}"`);
             }
             const layout = await browser.evaluate(`(() => {
                 const inner = document.querySelector("#tandem-application").contentDocument;
@@ -777,15 +883,23 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
                 };
                 return { actions: bounds("#stage-workflow-actions"), intake: bounds("#requirements-substage-section"),
                     trigger: bounds("#requirements-substage-section .usage-suggestion[aria-expanded]"), graph: bounds("#design-tree-card"),
-                    panel: bounds("#design-tree-panel") };
+                    panel: bounds("#design-tree-panel"), usage: bounds("#requirements-usage-panel"),
+                    research: bounds("#requirements-research") };
             })()`);
             assert.ok(layout.trigger.height > 0, "Accepted usages remain accessible.");
             assert.ok(layout.intake.height > layout.trigger.height, `Usage history must not collapse into a border strip: ${JSON.stringify(layout)}`);
             assert.ok(layout.trigger.bottom <= layout.intake.bottom, "The accepted usages control remains visible.");
             assert.ok(layout.actions.bottom <= layout.panel.top + 1, "Stage actions stay in the tab bar above the input workspace.");
-            assert.ok(layout.intake.bottom <= layout.graph.top, "The decision card does not overlap usage history.");
-            assert.ok(layout.graph.bottom <= layout.panel.bottom, "The decision card stays within its stage workspace.");
+            assert.equal(layout.graph.height, 0, "The DAG is not mixed into the usage tab.");
+            assert.ok(layout.research.height > 0 && layout.research.top >= layout.intake.bottom, "Research stays with Requirements in Usage list.");
+            assert.ok(layout.usage.bottom <= layout.panel.bottom, "Usage history has a bounded scrolling pane.");
         }
+        await browser.evaluate(`(() => {
+            const frame = document.querySelector("#tandem-application").contentWindow;
+            frame.document.querySelector("#dag-substage").dispatchEvent(new frame.MouseEvent("mousedown", { bubbles: true, button: 0 }));
+        })()`);
+        await browser.waitFor('document.querySelector("#tandem-application").contentDocument.querySelector("#dag-substage").getAttribute("aria-selected") === "true"');
+        assert.equal(await browser.evaluate('document.querySelector("#tandem-application").contentDocument.querySelector("#requirements-research").getBoundingClientRect().height'), 0);
         for (const width of [1920, 1024, 375]) {
             await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 800, deviceScaleFactor: 1, mobile: false });
             if (width === 375) {

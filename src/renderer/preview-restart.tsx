@@ -25,13 +25,15 @@ export function PreviewRestart({ target, unavailable, changed, iconOnly = false 
   const dialog = useRef<HTMLDialogElement>(null), inFlight = useRef(false);
   const blocked = pending || state.provider?.canSubmitAnswers === false || hasActiveJobs(state);
   const label = target === "current" ? "current saved preview" : target === "pending" ? "pending saved version"
-    : target === "original" ? "original prototype" : "visual exploration";
+    : target === "original" ? "original prototype" : target === "exploration" ? "visual exploration"
+    : target === "prototype" ? "saved Prototype" : `${target} prototype`;
   const checkpointId = prototypePreviewCheckpointId(state.prototypeFlow, target);
   const stale = Boolean(inspection && (inspection.checkpointId !== checkpointId ||
     inspection.generation && inspection.generation !== state.generation));
   const choices = inspection?.choices ?? [];
   const restartLabel = target === "current" ? "Restart current preview"
-    : target === "pending" ? "Restart pending preview" : target === "original" ? "Restart original prototype" : "Restart visual exploration";
+    : target === "pending" ? "Restart pending preview" : target === "original" ? "Restart original prototype"
+    : target === "exploration" ? "Restart visual exploration" : target === "prototype" ? "Restart Prototype preview" : `Restart ${target} prototype`;
   const buttonLabel = busy === "inspect" ? "Finding start instructions..."
     : busy === "start" ? "Starting preview..." : target === "current" ? "Restart preview" : restartLabel;
   const RestartIcon = iconOnly ? RotateCw : RefreshCw;

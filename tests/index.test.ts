@@ -4,6 +4,7 @@ import "./workflow-activity.test.js";
 import "./main-session-effort.test.js";
 import "./project-effort.test.js";
 import "./prototype-lifecycle.test.js";
+import "./progressive-prototype.test.js";
 import "./factory-dispatch.test.js";
 import "./prototype-flow.test.js";
 import "./visual-directions.test.js";

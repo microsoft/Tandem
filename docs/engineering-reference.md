@@ -205,6 +205,16 @@ it with `node --import tsx scripts\sync-ui-dsl.ts C:\projects\dsl`; builds do no
 depend on that neighboring checkout. Bundled icon licenses are retained in both
 source and built payloads.
 
+New UI DSL envelopes record optional `fidelity`: `wireframe` for new concepts,
+`styled` for existing-GUI validation. The host seeds new wireframe screens with a
+fixed neutral token kit; workers focus on meaningful content, hierarchy and
+navigation instead of decorative operations. Missing fidelity retains historical
+styled semantics and is never written into an existing revision implicitly, so
+old source hashes and approvals remain unchanged. Incremental edits and recovery
+retain the saved fidelity. Wireframe approval explicitly defers appearance and
+does not prove application behavior; this scope travels with the approved DSL
+and its artifact into Prototype and Development.
+
 Production prompts in `src/planning-prompts.ts` use the shared DSL catalog and
 operation rules, with a bounded, validated icon-name palette for the tool-free
 design worker. That worker cannot call the library's optional icon lookup tools.
@@ -254,6 +264,12 @@ view state, not edits or approval. Saved change targets retain their revision,
 screen and node identities; transient preview selections use a separate request
 identity and are never carried into saved revision requests. Selection outlines
 are excluded from approval images.
+In Interact mode, `Button.action` and `Link.destination` can name an exact outgoing
+transition ID; the local view follows only that saved edge. A bounded navigation
+strip also exposes the outgoing transitions without inferring links from labels
+or opening external URLs. Neither route edits or approves a document. Preview
+rendering and selection effects key on actual screen content, not object identity,
+so streamed changes on another page do not touch the selected page's DOM.
 
 New revisions save `document.json` and per-screen `.ui.json` sources instead of
 SVG geometry. Approval binds their hashes and derived PNGs. Prototype and the
@@ -265,11 +281,29 @@ implicitly.
 
 Next-action guidance opens request history and focuses
 a failed revision's Retry control without resubmitting it or replacing an unsent
-instruction. Prototype keeps the existing staged structure,
-interaction, optional visual refinement, queued feedback and Apply update flow.
+instruction. Prototype uses one combined functional sub-stage,
+optional visual refinement, queued feedback and explicit update acceptance.
 `build` produces a mock UI; `validate-existing` works from the existing GUI's
 copied source; `not-applicable` preserves a reason and feature specification
 without fabricating a graphical prototype.
+
+New builds, retries and non-visual revisions use milestone `prototype`, combining
+layout, navigation, typed mock behavior and applicable state feedback in one
+worker/checkpoint. The required sequence is `prototype`, then optional `visual`;
+no new Structure/Interaction continuation is scheduled. Existing checkpoints
+retain their IDs, sources, receipts and milestone values without rewriting history.
+A ready legacy `interaction` satisfies Prototype readiness; `structure` alone
+does not. Both map to the single Prototype tab, whose saved-preview target prefers
+the accepted non-visual version, otherwise a complete saved result, then a partial
+historical preview. Browsing never promotes a pending version.
+
+The legacy `tandem_publish_structure_*` tool and `continuation: "interaction"`
+reader remain only for previously admitted progressive workers. Their source
+verification, original image-read identities and terminal-receipt semantics are
+unchanged; a resumed worker follows its actual active checkpoint. New jobs never
+request that tool. Retrying incomplete historical work uses the combined milestone
+and preserves its source. Preview restart binds the checkpoint ID, not its shared
+workflow request ID, so both historical progressive snapshots remain recoverable.
 
 ### Finish Stage 1; open Development when ready
 
@@ -352,15 +386,21 @@ Requirements digest; a retained old preview is not current evidence for changed
 requirements. Request, analysis, native delivery and artifact identities remain
 separate. Errors and uncertain delivery are retained, not converted into approval.
 
-The optional native `discovery-change` terminal result requires an exact
-host-supplied discovery baseline. It finishes at a visible handoff, not Planner.
-Only after native settlement does the composed host retain the original request
-batch, answers and attachment references for impact assessment. Upstream mutation
-still requires the existing quiet/admission boundary. A follow-up failure does not
-revoke or gate the native role's durable result. Direct Development without that
-host context keeps ordinary routing. Explicit continuation persists an immutable
-outbound request before sending; duplicate delivery reconciles that identity, and
-recovery never authorizes replay.
+Upstream impact review is confined to discovery, through Prototype. Development
+requests stay in the native Router, Designer, implementation-confirmation and
+Review flow, including when retained Prototype handoffs exist. The composed host
+supplies only immutable handoff evidence, not a live discovery baseline, and
+native settlement never schedules an upstream assessment or wakes the main
+session. `discovery-change` remains readable in historical native ledgers but is
+not an accepted Router tool outcome. Saved Development-origin change requests
+remain inspectable without blocking discovery, resuming assessments or exposing
+impact-decision controls.
+
+Explicit continuation of a pre-Development change still persists an immutable
+outbound request before sending; duplicate delivery reconciles that identity,
+and recovery never authorizes replay. Upstream mutation retains the existing
+quiet/admission boundary, and Development implementation retains its separate
+human confirmation.
 
 Stage 1 workers honor the owning native session's explicitly selected reasoning
 effort. If unset, they keep their existing per-worker low/medium defaults.
@@ -627,6 +667,16 @@ actions without clearing existing input. Saved discovery evidence is a source-la
 render-only projection, not reconstructed native chat; it is never copied into a
 private request or written into its store. Cold private history still requires
 owned runtime verification during project entry; browsing alone does not reopen it.
+Requirements uses view-only **Usage list** and **Decision DAG** tabs. The usage
+tab owns Requirements intake/history and retained research. The DAG tab fills
+the available workspace. The diagram viewport, expanded Mermaid source, decision
+list and selected-question pane have independent, bounded scroll regions.
+The legend and zoom toolbar sit outside the diagram viewport, and the source
+heading stays outside the code scroller. Neither graph size nor source/list length
+can grow the workspace or displace another pane.
+Tab changes retain answer drafts, graph zoom and research expansion without
+changing the saved requirements substage or reopening accepted work.
+
 Active and completed Prototype views distinguish saved checkpoint readiness from
 a running server. Viewing the phase, reconnecting, or **Check again** verifies the
 current generation/checkpoint/URL before attaching an unverified inline preview.
@@ -634,15 +684,23 @@ Unavailable servers show an explanation instead of a browser connection error;
 saved versions, pending updates and feedback are unchanged. Verification never
 starts a server or model work, and successful rechecks keep the current frame's
 local state when its verified identity has not changed.
-During Prototype work, the runnable current version appears inline above Feedback.
-**Open current preview** opens that same version in a separate window.
-An automatic milestone is labelled **Interaction prototype ready to inspect** (or
-its actual milestone); **Show Interaction prototype** explicitly switches the
+**Prototype** and **Visual exploration** are view-only tabs.
+Saved milestone targets resolve the accepted checkpoint of that milestone when
+available, otherwise its latest ready, non-dismissed checkpoint. Availability
+checks and explicit restart reviews bind the exact generation, checkpoint and URL;
+browsing never promotes a pending version. Previously viewed milestone frames and
+the current preview stay mounted across tab changes. Feedback continues to bind
+the accepted checkpoint, not the historical result being inspected.
+The toolbar's open-preview control follows the visible result.
+An automatic version is labelled **Prototype ready to inspect**;
+**Show Prototype** explicitly switches the
 displayed checkpoint. Requested-revision wording appears only for a checkpoint
 linked to a recorded feedback revision. Feedback is optional; readiness is not a
 claim that the user submitted feedback or that the saved preview server is live.
 The phase-owned Feedback section stays at the bottom of the Prototype pane, with
-the inline preview using the remaining space above and pane scrolling when needed.
+the inline preview using the remaining space above and its sub-stage content
+scrolling when needed. Project context, stage content and discussion each own
+their scrolling rather than expanding the outer workspace, including narrow views.
 Successful preview checks and verbose version summaries stay collapsed in Details;
 unavailable versions and their targeted Restart actions remain prominent. The
 normal current-plus-pending view preserves a useful preview and initially reachable
@@ -689,7 +747,7 @@ manifest's `defaultSelection` must match exactly, then explicitly applies the
 verified saved choice. Later ordinary revisions retain those
 defaults; handoff captures the same source and snapshot rather than a URL-only
 theme preference. Previous single-theme checkpoints remain readable, and new
-exploration is an explicit action. Structure, Interaction and private
+exploration is an explicit action. Prototype generation and private
 Development ownership are unchanged.
 
 If a saved preview server has stopped, **Restart preview** targets only the

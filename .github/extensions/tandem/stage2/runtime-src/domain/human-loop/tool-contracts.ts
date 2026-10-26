@@ -44,9 +44,7 @@ export const internalPlanSchema = obj({
   })), minItems: 1 },
 });
 const outcome = (kind: RoleOutcome['kind'], fields: Record<string, PolicySchema>) => obj({ kind: { const: kind }, ...fields });
-const schemas: Record<Exclude<RoleOutcome['kind'], 'execution-failure' | 'review-incomplete' | 'stopped-partial'>, PolicySchema> = {
-  'discovery-change': outcome('discovery-change', { summary: string, reason: string, prototypeId: string,
-    sourceDigest: hash, stage: { enum: ['prepare', 'requirements', 'sketch', 'prototype'] } }),
+const schemas: Record<Exclude<RoleOutcome['kind'], 'execution-failure' | 'review-incomplete' | 'stopped-partial' | 'discovery-change'>, PolicySchema> = {
   route: outcome('route', { intent: { enum: ['design', 'implement', 'answer', 'resume-cycle', 'replan-cycle'] },
     cycleId: nullableString, summary: string, resolvedQuestions: array(obj({ questionId: string, sourceResultId: string })) }),
   'internal-plan': outcome('internal-plan', { plan: internalPlanSchema }),
@@ -68,7 +66,7 @@ const schemas: Record<Exclude<RoleOutcome['kind'], 'execution-failure' | 'review
   answer: referenced({ kind: { const: 'answer' }, summary: string, report: string, evidenceRefs: strings }),
 };
 const definitions: Array<{ name: string; roles: HumanRole[]; kinds: Array<keyof typeof schemas>; description: string }> = [
-  { name: 'submit_human_route', roles: ['router'], kinds: ['route', 'discovery-change'], description: 'Interpret the exact user request and bound answers. An available discovery baseline permits an upstream impact proposal, never upstream edits or approval.' },
+  { name: 'submit_human_route', roles: ['router'], kinds: ['route'], description: 'Interpret the exact user request and bound answers within Development. Retained Prototype evidence does not authorize upstream impact review.' },
   { name: 'submit_internal_plan', roles: ['planner'], kinds: ['internal-plan'], description: 'Submit the complete technical plan for Host validation. This is internal acceptance, not user approval.' },
   { name: 'submit_internal_task_result', roles: ['implementer'], kinds: ['task-result'], description: 'Account for the one owned internal task. This does not complete the plan or constitute a Review.' },
   { name: 'submit_implementation_result', roles: ['implementer'], kinds: ['implementation-result'], description: 'Submit the whole-plan result only after every internal task is accounted for. Real owned end is still required.' },

@@ -1307,6 +1307,22 @@ test('structured tools distinguish internal progress, final outcomes and shared 
   }), /supported|allowed|one of/);
 });
 
+test('historical discovery-change ledgers replay exactly but the live Router contract rejects their outcome', () => {
+  const f = fixture();
+  f.receive('old-development-request'); f.admit('old-development-request'); f.start('router');
+  const result = f.finish({ kind: 'discovery-change', summary: 'Saving adds a requirement.',
+    reason: 'Retained historical proposal.', prototypeId: 'simulation', sourceDigest: 'c'.repeat(64), stage: 'requirements' });
+  f.present();
+  assert.deepEqual(parseRoleResult('router', result), result);
+  assert.deepEqual(replayHumanLoopLedger(JSON.parse(JSON.stringify(f.ledger))).state, f.state);
+  assert.equal(f.state.handoffs[0]!.result.outcome.kind, 'discovery-change');
+  const router = humanLoopResultTools().find(tool => tool.name === 'submit_human_route')!;
+  assert.deepEqual(router.kinds, ['route']);
+  assert.throws(() => validatePolicyShape(router.parameters, result), /outcome/);
+  assert.deepEqual(f.state.design, design);
+  assert.equal(f.state.cycles.length, 0);
+});
+
 test('cooperative Stop commands require durable ordered facts, exact ownership and strict fields', () => {
   const f = fixture();
   f.receive('request'); f.admit('request'); f.start('router');

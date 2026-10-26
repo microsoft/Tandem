@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
-import { originalPrototypeCheckpointId, readVisualManifest, readVisualSelection, visualExplorationIsCurrent, visualPreviewUrl, type VisualCheckpoint } from "../src/visual-directions.js";
+import { isPrototypePreviewTarget, originalPrototypeCheckpointId, readVisualManifest, readVisualSelection, visualExplorationIsCurrent, visualPreviewUrl, type VisualCheckpoint } from "../src/visual-directions.js";
 import { newPrototypeFlow, readPrototypeFlow, reservePrototypeCheckpoint, settlePrototypeCheckpoint,
     updateVisualSelection, prototypeFlowCompletionError, promotePrototypeCheckpoint, restoreOriginalPrototype,
     prototypePreviewCheckpointId, type PrototypeCheckpoint } from "../src/prototype-flow.js";
@@ -28,6 +28,32 @@ function readyFlow() {
     return settlePrototypeCheckpoint(flow, "visual", { status: "ready", previewUrl: "http://127.0.0.1:9003/",
         summary: "Alternatives", focus: "", visual: { ...visual, manifest: visualManifest() } }, "2026-10-15T00:01:00Z");
 }
+
+test("milestone preview targets resolve saved results without replacing the accepted checkpoint", () => {
+    const flow = readyFlow(), before = structuredClone(flow);
+    assert.equal(prototypePreviewCheckpointId(flow, "structure"), "structure");
+    assert.equal(prototypePreviewCheckpointId(flow, "interaction"), "interaction");
+    assert.equal(prototypePreviewCheckpointId(flow, "prototype"), "interaction");
+    assert.equal(prototypePreviewCheckpointId(flow, "visual"), "visual");
+    assert.equal(prototypePreviewCheckpointId(null, "structure"), null);
+    assert.deepEqual(flow, before);
+    flow.checkpoints.push({ ...flow.checkpoints[1], id: "next-interaction" });
+    flow.pendingCheckpointId = "next-interaction";
+    assert.equal(prototypePreviewCheckpointId(flow, "interaction"), "interaction", "The accepted milestone wins over an unapplied revision of that same milestone.");
+    assert.equal(prototypePreviewCheckpointId(flow, "prototype"), "interaction");
+    flow.displayedCheckpointId = "structure";
+    assert.equal(prototypePreviewCheckpointId(flow, "prototype"), "structure", "Merging tabs cannot silently promote a waiting version.");
+    flow.displayedCheckpointId = "visual";
+    assert.equal(prototypePreviewCheckpointId(flow, "interaction"), "next-interaction");
+    flow.checkpoints.at(-1)!.status = "failed";
+    assert.equal(prototypePreviewCheckpointId(flow, "interaction"), "interaction");
+    flow.checkpoints[2].visualDismissedAt = "2026-10-15T00:02:00Z";
+    assert.equal(prototypePreviewCheckpointId(flow, "visual"), null);
+    for (const target of ["current", "pending", "exploration", "original", "prototype", "structure", "interaction", "visual"]) {
+        assert.equal(isPrototypePreviewTarget(target), true);
+    }
+    for (const target of ["checkpoint-id", "../structure", null, {}]) assert.equal(isPrototypePreviewTarget(target), false);
+});
 
 test("visual manifests require a bounded set of genuinely different design contracts and exact settings", () => {
     const valid = visualManifest();

@@ -1,8 +1,14 @@
 import type { ChangeRequest } from "./change-requests.js";
 import type { TandemState } from "./types.js";
 
+export function isDiscoveryChangeRequest(request: Pick<ChangeRequest, "originStage">): boolean {
+    // Retain old Development escalations as history, not scheduling or review authority.
+    return request.originStage !== "development";
+}
+
 export function currentChangeReview(state: Pick<TandemState, "changeRequests" | "stageReview">): ChangeRequest | undefined {
-    const requests = state.changeRequests?.filter(request => !["completed", "cancelled", "deferred"].includes(request.status)
+    const requests = state.changeRequests?.filter(request => isDiscoveryChangeRequest(request)
+        && !["completed", "cancelled", "deferred"].includes(request.status)
         && !(state.stageReview?.changeRequestId === request.id && request.status === "active")) ?? [];
     return requests.find(request => request.status === "active")
         ?? requests.find(request => request.status === "reviewing")
@@ -27,7 +33,7 @@ export function changeReviewNeedsAttention(state: TandemState): boolean {
 
 export function isCurrentStageChange(state: TandemState, request: ChangeRequest): boolean {
     const assessment = request.assessment;
-    return Boolean(assessment && !assessment.question && assessment.stages.length === 1
+    return Boolean(isDiscoveryChangeRequest(request) && assessment && !assessment.question && assessment.stages.length === 1
         && assessment.startStage === request.originStage && assessment.stages[0]!.stage === request.originStage
         && request.originStage === state.lifecycle.currentStage
         && !state.lifecycle.completedStages.includes(request.originStage));

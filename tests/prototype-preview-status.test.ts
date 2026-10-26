@@ -58,6 +58,51 @@ test("preview status verifies only the displayed checkpoint and preserves pendin
     }
 });
 
+test("milestone preview status verifies historical and pending results without changing accepted work", async () => {
+    const h = await extensionHarness();
+    h.setPreviewFetch(fetch);
+    const preview = createServer((req, res) => {
+        res.writeHead(200, { "Content-Type": "text/html" });
+        res.end(`<meta name="tandem-prototype-id" content="milestone-probe">
+            <meta name="tandem-prototype-checkpoint" content="${req.url?.slice(1)}">`);
+    });
+    await new Promise<void>(resolve => preview.listen(0, "127.0.0.1", resolve));
+    const address = preview.address();
+    assert.ok(address && typeof address !== "string");
+    const state = h.api.createState("milestone-probe");
+    const checkpoints: PrototypeCheckpoint[] = (["structure", "interaction", "visual"] as const).map(milestone => ({
+        id: milestone, requestId: milestone, generation: state.generation, milestone, revisionId: null,
+        baseCheckpointId: null, sourceCheckpointId: null, workspacePath: process.cwd(), workspacePrepared: true,
+        status: "ready", previewUrl: `http://127.0.0.1:${address.port}/${milestone}`, summary: milestone, focus: milestone,
+        requestedAt: state.updatedAt, completedAt: state.updatedAt, timeoutSeconds: null,
+    }));
+    state.prototypeFlow = { ...newPrototypeFlow(), checkpoints, displayedCheckpointId: "interaction", pendingCheckpointId: "visual" };
+    state.previewUrl = checkpoints[1].previewUrl;
+    await h.api.persistState(state);
+    const before = await h.api.loadState(state.prototypeId);
+    const server = await h.api.startServer("milestone-status", state.prototypeId, "project:tandem", false);
+    try {
+        for (const milestone of ["structure", "interaction", "visual", "prototype"]) {
+            const result = await (await fetch(new URL(`/api/prototype/preview-status?target=${milestone}`, server.url))).json();
+            const expectedId = milestone === "prototype" ? "interaction" : milestone;
+            assert.equal(result.checkpointId, expectedId);
+            assert.equal(result.pendingCheckpointId, "visual");
+            assert.equal(result.generation, state.generation);
+            assert.equal(result.available, true);
+            assert.equal(result.url, checkpoints.find(item => item.id === expectedId)!.previewUrl);
+        }
+        const invalid = await fetch(new URL("/api/prototype/preview-status?target=missing", server.url));
+        assert.equal(invalid.ok, false);
+        assert.deepEqual(await h.api.loadState(state.prototypeId), before);
+        assert.deepEqual(h.requests, []);
+    } finally {
+        clearInterval(server.heartbeat);
+        await new Promise<void>(resolve => { server.server.close(() => resolve()); server.server.closeAllConnections(); });
+        await new Promise<void>(resolve => { preview.close(() => resolve()); preview.closeAllConnections(); });
+        await h.close();
+    }
+});
+
 function status(value: ReturnType<typeof readyPrototype>, available = true) {
     const flow = value.prototypeFlow;
     return { generation: value.generation, checkpointId: flow.displayedCheckpointId, pendingCheckpointId: flow.pendingCheckpointId,

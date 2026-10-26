@@ -1,12 +1,14 @@
 import {
     hasScreenContent,
+    createSketchUi,
     validateSketchDocument,
     type SketchDocument,
     type DslSketchDocument,
     type DslSketchScreen,
     type SketchTransition,
+    type SketchFidelity,
 } from "./sketch.js";
-import { applyOperations, createDocument, DSLError, validateOperation, type UiDocument } from "./vendor/ui-dsl/index.js";
+import { applyOperations, DSLError, validateOperation, type UiDocument } from "./vendor/ui-dsl/index.js";
 
 export type SketchScreenStatus = "waiting" | "processing" | "ready";
 export type SketchStreamPhase = "outline" | "content" | "revision";
@@ -165,6 +167,7 @@ export class SketchOperationStream {
     #line = 0;
     #phase: SketchStreamPhase;
     #allowUnchanged: boolean;
+    #fidelity?: SketchFidelity;
 
     constructor(
         base: SketchDocument | null,
@@ -173,6 +176,7 @@ export class SketchOperationStream {
         phase: SketchStreamPhase = "revision",
         screenStatuses?: Record<string, SketchScreenStatus>,
         allowUnchanged = false,
+        fidelity?: SketchFidelity,
     ) {
         if (!Array.isArray(decisionIds) || decisionIds.some((id) => typeof id !== "string")) {
             invalid("accepted decision IDs must be an array of strings.");
@@ -181,6 +185,7 @@ export class SketchOperationStream {
         const document = base === null ? null : validateSketchDocument(base, this.#decisionIds);
         if (document?.version === 1) invalid("legacy geometry cannot be edited. Explicitly regenerate designs as UI DSL.");
         this.#document = document;
+        this.#fidelity = document?.fidelity ?? fidelity;
         this.#phase = phase;
         this.#allowUnchanged = allowUnchanged;
         if (phase === "content" && !document) invalid("content generation requires a completed page outline.");
@@ -295,7 +300,7 @@ export class SketchOperationStream {
             invalid("content generation cannot change the published page outline or navigation transitions.");
         }
         const next: DslSketchDocument = this.#document === null
-            ? { version: 2, screens: [], transitions: [] }
+            ? { version: 2, ...(this.#fidelity ? { fidelity: this.#fidelity } : {}), screens: [], transitions: [] }
             : { ...this.#document, screens: this.#document.screens.map(screen => ({ ...screen })),
                 transitions: [...this.#document.transitions] };
         const statuses = { ...this.#screenStatuses };
@@ -313,7 +318,7 @@ export class SketchOperationStream {
                     width: metadata.width as number,
                     height: metadata.height as number,
                     notes: metadata.notes as string,
-                    ui: index === -1 ? createDocument() : next.screens[index].ui,
+                    ui: index === -1 ? createSketchUi(next.fidelity) : next.screens[index].ui,
                 };
                 if (index === -1) next.screens.push(screen);
                 else next.screens[index] = screen;

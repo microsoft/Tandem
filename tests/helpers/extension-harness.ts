@@ -36,6 +36,7 @@ interface HarnessApi {
     sketchAction(id: string, provider: string, input: Record<string, unknown>): Promise<TandemState>;
     ensureSketchStarted(state: TandemState, writable: boolean): Promise<TandemState>;
     readSketchImage(input: unknown): Promise<{ resultType: string; textResultForLlm: string; binaryResultsForLlm: { type: string; mimeType: string; data: string }[] }>;
+    publishPrototypeStructure(input: unknown): Promise<{ resultType: string; textResultForLlm: string }>;
     prototypeAction(id: string, provider: string, input: Record<string, unknown>): Promise<TandemState>;
     queuePrototypeRevision(id: string, provider: string, input: Record<string, unknown>): Promise<{ revisionId: string }>;
     stageCompletionError(state: TandemState, stage: string, options?: { requirePrototypeSpec: boolean }): string | null;
@@ -97,7 +98,7 @@ async function compile(): Promise<string> {
     const openHandler = source.slice(openStart + "open: ".length, openEnd);
     const result = await build({
         stdin: {
-            contents: `${prefix}\nmodule.exports = { createState, createLegacyState(id, goal) { const state = createState(id, goal); delete state.lifecycle.version; return state; }, loadState, persistState, completeLifecycleStage, reopenLifecycleStage, beginPrototypeBuild, sketchAction, ensureSketchStarted, readSketchImage, prototypeAction, queuePrototypeRevision, stageCompletionError, applyFactoryResult, updateTandem, readRequestBody, verifyPreviewIdentity, applyCanvasReset, isCanvasRehydration, ensurePreparationStarted, bindPreparationRun, recordPreparationWorkItem, settlePreparationRun, recoverPreparationFactory, recoverAnswerFactory, preparationFactory, usageSuggestionFactory, textWorkerAgent, resetEffort, startEffort, startServer, runEffortFactory, waitForEffortRun, continueDevelopment, openTandem: ${openHandler}, async closeServers() { for (const entry of servers.values()) { clearInterval(entry.heartbeat); for (const client of entry.clients) client.end(); await new Promise(resolve => entry.server.close(resolve)); } servers.clear(); }, waitForPreparation(id) { return activePreparationRuns.get(id); }, waitForAnswer(id) { return activeAnswerRuns.get(id); }, answerFactory, answerFactoryPrompt, processAction, setSession(value) { session = value; handoffs = new DevelopmentHandoffs(WORKSPACE_ROOT, SHARED_PROJECT_ROOT, value.sessionId); } };`,
+            contents: `${prefix}\nmodule.exports = { createState, createLegacyState(id, goal) { const state = createState(id, goal); delete state.lifecycle.version; return state; }, loadState, persistState, completeLifecycleStage, reopenLifecycleStage, beginPrototypeBuild, sketchAction, ensureSketchStarted, readSketchImage, publishPrototypeStructure, prototypeAction, queuePrototypeRevision, stageCompletionError, applyFactoryResult, updateTandem, readRequestBody, verifyPreviewIdentity, applyCanvasReset, isCanvasRehydration, ensurePreparationStarted, bindPreparationRun, recordPreparationWorkItem, settlePreparationRun, recoverPreparationFactory, recoverAnswerFactory, preparationFactory, usageSuggestionFactory, textWorkerAgent, resetEffort, startEffort, startServer, runEffortFactory, waitForEffortRun, continueDevelopment, openTandem: ${openHandler}, async closeServers() { for (const entry of servers.values()) { clearInterval(entry.heartbeat); for (const client of entry.clients) client.end(); await new Promise(resolve => entry.server.close(resolve)); } servers.clear(); }, waitForPreparation(id) { return activePreparationRuns.get(id); }, waitForAnswer(id) { return activeAnswerRuns.get(id); }, answerFactory, answerFactoryPrompt, processAction, setSession(value) { session = value; handoffs = new DevelopmentHandoffs(WORKSPACE_ROOT, SHARED_PROJECT_ROOT, value.sessionId); } };`,
             loader: "ts", resolveDir: sourceRoot,
         },
         bundle: true, platform: "node", target: "node20", format: "cjs", write: false,
@@ -136,6 +137,7 @@ export async function extensionHarness(environment: Record<string, string> = {},
     let developmentReasoningEffort: string | null = null, developmentEffortActive = false, developmentEffortError: string | null = null;
     let beforeDevelopmentStart: () => Promise<void> = async () => {};
     let developmentModelRequired = false;
+    let developmentOptions: { contextProvider(): Promise<unknown> } | undefined;
     const logs: string[] = [];
     let previewHtml = '<html><meta name="tandem-prototype-id" content="sample"></html>';
     let previewFetch: typeof fetch = async () => new Response(previewHtml);
@@ -168,36 +170,39 @@ export async function extensionHarness(environment: Record<string, string> = {},
         runInNewContext(await (compiled ??= compile()), {
             module, exports: module.exports, console, URL, Buffer, AbortController, AbortSignal, Response, Error, TextDecoder, TextEncoder, structuredClone,
             setTimeout, clearTimeout, setInterval, clearInterval,
-            developmentFixture: () => ({
-                toolHook: async () => undefined, permissionHandler: async () => ({ kind: "denied-no-approval-rule-and-could-not-request-from-user" }),
-                observe: () => {}, assertQuiet: async () => {
-                    if (developmentRequests.length) throw new Error("Finish or close Development before changing upstream discovery.");
-                },
-                status: async () => ({ installation: { status: "new" }, workflow: null }),
-                requiresModelSelection: async () => developmentModelRequired,
-                validateReasoningEffort: async () => {
-                    if (developmentRequests.length) throw new Error("Private native work is busy.");
-                },
-                selectReasoningEffort: async (effort: string) => {
-                    if (developmentEffortError) throw new Error(developmentEffortError);
-                    developmentReasoningEffort = effort;
-                },
-                reasoningEffortStatus: async () => ({ desired: developmentReasoningEffort,
-                    actual: developmentEffortActive ? developmentReasoningEffort : null, model: developmentEffortActive ? "private-model" : null,
-                    supported: ["low", "high"], status: developmentEffortError ? "error" : developmentReasoningEffort === null ? "unset" : developmentEffortActive ? "applied" : "pending",
-                    error: developmentEffortError }),
-                openView: async (id: string) => { developmentOpens.push(id); return { url: "http://127.0.0.1:8765/" }; },
-                reportError: (error: Error) => { logs.push(error.message); },
-                close: async () => ({ status: "closed", warnings: [] }),
-                start: async () => { await beforeDevelopmentStart(); return {
-                    sessionId: "fixture-private",
-                    store: { load: async () => ({
-                        owner: { mainSessionId: session.sessionId, privateSessionId: "fixture-private", workspacePath: workspace },
-                        requests: developmentRequests.map(request => ({ ...request, status: "waiting" })), recoveries: [],
-                    }) },
-                    send: (request: Record<string, unknown>) => sendDevelopment(request),
-                }; },
-            }),
+            developmentFixture: (options: NonNullable<typeof developmentOptions>) => {
+                developmentOptions = options;
+                return {
+                    toolHook: async () => undefined, permissionHandler: async () => ({ kind: "denied-no-approval-rule-and-could-not-request-from-user" }),
+                    observe: () => {}, assertQuiet: async () => {
+                        if (developmentRequests.length) throw new Error("Finish or close Development before changing upstream discovery.");
+                    },
+                    status: async () => ({ installation: { status: "new" }, workflow: null }),
+                    requiresModelSelection: async () => developmentModelRequired,
+                    validateReasoningEffort: async () => {
+                        if (developmentRequests.length) throw new Error("Private native work is busy.");
+                    },
+                    selectReasoningEffort: async (effort: string) => {
+                        if (developmentEffortError) throw new Error(developmentEffortError);
+                        developmentReasoningEffort = effort;
+                    },
+                    reasoningEffortStatus: async () => ({ desired: developmentReasoningEffort,
+                        actual: developmentEffortActive ? developmentReasoningEffort : null, model: developmentEffortActive ? "private-model" : null,
+                        supported: ["low", "high"], status: developmentEffortError ? "error" : developmentReasoningEffort === null ? "unset" : developmentEffortActive ? "applied" : "pending",
+                        error: developmentEffortError }),
+                    openView: async (id: string) => { developmentOpens.push(id); return { url: "http://127.0.0.1:8765/" }; },
+                    reportError: (error: Error) => { logs.push(error.message); },
+                    close: async () => ({ status: "closed", warnings: [] }),
+                    start: async () => { await beforeDevelopmentStart(); return {
+                        sessionId: "fixture-private",
+                        store: { load: async () => ({
+                            owner: { mainSessionId: session.sessionId, privateSessionId: "fixture-private", workspacePath: workspace },
+                            requests: developmentRequests.map(request => ({ ...request, status: "waiting" })), recoveries: [],
+                        }) },
+                        send: (request: Record<string, unknown>) => sendDevelopment(request),
+                    }; },
+                };
+            },
             fetch: (input: Parameters<typeof fetch>[0], init?: RequestInit) => previewFetch(input, init),
             process: new Proxy(process, {
                 get(target, key) {
@@ -228,13 +233,14 @@ export async function extensionHarness(environment: Record<string, string> = {},
         });
         const api = module.exports as HarnessApi;
         api.setSession(session);
+        if (!developmentOptions) throw new Error("The composed Development controller was not configured.");
         const waitForRequests = async (count = 1) => {
             for (let attempt = 0; requests.length < count && attempt < 300; attempt++) {
                 await new Promise((resolve) => setTimeout(resolve, 10));
             }
             if (requests.length < count) throw new Error("The expected factory dispatch was not observed.");
         };
-        return { api, root, requests, developmentRequests, developmentOpens, logs, session, waitForRequests,
+        return { api, root, requests, developmentRequests, developmentOpens, developmentOptions, logs, session, waitForRequests,
             setDevelopmentSend(handler: typeof sendDevelopment) { sendDevelopment = handler; },
             setDevelopmentEffortActive(value: boolean) { developmentEffortActive = value; },
             setDevelopmentEffortError(value: string | null) { developmentEffortError = value; },

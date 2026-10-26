@@ -22,6 +22,27 @@ const add = (id = "primary-action", label = "Continue") =>
     edit({ op: "add", parent: "screen", component: { id, type: "Button", props: { label } } });
 const generation = () => line({ op: "upsert-screen", screen: metadata() }) + line(add("primary-action", "首頁 👩‍💻")) + done;
 
+test("host-selected wireframe fidelity is available with the first outline and survives content, revision and recovery", () => {
+    const outline = new SketchOperationStream(null, decisions, undefined, "outline", undefined, false, "wireframe");
+    outline.append(line({ op: "upsert-screen", screen: metadata() }) + done);
+    const pages = outline.complete() as DslSketchDocument;
+    assert.equal(pages.fidelity, "wireframe");
+    assert.equal(pages.screens[0].ui.tokens["color.primary"], "#333333");
+    const content = new SketchOperationStream(pages, decisions, undefined, "content");
+    content.append(line(add()) + done);
+    const design = content.complete() as DslSketchDocument;
+    const revision = new SketchOperationStream(design, decisions);
+    revision.append(line(update("Save task")) + done);
+    const changed = revision.complete() as DslSketchDocument;
+    assert.equal(changed.fidelity, "wireframe");
+    assert.deepEqual(changed.screens[0].ui.tokens, pages.screens[0].ui.tokens);
+    const legacy = sketchDocument(), preserved = new SketchOperationStream(legacy, decisions, undefined, "revision", undefined, false, "wireframe");
+    preserved.append(line(update()) + done);
+    const old = preserved.complete() as DslSketchDocument;
+    assert.equal(Object.hasOwn(old, "fidelity"), false, "A new default cannot migrate an existing design.");
+    assert.deepEqual(old.screens[0].ui.tokens, legacy.screens[0].ui.tokens);
+});
+
 function poisoned(stream: SketchOperationStream, pattern: RegExp) {
     assert.throws(() => stream.append(done), pattern);
     assert.throws(() => stream.complete(), pattern);

@@ -377,7 +377,7 @@ test("React visual controls switch and persist per direction without changing th
     assert.equal(accepted.hidden, true);
     assert.match(text(h, "visual-selection-status"), /Previewing Canvas first.*Accept to apply/);
     assert.equal(h.document.querySelector("#restart-original-preview"), null);
-    assert.ok(h.document.querySelector("#stage-input-review > .phase-actions")!.contains(h.get("restart-exploration-preview")));
+    assert.ok(h.document.querySelector(".prototype-substage-bar")!.contains(h.get("restart-exploration-preview")));
     assert.equal(h.document.querySelector(".visual-exploration .preview-recovery-action"), null);
     const frame = h.get<HTMLIFrameElement>("visual-preview-frame"), frameUrl = frame.src;
     await h.input("visual-setting-textSize", "large");
@@ -415,7 +415,7 @@ test("React visual controls switch and persist per direction without changing th
     assert.equal(h.get("preview-frame"), accepted);
     assert.equal(accepted.src, acceptedUrl);
     assert.equal(h.get("compare-current-prototype").getAttribute("aria-checked"), "true");
-    assert.ok(h.document.querySelector("#stage-input-review > .phase-actions")!.contains(h.get("restart-original-preview")));
+    assert.ok(h.document.querySelector(".prototype-substage-bar")!.contains(h.get("restart-original-preview")));
     assert.equal(h.document.querySelector("#restart-exploration-preview"), null);
     assert.equal(h.get<HTMLTextAreaElement>("revision-input").value, "Keep this current-prototype draft.");
     assert.equal(current(h).prototypeFlow!.displayedCheckpointId, "interaction");
@@ -541,7 +541,7 @@ test("the shared toolbar rechecks and restarts only the preview currently on scr
     await h.click("restart-exploration-preview");
     assert.equal(h.requests.at(-1)!.body.target, "exploration");
     assert.equal(h.requests.at(-1)!.body.checkpointId, "visual-bundle");
-    assert.equal(h.document.querySelectorAll(".phase-actions .preview-recovery-action").length, 2);
+    assert.equal(h.document.querySelectorAll(".prototype-substage-bar .preview-recovery-action").length, 2);
     assert.equal(h.document.querySelector(".visual-exploration .preview-recovery-action"), null);
     assert.equal(current(h).prototypeFlow!.displayedCheckpointId, "interaction");
 });

@@ -99,8 +99,10 @@ test("compact theme preserves host colors, standalone dark mode, and accessible 
     assert.match(css, /@media \(forced-colors: active\)/);
     assert.match(css, /\.choice\[data-state="checked"\][^{]*\{[^}]*background:\s*var\(--studio-accent-soft\)/);
     assert.match(css, /\.usage-intake\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/);
-    assert.match(css, /\.requirements-intake-panel\[data-substage="dag"\]\s*\{[^}]*max-height:\s*min\(240px, 35vh\);[^}]*overflow:\s*auto/,
-        "Expanded usage history must not push the decision workspace out of reach");
+    assert.match(css, /\.requirements-usage-panel\s*\{[^}]*overflow:\s*auto/,
+        "Usage history scrolls in its own tab instead of shrinking the DAG");
+    assert.match(css, /\.requirements-dag-panel\s*\{[^}]*flex:\s*1;[^}]*min-height:\s*0;[^}]*overflow:\s*hidden/,
+        "The DAG uses the remaining tab space without an outer scrollbar");
     assert.match(css, /\.reload-status:not\(\[data-status="error"\]\)/, "Compact headers must not hide reload errors");
     assert.doesNotMatch(css, /var\(--(?:text-color-default|text-color-muted|background-color-default),\s*#[\da-f]+\)/i);
 });

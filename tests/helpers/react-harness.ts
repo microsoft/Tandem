@@ -6,7 +6,7 @@ import { TextEncoder, TextDecoder } from "node:util";
 import type { TestContext } from "node:test";
 import type { UiState } from "../../src/renderer/ui-context.js";
 import { createProcessState } from "../../src/process-state.js";
-import { prototypePreviewCheckpointId, type PrototypePreviewTarget } from "../../src/prototype-flow.js";
+import { isPrototypePreviewTarget, prototypePreviewCheckpointId, type PrototypePreviewTarget } from "../../src/prototype-flow.js";
 
 let compiled: Promise<string> | undefined;
 async function compile() {
@@ -64,6 +64,7 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
   const presentationRequests: string[] = [];
   const entryRequests: string[] = [];
   const previewRequests: RequestInit[] = [];
+  const previewPaths: string[] = [];
   const previewFetchers = new Map<PrototypePreviewTarget, () => Promise<Response>>();
   let entryOpened = false;
   let entryGate: ((path: string, options: RequestInit) => Promise<void>) | null = null;
@@ -117,8 +118,9 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
       }
       if (path.startsWith("/api/prototype/preview-status")) {
         previewRequests.push(options);
-        const target = path.includes("target=pending") ? "pending" : path.includes("target=exploration") ? "exploration"
-          : path.includes("target=original") ? "original" : "current";
+        previewPaths.push(path);
+        const target = new URL(path, window.location.href).searchParams.get("target") ?? "current";
+        if (!isPrototypePreviewTarget(target)) return response({ error: "Unknown preview target" }, 400);
         const previewFetcher = previewFetchers.get(target);
         if (previewFetcher) return previewFetcher();
         const current = mounted.store.getSnapshot().state;
@@ -174,7 +176,7 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
   };
   const dispose = () => { mounted.dispose(); window.close(); };
   t?.after(dispose);
-  return { presentationRequests, entryRequests, previewRequests,
+  return { presentationRequests, entryRequests, previewRequests, previewPaths,
     window, document, requests, errors, pngExports, store: mounted.store, get, click, input, fire, flush, dispose,
     async projectSettings(open = true) {
       if (open) await click("project-settings");
