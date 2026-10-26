@@ -22,8 +22,13 @@ test("requirements remain answerable and selectable without Mermaid", async (t) 
     const h = await setup(t, dag(decision("active"), decision("previous", "answered"),
         { ...decision("future", "toAnswer"), dependencies: ["active"] }));
     assert.ok(detail(h));
+    assert.doesNotMatch(text(h, "design-tree-card"), /You are here/);
+    assert.match(text(h, "design-tree-current"), /Active/);
+    assert.ok(h.get("design-tree-current").classList.contains("eyebrow"));
+    assert.ok(h.get("design-tree-current").querySelector('svg[aria-hidden="true"]'));
     assert.equal(h.document.querySelector(".design-tree-host .diagram-header .design-tree-legend")?.textContent, "AnsweredActiveTo answerExplicit answer");
-    assert.equal(h.document.querySelector(".design-tree-host .diagram-toolbar"), null);
+    assert.equal(h.document.querySelectorAll(".design-tree-host .diagram-toolbar button").length, 1);
+    assert.equal(h.get("design-tree-host-source-trigger").textContent, "Mermaid source");
     const buttons = h.get("decision-list").querySelectorAll<HTMLButtonElement>("button");
     assert.equal(buttons.length, 3);
     await h.click(buttons[2]);
@@ -34,28 +39,39 @@ test("requirements remain answerable and selectable without Mermaid", async (t) 
     assert.equal(hidden(h, "decision-list"), false);
 });
 
-test("Requirements keeps the diagram, source and decision navigation in separate scroll regions", async t => {
+test("Requirements keeps Mermaid source in a popup without replacing the diagram or decision drafts", async t => {
     const h = await setup(t, dag(decision("active"), decision("previous", "answered")));
     const diagram = h.document.querySelector(".design-tree-host .diagram-scroll-area")!;
-    const source = h.document.querySelector<HTMLDetailsElement>(".design-tree-host .diagram-source")!;
     const list = h.document.querySelector(".decision-list-pane")!;
     const question = h.document.querySelector<HTMLElement>(".design-tree-inspector")!;
+    const sourceButton = h.get("design-tree-host-source-trigger");
+    assert.equal(h.document.querySelector(".diagram-source-dialog"), null);
+    await h.click(sourceButton);
+    const source = h.get("design-tree-host-source-dialog");
     assert.ok(diagram.contains(h.get("design-tree-host")));
     assert.equal(diagram.contains(source), false);
     assert.equal(diagram.contains(list), false);
     assert.ok(list.contains(h.get("decision-list")));
     assert.ok(question.contains(host(h)));
     assert.equal(question.tabIndex, 0);
-    assert.equal(source.open, true, "The source remains available when Mermaid cannot render.");
+    assert.equal(source.getAttribute("role"), "dialog");
+    assert.equal(source.getAttribute("aria-modal"), "true");
+    assert.match(text(h, "design-tree-host-source-label"), /Mermaid source/);
     const code = source.querySelector("pre")!;
     assert.equal(code.tabIndex, 0);
     assert.equal(code.getAttribute("role"), "region");
-    assert.equal(code.getAttribute("aria-labelledby"), source.querySelector("summary")!.id);
+    assert.equal(code.getAttribute("aria-labelledby"), source.querySelector("h2")!.id);
     const before = code;
+    await h.click(source.querySelector('[aria-label="Close Mermaid source"]')!);
+    assert.equal(h.document.activeElement, sourceButton);
     await h.input(detail(h), "Keep the selected answer draft.");
     await h.fire(h.get("usage-substage"), "mousedown", { button: 0 });
     await h.fire(h.get("dag-substage"), "mousedown", { button: 0 });
-    assert.equal(source.querySelector("pre"), before);
+    await h.click(sourceButton);
+    assert.equal(h.get("design-tree-host-source-dialog").querySelector("pre")!.textContent, before.textContent);
+    await h.fire(h.get("design-tree-host-source-dialog"), "keydown", { key: "Escape" });
+    assert.equal(h.document.querySelector(".diagram-source-dialog"), null);
+    assert.equal(h.document.activeElement, sourceButton);
     assert.equal(detail(h).value, "Keep the selected answer draft.");
     assert.deepEqual(h.requests, []);
 });
@@ -65,6 +81,7 @@ test("rejected DAGs retain usages, stop generating, and expose explicit retry", 
     value.processing = { action: "generate-dag", requestId: "dag-request", status: "running" };
     const h = await setup(t, value);
     assert.equal(text(h, "generate-dag"), "Generating DAG...");
+    assert.equal(h.get("dag-substage").querySelector(".substage-status")!.getAttribute("aria-label"), "Generating requirements DAG");
     assert.equal(disabled(h, "generate-dag"), true);
     const failed = { ...value, revision: 2, processing: { ...value.processing, status: "error",
         message: "New requirements must be answered by the user, not by the worker." } };
@@ -73,6 +90,7 @@ test("rejected DAGs retain usages, stop generating, and expose explicit retry", 
     assert.equal(disabled(h, "generate-dag"), false);
     assert.equal(hidden(h, "usage-intake"), false);
     assert.equal(h.get("dag-substage").dataset.status, "locked");
+    assert.equal(h.get("dag-substage").querySelector(".substage-status")!.getAttribute("aria-label"), "Generation failed - retry available");
     assert.equal(hidden(h, "design-tree-card"), true);
     assert.match(text(h, "usage-items"), /explore a model/);
     assert.match(text(h, "usage-message"), /answered by the user/);
@@ -104,6 +122,7 @@ test("Requirements shows research progress and retained sources without adding a
         sources: [{ title: "Declines reference", url: "https://docs.stripe.com/declines", purpose: "Recovery options" }],
     } }, processing: { ...value.processing, status: "error", message: "Question generation failed." } };
     h.render(researched);
+    assert.equal(h.get<HTMLDetailsElement>("requirements-research").open, true);
     assert.match(text(h, "requirements-research"), /Declines may need another payment method/);
     assert.match(text(h, "requirements-research"), /Live payment.*deferred/);
     const link = h.get("requirements-research").querySelector("a")!;
@@ -128,6 +147,10 @@ test("Requirements substage tabs retain usages, research and decision drafts wit
     };
     const h = await setup(t, value);
     assert.equal(h.get("dag-substage").getAttribute("role"), "tab");
+    assert.equal(h.get("dag-substage").getAttribute("aria-label"), "Decision DAG, Decisions to answer");
+    assert.equal(h.get("usage-substage").getAttribute("aria-label"), "Usage list, Usage list complete");
+    assert.ok(h.get("dag-substage").classList.contains("substage-tab"));
+    assert.equal(h.get("dag-substage").querySelector(".substage-index")!.textContent, "2");
     assert.equal(h.get("dag-substage").getAttribute("aria-selected"), "true");
     assert.equal(h.get("requirements-dag-panel").getAttribute("aria-labelledby"), "dag-substage");
     await h.input(detail(h), "Keep this answer draft.");
@@ -138,7 +161,8 @@ test("Requirements substage tabs retain usages, research and decision drafts wit
     assert.ok(h.get("requirements-usage-panel").contains(h.get("requirements-substage-section")));
     assert.ok(h.get("requirements-usage-panel").contains(h.get("requirements-research")));
     assert.match(h.get("requirements-usage-panel").textContent!, /Review saved work.*Retained research/s);
-    h.get<HTMLDetailsElement>("requirements-research").open = true;
+    assert.equal(h.get<HTMLDetailsElement>("requirements-research").open, true);
+    h.get<HTMLDetailsElement>("requirements-research").open = false;
     h.render({ ...value, revision: 2, status: "Unrelated update" }); await h.flush();
     assert.equal(h.get("usage-substage").getAttribute("aria-selected"), "true");
     await h.fire(h.get("usage-substage"), "keydown", { key: "ArrowRight" });
@@ -147,7 +171,7 @@ test("Requirements substage tabs retain usages, research and decision drafts wit
     assert.equal(detail(h), input);
     assert.equal(detail(h).value, "Keep this answer draft.");
     assert.equal(h.get("design-tree-host"), graph);
-    assert.equal(h.get<HTMLDetailsElement>("requirements-research").open, true);
+    assert.equal(h.get<HTMLDetailsElement>("requirements-research").open, false, "An explicit collapse is preserved across updates and tabs.");
     const later = { ...value, revision: 3, lifecycle: { ...value.lifecycle,
         currentStage: "prototype", completedStages: ["prepare", "requirements", "sketch"] } };
     h.render(later); await browse(h, "requirements");
@@ -163,6 +187,13 @@ test("Requirements disables the empty DAG tab and switches to its result only af
     const value = state(), h = await setup(t, value);
     assert.equal(disabled(h, "dag-substage"), true);
     assert.equal(h.get("usage-substage").getAttribute("aria-selected"), "true");
+    const lockedStatus = h.get("dag-substage").querySelector(".substage-status")!;
+    assert.equal(lockedStatus.getAttribute("role"), "img");
+    assert.equal(lockedStatus.getAttribute("title"), lockedStatus.getAttribute("aria-label"));
+    assert.equal(lockedStatus.getAttribute("data-status"), "locked");
+    assert.ok(lockedStatus.querySelector('svg[aria-hidden="true"]'));
+    assert.equal(text(h, "dag-substage"), "2Decision DAG");
+    assert.equal(h.get("dag-substage").getAttribute("aria-label"), "Decision DAG, Complete the usage list to unlock the decision DAG");
     const ready = { ...dag(decision("first")), revision: 2 };
     h.render(ready); await h.flush();
     assert.equal(disabled(h, "dag-substage"), false);

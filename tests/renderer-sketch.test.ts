@@ -49,8 +49,13 @@ test("Designs naming covers actions, accessible copy and activity without renami
     assert.equal(h.get("sketch-save").getAttribute("aria-label"), "Save designs");
     assert.equal(text(h, "sketch-approve"), "Approve designs and continue");
     assert.equal(field(h, "sketch-instruction").placeholder, "Describe a design change... (Ctrl+Enter)");
+    assert.ok(h.get("sketch-revise-form").classList.contains("feedback-composer"));
+    assert.equal(h.get("sketch-revise-form").lastElementChild, h.get("sketch-history-toggle"));
     await h.click("sketch-history-toggle");
     assert.equal(h.get("sketch-request-history-pane").getAttribute("aria-label"), "Design request history");
+    await h.fire(h.get("sketch-request-history-pane"), "keydown", { key: "Escape" });
+    assert.equal(h.get("sketch-request-history-pane").hidden, true);
+    assert.equal(h.document.activeElement, h.get("sketch-history-toggle"));
     h.render({ ...value, revision: value.revision + 1, processing: {
         action: "generate-sketch", status: "running", requestId: "design-name-request", runId: "design-name-run",
         requestedAt: new Date().toISOString(),
@@ -69,9 +74,51 @@ test("Designs naming covers actions, accessible copy and activity without renami
     assert.ok(h.requests.every(request => request.path === "/api/sketch" && request.body === null), "Renaming copy performs no mutations.");
 });
 
-
-
-
+test("design approval status appears only in the bottom status bar for the viewed, unchanged designs", async t => {
+    for (const [fidelity, message] of [["wireframe", "Layout and navigation approved"], ["styled", "Saved designs approved"]] as const) {
+        await t.test(fidelity, async t => {
+            const fixture = sketchFixture();
+            fixture.document.fidelity = fidelity;
+            fixture.value.sketch.status = "approved";
+            fixture.value.sketch.approved = {
+                revisionId: fixture.value.sketch.current.id,
+                documentHash: fixture.value.sketch.current.documentHash,
+                requirementsDigest: fixture.value.sketch.current.requirementsDigest,
+            };
+            const { h, value } = await sketchSetup(t, fixture);
+            assert.equal(h.document.getElementById("sketch-focus"), null);
+            assert.equal(h.document.querySelector(".sketch-approval-actions [role=status]"), null);
+            assert.equal(text(h, "next-action-guide"), message);
+            assert.equal(h.get("next-action-guide").title, message);
+            assert.equal(hidden(h, "show-next-action"), false, "Moving the status must retain the next-action shortcut.");
+            await h.fire(h.get("sketch-generate"), "pointerover");
+            assert.equal(text(h, "next-action-guide"), "Regenerate designs");
+            await h.fire(h.get("sketch-generate"), "pointerout");
+            assert.equal(text(h, "next-action-guide"), message);
+            h.store.setConnectionError("Connection interrupted.");
+            await h.flush();
+            assert.equal(h.get("next-action-bar").dataset.status, "error");
+            assert.equal(text(h, "next-action-guide"), "Connection interrupted.");
+            h.store.setConnectionError("");
+            await h.flush();
+            assert.equal(text(h, "next-action-guide"), message);
+            await browse(h, "requirements");
+            assert.notEqual(text(h, "next-action-guide"), message, "Approval status belongs only to the Designs view.");
+            await browse(h, "sketch");
+            assert.equal(text(h, "next-action-guide"), message);
+            h.render({ ...value, revision: 2, sketch: { ...value.sketch,
+                approved: { ...value.sketch.approved, documentHash: "older" } } });
+            await h.flush();
+            assert.notEqual(text(h, "next-action-guide"), message, "An approval must match the current saved revision.");
+            h.render({ ...value, revision: 3 });
+            await h.flush();
+            assert.equal(text(h, "next-action-guide"), message);
+            await h.input("sketch-title", "Local changes");
+            assert.notEqual(text(h, "next-action-guide"), message, "Unsaved designs are not approved.");
+            assert.ok(h.requests.every(request => request.path === "/api/sketch" && request.body === null));
+        });
+    }
+});
 
 test("Sketch retains drafts, focus and caret through SSE and tabs, with explicit conflict reload", async (t) => {
     const { h, value, document } = await sketchSetup(t);

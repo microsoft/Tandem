@@ -236,7 +236,9 @@ function Header({ version, connectionError, status, showNextAction, onHostedChan
   </header>;
 }
 
-function PreparationRestart({ store, effortBusy }: { store: StudioStore; effortBusy: boolean }) {
+function PreparationRestart({ store, effortBusy, renderAction }: {
+  store: StudioStore; effortBusy: boolean; renderAction?: (action: ReactNode) => ReactNode;
+}) {
   const { state, confirm, post } = useUi();
   const project = useProjectView();
   const reset = useAction("effort");
@@ -247,10 +249,8 @@ function PreparationRestart({ store, effortBusy }: { store: StudioStore; effortB
   if (project.entry.startingPath !== "preparation" && !state.effortReset) return null;
   if (isGoalEntry(state) && !state.effortReset && !reset.error) return null;
   const error = reset.error || state.effortReset?.error;
-  return <details id="preparation-maintenance" className="preparation-stage-card" open={state.effortReset ? true : undefined}>
-    <summary>Advanced Preparation actions</summary>
-    <p>Stop current discovery work, archive Preparation, Requirements, Designs and Prototype state/files, and return to the goal form. Development work and the project's saved starting choice are kept.</p>
-    <button id="reset-effort" className="plan-button secondary" type="button" disabled={disabled}
+  const button = <button id="reset-effort" className="plan-button secondary" type="button" disabled={disabled}
+      aria-describedby="effort-message"
       title={project.active ? "Close the private runtime in Project settings before restarting Preparation." : "Archive upstream discovery; retain Development and admitted handoffs"}
       onClick={async () => {
         if (latest.current) return;
@@ -265,11 +265,13 @@ function PreparationRestart({ store, effortBusy }: { store: StudioStore; effortB
           const saved = store.getSnapshot().state;
           if (!saved || !isGoalEntry(saved) || saved.generation === state.generation) throw new Error("Preparation restart has not been confirmed. Refresh the project state before retrying.");
         });
-      }}><RotateCcw size={15} aria-hidden="true" />{reset.busy ? "Restarting Preparation..." : "Restart Preparation..."}</button>
-    <p id="effort-message" role="status" data-status={error ? "error" : "idle"}>
+      }}><RotateCcw size={15} aria-hidden="true" />{reset.busy ? "Restarting Preparation..." : "Restart Preparation..."}</button>;
+  return <>
+    {renderAction ? renderAction(button) : button}
+    <p id="effort-message" className="effort-message" role="status" data-status={error ? "error" : "idle"}>
       {error || (state.effortReset ? "Preparation restart is pending. Use Restart Preparation to confirm worker termination and finish the interrupted archive/reset." : message)}
     </p>
-  </details>;
+  </>;
 }
 interface WorkspaceProps {
   version: string; connectionError: string; store: StudioStore; activeTab: TabId; onTabChange: (tab: TabId) => void;
@@ -289,6 +291,7 @@ function Workspace(props: WorkspaceProps) {
   const [reviewControlsContainer, setReviewControlsContainer] = useState<HTMLElement | null>(null);
   const [prototypeHeaderActions, setPrototypeHeaderActions] = useState<HTMLElement | null>(null);
   const [approvalContainer, setApprovalContainer] = useState<HTMLElement | null>(null);
+  const [sketchApprovalStatus, setSketchApprovalStatus] = useState("");
   const [width, setWidth] = useState(minimumContextWidth);
   const [contextCollapsed, setContextCollapsed] = useState(false);
   const [hosting, setHosting] = useState<StandaloneHosting>({ header: false, status: false });
@@ -349,7 +352,9 @@ function Workspace(props: WorkspaceProps) {
     && !hasActiveJobs(state) && (!handoffStatus.rootStatus || savedPrototype) ? privateStatus.text : "";
   const statusBarText = statusBarError || (privateStatus?.kind === "attention" ? privateStatus.text : "")
     || (activeTab === "development" && projectView.starting ? privateStatus?.text || "Starting Development..." : "")
-    || authoritativeActivity || contextHelp || (nextAction ? "Next action: " + nextAction.label
+    || authoritativeActivity || contextHelp
+    || (activeTab === "sketch" && !reviewing && !pending && !hasActiveJobs(state) ? sketchApprovalStatus : "")
+    || (nextAction ? "Next action: " + nextAction.label
     : (handoffStatus.busy ? handoffStatus.text : "") || developmentStatus
     || (pending || hasActiveJobs(state) ? state.status : "") || (!savedPrototype ? handoffStatus.rootStatus : "")
     || (privateStatus?.kind === "active" ? privateStatus.text : "") || handoffStatus.text || privateStatus?.text
@@ -649,11 +654,14 @@ function Workspace(props: WorkspaceProps) {
                   if (target) document.getElementById(`${target.id}-panel`)?.focus({ preventScroll: true });
                 });
               }} /> : <UiContext.Provider value={tab.stage === "development" ? ui : { ...ui, canEdit: (stage, allowCompleted) => !projectView.developmentEntered && ui.canEdit(stage, allowCompleted) }}>
-            {tab.stage === "prepare" && <PreparationRestart store={props.store} effortBusy={props.effortBusy} />}
+            {tab.stage === "prepare" && <PreparationRestart store={props.store} effortBusy={props.effortBusy}
+              renderAction={activeTab === "preparation" && prototypeHeaderActions
+                ? action => createPortal(action, prototypeHeaderActions) : undefined} />}
             {tab.stage === "prepare" ? atStart ? projectView.developmentEntered
               ? <div className="start-panel"><h2>Preparation was not used</h2><p>This project is working in Development. Its conversation remains alongside the project artifacts.</p></div>
               : <GoalEntry /> : <PreparationPanel /> : tab.stage === "requirements" ? <RequirementsPanel />
               : tab.stage === "sketch" ? <SketchCompletionContext.Provider value={props.onSketchBlocked}><SketchPanel
+                onApprovalStatusChange={setSketchApprovalStatus}
                 renderReviewActions={activeTab === "sketch" && reviewControlsContainer
                   ? actions => createPortal(actions, reviewControlsContainer) : undefined}
                 renderApproval={actions => activeTab === "sketch" && approvalContainer ? createPortal(actions, approvalContainer) : null} /></SketchCompletionContext.Provider>

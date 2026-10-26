@@ -244,7 +244,8 @@ test("wireframe Designs explains its approval scope and previews saved navigatio
   first.ui = applyOperations(first.ui, [{ op: "update", id: "primary-action", props: { label: "Open task", action: "open-task" } }]);
   const h = await harness(initial);
   try {
-    assert.match(h.element("focus").textContent!, /Wireframes: layout & navigation/);
+    assert.equal(dom.window.document.getElementById("sketch-focus"), null);
+    assert.equal(h.element("approve").getAttribute("aria-describedby"), null);
     assert.match(h.element("approve").title, /Appearance is deferred/);
     assert.match(h.element<HTMLTextAreaElement>("instruction").placeholder, /layout, label or navigation/);
     const requests = h.requests.length;

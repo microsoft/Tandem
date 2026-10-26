@@ -114,12 +114,14 @@ is not a reason to retry.
 In Requirements, **Add usage** accepts a usage, then **Generate requirements DAG**
 researches relevant missing facts before creating connected decisions. Progress
 appears in **Usage list**, alongside Requirements and **Research and sources**.
+**Research and sources** starts expanded; collapse it when you want more space.
 Switch to **Decision DAG** to answer questions; switch back to **Usage list**
 to inspect accepted usages and research, including from later stages.
-The DAG fills its tab. The diagram, expanded **Mermaid source**, decision list,
-and selected question each have a bounded-height area with their own scrollbar.
-Long content stays inside its pane; zoom controls and the source heading remain
-visible while their content scrolls.
+The DAG fills its tab. The diagram, decision list and selected question each have
+a bounded-height area with their own scrollbar. **Mermaid source**, immediately
+after the **Fit**/zoom readout, opens a scrollable popup without resizing those panes. Close it
+with **Close** or **Escape** to return to the source button. The source remains
+available even when the diagram cannot render.
 Research informs questions, not accepted features or answers. Failed generation
 keeps your usages and any completed findings for **Retry requirements DAG**.
 An unchanged retry reuses those findings instead of repeating the research.
@@ -184,7 +186,8 @@ Sizing changes the responsive viewport; zoom changes only the view.
 **Save designs** saves edits;
 **Approve designs and continue** explicitly approves that revision.
 Already-approved, unchanged designs may show **Finish Designs and continue**
-instead. A saved/streamed revision alone is not approval.
+instead. Their approval status appears in the bottom status bar, not the
+design toolbar. A saved/streamed revision alone is not approval.
 
 Older geometry-based designs show a **Regenerate designs** prompt instead of a
 view. Reopen Designs if needed, regenerate and approve the DSL revision, then
@@ -270,6 +273,8 @@ or **Custom**, the same feedback box refines only that alternative.
 
 Use the **Prototype** and **Visual exploration** tabs to revisit
 each saved result, including after continuing into a later stage.
+These numbered sub-tabs use the same style and status icons as Requirements.
+Hover over an icon for its status; screen readers announce the same description.
 Switching tabs only changes the view: it does not reopen work, apply a version,
 or start generation. Each preview is checked against its saved checkpoint.
 Unavailable saved previews can be explicitly rechecked or restarted.
@@ -280,8 +285,10 @@ The accepted prototype changes only when you choose an action such as
 milestones are not feedback you submitted. **Feedback** still targets the
 accepted prototype when you are inspecting an earlier result.
 
-Use **Feedback** to **Send change** or **Queue change**, then inspect its
-status and clarifications. Finish requires the necessary milestones, current
+Change and feedback boxes share an input, **Send**, and **History** layout.
+**Send** keeps the current target and queues feedback when work is already running.
+**History** shows the recorded requests and their status without applying changes.
+Inspect any clarifications before continuing. Finish requires the necessary milestones, current
 design approval and resolved submitted feedback. **Finish Prototype and save
 outputs** retains evidence; it starts neither Design nor implementation.
 Non-GUI work can retain a reason/specification without fabricating screens.
@@ -306,7 +313,7 @@ new navigation or features.
    are retained separately for each direction and the accepted prototype.
    Return to **Default** or the **Prototype** tab for ordinary feedback, which
    waits until exploration is applied or put aside.
-4. Use **Accept** at the top right of **Compare visual directions** to apply the
+4. Use **Accept** at the right of the direction buttons to apply the
    previewed direction and settings.
    Accepting **Default** restores the saved original without regenerating it.
    Alternatives, settings and checkpoint history are retained.

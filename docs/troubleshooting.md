@@ -164,7 +164,7 @@ session's other extension connections and lose unsent text, but does not
 archive/reset saved data, download updates or refresh the app preview.
 Failures remain in the root status bar/hosted error banners after Settings closes.
 
-**Restart Preparation...** lives in **Preparation > Advanced Preparation actions**,
+**Restart Preparation...** lives in the **Preparation** tab header,
 not empty goal entry or direct Development without discovery. After confirmation,
 it stops discovery, archives Preparation/Requirements/Designs/Prototype state and
 files, and returns to goal entry. Unconfirmed stopping leaves recovery visible.

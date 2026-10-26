@@ -669,11 +669,17 @@ private request or written into its store. Cold private history still requires
 owned runtime verification during project entry; browsing alone does not reopen it.
 Requirements uses view-only **Usage list** and **Decision DAG** tabs. The usage
 tab owns Requirements intake/history and retained research. The DAG tab fills
-the available workspace. The diagram viewport, expanded Mermaid source, decision
-list and selected-question pane have independent, bounded scroll regions.
-The legend and zoom toolbar sit outside the diagram viewport, and the source
-heading stays outside the code scroller. Neither graph size nor source/list length
-can grow the workspace or displace another pane.
+the available workspace. The diagram viewport, decision list and selected-question
+pane have independent, bounded scroll regions. The diagram region and the
+question list below it share a 3:2 vertical
+split at wide and narrow widths, without resizing the selected-question inspector.
+The legend and zoom toolbar sit
+outside the diagram viewport. The Mermaid source button follows the Fit/zoom readout and opens a
+modal with its own bounded code scroller, including when rendering fails.
+Opening, closing or updating the source cannot resize the workspace or reset zoom
+or decision selection. Requirements and Prototype use shared numbered sub-tab
+styling and status icons while retaining their independent state. Status descriptions
+remain available through icon tooltips and accessible names, not visible status text.
 Tab changes retain answer drafts, graph zoom and research expansion without
 changing the saved requirements substage or reopening accepted work.
 
@@ -705,6 +711,10 @@ Successful preview checks and verbose version summaries stay collapsed in Detail
 unavailable versions and their targeted Restart actions remain prominent. The
 normal current-plus-pending view preserves a useful preview and initially reachable
 Feedback at 920x620, including an expanded feedback draft.
+Designs, Prototype (including visual-direction refinement) and draft Requirements
+change requests use the same input/Send/History layout and shared history controls.
+History reads the owning stage's existing request records, preserves drafts and
+queue identities, and never submits, accepts or promotes a version.
 Neither current-preview link nor current iframe switches to a pending version without the explicit
 checkpoint-promotion action; its existing validation and Finish gates are unchanged.
 
@@ -844,8 +854,8 @@ identities remain read-only evidence; they do not become Stage 2 authorization.
 Active or termination-unconfirmed legacy work blocks cutover until its original
 owner settles it. Work owned by a different worktree is not silently adopted.
 
-**Restart Preparation...** lives under Preparation's **Advanced Preparation
-actions**, not global navigation. Its confirmation explains that current upstream
+**Restart Preparation...** lives in Preparation's tab header beside its stage
+actions, not global navigation. Its confirmation explains that current upstream
 state/files are archived, while Development Design, conversation, application
 files, admitted handoffs and the immutable starting choice are retained.
 Direct-Development projects without discovery do not offer this reset starter.

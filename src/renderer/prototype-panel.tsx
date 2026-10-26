@@ -13,16 +13,16 @@ import { awaitingVisualChoice, originalPrototypeCheckpointId, prototypePreviewCh
 import { VisualExplorationPanel } from "./visual-exploration-panel.js";
 import { HandoffControls } from "./handoff-review.js";
 import { currentChangeReview } from "../change-request-policy.js";
+import { SubstageStatusIcon, type SubstageStatus } from "./substage-status.js";
+import { FeedbackHistory, FeedbackHistoryButton } from "./feedback-history.js";
 
 const milestones = [
   { id: "prototype", label: "Prototype" }, { id: "visual", label: "Visual exploration" },
 ] as const;
-const milestoneFocus = {
-  prototype: { title: "Task flow & behavior", review: "Try the primary task: navigation, controls and applicable loading, empty, error and recovery states. Data is mocked; visual refinement is optional.",
-    placeholder: "Describe a change to the task flow, controls or state feedback." },
-  visual: { title: "Appearance", review: "Compare layout treatment, typography and colors without changing the agreed workflow. Accept a direction explicitly, or keep the current version.",
-    placeholder: "Describe one focused change to the accepted prototype." },
-} satisfies Record<PrototypeSubstage, { title: string; review: string; placeholder: string }>;
+const milestonePlaceholders = {
+  prototype: "Describe a change to the task flow, controls or state feedback.",
+  visual: "Describe one focused change to the accepted prototype.",
+} satisfies Record<PrototypeSubstage, string>;
 const unresolvedStatuses = ["queued", "processing", "clarifying", "ready", "failed"];
 interface Revision { id: string; status: string; suggestion?: string; summary?: string; visualSelection?: unknown }
 interface Submission { suggestion: string; baseCheckpointId?: string | null; visualSelection?: VisualSelection; clientRequestId: string }
@@ -206,6 +206,7 @@ export function PrototypePanel({ active: visible, connected, renderStageActions,
   const action = useAction("prototype-action");
   const revisionAction = useAction("prototype-revision");
   const [revisionScope, setRevisionScope] = useState("prototype-revision");
+  const [historyOpen, setHistoryOpen] = useDraft("prototype-feedback-history", false);
   const submissions = useRef(new Map<string, Submission>());
   const frame = useRef<HTMLIFrameElement>(null);
   const capture = useRef<{ finish: (value?: { state: unknown }) => void } | null>(null);
@@ -285,6 +286,9 @@ export function PrototypePanel({ active: visible, connected, renderStageActions,
   const previewLabel = original ? "original prototype" : "current preview";
   const url = flow ? shownCheckpoint?.previewUrl || (shownCheckpoint === displayed && displayed ? state.previewUrl : null) : state.previewUrl;
   const readyUrl = originOf(url) && !unavailable && !undecided ? url : null;
+  const sendLabel = revisionAction.busy ? state.stageReview ? "Saving..." : "Sending..." : state.stageReview ? "Save draft feedback"
+    : refiningVisual ? hasActiveJobs(state) ? "Queue refinement" : "Refine direction"
+      : hasActiveJobs(state) || question || candidate || !readyUrl ? "Queue change" : "Send change";
   const generation = state.generation;
   const previewId = shownCheckpoint?.id ?? null;
   const pendingId = flow?.pendingCheckpointId ?? null;
@@ -435,7 +439,7 @@ export function PrototypePanel({ active: visible, connected, renderStageActions,
     : state.stageReview ? "Feedback is saved only in this draft. Use Build draft preview when you want to run it."
     : finalizing ? "The final feature specification is being generated from frozen input. Keep drafting; sending is paused for this handoff."
     : unresolved.length >= 50 ? "The feedback queue is full. Apply or resolve existing updates before sending more; your draft is kept."
-    : visualFeedback ? "This updates the selected alternative, not the accepted prototype or the other directions."
+    : visualFeedback ? ""
     : !readyUrl ? "You can queue feedback before the first preview is ready."
     : hasActiveJobs(state) ? "Keep using the displayed preview. New feedback is queued while the next update builds."
     : question ? "Answer the clarification to continue that revision. You can queue other feedback meanwhile."
@@ -507,29 +511,33 @@ export function PrototypePanel({ active: visible, connected, renderStageActions,
         hidden={Boolean(unavailable) || (!flow && !readyUrl && !failedRevision && state.lifecycle.currentStage !== "prototype")}>
         <div className="prototype-substage-bar">
           <Tabs.List id="prototype-milestones" className="preview-tabs prototype-milestones" aria-label="Prototype substages" hidden={!flow && Boolean(readyUrl)}>
-          {milestones.map((milestone) => {
+          {milestones.map((milestone, index) => {
             const latest = checkpoints.filter((checkpoint) => prototypeSubstage(checkpoint.milestone) === milestone.id && !checkpoint.visualDismissedAt).at(-1)
               || checkpoints.filter(checkpoint => prototypeSubstage(checkpoint.milestone) === milestone.id).at(-1);
             const skipped = milestone.id === "visual" && !flow?.visualRequested && (latest?.status === "failed" || Boolean(flow?.visualExploration));
-            const label = skipped ? "Skipped (optional)" : latest?.id === candidate?.id && candidate ? "Ready to inspect - not applied"
-              : latest?.status === "running" ? "Building" : latest?.status === "clarifying" ? "Needs clarification" : latest?.status === "failed" ? "Failed - retry available"
-              : milestone.id === "visual" && flow && awaitingVisualChoice(flow) ? "Compare & choose"
-              : milestoneReady(state, milestone.id) ? "Ready" : milestone.id === "visual" && !flow?.visualRequested ? "Optional"
-              : latest?.status === "ready" ? "Partial preview" : "Waiting";
+            const [status, label]: [SubstageStatus, string] = skipped ? ["skipped", "Skipped (optional)"]
+              : latest?.id === candidate?.id && candidate ? ["inspect", "Ready to inspect - not applied"]
+              : latest?.status === "running" ? ["running", "Building"]
+              : latest?.status === "clarifying" ? ["attention", "Needs clarification"]
+              : latest?.status === "failed" ? ["failed", "Failed - retry available"]
+              : milestone.id === "visual" && flow && awaitingVisualChoice(flow) ? ["inspect", "Compare & choose"]
+              : milestoneReady(state, milestone.id) ? ["ready", "Ready"]
+              : milestone.id === "visual" && !flow?.visualRequested ? ["optional", "Optional"]
+              : latest?.status === "ready" ? ["partial", "Partial preview"] : ["waiting", "Waiting"];
             return <Tabs.Trigger key={milestone.id} value={milestone.id} id={`prototype-${milestone.id}-tab`}
-              className="preview-tab prototype-milestone" aria-controls="prototype-substage-panel"
+              className="preview-tab prototype-milestone substage-tab" aria-controls="prototype-substage-panel"
+              aria-label={`${milestone.label}, ${label}`}
               disabled={milestone.id !== "prototype" && !latest && !milestoneReady(state, "prototype")}
               data-milestone={milestone.id} data-status={skipped ? "skipped" : latest?.status || "waiting"}
+              data-complete={milestoneReady(state, milestone.id)}
               aria-current={active && prototypeSubstage(active.milestone) === milestone.id ? "step" : undefined}>
-              <strong>{milestone.label}</strong><span>{label}</span>
+              <span className="substage-index" aria-hidden="true">{index + 1}</span><span>{milestone.label}</span>
+              <SubstageStatusIcon status={status} label={label} />
             </Tabs.Trigger>;
           })}
           </Tabs.List>
           {previewActions}
         </div>
-        <p id="prototype-focus" className="stage-focus">
-          <strong>{milestoneFocus[viewedMilestone].title}</strong><span>{milestoneFocus[viewedMilestone].review}</span>
-        </p>
         {importantProgress && <p id="prototype-progress-message" className="muted"
           role="status" data-essential="true">{message}</p>}
       </section>
@@ -582,13 +590,21 @@ export function PrototypePanel({ active: visible, connected, renderStageActions,
         }} />
       </Tabs.Content>
     </Tabs.Root>
+    <div className="prototype-feedback-pane" hidden={!hasStageData(state, "prototype") || Boolean(unavailable)}>
+      <FeedbackHistory id="revision-history-details" triggerId="prototype-history-toggle"
+        label="Prototype request history" open={historyOpen} onClose={() => setHistoryOpen(false)}>
+        <p id="revision-queue-summary" className="muted" role="status">{unresolved.length
+          ? `${revisions.filter(item => item.status === "queued").length} queued · ${unresolved.length} unresolved / 50` : ""}</p>
+        <ul id="revision-history" className="revision-history feedback-request-history">{revisions.filter(item => item.status !== "applied" || recentApplied.has(item.id)).slice().reverse().map(revision =>
+          <li key={revision.id} data-revision-id={revision.id} data-status={revision.status}><strong title={revision.summary}>{revision.suggestion || revision.summary}</strong>
+            <span>{revision.visualSelection ? "Visual direction · " : ""}{{ queued: "Queued", processing: "Building update", clarifying: "Needs clarification", ready: "Update ready - not applied", applied: "Applied", dismissed: "Put aside - current kept", failed: "Failed - retry needed" }[revision.status] || revision.status}</span></li>)}</ul>
+        {!revisions.length && <p className="muted">No prototype requests yet.</p>}
+      </FeedbackHistory>
     <section id="prototype-review" className="prototype-review" hidden={!hasStageData(state, "prototype") || Boolean(unavailable)}>
-      <div className="prototype-review-heading"><strong>{refiningVisual ? `Feedback for ${visualFeedback?.name ?? "selected direction"}`
-        : viewingSavedMilestone || original && original.id !== displayed?.id ? "Feedback for accepted prototype" : "Feedback"}</strong>
-        <span className="muted">{refiningVisual ? "Selected direction only"
-          : <>{milestones.find(item => item.id === feedbackMilestone)?.label} · {milestoneFocus[feedbackMilestone].title}</>}</span>
-      </div>
-      <form id="revision-form" className="revision-form inline-composer" aria-describedby="revision-status" onSubmit={(event) => {
+      {(refiningVisual || !(viewingSavedMilestone || original && original.id !== displayed?.id)) &&
+        <div className="prototype-review-heading"><strong>{refiningVisual
+          ? `Feedback for ${visualFeedback?.name ?? "selected direction"}` : "Feedback"}</strong></div>}
+      <form id="revision-form" className="revision-form feedback-composer" aria-describedby="revision-status" onSubmit={(event) => {
         event.preventDefault();
         if (feedbackBlocked) return;
         setRevisionScope(feedbackKey);
@@ -617,26 +633,26 @@ export function PrototypePanel({ active: visible, connected, renderStageActions,
         <textarea className="composer-input" id="revision-input" value={draft.value} onChange={(event) => {
           const value = event.currentTarget.value;
           setFeedbackDrafts(current => ({ ...current, [feedbackKey]: { value, version: (current[feedbackKey]?.version ?? 0) + 1 } }));
+        }} onKeyDown={event => {
+          if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) {
+            event.preventDefault(); event.currentTarget.form?.requestSubmit();
+          }
         }}
           rows={1} maxLength={4000} disabled={Boolean(state.effortReset)}
-          placeholder={refiningVisual ? "Keep this layout, but simplify the toolbar..." : milestoneFocus[feedbackMilestone].placeholder}
+          placeholder={refiningVisual ? "Keep this layout, but simplify the toolbar..." : milestonePlaceholders[feedbackMilestone]}
           aria-label={refiningVisual ? `Feedback for ${visualFeedback?.name ?? "selected direction"}` : "Prototype revision suggestion"} aria-describedby="revision-status" />
-        <button id="submit-revision" type="submit" aria-describedby="revision-status" disabled={feedbackBlocked || unresolved.length >= 50}><Send size={16} />
-          {revisionAction.busy ? state.stageReview ? "Saving..." : "Sending..." : state.stageReview ? "Save draft feedback"
-            : refiningVisual ? hasActiveJobs(state) ? "Queue refinement" : "Refine direction"
-            : hasActiveJobs(state) || question || candidate || !readyUrl ? "Queue change" : "Send change"}</button>
+        <button id="submit-revision" className="plan-button feedback-send" type="submit" aria-describedby="revision-status"
+          aria-label={sendLabel} title={`${sendLabel} (Ctrl+Enter)`}
+          disabled={feedbackBlocked || unresolved.length >= 50}><Send size={15} aria-hidden="true" />Send</button>
+        <FeedbackHistoryButton id="prototype-history-toggle" target="revision-history-details"
+          open={historyOpen} error={Boolean(revisionError || failedRevision)} onToggle={() => setHistoryOpen(open => !open)} />
       </form>
       {!renderReviewActions && reviewControls}
       {question && <Clarification key={JSON.stringify(question)} question={question} />}
-      <details id="revision-history-details" className="revision-history-details" hidden={!revisions.length}>
-        <summary>Revision history <span id="revision-queue-summary" className="muted" role="status">{unresolved.length ? `${revisions.filter((item) => item.status === "queued").length} queued · ${unresolved.length} unresolved / 50` : ""}</span></summary>
-        <ul id="revision-history" className="revision-history">{revisions.filter((item) => item.status !== "applied" || recentApplied.has(item.id)).slice().reverse().map((revision) =>
-          <li key={revision.id} data-revision-id={revision.id} data-status={revision.status}><strong title={revision.summary}>{revision.suggestion || revision.summary}</strong>
-            <span>{revision.visualSelection ? "Visual direction · " : ""}{{ queued: "Queued", processing: "Building update", clarifying: "Needs clarification", ready: "Update ready - not applied", applied: "Applied", dismissed: "Put aside - current kept", failed: "Failed - retry needed" }[revision.status] || revision.status}</span></li>)}</ul>
-      </details>
-      <p id="revision-status" className={revisionError || unresolved.length >= 50 || finalizing || question || refiningVisual ? "revision-status" : "visually-hidden"} role="status" data-status={revisionError || unresolved.length >= 50 ? "error" : "idle"}
-        data-essential={Boolean(revisionError || unresolved.length >= 50 || !canEdit("prototype") || finalizing || question || refiningVisual)}>{revisionMessage}</p>
+      <p id="revision-status" className={revisionError || unresolved.length >= 50 || finalizing || question || visualFeedbackBlocker ? "revision-status" : "visually-hidden"} role="status" data-status={revisionError || unresolved.length >= 50 ? "error" : "idle"}
+        data-essential={Boolean(revisionError || unresolved.length >= 50 || !canEdit("prototype") || finalizing || question || visualFeedbackBlocker)}>{revisionMessage}</p>
     </section>
+    </div>
     {savedOnly && state.lifecycle.outputs.some(output => output.stageId === "prototype") && !finalizing && <section className="prototype-progress" aria-label="Saved Prototype next step">
       {!state.stageReview && <HandoffControls prototype active={visible} />}
       <button className="plan-button secondary" type="button" onClick={() => ui.browseStage("development")}>Open Development</button>
