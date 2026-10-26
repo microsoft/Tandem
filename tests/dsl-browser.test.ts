@@ -154,10 +154,29 @@ test("real browser shows design generation before the first view and keeps live 
     assert.equal(await browser.evaluate('document.querySelector("#sketch-board").getAttribute("aria-busy")'), "false");
     assert.equal(await browser.evaluate('document.querySelector("#sketch-approve").disabled'), true);
     await browser.evaluate(`designFixture.flushSync(() => designFixture.store.accept(${JSON.stringify({
-        ...initial, revision: 3, processing: { ...initial.processing, status: "error", message: "Design generation failed. Retry explicitly." },
+        ...initial, revision: 3, processing: { ...initial.processing, status: "error", message: "Design generation failed. Retry explicitly.",
+            sketchRecovery: { phase: "content", preview: live.sketchPreview } },
     })}))`);
     await browser.waitFor('!document.querySelector("#sketch-generation")');
     assert.equal(await browser.evaluate('document.querySelector("#sketch-history-toggle").dataset.status'), "error");
+    assert.equal(await browser.evaluate('document.querySelectorAll("#sketch-screens button").length'), 2);
+    assert.equal(await browser.evaluate('document.querySelector("#sketch-board .dsl-view").shadowRoot.querySelector("button").textContent'), "Continue");
+    assert.equal(await browser.evaluate('document.querySelector("#sketch-approve").disabled'), true);
+    for (const width of [1280, 375]) {
+        await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 760, deviceScaleFactor: 1, mobile: false });
+        await browser.evaluate('document.querySelector("#sketch-retry-generation").scrollIntoView({block:"center"})');
+        const recovery = await browser.evaluate(`(() => {
+            const button = document.querySelector("#sketch-retry-generation"), r = button.getBoundingClientRect();
+            const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+            return { visible: button === hit || button.contains(hit), disabled: button.disabled, width: r.width,
+                text: document.querySelector("#sketch-status").textContent };
+        })()`);
+        assert.equal(recovery.visible, true, `Recovery stays reachable at ${width}: ${JSON.stringify(recovery)}`);
+        assert.equal(recovery.disabled, false);
+        assert.match(recovery.text, /incomplete preview/);
+        if (process.env.TANDEM_UI_EVIDENCE) await writeFile(
+            join(process.env.TANDEM_UI_EVIDENCE, `design-recovery-${width}.png`), await browser.screenshot());
+    }
     assert.deepEqual(unexpected, []);
     assert.deepEqual(browser.exceptions, []);
 });

@@ -441,6 +441,69 @@ test("React sketch streaming screens stay navigable across updates and failure r
   } finally { await h.close(); }
 });
 
+test("failed generation keeps completed and partial pages navigable and retries without saving or starting over", async () => {
+  const initial = fixture();
+  initial.state.sketch.current = null;
+  initial.state.sketch.status = "empty";
+  const h = await harness({ state: initial.state, document: null });
+  try {
+    const document = structuredClone(initial.document);
+    const first = document.screens[0];
+    first.title = "Completed page";
+    const second = createScreen(document, ["Requirement.Main_1"]);
+    second.title = "Partial page";
+    addUi(second, "partial-title", "Heading", { text: "Retained partial content" });
+    document.screens.push(second);
+    const third = createScreen(document, ["Requirement.Main_1"]);
+    third.title = "Waiting page";
+    document.screens.push(third);
+    document.transitions.push({ id: "next", fromScreenId: first.id, toScreenId: second.id, trigger: "Next", description: "" });
+    const live = streaming(h.server, document);
+    live.sketchPreview!.screenStatuses = { [first.id]: "ready", [second.id]: "processing", [third.id]: "waiting" };
+    await h.sse(live);
+    await h.selectScreen(1);
+    const failed = { ...live, revision: live.revision + 1,
+      processing: { ...live.processing, status: "error", message: "'size' is not a prop of List.",
+        sketchRecovery: { phase: "content", preview: live.sketchPreview } } };
+    await h.sse(failed);
+    assert.match(h.preview().textContent!, /Retained partial content/);
+    assert.equal(h.element("page-status").dataset.status, "stopped");
+    assert.equal(h.element("board").getAttribute("aria-busy"), "false");
+    assert.equal(h.element("workspace").querySelector(".processing-indicator"), null);
+    assert.deepEqual([...h.element("screens").querySelectorAll("button")].map(item => item.textContent),
+      ["Completed pageReady", "Partial pageStopped", "Waiting pageWaiting"]);
+    assert.match(h.element("status").textContent!, /incomplete preview, not saved or approved/);
+    assert.equal(h.element<HTMLButtonElement>("save").disabled, true);
+    assert.equal(h.element<HTMLButtonElement>("approve").disabled, true);
+    assert.equal(h.element<HTMLButtonElement>("retry-generation").disabled, false);
+    await h.selectScreen(0);
+    assert.equal(h.preview().querySelector("button")!.textContent, "Continue");
+    await h.selectScreen(2);
+    assert.equal(h.element("board").getAttribute("aria-busy"), "false");
+    assert.match(h.element("board").textContent!, /Waiting page/);
+    await h.selectScreen(1);
+    h.setPost(async (endpoint, body) => {
+      assert.equal(endpoint, "/api/sketch");
+      assert.deepEqual(body, { action: "retry", expectedRevision: null, expectedGeneration: failed.generation,
+        requestId: failed.processing.requestId });
+      return { ...failed, revision: failed.revision + 1,
+        processing: { ...failed.processing, status: "running", requestId: "retry-request", runId: null, sketchRecovery: null,
+          sketchResume: failed.processing.sketchRecovery },
+        sketchPreview: live.sketchPreview };
+    });
+    await h.click("retry-generation");
+    assert.equal(h.requests.length, 2, "Only the initial read and explicit retry, never an implicit save or regenerate.");
+    assert.match(h.preview().textContent!, /Retained partial content/);
+    assert.equal(h.element("page-status").dataset.status, "processing");
+    await h.sse({ ...h.server, revision: h.server.revision + 1,
+      processing: { ...h.server.processing, runId: "retry-run" },
+      sketchPreview: { ...live.sketchPreview!, requestId: "retry-request", runId: "retry-run", sequence: 0 } });
+    assert.match(h.preview().textContent!, /Retained partial content/);
+    assert.equal(h.state.sketch.current, null);
+    assert.equal(h.completionBlocked, true);
+  } finally { await h.close(); }
+});
+
 test("React sketch incoming preview never obscures local edits or changes their undo history", async () => {
   const initial = fixture();
   const h = await harness(initial);

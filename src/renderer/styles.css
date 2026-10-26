@@ -455,6 +455,7 @@ form textarea.composer-input {
 }
 
 form:focus-within textarea.composer-input,
+#question-host[data-composer-expanded="true"] textarea.composer-input,
 #question-host:focus-within textarea.composer-input {
   min-height: var(--studio-composer-expanded-height);
 }
@@ -2417,6 +2418,34 @@ h1 {
 
 .decision-list button:disabled { cursor: default; }
 
+.decision-list button[data-explicit-answer="true"] {
+  border-style: dashed;
+  border-color: var(--studio-warning);
+}
+
+.decision-list button > span:first-of-type { flex: 1; min-width: 0; }
+.decision-list button > .lucide { flex-shrink: 0; }
+
+.explicit-answer-badge {
+  flex-shrink: 0;
+  border-radius: 4px;
+  padding: 2px 6px;
+  color: var(--studio-warning);
+  background: var(--studio-warning-soft);
+  font-size: var(--text-body-small, 12px);
+}
+
+.explicit-answer-notice {
+  padding: 8px;
+  border-left: 3px dashed var(--studio-warning);
+  background: var(--studio-warning-soft);
+}
+
+.design-tree-host g.node.explicitAnswer > rect {
+  stroke: var(--studio-warning) !important;
+  stroke-dasharray: 6 3 !important;
+}
+
 .design-tree-host g.node[data-status="answered"] > rect {
   fill: var(--studio-success-soft) !important;
 }
@@ -2480,6 +2509,10 @@ h1 {
 .design-tree-legend .to-answer {
   border-color: var(--studio-warning);
   background: var(--studio-warning-soft);
+}
+
+.design-tree-legend .explicit-answer {
+  border: 2px dashed var(--studio-warning);
 }
 
 .section {

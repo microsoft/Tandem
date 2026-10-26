@@ -19,9 +19,10 @@ function batch() {
 }
 
 test("requirements remain answerable and selectable without Mermaid", async (t) => {
-    const h = await setup(t, dag(decision("active"), decision("previous", "answered"), decision("future", "toAnswer")));
+    const h = await setup(t, dag(decision("active"), decision("previous", "answered"),
+        { ...decision("future", "toAnswer"), dependencies: ["active"] }));
     assert.ok(detail(h));
-    assert.equal(h.document.querySelector(".design-tree-host .diagram-header .design-tree-legend")?.textContent, "AnsweredActiveTo answer");
+    assert.equal(h.document.querySelector(".design-tree-host .diagram-header .design-tree-legend")?.textContent, "AnsweredActiveTo answerExplicit answer");
     assert.equal(h.document.querySelector(".design-tree-host .diagram-toolbar"), null);
     const buttons = h.get("decision-list").querySelectorAll<HTMLButtonElement>("button");
     assert.equal(buttons.length, 3);
@@ -171,12 +172,15 @@ test("whole-graph defaults freeze all choices in one confirmed request without c
         defaults: [{ nodeId: "first", answer: "A" }, { nodeId: "second", answer: "A" }] });
 });
 
-test("whole-graph defaults require curated downstream recommendations and confirmation", async (t) => {
+test("whole-graph defaults skip non-curated downstream questions and still require confirmation", async (t) => {
     const value = batch(); value.decisionGraph.nodes[1].question.choices.pop();
     const h = await setup(t, value);
     await h.click(defaults(h));
     assert.equal(h.requests.length, 0);
-    assert.match(text(h, "design-tree-status"), /second.*no curated recommended/);
+    assert.match(h.document.querySelector('[role="alertdialog"]')!.textContent!, /ALL 1 unanswered/);
+    assert.match(h.document.querySelector('[role="alertdialog"]')!.textContent!, /explicit answer.*second/s);
+    assert.match(h.document.querySelector('[data-decision-id="second"]')!.textContent!, /Explicit answer/);
+    await h.confirm(false);
     h.render({ ...batch(), revision: 2 });
     await h.click(defaults(h));
     assert.match(h.document.querySelector('[role="alertdialog"]')!.textContent!, /ALL 2 unanswered/);

@@ -6,9 +6,21 @@ import {
     type DslSketchScreen,
     type SketchTransition,
 } from "./sketch.js";
-import { applyOperations, createDocument, validateOperation, type UiDocument } from "./vendor/ui-dsl/index.js";
+import { applyOperations, createDocument, DSLError, validateOperation, type UiDocument } from "./vendor/ui-dsl/index.js";
 
 export type SketchScreenStatus = "waiting" | "processing" | "ready";
+export type SketchStreamPhase = "outline" | "content" | "revision";
+
+export interface SketchEditRepair {
+    message: string;
+    operation: unknown;
+}
+
+export class SketchEditValidationError extends Error {
+    constructor(readonly repair: SketchEditRepair, cause: DSLError) {
+        super(`Invalid design component: ${cause.message} (${cause.path})`, { cause });
+    }
+}
 
 export interface SketchPreview {
     prototypeId: string;
@@ -20,6 +32,54 @@ export interface SketchPreview {
     sequence: number;
     document: SketchDocument;
     screenStatuses?: Record<string, SketchScreenStatus>;
+}
+
+export interface SketchRecovery {
+    phase: SketchStreamPhase;
+    preview: SketchPreview;
+    repair?: SketchEditRepair;
+}
+
+export function readSketchRecovery(value: unknown): SketchRecovery {
+    const recovery = object(value, "recovery checkpoint");
+    exactKeys(recovery, ["phase", "preview", ...(Object.hasOwn(recovery, "repair") ? ["repair"] : [])], "recovery checkpoint");
+    const phase = recovery.phase;
+    if (phase !== "outline" && phase !== "content" && phase !== "revision") return invalid("invalid recovery phase.");
+    const preview = object(recovery.preview, "recovery preview");
+    exactKeys(preview, ["prototypeId", "generation", "requestId", "runId", "requirementsDigest",
+        "baseRevisionId", "sequence", "document", "screenStatuses"], "recovery preview");
+    for (const field of ["prototypeId", "generation", "requestId", "runId", "requirementsDigest"]) {
+        if (typeof preview[field] !== "string" || !preview[field] || preview[field].length > 512) {
+            invalid(`invalid recovery ${field}.`);
+        }
+    }
+    if (!(preview.baseRevisionId === null || typeof preview.baseRevisionId === "string" && preview.baseRevisionId !== "")
+        || !Number.isSafeInteger(preview.sequence) || Number(preview.sequence) < 0) invalid("invalid recovery identity.");
+    const document = validateSketchDocument(preview.document);
+    if (document.version !== 2) invalid("recovery requires UI DSL.");
+    const statuses = object(preview.screenStatuses, "recovery page statuses");
+    exactKeys(statuses, document.screens.map(screen => screen.id), "recovery page statuses");
+    const screenStatuses: Record<string, SketchScreenStatus> = {};
+    for (const screen of document.screens) {
+        const status = statuses[screen.id];
+        if (status !== "waiting" && status !== "processing" && status !== "ready") return invalid("invalid recovery page status.");
+        if (status === "ready" && !hasScreenContent(screen)) invalid("invalid recovery page status.");
+        screenStatuses[screen.id] = status;
+    }
+    let repair: SketchEditRepair | undefined;
+    if (recovery.repair !== undefined) {
+        const correction = object(recovery.repair, "recovery correction");
+        exactKeys(correction, ["message", "operation"], "recovery correction");
+        if (typeof correction.message !== "string" || correction.message.length > 2000) return invalid("invalid recovery correction message.");
+        repair = { message: correction.message, operation: structuredClone(object(correction.operation, "rejected operation")) };
+    }
+    return { phase, preview: {
+        prototypeId: identifier(preview.prototypeId, "prototypeId"), generation: identifier(preview.generation, "generation"),
+        requestId: identifier(preview.requestId, "requestId"), runId: identifier(preview.runId, "runId"),
+        requirementsDigest: identifier(preview.requirementsDigest, "requirementsDigest"),
+        baseRevisionId: preview.baseRevisionId === null ? null : identifier(preview.baseRevisionId, "baseRevisionId"),
+        sequence: Number(preview.sequence), document, screenStatuses,
+    }, ...(repair ? { repair } : {}) };
 }
 
 export const MAX_SKETCH_STREAM_RESPONSE_BYTES = 512 * 1024;
@@ -103,11 +163,16 @@ export class SketchOperationStream {
     #recordQuoted = false;
     #recordEscaped = false;
     #line = 0;
+    #phase: SketchStreamPhase;
+    #allowUnchanged: boolean;
 
     constructor(
         base: SketchDocument | null,
         decisionIds: string[],
         onChange?: (document: SketchDocument, sequence: number, screenStatuses: Record<string, SketchScreenStatus>) => void,
+        phase: SketchStreamPhase = "revision",
+        screenStatuses?: Record<string, SketchScreenStatus>,
+        allowUnchanged = false,
     ) {
         if (!Array.isArray(decisionIds) || decisionIds.some((id) => typeof id !== "string")) {
             invalid("accepted decision IDs must be an array of strings.");
@@ -116,8 +181,11 @@ export class SketchOperationStream {
         const document = base === null ? null : validateSketchDocument(base, this.#decisionIds);
         if (document?.version === 1) invalid("legacy geometry cannot be edited. Explicitly regenerate designs as UI DSL.");
         this.#document = document;
+        this.#phase = phase;
+        this.#allowUnchanged = allowUnchanged;
+        if (phase === "content" && !document) invalid("content generation requires a completed page outline.");
         this.#screenStatuses = Object.fromEntries((document?.screens ?? [])
-            .map(screen => [screen.id, hasScreenContent(screen) ? "ready" : "waiting"]));
+            .map(screen => [screen.id, screenStatuses?.[screen.id] ?? (hasScreenContent(screen) ? "ready" : "waiting")]));
         this.#onChange = onChange;
     }
 
@@ -181,7 +249,10 @@ export class SketchOperationStream {
         try {
             if (this.#record.length) this.#consumeRecord();
             if (!this.#done) invalid("missing done record; the operation stream is incomplete.");
-            if (!this.#document || this.#changes === 0) invalid("at least one document-changing operation is required before done.");
+            if (!this.#document || this.#changes === 0 && !this.#allowUnchanged) invalid("at least one document-changing operation is required before done.");
+            if (this.#phase === "content" && this.#document.screens.some(screen => !hasScreenContent(screen))) {
+                invalid("content generation must fill every outlined page before done.");
+            }
             return validateSketchDocument(this.#document, this.#decisionIds);
         } catch (error) {
             return this.#fail(error);
@@ -217,6 +288,12 @@ export class SketchOperationStream {
             return;
         }
         if (this.#sequence >= MAX_SKETCH_STREAM_OPERATIONS) invalid("stream exceeds 1024 operations.");
+        if (this.#phase === "outline" && !["upsert-screen", "upsert-transition"].includes(String(operation.op))) {
+            invalid("outline generation accepts only page metadata and navigation transitions, never page content.");
+        }
+        if (this.#phase === "content" && !["ui", "screen-status"].includes(String(operation.op))) {
+            invalid("content generation cannot change the published page outline or navigation transitions.");
+        }
         const next: DslSketchDocument = this.#document === null
             ? { version: 2, screens: [], transitions: [] }
             : { ...this.#document, screens: this.#document.screens.map(screen => ({ ...screen })),
@@ -240,7 +317,7 @@ export class SketchOperationStream {
                 };
                 if (index === -1) next.screens.push(screen);
                 else next.screens[index] = screen;
-                statuses[screen.id] = index === -1 ? "waiting" : "processing";
+                statuses[screen.id] = index === -1 || this.#phase === "outline" ? "waiting" : "processing";
                 break;
             }
             case "remove-screen": {
@@ -255,7 +332,19 @@ export class SketchOperationStream {
             case "ui": {
                 exactKeys(operation, ["op", "screenId", "edit"], "ui");
                 const screen = this.#screen(next, operation.screenId);
-                screen.ui = applyOperations(screen.ui, [validateOperation(canonicalIconEdit(operation.edit, screen.ui))]);
+                try {
+                    screen.ui = applyOperations(screen.ui, [validateOperation(canonicalIconEdit(operation.edit, screen.ui))]);
+                } catch (error) {
+                    if (error instanceof DSLError && [
+                        "unknown_prop", "invalid_prop", "missing_prop", "unknown_component", "unknown_icon",
+                        "unknown_token", "invalid_token",
+                    ].includes(error.code)) {
+                        throw new SketchEditValidationError({
+                            message: `${error.message} (${error.path})`, operation,
+                        }, error);
+                    }
+                    throw error;
+                }
                 statuses[screen.id] = "processing";
                 break;
             }

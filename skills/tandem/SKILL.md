@@ -159,6 +159,12 @@ Update existing Designs incrementally after accepted requirements change.
 Use `sketch_action` with `action: "update"` and the saved revision; it retains
 reviewed screens and UI nodes while applying only required adjustments.
 `action: "generate"` is a separate, explicit start-over choice, not a refresh.
+Generation publishes page titles and navigation before a separate content pass.
+If it fails, retain completed and partial pages as an incomplete preview, never
+as approval. **Retry generation** resumes that checkpoint without starting over.
+For an explicitly requested retry, use `sketch_action` with `action: "retry"`,
+the current `expectedRevision`, `expectedGeneration`, and the failed `requestId`.
+Do not substitute regeneration when the checkpoint is stale or unavailable.
 
 Only explicit user approval of the current rendered designs creates the
 approved document/image handoff. A changed requirements digest, revision or

@@ -25,8 +25,8 @@ function fixture() {
   return { state, preview };
 }
 
-test("sketch previews publish consecutive SSE chunks at the same persisted revision and clear on every terminal outcome", () => {
-  for (const status of ["success", "error", "cancelled"]) {
+test("sketch previews publish consecutive SSE chunks at the same persisted revision and clear on success or cancellation", () => {
+  for (const status of ["success", "cancelled"]) {
     const { state, preview } = fixture();
     const store = new StudioStore();
     let publications = 0;
@@ -101,7 +101,7 @@ test("unrelated snapshots retain a preview only for the same active sketch ident
     (state: UiState) => { state.sketch.current!.id = "drawing-2"; },
     (state: UiState) => { state.processing.sketchRequest.generation = "generation-2"; },
     (state: UiState) => { state.processing.action = "build-prototype"; },
-    (state: UiState) => { state.processing.status = "error"; },
+    (state: UiState) => { state.processing.status = "success"; },
     (state: UiState) => { state.lifecycle.currentStage = "prototype"; },
   ]) {
     const { state, preview } = fixture();
@@ -115,6 +115,27 @@ test("unrelated snapshots retain a preview only for the same active sketch ident
     store.accept(next);
     assert.equal(store.getSnapshot().state!.sketchPreview, null);
   }
+});
+
+test("failed generation retains the last valid preview through terminal updates, refresh and late chunks", () => {
+  const { state, preview } = fixture();
+  const store = new StudioStore();
+  store.accept({ ...state, sketchPreview: preview });
+  const failed = { ...state, revision: 4, processing: { ...state.processing, status: "error" } };
+  store.accept({ ...failed, sketchPreview: null });
+  assert.deepEqual(store.getSnapshot().state!.sketchPreview, preview);
+  store.accept({ ...state, revision: 4, sketchPreview: { ...preview, sequence: 99 } });
+  assert.deepEqual(store.getSnapshot().state!.sketchPreview, preview, "Late chunks cannot resume a stopped preview.");
+  const reloaded = new StudioStore();
+  reloaded.accept({ ...failed, sketchPreview: preview });
+  assert.deepEqual(reloaded.getSnapshot().state!.sketchPreview, preview);
+  reloaded.accept({ ...failed, revision: 5, processing: { ...failed.processing, requestId: "retry", runId: null, status: "running",
+    sketchResume: { phase: "revision", preview } }, sketchPreview: preview });
+  assert.deepEqual(reloaded.getSnapshot().state!.sketchPreview, preview, "Queued retry keeps the source preview before its new run ID exists.");
+  reloaded.accept({ ...failed, revision: 6, processing: { ...failed.processing, requestId: "retry", status: "running" },
+    sketchPreview: { ...preview, requestId: "retry", sequence: 0 } });
+  assert.equal(reloaded.getSnapshot().state!.sketchPreview!.requestId, "retry");
+  assert.equal(reloaded.getSnapshot().state!.sketchPreview!.sequence, 0);
 });
 
 test("replacement sketch requests reset the sequence and reject stale identities before validating their document", () => {

@@ -4,7 +4,7 @@ import {
 } from "react";
 import { ToggleGroup } from "radix-ui";
 import {
-  Check, Clock, Hand, History, LoaderCircle, Monitor, MousePointer2, Plus, Redo2, RefreshCw, Save, Send, Sparkles, Trash2, Undo2, Workflow, X,
+  Check, CircleAlert, Clock, Hand, History, LoaderCircle, Monitor, MousePointer2, Plus, Redo2, RefreshCw, Save, Send, Sparkles, Trash2, Undo2, Workflow, X,
 } from "lucide-react";
 import { hasScreenContent, validateSketchDocument } from "../sketch.js";
 import type { DslSketchDocument, DslSketchScreen, SketchRevision, SketchState, SketchTransition } from "../sketch.js";
@@ -74,13 +74,15 @@ const sidePanes = [
   { id: "history", label: "Revision history", target: "sketch-revision-history", Icon: History },
 ] as const;
 
-const screenStatusLabels: Record<SketchScreenStatus, string> = {
-  waiting: "Waiting", processing: "Processing", ready: "Ready",
+type ScreenProgressStatus = SketchScreenStatus | "stopped";
+const screenStatusLabels: Record<ScreenProgressStatus, string> = {
+  waiting: "Waiting", processing: "Processing", ready: "Ready", stopped: "Stopped",
 };
 const updateRequirementsLabel = "Update designs from latest requirements";
 
-function ScreenStatusIcon({ status }: { status: SketchScreenStatus }) {
+function ScreenStatusIcon({ status }: { status: ScreenProgressStatus }) {
   return status === "processing" ? <LoaderCircle className="processing-indicator" size={15} aria-hidden="true" />
+    : status === "stopped" ? <CircleAlert size={15} aria-hidden="true" />
     : status === "waiting" ? <Clock size={15} aria-hidden="true" /> : <Check size={15} aria-hidden="true" />;
 }
 
@@ -124,7 +126,7 @@ function SketchGenerationStatus({ processing, preview, hasScreen, dirty }: {
           : preview ? "You can inspect the live screens below. They are not saved or approved yet."
           : hasScreen ? updating ? "Your existing designs remain visible. Only the required changes are being prepared."
             : "Your current designs remain visible while the new design is prepared."
-          : "The first screen will appear here as it arrives. Designs still need your approval."}</p>
+          : "Page titles and navigation appear first; page contents follow. Designs still need your approval."}</p>
       </div>
     </div>
   </section>;
@@ -155,6 +157,7 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
   const [historyOpen, setHistoryOpen] = useState(false);
   const [requestHistory, setRequestHistory] = useState<RequestHistoryItem[]>([]);
   const [clearedWorkerError, setClearedWorkerError] = useState("");
+  const [dismissedPreview, setDismissedPreview] = useState<string | null>(null);
   const instructionRef = useRef(instruction);
   instructionRef.current = instruction;
   const [retryDraft, setRetryDraft] = useState("");
@@ -182,32 +185,37 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
     try { return { preview: readSketchPreview(state, state.sketchPreview), error: "" }; }
     catch (cause) { return { preview: null, error: errorMessage(cause) }; }
   }, [state]);
-  const livePreview = !dirty ? incoming.preview : null;
+  const previewKey = incoming.preview ? JSON.stringify(["preview", incoming.preview.prototypeId, incoming.preview.generation,
+    incoming.preview.requestId, incoming.preview.runId, incoming.preview.baseRevisionId, incoming.preview.requirementsDigest]) : null;
+  const livePreview = !dirty && previewKey !== dismissedPreview ? incoming.preview : null;
   // A preview is only a display source: the editor and undo history stay local/saved.
   const sourceDocument = livePreview?.document ?? editor.document;
   const legacy = sourceDocument?.version === 1;
   const document = sourceDocument?.version === 2 ? sourceDocument : null;
   const screen = document?.screens.find((item) => item.id === selectedScreen) ?? document?.screens[0];
-  const selectionKey = livePreview ? JSON.stringify(["preview", livePreview.prototypeId, livePreview.generation,
-    livePreview.requestId, livePreview.runId, livePreview.baseRevisionId, livePreview.requirementsDigest]) : loadState.loadedKey;
+  const selectionKey = livePreview ? previewKey : loadState.loadedKey;
   const selectedNodeId = selectedElement?.key === selectionKey && selectedElement?.screenId === screen?.id
     && screen && Object.hasOwn(screen.ui.nodes, selectedElement.nodeId) ? selectedElement.nodeId : null;
   const remoteChanged = loadState.loadedKey !== null
     && revisionIdentity(loadState.baseRevision) !== revisionIdentity(state.sketch.current);
   const conflict = loadState.conflict || (!action.busy && remoteChanged && dirty);
   const emptyScreens = !document?.screens.length || document.screens.some((item) => !hasScreenContent(item));
-  const writable = canEdit("sketch") && state.provider?.canSubmitAnswers !== false
+  const requestWritable = canEdit("sketch") && state.provider?.canSubmitAnswers !== false
     && !skipped && !pending && !hasActiveJobs(state) && !action.busy && !loadState.loading
     && loadState.loadedKey !== null && loadState.failedKey !== key && (!remoteChanged || dirty || loadState.conflict);
+  const writable = requestWritable && !livePreview;
   const worker = ["generate-sketch", "revise-sketch"].includes(state.processing?.action) ? state.processing : null;
   const workerRequest = state.sketch.requests?.find(item => item.requestId === worker?.requestId);
   const generating = state.lifecycle.currentStage === "sketch" && !skipped && !state.effortReset
     && ["starting", "running"].includes(worker?.status);
-  const screenStatus = (item: DslSketchScreen): SketchScreenStatus | null => {
-    if (!generating || dirty) return null;
+  const stoppedPreview = Boolean(livePreview && worker?.status === "error");
+  const recoverable = worker?.status === "error" && Boolean((worker.sketchRecovery || worker.sketchResume) && incoming.preview);
+  const screenStatus = (item: DslSketchScreen): ScreenProgressStatus | null => {
+    if ((!generating && !stoppedPreview) || dirty) return null;
     if (!livePreview && worker?.action === "revise-sketch" && hasScreenContent(item)) return "ready";
-    return livePreview?.screenStatuses?.[item.id]
+    const progress = livePreview?.screenStatuses?.[item.id]
       ?? (livePreview && hasScreenContent(item) ? "processing" : "waiting");
+    return stoppedPreview && progress === "processing" ? "stopped" : progress;
   };
   const pageStatus = screen ? screenStatus(screen) : null;
   const drawingChanges = (state.changeRequests ?? []).filter(item => item.originStage === "sketch").map(item =>
@@ -228,7 +236,7 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
   const retryInstruction = retryDraft || failedInstruction;
   const failedReviewWork = Boolean(requiredReview && state.processing?.status === "error"
     && state.processing.changeRequestId === requiredReview.id);
-  const completionBlocked = hasActiveJobs(state) || action.busy || loadState.loading || dirty || conflict || !available || Boolean(skipped)
+  const completionBlocked = Boolean(livePreview) || hasActiveJobs(state) || action.busy || loadState.loading || dirty || conflict || !available || Boolean(skipped)
     || loadState.loadedKey !== key || loadState.failedKey === key || emptyScreens || !isSketchRevisionApproved(state.sketch);
 
   useEffect(() => {
@@ -265,10 +273,10 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
     delete next[key];
     updateDrafts(next);
   }
-  function canWrite() {
+  function canWrite(allowPreview = false) {
     const context = latest.current;
     const snapshot = stateRef.current;
-    return mounted.current && context.canEdit("sketch") && snapshot.provider?.canSubmitAnswers !== false
+    return (allowPreview || !livePreview) && mounted.current && context.canEdit("sketch") && snapshot.provider?.canSubmitAnswers !== false
       && !skippedStage(snapshot, "sketch") && !context.pending && !hasActiveJobs(snapshot)
       && !operation.current && !loadRef.current.loading
       && loadRef.current.loadedKey !== null && loadRef.current.failedKey !== loadKey(snapshot)
@@ -492,7 +500,7 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
     updateLoad({ baseRevision: { ...revision }, loadedKey: loadKey(stateRef.current), failedKey: null, conflict: false });
   }
   async function submit(kind: RequestHistoryItem["kind"], retry?: string) {
-    if (!canWrite() || hasConflict() || hasInvalidFields()) return;
+    if (!canWrite(kind === "generate" || kind === "update" || retry !== undefined) || hasConflict() || hasInvalidFields()) return;
     if (kind === "revise" && stateRef.current.sketch.status === "stale") {
       action.setError("Update designs from latest requirements before sending a design revision. Your message is retained.");
       return;
@@ -611,6 +619,24 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
           "Discard your unsaved design edits and load the latest saved revision?", "Reload saved designs")) return;
         ensureEffort(identity);
         await load(true);
+        if (loadRef.current.failedKey === null) setDismissedPreview(previewKey);
+      } finally {
+        operation.current = false;
+      }
+    });
+  }
+
+  async function retryGeneration() {
+    if (!recoverable || !canWrite(true) || isDirty() || hasConflict() || hasInvalidFields()) return;
+    const identity = identityOf(stateRef.current);
+    operation.current = true;
+    await action.run(async () => {
+      try {
+        const result = await post("/api/sketch", {
+          action: "retry", expectedRevision: stateRef.current.sketch.current?.id ?? null,
+          expectedGeneration: stateRef.current.generation, requestId: worker.requestId,
+        }, identity);
+        if (result.processing?.status !== "error") setClearedWorkerError(workerErrorKey);
       } finally {
         operation.current = false;
       }
@@ -630,7 +656,8 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
   }
 
   const status = skipped ? "Designs disabled: " + skipped.reason
-    : incoming.preview ? dirty
+    : stoppedPreview ? "Generation stopped. Generated pages and content are retained as an incomplete preview, not saved or approved. Retry generation or reload saved designs."
+    : incoming.preview && previewKey !== dismissedPreview ? dirty
       ? "Live preview pending — local edits are preserved and remain visible. Incoming designs are not saved or approved."
       : `Live preview · update ${incoming.preview.sequence} — not saved or approved. You can browse screens while AI draws.`
     : loadState.loading || (available && !dirty && loadState.loadedKey !== key && loadState.failedKey !== key) ? "Loading saved designs…"
@@ -648,7 +675,9 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
   const message = action.error || incoming.error || Object.values(drafts).find((draft) => draft.error)?.error
     || (worker?.status === "error" && !workerErrorCleared ? worker.message || "Design generation failed. Retry explicitly." : "");
   const activeError = Boolean(message || retryInstruction);
-  const boardHelp = livePreview
+  const boardHelp = stoppedPreview
+    ? "Incomplete UI DSL preview retained after generation stopped. Inspect pages and components; this preview is not saved or approved."
+    : livePreview
     ? "Live UI DSL preview. Inspect the structure or select components while generation continues. This selection is not a saved change target."
     : pickingElement ? "Select an element in the view or Structure, then describe the change. Use Interact to try the controls."
     : "UI DSL preview. Controls are local examples, not connected services. Describe changes below.";
@@ -664,7 +693,7 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
       event.currentTarget.form?.requestSubmit();
     }
   };
-  const approved = isSketchRevisionApproved(state.sketch) && !dirty && !conflict;
+  const approved = isSketchRevisionApproved(state.sketch) && !dirty && !conflict && !livePreview;
   const approvalDisabled = !writable || emptyScreens || conflict || state.sketch.status === "stale" || invalidFields || failedReviewWork;
   useEffect(() => {
     if (!state.stageReview || !onDraftApprovalChange) return;
@@ -683,7 +712,7 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
     {document && approved && <span role="status">Saved designs approved</span>}
   </div>;
   const updateAction = state.sketch.status === "stale" && canEdit("sketch") && !legacy
-    ? <button id="sketch-update-requirements" className="plan-button" type="button" disabled={!writable || !document || conflict || dirty}
+    ? <button id="sketch-update-requirements" className="plan-button" type="button" disabled={!requestWritable || !document || conflict || dirty}
       title={dirty ? "Save or undo your local design edits before updating from requirements." : updateRequirementsLabel}
       onClick={() => void submit("update")}><Sparkles size={15} aria-hidden="true" />{updateRequirementsLabel}</button> : null;
 
@@ -714,7 +743,7 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
         onClick={() => void reload()}><RefreshCw size={16} aria-hidden="true" /></button>
       <button id="sketch-generate" className="sketch-icon-button" type="button"
         title={sourceDocument ? "Regenerate designs" : "Generate designs"} aria-label={sourceDocument ? "Regenerate designs" : "Generate designs"}
-        disabled={!writable || conflict || dirty} onClick={() => void submit("generate")}>
+        disabled={!requestWritable || conflict || dirty} onClick={() => void submit("generate")}>
         <Sparkles size={16} aria-hidden="true" />
       </button>
       <button id="sketch-save" className="sketch-icon-button" type="button" title="Save designs" aria-label="Save designs"
@@ -728,6 +757,12 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
     </div>
     {generating && <SketchGenerationStatus key={JSON.stringify([state.prototypeId, state.generation, worker.requestId])}
       processing={worker} preview={incoming.preview} hasScreen={Boolean(screen)} dirty={dirty} />}
+    {recoverable && <div id="sketch-recovery" className="sketch-heading">
+      <p className="muted">Continue from the retained pages and content, without starting over.</p>
+      <button id="sketch-retry-generation" className="plan-button" type="button"
+        disabled={!requestWritable || dirty || conflict || invalidFields}
+        onClick={() => void retryGeneration()}><RefreshCw size={15} aria-hidden="true" />Retry generation</button>
+    </div>}
     <p id="sketch-empty" className="sketch-empty" hidden={Boolean(screen) || generating}
       data-status-help="Generate a first draft or add a screen to begin.">{legacy
         ? "These designs use the retired geometry format. Reopen Designs if needed, then choose Regenerate designs to create UI DSL views. Saved files and approval history will remain intact."
@@ -819,12 +854,13 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
               role="status" aria-live="polite" aria-atomic="true" data-status={pageStatus}>
               <ScreenStatusIcon status={pageStatus} /><strong>{screen.title}</strong>
               <span>{pageStatus === "waiting" ? "Waiting for design"
-                : pageStatus === "processing" ? "Design in progress" : "Preview ready - not saved or approved"}</span>
+                : pageStatus === "processing" ? "Design in progress"
+                : pageStatus === "stopped" ? "Generation stopped - partial content retained" : "Preview ready - not saved or approved"}</span>
             </div>}
             <p id="sketch-board-help" className="visually-hidden">{boardHelp}</p>
           </div>}>
           <div id="sketch-board" className="sketch-board" tabIndex={0} role="group"
-            aria-busy={pageStatus === "waiting" || pageStatus === "processing"}
+            aria-busy={generating && (pageStatus === "waiting" || pageStatus === "processing")}
             aria-label={livePreview ? "Live UI DSL preview (not saved)" : "UI DSL screen view"} aria-describedby="sketch-board-help">
             {screen && <DslView key={screen.id} screen={screen} selection={{
               nodeId: selectedNodeId, picking: pickingElement, onSelect: selectElement,
@@ -833,7 +869,7 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
               && <div className="sketch-page-placeholder" aria-hidden="true">
                 <ScreenStatusIcon status={pageStatus} />
                 <strong>{screen.title}</strong>
-                <span>{pageStatus === "waiting" ? "Waiting for design" : "Design in progress"}</span>
+                <span>{pageStatus === "waiting" ? "Waiting for design" : pageStatus === "stopped" ? "Generation stopped" : "Design in progress"}</span>
               </div>}
           </div>
         </SketchViewport>
@@ -893,10 +929,10 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
         </button>
       </div>
       <p id="sketch-message" className="sketch-error" role="alert" hidden={!message}>{message}</p>
-      <section id="sketch-failed-revision" className="sketch-details" aria-label="Failed design revision" hidden={!retryInstruction}>
+      <section id="sketch-failed-revision" className="sketch-details" aria-label="Failed design revision" hidden={!retryInstruction || recoverable}>
         <p id="sketch-failed-instruction" className="muted">{retryInstruction ? "Failed revision instruction: " + retryInstruction : ""}</p>
         <button id="sketch-retry-revision" type="button" aria-describedby="sketch-retry-help"
-          disabled={!writable || !document || conflict || !retryInstruction || invalidFields || workerRequest?.kind === "update" && dirty}
+          disabled={!requestWritable || !document || conflict || !retryInstruction || invalidFields || workerRequest?.kind === "update" && dirty}
           onClick={() => void submit(workerRequest?.kind === "update" ? "update" : "revise", retryInstruction)}>
           <RefreshCw size={14} aria-hidden="true" />{workerRequest?.kind === "update" ? "Retry update" : "Retry same revision"}</button>
         <p id="sketch-retry-help" className="visually-hidden">{workerRequest?.kind === "update"

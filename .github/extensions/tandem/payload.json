@@ -4,8 +4,8 @@
   "files": [
     {
       "path": "extension.mjs",
-      "bytes": 2896146,
-      "sha256": "b13d6f3ace507c72542fffeaf2bca8a16ffc927e9e5911dbb554a94dad709325"
+      "bytes": 2935045,
+      "sha256": "89dbb6825cd2be6cd8c9b4850175ba2f445b57f6a47a285d7250fbcdd664384c"
     },
     {
       "path": "preview-launcher.mjs",
@@ -14,8 +14,8 @@
     },
     {
       "path": "skills/tandem/SKILL.md",
-      "bytes": 22142,
-      "sha256": "81c0c5e4fce917986d488ec78dfd6e717a34bb4e5b24aa8bb70405655ecc68a4"
+      "bytes": 22626,
+      "sha256": "5035c320196512da19d10387fad8b8579a2b3a859348d5899a8d0fc7b32ce82b"
     },
     {
       "path": "stage2/INSTALL.md",
@@ -778,5 +778,5 @@
       "sha256": "92b92e76eb4ac3bee96c6bbdde06ed1f7d9c0088576a51db1276c567dbb207f8"
     }
   ],
-  "digest": "32ee3e26f0f913e6b43148417b63a07efae72240f3523bea07de873cbcbbf4b4"
+  "digest": "ee988020248a251fa21cff734129e0bdd5694d8a9676f24c91d17c80b244cbf9"
 }

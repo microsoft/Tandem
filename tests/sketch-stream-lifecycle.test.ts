@@ -35,8 +35,9 @@ async function setup(legacyEvents = false, document = sketchDocument()) {
         action: "approve", expectedRevision: saved.sketch.current!.id,
         previews: document.screens.map(screen => ({ screenId: screen.id, data: screenPng(screen.width, screen.height) })),
     });
-    const ready = deferred<void>();
-    const output = deferred<string>();
+    const workers: Array<{ ready: ReturnType<typeof deferred<void>>; output: ReturnType<typeof deferred<string>> }> = [];
+    const worker = (index: number) => workers[index] ??= { ready: deferred<void>(), output: deferred<string>() };
+    let activeWorker = 0;
     const listeners = new Set<(event: SketchWorkerEvent) => void>();
     const prompts: string[] = [];
     const signal = new AbortController().signal;
@@ -45,7 +46,7 @@ async function setup(legacyEvents = false, document = sketchDocument()) {
         workflow: {
             getRunDetail: async (runId: string) => {
                 assert.equal(runId, "stream-run");
-                return { runId, agents: [{ runId, agentId: "stream-agent", toolCallId: "bg-stream-tool" }] };
+                return { runId, agents: workers.map((_worker, index) => ({ runId, toolCallId: `bg-stream-tool-${index}` })) };
             },
         },
         on(callback: (event: SketchWorkerEvent) => void) {
@@ -60,13 +61,14 @@ async function setup(legacyEvents = false, document = sketchDocument()) {
                     log() {}, phase() {},
                     step: async (_key: string, producer: () => Promise<unknown>) => producer(),
                     agent: async (prompt: string, options: { schema?: unknown; agent?: string; reasoningEffort: string }) => {
+                        const current = worker(prompts.length);
                         prompts.push(prompt);
                         assert.equal(options.schema, undefined, "a whole-document schema would buffer the response");
                         assert.equal(options.agent, h.api.textWorkerAgent.name);
                         assert.equal(options.reasoningEffort, "low");
                         assert.match(prompt, /newline-delimited JSON design operations/);
-                        ready.resolve();
-                        return output.promise;
+                        current.ready.resolve();
+                        return current.output.promise;
                     },
                 });
                 return { status: "completed", runId: "stream-run", result };
@@ -80,12 +82,26 @@ async function setup(legacyEvents = false, document = sketchDocument()) {
     });
     const emit = (event: SketchWorkerEvent) => { for (const listener of listeners) listener(event); };
     const delta = (text: string) => emit({
-        type: "assistant.message_delta", agentId: "bg-stream-tool",
-        data: { messageId: "drawing-message", deltaContent: text },
+        type: "assistant.message_delta", agentId: `bg-stream-tool-${activeWorker}`,
+        data: { messageId: `drawing-message-${activeWorker}`, deltaContent: text },
     });
     const operation = (x: number) => JSON.stringify({
         op: "ui", screenId: "main", edit: { op: "setToken", key: "space.1", value: x },
     }) + "\n";
+    const waitForWorker = async (prototypeId = "sample") => {
+        await Promise.race([worker(activeWorker).ready.promise, h.api.waitForAnswer(prototypeId).then(() => {
+            throw new Error(`Design worker did not start: ${h.logs.join("\n")}`);
+        })]);
+        emit({ type: "subagent.started", agentId: `bg-stream-tool-${activeWorker}`,
+            data: { ...(legacyEvents ? {} : { workflowRunId: "stream-run" }), toolCallId: `bg-stream-tool-${activeWorker}` } });
+        emit({ type: "assistant.message_start", agentId: `bg-stream-tool-${activeWorker}`,
+            data: { messageId: `drawing-message-${activeWorker}`, phase: "final_answer" } });
+    };
+    const nextWorker = async (source: string) => {
+        worker(activeWorker).output.resolve(source);
+        activeWorker++;
+        await waitForWorker();
+    };
     const start = async (action: "revise" | "generate" | "update" | "automatic" = "revise", prototypeId = "sample") => {
         const pending = action === "automatic"
             ? await h.api.ensureSketchStarted(await h.api.loadState(prototypeId), true)
@@ -93,16 +109,11 @@ async function setup(legacyEvents = false, document = sketchDocument()) {
             action, expectedRevision: before.sketch.current!.id,
             ...(action === "revise" ? { instruction: "Move the primary action right." } : {}),
         });
-        await Promise.race([ready.promise, h.api.waitForAnswer(prototypeId).then(() => {
-            throw new Error(`Design worker did not start: ${h.logs.join("\n")}`);
-        })]);
-        emit({ type: "subagent.started", agentId: "bg-stream-tool",
-            data: { ...(legacyEvents ? {} : { workflowRunId: "stream-run" }), toolCallId: "bg-stream-tool" } });
-        emit({ type: "assistant.message_start", agentId: "bg-stream-tool",
-            data: { messageId: "drawing-message", phase: "final_answer" } });
+        await waitForWorker(prototypeId);
         return pending;
     };
-    return { h, before, url: opened.url, start, delta, operation, output, listeners, prompts };
+    return { h, before, url: opened.url, start, delta, operation, nextWorker,
+        get output() { return worker(activeWorker).output; }, listeners, prompts };
 }
 
 async function eventReader(url: string, signal: AbortSignal) {
@@ -183,12 +194,13 @@ test("regeneration streams a fresh UI document rather than carrying forward old 
         const preview = await (await fetch(new URL("api/state", f.url))).json();
         assert.deepEqual(preview.sketchPreview.document.screens[0].ui.nodes.screen.children, []);
         assert.equal(preview.sketch.current.id, f.before.sketch.current!.id);
+        await f.nextWorker(first + '{"op":"done"}');
         const second = JSON.stringify({
             op: "ui", screenId: screen.id, edit: { op: "add", parent: "screen",
                 component: { id: "replacement-action", type: "Button", props: ui.nodes["primary-action"].props } },
         }) + "\n";
         f.delta(second);
-        f.output.resolve(first + second + '{"op":"done"}');
+        f.output.resolve(second + '{"op":"done"}');
         await f.h.api.waitForAnswer("sample");
         const saved = await f.h.api.loadState("sample");
         assert.equal(saved.processing.status, "success", saved.processing.message);
@@ -311,11 +323,24 @@ test("formatted title-first generation publishes per-page progress before saving
         const record = (value: unknown) => JSON.stringify(value, null, 2) + "\n";
         const titles = record({ op: "upsert-screen", screen: { ...screen, title: "Menu" } })
             + record({ op: "upsert-screen", screen: { ...screen, id: "details", title: "Drink details" } });
-        f.delta(titles);
+        const navigation = record({ op: "upsert-transition", transition: {
+            id: "open-details", fromScreenId: "main", toScreenId: "details", trigger: "Choose a drink", description: "",
+        } });
+        const connection = new AbortController();
+        const next = await eventReader(f.url, AbortSignal.any([connection.signal, AbortSignal.timeout(10_000)]));
+        f.delta(titles + navigation);
         const read = async () => (await (await fetch(new URL("api/state", f.url))).json()).sketchPreview;
         const outlined = await read();
         assert.deepEqual(outlined.document.screens.map(item => item.title), ["Menu", "Drink details"]);
         assert.deepEqual(outlined.screenStatuses, { main: "waiting", details: "waiting" });
+        assert.equal(f.prompts.length, 1, "No content worker may start before the outline is complete.");
+        const published = await next(state => state.sketchPreview?.document.transitions.length === 1);
+        assert.ok(published.sketchPreview.document.screens.every(item => item.ui.nodes.screen.children.length === 0));
+        connection.abort();
+        await f.nextWorker(titles + navigation + '{"op":"done"}');
+        assert.match(f.prompts[0], /OUTLINE ONLY/);
+        assert.match(f.prompts[1], /CONTENTS ONLY/);
+        assert.match(f.prompts[1], /"id":"open-details"/);
         const first = record({ op: "screen-status", screenId: "main", status: "processing" })
             + record({ op: "ui", screenId: "main", edit: { op: "add", parent: "screen",
                 component: { id: "primary-action", type: "Button", props: ui.nodes["primary-action"].props } } })
@@ -328,7 +353,7 @@ test("formatted title-first generation publishes per-page progress before saving
             + record({ op: "screen-status", screenId: "details", status: "ready" });
         f.delta(second);
         assert.deepEqual((await read()).screenStatuses, { main: "ready", details: "ready" });
-        f.output.resolve(titles + first + second + '{"op":"done"}');
+        f.output.resolve(first + second + '{"op":"done"}');
         await f.h.api.waitForAnswer("sample");
         const saved = await f.h.api.loadState("sample");
         assert.equal(saved.processing.status, "success", saved.processing.message);
@@ -344,7 +369,7 @@ test("formatted title-first generation publishes per-page progress before saving
     }
 });
 
-test("a malformed design tail discards previews while preserving the previously approved revision", { timeout: 15_000 }, async () => {
+test("a malformed design tail retains its last valid preview and recovery checkpoint without changing approved revisions", { timeout: 15_000 }, async () => {
     const f = await setup();
     try {
         const assets = await Promise.all(f.before.sketch.approved!.assets.map(async asset =>
@@ -355,13 +380,17 @@ test("a malformed design tail discards previews while preserving the previously 
         assert.ok(partial.sketchPreview, JSON.stringify({ processing: partial.processing, logs: f.h.logs }));
         assert.equal(partial.sketchPreview.sequence, 1);
         f.delta('{"op":"upsert-shape","screenId":"missing"}\n');
-        const cleared = await (await fetch(new URL("api/state", f.url))).json();
-        assert.equal(cleared.sketchPreview, null);
+        const retained = await (await fetch(new URL("api/state", f.url))).json();
+        assert.equal(retained.sketchPreview.sequence, 1);
         f.output.resolve(f.operation(90) + '{"op":"done"}');
         await f.h.api.waitForAnswer("sample");
         const failed = await f.h.api.loadState("sample");
         assert.equal(failed.processing.status, "error");
         assert.equal(failed.processing.answer, "Move the primary action right.");
+        assert.equal(failed.processing.sketchRecovery.phase, "revision");
+        assert.equal(failed.processing.sketchRecovery.preview.document.screens[0].ui.tokens["space.1"], 90);
+        const reloaded = await (await fetch(new URL("api/state", f.url))).json();
+        assert.deepEqual(reloaded.sketchPreview, partial.sketchPreview);
         const { requests, ...preserved } = failed.sketch;
         assert.equal(JSON.stringify(preserved), JSON.stringify(f.before.sketch));
         assert.equal(JSON.stringify(requests), JSON.stringify(pending.sketch.requests),
@@ -396,6 +425,132 @@ test("requirements replaced during streaming reject late design output and hide 
     } finally {
         f.output.resolve("");
         await f.h.api.waitForAnswer("sample");
+        await f.h.close();
+    }
+});
+
+test("the factory corrects List.size once from the last valid content instead of losing or replaying it", { timeout: 15_000 }, async () => {
+    const f = await setup();
+    try {
+        await f.start();
+        const invalid = JSON.stringify({ op: "ui", screenId: "main", edit: { op: "add", parent: "screen",
+            component: { id: "items", type: "List", props: { items: ["One", "Two"], size: "font.size.body" } },
+        } }) + "\n";
+        f.delta(f.operation(90) + invalid);
+        const retained = await (await fetch(new URL("api/state", f.url))).json();
+        assert.equal(retained.sketchPreview.document.screens[0].ui.tokens["space.1"], 90);
+        await f.nextWorker(f.operation(90) + invalid + '{"op":"done"}');
+        assert.match(f.prompts[1], /COMPONENT CORRECTION \(one attempt\)/);
+        assert.match(f.prompts[1], /'size' is not a prop of List/);
+        assert.match(f.prompts[1], /"space.1":90/);
+        const corrected = JSON.stringify({ op: "ui", screenId: "main", edit: { op: "add", parent: "screen",
+            component: { id: "items", type: "List", props: { items: ["One", "Two"] } },
+        } }) + "\n";
+        f.delta(corrected);
+        const preview = await (await fetch(new URL("api/state", f.url))).json();
+        assert.equal(preview.sketchPreview.sequence, 2, "Correction keeps one monotonic preview sequence.");
+        f.output.resolve(corrected + '{"op":"done"}');
+        await f.h.api.waitForAnswer("sample");
+        const saved = await f.h.api.loadState("sample");
+        assert.equal(saved.processing.status, "success", saved.processing.message);
+        const document = await new SketchStore(f.h.root).read("sample", saved.sketch.current!);
+        assert.equal(document.screens[0].ui.tokens["space.1"], 90);
+        assert.deepEqual(document.screens[0].ui.nodes.items.props.items, ["One", "Two"]);
+        assert.equal(Object.hasOwn(document.screens[0].ui.nodes.items.props, "size"), false);
+        assert.equal(f.prompts.length, 2);
+        assert.equal(saved.sketch.history.length, 2);
+    } finally {
+        f.output.resolve("");
+        await f.h.api.waitForAnswer("sample");
+        await f.h.close();
+    }
+});
+
+test("a second invalid component stops with durable pages, and explicit retry after restart finishes only retained content", { timeout: 20_000 }, async () => {
+    const f = await setup();
+    let restarted: Awaited<ReturnType<typeof extensionHarness>> | undefined;
+    try {
+        await f.start("generate");
+        const { ui: _ui, ...screen } = sketchDocument().screens[0];
+        const line = (value: unknown) => JSON.stringify(value) + "\n";
+        const titles = line({ op: "upsert-screen", screen })
+            + line({ op: "upsert-screen", screen: { ...screen, id: "details", title: "Details" } })
+            + line({ op: "upsert-transition", transition: {
+                id: "next", fromScreenId: "main", toScreenId: "details", trigger: "Next", description: "",
+            } });
+        f.delta(titles);
+        await f.nextWorker(titles + '{"op":"done"}');
+        const valid = line({ op: "ui", screenId: "main", edit: { op: "add", parent: "screen",
+            component: { id: "kept-heading", type: "Heading", props: { text: "Keep this content" } } } })
+            + line({ op: "screen-status", screenId: "main", status: "ready" });
+        const invalid = line({ op: "ui", screenId: "details", edit: { op: "add", parent: "screen",
+            component: { id: "items", type: "List", props: { items: ["One"], size: "font.size.body" } } } });
+        f.delta(valid + invalid);
+        await f.nextWorker(valid + invalid + '{"op":"done"}');
+        f.delta(invalid);
+        f.output.resolve(invalid + '{"op":"done"}');
+        await f.h.api.waitForAnswer("sample");
+        const failed = await f.h.api.loadState("sample");
+        assert.equal(failed.processing.status, "error");
+        assert.equal(f.prompts.length, 3, "Exactly one correction attempt, not an unbounded retry loop.");
+        const checkpoint = failed.processing.sketchRecovery;
+        assert.equal(checkpoint.phase, "content");
+        assert.deepEqual(JSON.parse(JSON.stringify(checkpoint.preview.screenStatuses)), { main: "ready", details: "waiting" });
+        assert.equal(failed.sketch.current!.id, f.before.sketch.current!.id);
+        restarted = await extensionHarness({}, f.h.root);
+        restarted.api.setSession({ ...restarted.session, workflow: {
+            getRun: async (runId: string) => {
+                assert.equal(runId, "stream-run");
+                return { runId, status: "failed" };
+            },
+        } });
+        const reopened = await restarted.api.openTandem({
+            instanceId: "restarted", extensionId: "project:tandem", sessionId: restarted.session.sessionId,
+            input: { prototypeId: "sample" },
+        });
+        await restarted.api.waitForAnswer("sample");
+        const visible = await (await fetch(new URL("api/state", reopened.url))).json();
+        assert.deepEqual(visible.sketchPreview, JSON.parse(JSON.stringify(checkpoint.preview)), "Restart restores the last validated pages.");
+        const retryInput = { action: "retry", expectedRevision: failed.sketch.current!.id,
+            expectedGeneration: failed.generation, requestId: failed.processing.requestId };
+        await assert.rejects(restarted.api.sketchAction("sample", "project:tandem", { ...retryInput, requestId: "obsolete" }), /matching recovery checkpoint/);
+        const retryPrompts: string[] = [];
+        const h = restarted;
+        const runtime = {
+            ...h.session, on: () => () => {},
+            workflow: { getRunDetail: async () => ({ runId: "retry-run", agents: [] }) },
+            rpc: { ...h.session.rpc, workflow: { run: async (request) => {
+                const result = await h.api.answerFactory.run({
+                    args: request.args, runId: "retry-run", signal: new AbortController().signal, session: runtime,
+                    phase() {}, log() {}, step: async (_key: string, work: () => Promise<unknown>) => work(),
+                    agent: async (prompt: string) => {
+                        retryPrompts.push(prompt);
+                        return line({ op: "ui", screenId: "details", edit: { op: "add", parent: "screen",
+                            component: { id: "items", type: "List", props: { items: ["One"] } } } })
+                            + line({ op: "screen-status", screenId: "details", status: "ready" }) + '{"op":"done"}';
+                    },
+                });
+                return { status: "completed", runId: "retry-run", result };
+            } } },
+        };
+        h.api.setSession(runtime);
+        await h.api.sketchAction("sample", "project:tandem", retryInput);
+        await h.api.waitForAnswer("sample");
+        const saved = await h.api.loadState("sample");
+        assert.equal(saved.processing.status, "success", saved.processing.message);
+        assert.equal(retryPrompts.length, 1, "Retry does not repeat page planning or finished pages.");
+        assert.match(retryPrompts[0], /RESUME RETAINED GENERATION/);
+        assert.match(retryPrompts[0], /"kept-heading"/);
+        const document = await new SketchStore(h.root).read("sample", saved.sketch.current!);
+        assert.equal(document.screens[0].ui.nodes["kept-heading"].props.text, "Keep this content");
+        assert.deepEqual(document.transitions, JSON.parse(JSON.stringify(checkpoint.preview.document.transitions)));
+        assert.deepEqual(document.screens[1].ui.nodes.items.props.items, ["One"]);
+        assert.equal(saved.sketch.history.length, 2, "A recovery checkpoint is not a saved design revision.");
+        assert.equal(saved.sketch.approved, null);
+    } finally {
+        f.output.resolve("");
+        await f.h.api.waitForAnswer("sample");
+        if (restarted) await restarted.close();
         await f.h.close();
     }
 });

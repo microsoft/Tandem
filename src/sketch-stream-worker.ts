@@ -1,5 +1,5 @@
 import type { SketchDocument } from "./sketch.js";
-import { MAX_SKETCH_STREAM_RESPONSE_BYTES, SketchOperationStream, type SketchScreenStatus } from "./sketch-stream.js";
+import { MAX_SKETCH_STREAM_RESPONSE_BYTES, SketchOperationStream, type SketchScreenStatus, type SketchStreamPhase } from "./sketch-stream.js";
 
 export interface SketchWorkerEvent {
     type: string;
@@ -11,6 +11,9 @@ interface SketchWorkerOptions {
     runId: string;
     signal: AbortSignal;
     base: SketchDocument | null;
+    phase?: SketchStreamPhase;
+    screenStatuses?: Record<string, SketchScreenStatus>;
+    allowUnchanged?: boolean;
     decisionIds: string[];
     subscribe: (handler: (event: SketchWorkerEvent) => void) => () => void;
     getRunDetail: () => Promise<{
@@ -26,10 +29,11 @@ function record(value: unknown): value is Record<string, unknown> {
     return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-/** The factory result remains authoritative; SDK deltas only drive a disposable preview. */
+/** The factory result remains authoritative; SDK deltas are never saved or approved revisions. */
 export async function runSketchStreamWorker(options: SketchWorkerOptions): Promise<SketchDocument> {
     options.signal.throwIfAborted();
-    const stream = new SketchOperationStream(options.base, options.decisionIds, options.preview);
+    const stream = new SketchOperationStream(options.base, options.decisionIds, options.preview,
+        options.phase, options.screenStatuses, options.allowUnchanged);
     const messages = new Map<string, { text: string; completed: boolean; commentary: boolean | undefined; appended: number }>();
     let agentId: string | undefined;
     let toolCallId: string | undefined;
