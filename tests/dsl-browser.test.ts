@@ -142,7 +142,7 @@ test("real browser shows design generation before the first view and keeps live 
     assert.match(layout.message, /2 screens received.*live update 2/);
     assert.ok(layout.statusBottom <= layout.workspaceTop + 1, "The indicator must not overlay the arriving UI.");
     assert.equal(layout.busy, true, "Live updates are not saved approval.");
-    assert.match(await browser.evaluate('document.querySelector("#sketch-focus").textContent'), /Wireframes: layout & navigation/);
+    assert.equal(await browser.evaluate('document.querySelector("#sketch-focus")'), null);
     assert.equal(await browser.evaluate('getComputedStyle(document.querySelector("#sketch-board .dsl-view").shadowRoot.querySelector("button")).backgroundColor'),
         "rgb(51, 51, 51)", "New wireframes use the shared neutral kit, not a generated palette.");
     assert.equal(await browser.evaluate('document.querySelector("#sketch-screens button").dataset.screenStatus'), "processing");

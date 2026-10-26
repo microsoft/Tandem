@@ -64,8 +64,8 @@ export function PreparationPanel() {
   }
 
   return <div>
-    {state.goal && !state.stageReview && <section className="preparation-stage-card" aria-label="Original project brief">
-      <h3>Original project brief</h3><p id="goal" className="goal">{state.goal}</p>
+    {state.goal && !state.stageReview && <section className="preparation-stage-card preparation-brief" aria-labelledby="preparation-brief-title">
+      <h3 id="preparation-brief-title">Original project brief</h3><p id="goal" className="goal">{state.goal}</p>
     </section>}
     <section className="preparation-stage-card">
       <div className="preparation-stage-heading" aria-describedby="preparation-stage-progress">

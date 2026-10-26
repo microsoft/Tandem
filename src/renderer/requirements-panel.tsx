@@ -7,6 +7,7 @@ import { Diagram } from "./diagram.js";
 import { skippedStage, useAction, useDraft, useUi, type UiContextValue, type UiState } from "./ui-context.js";
 import { requirementDraftKey, requirementNodes, selectedRequirement, wholeGraphDefaults } from "./requirements-model.js";
 import { requirementsResearchIsCurrent } from "../requirements-research.js";
+import { SubstageStatusIcon, type SubstageStatus } from "./substage-status.js";
 
 interface AnswerDraft {
     choice: string;
@@ -469,17 +470,27 @@ export function RequirementsPanel() {
                     ? "The remaining decisions are blocked. Review their prerequisites before continuing."
                     : explicitQuestions.length ? `${explicitQuestions.length} ${explicitQuestions.length === 1 ? "question needs" : "questions need"} an explicit answer. Whole-graph defaults will skip ${explicitQuestions.length === 1 ? "it" : "them"}.` : "");
 
+    const usageStatusLabel = isUsage ? "Collecting usages" : "Usage list complete";
+    const [dagStatus, dagStatusLabel]: [SubstageStatus, string] = dagFailed ? ["failed", "Generation failed - retry available"]
+        : activeAction === "generate-dag" || workerBusy && processing?.action === "generate-dag" ? ["running", "Generating requirements DAG"]
+            : !nodes.length ? ["locked", "Complete the usage list to unlock the decision DAG"]
+                : !unanswered.length ? ["ready", "All decisions answered"] : ["active", "Decisions to answer"];
+
     return <Tabs.Root className="requirements-workspace" value={viewedSubstage} onValueChange={(value) => {
         if (value === "usage" || value === "dag") setSubstageTab(value);
     }}>
         <Tabs.List className="preview-tabs requirements-substages" aria-label="Requirements substages">
-            <Tabs.Trigger id="usage-substage" value="usage" className="preview-tab requirements-substage"
+            <Tabs.Trigger id="usage-substage" value="usage" className="preview-tab requirements-substage substage-tab"
+                aria-label={`Usage list, ${usageStatusLabel}`}
                 data-status={isUsage ? "active" : "complete"} aria-controls="requirements-usage-panel">
-                <span className="requirements-substage-index">1</span><span>Usage list</span>
+                <span className="substage-index" aria-hidden="true">1</span><span>Usage list</span>
+                <SubstageStatusIcon status={isUsage ? "active" : "ready"} label={usageStatusLabel} />
             </Tabs.Trigger>
-            <Tabs.Trigger id="dag-substage" value="dag" className="preview-tab requirements-substage"
+            <Tabs.Trigger id="dag-substage" value="dag" className="preview-tab requirements-substage substage-tab"
+                aria-label={`Decision DAG, ${dagStatusLabel}`}
                 data-status={isUsage ? "locked" : "active"} disabled={!nodes.length} aria-controls="requirements-dag-panel">
-                <span className="requirements-substage-index">2</span><span>Decision DAG</span>
+                <span className="substage-index" aria-hidden="true">2</span><span>Decision DAG</span>
+                <SubstageStatusIcon status={dagStatus} label={dagStatusLabel} />
             </Tabs.Trigger>
         </Tabs.List>
         <Tabs.Content id="requirements-usage-panel" value="usage" forceMount hidden={viewedSubstage !== "usage"}
@@ -552,7 +563,7 @@ export function RequirementsPanel() {
             <p id="usage-message" className={usageError || dagFailed || activeAction || workerBusy || suggestionsLoading ? "usage-message" : "visually-hidden"} role={usageError || dagFailed ? "alert" : "status"} aria-live="polite"
                 data-status={usageError || dagFailed ? "error" : "idle"}>{usageMessage}</p>
         </section>
-        {research && <details id="requirements-research" className="section">
+        {research && <details id="requirements-research" className="section" open>
             <summary>{researchIsCurrent ? "Research and sources" : "Earlier research and sources"}</summary>
             {!researchIsCurrent && <p className="muted">These findings belong to earlier inputs and are retained for reference.</p>}
             <p>{research.summary}</p>
@@ -575,12 +586,11 @@ export function RequirementsPanel() {
         <div id="design-tree-card" className="design-tree-card" hidden={!nodes.length}>
             <div className="design-tree-heading">
                 <div className="design-tree-location">
-                    <span>You are here</span>
-                    <strong id="design-tree-current">{selected
+                    <p id="design-tree-current" className="eyebrow"><GitBranch size={14} aria-hidden="true" />{selected
                         ? `${selected.status === "active" ? "Active" : selected.status === "answered" ? "Answered"
                             : decisionIsReady(selected, nodes) ? "Ready to answer" : "To answer"} · ${selected.title}`
                             + (nodes.some((node) => node.status === "toAnswer") ? ` · ${nodes.filter((node) => node.status === "toAnswer").length} to answer` : "")
-                        : "Waiting for the active decision..."}</strong>
+                        : "Waiting for the active decision..."}</p>
                 </div>
                 <span id="design-tree-phase" className="design-tree-phase">{state.lifecycle.completedStages.includes("requirements")
                   ? "Saved requirements" : state.requirements.substage === "usage" ? "Collecting usages" : "Requirements decisions"}</span>

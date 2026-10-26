@@ -271,12 +271,6 @@ export function VisualExplorationPanel({ active, connected, inspecting, onInspec
     <section className="visual-exploration" data-inspecting={inspecting} aria-labelledby="visual-exploration-title">
     <div className="visual-exploration-heading">
       <strong id="visual-exploration-title">Compare visual directions</strong>
-      <button id="choose-visual-direction" type="button" className="plan-button preview-accept-action" disabled={choiceBlocked}
-        aria-describedby="visual-choice-help" aria-busy={Boolean(acceptance)}
-        title={!inspecting ? "Accept the original prototype as Default."
-          : !onApply ? "Accept is unavailable in this view." : "Apply the previewed direction and settings."}
-        onClick={() => void accept()}><Check size={14} aria-hidden="true" />
-        {acceptance ? "Accepting..." : "Accept"}</button>
     </div>
     <div className="visual-selection-toolbar">
       <ToggleGroup.Root className="visual-direction-toggles" type="single" aria-label="Design directions"
@@ -331,8 +325,14 @@ export function VisualExplorationPanel({ active, connected, inspecting, onInspec
           </Fragment>)}</dl>
         </Tooltip.Content></Tooltip.Portal></Tooltip.Root>}
       </ToggleGroup.Root>
+      <button id="choose-visual-direction" type="button" className="plan-button preview-accept-action" disabled={choiceBlocked}
+        aria-describedby="visual-choice-help" aria-busy={Boolean(acceptance)}
+        title={!inspecting ? "Accept the original prototype as Default."
+          : !onApply ? "Accept is unavailable in this view." : "Apply the previewed direction and settings."}
+        onClick={() => void accept()}><Check size={14} aria-hidden="true" />
+        {acceptance ? "Accepting..." : "Accept"}</button>
     </div>
-    <p id="visual-selection-status" className={needsAcceptance || acceptance ? "muted" : "visually-hidden"} role="status">{acceptance
+    <p id="visual-selection-status" className={acceptance ? "muted" : "visually-hidden"} role="status">{acceptance
       ? acceptance.selection ? "Applying the accepted direction. The current prototype stays available." : "Restoring the original prototype."
       : inspecting ? selectionChanged ? `Previewing ${previewName}. Accept to apply.` : `Accepted: ${previewName}.`
       : savedOnly ? "Showing the saved accepted prototype."
@@ -353,7 +353,6 @@ export function VisualExplorationPanel({ active, connected, inspecting, onInspec
               </select>
             </label>)}
           </div>
-          <p>Changes appear as Custom. Reduced-motion preferences always turn motion off.</p>
         </details>
       </div>
     </>}

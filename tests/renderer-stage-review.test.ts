@@ -59,6 +59,24 @@ async function fixture(t: Parameters<typeof setup>[0], changed = false, usageMod
         setDraftMutation(handler: typeof mutate) { mutate = handler; } };
 }
 
+test("draft requirement changes share the input, Send and History structure without mutating on history browsing", async t => {
+    const { h } = await fixture(t);
+    const input = h.get("review-requirement-request"), form = input.closest("form")!;
+    assert.ok(form.classList.contains("feedback-composer"));
+    assert.equal(form.lastElementChild, h.get("requirements-history-toggle"));
+    assert.equal(form.querySelector('button[type="submit"]')!.textContent, "Send");
+    await h.input(input, "Keep this requirements draft.");
+    const before = h.requests.length;
+    await h.click("requirements-history-toggle");
+    assert.equal(h.get("requirements-request-history").hidden, false);
+    assert.match(h.get("requirements-request-history").textContent!, /No requirement change requests yet/);
+    await h.fire(h.get("requirements-request-history"), "keydown", { key: "Escape" });
+    assert.equal(h.get("requirements-request-history").hidden, true);
+    assert.equal(h.document.activeElement, h.get("requirements-history-toggle"));
+    assert.equal(field(h, "review-requirement-request").value, "Keep this requirements draft.");
+    assert.equal(h.requests.length, before);
+});
+
 test("review mode pins an earlier-stage editor without unlocking accepted work or redirecting current work", async t => {
     const { h, reference } = await fixture(t);
     assert.equal(h.get("project-contents").querySelector('[data-stage-id="requirements"]')!.getAttribute("data-status"), "complete");

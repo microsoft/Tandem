@@ -787,7 +787,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await browser.waitFor('document.querySelector("#studio-workspace") && !document.querySelector("#studio-workspace").inert');
       assert.equal(await browser.evaluate('document.querySelector(".topbar #reload-extension, .topbar #reset-effort, .topbar #speech-sign-in")'), null);
       await clickRoot("#preparation-tab");
-      await clickRoot("#preparation-maintenance > summary");
+      assert.equal(await browser.evaluate('Boolean(document.querySelector(".previewbar #reset-effort"))'), true);
       await clickRoot("#reset-effort");
       await browser.waitFor('Boolean(document.querySelector("[role=alertdialog]"))');
       assert.match(await browser.evaluate('document.querySelector("[role=alertdialog]").textContent'),
@@ -808,7 +808,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await browser.waitFor('!document.querySelector("[role=alertdialog]")');
       value.effortReset = { requestId: "retained-reset", generation: value.generation, error: "Worker termination is unconfirmed." };
       value.revision++;
-      await browser.waitFor('document.querySelector("#preparation-maintenance").open && document.querySelector("#effort-message").textContent.includes("unconfirmed")');
+      await browser.waitFor('document.querySelector("#reset-effort").checkVisibility() && document.querySelector("#effort-message").textContent.includes("unconfirmed")');
       assert.equal(await browser.evaluate('document.querySelector("#studio-workspace").inert'), false);
       await clickRoot("#reset-effort");
       await browser.waitFor('Boolean(document.querySelector("[role=alertdialog]"))');

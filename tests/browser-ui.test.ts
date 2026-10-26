@@ -651,6 +651,7 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
                     noOuterScroll: inner.documentElement.scrollHeight <= inner.documentElement.clientHeight + 1
                         && inner.querySelector("#studio-workspace").scrollHeight <= inner.querySelector("#studio-workspace").clientHeight + 1
                         && panel.scrollHeight <= panel.clientHeight + 1,
+                    diagram:bounds(inner.querySelector(".design-tree-host")), decisions:bounds(inner.querySelector(".decision-list-pane")),
                     dagPanel:bounds(inner.querySelector("#requirements-dag-panel")) };
             })()`);
             assert.equal(layout.outerFits, true, `The browser frame must fit the window at ${width}: ${JSON.stringify(layout)}`);
@@ -658,6 +659,8 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
             assert.equal(layout.cardFits, true, `The question and DAG must fit their card at ${width}: ${JSON.stringify(layout)}`);
             assert.equal(layout.noOuterScroll, true, `Only the inner panes scroll at ${width}: ${JSON.stringify(layout)}`);
             assert.ok(Math.abs(layout.card.height - layout.dagPanel.height) <= 1, "The DAG fills its tab's remaining height.");
+            assert.ok(Math.abs(layout.diagram.height / layout.decisions.height - 1.5) < .01,
+                `The diagram and question list share a 3:2 vertical split at ${width}: ${JSON.stringify(layout)}`);
             assert.equal(layout.review.height, 0, "An empty review area must not leave a bottom action strip.");
             assert.ok(layout.finish.left >= layout.header.left - 1 && layout.finish.right <= layout.header.right + 1
                 && layout.finish.top >= layout.header.top - 1 && layout.finish.bottom <= layout.header.bottom + 1,
@@ -706,14 +709,15 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
             assert.equal(scroll.questionStyle, "auto");
             await browser.evaluate(`(() => {
                 const inner = document.querySelector("#tandem-application").contentDocument;
-                inner.querySelector(".design-tree-host .diagram-source").open = true;
+                inner.querySelector("#design-tree-host-source-trigger").click();
             })()`);
+            await browser.waitFor('Boolean(document.querySelector("#tandem-application").contentDocument.querySelector(".diagram-source-dialog"))');
             const fixedPanes = await browser.evaluate(`(() => {
                 const inner = document.querySelector("#tandem-application").contentDocument;
-                const selectors = [".design-tree-host .diagram-scroll-area", ".design-tree-host .diagram-source pre",
+                const selectors = [".design-tree-host .diagram-scroll-area", ".diagram-source-dialog pre",
                     ".decision-list-pane", ".design-tree-inspector"];
                 const panes = selectors.map(selector => inner.querySelector(selector));
-                const toolbar = inner.querySelector(".diagram-toolbar"), summary = inner.querySelector(".diagram-source summary");
+                const toolbar = inner.querySelector(".diagram-toolbar"), summary = inner.querySelector(".diagram-source-heading");
                 const top = toolbar.getBoundingClientRect().top, sourceTop = summary.getBoundingClientRect().top;
                 panes.forEach(pane => { pane.scrollTop = 0; });
                 const independent = panes.map((pane, index) => {
@@ -728,6 +732,18 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
                     headersFixed: top === toolbar.getBoundingClientRect().top && sourceTop === summary.getBoundingClientRect().top,
                     noOuterScroll: inner.querySelector("#design-tree-panel").scrollHeight <= inner.querySelector("#design-tree-panel").clientHeight + 1
                         && inner.querySelector(".design-tree-body").scrollHeight <= inner.querySelector(".design-tree-body").clientHeight + 1,
+                    dialogFits: (() => {
+                        const rect = inner.querySelector(".diagram-source-dialog").getBoundingClientRect();
+                        return rect.left >= 0 && rect.top >= 0 && rect.right <= inner.defaultView.innerWidth
+                            && rect.bottom <= inner.defaultView.innerHeight;
+                    })(),
+                    focusInDialog: Boolean(inner.activeElement.closest(".diagram-source-dialog")),
+                    followsFit: (() => {
+                        const button = inner.querySelector("#design-tree-host-source-trigger");
+                        const readout = button.previousElementSibling;
+                        return readout?.classList.contains("diagram-toolbar-output")
+                            && button.getBoundingClientRect().left >= readout.getBoundingClientRect().right;
+                    })(),
                 };
             })()`);
             assert.ok(fixedPanes.heights.every((height: number) => height >= 20), `Every pane retains usable height at ${width}: ${JSON.stringify(fixedPanes)}`);
@@ -736,13 +752,16 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
             assert.deepEqual(fixedPanes.scrollStyles, ["auto", "auto", "auto", "auto"]);
             assert.equal(fixedPanes.headersFixed, true);
             assert.equal(fixedPanes.noOuterScroll, true);
+            assert.equal(fixedPanes.dialogFits, true, `The source popup fits at ${width}: ${JSON.stringify(fixedPanes)}`);
+            assert.equal(fixedPanes.focusInDialog, true);
+            assert.equal(fixedPanes.followsFit, true, `Mermaid source stays to the right of the Fit/zoom readout at ${width}.`);
             const afterGrowth = await browser.evaluate(`(async () => {
                 const inner = document.querySelector("#tandem-application").contentDocument;
-                const source = inner.querySelector(".design-tree-host .diagram-source pre"), saved = source.textContent;
+                const source = inner.querySelector(".diagram-source-dialog pre"), saved = source.textContent;
                 source.textContent += "\\n" + "Additional source line\\n".repeat(300);
                 inner.querySelector(".design-tree-host [aria-label='Zoom in']").click();
                 await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-                const heights = [".design-tree-host .diagram-scroll-area", ".design-tree-host .diagram-source pre",
+                const heights = [".design-tree-host .diagram-scroll-area", ".diagram-source-dialog pre",
                     ".decision-list-pane", ".design-tree-inspector"].map(selector => inner.querySelector(selector).getBoundingClientRect().height);
                 source.textContent = saved;
                 return heights;
@@ -751,7 +770,10 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
             if (process.env.TANDEM_UI_EVIDENCE) {
                 await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `requirements-independent-panes-${width}.png`), await browser.screenshot());
             }
-            await browser.evaluate('document.querySelector("#tandem-application").contentDocument.querySelector(".design-tree-host .diagram-source").open = false');
+            await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape" });
+            await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape" });
+            await browser.waitFor('!document.querySelector("#tandem-application").contentDocument.querySelector(".diagram-source-dialog")');
+            assert.equal(await browser.evaluate('document.querySelector("#tandem-application").contentDocument.activeElement.id'), "design-tree-host-source-trigger");
             if (width >= 1000) {
                 const historyScroll = await browser.evaluate(`(() => {
                     const inner = document.querySelector("#tandem-application").contentDocument;
@@ -769,6 +791,40 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
                 await browser.evaluate('document.querySelector("#tandem-application").contentDocument.querySelector("#decision-question-title").scrollIntoView({block:"center"})');
                 await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `requirements-active-${width}.png`), await browser.screenshot());
             }
+            await browser.evaluate(`(() => {
+                const frame = document.querySelector("#tandem-application").contentWindow;
+                frame.document.querySelector("#preparation-workspace-tab").dispatchEvent(new frame.MouseEvent("mousedown", { bubbles:true, button:0 }));
+            })()`);
+            await browser.waitFor('Boolean(document.querySelector("#tandem-application").contentDocument.querySelector(".previewbar #reset-effort"))');
+            const restartLayout = await browser.evaluate(`(() => {
+                const inner = document.querySelector("#tandem-application").contentDocument;
+                const button = inner.querySelector("#reset-effort"), header = inner.querySelector(".previewbar");
+                const rect = button.getBoundingClientRect(), bar = header.getBoundingClientRect();
+                return { visible:button.checkVisibility(), inActions:Boolean(button.closest("#stage-workflow-actions")),
+                    inPanel:Boolean(button.closest("#preparation-panel")),
+                    fits:rect.left >= 0 && rect.right <= inner.defaultView.innerWidth && rect.top >= bar.top && rect.bottom <= bar.bottom,
+                    briefGap:(() => {
+                        const title = inner.querySelector("#preparation-brief-title").getBoundingClientRect();
+                        const brief = inner.querySelector("#goal").getBoundingClientRect();
+                        return brief.top - title.bottom;
+                    })(),
+                    briefFits:(() => {
+                        const brief = inner.querySelector(".preparation-brief");
+                        return brief.scrollWidth <= brief.clientWidth + 1;
+                    })() };
+            })()`);
+            assert.ok(restartLayout.visible && restartLayout.inActions && !restartLayout.inPanel && restartLayout.fits,
+                `Preparation restart stays in the tab header at ${width}: ${JSON.stringify(restartLayout)}`);
+            assert.ok(restartLayout.briefFits && restartLayout.briefGap >= 6 && restartLayout.briefGap <= 10,
+                `Original project brief has compact spacing and wraps at ${width}: ${JSON.stringify(restartLayout)}`);
+            if (process.env.TANDEM_UI_EVIDENCE) {
+                await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `preparation-header-${width}.png`), await browser.screenshot());
+            }
+            await browser.evaluate(`(() => {
+                const frame = document.querySelector("#tandem-application").contentWindow;
+                frame.document.querySelector("#design-tree-workspace-tab").dispatchEvent(new frame.MouseEvent("mousedown", { bubbles:true, button:0 }));
+            })()`);
+            await browser.waitFor('document.querySelector("#tandem-application").contentDocument.querySelector("#design-tree-workspace-tab").getAttribute("aria-selected") === "true"');
         }
         const usageIntake = rendererState("requirements", 4);
         usageIntake.requirements.suggestions = [
@@ -833,6 +889,17 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
         })()`);
         await browser.waitFor('document.querySelector("#tandem-application").contentDocument.querySelector("#reopen-stage")?.hidden === false');
         await browser.waitFor('Boolean(document.querySelector("#tandem-application").contentDocument.querySelector("#design-tree-host svg"))');
+        const headingStyles = await browser.evaluate(`(() => {
+            const inner = document.querySelector("#tandem-application").contentDocument;
+            const style = element => {
+                const value = inner.defaultView.getComputedStyle(element);
+                return { font:value.font, color:value.color, spacing:value.letterSpacing,
+                    transform:value.textTransform, gap:value.gap, margin:value.margin };
+            };
+            return { usages:style(inner.querySelector(".requirements-intake-heading .eyebrow")),
+                decision:style(inner.querySelector("#design-tree-current")) };
+        })()`);
+        assert.deepEqual(headingStyles.decision, headingStyles.usages, "Requirements section headings share their typography, icon spacing and margins.");
         for (const width of [1920, 1024, 375]) {
             await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 800, deviceScaleFactor: 1, mobile: false });
             const layout = await browser.evaluate(`(() => {

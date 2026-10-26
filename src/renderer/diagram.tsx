@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { Maximize, Minus, Plus, RotateCcw } from "lucide-react";
+import { Code, Maximize, Minus, Plus, RotateCcw, X } from "lucide-react";
+import { Dialog } from "radix-ui";
 import { useDraft } from "./ui-context.js";
 
 export interface MermaidRenderer {
@@ -53,7 +54,7 @@ export function Diagram({ id, source, onNodeSelect, legend, label = "Diagram", l
     }).catch((cause: unknown) => {
       if (!cancelled) {
         setSvg("");
-        setError("Diagram unavailable. Use the text and source below. " + (cause instanceof Error ? cause.message : ""));
+        setError("Diagram unavailable. Open Mermaid source to view its text. " + (cause instanceof Error ? cause.message : ""));
       }
     });
     return () => { cancelled = true; };
@@ -76,17 +77,24 @@ export function Diagram({ id, source, onNodeSelect, legend, label = "Diagram", l
     if (nodeId) onNodeSelect?.(nodeId);
   };
   const zoom = (scale: number) => setView({ mode: "scale", scale: Math.max(.25, Math.min(4, scale)) });
-  return <div className="diagram">
-    {(legend || svg) && <div className="diagram-header">
+  return <Dialog.Root><div className="diagram">
+    <div className="diagram-header">
       {legend}
-      {svg && <div className="diagram-toolbar" role="toolbar" aria-label="Diagram zoom controls">
+      <div className="diagram-toolbar" role="toolbar" aria-label="Diagram controls">
+        {svg && <>
         <button type="button" aria-label="Zoom out" title="Zoom out" onClick={() => zoom(view.scale * .8)}><Minus size={16} aria-hidden="true" /></button>
         <button type="button" aria-label="Zoom in" title="Zoom in" onClick={() => zoom(view.scale * 1.25)}><Plus size={16} aria-hidden="true" /></button>
         <button type="button" aria-label="Actual size" title="Actual size" onClick={() => zoom(1)}><RotateCcw size={16} aria-hidden="true" />100%</button>
         <button type="button" aria-label="Fit diagram" title="Fit diagram" onClick={() => setView({ mode: "fit", scale: 1 })}><Maximize size={16} aria-hidden="true" />Fit</button>
-        <span className="diagram-toolbar-output" aria-live="polite">{view.mode === "fit" ? "Fit" : Math.round(view.scale * 100) + "%"}</span>
-      </div>}
-    </div>}
+        </>}
+        <div className="diagram-source-controls">
+          {svg && <span className="diagram-toolbar-output" aria-live="polite">{view.mode === "fit" ? "Fit" : Math.round(view.scale * 100) + "%"}</span>}
+          <Dialog.Trigger asChild><button id={`${id}-source-trigger`} type="button" title="Mermaid source" aria-controls={`${id}-source-dialog`}>
+            <Code size={16} aria-hidden="true" />Mermaid source
+          </button></Dialog.Trigger>
+        </div>
+      </div>
+    </div>
     <div className="diagram-scroll-area" role="region" aria-label={`${label} content`} tabIndex={0}>
       <div id={id} ref={host} className="mermaid-host react-diagram" role={onNodeSelect ? "group" : "img"} aria-label={label}
         style={{ "--diagram-width": view.mode === "fit" ? "100%" : naturalWidth * view.scale + "px" } as CSSProperties}
@@ -95,9 +103,18 @@ export function Diagram({ id, source, onNodeSelect, legend, label = "Diagram", l
         dangerouslySetInnerHTML={{ __html: svg }} />
     </div>
     <p className="diagram-status" role="status" data-status={error ? "error" : "idle"}>{error}</p>
-    <details className="diagram-source" open={error ? true : undefined}>
-      <summary id={`${id}-source-label`}>Mermaid source</summary>
-      <pre tabIndex={0} role="region" aria-labelledby={`${id}-source-label`}>{source}</pre>
-    </details>
-  </div>;
+  </div>
+    <Dialog.Portal><Dialog.Overlay className="dialog-overlay" />
+      <Dialog.Content id={`${id}-source-dialog`} className="dialog-content diagram-source-dialog"
+        aria-modal="true" aria-labelledby={`${id}-source-label`} aria-describedby={undefined}>
+        <header className="diagram-source-heading">
+          <Dialog.Title id={`${id}-source-label`}>Mermaid source</Dialog.Title>
+          <Dialog.Close asChild><button className="review-close" type="button" aria-label="Close Mermaid source">
+            <X size={18} aria-hidden="true" />
+          </button></Dialog.Close>
+        </header>
+        <pre tabIndex={0} role="region" aria-labelledby={`${id}-source-label`}>{source}</pre>
+      </Dialog.Content>
+    </Dialog.Portal>
+  </Dialog.Root>;
 }

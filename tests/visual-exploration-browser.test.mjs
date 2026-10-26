@@ -108,6 +108,15 @@ test("real browser keeps the original as Default, shares the toolbar and explici
   await browser.call("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "no-preference" }] });
   await browser.call("Page.navigate", { url: origin });
   await browser.waitFor('document.querySelector("#visual-direction-canvas") && !document.querySelector("#preview-frame").hidden');
+  const substageStyles = await browser.evaluate(`(() => {
+    const styles = selector => {
+      const tab = document.querySelector(selector), style = getComputedStyle(tab), badge = getComputedStyle(tab.querySelector(".substage-index"));
+      return { font:style.font, padding:style.padding, gap:style.gap, border:style.borderLeftWidth,
+        background:style.backgroundColor, color:style.color, badge:[badge.width,badge.height,badge.borderRadius] };
+    };
+    return { requirements:styles(".requirements-substage[aria-selected=true]"), prototype:styles(".prototype-milestone[aria-selected=true]") };
+  })()`);
+  assert.deepEqual(substageStyles.prototype, substageStyles.requirements, "Requirements and Prototype share the same numbered sub-tab styling.");
   await browser.evaluate('document.querySelector("#toggle-discovery-history")?.click()');
   const click = async selector => {
     const point = await browser.evaluate(`(() => {const e=document.querySelector(${JSON.stringify(selector)});e.scrollIntoView({block:"center"});
@@ -117,12 +126,22 @@ const r=e.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,disab
     await browser.call("Input.dispatchMouseEvent", { type: "mousePressed", button: "left", clickCount: 1, x: point.x, y: point.y });
     await browser.call("Input.dispatchMouseEvent", { type: "mouseReleased", button: "left", clickCount: 1, x: point.x, y: point.y });
   };
+  const feedbackStyles = await browser.evaluate(`(() => {
+    const style = selector => {
+      const value = getComputedStyle(document.querySelector(selector));
+      return { font:value.font, padding:value.padding, border:value.border, radius:value.borderRadius,
+        background:value.backgroundColor, color:value.color, minimum:value.minHeight };
+    };
+    return { designs:["#sketch-instruction","#sketch-revise","#sketch-history-toggle"].map(style),
+      prototype:["#revision-input","#submit-revision","#prototype-history-toggle"].map(style) };
+  })()`);
+  assert.deepEqual(feedbackStyles.prototype, feedbackStyles.designs, "Change/feedback inputs, Send and History share the same styles.");
   const frameValue = expression => browser.evaluate(`(() => {const w=document.querySelector("#visual-preview-frame").contentWindow;return (${expression});})()`);
   const controlsLayout = async () => browser.evaluate(`(() => {
     const accept=document.querySelector("#choose-visual-direction"),panel=document.querySelector(".visual-exploration");
-    const a=accept.getBoundingClientRect(),p=panel.getBoundingClientRect(),toggles=panel.querySelector(".visual-selection-toolbar").getBoundingClientRect();
-    return {top:a.top-p.top,right:p.right-a.right,aboveDirections:a.bottom<=toggles.top,
-      inHeading:panel.querySelector(".visual-exploration-heading").contains(accept),
+    const a=accept.getBoundingClientRect(),p=panel.getBoundingClientRect(),toggle=panel.querySelector(".visual-direction-toggle").getBoundingClientRect();
+    return {top:a.top-p.top,right:p.right-a.right,aligned:Math.abs(a.top-toggle.top)<1 && Math.abs(a.height-toggle.height)<1,
+      inToolbar:panel.querySelector(".visual-selection-toolbar").contains(accept),
       composers:document.querySelectorAll(".visual-exploration textarea, #revision-form textarea").length};
   })()`);
   const choose = async id => {
@@ -137,12 +156,13 @@ const r=e.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,disab
   await browser.waitFor('document.querySelector("#preview-frame").contentDocument?.querySelector("#select-shape")');
   assert.equal(await browser.evaluate('document.querySelector("#compare-current-prototype").getAttribute("aria-checked")'), "true");
   const defaultControls = await controlsLayout();
-  assert.equal(defaultControls.inHeading, true);
-  assert.equal(defaultControls.aboveDirections, true);
+  assert.equal(defaultControls.inToolbar, true);
+  assert.equal(defaultControls.aligned, true, JSON.stringify(defaultControls));
+  assert.ok(defaultControls.right > 0 && defaultControls.right <= 12, JSON.stringify(defaultControls));
   assert.equal(defaultControls.composers, 1);
   await browser.evaluate('(() => {const d=document.querySelector("#preview-frame").contentDocument;d.querySelector("#select-shape").click();d.querySelector("#shape-name").value="Original draft";})()');
   await choose("precision");
-  assert.deepEqual(await controlsLayout(), defaultControls, "Accept stays in the same header position and feedback remains a single composer.");
+  assert.deepEqual(await controlsLayout(), defaultControls, "Accept stays aligned with the direction buttons and feedback remains a single composer.");
   assert.equal(await browser.evaluate('document.querySelector("#revision-input").getAttribute("aria-label")'), "Feedback for Precision workspace");
   await browser.evaluate('window.originalCurrent=document.querySelector("#preview-frame");window.originalVisual=document.querySelector("#visual-preview-frame");void 0;');
   await frameValue('w.document.querySelector("#select-shape").click()');
@@ -188,13 +208,45 @@ const r=e.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,disab
   await browser.call("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "no-preference" }] });
   for (const [width, height] of [[1360, 960], [920, 620], [430, 850]]) {
     await browser.call("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+    const inputLayout = await browser.evaluate(`(() => {
+      const input=document.querySelector("#revision-input").getBoundingClientRect(),
+        send=document.querySelector("#submit-revision").getBoundingClientRect(),
+        history=document.querySelector("#prototype-history-toggle").getBoundingClientRect();
+      return { ordered:input.right <= send.left && send.right <= history.left,
+        aligned:Math.abs(input.top-send.top)<1 && Math.abs(send.top-history.top)<1,
+        fits:input.width >= 60 && history.right <= innerWidth };
+    })()`);
+    assert.deepEqual(inputLayout, { ordered:true, aligned:true, fits:true }, `Input, Send and History stay aligned at ${width}.`);
+    await click("#revision-input");
+    const expandedInput = await browser.evaluate(`(() => {
+      const input=document.querySelector("#revision-input").getBoundingClientRect(),
+        send=document.querySelector("#submit-revision").getBoundingClientRect(),
+        history=document.querySelector("#prototype-history-toggle").getBoundingClientRect();
+      return { expanded:input.height>send.height, aligned:Math.abs(input.bottom-send.bottom)<1 && Math.abs(send.bottom-history.bottom)<1 };
+    })()`);
+    assert.deepEqual(expandedInput, { expanded:true, aligned:true }, `Expanded feedback keeps Send and History anchored at ${width}.`);
+    const requestsBeforeHistory = actions.length;
+    await click("#prototype-history-toggle");
+    await browser.waitFor('document.querySelector("#prototype-history-toggle").getAttribute("aria-expanded")==="true" && !document.querySelector("#revision-history-details").hidden');
+    const historyLayout = await browser.evaluate(`(() => {
+      const pane=document.querySelector("#revision-history-details"), rect=pane.getBoundingClientRect();
+      const close=pane.querySelector('[aria-label="Close request history"]'), button=close.getBoundingClientRect();
+      return { open:!pane.hidden, fits:rect.left>=0 && rect.right<=innerWidth && rect.top>=0 && rect.bottom<=innerHeight,
+        reachable:close.contains(document.elementFromPoint(button.x+button.width/2,button.y+button.height/2)) };
+    })()`);
+    assert.deepEqual(historyLayout, { open:true, fits:true, reachable:true }, `Request history remains usable at ${width}.`);
+    if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `feedback-history-${width}.png`), await browser.screenshot());
+    await click('#revision-history-details [aria-label="Close request history"]');
+    await browser.waitFor('document.querySelector("#revision-history-details").hidden');
+    assert.equal(actions.length, requestsBeforeHistory, "History browsing never submits or accepts feedback.");
     await browser.evaluate('document.querySelector(".visual-exploration").scrollIntoView({block:"start"})');
     const bounds = await browser.evaluate('({width:document.documentElement.clientWidth,scroll:document.documentElement.scrollWidth,panel:document.querySelector(".visual-exploration").getBoundingClientRect().width})');
     assert.ok(bounds.scroll <= bounds.width + 1, "Visual controls must not overflow horizontally: " + JSON.stringify(bounds));
     assert.ok(bounds.panel > 240);
     const customControls = await controlsLayout();
-    assert.equal(customControls.inHeading, true);
-    assert.equal(customControls.aboveDirections, true);
+    assert.equal(customControls.inToolbar, true);
+    assert.equal(customControls.aligned, true, JSON.stringify(customControls));
+    assert.ok(customControls.right > 0 && customControls.right <= 12, JSON.stringify(customControls));
     assert.equal(customControls.composers, 1);
     assert.equal(await browser.evaluate('document.querySelector("#revision-input").getAttribute("aria-label")'), "Feedback for Custom");
     await click("#compare-current-prototype");
