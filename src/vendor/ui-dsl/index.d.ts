@@ -32,6 +32,12 @@ export const TOKEN_DEFINITIONS: Readonly<Record<string,
     { kind: "color"; default: string } | { kind: "length" | "weight"; default: number; min: number; max: number }>>;
 export const OPERATION_SCHEMA: { [key: string]: JsonValue };
 export const PROMPT_PREFIX: string;
+export class DSLError extends Error {
+    constructor(code: string, message: string, path?: string, details?: Record<string, unknown>);
+    code: string;
+    path: string;
+    details: Record<string, unknown>;
+}
 export function searchIcons(options?: { query?: string; limit?: number; offset?: number }): {
     library: Readonly<{ name: string; version: string; count: number }>;
     query: string; total: number; names: string[]; offset: number; nextOffset: number | null;

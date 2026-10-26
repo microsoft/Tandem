@@ -231,7 +231,7 @@ test("Requirements generates designs once and cannot start Prototype before expl
         await fixture.waitForRequests();
         assert.deepEqual(JSON.parse(JSON.stringify((fixture.requests[0] as { options: unknown }).options)), {
             notifyOnComplete: false,
-            limits: { maxConcurrentSubagents: 1, maxTotalSubagents: 1, maxAiCredits: 128 },
+            limits: { maxConcurrentSubagents: 1, maxTotalSubagents: 3, maxAiCredits: 128 },
         });
         await fixture.api.waitForAnswer("sample");
         const draft = await fixture.api.loadState("sample");
@@ -850,6 +850,10 @@ test("sketch HTTP transport accepts bounded scenes above the ordinary request li
 test("production design/prototype prompts bind UI DSL semantics and derived image transport", () => {
     const sketch = buildSketchPrompt({
         prototypeId: "sample", projectRoot: "C:\\app", action: "generate-sketch", instruction: "Draw it.",
+        requirements: { decisions: ["Accepted decision"] }, approach: "validate-existing", document: sketchDocument(), phase: "content",
+    });
+    const outline = buildSketchPrompt({
+        prototypeId: "sample", projectRoot: "C:\\app", action: "generate-sketch", instruction: "Draw it.",
         requirements: { decisions: ["Accepted decision"] }, approach: "validate-existing", document: null,
     });
     assert.match(sketch, /decision DAG is NOT a navigation graph/);
@@ -858,7 +862,11 @@ test("production design/prototype prompts bind UI DSL semantics and derived imag
     assert.match(sketch, /Preserve user-selected dimensions/);
     assert.match(sketch, /Component catalog:/);
     assert.match(sketch, /wrap EVERY DSL edit/);
-    assert.match(sketch, /upsert-screen metadata for ALL planned pages.*before ANY ui edit/);
+    assert.match(outline, /upsert-screen metadata for ALL planned pages.*before ANY ui edit/);
+    assert.match(outline, /every planned upsert-transition/);
+    assert.doesNotMatch(outline, /Component catalog:|"op":"ui"/);
+    assert.match(sketch, /CONTENTS ONLY/);
+    assert.match(sketch, /List has NO size/);
     assert.match(sketch, /build one page at a time.*screen-status processing.*screen-status ready/);
     assert.match(sketch, /"op":"screen-status","screenId":"home","status":"processing"/);
     assert.match(sketch, /"op":"screen-status","screenId":"home","status":"ready"/);
@@ -884,7 +892,7 @@ test("production design/prototype prompts bind UI DSL semantics and derived imag
     assert.match(update, /Retain unrelated screens, layout, styling/);
     assert.match(update, /Keep each existing screen's viewport dimensions/);
     assert.doesNotMatch(update, /Start from an empty sketch set|TITLE-FIRST ORDER|upsert-screen metadata for ALL planned pages|commonly 960x640/);
-    assert.match(sketch, /Start from an empty sketch set/);
+    assert.match(outline, /Start from an empty sketch set/);
     const prototype = buildPrototypeCheckpointPrompt({
         prototypeId: "sample", projectRoot: "C:\\app", goal: "Task app", approach: "build",
         requirements: {}, confirmed: [],

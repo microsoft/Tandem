@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { JSDOM } from "jsdom";
-import type { DecisionNode } from "../src/workflow.js";
+import { decisionIsReady, type DecisionNode } from "../src/workflow.js";
 import type { UiContextValue, UiState } from "../src/renderer/ui-context.js";
 import { requirementDraftKey, requirementNodes, selectedRequirement, wholeGraphDefaults } from "../src/renderer/requirements-model.js";
+import { buildDecisionGraphMermaid } from "../src/decision-diagram.js";
 
 function decision(id: string, status: DecisionNode["status"] = "active"): DecisionNode {
     return {
@@ -54,13 +55,33 @@ test("React Requirements retries only the saved default batch, while replacement
     assert.throws(() => wholeGraphDefaults(value), /no saved request ID/);
 });
 
-test("React Requirements validates curated defaults on blocked nodes before requesting confirmation", () => {
+test("React Requirements skips non-curated and missing recommendations while freezing downstream defaults", () => {
     const value = snapshot([decision("first"), decision("blocked", "toAnswer")]);
     value.decisionGraph.nodes[1].question!.choices = ["A", "B"];
-    assert.throws(() => wholeGraphDefaults(value), /"blocked" has no curated recommended choice/);
+    const plan = wholeGraphDefaults(value);
+    assert.deepEqual(plan.body.defaults, [{ nodeId: "first", answer: "A" }]);
+    assert.match(plan.confirmation!, /1 question needs an explicit answer.*\nblocked/);
+    assert.doesNotMatch(plan.confirmation!, /blocked: A/);
     value.decisionGraph.nodes[1].question = null;
-    assert.throws(() => wholeGraphDefaults(value), /"blocked" has no curated recommended choice/);
+    assert.deepEqual(wholeGraphDefaults(value).body.defaults, plan.body.defaults);
+    value.decisionGraph.nodes[0].question!.recommended = null;
+    assert.throws(() => wholeGraphDefaults(value), /No recommended answers are available/);
     assert.throws(() => wholeGraphDefaults(snapshot([decision("done", "answered")])), /No unanswered decisions/);
+});
+
+test("the DAG marks every unanswered non-default decision without losing status, edges or aliases", () => {
+    const nodes = [decision("default"), decision("explicit"), decision("blocked", "toAnswer"), decision("done", "answered")];
+    for (const node of nodes.slice(1)) node.question!.recommended = null;
+    nodes[2].dependencies = ["explicit"];
+    const graph = buildDecisionGraphMermaid(nodes);
+    assert.match(graph.source, /Decision1\["explicit \(Explicit answer\)"\]/);
+    assert.match(graph.source, /Decision2\["blocked \(Explicit answer\)"\]/);
+    assert.doesNotMatch(graph.source, /(?:default|done) \(Explicit answer\)/);
+    assert.match(graph.source, /class Decision1,Decision2 explicitAnswer/);
+    assert.match(graph.source, /class Decision0,Decision1 active/);
+    assert.match(graph.source, /class Decision2 toAnswer/);
+    assert.match(graph.source, /Decision1 --> Decision2/);
+    assert.equal(graph.aliases.get("Decision2"), nodes[2]);
 });
 
 test("React Requirements draft identity includes effort, question definition and accepted answer", () => {
@@ -86,6 +107,19 @@ test("React Requirements follows unresolved decisions without overriding explici
     assert.deepEqual(requirementNodes(value), []);
     value.requirements.substage = "dag";
     assert.equal(requirementNodes(value)[0].id, "first");
+});
+
+test("answer readiness follows saved prerequisites, not the single active marker", () => {
+    const first = decision("first");
+    const explicit = { ...decision("explicit", "toAnswer"), question: { ...decision("explicit").question!, recommended: null } };
+    const accepted = decision("accepted", "answered");
+    const nodes = [first, explicit, accepted];
+    assert.equal(decisionIsReady(explicit, nodes), true);
+    assert.equal(decisionIsReady({ ...explicit, dependencies: ["accepted"] }, nodes), true);
+    assert.equal(decisionIsReady({ ...explicit, dependencies: ["first"] }, nodes), false);
+    assert.equal(decisionIsReady({ ...explicit, dependencies: ["missing"] }, nodes), false);
+    assert.equal(decisionIsReady({ ...explicit, question: null }, nodes), false);
+    assert.equal(decisionIsReady(accepted, nodes), false);
 });
 
 async function harness(initial: UiState) {
@@ -197,8 +231,10 @@ test("React Requirements keeps per-question drafts, errors, focus and caret thro
     try {
         await h.input('textarea[name="prototype-detail"]', "My custom answer");
         const field = h.find<HTMLTextAreaElement>('textarea[name="prototype-detail"]');
-        field.focus();
-        field.setSelectionRange(3, 7);
+        await h.act(async () => {
+            field.focus();
+            field.setSelectionRange(3, 7);
+        });
         await h.render({ ...value, revision: 2 });
         assert.equal(h.document.activeElement, field);
         assert.equal(field.selectionStart, 3);
@@ -239,6 +275,31 @@ test("React Requirements blocked decisions remain inspectable and previous stage
     } finally { await h.close(); }
 });
 
+test("React Requirements lets a selected explicit question answer when another question is active", async () => {
+    const explicit = { ...decision("jurisdiction", "toAnswer"), dependencies: ["accepted"],
+        question: { ...decision("jurisdiction").question!, recommended: null } };
+    const value = snapshot([decision("first"), decision("accepted", "answered"), explicit]);
+    const h = await harness(value);
+    try {
+        await h.click('[data-decision-id="jurisdiction"]');
+        assert.match(h.find("#design-tree-current").textContent!, /Ready to answer · jurisdiction/);
+        assert.equal(h.find<HTMLButtonElement>(".send").disabled, false);
+        assert.equal(h.find<HTMLTextAreaElement>("#question-host textarea").disabled, false);
+        assert.equal(h.document.querySelector('[role="radio"][data-state="checked"]'), null);
+        assert.doesNotMatch(h.find("#question-host").textContent!, /Waiting for prerequisites|cannot answer it yet/);
+        await h.input("#question-host textarea", "The shop operates in Washington, USA.");
+        await h.submit("#question-host form");
+        assert.deepEqual(h.requests[0].body, { questionId: "jurisdiction", answer: "The shop operates in Washington, USA.", action: "answer-decision" });
+        assert.equal(h.requests.length, 1);
+        await h.render({ ...value, revision: 2, decisionGraph: { nodes: [decision("first"), decision("accepted"), explicit] } });
+        await h.click('[data-decision-id="jurisdiction"]');
+        assert.equal(h.find<HTMLButtonElement>(".send").disabled, true);
+        assert.match(h.find("#question-host").textContent!, /Blocked until.*accepted/);
+        await h.submit("#question-host form");
+        assert.equal(h.requests.length, 1, "a reopened prerequisite blocks submission");
+    } finally { await h.close(); }
+});
+
 test("React Requirements treats domain IDs separately from Mermaid aliases and preserves change-answer payloads", async () => {
     const value = snapshot([decision("first"), decision("Decision0", "answered")]);
     const h = await harness(value);
@@ -264,6 +325,53 @@ test("React Requirements applies one frozen whole-graph request and never chains
         await h.render({ ...value, revision: 2, decisionGraph: { nodes: [decision("first", "answered"), decision("second")] } });
         assert.equal(h.requests.length, 1);
         assert.match(h.find("#design-tree-current").textContent!, /Active · second/);
+    } finally { await h.close(); }
+});
+
+test("React Requirements marks explicit questions and focuses the next blocker after defaults settle", async () => {
+    const explicit = { ...decision("explicit", "toAnswer"), dependencies: ["first"],
+        question: { ...decision("explicit").question!, recommended: null } };
+    const nextExplicit = { ...decision("next-explicit", "toAnswer"), dependencies: ["downstream"],
+        question: { ...decision("next-explicit").question!, recommended: null } };
+    const value = snapshot([decision("first"), explicit,
+        { ...decision("downstream", "toAnswer"), dependencies: ["explicit"] }, nextExplicit]);
+    const h = await harness(value);
+    try {
+        assert.equal(h.document.querySelectorAll('#decision-list [data-explicit-answer="true"]').length, 2);
+        assert.match(h.find('[data-decision-id="explicit"]').textContent!, /Explicit answer/);
+        assert.match(h.find('[aria-label="Decision status legend"]').textContent!, /Explicit answer/);
+        await h.click('[data-decision-id="next-explicit"]');
+        assert.match(h.find("#question-host").textContent!, /Whole-graph defaults will skip this question/);
+        await h.click(".all-recommended");
+        assert.deepEqual(h.requests[0].body.defaults, [{ nodeId: "first", answer: "A" }, { nodeId: "downstream", answer: "A" }]);
+        assert.match(h.confirmations[0], /2 questions need an explicit answer/);
+        assert.equal(h.requests.length, 1);
+        await h.render({ ...value, revision: 2, processing: { action: "apply-defaults", status: "running" } });
+        assert.equal(h.find<HTMLTextAreaElement>("#question-host textarea").disabled, true);
+        await h.render({ ...value, revision: 3, processing: { action: "apply-defaults", status: "success" },
+            decisionGraph: { nodes: [decision("first", "answered"), { ...explicit, status: "active" },
+                { ...value.decisionGraph.nodes[2], answer: "A", status: "answered" }, nextExplicit] } });
+        assert.match(h.find("#design-tree-current").textContent!, /Active · explicit/);
+        assert.ok(h.document.activeElement === h.find("#question-host textarea"), "focus moves to the explicit answer field");
+        assert.equal(h.find<HTMLButtonElement>(".all-recommended").disabled, true);
+        assert.equal(h.document.querySelector('[role="radio"][data-state="checked"]'), null);
+        assert.equal(h.requests.length, 1, "a missing default never triggers an automatic answer");
+    } finally { await h.close(); }
+});
+
+test("React Requirements focuses the explicit question without selecting a choice when free text is disabled", async () => {
+    const explicit = { ...decision("explicit", "toAnswer"), dependencies: ["first"],
+        question: { ...decision("explicit").question!, recommended: null, allowFreeText: false } };
+    const value = snapshot([decision("first"), explicit]);
+    const h = await harness(value);
+    try {
+        await h.click(".all-recommended");
+        await h.render({ ...value, revision: 3, processing: { action: "apply-defaults", status: "success" },
+            decisionGraph: { nodes: [decision("first", "answered"), { ...explicit, status: "active" }] } });
+        assert.equal(h.document.activeElement?.id, "decision-question-title");
+        assert.equal(h.document.querySelector('[role="radio"][data-state="checked"]'), null);
+        assert.equal(h.find('[data-decision-id="explicit"]').getAttribute("aria-pressed"), "true");
+        assert.equal(h.requests.length, 1);
     } finally { await h.close(); }
 });
 
@@ -304,7 +412,7 @@ test("React Requirements opens and focuses a generated DAG once, without submitt
         assert.equal(h.document.activeElement, h.find('[role="radio"][data-state="checked"]'));
         await h.input('textarea[name="prototype-detail"]', "Keep focus");
         const field = h.find<HTMLTextAreaElement>('textarea[name="prototype-detail"]');
-        field.focus();
+        await h.act(async () => field.focus());
         await h.render({ ...ready, revision: 3 });
         assert.equal(h.document.activeElement, field);
         assert.deepEqual(h.navigations, ["requirements"]);

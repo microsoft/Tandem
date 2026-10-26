@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
     MAX_SKETCH_STREAM_OPERATIONS, MAX_SKETCH_STREAM_RECORD_BYTES,
-    MAX_SKETCH_STREAM_RESPONSE_BYTES, SketchOperationStream,
+    MAX_SKETCH_STREAM_RESPONSE_BYTES, SketchEditValidationError, SketchOperationStream, readSketchRecovery,
     type SketchScreenStatus,
 } from "../src/sketch-stream.js";
 import { validateSketchDocument, type DslSketchDocument, type SketchDocument } from "../src/sketch.js";
@@ -129,6 +129,86 @@ test("screen progress cannot reference missing pages, mark empty pages ready or 
     stream.append(line({ op: "screen-status", screenId: "main", status: "processing" })
         + line({ op: "screen-status", screenId: "main", status: "ready" }) + done);
     assert.throws(() => stream.complete(), /at least one document-changing operation/, "Progress alone is not a design revision.");
+});
+
+test("outline and content phases enforce structure before content instead of trusting worker ordering", () => {
+    const outline = new SketchOperationStream(null, decisions, undefined, "outline");
+    outline.append(line({ op: "upsert-screen", screen: metadata() })
+        + line({ op: "upsert-screen", screen: metadata("details") })
+        + line({ op: "upsert-transition", transition: {
+            id: "next", fromScreenId: "main", toScreenId: "details", trigger: "Continue", description: "",
+        } }) + done);
+    const base = outline.complete();
+    assert.ok(base.screens.every(screen => screen.ui.nodes.screen.children.length === 0));
+    for (const operation of [add(), { op: "screen-status", screenId: "main", status: "processing" }]) {
+        const invalid = new SketchOperationStream(null, decisions, undefined, "outline");
+        invalid.append(line({ op: "upsert-screen", screen: metadata() }));
+        assert.throws(() => invalid.append(line(operation)), /only page metadata and navigation/);
+        assert.equal(invalid.sequence, 1);
+    }
+    for (const operation of [
+        { op: "upsert-screen", screen: metadata("late-page") },
+        { op: "remove-screen", screenId: "details" },
+        { op: "remove-transition", transitionId: "next" },
+    ]) {
+        const invalid = new SketchOperationStream(base, decisions, undefined, "content");
+        assert.throws(() => invalid.append(line(operation)), /cannot change the published page outline/);
+        assert.deepEqual(invalid.document, base);
+    }
+    const incomplete = new SketchOperationStream(base, decisions, undefined, "content");
+    incomplete.append(line(add()) + done);
+    assert.throws(() => incomplete.complete(), /fill every outlined page/);
+    const content = new SketchOperationStream(base, decisions, undefined, "content");
+    content.append(line(add()) + line(edit({
+        op: "add", parent: "screen", component: { id: "title", type: "Heading", props: { text: "Details" } },
+    }, "details")) + done);
+    assert.deepEqual(content.complete().transitions, base.transitions);
+});
+
+test("List.size produces actionable correction data without applying invalid props or losing valid content", () => {
+    const stream = new SketchOperationStream(sketchDocument(), decisions);
+    stream.append(line(update("Kept")));
+    const invalid = edit({ op: "add", parent: "screen",
+        component: { id: "items", type: "List", props: { items: ["One"], size: "font.size.body" } } });
+    assert.throws(() => stream.append(line(invalid)), (error: unknown) => {
+        assert.ok(error instanceof SketchEditValidationError);
+        assert.match(error.repair.message, /'size' is not a prop of List/);
+        assert.deepEqual(error.repair.operation, invalid);
+        return true;
+    });
+    assert.equal(stream.document!.screens[0].ui.nodes["primary-action"].props.label, "Kept");
+    assert.equal(stream.document!.screens[0].ui.nodes.items, undefined);
+    assert.throws(() => stream.complete(), /not a prop of List/);
+});
+
+test("explicit recovery can finish already-complete retained content without redrawing it", () => {
+    const base = sketchDocument();
+    const resumed = new SketchOperationStream(base, decisions, undefined, "content", { main: "ready" }, true);
+    resumed.append(done);
+    assert.deepEqual(resumed.complete(), base);
+    const empty = structuredClone(base);
+    empty.screens[0].ui = createDocument();
+    const incomplete = new SketchOperationStream(empty, decisions, undefined, "content", { main: "waiting" }, true);
+    incomplete.append(done);
+    assert.throws(() => incomplete.complete(), /fill every outlined page/);
+});
+
+test("durable recovery validates identity, page status and its complete UI DSL document", () => {
+    const checkpoint = {
+        phase: "content", preview: {
+            prototypeId: "sample", generation: "generation", requestId: "request", runId: "run",
+            baseRevisionId: null, requirementsDigest: "requirements", sequence: 2,
+            document: sketchDocument(), screenStatuses: { main: "processing" },
+        },
+    };
+    assert.deepEqual(readSketchRecovery(checkpoint), checkpoint);
+    for (const invalid of [
+        { ...checkpoint, phase: "unknown" },
+        { ...checkpoint, preview: { ...checkpoint.preview, baseRevisionId: "" } },
+        { ...checkpoint, preview: { ...checkpoint.preview, screenStatuses: { main: "approved" } } },
+        { ...checkpoint, preview: { ...checkpoint.preview, document: {} } },
+        { ...checkpoint, repair: { message: "bad", operation: null } },
+    ]) assert.throws(() => readSketchRecovery(invalid));
 });
 
 test("all five library operations preserve unrelated nodes and metadata while revisions use the current DSL base", () => {

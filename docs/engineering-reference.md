@@ -182,6 +182,16 @@ legacy results remain recoverable.
 Progress and **Research and sources** stay inside Requirements, without a new
 user-facing stage. Recommendations and research findings are not accepted answers.
 Whole-graph defaults require explicit confirmation and one bounded reconciliation.
+The frozen batch must contain exactly all unanswered decisions with valid curated
+recommendations, including downstream nodes; questions without them remain
+unanswered and are marked **Explicit answer** in both DAG and list. Reconciliation
+must not infer their answers or accept dependent defaults whose compatibility
+requires missing prerequisite information. On success, the inspector focuses the
+next active question. No new or changed recommendation is selected automatically.
+The active marker is a navigation default, not an answer lock: the UI and answer
+endpoint share dependency-based readiness, so any unanswered question with
+completed prerequisites can be selected and answered. Unmet dependencies still
+block submission.
 Failed or conflicting answers remain visible, not silently accepted.
 
 Designs (internal stage ID `sketch`) uses a version-2 multi-screen envelope with UI DSL v1 documents, while
@@ -201,17 +211,35 @@ design worker. That worker cannot call the library's optional icon lookup tools.
 Tandem's stream boundary canonicalizes known official Lucide aliases such as
 `trash-2` to `trash` before normal validation, without modifying the vendor
 snapshot. Unknown icons still fail atomically; previews and saved documents
-contain only canonical names. The existing bounded stream applies one `ui.edit` at a time to
+contain only canonical names. Invalid component props (for example `List.size`)
+receive one bounded correction attempt from the last validated document, with the
+rejected operation and schema error supplied to the worker. Invalid properties are
+never silently dropped or accepted; transport, identity and unsafe-key errors do
+not trigger this correction. The existing bounded stream applies one `ui.edit` at a time to
 the named screen; Tandem still owns request identity, transient previews, final
-commit, approval and immutable history. Generation emits all `upsert-screen`
-titles before UI edits, then builds pages sequentially with `screen-status`
-processing/ready records. The host initializes new pages as waiting, validates
+commit, approval and immutable history. Generation uses an outline-only worker for
+`upsert-screen` metadata and `upsert-transition` navigation, followed by a content-only
+worker that cannot change that published outline. Structural updates bypass preview
+batching so every page is visible before content generation starts. Content is built
+sequentially with `screen-status` processing/ready records. The factory allows at most
+three workers (outline, content and one correction), retaining its existing credit
+ceiling. Incremental revisions still patch the saved DSL without rebuilding an outline.
+The host initializes new pages as waiting, validates
 ready pages have UI content, and resets a page to processing on a later edit.
 Per-page statuses travel only in the request-bound preview, never the saved
 document or approval. Older previews without statuses remain readable and do not
 claim partial content is ready. JSON records can span formatting line breaks;
 only complete, valid operations are applied, with unchanged size limits and
 strict rejection of prose, malformed JSON and invalid operations.
+On failure, the last validated preview remains inspectable and is persisted as a
+request-bound recovery checkpoint in ignored operational state, not in saved revision
+history or approval. `sketch_action` with `action: "retry"`, `expectedRevision`,
+`expectedGeneration` and the failed `requestId` resumes its exact phase, pages, nodes
+and navigation. The SDK must confirm the failed run is terminal before retry.
+Recovery preserves its source request/run identities and is rejected if the generation,
+requirements digest or saved base revision changes. Success clears the checkpoint.
+The renderer labels interrupted pages **Stopped**, keeps completed pages visible,
+and disables edits/approval of the incomplete preview.
 Verified workers without native phase metadata can stream JSON-prefixed data
 without waiting for the final message; prose still requires native commentary
 classification and cannot be silently dropped from a design result.

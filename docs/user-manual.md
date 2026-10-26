@@ -117,14 +117,22 @@ appears here; expand **Research and sources** to inspect findings and references
 Research informs questions, not accepted features or answers. Failed generation
 keeps your usages and any completed findings for **Retry requirements DAG**.
 An unchanged retry reuses those findings instead of repeating the research.
-Answer active decisions with **Use this answer**; processing reviews affected
+Answer the active decision, or select any **Ready to answer** question whose
+prerequisites are complete, with **Use this answer**; processing reviews affected
 decisions without rewriting unrelated questions.
 Prerequisites hold dependent questions. Free text, when offered, replaces the
 selected option rather than adding a second answer.
 
 **Use whole-graph defaults** requires confirmation of the displayed
-recommendations, including downstream choices. Recommendations and suggestions
-are not already accepted answers. **Update answer and dependents** can invalidate
+recommendations, including downstream choices. Questions without a valid
+recommendation are marked **Explicit answer** in the DAG and question list.
+They are skipped, not answered automatically. After compatibility review,
+Tandem opens the next blocking question for you to answer. Defaults that conflict
+or depend on missing information remain for review.
+Answering an explicit question also reopens saved downstream defaults if their
+meaning changes, retaining the previous answers for review.
+Recommendations and suggestions are not already accepted answers.
+**Update answer and dependents** can invalidate
 dependent decisions while retaining independent answers.
 
 Finishing Requirements opens Designs and generates the initial screens
@@ -132,10 +140,17 @@ automatically; generation controls are disabled while that work is running.
 The main Designs area shows a processing indicator, the current generation
 message and elapsed time when a request timestamp is available. Incoming screens
 appear live with a received-screen count and update number; these are not a
-percentage complete or approval. The agent lists page titles first, then fills
-one page at a time. Each page shows **Waiting**, **Processing**, or **Ready** in
+percentage complete or approval. Tandem first plans and displays all page titles
+and navigation, then starts a separate content pass to fill one page at a time.
+Each page shows **Waiting**, **Processing**, or **Ready** in
 the screen list; the selected page also shows its progress above the preview.
 **Ready** means that page's preview is ready, not saved or approved.
+If generation fails, completed and partial pages stay visible and navigable;
+the interrupted page shows **Stopped**. **Retry generation** continues from the
+retained content without starting over, including after reloading Tandem.
+The recovery checkpoint is not a saved or approved revision. Changed requirements
+or a replaced draft invalidate it. **Reload saved designs** returns to the saved
+revision; **Regenerate designs** remains the explicit start-over action.
 Existing designs and local edits stay visible
 while a new design is prepared.
 Designs displays UI DSL screens: structured components, layout and design tokens

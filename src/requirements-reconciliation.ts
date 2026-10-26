@@ -220,6 +220,20 @@ export function applyRequirementsAnswerChanges(
     ] };
     if (proposed.nodes.length > 50) throw new Error("The requirements graph exceeds the 50-decision limit.");
     const decisionGraph = applyAuthoritativeAnswer(state.decisionGraph, proposed, questionId, answer, changingAnswer);
+    const changed = changes.upsert.filter(node => {
+        const old = state.decisionGraph.nodes.find(candidate => candidate.id === node.id);
+        return old && (old.title !== node.title || JSON.stringify(old.question) !== JSON.stringify(node.question)
+            || JSON.stringify(old.dependencies) !== JSON.stringify(node.dependencies));
+    });
+    const affected = new Set(changed.flatMap(node => [
+        node.id, ...decisionDescendants(state.decisionGraph, node.id), ...decisionDescendants(proposed, node.id),
+    ]));
+    for (const node of decisionGraph.nodes) {
+        if (!node.answer || !affected.has(node.id)) continue;
+        node.review = { previousAnswer: node.answer,
+            reason: "An upstream answer changed this decision or its prerequisites. Review the saved default." };
+        node.answer = null;
+    }
     for (const node of decisionGraph.nodes) if (node.answer) node.review = null;
     let prototypeApproach = state.prototypeApproach;
     if (questionId === "prototype-approach") {
