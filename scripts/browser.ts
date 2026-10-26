@@ -26,7 +26,7 @@ if (operation === "run") {
     await writeFile(join(output, "package.json"), `${JSON.stringify({
         name: "@tandem/standalone", version: metadata.version, description: "Tandem standalone local browser app",
         type: "module", license: "MIT", engines: { node: ">=24.0.0" }, bin: { tandem: "cli.mjs" },
-        files: ["cli.mjs", "host.mjs", "extension.mjs", "preview-launcher.mjs", "payload.json", "stage2", "skills", "README.md", "LICENSE"],
+        files: ["cli.mjs", "host.mjs", "source-preview-extension.mjs", "extension.mjs", "preview-launcher.mjs", "payload.json", "stage2", "skills", "README.md", "LICENSE"],
         dependencies: metadata.dependencies,
     }, null, 2)}\n`);
     await copyFile(join(root, "README.md"), join(output, "README.md"));

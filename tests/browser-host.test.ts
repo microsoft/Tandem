@@ -21,7 +21,7 @@ async function until(predicate: () => boolean, timeout = 3000): Promise<void> {
     }
 }
 
-async function fixture(t: TestContext, startupTimeoutMs?: number, modelSelection?: BrowserHostOptions["modelSelection"]) {
+async function fixture(t: TestContext, startupTimeoutMs?: number, modelSelection?: BrowserHostOptions["modelSelection"], sourcePreview = false) {
     const root = await mkdtemp(join(tmpdir(), "tandem-browser-host-"));
     const workspace = join(root, "workspace");
     const other = join(root, "other");
@@ -32,6 +32,7 @@ async function fixture(t: TestContext, startupTimeoutMs?: number, modelSelection
         workspace, preferencesPath: join(root, "preferences"), page: "<html>Tandem fixture</html>", scriptHash: "sha256-fixture",
         startupTimeoutMs,
         ...(modelSelection ? { modelSelection } : {}),
+        ...(sourcePreview ? { sourcePreview: true } : {}),
         backendFactory: async (options) => {
             const record: typeof backends[number] = { options, commands: [], stops: 0, failStop: false };
             backends.push(record);
@@ -84,6 +85,20 @@ test("browser host preserves explicit main model selection across workspace swit
 test("browser host leaves native model defaults untouched when no selection was supplied", async (t) => {
     const f = await fixture(t);
     assert.equal(Object.hasOwn(f.backends[0].options, "modelSelection"), false);
+    assert.equal(Object.hasOwn(f.backends[0].options, "sourcePreview"), false);
+});
+
+test("source-preview isolation remains explicit across retry and workspace changes", async (t) => {
+    const f = await fixture(t, undefined, undefined, true);
+    assert.equal(f.backends[0].options.sourcePreview, true);
+    assert.equal((await f.command({ type: "retry" })).status, 202);
+    await until(() => f.backends.length === 2);
+    assert.equal(f.backends[1].options.sourcePreview, true);
+    assert.equal((await f.command({ type: "open-workspace", workspace: f.other })).status, 202);
+    await until(() => f.backends.length === 3);
+    assert.equal(f.backends[2].options.sourcePreview, true);
+    assert.equal(f.host.snapshot().permissionMode, "ask");
+    assert.deepEqual(f.backends.flatMap(backend => backend.commands), []);
 });
 
 test("browser host API requires a launch capability, same origin and bounded JSON", async (t) => {

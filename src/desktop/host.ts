@@ -12,12 +12,14 @@ process.once("SIGTERM", () => controller.abort());
 try {
     const { values } = parseArgs({ options: {
         workspace: { type: "string" }, model: { type: "string" }, "reasoning-effort": { type: "string" },
+        "source-preview": { type: "boolean" },
     }, strict: true });
     if (!values.workspace) throw new Error("Launch Tandem with --workspace followed by a folder path.");
     await runDesktopRuntime({
         workspace: values.workspace, runtimeDirectory: dirname(fileURLToPath(import.meta.url)),
         protocol, signal: controller.signal,
         modelSelection: parseDesktopModelSelection(values.model, values["reasoning-effort"]),
+        sourcePreview: values["source-preview"],
     });
 } catch (error) {
     if (!controller.signal.aborted) {
