@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
-import { Check, ExternalLink, RefreshCw, Send } from "lucide-react";
+import { Check, ExternalLink, RefreshCw } from "lucide-react";
 import { ToggleGroup, Tooltip } from "radix-ui";
 import { awaitingVisualChoice, originalPrototypeCheckpointId, readVisualSelection, visualExplorationIsCurrent, visualPreviewUrl, visualSettingsValues,
   type VisualSelection, type VisualSettings } from "../visual-directions.js";
@@ -20,47 +20,6 @@ interface VisualAcceptance {
   explorationCheckpointId: string;
   checkpointId: string | null;
   selection: VisualSelection | null;
-}
-
-function VisualFeedback({ checkpointId, selection, name, disabled }: {
-  checkpointId: string; selection: VisualSelection; name: string; disabled: boolean;
-}) {
-  const { state, post, setReviewDirty } = useUi();
-  const action = useAction("visual-feedback");
-  const [draft, setDraft] = useDraft("visual-feedback:" + selection.directionId, { value: "", version: 0 });
-  useEffect(() => {
-    const key = `visual-feedback:${selection.directionId}`;
-    setReviewDirty?.(key, Boolean(draft.value.trim()));
-    return () => setReviewDirty?.(key, false);
-  }, [draft.value, selection.directionId, setReviewDirty]);
-  const submissions = useRef(new Map<string, string>());
-  return <form id="visual-feedback-form" className="visual-feedback inline-composer" onSubmit={event => {
-    event.preventDefault();
-    if (disabled) return;
-    const suggestion = draft.value.trim();
-    if (!suggestion || suggestion.length > 4000) { action.setError("Describe a change to this direction in up to 4,000 characters."); return; }
-    const key = JSON.stringify([checkpointId, selection, suggestion]), version = draft.version;
-    const clientRequestId = submissions.current.get(key) || crypto.randomUUID();
-    submissions.current.set(key, clientRequestId);
-    void action.run(async () => {
-      await post("/api/revision", { suggestion, baseCheckpointId: checkpointId, visualSelection: selection, clientRequestId });
-      submissions.current.delete(key);
-      setDraft(current => current.version === version ? { value: "", version: version + 1 } : current);
-    });
-  }}>
-    <label htmlFor="visual-feedback-input">Refine {name} only</label>
-    <textarea className="composer-input" id="visual-feedback-input" value={draft.value} rows={1} maxLength={4000}
-      disabled={Boolean(state.effortReset)} aria-label={`Feedback for ${name}`} aria-describedby="visual-feedback-status"
-      placeholder="Keep this layout, but simplify the toolbar..."
-      onChange={event => {
-        const value = event.currentTarget.value;
-        setDraft(current => ({ value, version: current.version + 1 }));
-      }} />
-    <button id="submit-visual-feedback" type="submit" disabled={disabled}><Send size={14} />
-      {action.busy ? "Sending..." : hasActiveJobs(state) ? "Queue refinement" : "Refine direction"}</button>
-    <p id="visual-feedback-status" className="revision-status" role="status" data-status={action.error ? "error" : "idle"}>
-      {action.error || "This updates the selected alternative, not the current prototype or the other directions."}</p>
-  </form>;
 }
 
 export function VisualExplorationPanel({ active, connected, inspecting, onInspectChange, onApply, defaultPreviewReady, renderActions }: {
@@ -131,10 +90,6 @@ export function VisualExplorationPanel({ active, connected, inspecting, onInspec
     || inspecting && (!onApply || !verified || bridge.key !== selectionKey || !bridge.ready)
     || !inspecting && (!original || !defaultPreviewReady)
     || !needsAcceptance;
-  const activeCheckpoint = state.prototypeFlow?.checkpoints.find(item => item.id === state.prototypeFlow?.activeCheckpointId);
-  const refinementBlocked = controlsBlocked || !current || unresolved.length >= 50 ||
-    Boolean(activeCheckpoint && activeCheckpoint.visual?.operation !== "refine") ||
-    Boolean(state.prototypeFlow && !awaitingVisualChoice(state.prototypeFlow) && unresolved.some(item => !item.visualSelection));
   useEffect(() => { if (inspecting) setOpened(true); }, [inspecting]);
   useEffect(() => { if (savedChoice) onInspectChange(true); }, [candidate?.id, savedChoice]);
 
@@ -316,6 +271,12 @@ export function VisualExplorationPanel({ active, connected, inspecting, onInspec
     <section className="visual-exploration" data-inspecting={inspecting} aria-labelledby="visual-exploration-title">
     <div className="visual-exploration-heading">
       <strong id="visual-exploration-title">Compare visual directions</strong>
+      <button id="choose-visual-direction" type="button" className="plan-button preview-accept-action" disabled={choiceBlocked}
+        aria-describedby="visual-choice-help" aria-busy={Boolean(acceptance)}
+        title={!inspecting ? "Accept the original prototype as Default."
+          : !onApply ? "Accept is unavailable in this view." : "Apply the previewed direction and settings."}
+        onClick={() => void accept()}><Check size={14} aria-hidden="true" />
+        {acceptance ? "Accepting..." : "Accept"}</button>
     </div>
     <div className="visual-selection-toolbar">
       <ToggleGroup.Root className="visual-direction-toggles" type="single" aria-label="Design directions"
@@ -406,16 +367,6 @@ export function VisualExplorationPanel({ active, connected, inspecting, onInspec
       hidden={!inspecting || !verified} src={verified && opened ? checkpoint.previewUrl || undefined : undefined}
       referrerPolicy="origin" sandbox="allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
       onLoad={() => setLoaded(value => value + 1)} />
-    {inspecting && <VisualFeedback key={direction.id} checkpointId={checkpoint.id} selection={selection} name={previewName}
-      disabled={refinementBlocked} />}
-    <div className="prototype-actions">
-      <button id="choose-visual-direction" type="button" className="plan-button preview-accept-action" disabled={choiceBlocked}
-        aria-describedby="visual-choice-help" aria-busy={Boolean(acceptance)}
-        title={!inspecting ? "Accept the original prototype as Default."
-          : !onApply ? "Accept is unavailable in this view." : "Apply the previewed direction and settings."}
-        onClick={() => void accept()}><Check size={14} aria-hidden="true" />
-        {acceptance ? "Accepting..." : "Accept"}</button>
-    </div>
     </section>
   </>;
 }

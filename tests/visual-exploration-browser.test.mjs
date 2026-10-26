@@ -118,6 +118,13 @@ const r=e.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,disab
     await browser.call("Input.dispatchMouseEvent", { type: "mouseReleased", button: "left", clickCount: 1, x: point.x, y: point.y });
   };
   const frameValue = expression => browser.evaluate(`(() => {const w=document.querySelector("#visual-preview-frame").contentWindow;return (${expression});})()`);
+  const controlsLayout = async () => browser.evaluate(`(() => {
+    const accept=document.querySelector("#choose-visual-direction"),panel=document.querySelector(".visual-exploration");
+    const a=accept.getBoundingClientRect(),p=panel.getBoundingClientRect(),toggles=panel.querySelector(".visual-selection-toolbar").getBoundingClientRect();
+    return {top:a.top-p.top,right:p.right-a.right,aboveDirections:a.bottom<=toggles.top,
+      inHeading:panel.querySelector(".visual-exploration-heading").contains(accept),
+      composers:document.querySelectorAll(".visual-exploration textarea, #revision-form textarea").length};
+  })()`);
   const choose = async id => {
     await click("#visual-direction-" + id);
     await browser.waitFor(`document.querySelector("#visual-preview-frame").contentDocument?.documentElement?.dataset.tandemDirection===${JSON.stringify(id)}
@@ -129,8 +136,14 @@ const r=e.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,disab
   };
   await browser.waitFor('document.querySelector("#preview-frame").contentDocument?.querySelector("#select-shape")');
   assert.equal(await browser.evaluate('document.querySelector("#compare-current-prototype").getAttribute("aria-checked")'), "true");
+  const defaultControls = await controlsLayout();
+  assert.equal(defaultControls.inHeading, true);
+  assert.equal(defaultControls.aboveDirections, true);
+  assert.equal(defaultControls.composers, 1);
   await browser.evaluate('(() => {const d=document.querySelector("#preview-frame").contentDocument;d.querySelector("#select-shape").click();d.querySelector("#shape-name").value="Original draft";})()');
   await choose("precision");
+  assert.deepEqual(await controlsLayout(), defaultControls, "Accept stays in the same header position and feedback remains a single composer.");
+  assert.equal(await browser.evaluate('document.querySelector("#revision-input").getAttribute("aria-label")'), "Feedback for Precision workspace");
   await browser.evaluate('window.originalCurrent=document.querySelector("#preview-frame");window.originalVisual=document.querySelector("#visual-preview-frame");void 0;');
   await frameValue('w.document.querySelector("#select-shape").click()');
   const beforeTabs = actions.length;
@@ -179,6 +192,18 @@ const r=e.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,disab
     const bounds = await browser.evaluate('({width:document.documentElement.clientWidth,scroll:document.documentElement.scrollWidth,panel:document.querySelector(".visual-exploration").getBoundingClientRect().width})');
     assert.ok(bounds.scroll <= bounds.width + 1, "Visual controls must not overflow horizontally: " + JSON.stringify(bounds));
     assert.ok(bounds.panel > 240);
+    const customControls = await controlsLayout();
+    assert.equal(customControls.inHeading, true);
+    assert.equal(customControls.aboveDirections, true);
+    assert.equal(customControls.composers, 1);
+    assert.equal(await browser.evaluate('document.querySelector("#revision-input").getAttribute("aria-label")'), "Feedback for Custom");
+    await click("#compare-current-prototype");
+    await browser.waitFor('!document.querySelector("#preview-frame").hidden');
+    assert.deepEqual(await controlsLayout(), customControls, `Accept must not move between Default and alternatives at ${width}px.`);
+    assert.equal(await browser.evaluate('document.querySelector("#revision-input").getAttribute("aria-label")'), "Prototype revision suggestion");
+    await click("#visual-custom-direction");
+    await browser.waitFor('!document.querySelector("#visual-preview-frame").hidden && !document.querySelector("#choose-visual-direction").disabled');
+    assert.deepEqual(await controlsLayout(), customControls);
     const contrast = await frameValue('({background:w.getComputedStyle(w.document.body).backgroundColor,foreground:w.getComputedStyle(w.document.body).color})');
     const luminance = color => color.match(/[\d.]+/g).slice(0, 3).map(Number).map(c => c / 255)
       .map(c => c <= .04045 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4).reduce((sum, c, index) => sum + c * [.2126, .7152, .0722][index], 0);

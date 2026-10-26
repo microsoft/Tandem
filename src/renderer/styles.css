@@ -1160,7 +1160,13 @@ h1 {
 }
 .visual-exploration[data-inspecting="true"] { flex: 1 0 auto; }
 .visual-exploration p { margin: 0; font-size: var(--text-body-small, 12px); }
-.visual-exploration-heading, .visual-selection-toolbar, .visual-exploration-tools {
+.visual-exploration-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.visual-selection-toolbar, .visual-exploration-tools {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -1211,15 +1217,10 @@ h1 {
 .visual-settings label { display: grid; gap: 4px; }
 .visual-settings select { width: 100%; min-width: 0; padding: var(--studio-control-padding); border: 1px solid var(--studio-border); border-radius: 5px; background: var(--studio-surface); }
 #visual-preview-frame { width: 100%; min-height: 340px; flex: 1 0 340px; border: 1px solid var(--studio-border); background: var(--studio-surface); }
-.visual-feedback { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
-.visual-feedback > label, .visual-feedback > p { grid-column: 1 / -1; }
-.visual-feedback > button { align-self: end; }
 @container output (max-width: 680px) {
   .visual-settings { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .visual-exploration dl { grid-template-columns: 1fr; }
   .visual-exploration dd { margin-bottom: 6px; }
-  .visual-feedback { grid-template-columns: 1fr; }
-  .visual-feedback > button { justify-self: end; }
 }
 
 .prototype-progress p { margin: 8px 0; }
@@ -3638,7 +3639,7 @@ textarea {
 .stage-primary-actions:empty { display: none; }
 .phase-actions .complete-stage { width: auto; max-width: 100%; margin: 0; gap: 6px; min-height: var(--studio-control-height); height: auto; padding: var(--studio-control-padding); }
 .prototype-preview-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--studio-control-gap); margin-left: auto; }
-.preview-accept-action { order: -1; margin: 0; }
+.preview-accept-action { flex: none; margin: 0; }
 .preview-recovery-action { display: inline-flex; flex: none; align-items: center; justify-content: center; width: var(--studio-control-height); height: var(--studio-control-height); margin: 0; padding: 0; }
 .preview-recovery-action[data-error="true"] { color: var(--studio-danger); border-color: var(--studio-danger); }
 .preview-recovery-action[data-error="true"]:not(:disabled):hover { color: var(--studio-danger); border-color: var(--studio-danger); background: color-mix(in srgb, var(--studio-danger) 10%, var(--studio-surface)); }
