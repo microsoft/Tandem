@@ -75,7 +75,8 @@ Storybook imports the same theme and component stylesheet directly.
 | `DialogParts`, `AlertDialog` | Styled composable Radix families for existing complex dialogs and consequential confirmations. Keep their original dismissal, initial focus and focus-return rules. |
 | `NativeDialog` | Shared appearance on a native `dialog`, with a forwarded `HTMLDialogElement` ref. The caller still owns `showModal`, `close`, cancellation and recovery. |
 | `Disclosure` | Native `details`/`summary` behavior, forwarded ref and shared summary typography/focus. Keep the existing `open` and `onToggle` contracts; Radix collapsibles compose their trigger with a shared `Button` through `asChild`. |
-| `Tabs`, `ToggleGroup`, `RadioGroup`, `Tooltip` | Styled Radix families preserving native Radix keyboard and controlled-state behavior. Radio items support circular controls or `presentation="choice"` cards; icon toggles declare `iconOnly`. |
+| `Tabs` | Styled Radix family, including `List` and `Trigger`. Use `Tabs.Bar` around substage lists for the shared flat surface, bottom divider and action spacing. Put preview actions beside the list, not inside its keyboard navigation. Selection indicators, focus and horizontal overflow belong to the shared stylesheet. |
+| `ToggleGroup`, `RadioGroup`, `Tooltip` | Styled Radix families preserving native Radix keyboard and controlled-state behavior. Radio items support circular controls or `presentation="choice"` cards; icon toggles declare `iconOnly`. |
 | `Status` | Meaningful text plus a decorative semantic icon. `busy` adds a reduced-motion-aware spinner. No live region by default; explicitly use `role="status"` for updates or `role="alert"` for urgent errors. |
 
 ```tsx
@@ -139,10 +140,30 @@ When adding or migrating a control:
 component regression coverage and, when the existing Edge fixture is available,
 rendered contrast, keyboard focus, portal themes, reduced motion and touch sizes.
 `tests\ui-consistency.test.ts` enforces shared-control adoption and compares
-computed control styles across React, browser and native Development in both
-themes and at wide/narrow widths. Browser fixtures must bundle CSS imports using
+computed control styles across React, browser, Storybook and native Development
+in both themes and at wide/narrow widths. Browser fixtures must bundle CSS imports using
 the existing esbuild setup, rather than stripping imports or concatenating only
 one stylesheet.
+The navigation checks also compare real Requirements and Prototype panels,
+including their surrounding bars, spacing and preview actions. Catalogue/feature
+comparisons include active, inactive and disabled tabs and their pseudo-elements,
+so a legacy underline or a locally styled container cannot pass just because the
+buttons use the shared component.
+
+For a focused consistency audit, run:
+
+```powershell
+node --import tsx --test tests\ui-consistency.test.ts
+```
+
+When a mismatch appears, identify the equivalent component/state, inspect its
+container and `::before`/`::after` styles as well as the control, then move the
+common appearance into the shared family and add the affected production surface
+to the comparison. Keep genuine layout differences, such as the project sidebar,
+explicit in `tandem-layout`; do not flatten them into horizontal sub-tabs. The
+**Substage navigation** story covers completion, building, failure, locked items
+and long labels. These checks use synthetic local fixtures, not live project work.
+
 Use `npm run build` and `npm run build:storybook` to verify the independent
 production and catalogue builds.
 

@@ -140,7 +140,7 @@ test("progressive Prototype reports honest milestones and keeps its iframe while
     assert.equal(hidden(h, "prototype-progress"), false);
     assert.equal(text(h, "prototype-milestones"), "1Prototype2Visual exploration");
     assert.equal(h.get("prototype-prototype-tab").querySelector(".substage-status")!.getAttribute("aria-label"), "Building");
-    assert.ok(h.get("prototype-prototype-tab").querySelector(".substage-status .spin"));
+    assert.ok(h.get("prototype-prototype-tab").querySelector(".substage-status .tandem-spin"));
     assert.match(text(h, "preview-empty-message"), /first checkpoint/);
     assert.equal(frame(h).hidden, true);
     assert.equal(disabled(h, "revision-input"), false);

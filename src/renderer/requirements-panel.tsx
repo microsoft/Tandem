@@ -480,6 +480,7 @@ export function RequirementsPanel() {
     return <Tabs.Root className="requirements-workspace" value={viewedSubstage} onValueChange={(value) => {
         if (value === "usage" || value === "dag") setSubstageTab(value);
     }}>
+        <Tabs.Bar>
         <Tabs.List className="preview-tabs requirements-substages" aria-label="Requirements substages">
             <Tabs.Trigger id="usage-substage" value="usage" className="preview-tab requirements-substage substage-tab"
                 aria-label={`Usage list, ${usageStatusLabel}`}
@@ -494,6 +495,7 @@ export function RequirementsPanel() {
                 <SubstageStatusIcon status={dagStatus} label={dagStatusLabel} />
             </Tabs.Trigger>
         </Tabs.List>
+        </Tabs.Bar>
         <Tabs.Content id="requirements-usage-panel" value="usage" forceMount hidden={viewedSubstage !== "usage"}
             className="requirements-usage-panel" aria-labelledby="usage-substage">
         <section id="requirements-substage-section" className="section requirements-intake-panel" aria-label="Requirements" aria-describedby="usage-message" data-substage={isUsage ? "usage" : "dag"}>
@@ -593,8 +595,9 @@ export function RequirementsPanel() {
                             + (nodes.some((node) => node.status === "toAnswer") ? ` · ${nodes.filter((node) => node.status === "toAnswer").length} to answer` : "")
                         : "Waiting for the active decision..."}</p>
                 </div>
-                <span id="design-tree-phase" className="design-tree-phase">{state.lifecycle.completedStages.includes("requirements")
-                  ? "Saved requirements" : state.requirements.substage === "usage" ? "Collecting usages" : "Requirements decisions"}</span>
+                {!state.lifecycle.completedStages.includes("requirements") && <span id="design-tree-phase" className="design-tree-phase">
+                    {state.requirements.substage === "usage" ? "Collecting usages" : "Requirements decisions"}
+                </span>}
             </div>
             <div className="design-tree-body">
                 {nodes.length > 0 && <div className="design-tree-host">

@@ -119,12 +119,45 @@ textarea.tandem-input, :where(.human-app) textarea { min-height: var(--studio-co
 .tandem-native-dialog:not([open]), :where(.human-app) dialog:not([open]) { display: none; }
 .tandem-native-dialog::backdrop, :where(.human-app) dialog::backdrop { background: var(--studio-overlay); }
 
+.tandem-tab-bar {
+  display: flex; align-items: center; flex-wrap: wrap; flex: none;
+  gap: var(--studio-space-1) var(--studio-space-3);
+  box-sizing: border-box; width: 100%; min-width: 0; min-height: var(--studio-tab-height);
+  margin: 0; padding: 0; border: 0; border-bottom: 1px solid var(--studio-border);
+  border-radius: 0; background: var(--studio-surface);
+}
+.tandem-tab-list {
+  display: flex; align-self: stretch; flex: 1 1 auto; gap: var(--studio-space-1);
+  min-width: 0; margin: 0; padding: 0;
+  overflow-x: auto; scrollbar-width: thin; scroll-padding-inline: var(--studio-space-2);
+}
+.tandem-tab-list[data-orientation="vertical"] { flex-direction: column; align-items: stretch; }
+.tandem-tab-bar > .tandem-tab-list { flex-basis: 240px; }
+.tandem-tab-bar > :not(.tandem-tab-list) { flex: 0 1 auto; min-width: 0; max-width: 100%; margin-inline-start: auto; }
 .tandem-tab, .tandem-toggle {
   display: inline-flex; align-items: center; justify-content: center; gap: var(--studio-control-gap);
   box-sizing: border-box; min-height: var(--studio-tab-height); max-width: 100%;
+  margin: 0;
   padding: var(--studio-control-padding); border: 1px solid transparent; border-radius: var(--studio-radius-control);
   background: transparent; color: var(--studio-muted); font: inherit; line-height: var(--studio-control-line-height); cursor: pointer;
 }
+.tandem-tab { position: relative; flex: none; max-width: none; white-space: nowrap; }
+.tandem-tab::after {
+  position: absolute; inset-inline: var(--studio-space-2); bottom: 0; height: 2px;
+  border-radius: 2px 2px 0 0; background: transparent; content: ""; pointer-events: none;
+}
+.tandem-tab[data-state="active"]::after { background: var(--studio-focus); }
+.substage-index {
+  display: grid; place-items: center; flex: none; box-sizing: border-box;
+  width: var(--studio-control-line-height); height: var(--studio-control-line-height);
+  border: 1px solid currentColor; border-radius: 50%; font-size: calc(var(--studio-text-small) - 1px);
+}
+.substage-tab[data-status="failed"] .substage-index { color: var(--studio-danger); }
+.substage-status { display: inline-flex; flex: none; color: var(--studio-muted); }
+.substage-status[data-status="ready"] { color: var(--studio-success); }
+.substage-status:is([data-status="active"], [data-status="running"], [data-status="inspect"]) { color: var(--studio-accent-strong); }
+.substage-status:is([data-status="attention"], [data-status="partial"]) { color: var(--studio-warning); }
+.substage-status[data-status="failed"] { color: var(--studio-danger); }
 .tandem-toggle { min-height: var(--studio-control-height); border-color: var(--studio-border); color: var(--studio-text); }
 .tandem-tab:hover:not(:disabled), .tandem-toggle:hover:not(:disabled) { background: var(--studio-panel); color: var(--studio-text); }
 .tandem-tab[data-state="active"], .tandem-toggle[data-state="on"] {
@@ -169,13 +202,16 @@ textarea.tandem-input, :where(.human-app) textarea { min-height: var(--studio-co
   outline: var(--studio-focus-width) solid var(--studio-focus);
   outline-offset: var(--studio-focus-offset);
 }
-.tandem-button[hidden], .tandem-field[hidden], .tandem-status[hidden], .tandem-tab[hidden], .tandem-toggle[hidden], .tandem-disclosure[hidden] { display: none; }
+.tandem-tab:focus-visible { outline-offset: calc(-1 * var(--studio-focus-width) - 1px); }
+.tandem-button[hidden], .tandem-field[hidden], .tandem-status[hidden], .tandem-tab[hidden], .tandem-tab-bar[hidden],
+.tandem-tab-list[hidden], .tandem-toggle[hidden], .tandem-disclosure[hidden] { display: none; }
 .tandem-spin { animation: tandem-spin 1.2s linear infinite; }
 @keyframes tandem-spin { to { transform: rotate(360deg); } }
 @media (pointer: coarse) {
   .tandem-button, :where(.human-app) button { --tandem-button-height: var(--studio-touch-target); min-width: var(--studio-touch-target); }
   .tandem-button[data-size] { --tandem-button-height: var(--studio-touch-target); }
   .tandem-input, .tandem-tab, .tandem-toggle, :where(.human-app) :is(input, textarea, select) { min-height: var(--studio-touch-target); }
+  .tandem-tab { min-width: var(--studio-touch-target); }
   .tandem-radio[data-presentation="choice"] { min-height: var(--studio-touch-target); }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -184,6 +220,7 @@ textarea.tandem-input, :where(.human-app) textarea { min-height: var(--studio-co
 }
 @media (forced-colors: active) {
   .tandem-button, .tandem-input, .tandem-tab, .tandem-toggle, .tandem-radio, :where(.human-app) :is(button, input, textarea, select) { border-color: ButtonText; }
+  .tandem-tab[data-state="active"]::after { background: Highlight; }
   .tandem-button:disabled, .tandem-input:disabled { border-color: GrayText; color: GrayText; }
   .tandem-button:focus-visible, .tandem-input:focus-visible { outline-color: Highlight; }
   .tandem-input[aria-invalid="true"] { outline: 1px dashed CanvasText; }
