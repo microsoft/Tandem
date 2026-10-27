@@ -778,6 +778,7 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
             await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape" });
             await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape" });
             await browser.waitFor('!document.querySelector("#tandem-application").contentDocument.querySelector(".diagram-source-dialog")');
+            await browser.waitFor('document.querySelector("#tandem-application").contentDocument.activeElement.id === "design-tree-host-source-trigger"');
             assert.equal(await browser.evaluate('document.querySelector("#tandem-application").contentDocument.activeElement.id'), "design-tree-host-source-trigger");
             if (width >= 1000) {
                 const historyScroll = await browser.evaluate(`(() => {
@@ -988,6 +989,7 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
                     trigger.focus();
                 })()`);
                 await browser.waitFor(`(document.querySelector("#tandem-application")?.contentDocument ?? document).querySelector("#${tab}-workspace-tab")?.getAttribute("aria-selected") === "true"`);
+                await browser.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
                 const layout = await browser.evaluate(`(() => {
                     const inner = document.querySelector("#tandem-application")?.contentDocument ?? document;
                     const header = inner.querySelector(".previewbar"), actions = inner.querySelector("#stage-workflow-actions");
@@ -1016,7 +1018,7 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
                 assert.ok(layout.actions.top >= layout.header.top - 1 && layout.actions.bottom <= layout.header.bottom + 1,
                     "Stage controls remain inside the tab bar, not in a bottom strip.");
                 assert.ok(layout.selected.left >= layout.tabs.left - 1 && layout.selected.right <= layout.tabs.right + 1,
-                    "The focused stage tab stays visible in the horizontal scroller.");
+                    `The focused stage tab stays visible in the horizontal scroller: ${JSON.stringify(layout)}`);
                 assert.ok(layout.panel.top >= layout.header.bottom - 1, "Content begins below the shared header.");
                 for (const control of layout.controls) {
                     assert.ok(control.left >= layout.actions.left - 1 && control.right <= layout.actions.right + 1);

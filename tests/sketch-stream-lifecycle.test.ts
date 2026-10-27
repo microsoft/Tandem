@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { extensionHarness } from "./helpers/extension-harness.js";
+import { eventReader } from "./helpers/state-events.js";
 import { sketchDocument, screenPng } from "./helpers/sketch-lifecycle-fixture.js";
 import type { SketchWorkerEvent } from "../src/sketch-stream-worker.js";
 import { SketchStore } from "../src/sketch-store.js";
@@ -114,30 +115,6 @@ async function setup(legacyEvents = false, document = sketchDocument()) {
     };
     return { h, before, url: opened.url, start, delta, operation, nextWorker,
         get output() { return worker(activeWorker).output; }, listeners, prompts };
-}
-
-async function eventReader(url: string, signal: AbortSignal) {
-    const response = await fetch(new URL("events", url), { signal });
-    assert.equal(response.status, 200);
-    const reader = response.body!.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    return async (matches: (value: any) => boolean) => {
-        for (;;) {
-            const boundary = buffer.indexOf("\n\n");
-            if (boundary >= 0) {
-                const frame = buffer.slice(0, boundary);
-                buffer = buffer.slice(boundary + 2);
-                if (!frame.startsWith("data: ")) continue;
-                const value = JSON.parse(frame.slice(6));
-                if (matches(value)) return value;
-                continue;
-            }
-            const result = await reader.read();
-            if (result.done) throw new Error("Design event stream closed before the expected update.");
-            buffer += decoder.decode(result.value, { stream: true });
-        }
-    };
 }
 
 for (const legacyEvents of [false, true]) test(`a sketch factory streams intermediate SSE previews with ${legacyEvents ? "legacy" : "current"} runtime events`, { timeout: 15_000 }, async () => {

@@ -302,6 +302,10 @@ function Workspace(props: WorkspaceProps) {
   const atStart = isGoalEntry(state);
   const developmentView = activeTab === "development";
   const showStageTabs = !atStart && !developmentView && activeTab !== "content";
+  useLayoutEffect(() => {
+    const selected = document.querySelector<HTMLElement>('#stage-workspace-tabs [aria-selected="true"]');
+    if (selected === document.activeElement) selected?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [activeTab, showStageTabs]);
   const contextHelp = useStatusHelp(`${activeTab}:${contextOpen}:${contextCollapsed}:${atStart}:${projectView.entry.ready}`);
   const previousAtStart = useRef(atStart);
   useEffect(() => { if (state.effortReset) onTabChange("preparation"); }, [state.effortReset?.requestId]);

@@ -48,7 +48,12 @@ jobs:
         with:
           node-version: "24"
           cache: npm
-      - run: npm ci && npm run check && npm test
+      - run: npm ci && npm --prefix development/tandem ci && npm run check && npm test
+      - name: Verify the extracted extension ZIP
+        run: npm run pack && node --import tsx --test tests/payload.test.ts
+        env:
+          TANDEM_PACKAGED_ZIP: dist/tandem-extension.zip
+          TANDEM_PACKAGED_EXTENSION: .github/extensions/tandem/extension.mjs
       - name: Validate fixture inventory without model calls
         run: npm run eval
 
@@ -73,10 +78,8 @@ jobs:
           node-version: "24"
           cache: npm
       - run: npm ci
-      # Matches the released CLI installed with this repository's SDK 1.0.11.
-      # The SDK also resolves its locked bundled CLI; no developer dependency is added.
-      - name: Provision Copilot CLI
-        run: npm install --global @github/copilot@1.0.80
+      # npm ci restores the SDK and its bundled CLI from package-lock.json.
+      # The SDK resolves that local runtime; do not install a drifting global CLI.
       - name: Run live probes with an observed-usage soft budget
         shell: bash
         env:

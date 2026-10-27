@@ -1,4 +1,4 @@
-# Tandem Stage 2 instructions
+# Tandem Development instructions
 
 These instructions apply within `development/`. All paths below are relative to this
 directory, which retains the original source layout. The approved Node integration
@@ -14,8 +14,8 @@ the nested discovery shim or overwrite a user installation without authorization
 - `.github/extensions/tandem/extension.mjs` is the required project discovery shim, pointing to `tandem/src/extension.mjs`. The extension and canvas ID are `tandem`. The active implementation is the `human-loop-*` family under `tandem/src` and its renderer under `tandem/public`.
 - The old standalone web host, renderer, and inactive Canvas application are retired. Reused TypeScript modules live under `tandem/runtime-src`, skills under `tandem/skills`, and TypeScript tests under `tandem/test/shared`. Do not restore a second application workspace, standalone `npm start` path, or retired-host parity oracle.
 - Before removing more legacy code, trace both direct and transitive imports, dynamic file paths, packaging inputs, and tests. A historical directory name does not make its shared modules unused.
-- Historical teleos prototypes were deliberately not transferred. Their phase models and compatibility contracts do not constrain Tandem Stage 2.
-- `docs/` contains the selected design documents, overview slides and image without nested folders. Check the active extension and tests before treating a note as shipped behavior.
+- Historical teleos prototypes were deliberately not transferred. Their phase models and compatibility contracts do not constrain Tandem Development.
+- `docs/` contains maintained contributor references for prompts and artifact formats. Internal discussion decks and integration progress logs are not public guides.
 
 ## Build, package, and test
 
@@ -53,7 +53,7 @@ Passing unit tests, syntax checks, or packaging does not establish native/UI qua
 
 - `tandem/src/extension.mjs` registers the standalone extension. The exported `human-loop-controller.mjs` also composes the original installation/runtime/transport/provider into the Node host without importing that entrypoint for side effects. Only one public Tandem registration is active.
 - The composed upstream mutation/request-admission fence is not a role-completion gate. Acquire it before the local admission queue; never hold one queue while waiting behind a request that needs the other.
-- Preserve immutable host handoff provenance through the optional context provider. Read supplied source as evidence, not executable setup or implementation authorization. Do not copy Stage 2 role prompts into root.
+- Preserve immutable host handoff provenance through the optional context provider. Read supplied source as evidence, not executable setup or implementation authorization. Do not copy Development role prompts into root.
 - The owning Copilot session and Tandem's private native workflow session have distinct responsibilities. Opening Tandem creates its owned session but sends no project request until the user submits one.
 - Main-session chat is not a Tandem request. Only explicit Tandem submission enters its request queue. Do not reintroduce a blanket main-chat question veto or a hidden chat-to-Router bridge.
 - Controlled work requires the private session's real Interactive mode and readiness. Verify installed SDK capabilities rather than guessing APIs or using per-message metadata as a mode switch. Never change the user's mode.

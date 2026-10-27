@@ -1831,7 +1831,7 @@ test("prepare-replan keeps old plan reference buttons bound to DesignA while pau
   })()`);
   assert.match(await browser.evaluate("document.querySelector('#notice').textContent"), /another retained Design revision/);
   assert.equal(await browser.evaluate("document.querySelector('.artifact-element-details').hidden"), true);
-  assert.equal(await browser.evaluate("document.querySelector('#current-state-title').textContent"), "Waiting for your answers");
+  assert.equal(await browser.evaluate("document.querySelector('#current-state-title').textContent"), "Questions need your answer");
   await browser.evaluate("document.querySelector('.human-loop-questions fieldset [data-design-reference=\"interaction#deliver\"]').click()");
   assert.match(await browser.evaluate("document.querySelector('.artifact-element-details').textContent"), /DesignB keeps this ID/);
   assert.deepEqual((await f.runtime.currentDesign()).binding, designB);

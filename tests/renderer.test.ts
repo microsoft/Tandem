@@ -18,7 +18,9 @@ test("responsive layout and graph keyboard focus have explicit accessible styles
     assert.match(css, /\.preview-tabs\s*\{[^}]*overflow-x: auto/);
     assert.match(css, /\.preview\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
     assert.match(css, /\.prototype-view \.frame-wrap\s*\{[^}]*grid-template-rows:\s*minmax\(220px, 1fr\) auto/);
-    assert.match(css, /form:focus-within textarea\.composer-input/);
+    const layout = await readFile(new URL("../src/renderer/ui/layout.css", import.meta.url), "utf8");
+    assert.match(layout, /form:not\(\.feedback-composer\):focus-within textarea\.tandem-input\.composer-input/);
+    assert.match(layout, /form\.feedback-composer > textarea\.tandem-input\.composer-input:focus/);
     assert.doesNotMatch(css, /animation:\s*next-action/);
     assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.processing-indicator/);
 });
@@ -66,7 +68,8 @@ test("compact density is shared by all stage headers, panels, controls, and comp
     assert.match(rules("form textarea.composer-input"), /height:\s*var\(--studio-composer-height\)/);
     assert.match(rules("#question-host:focus-within textarea.composer-input"), /var\(--studio-composer-expanded-height\)/);
     assert.match(rules(".start-form textarea.composer-input"), /min-height:\s*112px/);
-    assert.match(rules("form.sketch-composer > #sketch-instruction"), /min-height:\s*var\(--studio-composer-height\)/);
+    const layout = await readFile(new URL("../src/renderer/ui/layout.css", import.meta.url), "utf8");
+    assert.match(layout, /\.tandem-input\.composer-input\s*\{[^}]*min-height:\s*var\(--studio-composer-height\)/);
     assert.match(rules(".artifact-content"), /line-height:\s*1\.55/);
     assert.match(rules(".requirements"), /padding-inline-end:\s*4px/);
     assert.match(rules(".requirements"), /scrollbar-width:\s*thin/);

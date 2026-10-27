@@ -103,7 +103,7 @@ test("ready checkpoints retain their own validated server start instructions for
                 return { status: "completed", runId: `start-instructions-${fixture.requests.length}`, result: {
                     summary: "Saved mock preview", focus: "Inspect the primary action.",
                     previewUrl: `http://127.0.0.1:${port}/`, question: null, artifactChanges: { upsert: [], remove: [] }, evidence: [],
-                    previewStart: { entrypoint: "app\\server.mjs", workingDirectory: "app", args: ["--port", port] },
+                    previewStart: { entrypoint: join("app", "server.mjs"), workingDirectory: "app", args: ["--port", port] },
                 } };
             },
         } } });

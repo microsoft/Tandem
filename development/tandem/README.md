@@ -8,7 +8,7 @@ it imports `src\extension.mjs`. The renderer entry is `public\human-loop.html`.
 The standalone server/UI under `apps/living-canvas` and the inactive Canvas
 migration application have been removed, including their alternate Router,
 coordinators, private SDK adapter, frontend and smoke driver. Current shared contracts, storage and permissions now live in `runtime-src`,
-with authoring/review guidance in `skills`. All maintained product code, scripts
+with Design authoring guidance in `skills`. All maintained product code, scripts
 and tests use this single workspace, manifest and lockfile.
 
 ## Current lifecycle

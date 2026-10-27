@@ -358,8 +358,8 @@
     },
     {
       "path": "public/ui-native.css",
-      "bytes": 7273,
-      "sha256": "124dab2ab73b97c54cb8fb3538e135bcf750c291cdc6f6f87d9108441f4e5633"
+      "bytes": 7419,
+      "sha256": "a4274cdd55b96dfe46ac0c809de3f439adb0415f7e65e9eacbdb2c5a481c29af"
     },
     {
       "path": "public/ui-system.css",
@@ -562,34 +562,9 @@
       "sha256": "688535a0a0118cd57989e1c32fd7e0c476212bc16f72383279b487eeae3f45ff"
     },
     {
-      "path": "skills/design-impact-classifier/SKILL.md",
-      "bytes": 4553,
-      "sha256": "784168b8497cd94d7784f493d11cf8d94c1efb554883fab5151d0a318dfa701e"
-    },
-    {
       "path": "skills/gui-designer/SKILL.md",
       "bytes": 1873,
       "sha256": "f4eb6a05b39fcba62e3aa540ae757df79dad2842975d7e6b9ff5222881bdff89"
-    },
-    {
-      "path": "skills/implementation-gap-reviewer/SKILL.md",
-      "bytes": 3967,
-      "sha256": "b486355d4ac745b1b7b522b7ba17190f023abb6f26a9f55b28fbc726c38c31a3"
-    },
-    {
-      "path": "skills/implementation-index-maintainer/SKILL.md",
-      "bytes": 2924,
-      "sha256": "eb556599405a0053a9d85123f748678db41e01a2b3dde9621227538b25bc503a"
-    },
-    {
-      "path": "skills/implementation-lifecycle-reconciler/SKILL.md",
-      "bytes": 2718,
-      "sha256": "dcbee59ee921df65e03a3d0e743b49f1aef08f3cf08dc598998ad361a0c60ce6"
-    },
-    {
-      "path": "skills/implementation-reviewer/SKILL.md",
-      "bytes": 4617,
-      "sha256": "8889b0abfbd462b7a55644f25bc6ea520ef22c4a6797c7c5e0a8b969e68882a7"
     },
     {
       "path": "skills/module-designer/SKILL.md",

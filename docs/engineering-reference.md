@@ -28,7 +28,7 @@ All source paths and command working directories below are relative to the
 Tandem can open **Development directly** for a new or existing Git project.
 Optional Stage 1 collects Q&A, confirmed intent and prototype evidence through
 **Preparation -> Requirements -> Designs -> Prototype**. It does not own formal
-Design. Stage 2 Development owns canonical Design, confirmed implementation and
+Design. Development owns canonical Design, confirmed implementation and
 Review, using its original Design/Conversation UI and native role workflow.
 The former Design, Plan, Implement and Test stage engine is retired.
 
@@ -36,7 +36,7 @@ The former Design, Plan, Implement and Test stage engine is retired.
 
 Use the [source quick start](quick-start.md#1-launch-the-source-preview) for
 prerequisites and launch commands. Windows and PowerShell are the currently
-qualified Stage 2 environment. Other platforms are not qualified merely because
+qualified Development environment. Other platforms are not qualified merely because
 the outer browser launcher supports them. The browser launcher needs neither
 .NET nor a running Copilot desktop app.
 
@@ -70,7 +70,7 @@ in Project settings' advanced diagnostics. Its explanation warns that this
 session's extension connections restart and unsent form text may be lost;
 Tandem's saved data/history are not reset or archived. It does not refresh the
 page or app preview or download updates. The composed Settings
-surface delegates this existing action to its owning root; standalone Stage 2
+surface delegates this existing action to its owning root; standalone Development
 does not acquire a root maintenance action.
 Reload failures remain visible in the root status bar and hosted error banners
 after Settings closes. An interrupted Preparation restart may use supported
@@ -114,7 +114,7 @@ npm run pack:browser
 npx --yes --package ".\dist\tandem-standalone-<version>.tgz" tandem --workspace C:\projects\my-app
 ```
 
-The tarball contains the host, composed extension, complete Stage 2 module tree,
+The tarball contains the host, composed extension, complete Development module tree,
 `runtime-src`, original renderer, offline vendors/licenses, skills and hash
 manifests. Keep the entire package together. Session staging checks all manifest
 entries; an asset-only change invalidates the cache.
@@ -436,7 +436,7 @@ Use **Project effort** inside **Project settings** for one explicit reasoning-ef
 choice across both stages. Models remain independently selected. Root
 `MainSessionEffort` owns Stage 1 validation, SDK application/readback and
 `.tandem\desktop\reasoning-effort.json`; Development's controller/runtime and
-preferences own the equivalent Stage 2 implementation. Integration passes only
+preferences own the equivalent Development implementation. Integration passes only
 the selected value through their explicit interfaces, not shared effort logic
 or access to the other stage's preference files.
 Saving a choice before Development opens retains intent without creating a
@@ -447,7 +447,7 @@ changes are rejected. A partial application is visible and is not rolled back
 silently or retried automatically. Saved explicit choices survive ordinary
 reopen; unresolved private model intent must still be reconciled, and workflow
 history is never replaced. With no shared choice, existing defaults are unchanged.
-Standalone Stage 2 retains its own editable effort selector and needs no Stage 1.
+Standalone Development retains its own editable effort selector and needs no discovery stage.
 
 The native host also retires a pending tool-consent card when its exact native
 worker is cancelled or its native permission request has already completed.
@@ -479,15 +479,15 @@ preview does not invalidate a retained, source-bound checkpoint.
 
 **Finish Prototype and save outputs** (or **Finish Requirements and save
 outputs** for a non-GUI project) saves Stage 1 evidence without opening a private
-Stage 2 session or submitting a Design request. Completion keeps the current
+Development session or submitting a Design request. Completion keeps the current
 upstream view; reopening completed Stage 1 without a handoff shows its saved
 artifacts. You may shut down at this point.
 
 Later, open Development explicitly and reference the saved Q&A, snapshot,
 approved designs or prototype source files in a normal message. Stage 1's
 connection need not survive: these files are input/evidence, not permission to
-adopt a previous Stage 2 run, its canonical Design or session authority. Existing
-used Stage 2 work still requires its original owner and same-ID recovery; this
+adopt a previous Development run, its canonical Design or session authority. Existing
+used Development work still requires its original owner and same-ID recovery; this
 does not bypass the desktop workspace's main-session ownership rules.
 
 Alternatively, **Continue to Development** opens a read-only handoff review.
@@ -504,7 +504,7 @@ browser/runtime caches, credential-like files and unrelated operational state
 are excluded. Missing, changed or aliased input fails explicitly.
 
 Stage 1's shared state root and the actual target worktree are recorded
-separately. Stage 2 implements in the real target workspace, not in the shared
+separately. Development implements in the real target workspace, not in the shared
 snapshot directory. Original inputs are preserved.
 
 For that optional strict route, one exact request ID, timestamp and message are persisted **before** admission.
@@ -516,7 +516,7 @@ an exact source identity must be revisited before continuation.
 
 The ordinary request goes through `HumanLoopRuntime.send`, Router and Designer.
 Designer reads the supplied documents/source without running prototype scripts,
-then publishes through the existing Stage 2 design tools. A later handoff refines
+then publishes through the existing Development design tools. A later handoff refines
 the current canonical Design rather than replacing the project.
 
 **Design publication returns control to the user.** Implementation needs a
@@ -629,13 +629,13 @@ overview. Sidebar progress shows one action/state and latest public update;
 worker details and freshness diagnostics expand under Details. Permission
 requests, errors and unknown outcomes remain prominent. Successful Prototype
 completion directs to Development; closing and returning later is optional.
-Before Development, root-owned saved-evidence history needs no Stage2 renderer or
+Before Development, root-owned saved-evidence history needs no Development renderer or
 private session. Project settings keeps the shared effort control usable there.
 After Development begins, its complete renderer owns its document, controls and isolated
 loopback origin. One iframe stays mounted hidden across earlier-phase navigation; selecting Development
 expands its existing Design pane alongside its existing conversation. This also
 keeps annotations and unsent attachments with their original composer, rather
-than creating a second editor. Standalone Stage 2 retains its full shell.
+than creating a second editor. Standalone Development retains its full shell.
 
 Embedded Development uses the framework's shared color and control tokens.
 Saved appearance settings apply to the whole project surface. Development uses
@@ -653,7 +653,7 @@ remain distinct, with longer output-status badges on a second line.
 Development conversation is visible **only on Development**. Earlier phases use
 their original inputs and root-owned Discovery history; the private renderer stays
 mounted but hidden so its draft and attachments survive navigation. Private
-conversation contains only Stage2's own messages and attributable events, not
+conversation contains only Development's own messages and attributable events, not
 foreground/main chat or copied Discovery evidence. Previously stored parent
 copies are excluded from display without deleting the original journal.
 Unverified private history is labelled unavailable, never replaced by parent
@@ -821,7 +821,7 @@ saved state before submitting again.
 The original artifact views, questions, conversation/history, keyboard resizing,
 annotation snapshots, pasted images, quick requests, implementation confirmation,
 model/appearance settings, compaction, permissions, process controls, Stop after
-this step, Stop now and Close remain Stage 2 controls. Closing a view is not the
+this step, Stop now and Close remain Development controls. Closing a view is not the
 same as closing its native runtime.
 
 ## State, migration and recovery
@@ -844,14 +844,14 @@ the user can add it manually.
 
 - Shared upstream efforts and snapshots: `.tandem\efforts\<effortId>`.
 - Archived upstream resets: `.tandem\effort-history\<effortId>\<archiveId>`.
-- Project-bound Stage 2 installation, WAL, canonical Design and ledger:
+- Project-bound Development installation, WAL, canonical Design and ledger:
   `.tandem\living-canvas`.
 - Immutable admitted source handoffs: `.tandem\living-canvas\handoffs`.
 - Node/Windows main-session identity and workspace lock: `.tandem\desktop`.
 
 Lifecycle version 3 has five active stages and a separate historical-stage
 parser. Old snapshots, artifacts, acceptances, receipts, code and original
-identities remain read-only evidence; they do not become Stage 2 authorization.
+identities remain read-only evidence; they do not become Development authorization.
 Active or termination-unconfirmed legacy work blocks cutover until its original
 owner settles it. Work owned by a different worktree is not silently adopted.
 
@@ -1033,7 +1033,7 @@ process termination.
 
 ## Develop, validate and package
 
-Maintain root TypeScript/renderer assets under `src` and Stage 2 implementation
+Maintain root TypeScript/renderer assets under `src` and Development implementation
 under `development\tandem`. Never hand-edit the generated extension.
 
 For live frontend editing, run:
@@ -1063,8 +1063,11 @@ npm --prefix .\development\tandem run build
 npm --prefix .\development\tandem test
 ```
 
-Root checking emits Stage 2 type declarations using its strict configuration
+Root checking emits Development type declarations using its strict configuration
 before checking the composition; it does not inline or rewrite its runtime.
+On a fresh checkout, restore both lockfiles with `npm ci` and
+`npm --prefix development\tandem ci`. Development's prompt tests use its pinned
+TypeScript compiler API, not the root compiler as a fallback.
 `npm run build:browser` and `npm run build:desktop:runtime` stage the same complete
 payload. `npm run pack` creates the extension ZIP. Install its complete
 `extensions\tandem` directory and matching `skills\tandem\SKILL.md` together
@@ -1073,21 +1076,23 @@ insufficient. Large complete payloads may exceed the canvas gist size limits.
 
 The `development/` source folder is distinct from the stable `stage2/` packaged
 runtime directory. See [source and distribution paths](../development/README.md#source-and-distribution-paths).
-After a fresh build, check the actual composed payload and production renderer
+After `npm run pack`, check the extracted ZIP, actual composed payload and production renderer
 with local deterministic fixtures (no model calls or installation):
 
 ```powershell
 $env:TANDEM_PACKAGED_EXTENSION = (Resolve-Path .\.github\extensions\tandem\extension.mjs).Path
+$env:TANDEM_PACKAGED_ZIP = (Resolve-Path .\dist\tandem-extension.zip).Path
 try {
     node --import tsx --test tests\payload.test.ts tests\project-workspace-browser.test.mjs
 } finally {
     Remove-Item Env:TANDEM_PACKAGED_EXTENSION
+    Remove-Item Env:TANDEM_PACKAGED_ZIP
 }
 ```
 
 Bridge tests cover source retention, exact request reconciliation, migration,
-retired routes, native capability/provider conflicts, payload hashes and delivery.
-Stage 2 owns its role/runtime, confirmation, Stop/reopen, WAL and browser tests.
+retired routes, native capability/provider conflicts and extracted payload hashes.
+Development owns its role/runtime, confirmation, Stop/reopen, WAL and browser tests.
 Browser fixtures must actually execute to establish UI coverage; skips are not
 qualification. Native no-model startup/control/recovery qualification is distinct
 from a model-driven Design/implementation journey.
@@ -1098,5 +1103,5 @@ evaluations still require explicit `--live`, `--model`, `--max-cases`,
 `--timeout-seconds` and `--max-ai-credits`. No mock result or worker report
 establishes native end-to-end success.
 
-See [Stage 2 integration](../development/stage1-integration-plan.md) and
-[Stage 2 instructions](../development/AGENTS.md) for the composition boundary and invariants.
+See [Development integration](../development/README.md#reviewed-discovery-handoff) and
+[Development instructions](../development/AGENTS.md) for the composition boundary and invariants.

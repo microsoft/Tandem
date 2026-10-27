@@ -701,8 +701,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
           preserved: ["Joint controls", "Playback", "Chosen appearance"], affectedScreenIds: [], question: null, requirements: null },
       }];
       await push();
-      await browser.waitFor('Boolean(document.querySelector("#toggle-change-details"))');
-      await clickRoot("#toggle-change-details");
+      await browser.waitFor('document.querySelector("#continue-pending-review")?.checkVisibility()');
       await browser.waitFor('document.querySelector("#approve-change")?.checkVisibility()');
       for (const width of [1360, 760, 390]) {
         await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: false });
@@ -1025,7 +1024,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       assert.equal(await browser.evaluate('document.querySelector("#preview-frame").contentDocument.querySelector("#preview-button").textContent'), "Preview interaction accepted");
       await browser.call("Emulation.setDeviceMetricsOverride", { width: 390, height: 1000, deviceScaleFactor: 1, mobile: false });
       holdPreviewChecks = true;
-      assert.equal(await browser.evaluate('!!document.querySelector(".phase-actions #retry-current-preview")'), true);
+      assert.equal(await browser.evaluate('!!document.querySelector(".prototype-substage-bar #retry-current-preview")'), true);
       await clickRoot("#retry-current-preview");
       await browser.waitFor('document.querySelector("#preview-availability").textContent.includes("Checking current preview")');
       const pendingPrototype = readyPrototype(1, true);
@@ -1273,10 +1272,21 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       assert.equal(await inside('document.querySelector("#messages").textContent.includes("Discovery evidence")'), false);
       assert.equal(await browser.evaluate('document.querySelector("#discovery-history") === null'), true);
       const checkRootChrome = async () => {
-        const styles = await browser.evaluate(`["#project-settings","#project-current-work",".topbar"].map(selector=>{
-          const element=document.querySelector(selector), style=getComputedStyle(element);
-          return {selector,background:style.backgroundColor,color:style.color,height:element.getBoundingClientRect().height};
-        })`);
+        const styles = await browser.evaluate(`(() => {
+          const canvas=document.createElement("canvas");canvas.width=canvas.height=1;
+          const context=canvas.getContext("2d");
+          const rgba=color=>{context.clearRect(0,0,1,1);context.fillStyle=color;context.fillRect(0,0,1,1);return [...context.getImageData(0,0,1,1).data];};
+          return ["#project-settings","#project-current-work",".topbar"].map(selector=>{
+            const element=document.querySelector(selector), style=getComputedStyle(element);
+            let background=null;
+            for(let node=element;node;node=node.parentElement){
+              const color=rgba(getComputedStyle(node).backgroundColor);
+              if(color[3]===255){background="rgb("+color.slice(0,3).join(", ")+")";break;}
+              if(color[3]!==0)throw new Error("Unexpected partially transparent chrome background");
+            }
+            return {selector,background,color:style.color,height:element.getBoundingClientRect().height};
+          });
+        })()`);
         const luminance = color => {
           const channels = color.match(/[\d.]+/g).slice(0, 3).map(value => {
             const channel = Number(value) / (color.startsWith("color(srgb ") ? 1 : 255);

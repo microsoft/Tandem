@@ -4,8 +4,8 @@
   "files": [
     {
       "path": "extension.mjs",
-      "bytes": 2992574,
-      "sha256": "dbfe8db6bebfbc70ca6c4b4c842e57bc88f92e61b74451711fe71b95f222d789"
+      "bytes": 2992969,
+      "sha256": "130e3817290fa8a3a58c3d7368e2cba358137b2171e04190032580e629d04223"
     },
     {
       "path": "preview-launcher.mjs",
@@ -14,8 +14,8 @@
     },
     {
       "path": "skills/tandem/SKILL.md",
-      "bytes": 23155,
-      "sha256": "0ba21709d0c810c6769d74037d7f31f7cf19be5a7fdbd0e072374886f7daba44"
+      "bytes": 23187,
+      "sha256": "d89a35e4231eb5c48427006d22619095ed9f75aa89efcd79aa82b8afbef33d90"
     },
     {
       "path": "stage2/INSTALL.md",
@@ -29,8 +29,8 @@
     },
     {
       "path": "stage2/manifest.json",
-      "bytes": 25901,
-      "sha256": "e180b98e340e6da84e11b57d01351c0c06e31b43a18053bf2ab4b7ea4bc420d2"
+      "bytes": 25006,
+      "sha256": "066fdea91c109bd513e92eb2a3c6d876f074ce93cb38822a27a6944e53848cc2"
     },
     {
       "path": "stage2/package.json",
@@ -379,8 +379,8 @@
     },
     {
       "path": "stage2/public/ui-native.css",
-      "bytes": 7273,
-      "sha256": "124dab2ab73b97c54cb8fb3538e135bcf750c291cdc6f6f87d9108441f4e5633"
+      "bytes": 7419,
+      "sha256": "a4274cdd55b96dfe46ac0c809de3f439adb0415f7e65e9eacbdb2c5a481c29af"
     },
     {
       "path": "stage2/public/ui-system.css",
@@ -583,34 +583,9 @@
       "sha256": "688535a0a0118cd57989e1c32fd7e0c476212bc16f72383279b487eeae3f45ff"
     },
     {
-      "path": "stage2/skills/design-impact-classifier/SKILL.md",
-      "bytes": 4553,
-      "sha256": "784168b8497cd94d7784f493d11cf8d94c1efb554883fab5151d0a318dfa701e"
-    },
-    {
       "path": "stage2/skills/gui-designer/SKILL.md",
       "bytes": 1873,
       "sha256": "f4eb6a05b39fcba62e3aa540ae757df79dad2842975d7e6b9ff5222881bdff89"
-    },
-    {
-      "path": "stage2/skills/implementation-gap-reviewer/SKILL.md",
-      "bytes": 3967,
-      "sha256": "b486355d4ac745b1b7b522b7ba17190f023abb6f26a9f55b28fbc726c38c31a3"
-    },
-    {
-      "path": "stage2/skills/implementation-index-maintainer/SKILL.md",
-      "bytes": 2924,
-      "sha256": "eb556599405a0053a9d85123f748678db41e01a2b3dde9621227538b25bc503a"
-    },
-    {
-      "path": "stage2/skills/implementation-lifecycle-reconciler/SKILL.md",
-      "bytes": 2718,
-      "sha256": "dcbee59ee921df65e03a3d0e743b49f1aef08f3cf08dc598998ad361a0c60ce6"
-    },
-    {
-      "path": "stage2/skills/implementation-reviewer/SKILL.md",
-      "bytes": 4617,
-      "sha256": "8889b0abfbd462b7a55644f25bc6ea520ef22c4a6797c7c5e0a8b969e68882a7"
     },
     {
       "path": "stage2/skills/module-designer/SKILL.md",
@@ -793,5 +768,5 @@
       "sha256": "92b92e76eb4ac3bee96c6bbdde06ed1f7d9c0088576a51db1276c567dbb207f8"
     }
   ],
-  "digest": "15a9edbc51b4362f12e89784422fe3da41c17d5fad3a503b7f1c0786406332fc"
+  "digest": "1a5eb5ec5cde13a2d3b7eeb8024b36d8f8c0105dc0617341477d274711e1b0c8"
 }

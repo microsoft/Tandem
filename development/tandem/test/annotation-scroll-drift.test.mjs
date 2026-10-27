@@ -200,7 +200,6 @@ for (const config of [
   const pngGap=metrics.captured.contour.bottom-metrics.captured.lamps[2].bottom;
   assert.ok(pngGap>8 && Math.abs(pngGap-liveGap)<=1.5,'Contour must still enclose Green in the PNG');
   assert.equal(await browser.evaluate('JSON.stringify(design)===original'),true);
-  await browser.call('Browser.close');
 });
 
 test('captured strokes survive live remount, scroll, resize, SVG mapping and revision changes without rebinding', {
@@ -252,5 +251,4 @@ test('captured strokes survive live remount, scroll, resize, SVG mapping and rev
       && !canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height).data.some((value,index)=>index%4===3&&value)
       && annotation.preview().source.revisionId===design.binding.revisionId;
   })()`),true);
-  await browser.call('Browser.close');
 });

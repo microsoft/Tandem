@@ -162,6 +162,10 @@ test("PR triggers include every source, test, and workflow while live stays manu
     assert.match(workflow, /in-flight costs can exceed it/);
     assert.doesNotMatch(workflow, /max_tokens|max-tokens/);
     assert.doesNotMatch(workflow, /^\s*(pull_request_target|schedule):/m);
+    assert.doesNotMatch(workflow, /npm install --global.*@github\/copilot/);
+    assert.match(workflow, /npm --prefix development\/tandem ci/);
+    assert.match(workflow, /npm run pack && node --import tsx --test tests\/payload\.test\.ts/);
+    assert.match(workflow, /TANDEM_PACKAGED_ZIP: dist\/tandem-extension\.zip/);
 });
 
 test("fake runner reports model, prompt fingerprints, actual usage, and a successful exit code", async () => {

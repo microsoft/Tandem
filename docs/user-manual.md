@@ -68,6 +68,7 @@ does not switch the pinned tab.
 Every review panel has a **Details** button that opens the change context in a
 popup. In a draft review, the same popup includes **Compare with the accepted baseline**,
 showing what the draft started from.
+When Apply is blocked, the review pane shows the reason without requiring a hover.
 If accepted inputs changed meanwhile, the draft is kept but cannot overwrite
 them: compare it, discard it, then start a fresh review. Designs drafts support
 direct editing and typed revision instructions.

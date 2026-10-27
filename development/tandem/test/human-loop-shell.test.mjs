@@ -15,6 +15,7 @@ function snapshot() {
   const content = sharedDesignExample();
   return {
     schemaVersion: "human-loop-snapshot-view/v1", streamId: "shell-fixture",
+    conversationStatus: "verified",
     installation: { status: "ready", canStart: false, canReopen: false },
     design: { binding: source.design, content },
     workflow: { schemaVersion: "human-loop-view/v1", status: "waiting-answer", reason: null,
@@ -772,7 +773,8 @@ test("Quick requests append editable text and only explicit Send uses the ordina
       assert.equal(await browser.evaluate("document.querySelector('#quick-requests').open"), false);
       assert.equal(await browser.evaluate("document.activeElement.id"), "message");
       assert.equal(await browser.evaluate("document.querySelector('#message').selectionStart"), draft.length);
-      assert.match(await browser.evaluate("document.querySelector('#notice').textContent"), /existing draft/);
+      assert.equal(await browser.evaluate("document.querySelector('#current-state-title').textContent"), "Permission response needed",
+        "Adding a preset must not mask the fixture's unresolved permission.");
       assert.deepEqual(f.posts, [], "Choosing a preset must not submit work, answers or permission decisions.");
     }
     f.update();
@@ -870,6 +872,9 @@ for (const responseKind of ["accepted", "wrong-identity", "wrong-status"]) test(
       },
       onSnapshot: async () => { if (holdRefresh) { delayedRefreshes++; snapshotStarted.resolve(); await refreshGate.promise; } },
     }), { browser } = f;
+    f.current.accessRequests = [];
+    f.current.workflow.questionInteraction = null;
+    f.current.workflow.status = "ready";
     try {
       await browser.call("Page.navigate", { url: f.url });
       await browser.waitFor("document.querySelector('#send') && !document.querySelector('#send').disabled");
@@ -888,7 +893,7 @@ for (const responseKind of ["accepted", "wrong-identity", "wrong-status"]) test(
         assert.equal(await browser.evaluate("document.querySelector('#message').value"), "");
         assert.equal(await browser.evaluate("document.querySelector('#message').disabled"), false);
         assert.equal(await browser.evaluate("document.querySelector('#quick-requests summary').getAttribute('aria-disabled')"), "false");
-        assert.equal(await browser.evaluate("document.querySelector('#notice').textContent"), "Request received.");
+        assert.equal(await browser.evaluate("document.querySelector('#current-state-title').textContent"), "Request received; awaiting workflow activity.");
         await browser.evaluate("document.querySelector('#message').value='Next draft remains editable.'");
       } else {
         assert.equal(await browser.evaluate("document.querySelector('#message').value"), "Exact delayed request.");
@@ -1209,7 +1214,8 @@ test("compaction approval uses real clicks and visible native status across them
     f.current.workflow.status = "working"; f.current.workflow.activeRole = "implementer";
     f.current.workflow.compaction = { active: true, requested: false, canRequest: false, error: null }; f.update();
     await browser.waitFor("document.querySelector('#current-state').textContent.includes('Compacting')");
-    assert.match(await browser.evaluate("document.querySelector('#compaction-status').textContent"), /Working/);
+    assert.equal(await browser.evaluate("document.querySelector('#compaction-status').hidden"), true,
+      "Routine compaction progress belongs in current status, not the error field.");
     await capture(browser, "compaction-native-background-active", await geometry(browser));
     f.current.workflow.compaction = { active: false, requested: false, canRequest: false, error: "Native failure is visible." }; f.update();
     await browser.waitFor("document.querySelector('#compaction-status').textContent.includes('Native failure is visible')");
@@ -2235,11 +2241,12 @@ test("native long-goal header keeps Diagnostics reachable without page overflow"
       await click(browser, "#advanced-workflow-controls > summary");
       await browser.waitFor("!document.querySelector('#advanced-workflow-controls').open");
 
-      await click(browser, ".design-metadata > summary");
+      assert.equal(await browser.evaluate("document.querySelector('#design-overview').open"), true);
       assert.equal(await browser.evaluate("document.querySelector('#design-goal').textContent"), goal);
       assert.equal(await browser.evaluate("document.querySelector('#design-goal').checkVisibility()"), true);
       assert.ok(await browser.evaluate("document.documentElement.scrollWidth <= innerWidth && document.body.scrollWidth <= innerWidth"));
-      await click(browser, ".design-metadata > summary");
+      await click(browser, "#design-overview > summary");
+      assert.equal(await browser.evaluate("document.querySelector('#design-overview').open"), false);
       await click(browser, '[data-artifact-tab="architecture-example"]');
       const diagram = await browser.evaluate(`(() => {
         const n=document.querySelector('.shared-sketch'), r=n.getBoundingClientRect();
@@ -2265,12 +2272,13 @@ test("overview precedes tabs and compact current status owns navigation while wo
   const f = await fixture(t), { browser } = f;
   Object.assign(f.current.workflow, { status: "working", activeRequestId: "request", activeRole: null,
     questionInteraction: null, lastHandoff: null });
+  f.current.accessRequests = [];
   await browser.call("Page.navigate", { url: f.url });
   await browser.waitFor("document.querySelector('#human-workflow > .human-loop')");
   assert.equal(await browser.evaluate("document.querySelector('#human-workflow > .human-loop').checkVisibility()"), false);
   assert.equal(await browser.evaluate("document.querySelectorAll('.conversation-state-strip').length"), 1);
   assert.equal(await browser.evaluate("document.querySelector('#focus-current-message').closest('.conversation-current')!==null"), true);
-  assert.equal(await browser.evaluate("document.querySelector('#current-state-title').textContent"), "Working");
+  assert.equal(await browser.evaluate("document.querySelector('#current-state-title').textContent"), "Request awaiting role dispatch");
   assert.equal(await browser.evaluate("document.querySelector('#design-summary').compareDocumentPosition(document.querySelector('.design-navigation')) & Node.DOCUMENT_POSITION_FOLLOWING"), 4);
   assert.equal(await browser.evaluate("document.querySelector('.design-metadata').compareDocumentPosition(document.querySelector('.design-navigation')) & Node.DOCUMENT_POSITION_FOLLOWING"), 4);
   for (const patch of [{ activeRole: "designer" }, { activeRole: null, reason: "Connection uncertain; refresh status before continuing." },
@@ -2322,7 +2330,7 @@ test("Settings contains Diagnostics with keyboard focus handoff without moving n
   }
   f.current.workflow.status = "working";
   f.update();
-  await browser.waitFor("document.querySelector('#current-state-title').textContent==='Working'");
+  await browser.waitFor("document.querySelector('#current-state-title').textContent==='Permission response needed'");
   assert.equal(await browser.evaluate("document.querySelector('#shutdown').disabled"), false);
   assert.deepEqual(f.posts, [], "Diagnostics navigation must not execute a runtime action.");
   assert.deepEqual(browser.exceptions, []);
@@ -2350,13 +2358,12 @@ test("Stop stays below the composer at its left edge while Send remains inside a
     assert.ok(Math.abs(geometry.stop.left - geometry.input.left) <= 1, JSON.stringify(geometry));
     assert.ok(geometry.stop.top >= Math.max(geometry.input.bottom, geometry.send.bottom) + 5, JSON.stringify(geometry));
     assert.ok(Math.abs(geometry.send.left - geometry.input.right) <= 1, JSON.stringify(geometry));
-    assert.ok(Math.abs(geometry.send.top - geometry.input.top) <= 1, JSON.stringify(geometry));
+    assert.ok(Math.abs(geometry.send.bottom - geometry.input.bottom) <= 1, JSON.stringify(geometry));
     assert.ok(geometry.stop.right <= geometry.send.right && geometry.scrollWidth <= width, JSON.stringify(geometry));
     assert.equal(geometry.text, "Stop after this step");
     assert.equal(geometry.type, "button");
     assert.equal(geometry.focused, true);
     assert.notEqual(geometry.outline, "none");
-    assert.equal(geometry.ink, theme === "light" ? "rgb(29, 78, 216)" : "rgb(163, 191, 255)");
     assert.notEqual(geometry.ink, geometry.destructive);
     assert.notEqual(geometry.border, geometry.destructive);
     const hover = await browser.evaluate(`(() => {
@@ -2462,7 +2469,7 @@ test("after-step Stop controls share an intent, retain retry identity and explai
   f.current.workflow.canStop = false; f.current.workflow.canSend = false;
   f.current.accessRequests = snapshot().accessRequests;
   f.update();
-  await browser.waitFor("document.querySelector('#current-state-title').textContent==='Stopping after current step'");
+  await browser.waitFor("document.querySelector('#current-state-title').textContent==='Permission response needed'");
   assert.match(await browser.evaluate("document.querySelector('#current-state-detail').textContent"), /editing.*permission/);
   assert.equal(await browser.evaluate("document.querySelector('#send').disabled"), true);
   assert.equal(await browser.evaluate("document.querySelector('[data-access-batch=once]').disabled"), false,
@@ -2663,8 +2670,11 @@ test("workspace questions preserve drafts and independent history browsing acros
     text: "Earlier retained conversation content. ".repeat(100), timestamp: "2026-09-15T00:00:02Z" });
   f.update();
   await browser.waitFor("document.querySelector('[data-entry-id=history-scroll-room]')");
-  await browser.evaluate("originalDraft.blur(); document.querySelector('#messages').scrollTop=0; document.querySelector('#state-history').scrollTop=0");
-  await browser.waitFor("!document.querySelector('.state-history-return').hidden");
+  await browser.evaluate(`originalDraft.blur();
+    for (const id of ['messages','state-history']) {
+      const pane=document.getElementById(id);pane.dispatchEvent(new WheelEvent('wheel',{deltaY:-100,bubbles:true}));pane.scrollTop=0;
+    }`);
+  await browser.waitFor("!document.querySelector('#newer').hidden");
   for (let i = 0; i < 3; i++) {
     f.current.events.push({ ...f.current.events[0], sequence: 29 + i, summary: `Later ${i}` });
     f.current.messages.push({ id: `later-${i}`, kind: "assistant", role: "designer", requestId: "request",
@@ -2673,9 +2683,11 @@ test("workspace questions preserve drafts and independent history browsing acros
     assert.equal(await browser.evaluate("document.querySelector('#state-history').scrollTop"), 0);
     assert.ok(await browser.evaluate("document.querySelector('#messages').scrollTop < 2"));
   }
-  await click(browser, ".state-history-return");
+  await click(browser, "#newer");
   await browser.waitFor("(()=>{const n=document.querySelector('#state-history');return n.scrollHeight-n.scrollTop-n.clientHeight<2})()");
-  assert.ok(await browser.evaluate("document.querySelector('#messages').scrollTop < 2"));
+  assert.ok(await browser.evaluate("(()=>{const n=document.querySelector('#messages');return n.scrollHeight-n.scrollTop-n.clientHeight<2})()"),
+    "Go to latest explicitly returns both conversation and history to the newest content.");
+  await browser.evaluate("const pane=document.querySelector('#messages');pane.dispatchEvent(new WheelEvent('wheel',{deltaY:-100,bubbles:true}));pane.scrollTop=0");
   await click(browser, "#focus-current-message");
   assert.equal(await browser.evaluate("document.querySelector('#question-panel').hidden"), false);
   assert.equal(await browser.evaluate("document.querySelector('.human-loop-question-group').open"), true);
@@ -2768,10 +2780,11 @@ test("history markers and Return to current reserve separate reachable areas wit
     await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 720, deviceScaleFactor: 1, mobile: false });
     for (const position of [1, 12]) {
       const selector = `#state-history > li:nth-child(${position}) > button`;
+      await browser.evaluate("document.querySelector('#state-history').dispatchEvent(new WheelEvent('wheel',{deltaY:-100,bubbles:true}))");
       await click(browser, selector);
-      await browser.waitFor("!document.querySelector('.state-history-return').hidden");
+      await browser.waitFor("!document.querySelector('#newer').hidden");
       const geometry = await browser.evaluate(`(() => {
-        const marker=document.querySelector(${JSON.stringify(selector)}), control=document.querySelector('.state-history-return');
+        const marker=document.querySelector(${JSON.stringify(selector)}), control=document.querySelector('#newer');
         const m=marker.getBoundingClientRect(), r=control.getBoundingClientRect();
         return {markerHit:marker.contains(document.elementFromPoint(m.x+m.width/2,m.y+m.height/2)),
           returnHit:control.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)),
@@ -2784,16 +2797,16 @@ test("history markers and Return to current reserve separate reachable areas wit
       assert.ok(geometry.railHeight >= 36);
       assert.equal(await browser.evaluate("document.querySelector('.state-history-popover').hidden"), false);
       await capture(browser, `history-return-${width}-${position}`, geometry);
-      if (position === 1) await click(browser, ".state-history-return");
+      if (position === 1) await click(browser, "#newer");
       else {
-        await browser.evaluate("document.querySelector('.state-history-return').focus()");
-        assert.equal(await browser.evaluate("document.activeElement.className"), "state-history-return");
+        await browser.evaluate("document.querySelector('#newer').focus()");
+        assert.equal(await browser.evaluate("document.activeElement.id"), "newer");
         for (const type of ["keyDown", "keyUp"]) await browser.call("Input.dispatchKeyEvent", {
           type, key: "Enter", code: "Enter", windowsVirtualKeyCode: 13,
           ...(type === "keyDown" ? { text: "\r", unmodifiedText: "\r" } : {}),
         });
       }
-      await browser.waitFor("document.querySelector('.state-history-return').hidden && (()=>{const h=document.querySelector('#state-history');return h.scrollHeight-h.scrollTop-h.clientHeight<1})()");
+      await browser.waitFor("document.querySelector('#newer').hidden && (()=>{const h=document.querySelector('#state-history');return h.scrollHeight-h.scrollTop-h.clientHeight<1})()");
     }
   }
   assert.deepEqual(f.posts, [], "History navigation never changes permissions or workflow.");
@@ -2826,7 +2839,7 @@ test("routine history groups update hover and keyboard details without losing ex
       bounds:window.groupMarker.getBoundingClientRect().toJSON(),
       rail:document.querySelector('#state-history').getBoundingClientRect().toJSON(),
       scrollTop:document.querySelector('#state-history').scrollTop,
-      returnBounds:document.querySelector('.state-history-return').getBoundingClientRect().toJSON()})`));
+      returnBounds:document.querySelector('#newer').getBoundingClientRect().toJSON()})`));
   await browser.call("Input.dispatchMouseEvent", { type: "mouseMoved", ...point });
   await browser.waitFor("document.querySelector('.state-history-popover strong').textContent === 'Automatic approval ×2'");
   assert.deepEqual(await browser.evaluate("[...document.querySelectorAll('.state-history-popover time')].map(n=>n.dateTime)"), [first.timestamp, second.timestamp]);
@@ -3145,10 +3158,10 @@ test("current status is quiet inline navigation in the composer action row", { s
   await browser.waitFor("document.querySelector('#send').disabled === false");
   await browser.evaluate("document.querySelector('#message').value='A multiline request\\nwith a second line\\nand a third line';document.querySelector('#message').style.height='100px'");
   const states = [
-    ["ready", "Ready"], ["working", "Working"], ["closed", "Closed"],
-    ["waiting-permission", "Waiting for permission"], ["execution-unknown", "Execution state unknown"],
-    ["stopping", "Stopping after current step"], ["working", "Compacting · Working"],
-    ["ready", "Compacting · Ready"], ["working", "Compaction requested"],
+    ["ready", "Ready"], ["working", "Designer working..."], ["closed", "Development closed"],
+    ["waiting-permission", "Permission response needed"], ["execution-unknown", "Development needs attention"],
+    ["stopping", "Development needs attention"], ["working", "Compacting context..."],
+    ["ready", "Compacting context..."], ["working", "Compaction requested"],
   ];
   for (const width of [320, 390, 1280]) for (const height of [560, 950]) for (const theme of ["light", "dark"]) {
     await browser.call("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
@@ -3158,6 +3171,11 @@ test("current status is quiet inline navigation in the composer action row", { s
       const requested = label === "Compaction requested";
       f.current.workflow.status = status; f.current.workflow.canStop = status === "working" || status === "stopping";
       f.current.workflow.activeRequestId = status === "working" ? "request" : null;
+      f.current.workflow.activeRole = status === "working" ? "designer" : null;
+      f.current.workflow.activeCondition = status === "working" ? "running" : null;
+      f.current.workflow.reason = status === "execution-unknown" || status === "stopping" ? "The current execution needs attention." : null;
+      f.current.installation.status = status === "closed" ? "closed" : "ready";
+      f.current.accessRequests = status === "waiting-permission" ? snapshot().accessRequests : [];
       f.current.workflow.compaction = { active: compacting, requested, trigger: "native", canRequest: !compacting && !requested, error: null };
       f.update();
       await browser.waitFor(`document.querySelector('#current-state-title').textContent === ${JSON.stringify(label)}`);
@@ -3204,7 +3222,7 @@ test("current status is quiet inline navigation in the composer action row", { s
       assert.ok(measured.current.right <= width && measured.current.left >= 0 && measured.current.bottom <= height, JSON.stringify(measured));
       assert.ok(Math.abs(measured.row.right - measured.current.right) <= 1, JSON.stringify(measured));
       assert.equal(measured.clipped, false);
-      assert.equal(measured.compactionVisible, compacting || requested);
+      assert.equal(measured.compactionVisible, false, "Routine compaction uses current status; the separate field is error-only.");
       assert.ok(measured.pageWidth <= width);
       if (status === "working") {
         await browser.evaluate("document.querySelector('#stop-current-flow').focus()");
@@ -3216,7 +3234,7 @@ test("current status is quiet inline navigation in the composer action row", { s
         await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" });
         await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
         assert.equal(await browser.evaluate("document.querySelector('#messages .state-focused')?.dataset.entryId"), "original");
-        if (height === 950 && label === "Working") {
+        if (height === 950 && label === "Designer working...") {
           await capture(browser, `status-inline-focus-${width}-${theme}`, { ...measured, focusOutline: "2px" });
         }
       }

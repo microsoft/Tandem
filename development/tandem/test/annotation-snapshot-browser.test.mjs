@@ -29,10 +29,11 @@ for (const width of [1440, 390]) for (const theme of ['light', 'dark']) test(
     content.artifacts.push({ schemaVersion:'artifact/v2',format:'markdown',id:'notes',title:'Notes',noteForArtifactId:'checkout',source:'Read only notes.' });
     const snapshot = {
       schemaVersion:'human-loop-snapshot-view/v1',streamId:'snapshot-editor',
+      conversationStatus:'verified',
       installation:{status:'ready',canStart:false,canReopen:false},
       design:{binding:{revisionId:'snapshot-design',digest:'original-digest'},content},
       workflow:{schemaVersion:'human-loop-view/v1',status:'ready',reason:null,activeRequestId:null,activeRole:null,
-        workspacePath:'Fixture',currentCycle:null,lastHandoff:null,queue:[],canStop:false,canSend:true,questionInteraction:null},
+        workspacePath:'Fixture',currentCycle:null,lastHandoff:null,queue:[],canStop:false,canSend:true,questionInteractions:[]},
       messages:[],events:[],accessRequests:[],processes:{apps:[],commands:[]},
     };
     const posts = [], clients = new Set();
@@ -205,7 +206,7 @@ for (const width of [1440, 390]) for (const theme of ['light', 'dark']) test(
         await browser.call('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
         assert.equal(await browser.evaluate("document.querySelector('.annotation-view-toggle').textContent"),'Resume sketch');
         assert.equal(await browser.evaluate("document.querySelector('[data-cancel-annotation-artifact]').hidden"),false);
-        await clickVisible('[data-cancel-annotation-artifact]');
+        await click('[data-cancel-annotation-artifact]');
       } else if (mode === 'escape') {
         await browser.evaluate("document.querySelector('[data-annotation-action=\"cancel\"]').focus()");
         await browser.call('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
@@ -386,5 +387,4 @@ for (const width of [1440, 390]) for (const theme of ['light', 'dark']) test(
     await action('close');
     assert.deepEqual(posts,[],'No Annotate, Return, Clear, Capture new or Attach operation sends a request.');
     assert.deepEqual(browser.exceptions,[]);
-    await browser.call('Browser.close');
   });

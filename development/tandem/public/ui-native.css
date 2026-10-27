@@ -55,7 +55,7 @@
 }
 .human-app :is(#annotation-reset, #annotation-remove, #clipboard-remove, #shutdown, #stop-now,
   [data-annotation-action="replace"], [data-native-process-id]) { --tandem-control-color: var(--studio-danger); }
-.human-app :is(.artifact-navigation-row button, .state-history-step button, .question-list button,
+.human-app :where(.artifact-navigation-row button, .state-history-step button, .question-list button,
   .role-suggestions button, .quick-request-options button, #focus-current-message) {
   --tandem-control-background: transparent; --tandem-control-border: transparent; --tandem-control-weight: 400;
   justify-content: flex-start; text-align: start;
@@ -74,11 +74,12 @@
 .human-app .human-loop-questions select { min-height: var(--studio-control-height); }
 .human-app .human-loop-questions button[type="submit"] { min-height: var(--studio-control-height); }
 .human-app #message { min-height: var(--studio-composer-expanded-height); height: auto; }
+.human-app #message:focus-visible { outline-offset: calc(-1 * var(--studio-focus-width)); }
 .human-app #send { width: var(--studio-control-height); min-width: var(--studio-control-height); padding: 0; align-self: end; font-size: var(--studio-text-title); border-radius: var(--studio-radius-control); }
 .human-app #send::before { content: none; }
 .human-app #stop-options { min-width: var(--studio-control-height); padding-inline: var(--studio-space-1); }
-.human-app .state-history-step button { min-height: var(--history-target-size); justify-content: center; padding: 0; }
-.human-app #focus-current-message { gap: var(--studio-control-gap); }
+.human-app .state-history-step button { min-height: var(--history-target-size); min-width: var(--history-target-size); justify-content: center; padding: 0; }
+.human-app #focus-current-message { gap: var(--studio-control-gap); border: 0; }
 .human-app :is(#compaction-approval, #empty-setup-approval, #initial-creation-approval) > button { margin-top: var(--studio-space-3); }
 .human-app dialog.annotation-editor { display: flex; flex-direction: column; gap: var(--studio-space-3); width: min(1000px, calc(100vw - 24px)); }
 .human-app dialog.annotation-editor:not([open]) { display: none; }

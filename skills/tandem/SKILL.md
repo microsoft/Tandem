@@ -30,7 +30,7 @@ invocation:
 This is the loaded Tandem skill. Do not invoke the skill again.
 
 Stage 1 is optional: **Preparation -> Requirements -> Designs -> Prototype**
-collects Q&A and prototype evidence, not formal Design. Stage 2 can open directly
+collects Q&A and prototype evidence, not formal Design. Development can open directly
 or later with saved Stage 1 files as explicit input. Development is PR #14's
 original human-loop application, not a renamed version of the old
 Design/Plan/Implement/Test factory pipeline.
@@ -237,10 +237,10 @@ sketch approval first. An offline preview does not invalidate already recorded,
 source-bound input; absent or changed required files are explicit blockers.
 
 Finishing Prototype (or non-GUI Requirements) saves output only. It must not
-start a private Stage 2 session or submit a Design request. The user can close
+start a private Development session or submit a Design request. The user can close
 Stage 1 and later explicitly open Development with the saved documents/source
 as ordinary file references. No Stage 1 connection has to remain alive.
-Files are evidence, not authority to replace an existing used Stage 2 owner,
+Files are evidence, not authority to replace an existing used Development owner,
 import canonical Design or replay an old request.
 
 ## Scoped changes before Development
@@ -294,7 +294,7 @@ Unknown activity remains unverified; never invent progress or inject a model tur
 Use that ordinary persisted request through `HumanLoopRuntime.send`. Router
 selects Designer; Designer reads the retained documents/source read-only and
 publishes through `stage_human_design` and `submit_designer_outcome`. Do not
-convert the upstream sketch directly into canonical Stage 2 Design, execute
+convert the upstream sketch directly into canonical Development Design, execute
 prototype scripts, or copy prototype files onto production files automatically.
 
 Preserve confirmed intent and the approved experience. Ask only about
@@ -310,7 +310,7 @@ retirement. Opening/refreshing Development alone sends no project request.
 
 ## Native Development workflow
 
-Keep the original Stage 2 Design/Conversation UI and controls in its full-size
+Keep the original Development Design/Conversation UI and controls in its full-size
 isolated iframe. Its document, CSS, scripts and absolute API routes are not
 ported into React. Navigation away is not Stop or Close and should not discard
 an unsent draft.
@@ -388,7 +388,7 @@ Conversation and results rather than manufacturing acceptance or test evidence.
 Use actual Node 24+. Keep one composed provider and the real joined main session.
 Check the preferred provider's protocol/version/full-payload identity; an old
 user provider must fail visibly, not be overridden. Package/stage the complete
-Stage 2 modules, `runtime-src`, original public assets, vendors/licenses and skills.
+Development modules, `runtime-src`, original public assets, vendors/licenses and skills.
 Do not hand-edit generated `extension.mjs` or update user installations without
 authorization.
 
@@ -397,8 +397,8 @@ shutdown. Preserve separate saved/closed/uncertain outcomes even if local saving
 fails. Close view, Stop after this step, Stop now, Close runtime, workspace switch
 and app exit are different actions.
 
-Use production builders in `src\planning-prompts.ts` and the Stage 2 role JSON,
-not evaluation-only prompt copies. Run root and Stage 2 checks plus the targeted
+Use production builders in `src\planning-prompts.ts` and the Development role JSON,
+not evaluation-only prompt copies. Run root and Development checks plus the targeted
 bridge/browser cases. Skipped browsers are not UI evidence; no-model native API
 qualification is not a model-driven implementation journey. Live evaluations
 require explicit model, case/time and credit limits.

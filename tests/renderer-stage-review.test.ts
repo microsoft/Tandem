@@ -85,7 +85,8 @@ test("review mode pins an earlier-stage editor without unlocking accepted work o
     assert.equal(current(h).lifecycle.currentStage, "prototype");
     assert.equal(hidden(h, "reopen-stage"), true);
     assert.equal(hidden(h, "complete-stage"), true);
-    assert.match(h.get("design-tree-panel").textContent!, /Pinned draft review.*Current work: Prototype/);
+    assert.match(h.get("stage-input-review").textContent!, /Requirements reviewDraft only.*Return to Prototype/);
+    assert.match(h.get("design-tree-workspace-tab").getAttribute("aria-label")!, /pinned draft review/);
     assert.equal(disabled(h, "review-requirement-request"), false);
     await h.input("review-requirement-request", "Keep this unsent draft while I work on Prototype.");
     const input = field(h, "review-requirement-request");
@@ -144,7 +145,7 @@ test("Apply is explicit, refuses unsent edits, and leaves the reviewed view pinn
     await h.click("apply-stage-review"); await h.confirm(true);
     assert.equal(current(h).lifecycle.currentStage, "prototype");
     assert.equal(current(h).decisionGraph.nodes[0].answer, "Draft task behavior");
-    assert.match(h.get("design-tree-panel").textContent!, /Applied review/);
+    assert.match(h.get("stage-input-review").textContent!, /Requirements reviewApplied/);
     assert.equal(hidden(h, "design-tree-panel"), false);
     assert.equal(disabled(h, "review-requirement-request"), true);
     const ids = Array.from(h.document.querySelectorAll("[id]"), node => node.id);
@@ -177,9 +178,10 @@ test("a real parent work blocker is shown before Apply rather than as a failed r
 
 test("baseline comparison includes usage changes as well as changed decisions", async t => {
     const { h } = await fixture(t, true);
-    const comparison = h.document.querySelector<HTMLDetailsElement>(".stage-review-comparison")!;
-    comparison.open = true;
-    await h.fire(comparison, "toggle");
+    assert.equal(h.document.querySelector(".stage-review-comparison"), null, "Comparison loads only when requested.");
+    await h.click([...h.get("stage-input-review").querySelectorAll("button")].find(button => button.textContent === "Details")!);
+    const comparison = h.document.querySelector<HTMLElement>(".stage-review-comparison")!;
+    assert.ok(comparison.closest('[role="dialog"]'));
     assert.match(comparison.textContent!, /Usages.*I want to share a task list/s);
     assert.match(comparison.textContent!, /Draft task behavior/);
 });
@@ -234,7 +236,7 @@ test("stale Designs review exposes a confirmed update scoped to its draft, not c
     await h.click("review-stage");
     assert.equal(disabled(h, "sketch-update-requirements"), false);
     assert.equal(disabled(h, "apply-stage-review"), true);
-    assert.equal(disabled(h, "sketch-approve"), true);
+    assert.equal(h.document.getElementById("sketch-approve"), null, "Draft approval is bound to Apply changes, not a second approval.");
     assert.equal(h.document.querySelector("#prepare-review-drawings"), null);
     await h.click("sketch-update-requirements");
     assert.match(h.document.querySelector('[role="alertdialog"]')!.textContent!, /latest accepted requirements and DAG/);
@@ -247,6 +249,6 @@ test("stale Designs review exposes a confirmed update scoped to its draft, not c
     assert.equal(current(h).sketch.current!.id, parent.sketch.current!.id);
     assert.equal(current(h).sketch.status, "stale");
     assert.equal(disabled(h, "apply-stage-review"), true);
-    assert.equal(disabled(h, "sketch-approve"), true);
+    assert.equal(h.document.getElementById("sketch-approve"), null);
     assert.equal(h.requests.some(item => item.path === "/api/reviews/apply" || item.path === "/api/stage/complete"), false);
 });

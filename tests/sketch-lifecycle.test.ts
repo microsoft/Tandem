@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { access, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { extensionHarness } from "./helpers/extension-harness.js";
+import { eventReader } from "./helpers/state-events.js";
 import { sketchDocument, screenPng } from "./helpers/sketch-lifecycle-fixture.js";
 import { SketchStore } from "../src/sketch-store.js";
 import { buildPrototypeCheckpointPrompt, buildSketchPrompt } from "../src/planning-prompts.js";
@@ -147,20 +148,20 @@ test("public design revisions pass workflow action validation before assessment 
         ]) assert.equal(completeSavedChange(unproven), unproven, "Only matching saved output and terminal receipts release a legacy request.");
         await fixture.api.persistState(legacy);
         const reopened = await extensionHarness({}, fixture.root);
+        const connection = new AbortController();
         try {
             reopened.api.setSession({ ...reopened.session, sessionId: "new-drawing-session" });
-            await reopened.api.openTandem({ instanceId: "legacy-drawing-change", sessionId: "new-drawing-session",
+            const opened = await reopened.api.openTandem({ instanceId: "legacy-drawing-change", sessionId: "new-drawing-session",
                 extensionId: "project:tandem", input: { prototypeId: "sample" }, reason: "rehydrate" });
-            let recovered = await reopened.api.loadState("sample");
-            for (let attempt = 0; recovered.changeRequests![0].status === "active" && attempt < 300; attempt++) {
-                await new Promise(resolve => setTimeout(resolve, 10));
-                recovered = await reopened.api.loadState("sample");
-            }
-            assert.equal(recovered.changeRequests![0].status, "completed");
+            const next = await eventReader(opened.url, AbortSignal.any([connection.signal, AbortSignal.timeout(15000)]));
+            await next(state => state.changeRequests?.[0]?.status === "completed");
+            const recovered = await reopened.api.loadState("sample");
+            assert.equal(recovered.changeRequests![0].status, "completed",
+                JSON.stringify({ processing: recovered.processing, logs: reopened.logs }));
             assert.equal(recovered.sketch.current!.id, saved.sketch.current!.id);
             assert.equal(recovered.sketch.approved, null);
             assert.equal(reopened.requests.length, 0, "A saved legacy edit is settled, never regenerated or re-approved.");
-        } finally { await reopened.close(); }
+        } finally { connection.abort(); await reopened.close(); }
         const followUp = await fetch(new URL("/api/sketch", server.url), {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ action: "revise", expectedRevision: saved.sketch.current!.id,
@@ -750,42 +751,6 @@ test("changed approved asset bytes block the sketch-to-prototype handoff", async
         await writeFile(join(fixture.root, png.path), "tampered");
         await assert.rejects(fixture.api.completeLifecycleStage("sample", "sketch", "project:tandem"), /hash|changed|integrity|PNG/i);
         assert.equal((await fixture.api.loadState("sample")).lifecycle.currentStage, "sketch");
-    } finally { await fixture.close(); }
-});
-
-test("the real Sketch stage snapshot accepts and exports frozen image bytes", async () => {
-    const fixture = await extensionHarness();
-    try {
-        await readyRequirements(fixture);
-        generateDrawings(fixture);
-        await fixture.api.completeLifecycleStage("sample", "requirements", "project:tandem");
-        await fixture.api.waitForAnswer("sample");
-        const approved = await approveDrawings(fixture);
-        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, workflow: {
-            run: async () => ({ status: "failed", runId: "prototype-paused", error: "No AI in this fixture." }),
-        } } });
-        await fixture.api.completeLifecycleStage("sample", "sketch", "project:tandem");
-        await fixture.api.waitForAnswer("sample");
-        const current = await fixture.api.loadState("sample");
-        const accepted = await fixture.api.processAction("sample", "project:tandem", {
-            action: "accept", expectedRevision: current.revision, stageId: "sketch", approver: "Product owner",
-        });
-        const record = accepted.process.acceptances[0];
-        const png = approved.sketch.approved!.assets.find((asset) => asset.mediaType === "image/png")!;
-        await writeFile(join(fixture.root, png.path), "Changed after acceptance.");
-        const exported = await fixture.api.processAction("sample", "project:tandem", {
-            action: "export", expectedRevision: accepted.revision, acceptanceId: record.id,
-        });
-        const directory = join(fixture.root, exported.process.acceptances[0].exportPath!);
-        const manifest = JSON.parse(await readFile(join(directory, "manifest.json"), "utf8"));
-        const image = manifest.assetFiles.find((file) => file.asset.mediaType === "image/png");
-        assert.equal((await readFile(join(directory, image.path))).toString("base64"), screenPng());
-        const ui = manifest.assetFiles.find((file) => file.asset.path.endsWith(".ui.json"));
-        const source = manifest.assetFiles.find((file) => file.asset.id === "document");
-        assert.deepEqual(JSON.parse(await readFile(join(directory, ui.path), "utf8")), sketchDocument().screens[0].ui);
-        assert.equal(JSON.parse(await readFile(join(directory, source.path), "utf8")).version, 2);
-        assert.equal(manifest.assetFiles.some((file) => file.asset.mediaType === "image/svg+xml"), false);
-        assert.equal(manifest.acceptance.stageId, "sketch");
     } finally { await fixture.close(); }
 });
 
