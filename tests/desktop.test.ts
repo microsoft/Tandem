@@ -8,7 +8,7 @@ import { test } from "node:test";
 import type { PermissionRequest } from "@github/copilot-sdk";
 import { DesktopProtocol, validateDesktopUrl } from "../src/desktop/protocol.js";
 import { desktopRuntimeEnvironment } from "../src/desktop/environment.js";
-import { desktopSessionConfig, parseDesktopModelSelection } from "../src/desktop/runtime.js";
+import { assertSourcePreviewProviders, desktopSessionConfig, parseDesktopModelSelection } from "../src/desktop/runtime.js";
 import { claimDesktopWorkspace } from "../src/desktop/workspace.js";
 import { isPreferredTandemProvider, preferredTandemProvider } from "../src/provider-identity.js";
 import { canvasRequestAllowed } from "../src/canvas-transport.js";
@@ -49,6 +49,46 @@ test("desktop provider is session-bound and preserves installed provider precede
     assert.equal(isPreferredTandemProvider("session:tandem", [session], "current"), true);
     assert.equal(isPreferredTandemProvider("session:tandem", [session], "other"), false);
     assert.equal(isPreferredTandemProvider("session:tandem", [session, user], "current"), false);
+});
+
+test("explicit source preview disables discovered configuration without moving auth or session state", async () => {
+    const f = protocolFixture();
+    try {
+        const ordinary = desktopSessionConfig("workspace", "runtime", f.protocol);
+        const isolated = desktopSessionConfig("workspace", "runtime", f.protocol, undefined, true);
+        assert.equal(ordinary.enableConfigDiscovery, true);
+        assert.equal(Object.hasOwn(ordinary, "enableSkills"), false);
+        assert.equal(isolated.enableConfigDiscovery, false);
+        assert.equal(isolated.requestExtensions, true, "the staged extension still uses native loading and consent");
+        assert.equal(isolated.enableSkills, true);
+        assert.deepEqual(isolated.skillDirectories, [join("runtime", "skills")]);
+        assert.equal(isolated.configDirectory, undefined, "do not move session state or copy authentication profiles");
+        assert.equal(isolated.gitHubToken, undefined);
+        assert.equal(isolated.continuePendingWork, false);
+        assert.equal(f.protocol.permissionMode, "ask");
+        assert.equal(Object.hasOwn(isolated, "model"), false);
+        assert.equal(Object.hasOwn(isolated, "reasoningEffort"), false);
+        const permission = isolated.onPermissionRequest!(desktopPermissionRequests.read, permissionInvocation);
+        assert.equal(f.events[0].type, "permission");
+        f.reply({ type: "permission-response", id: f.events[0].id, approved: false });
+        assert.deepEqual(await permission, { kind: "reject" });
+    } finally { f.protocol.close(); }
+});
+
+test("source preview refuses foreign active providers instead of overriding execution ownership", () => {
+    const session = { id: "session:current:tandem", status: "running" };
+    assert.doesNotThrow(() => assertSourcePreviewProviders([session], "current"));
+    assert.equal(isPreferredTandemProvider("session:tandem", [session], "current"), true);
+    for (const id of ["user:tandem", "project:tandem", "session:another:tandem", "plugin:example:tandem"]) {
+        for (const status of ["starting", "running"]) {
+            assert.throws(() => assertSourcePreviewProviders([session, { id, status }], "current"),
+                /Source preview isolation was not honored.*No provider was substituted/);
+        }
+    }
+    assert.throws(() => assertSourcePreviewProviders([session], "other"), /isolation was not honored/);
+    assert.doesNotThrow(() => assertSourcePreviewProviders([session,
+        { id: "user:tandem", status: "disabled" }, { id: "project:tandem", status: "failed" }], "current"));
+    assert.doesNotThrow(() => assertSourcePreviewProviders([session, { id: "user:unrelated", status: "running" }], "current"));
 });
 
 test("canvas transport rejects cross-origin API requests and rebinding hosts but permits embedding", () => {

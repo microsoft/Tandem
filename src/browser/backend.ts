@@ -20,6 +20,7 @@ export interface BackendOptions {
     workspace: string;
     runtimeDirectory: string;
     modelSelection?: DesktopModelSelection;
+    sourcePreview?: boolean;
     event(event: DesktopEvent): void;
     diagnostic(message: string): void;
     exited(code: number | null, error?: string): void;
@@ -63,6 +64,7 @@ export const startBackend: BackendFactory = async (options) => {
     const child = spawn(process.execPath, [host, "--workspace", options.workspace,
         ...(options.modelSelection ? ["--model", options.modelSelection.model] : []),
         ...(options.modelSelection?.reasoningEffort ? ["--reasoning-effort", options.modelSelection.reasoningEffort] : []),
+        ...(options.sourcePreview ? ["--source-preview"] : []),
     ], {
         cwd: options.workspace, env: environment, stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true, detached: process.platform !== "win32",

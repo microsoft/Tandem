@@ -60,6 +60,20 @@ npm run browser -- --workspace C:\projects\my-app
 
 Both browser scripts build the app automatically. Pass launch options after `--`.
 
+If you also have Tandem installed, explicitly isolate a source preview from that
+installation:
+
+```powershell
+npm run browser -- --source-preview --workspace C:\projects\my-app
+```
+
+This restricts native extension launches to the exact session-staged Tandem
+payload and disables main-session configuration discovery. Other discovered
+extensions cannot execute; the bundled skill remains available. Sign-in, saved
+session identity and native permission prompts are unchanged. The installed
+extension is not modified.
+Without this option, normal installed-provider preference remains in effect.
+
 Replace `C:\projects\my-app` with your project folder (the repository/worktree root
 for existing Git projects), not the Tandem source folder. Before Development,
 Tandem offers explicit local Git setup when needed;
@@ -125,6 +139,8 @@ For automatic frontend rebuilds and browser refresh:
 ```powershell
 npm run dev:browser -- --workspace C:\projects\my-app
 ```
+
+Add `--source-preview` to use the same explicit isolation while watching UI files.
 
 UI saves refresh the whole page without restarting Copilot runtimes; unsent input
 may be lost. Backend/runtime source changes require restarting the command.

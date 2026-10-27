@@ -1,13 +1,13 @@
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { CopilotClient, type CopilotSession, type ResumeSessionConfig } from "@github/copilot-sdk";
-import { isPreferredTandemProvider } from "../provider-identity.js";
+import { CopilotClient, type CopilotSession, type ExtensionLaunchProvider, type ResumeSessionConfig } from "@github/copilot-sdk";
+import { isPreferredTandemProvider, type TandemProvider } from "../provider-identity.js";
 import { DesktopProtocol, validateDesktopUrl } from "./protocol.js";
 import { claimDesktopWorkspace } from "./workspace.js";
 import { desktopRuntimeEnvironment } from "./environment.js";
 import { tandemWorkerInteractionRules } from "../planning-prompts.js";
-import { stagePayload, type TandemPayload } from "../payload.js";
+import { stagePayload, verifyPayload, type TandemPayload } from "../payload.js";
 
 export const PRIVATE_CLOSE_DEADLINE_MS = 30_000;
 export const MAIN_CLOSE_DEADLINE_MS = 8_000;
@@ -32,12 +32,52 @@ export function assertComposedProvider(canvas: { extensionId: string; actions?: 
     }
 }
 
-export function assertComposedVersion(value: unknown, manifest: TandemPayload): void {
+export function assertSourcePreviewProviders(providers: readonly TandemProvider[], sessionId: string): void {
+    const expected = `session:${sessionId}:tandem`;
+    const conflicting = providers.filter(provider => provider.id.endsWith(":tandem") && provider.id !== expected &&
+        provider.status !== "disabled" && provider.status !== "failed");
+    if (conflicting.length) {
+        throw new Error(`Source preview isolation was not honored: expected only ${expected}, but found ${
+            conflicting.map(provider => `${provider.id} (${provider.status})`).join(", ")}. No provider was substituted.`);
+    }
+}
+
+export function createSourcePreviewLaunchProvider(runtimeDirectory: string, sessionId: string, report: (message: string) => void) {
+    let allowed: { entrypoint: string; manifest: TandemPayload } | undefined;
+    const provider: ExtensionLaunchProvider = {
+        async resolve(entry) {
+            const samePath = (a: string, b: string) => process.platform === "win32"
+                ? resolve(a).toLowerCase() === resolve(b).toLowerCase() : resolve(a) === resolve(b);
+            if (!allowed || entry.source !== "session" || entry.id !== `session:${sessionId}:tandem` ||
+                !samePath(entry.modulePath, allowed.entrypoint)) {
+                report(`Source preview did not launch ${entry.id}; only the verified session payload is allowed.`);
+                return {};
+            }
+            const manifest = await verifyPayload(dirname(allowed.entrypoint));
+            if (manifest.digest !== allowed.manifest.digest) throw new Error("The source-preview payload changed before launch. No extension was started.");
+            report(`Source preview launching ${entry.id}: version ${manifest.version}, payload ${manifest.digest}.`);
+            return { launch: { executable: process.execPath,
+                args: [join(runtimeDirectory, "source-preview-extension.mjs"), allowed.entrypoint, manifest.digest], env: {} } };
+        },
+    };
+    return { provider, activate(directory: string, manifest: TandemPayload) {
+        allowed = { entrypoint: join(directory, "extension.mjs"), manifest };
+    } };
+}
+
+export function assertComposedVersion(value: unknown, manifest: TandemPayload, extensionId = "unknown"): void {
     value = canvasActionResult(value);
     if (!value || typeof value !== "object" || !("protocol" in value) || value.protocol !== "development/v1" ||
         !("version" in value) || value.version !== manifest.version ||
         !("payloadDigest" in value) || value.payloadDigest !== manifest.digest) {
-        throw new Error("The preferred Tandem provider does not match this Node package's complete payload/version. No alternate provider was substituted.");
+        const field = (name: string) => {
+            const item: unknown = value && typeof value === "object" ? Reflect.get(value, name) : undefined;
+            return typeof item === "string" ? JSON.stringify(item.slice(0, 128)) : "missing or invalid";
+        };
+        throw new Error(`The preferred Tandem provider (${extensionId}) does not match this Node package's complete payload/version. ` +
+            `Expected protocol="development/v1", version=${JSON.stringify(manifest.version)}, payloadDigest=${manifest.digest}; ` +
+            `observed protocol=${field("protocol")}, version=${field("version")}, payloadDigest=${field("payloadDigest")}. ` +
+            "No alternate provider was substituted.");
     }
 
 }
@@ -61,6 +101,7 @@ export function developmentCloseResult(value: unknown): { status: "closed" | "no
 
 export function desktopSessionConfig(
     workspace: string, runtimeDirectory: string, protocol: DesktopProtocol, modelSelection?: DesktopModelSelection,
+    sourcePreview = false,
 ): ResumeSessionConfig {
     return {
         ...modelSelection,
@@ -68,7 +109,8 @@ export function desktopSessionConfig(
         clientName: "Tandem Desktop",
         streaming: true,
         includeSubAgentStreamingEvents: true,
-        enableConfigDiscovery: true,
+        enableConfigDiscovery: !sourcePreview,
+        ...(sourcePreview ? { enableSkills: true } : {}),
         requestCanvasRenderer: true,
         requestExtensions: true,
         extensionSdkPath: dirname(fileURLToPath(import.meta.resolve("@github/copilot-sdk"))),
@@ -124,6 +166,7 @@ export async function runDesktopRuntime(options: {
     protocol: DesktopProtocol;
     signal: AbortSignal;
     modelSelection?: DesktopModelSelection;
+    sourcePreview?: boolean;
 }): Promise<void> {
     const { protocol, signal } = options;
     if (Number(process.versions.node.split(".")[0]) < 24 || process.versions.electron || process.versions.bun) {
@@ -134,8 +177,11 @@ export async function runDesktopRuntime(options: {
         protocol.send({ type: "error", message: `Workspace ownership was lost: ${error.message}` });
         protocol.close();
     });
+    const sourcePreview = options.sourcePreview ? createSourcePreviewLaunchProvider(options.runtimeDirectory,
+        ownership.sessionId, message => console.error(message)) : undefined;
     const client = new CopilotClient({
         workingDirectory: ownership.workspace, logLevel: "error",
+        ...(sourcePreview ? { extensionLaunchProvider: sourcePreview.provider } : {}),
         env: { ...desktopRuntimeEnvironment(), TANDEM_NODE_MAIN_SESSION_ID: ownership.sessionId,
             TANDEM_NODE_EXECUTABLE: process.execPath },
     });
@@ -170,7 +216,7 @@ export async function runDesktopRuntime(options: {
                 throw new Error("The requested native host model/effort is unavailable; no substitute was selected.");
             }
         }
-        const config = desktopSessionConfig(ownership.workspace, options.runtimeDirectory, protocol, options.modelSelection);
+        const config = desktopSessionConfig(ownership.workspace, options.runtimeDirectory, protocol, options.modelSelection, options.sourcePreview);
         config.onEvent = event => protocol.observeNativeEvent(ownership.sessionId, event);
         session = await openDesktopSession(client, ownership, config);
         await ownership.save();
@@ -185,8 +231,9 @@ export async function runDesktopRuntime(options: {
         if (!session.workspacePath) throw new Error("The Copilot runtime did not provide a durable session workspace.");
         const extensionDirectory = join(session.workspacePath, "extensions", "tandem");
         const { changed, manifest } = await stagePayload(options.runtimeDirectory, extensionDirectory);
+        sourcePreview?.activate(extensionDirectory, manifest);
         protocol.send({ type: "status", message: "Loading Tandem..." });
-        if (changed) {
+        if (changed || sourcePreview) {
             await reloadDesktopExtensions(session, signal);
         }
         const sessionId = session.sessionId;
@@ -195,6 +242,7 @@ export async function runDesktopRuntime(options: {
         for (let elapsed = 0; elapsed < 30_000; elapsed += protocol.waitingForInput ? 0 : 200) {
             signal.throwIfAborted();
             const providers = await session.rpc.extensions.list();
+            if (options.sourcePreview) assertSourcePreviewProviders(providers.extensions, sessionId);
             const catalog = await session.rpc.canvas.list();
             const selected = catalog.canvases.find((canvas) => canvas.canvasId === "tandem" &&
                 isPreferredTandemProvider(canvas.extensionId, providers.extensions, sessionId));
@@ -225,7 +273,8 @@ export async function runDesktopRuntime(options: {
         const canvas = await session.rpc.canvas.open({ canvasId: "tandem", extensionId, instanceId: "desktop-main" });
         developmentInstance = "desktop-main";
         const integration = await session.rpc.canvas.action.invoke({ instanceId: developmentInstance, actionName: "get_integration" });
-        assertComposedVersion(integration, manifest);
+        assertComposedVersion(integration, manifest, extensionId);
+        protocol.send({ type: "status", message: `Verified Tandem provider ${extensionId}: development/v1, version ${manifest.version}, payload ${manifest.digest}.` });
         qualified = true;
         if (!canvas.url) throw new Error("Tandem did not return its application URL.");
         validateDesktopUrl(canvas.url);

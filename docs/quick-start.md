@@ -34,6 +34,35 @@ npm run browser -- --workspace C:\projects\counter
 Both browser scripts build the app automatically. `npm run login:browser` signs
 in to Copilot. Review startup permissions and keep this terminal open.
 
+### Test source alongside an installed Tandem
+
+Use an explicit isolated launch when your installed Tandem differs from this
+checkout:
+
+```powershell
+npm run browser -- --source-preview --workspace C:\projects\counter
+```
+
+The native SDK launch resolver admits only the complete matching Tandem payload
+staged into that same session; it refuses other discovered extension entrypoints
+before they execute. The main session also disables automatic configuration
+discovery for agents, hooks and MCP configuration; the bundled Tandem skill
+remains available. Turning off configuration discovery alone does not isolate
+native extensions. This is execution/configuration isolation, not a filesystem sandbox.
+It does not change the global installation, copy credentials, create another
+profile, replace the saved session, choose a model or approve permissions.
+It requires the SDK/runtime's extension launch-profile support; an unsupported
+runtime fails instead of reverting to the installed extension launcher.
+Private Development keeps its separate native ownership and consent.
+The same flag is accepted by `npm run dev:browser -- ...`.
+
+Normal launches without the flag keep installed-provider precedence. A mismatched
+preferred provider still fails visibly; isolation is never an automatic fallback.
+If another Tandem provider remains active in an isolated main session, startup
+fails instead of making the session copy writable over it.
+
+### Main-session model options
+
 To choose the main/Preparation model and effort explicitly, add launch options:
 
 ```powershell

@@ -114,6 +114,11 @@ if (process.argv.includes("--watch")) {
             external: ["@github/copilot-sdk", "@github/copilot-sdk/*"],
             banner: options.banner,
         });
+        await build({
+            entryPoints: [join(repositoryRoot, "src", "desktop", "source-preview-extension.ts")],
+            outfile: join(runtimeDirectory, "source-preview-extension.mjs"),
+            bundle: true, platform: "node", format: "esm", target: "node24", banner: options.banner,
+        });
         const skillDirectory = join(runtimeDirectory, "skills", "tandem");
         await mkdir(skillDirectory, { recursive: true });
         await copyFile(join(repositoryRoot, "skills", "tandem", "SKILL.md"), join(skillDirectory, "SKILL.md"));

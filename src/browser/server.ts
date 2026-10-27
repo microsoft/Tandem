@@ -43,6 +43,7 @@ export interface BrowserHostOptions {
     backendFactory?: BackendFactory;
     startupTimeoutMs?: number;
     modelSelection?: DesktopModelSelection;
+    sourcePreview?: boolean;
 }
 
 export async function createBrowserHost(options: BrowserHostOptions) {
@@ -203,6 +204,7 @@ export async function createBrowserHost(options: BrowserHostOptions) {
             backend = await (options.backendFactory || startBackend)({
                 workspace, runtimeDirectory: options.runtimeDirectory,
                 ...(options.modelSelection ? { modelSelection: options.modelSelection } : {}),
+                ...(options.sourcePreview ? { sourcePreview: true } : {}),
                 event: (event) => receive(event, generation),
                 diagnostic: (message) => diagnostics.write(message),
                 exited: (code, error) => {
