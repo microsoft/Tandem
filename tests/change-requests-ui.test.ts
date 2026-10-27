@@ -100,6 +100,34 @@ test("a completed latest message cannot hide an unresolved review and remains av
     assert.deepEqual(h.errors, []);
 });
 
+for (const status of ["queued", "analyzing", "proposed", "reviewing", "active", "failed", "deferred"] as const) {
+    test(`historical Development ${status} requests are inspectable without review actions or attention`, async t => {
+        const h = await reactHarness(t), initial = state("prototype");
+        const historical: ChangeRequest = { ...request(), originStage: "development", status,
+            error: "Retained assessment failure.", assessment: { ...request().assessment!, question: "Where should saving happen?" },
+            sourceRequests: [{ id: "original", message: "The exact original Development request.",
+                receivedAt: initial.updatedAt, context: JSON.stringify({ answers: null, attachments: [] }) }] };
+        initial.changeRequests = [historical];
+        h.render(initial); await h.flush();
+        assert.equal(h.document.getElementById("change-request-details"), null);
+        assert.equal(h.get("toggle-change-details").dataset.status, "idle");
+        assert.equal(h.document.getElementById("change-action-status"), null, "Historical errors do not create a current review alert.");
+        await h.click("toggle-change-details");
+        const dialog = h.get("change-request-details");
+        assert.match(dialog.textContent!, /Development request history/);
+        assert.match(dialog.textContent!, /read-only history/);
+        assert.match(dialog.textContent!, /Recorded proposal/);
+        assert.match(dialog.textContent!, /Recorded question:.*Where should saving happen/);
+        assert.match(dialog.textContent!, /exact original Development request/);
+        assert.match(h.get("change-dialog-error").textContent!, /Retained assessment failure/);
+        assert.equal(dialog.querySelector("form, textarea"), null);
+        assert.deepEqual([...dialog.querySelectorAll("button")].map(button => button.textContent), ["", "Done"]);
+        assert.equal(dialog.querySelector("[aria-current='step']"), null);
+        assert.equal(h.requests.filter(item => item.options.method === "POST").length, 0);
+        assert.deepEqual(h.errors, []);
+    });
+}
+
 test("Designs keeps one red review trigger after History and approval on the right of the tab header", async t => {
     const h = await reactHarness(t), drawing = sketchFixture();
     const change: ChangeRequest = { ...request(), originStage: "sketch", message: "Create an About Us page." };

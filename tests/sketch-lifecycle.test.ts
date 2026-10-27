@@ -727,11 +727,11 @@ test("prototype readiness requires actual approved image delivery, not worker cl
         deliverImage = true;
         await fixture.api.prototypeAction("sample", "project:tandem", { action: "retry" });
         await fixture.api.waitForAnswer("sample");
-        await fixture.waitForRequests(4);
+        await fixture.waitForRequests(3);
         await fixture.api.waitForAnswer("sample");
         state = await fixture.api.loadState("sample");
         assert.equal(state.previewStatus, "ready", state.processing?.message);
-        assert.ok(imageCalls >= 2);
+        assert.equal(imageCalls, 1, "The unified build reads the approved screen once instead of launching another milestone.");
         await assert.rejects(fixture.api.readSketchImage({
             prototypeId: "sample", checkpointId: "wrong", revisionId: state.sketch.current!.id, screenId: "main",
         }), /does not match/);

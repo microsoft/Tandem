@@ -339,6 +339,7 @@ export function parseRoleResult(role: HumanRole, value: unknown): RoleResult {
   const kind = data.outcome.kind;
   let outcome: RoleOutcome;
   switch (kind) {
+    // Historical ledgers retain this outcome; live Router tools no longer accept it.
     case 'discovery-change': {
       requireCondition(role === 'router', 'Only Router may propose an upstream discovery change.');
       const v = object(data.outcome, ['kind', 'summary', 'reason', 'prototypeId', 'sourceDigest', 'stage']);

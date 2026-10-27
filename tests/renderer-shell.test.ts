@@ -13,6 +13,8 @@ test("original brief belongs to Preparation, not duplicated global sidebar prose
     assert.doesNotMatch(h.get("requirements-pane").textContent!, /Project overview|Brief and project details/);
     await browse(h, "prepare");
     assert.equal(h.get("goal").textContent, value.goal);
+    assert.equal(h.get("goal").closest("section")!.getAttribute("aria-labelledby"), "preparation-brief-title");
+    assert.ok(h.get("goal").closest(".preparation-brief"));
     assert.equal(h.document.querySelector("#start-goal"), null);
     assert.equal(h.requests.length, 0);
 });
@@ -113,7 +115,10 @@ test("header omits maintenance while supported reload belongs to advanced Projec
         reloadReceipt: { status: "success", message: "Reloaded latest extension." } };
     const h = await setup(t, value);
     assert.equal(h.document.querySelector(".topbar #reload-extension, .topbar #reset-effort"), null);
-    assert.ok(h.get("preparation-panel").contains(h.get("reset-effort")));
+    await browse(h, "prepare");
+    assert.ok(h.document.querySelector(".previewbar #reset-effort"));
+    assert.equal(h.get("preparation-panel").contains(h.get("reset-effort")), false);
+    assert.doesNotMatch(text(h, "preparation-panel"), /Advanced Preparation actions/);
     assert.equal(text(h, "reset-effort"), "Restart Preparation...");
     const settings = await h.projectSettings();
     assert.equal(settings.reload().message, "");
@@ -125,6 +130,8 @@ test("header omits maintenance while supported reload belongs to advanced Projec
     await h.flush();
     assert.equal(settings.reload().message, "Could not reload extension.");
     assert.equal(settings.reload().error, true);
+    await browse(h, "requirements");
+    assert.equal(h.document.querySelector(".previewbar #reset-effort"), null, "Restart belongs only to the Preparation tab header.");
 });
 
 test("React panels have unique IDs and Radix navigation includes direct Development", async (t) => {
@@ -379,7 +386,8 @@ test("persisted reset barriers block ordinary actions while leaving Reset retry 
     const h = await setup(t, value);
     assert.equal(h.get("studio-workspace").hasAttribute("inert"), false, "The pending recovery control must remain reachable.");
     assert.equal(h.get("preparation-panel").hidden, false);
-    assert.equal((h.get("preparation-maintenance") as HTMLDetailsElement).open, true);
+    assert.ok(h.document.querySelector(".previewbar #reset-effort"));
+    assert.equal(h.document.getElementById("preparation-maintenance"), null);
     assert.equal(disabled(h, "reset-effort"), false);
     assert.equal(hidden(h, "next-action-bar"), false, "Reset does not remove the status/help surface.");
     assert.equal(hidden(h, "show-next-action"), true);

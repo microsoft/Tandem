@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { Dialog } from "radix-ui";
-import { ArrowRight, Check, ChevronRight, ListChecks, Pin, Play, ShieldCheck, X } from "lucide-react";
+import { ArrowRight, Check, ChevronRight, ListChecks, Pin, Play, Send, ShieldCheck, X } from "lucide-react";
 import type { LifecycleStageId } from "../types.js";
 import type { ChangeRequest } from "../change-requests.js";
 import type { SketchDocument } from "../sketch.js";
@@ -16,7 +16,8 @@ import { PrototypePanel, prototypeCompletionBlocked } from "./prototype-panel.js
 import { ChangeRequestsPanel, ChangeReviewPath } from "./change-requests-panel.js";
 import { DiscoveryRecovery } from "./discovery-recovery.js";
 import { changeReviewBlocksEditing, currentChangeReview } from "../change-request-policy.js";
-import { changeRequestResponse, changeRequestReviewStage } from "./change-request-feedback.js";
+import { changeRequestHistoryStatus, changeRequestResponse, changeRequestReviewStage } from "./change-request-feedback.js";
+import { FeedbackHistory, FeedbackHistoryButton } from "./feedback-history.js";
 
 export const reviewStageLabel = (stage: LifecycleStageId) => lifecycleStages.find(item => item.id === stage)?.label ?? stage;
 
@@ -356,13 +357,24 @@ function DraftRequirementRequest() {
   const ui = useUi(), { state, post, pending } = ui;
   const action = useAction("review-requirements");
   const [text, setText] = useDraft("review-requirement-request", "");
+  const [historyOpen, setHistoryOpen] = useDraft("review-requirement-history", false);
   useEffect(() => {
     ui.setReviewDirty?.("requirement-request", Boolean(text.trim()));
     return () => ui.setReviewDirty?.("requirement-request", false);
   }, [text, ui.setReviewDirty]);
   if (state.requirements.substage !== "dag") return null;
+  const history = (state.changeRequests ?? []).filter(item => item.originStage === "requirements").slice().reverse();
   return <details className="stage-review-request"><summary>Add or reshape draft requirements</summary>
-    <form className="stage-review-form" onSubmit={event => {
+    <FeedbackHistory id="requirements-request-history" triggerId="requirements-history-toggle" inline
+      label="Requirements request history" open={historyOpen} onClose={() => setHistoryOpen(false)}>
+      <ol className="feedback-request-history">{history.map(item => <li key={item.id} data-status={changeRequestHistoryStatus(item)}>
+        <p><b>Request:</b> {item.message}</p><p><b>Response:</b> {changeRequestResponse(item)}</p>
+        {ui.changeRequestDialog && <button className="plan-button secondary" type="button"
+          onClick={event => ui.changeRequestDialog!.open(item.id, event.currentTarget)}>View this request</button>}
+      </li>)}</ol>
+      {!history.length && <p className="muted">No requirement change requests yet.</p>}
+    </FeedbackHistory>
+    <form className="stage-review-form feedback-composer" onSubmit={event => {
       event.preventDefault();
       const message = text.trim();
       if (!message) return;
@@ -371,13 +383,22 @@ function DraftRequirementRequest() {
         setText("");
       });
     }}>
-      <label htmlFor="review-requirement-request">Change only this draft</label>
-      <textarea id="review-requirement-request" rows={2} maxLength={4000} value={text} onChange={event => setText(event.target.value)}
+      <label className="visually-hidden" htmlFor="review-requirement-request">Change only this draft</label>
+      <textarea id="review-requirement-request" className="composer-input" rows={1} maxLength={4000} value={text} onChange={event => setText(event.target.value)}
+        placeholder="Describe a requirement change... (Ctrl+Enter)" onKeyDown={event => {
+          if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) {
+            event.preventDefault(); event.currentTarget.form?.requestSubmit();
+          }
+        }}
         disabled={pending || hasActiveJobs(state) || !ui.canEdit("requirements")} />
-      <button className="plan-button" type="submit" disabled={pending || hasActiveJobs(state) || !text.trim() || !ui.canEdit("requirements")}>
-        Prepare requirement changes</button>
-      {action.error && <p role="alert">{action.error}</p>}
+      <button className="plan-button feedback-send" type="submit" aria-label="Prepare requirement changes"
+        title="Prepare requirement changes (Ctrl+Enter)" disabled={pending || hasActiveJobs(state) || !text.trim() || !ui.canEdit("requirements")}>
+        <Send size={15} aria-hidden="true" />Send</button>
+      <FeedbackHistoryButton id="requirements-history-toggle" target="requirements-request-history" open={historyOpen}
+        error={Boolean(action.error || history.some(item => changeRequestHistoryStatus(item) === "error"))}
+        onToggle={() => setHistoryOpen(open => !open)} />
     </form>
+    {action.error && <p role="alert">{action.error}</p>}
   </details>;
 }
 

@@ -1,8 +1,9 @@
 import type { ChangeRequest } from "../change-requests.js";
 import type { LifecycleStageId } from "../types.js";
+import { isDiscoveryChangeRequest } from "../change-request-policy.js";
 
 export function changeRequestReviewStage(request: ChangeRequest | undefined): LifecycleStageId | undefined {
-    if (!request || ["completed", "cancelled", "deferred"].includes(request.status)) return undefined;
+    if (!request || !isDiscoveryChangeRequest(request) || ["completed", "cancelled", "deferred"].includes(request.status)) return undefined;
     const stage = ["active", "reviewing"].includes(request.status) ? request.remainingStages[0] : request.assessment?.startStage;
     return stage === "none" ? undefined : stage;
 }
@@ -14,6 +15,7 @@ const statuses: Record<ChangeRequest["status"], string> = {
 };
 
 export function changeRequestStatus(request: ChangeRequest): string {
+    if (!isDiscoveryChangeRequest(request)) return "Historical Development request";
     if (request.error && !["completed", "cancelled", "deferred"].includes(request.status)) return "Change needs attention";
     if (request.status === "proposed" && request.assessment?.question) return "A detail is needed";
     if (request.status === "completed") {
@@ -30,6 +32,10 @@ export function changeRequestStatus(request: ChangeRequest): string {
 }
 
 export function changeRequestResponse(request: ChangeRequest): string {
+    if (!isDiscoveryChangeRequest(request)) {
+        return "Retained as history. Upstream impact review ends at Prototype; continue this request in Development."
+            + (request.error ? ` Recorded error: ${request.error}` : "");
+    }
     if (request.error) return request.error;
     switch (request.status) {
         case "queued": return "Your request is saved and waiting for current work. No changes have been applied yet.";
@@ -56,6 +62,7 @@ export function changeRequestResponse(request: ChangeRequest): string {
 }
 
 export function changeRequestActionLabel(request: ChangeRequest): string {
+    if (!isDiscoveryChangeRequest(request)) return "View request";
     if (request.status === "proposed") return request.assessment?.question ? "Answer this question" : "Review this change";
     if (request.status === "reviewing") return "Continue draft review";
     if (request.status === "failed") return "Review failed request";

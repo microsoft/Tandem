@@ -8,8 +8,9 @@ import { prototypePreviewBridgeSource } from "../src/prototype-bridge.js";
 import { restoreOriginalPrototype, updateVisualSelection } from "../src/prototype-flow.js";
 import { visualManifestName, type VisualManifest } from "../src/visual-directions.js";
 import { fingerprintPrototypeWorkspace } from "../src/prototype-runtime.js";
+import { createStageReview, type StageReviewReference } from "../src/stage-review.js";
 import type { TandemState } from "../src/types.js";
-import { setup, response, current, submit, disabled, text } from "./renderer-fixtures.test.js";
+import { setup, response, current, submit, disabled, text, browse, waitFor } from "./renderer-fixtures.test.js";
 
 const provider = "project:tandem";
 const plain = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -363,30 +364,51 @@ test("React visual controls switch and persist per direction without changing th
         return response({ ...value, revision: value.revision + 1 });
     });
     const accepted = h.get<HTMLIFrameElement>("preview-frame"), acceptedUrl = accepted.src;
+    const accept = h.get("choose-visual-direction"), feedback = h.get<HTMLTextAreaElement>("revision-input");
     assert.equal(disabled(h, "complete-stage"), false, "Finishing can keep the original without accepting an optional direction.");
     assert.equal(h.document.querySelectorAll(".visual-direction-toggle").length, 4);
     assert.equal(h.get("compare-current-prototype").dataset.applied, "true");
     assert.equal(h.get("compare-current-prototype").getAttribute("aria-checked"), "true");
-    assert.equal(h.get("choose-visual-direction").closest(".visual-exploration") !== null, true);
+    assert.equal(h.document.getElementById("prototype-focus"), null);
+    assert.equal(text(h, "prototype-progress").includes("Compare layout treatment"), false);
+    assert.ok(h.document.querySelector(".visual-selection-toolbar")!.contains(accept));
+    assert.ok(accept.compareDocumentPosition(h.get("visual-preview-frame")) & h.window.Node.DOCUMENT_POSITION_FOLLOWING);
     assert.equal(h.document.querySelector(".visual-selection-actions"), null);
     await h.input("revision-input", "Keep this current-prototype draft.");
     await h.click("visual-direction-canvas");
-    assert.ok(h.get("visual-feedback-input").compareDocumentPosition(h.get("choose-visual-direction")) & h.window.Node.DOCUMENT_POSITION_FOLLOWING);
+    assert.equal(h.get("choose-visual-direction"), accept);
+    assert.ok(h.document.querySelector(".visual-selection-toolbar")!.contains(accept));
+    assert.equal(h.document.querySelectorAll(".visual-exploration textarea, #revision-form textarea").length, 1);
+    assert.equal(h.document.querySelector("#visual-feedback-form"), null);
+    assert.equal(h.get("revision-input"), feedback);
+    assert.equal(feedback.value, "");
+    assert.equal(feedback.getAttribute("aria-label"), "Feedback for Canvas first");
+    assert.equal(h.document.querySelector(".prototype-review-heading")!.textContent, "Feedback for Canvas first");
+    assert.equal(text(h, "revision-status"), "");
+    assert.equal(h.get("revision-status").dataset.essential, "false");
+    await h.input("revision-input", "Keep this canvas draft.");
     assert.equal(h.get("preview-frame"), accepted);
     assert.equal(accepted.src, acceptedUrl);
     assert.equal(accepted.hidden, true);
     assert.match(text(h, "visual-selection-status"), /Previewing Canvas first.*Accept to apply/);
+    assert.equal(h.get("visual-selection-status").classList.contains("visually-hidden"), true);
+    assert.equal(h.get("visual-adjustments").querySelector("p"), null);
     assert.equal(h.document.querySelector("#restart-original-preview"), null);
-    assert.ok(h.document.querySelector("#stage-input-review > .phase-actions")!.contains(h.get("restart-exploration-preview")));
+    assert.ok(h.document.querySelector(".prototype-substage-bar")!.contains(h.get("restart-exploration-preview")));
     assert.equal(h.document.querySelector(".visual-exploration .preview-recovery-action"), null);
     const frame = h.get<HTMLIFrameElement>("visual-preview-frame"), frameUrl = frame.src;
     await h.input("visual-setting-textSize", "large");
+    assert.equal(feedback.getAttribute("aria-label"), "Feedback for Custom");
+    assert.equal(feedback.value, "Keep this canvas draft.");
     assert.equal(h.get("visual-preview-frame"), frame);
     assert.equal(frame.src, frameUrl, "Adjustments use the bridge, not iframe reloads.");
     await h.click("visual-direction-precision");
     assert.equal(h.get<HTMLSelectElement>("visual-setting-textSize").value, "standard");
+    assert.equal(feedback.value, "");
+    await h.input("revision-input", "Keep this precision draft.");
     await h.click("visual-custom-direction");
     assert.equal(h.get<HTMLSelectElement>("visual-setting-textSize").value, "large");
+    assert.equal(feedback.value, "Keep this canvas draft.");
     assert.equal(disabled(h, "choose-visual-direction"), true, "The iframe must confirm the exact settings before UI choice.");
     const sent: Array<{ data: Record<string, any>; origin: string }> = [];
     frame.contentWindow!.postMessage = (data: Record<string, any>, origin: string) => sent.push({ data, origin });
@@ -405,23 +427,202 @@ test("React visual controls switch and persist per direction without changing th
     const shared = new URL(h.get<HTMLAnchorElement>("open-visual-preview").href);
     assert.equal(shared.searchParams.get("tandem-direction"), "canvas");
     assert.equal(shared.searchParams.get("tandem-textSize"), "large");
-    await h.input("visual-feedback-input", "Simplify this toolbar.");
-    await submit(h, "visual-feedback-form");
+    await h.input("revision-input", "Simplify this toolbar.");
+    await submit(h, "revision-form");
     assert.equal(h.requests.at(-1)!.path, "/api/revision");
     assert.equal(h.requests.at(-1)!.body.baseCheckpointId, "visual-bundle");
     assert.equal(h.requests.at(-1)!.body.visualSelection.directionId, "canvas");
+    assert.equal(h.requests.at(-1)!.body.visualSelection.settings.textSize, "large");
+    assert.equal(feedback.value, "");
     await h.click("compare-current-prototype");
     assert.equal(accepted.hidden, false);
     assert.equal(h.get("preview-frame"), accepted);
     assert.equal(accepted.src, acceptedUrl);
     assert.equal(h.get("compare-current-prototype").getAttribute("aria-checked"), "true");
-    assert.ok(h.document.querySelector("#stage-input-review > .phase-actions")!.contains(h.get("restart-original-preview")));
+    assert.ok(h.document.querySelector(".prototype-substage-bar")!.contains(h.get("restart-original-preview")));
     assert.equal(h.document.querySelector("#restart-exploration-preview"), null);
     assert.equal(h.get<HTMLTextAreaElement>("revision-input").value, "Keep this current-prototype draft.");
+    assert.equal(feedback.getAttribute("aria-label"), "Prototype revision suggestion");
+    assert.equal(h.get("choose-visual-direction"), accept);
+    assert.ok(h.document.querySelector(".visual-selection-toolbar")!.contains(accept));
     assert.equal(current(h).prototypeFlow!.displayedCheckpointId, "interaction");
     assert.equal(current(h).prototypeFlow!.pendingCheckpointId, null);
     assert.equal(h.requests.filter(item => item.body?.action === "choose-visual").length, 0);
     assert.equal(h.requests.filter(item => item.body?.selection?.settings.accent === "neutral").length, 0, "Default is not a generated neutral preset.");
+});
+
+test("shared feedback isolates retries, targets and drafts across directions, settings and Prototype tabs", async t => {
+    const h = await setup(t, exploringPrototype());
+    let fail = true;
+    h.setFetch(async (path, options) => {
+        const input = JSON.parse(String(options.body)), value = current(h);
+        if (path === "/api/prototype/action") return response({ ...value, revision: value.revision + 1,
+            prototypeFlow: updateVisualSelection(value.prototypeFlow!, input.checkpointId, input.selection) });
+        assert.equal(path, "/api/revision");
+        return fail ? response({ error: "Connection failed; retry this feedback." }, 503)
+            : response({ ...value, revision: value.revision + 1 });
+    });
+    const feedback = h.get<HTMLTextAreaElement>("revision-input");
+    const suggestion = "Simplify this toolbar.";
+    await h.input("revision-input", suggestion);
+    await submit(h, "revision-form");
+    const original = h.requests.at(-1)!.body;
+    assert.equal(original.baseCheckpointId, "interaction");
+    assert.equal(original.visualSelection, undefined);
+    await h.click("visual-direction-canvas");
+    assert.equal(h.get("revision-status").dataset.status, "idle", "An accepted-prototype error must not follow the direction draft.");
+    await h.input("revision-input", suggestion);
+    await submit(h, "revision-form");
+    const canvas = h.requests.at(-1)!.body;
+    assert.notEqual(canvas.clientRequestId, original.clientRequestId);
+    assert.equal(canvas.baseCheckpointId, "visual-bundle");
+    assert.deepEqual(canvas.visualSelection, { directionId: "canvas", settings: visualManifest().directions[1].defaults });
+    await h.input("visual-setting-textSize", "large");
+    await submit(h, "revision-form");
+    const custom = h.requests.at(-1)!.body;
+    assert.notEqual(custom.clientRequestId, canvas.clientRequestId);
+    assert.equal(custom.visualSelection.settings.textSize, "large");
+    await h.click("visual-direction-precision");
+    assert.equal(feedback.value, "");
+    await h.input("revision-input", "Keep this precision draft.");
+    await h.fire(h.get("prototype-prototype-tab"), "mousedown", { button: 0 });
+    assert.equal(feedback.value, suggestion);
+    assert.equal(feedback.getAttribute("aria-label"), "Prototype revision suggestion");
+    fail = false;
+    await submit(h, "revision-form");
+    assert.deepEqual(h.requests.at(-1)!.body, original, "Returning to Prototype retries the original accepted-checkpoint submission.");
+    assert.equal(feedback.value, "");
+    await h.fire(h.get("prototype-visual-tab"), "mousedown", { button: 0 });
+    assert.equal(feedback.value, "Keep this precision draft.");
+    assert.equal(feedback.getAttribute("aria-label"), "Feedback for Precision workspace");
+    await h.click("visual-direction-canvas");
+    assert.equal(feedback.value, suggestion);
+    await submit(h, "revision-form");
+    assert.deepEqual(h.requests.at(-1)!.body, canvas, "Returning to a direction retries its exact saved submission.");
+    assert.equal(feedback.value, "");
+    await h.click("visual-direction-precision");
+    assert.equal(feedback.value, "Keep this precision draft.");
+    await h.click("visual-direction-canvas");
+    await h.input("revision-input", "Send this canvas refinement.");
+    let release!: (result: Response) => void;
+    h.setFetch(() => new Promise(resolve => { release = resolve; }));
+    await submit(h, "revision-form");
+    await h.input("revision-input", "A newer canvas draft.");
+    await h.fire(h.get("prototype-prototype-tab"), "mousedown", { button: 0 });
+    await h.input("revision-input", "A newer accepted-prototype draft.");
+    release(response({ ...current(h), revision: current(h).revision + 1 }));
+    await waitFor(h, () => !disabled(h, "submit-revision"));
+    assert.equal(feedback.value, "A newer accepted-prototype draft.");
+    await h.fire(h.get("prototype-visual-tab"), "mousedown", { button: 0 });
+    assert.equal(feedback.value, "A newer canvas draft.", "A completed submission cannot clear a replacement draft or another target's draft.");
+});
+
+test("Prototype review keeps Apply blocked for unsent feedback in other directions and views", async t => {
+    let parent = chosenVisualPrototype();
+    parent.stage = parent.lifecycle.currentStage = "development";
+    parent.lifecycle.completedStages.push("prototype");
+    const reference: StageReviewReference = { version: 1, id: "review-22222222-2222-2222-2222-222222222222",
+        stage: "prototype", generation: parent.generation, createdAt: parent.updatedAt, appliedAt: null, discardedAt: null };
+    const draft = { ...createStageReview(parent, reference), revision: 1, provider: parent.provider };
+    const snapshot = () => plain({ ...draft, stageReviewStatus: {
+        conflict: "", blocker: null, changed: true, currentStage: parent.lifecycle.currentStage, appliedAt: null, discardedAt: null,
+    } });
+    const h = await setup(t, parent);
+    h.setFetch(async (path, options) => {
+        if (path === "/api/reviews/open") {
+            parent = { ...parent, revision: parent.revision + 1, stageReviews: [reference] };
+            return response({ draft: snapshot() });
+        }
+        if (path === "/api/state") return response(parent);
+        if (path.startsWith(`/api/reviews/${reference.id}/prototype/preview-status`)) {
+            const target = new URL(path, "http://fixture").searchParams.get("target");
+            const id = target === "exploration" ? "visual-bundle" : "interaction";
+            return response({ generation: draft.generation, checkpointId: id, pendingCheckpointId: null,
+                url: draft.prototypeFlow!.checkpoints.find(item => item.id === id)!.previewUrl, available: true, reason: "" });
+        }
+        if (path === `/api/reviews/${reference.id}/prototype/action`) {
+            const input = JSON.parse(String(options.body));
+            assert.equal(input.action, "visual-preview");
+            draft.prototypeFlow = updateVisualSelection(draft.prototypeFlow!, input.checkpointId, input.selection);
+            draft.revision++;
+            return response(snapshot());
+        }
+        if (path === `/api/reviews/${reference.id}/state`) return response(snapshot());
+        throw new Error("Unexpected review request: " + path);
+    });
+    await browse(h, "prototype");
+    await h.click("review-stage");
+    assert.equal(disabled(h, "apply-stage-review"), false);
+    await h.input("revision-input", "Keep this accepted-prototype draft.");
+    await h.click("visual-direction-canvas");
+    assert.equal(h.get<HTMLTextAreaElement>("revision-input").value, "");
+    assert.equal(disabled(h, "apply-stage-review"), true);
+    await h.input("revision-input", "Keep this canvas draft.");
+    await h.click("visual-direction-precision");
+    assert.equal(h.get<HTMLTextAreaElement>("revision-input").value, "");
+    assert.equal(disabled(h, "apply-stage-review"), true);
+    await h.click("compare-current-prototype");
+    assert.equal(h.get<HTMLTextAreaElement>("revision-input").value, "Keep this accepted-prototype draft.");
+    await h.input("revision-input", "");
+    assert.equal(disabled(h, "apply-stage-review"), true, "The hidden canvas draft is still unsent.");
+    await h.click("visual-direction-canvas");
+    assert.equal(h.get<HTMLTextAreaElement>("revision-input").value, "Keep this canvas draft.");
+    await h.input("revision-input", "");
+    assert.equal(disabled(h, "apply-stage-review"), false);
+});
+
+test("shared direction feedback preserves refinement guards and queues only behind compatible work", async t => {
+    const value = exploringPrototype(), h = await setup(t, value);
+    h.setFetch(async (_path, options) => {
+        const input = JSON.parse(String(options.body)), value = current(h);
+        return response({ ...value, revision: value.revision + 1,
+            prototypeFlow: updateVisualSelection(value.prototypeFlow!, input.checkpointId, input.selection) });
+    });
+    await h.click("visual-direction-canvas");
+    await h.input("revision-input", "Keep this direction draft.");
+    const selected = plain(current(h));
+    const flow = selected.prototypeFlow!;
+    const original = flow.checkpoints.find(item => item.id === "interaction")!;
+    const exploration = flow.checkpoints.find(item => item.id === "visual-bundle")!;
+    const pending = chosenVisualPrototype();
+    pending.prototypeFlow!.displayedCheckpointId = "interaction";
+    pending.prototypeFlow!.pendingCheckpointId = "chosen";
+    pending.prototypeFlow!.visualExploration!.appliedCheckpointId = null;
+    const ordinary = chosenVisualPrototype();
+    ordinary.prototypeReview.revisions = [{ id: "ordinary", status: "queued", suggestion: "Revise the accepted prototype." }];
+    const blocked = [
+        { state: { ...selected, prototypeFlow: { ...flow, visualRequested: false } }, reason: /saved directions cannot be refined/ },
+        { state: { ...selected, prototypeFlow: { ...flow, displayedCheckpointId: "later",
+            checkpoints: [...flow.checkpoints, { ...original, id: "later" }] } }, reason: /saved directions cannot be refined/ },
+        { state: pending, reason: /pending update/ },
+        { state: { ...selected, prototypeFlow: { ...flow, activeCheckpointId: "ordinary-update",
+            checkpoints: [...flow.checkpoints, { ...original, id: "ordinary-update", status: "running" as const }] } }, reason: /current-prototype work/ },
+        { state: ordinary, reason: /current-prototype work/ },
+        { state: { ...selected, provider: { canSubmitAnswers: false } }, reason: /installed user-scoped Tandem/ },
+        { state: { ...selected, processing: { ...selected.processing, action: "generate-design-spec", status: "running" } }, reason: /frozen input/ },
+    ];
+    for (const snapshot of blocked) {
+        h.render({ ...snapshot.state, revision: current(h).revision + 1 });
+        await h.flush();
+        assert.equal(disabled(h, "submit-revision"), true);
+        assert.equal(h.get<HTMLTextAreaElement>("revision-input").value, "Keep this direction draft.");
+        assert.match(text(h, "revision-status"), snapshot.reason);
+        const before = h.requests.length;
+        await submit(h, "revision-form");
+        assert.equal(h.requests.length, before, "Blocked direction feedback must not fall back to accepted-prototype feedback.");
+    }
+    h.render({ ...selected, revision: current(h).revision + 1, prototypeFlow: { ...flow, activeCheckpointId: "refining",
+        checkpoints: [...flow.checkpoints, { ...exploration, id: "refining", status: "running",
+            visual: { ...exploration.visual!, operation: "refine" } }] } });
+    await h.flush();
+    assert.equal(disabled(h, "submit-revision"), false);
+    assert.equal(text(h, "submit-revision"), "Send");
+    assert.equal(h.get("submit-revision").getAttribute("aria-label"), "Queue refinement");
+    h.setFetch(async () => response({ ...current(h), revision: current(h).revision + 1 }));
+    await submit(h, "revision-form");
+    assert.equal(h.requests.at(-1)!.body.baseCheckpointId, "visual-bundle");
+    assert.equal(h.requests.at(-1)!.body.visualSelection.directionId, "canvas");
+    assert.equal(h.get<HTMLTextAreaElement>("revision-input").value, "");
 });
 
 test("Default remains the exact original after accepting a direction, and restoring it requires Accept", async t => {
@@ -432,7 +633,9 @@ test("Default remains the exact original after accepting a direction, and restor
     assert.equal(original.dataset.checkpointId, "interaction");
     assert.equal(h.get("compare-current-prototype").dataset.preview, "true");
     assert.equal(h.get("visual-direction-canvas").dataset.applied, "true");
-    assert.equal(h.get("visual-selection-status").classList.contains("visually-hidden"), false);
+    assert.equal(h.get("visual-selection-status").classList.contains("visually-hidden"), true);
+    assert.equal(h.document.querySelector(".prototype-review-heading"), null);
+    assert.equal(text(h, "prototype-review").includes("Feedback for accepted prototype"), false);
     assert.equal(disabled(h, "choose-visual-direction"), false);
     assert.equal(current(h).prototypeFlow!.displayedCheckpointId, "chosen", "Viewing Default does not roll back an accepted direction.");
     h.setFetch(async (path, options) => {
@@ -541,7 +744,7 @@ test("the shared toolbar rechecks and restarts only the preview currently on scr
     await h.click("restart-exploration-preview");
     assert.equal(h.requests.at(-1)!.body.target, "exploration");
     assert.equal(h.requests.at(-1)!.body.checkpointId, "visual-bundle");
-    assert.equal(h.document.querySelectorAll(".phase-actions .preview-recovery-action").length, 2);
+    assert.equal(h.document.querySelectorAll(".prototype-substage-bar .preview-recovery-action").length, 2);
     assert.equal(h.document.querySelector(".visual-exploration .preview-recovery-action"), null);
     assert.equal(current(h).prototypeFlow!.displayedCheckpointId, "interaction");
 });

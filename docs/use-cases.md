@@ -11,8 +11,8 @@ The recipes below cover the next tasks.
 
 **Use when:** a behavior or screen needs to change.
 
-1. Describe the change in Prototype Feedback, the design revision input, or
-   the Development conversation. Tandem assesses the affected stages against
+1. Before Development, describe the change in Prototype Feedback, the design
+   revision input, or Requirements. Tandem assesses the affected stages against
    retained decisions and work before changing earlier stages.
 2. Review **Project changes**: where the change starts, what needs an update,
    and what stays unchanged. Clarify or refine the request if necessary.
@@ -26,6 +26,10 @@ The recipes below cover the next tasks.
 repeating completed decisions or replacing the previous working prototype.
 Prior answers remain visible when a decision needs review. A changed project
 requires **Check impact again** before approving an older proposal.
+
+In Development, use its conversation to [refine Design](#point-to-a-design-change)
+or request implementation changes. This stays in Development's own workflow;
+it does not automatically start an upstream impact review.
 
 For direct edits rather than a chat request:
 
@@ -46,8 +50,8 @@ change, [refine Design](#point-to-a-design-change) instead.
 
 **Use when:** a version is ready but the current preview has not changed.
 
-1. Read its label: Interaction can be an automatic milestone, not your feedback.
-2. Choose the displayed **Show Interaction prototype**, **Show requested revision**
+1. Read its label: Prototype can be an automatic result, not your feedback.
+2. Choose the displayed **Show Prototype**, **Show requested revision**
    or **Show saved version** action.
 3. Try it inline or use **Open current preview**. If you want a change, describe
    it in Feedback and **Send change** or **Queue change**.

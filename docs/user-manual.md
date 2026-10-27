@@ -113,7 +113,15 @@ is not a reason to retry.
 
 In Requirements, **Add usage** accepts a usage, then **Generate requirements DAG**
 researches relevant missing facts before creating connected decisions. Progress
-appears here; expand **Research and sources** to inspect findings and references.
+appears in **Usage list**, alongside Requirements and **Research and sources**.
+**Research and sources** starts expanded; collapse it when you want more space.
+Switch to **Decision DAG** to answer questions; switch back to **Usage list**
+to inspect accepted usages and research, including from later stages.
+The DAG fills its tab. The diagram, decision list and selected question each have
+a bounded-height area with their own scrollbar. **Mermaid source**, immediately
+after the **Fit**/zoom readout, opens a scrollable popup without resizing those panes. Close it
+with **Close** or **Escape** to return to the source button. The source remains
+available even when the diagram cannot render.
 Research informs questions, not accepted features or answers. Failed generation
 keeps your usages and any completed findings for **Retry requirements DAG**.
 An unchanged retry reuses those findings instead of repeating the research.
@@ -157,9 +165,18 @@ Designs displays UI DSL screens: structured components, layout and design tokens
 rendered by a fixed local renderer. Describe UI changes in the composer; freehand,
 shape tools and the geometry inspector are no longer available. Screen metadata,
 transitions, Undo/Redo, canvas size presets and view zoom remain available.
+New concepts start with a neutral **Wireframes: layout & navigation** kit.
+Review the screen hierarchy, meaningful content, actions and path through the
+task, without spending this stage on branding. Existing reviewed designs retain
+their appearance; validating an existing GUI does not downgrade it to wireframes.
+Wireframe approval confirms layout, content and navigation, not final appearance
+or working application behavior. The approval control explains this scope.
 **Screen details** contains screen metadata; **Structure**, below it, shows the
 component hierarchy. Select an element there or directly in the view.
 Selection stays active until you choose **Interact** to try the preview controls.
+In Interact mode, navigation-linked controls and **Navigation preview only**
+actions follow the saved screen transitions. This changes only the viewed screen,
+without saving, approving, running services or generating application code.
 Use arrow keys to browse, expand and collapse the hierarchy.
 
 Requests include the viewed screen and selected element. Selecting or inspecting components does
@@ -169,7 +186,8 @@ Sizing changes the responsive viewport; zoom changes only the view.
 **Save designs** saves edits;
 **Approve designs and continue** explicitly approves that revision.
 Already-approved, unchanged designs may show **Finish Designs and continue**
-instead. A saved/streamed revision alone is not approval.
+instead. Their approval status appears in the bottom status bar, not the
+design toolbar. A saved/streamed revision alone is not approval.
 
 Older geometry-based designs show a **Regenerate designs** prompt instead of a
 view. Reopen Designs if needed, regenerate and approve the DSL revision, then
@@ -223,34 +241,61 @@ or unfinished work inside the draft still blocks Apply with a visible reason.
 
 Cancel before approval leaves accepted work unchanged. Cancelling remaining
 work afterwards retains already saved changes rather than rolling them back.
-Development can propose an upstream change when a discovery baseline exists;
-direct Development continues to own its Design without mandatory discovery.
-Returning a change to Development never substitutes for implementation confirmation.
+Impact review applies only to stages through Prototype. Development handles its
+own Design changes, implementation confirmation and code Review; its requests do
+not automatically return to discovery or start a review in the main conversation.
+Older Development-origin impact requests remain available as read-only history
+and do not block new discovery work. Explicitly sending an accepted discovery
+change to Development never substitutes for implementation confirmation.
 
 **Reopen** remains a broader manual operation: affected outputs become stale and
 may need completion/approval again. See [revision recipes](use-cases.md#revise-requirements-or-designs).
 
 ## Prototype versions
 
-**Structure** and **Interaction** are automatic milestones after prototype work
-starts. Feedback and **Explore visual directions (optional)** are optional.
+**Prototype** is one combined sub-stage for layout, navigation and working task
+behavior. Feedback and **Explore visual directions (optional)** are optional.
 Existing GUI validation uses copied source; a new mock UI is not proof of real
 services, persistence or integrations.
 
-The inline preview and **Open current preview** show the displayed version.
-A waiting version changes that only when you choose its action, such as
-**Show Interaction prototype** or **Show requested revision**. Automatic
-milestones are not feedback you submitted.
+One worker builds the smallest complete primary task, including applicable
+loading, empty, error, recovery and success states, and returns one verified
+preview. There is no separate Structure or Interaction build or approval.
+Revisions add only the requested changes to an isolated copy; a failed update
+retains the accepted version. Existing saved Structure/Interaction checkpoints
+and any already-running work remain intact and appear under the combined tab.
+An old Structure-only preview is partial, not proof of a complete prototype.
 
-Use **Feedback** to **Send change** or **Queue change**, then inspect its
-status and clarifications. Finish requires the necessary milestones, current
+**Prototype** focuses on task flow and behavior; **Visual exploration** focuses
+on appearance without adding workflows. Feedback targets the accepted version
+when inspecting a saved result or **Default**. When comparing a named direction
+or **Custom**, the same feedback box refines only that alternative.
+
+Use the **Prototype** and **Visual exploration** tabs to revisit
+each saved result, including after continuing into a later stage.
+These numbered sub-tabs use the same style and status icons as Requirements.
+Hover over an icon for its status; screen readers announce the same description.
+Switching tabs only changes the view: it does not reopen work, apply a version,
+or start generation. Each preview is checked against its saved checkpoint.
+Unavailable saved previews can be explicitly rechecked or restarted.
+
+The accepted prototype changes only when you choose an action such as
+**Show Prototype** or **Show requested revision**. **Open pending prototype
+(not applied)** lets you inspect a verified waiting version without accepting it. Automatic
+milestones are not feedback you submitted. **Feedback** still targets the
+accepted prototype when you are inspecting an earlier result.
+
+Change and feedback boxes share an input, **Send**, and **History** layout.
+**Send** keeps the current target and queues feedback when work is already running.
+**History** shows the recorded requests and their status without applying changes.
+Inspect any clarifications before continuing. Finish requires the necessary milestones, current
 design approval and resolved submitted feedback. **Finish Prototype and save
 outputs** retains evidence; it starts neither Design nor implementation.
 Non-GUI work can retain a reason/specification without fabricating screens.
 
 ### Explore visual directions
 
-After applying Interaction, choose **Explore visual directions (optional)**.
+After accepting the Prototype, choose **Explore visual directions (optional)**.
 The agent builds two or three working alternatives with different layouts,
 typography, colors and restrained effects. They keep the same primary workflow
 and mock data. **What differs** explains each direction, including layout
@@ -263,10 +308,13 @@ new navigation or features.
 2. Expand **Advanced settings** for light/dark, accent, density, text size and
    effects on a named direction. Changed settings appear as **Custom** and switch
    in place without an agent run. Reduced-motion preferences always turn motion off.
-3. Use **Refine direction** to request a change to that alternative only.
-   Ordinary **Feedback** still targets the current prototype and waits until
-   exploration is applied or put aside.
-4. Use **Accept** in the top toolbar to apply the previewed direction and settings.
+3. Use the shared **Feedback** box and **Refine direction** to request a change
+   to the alternative on screen. Its heading identifies the target, and drafts
+   are retained separately for each direction and the accepted prototype.
+   Return to **Default** or the **Prototype** tab for ordinary feedback, which
+   waits until exploration is applied or put aside.
+4. Use **Accept** at the right of the direction buttons to apply the
+   previewed direction and settings.
    Accepting **Default** restores the saved original without regenerating it.
    Alternatives, settings and checkpoint history are retained.
 

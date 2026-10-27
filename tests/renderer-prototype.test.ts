@@ -2,8 +2,55 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { setup, state, decision, response, progressivePrototype, readyPrototype, checkpoint,
     text, field, disabled, hidden, current, submit, browse, waitFor, type Harness } from "./renderer-fixtures.test.js";
+import { exploringPrototype } from "./helpers/visual-fixture.js";
 
 const frame = (h: Harness) => h.get<HTMLIFrameElement>("preview-frame");
+
+test("one Prototype tab combines layout and behavior while preserving accepted legacy checkpoints", async t => {
+    const h = await setup(t, readyPrototype(1, true));
+    assert.deepEqual(Array.from(h.get("prototype-milestones").querySelectorAll("[role=tab]"), item => item.getAttribute("data-milestone")), ["prototype", "visual"]);
+    assert.ok(h.get("prototype-visual-tab").classList.contains("substage-tab"));
+    assert.deepEqual(Array.from(h.get("prototype-milestones").querySelectorAll(".substage-index"), item => item.textContent), ["1", "2"]);
+    assert.equal(h.get("prototype-milestones").querySelector("strong"), null);
+    const status = h.get("prototype-prototype-tab").querySelector(".substage-status")!;
+    assert.equal(status.getAttribute("role"), "img");
+    assert.equal(status.getAttribute("title"), "Ready to inspect - not applied");
+    assert.equal(h.get("prototype-prototype-tab").getAttribute("aria-label"), "Prototype, Ready to inspect - not applied");
+    assert.ok(status.querySelector('svg[aria-hidden="true"]'));
+    assert.equal(h.document.getElementById("prototype-structure-tab"), null);
+    assert.equal(h.document.getElementById("prototype-interaction-tab"), null);
+    assert.equal(h.document.getElementById("prototype-focus"), null);
+    assert.equal(text(h, "prototype-review").includes("Task flow & behavior"), false);
+    assert.match(field(h, "revision-input").placeholder, /task flow, controls or state feedback/);
+    await h.fire(h.get("prototype-prototype-tab"), "mousedown", { button: 0 });
+    assert.equal(current(h).prototypeFlow.displayedCheckpointId, "structure");
+    assert.deepEqual(h.requests, []);
+    h.render(readyPrototype(2));
+    await h.flush();
+    assert.equal(current(h).prototypeFlow.displayedCheckpointId, "interaction");
+    assert.match(field(h, "revision-input").placeholder, /task flow, controls or state feedback/);
+});
+
+test("one ready combined checkpoint enables completion and optional visuals without a second mandatory milestone", async t => {
+    const value = readyPrototype();
+    const combined = { ...value.prototypeFlow.checkpoints[1], id: "combined", requestId: "combined",
+        milestone: "prototype" as const, baseCheckpointId: null, sourceCheckpointId: null };
+    value.prototypeFlow.checkpoints = [combined];
+    value.prototypeFlow.displayedCheckpointId = combined.id;
+    const h = await setup(t, value);
+    assert.equal(text(h, "prototype-milestones"), "1Prototype2Visual exploration");
+    assert.equal(h.get("prototype-prototype-tab").querySelector(".substage-status")!.getAttribute("aria-label"), "Ready");
+    assert.equal(h.get("prototype-visual-tab").querySelector(".substage-status")!.getAttribute("aria-label"), "Optional");
+    assert.equal(disabled(h, "complete-stage"), false);
+    assert.equal(hidden(h, "request-prototype-visual"), false);
+    assert.equal(frame(h).dataset.checkpointId, "combined");
+    const partial = { ...value, revision: 2, prototypeFlow: { ...value.prototypeFlow,
+        checkpoints: [{ ...combined, milestone: "structure" as const }] } };
+    h.render(partial); await h.flush();
+    assert.equal(h.get("prototype-prototype-tab").querySelector(".substage-status")!.getAttribute("aria-label"), "Partial preview");
+    assert.equal(disabled(h, "complete-stage"), true);
+    assert.equal(hidden(h, "request-prototype-visual"), true);
+});
 function bridge(h: Harness, owner = frame(h)) {
     const messages: { data: any; origin: string }[] = [];
     owner.contentWindow!.postMessage = (data: any, origin: any) => { messages.push({ data, origin }); };
@@ -17,6 +64,54 @@ async function reply(h: Harness, capture: { data: any; origin: string }, saved: 
         type: "tandem:preview:state", requestId: capture.data.requestId, prototypeId: "fixture", state: saved,
     } });
 }
+
+test("Prototype substage tabs revisit saved results without promoting versions or remounting the current preview", async t => {
+    const value = exploringPrototype(), h = await setup(t, value);
+    const before = structuredClone(current(h).prototypeFlow), accepted = frame(h);
+    await h.input("revision-input", "Retain this feedback.");
+    assert.equal(h.get("prototype-visual-tab").getAttribute("aria-selected"), "true");
+    await h.fire(h.get("prototype-prototype-tab"), "mousedown", { button: 0 });
+    assert.equal(frame(h), accepted);
+    assert.equal(accepted.hidden, false);
+    assert.equal(accepted.dataset.checkpointId, "interaction");
+    assert.equal(h.get("prototype-substage-panel").getAttribute("aria-labelledby"), "prototype-prototype-tab");
+    await h.fire(h.get("prototype-prototype-tab"), "keydown", { key: "ArrowRight" });
+    assert.equal(h.get("prototype-visual-tab").getAttribute("aria-selected"), "true");
+    assert.equal(h.get("visual-exploration-title").closest("[hidden]"), null);
+    await h.fire(h.get("prototype-prototype-tab"), "mousedown", { button: 0 });
+    assert.equal(frame(h), accepted);
+    assert.equal(field(h, "revision-input").value, "Retain this feedback.");
+    assert.deepEqual(current(h).prototypeFlow, before);
+    assert.deepEqual(h.requests, []);
+});
+
+test("a verified pending prototype can be opened without replacing or accepting the current preview", async t => {
+    const value = readyPrototype(1, true), h = await setup(t, value), accepted = frame(h);
+    const before = structuredClone(current(h).prototypeFlow);
+    const pending = h.get<HTMLAnchorElement>("open-pending-preview");
+    assert.equal(pending.href, value.prototypeFlow.checkpoints[1].previewUrl);
+    assert.match(pending.textContent!, /not applied/);
+    assert.equal(pending.target, "_blank");
+    assert.equal(disabled(h, "complete-stage"), true);
+    await h.fire(h.get("prototype-prototype-tab"), "mousedown", { button: 0 });
+    assert.equal(frame(h), accepted);
+    assert.equal(accepted.hidden, false);
+    assert.deepEqual(current(h).prototypeFlow, before);
+    assert.deepEqual(h.requests, []);
+});
+
+test("saved Prototype milestone tabs remain browsable after continuing into Development", async t => {
+    const value = readyPrototype(), h = await setup(t, value);
+    h.render({ ...value, revision: 2, lifecycle: { ...value.lifecycle,
+        currentStage: "development", completedStages: ["prepare", "requirements", "sketch", "prototype"] } });
+    await browse(h, "prototype");
+    const requestsBefore = h.requests.length;
+    await h.fire(h.get("prototype-prototype-tab"), "mousedown", { button: 0 });
+    assert.equal(frame(h).hidden, false);
+    assert.equal(current(h).lifecycle.currentStage, "development");
+    assert.equal(current(h).prototypeFlow.displayedCheckpointId, "interaction");
+    assert.equal(h.requests.length, requestsBefore);
+});
 
 test("prototype waits honestly, starts explicitly and shows actual progress with elapsed time", async (t) => {
     const value = state("prototype"); value.phase = "building";
@@ -43,17 +138,18 @@ test("progressive Prototype reports honest milestones and keeps its iframe while
     first.prototypeFlow.displayedCheckpointId = null; first.prototypeFlow.activeCheckpointId = "first";
     const h = await setup(t, first);
     assert.equal(hidden(h, "prototype-progress"), false);
-    assert.match(text(h, "prototype-milestones"), /StructureBuildingInteractionWaitingVisual explorationOptional/);
-    assert.match(text(h, "prototype-progress-message"), /No preview is available yet/);
+    assert.equal(text(h, "prototype-milestones"), "1Prototype2Visual exploration");
+    assert.equal(h.get("prototype-prototype-tab").querySelector(".substage-status")!.getAttribute("aria-label"), "Building");
+    assert.ok(h.get("prototype-prototype-tab").querySelector(".substage-status .spin"));
+    assert.match(text(h, "preview-empty-message"), /first checkpoint/);
     assert.equal(frame(h).hidden, true);
     assert.equal(disabled(h, "revision-input"), false);
     assert.equal(disabled(h, "submit-revision"), false);
     const value = progressivePrototype(2); h.render(value); await h.flush();
     const displayed = frame(h);
     assert.equal(displayed.hidden, false); assert.equal(displayed.src, value.previewUrl);
-    assert.equal(text(h, "prototype-building-title"), "Building Interaction");
-    assert.match(text(h, "prototype-budget"), /no automatic execution-time cap/);
-    assert.equal(h.get("prototype-milestones").querySelector<HTMLElement>('[aria-current="step"]')!.dataset.milestone, "interaction");
+    assert.equal(text(h, "prototype-building-title"), "Building Prototype");
+    assert.equal(h.get("prototype-milestones").querySelector<HTMLElement>('[aria-current="step"]')!.dataset.milestone, "prototype");
     await h.input("revision-input", "Keep this draft");
     field(h, "revision-input").focus(); field(h, "revision-input").setSelectionRange(2, 5);
     h.render({ ...value, revision: 3, status: "Verifying the update" });
@@ -63,7 +159,7 @@ test("progressive Prototype reports honest milestones and keeps its iframe while
     h.render(readyPrototype(4, true));
     assert.equal(frame(h), displayed);
     assert.equal(frame(h).src, value.previewUrl);
-    assert.match(text(h, "prototype-progress-message"), /Interaction prototype ready to inspect.*automatically generated milestone, not a response to feedback/);
+    assert.match(text(h, "prototype-progress-message"), /Prototype ready to inspect.*automatically generated milestone, not a response to feedback/);
     assert.equal(hidden(h, "apply-prototype-update"), false);
     assert.equal(disabled(h, "apply-prototype-update"), false);
     assert.equal(hidden(h, "request-prototype-visual"), true);
@@ -75,48 +171,69 @@ test("compact prototype layout retains expanded details, drafts and iframe acros
     value.prototypeReview.revisions = [{ id: "queued", suggestion: "Keep the camera position.", status: "queued" }];
     const h = await setup(t, value), displayed = frame(h);
     assert.equal(h.document.body.classList.contains("prototype-view"), true);
-    assert.equal(h.get<HTMLDetailsElement>("prototype-progress-details").open, false);
-    assert.equal(h.get<HTMLDetailsElement>("revision-history-details").open, false);
+    assert.equal(h.document.getElementById("prototype-focus"), null);
+    assert.equal(h.get("revision-history-details").hidden, true);
+    assert.equal(h.get("revision-form").lastElementChild, h.get("prototype-history-toggle"));
+    assert.equal(text(h, "submit-revision"), "Send");
     assert.match(text(h, "revision-queue-summary"), /1 queued/);
-    assert.equal(h.get("prototype-progress-message").dataset.essential, "false");
     assert.equal(h.get("revision-status").dataset.essential, "false");
     assert.equal(field(h, "revision-input").getAttribute("rows"), "1");
     await submit(h, "revision-form");
     assert.equal(h.get("revision-status").dataset.essential, "true");
     assert.match(text(h, "revision-status"), /Enter a revision suggestion/);
-    await h.click(h.get("prototype-progress-details").querySelector("summary")!);
-    await h.click(h.get("revision-history-details").querySelector("summary")!);
+    await h.click("prototype-history-toggle");
+    assert.equal(h.get("prototype-history-toggle").getAttribute("aria-expanded"), "true");
     await h.input("revision-input", "Draft stays here.");
     field(h, "revision-input").focus(); field(h, "revision-input").setSelectionRange(3, 5);
     h.render({ ...value, revision: 2 });
-    assert.equal(h.get<HTMLDetailsElement>("prototype-progress-details").open, true);
-    assert.equal(h.get<HTMLDetailsElement>("revision-history-details").open, true);
+    assert.equal(h.get("revision-history-details").hidden, false);
     assert.equal(field(h, "revision-input").selectionStart, 3);
     await browse(h, "requirements");
     assert.equal(h.document.body.classList.contains("prototype-view"), false);
     await browse(h, "prototype");
     assert.equal(h.document.body.classList.contains("prototype-view"), true);
-    assert.equal(h.get<HTMLDetailsElement>("revision-history-details").open, true);
+    assert.equal(h.get("revision-history-details").hidden, false);
     assert.equal(field(h, "revision-input").value, "Draft stays here.");
     assert.equal(frame(h), displayed);
+    await h.fire(h.get("revision-history-details"), "keydown", { key: "Escape" });
+    assert.equal(h.get("revision-history-details").hidden, true);
+    assert.equal(h.document.activeElement, h.get("prototype-history-toggle"));
+    assert.equal(field(h, "revision-input").value, "Draft stays here.");
 });
 
-test("prototype completion stays in the tab bar while preview controls stay below the inputs without remounting", async t => {
+test("Prototype history stays available when empty and keyboard submission retains the feedback target", async t => {
+    const value = readyPrototype(), h = await setup(t, value);
+    await h.click("prototype-history-toggle");
+    assert.equal(h.get("revision-history-details").hidden, false);
+    assert.match(text(h, "revision-history-details"), /No prototype requests yet/);
+    await h.fire(h.get("prototype-history-toggle"), "keydown", { key: "Escape" });
+    assert.equal(h.get("revision-history-details").hidden, true);
+    assert.deepEqual(h.requests, []);
+    await h.input("revision-input", "Keep this keyboard feedback.");
+    h.setFetch(async () => response({ ...value, revision: 2 }));
+    await h.fire(h.get("revision-input"), "keydown", { key: "Enter", ctrlKey: true });
+    assert.equal(h.requests[0].path, "/api/revision");
+    assert.equal(h.requests[0].body.suggestion, "Keep this keyboard feedback.");
+    assert.equal(h.requests[0].body.baseCheckpointId, "interaction");
+    assert.equal(field(h, "revision-input").value, "");
+});
+
+test("prototype completion stays in the stage header while preview controls share the substage tab bar", async t => {
     const value = readyPrototype();
     const h = await setup(t, value), displayed = frame(h);
-    const actions = h.document.querySelector("#stage-input-review > .phase-actions")!;
+    const actions = h.document.querySelector(".prototype-substage-bar")!;
     const open = h.get<HTMLAnchorElement>("open-preview");
     assert.ok(h.document.querySelector(".previewbar")!.contains(h.get("complete-stage")));
     assert.equal(actions.contains(h.get("complete-stage")), false);
     assert.ok(actions.contains(open));
     assert.equal(open.href, value.previewUrl);
-    assert.equal(h.get("live-preview-panel").querySelector(".prototype-preview-actions"), null);
+    assert.equal(h.get("live-preview-panel").querySelector(".prototype-preview-actions"), actions.querySelector(".prototype-preview-actions"));
     h.render({ ...value, revision: 2, status: "Current preview stays available." });
     await h.flush();
     assert.equal(h.get("open-preview"), open);
     assert.equal(frame(h), displayed);
     await browse(h, "requirements");
-    assert.equal(actions.querySelector(".prototype-preview-actions"), null);
+    assert.ok(actions.closest("[hidden]"));
     await browse(h, "prototype");
     assert.ok(actions.contains(h.get("open-preview")));
     assert.equal(frame(h), displayed);
@@ -127,9 +244,9 @@ test("pending Prototype copy distinguishes automatic milestones from recorded fe
     const value = readyPrototype(1, true);
     const h = await setup(t, value);
     assert.match(text(h, "prototype-progress-message"), /automatically generated milestone, not a response to feedback/);
-    assert.equal(text(h, "apply-prototype-update"), "Show Interaction prototype");
+    assert.equal(text(h, "apply-prototype-update"), "Show Prototype");
     assert.equal(h.document.getElementById("prototype-feedback-help"), null);
-    assert.equal(field(h, "revision-input").placeholder, "Describe one change you want to see in the prototype.");
+    assert.equal(field(h, "revision-input").placeholder, "Describe a change to the task flow, controls or state feedback.");
     assert.equal(field(h, "revision-input").getAttribute("aria-label"), "Prototype revision suggestion");
     const requested = readyPrototype(2, true);
     requested.prototypeFlow.checkpoints[1].revisionId = "feedback-one";
@@ -388,7 +505,7 @@ test("Finish Prototype requires promoted milestones and resolved feedback, not o
     h.render({ ...value, revision: 20, prototypeReview: { revisions: [{ id: "done", status: "applied", suggestion: "Done" }], question: null } });
     assert.equal(disabled(h, "complete-stage"), false);
     h.render({ ...value, revision: 21, prototypeFlow: null });
-    assert.equal(hidden(h, "prototype-progress"), true);
+    assert.equal(hidden(h, "prototype-milestones"), true);
     assert.equal(disabled(h, "complete-stage"), false);
 });
 
@@ -445,7 +562,8 @@ test("historically exhausted work remains visible and allows only explicit new r
     const h = await setup(t, value), displayed = frame(h);
     assert.equal(h.document.querySelector("#extend-prototype-budget"), null);
     assert.equal(hidden(h, "retry-prototype-checkpoint"), false);
-    assert.match(text(h, "prototype-budget"), /Legacy 15-minute budget retained for history, not enforced/);
+    assert.equal(current(h).prototypeFlow.budget.usedSeconds, 900);
+    assert.equal(text(h, "retry-prototype-checkpoint"), "Retry Prototype");
     assert.equal(h.requests.length, 0);
     h.setFetch(async () => response({ ...value, revision: 2 }));
     await h.click("retry-prototype-checkpoint");
@@ -459,6 +577,7 @@ test("failed optional visual work can be skipped without losing history, preview
     value.prototypeFlow.budget.usedSeconds = 900;
     const h = await setup(t, value), displayed = frame(h);
     assert.equal(hidden(h, "skip-prototype-visual"), false);
+    assert.equal(h.get("prototype-visual-tab").querySelector(".substage-status")!.getAttribute("aria-label"), "Failed - retry available");
     assert.equal(disabled(h, "complete-stage"), true);
     await h.input("revision-input", "Keep future feedback");
     h.setFetch(async () => response({ ...value, revision: 2, prototypeFlow: { ...value.prototypeFlow, visualRequested: false } }));
@@ -469,8 +588,8 @@ test("failed optional visual work can be skipped without losing history, preview
     assert.equal(h.document.querySelector("#extend-prototype-budget"), null);
     assert.equal(disabled(h, "request-prototype-visual"), false);
     assert.equal(disabled(h, "complete-stage"), false);
-    assert.match(text(h, "prototype-milestones"), /Visual explorationSkipped \(optional\)/);
-    assert.doesNotMatch(text(h, "prototype-progress-message"), /latest update failed/);
+    assert.equal(h.get("prototype-visual-tab").querySelector(".substage-status")!.getAttribute("aria-label"), "Skipped (optional)");
+    assert.equal(h.document.querySelector("#prototype-progress-message"), null);
     assert.equal(current(h).prototypeFlow.checkpoints.at(-1).status, "failed");
     assert.equal(field(h, "revision-input").value, "Keep future feedback");
     assert.equal(frame(h), displayed);

@@ -87,6 +87,16 @@ test("all roles receive natural public milestone guidance without changing resul
   assert.ok(humanLoopPrompts.wrapper.includes(terminalInstruction));
 });
 
+test("Development routing keeps retained Prototype evidence without requesting upstream impact review", () => {
+  const router = humanLoopPrompts.roles.router.join("\n");
+  assert.match(router, /Development owns this request even when sourceHandoffs contains retained/);
+  assert.match(router, /normal Designer and Questions paths against current canonical Design and actual code/);
+  assert.match(router, /Upstream impact review applies only before Development/);
+  assert.match(router, /never escalate this request to the main session/);
+  assert.doesNotMatch(router, /discovery-change|return.*upstream impact proposal/);
+  assert.match(router, /implementation requests propose internal planning.*explicit implementation confirmation/);
+});
+
 test("every effective role receives shared plain-language guidance without changing machine contracts", () => {
   const guidance = humanLoopPrompts.shared.find(line => line.startsWith("Use ordinary words"));
   assert.match(guidance, /short, concrete statements.*what happened, its impact, or the choice needed/);

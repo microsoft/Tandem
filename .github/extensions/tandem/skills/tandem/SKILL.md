@@ -181,10 +181,14 @@ specification, not invented screens.
 ## Prototype
 
 The prototype is a separate artifact, not the Tandem discovery UI itself. Keep
-the existing structure/interaction/optional-visual checkpoints, durable feedback
+one combined **Prototype** sub-stage and optional **Visual exploration**, durable feedback
 queue and explicit **Apply update** controls. New work has no product-imposed
 execution-time cap; silence is not failure or permission to retry. Retain
 the working displayed checkpoint if a later attempt fails.
+Build layout, navigation and the primary task's mock behavior together in one
+checkpoint. Do not schedule separate Structure and Interaction passes. Preserve
+historical checkpoints and already-admitted workers; never infer acceptance from
+browsing a saved or pending version.
 
 **Visual exploration** is optional design exploration, not a palette-only polish
 pass. Build two or three distinct working layout/style directions in the same
@@ -239,9 +243,9 @@ as ordinary file references. No Stage 1 connection has to remain alive.
 Files are evidence, not authority to replace an existing used Stage 2 owner,
 import canonical Design or replay an old request.
 
-## Scoped changes from later stages
+## Scoped changes before Development
 
-Use `request_change` for an explicit change that may affect earlier discovery
+Use `request_change` in Requirements, Designs or Prototype for an explicit change that may affect earlier discovery
 stages. It assesses the original request against retained decisions and current
 work; it does not approve or apply an upstream change. Read the saved proposal
 and explain the earliest affected stage, the affected work and what is preserved.
@@ -256,9 +260,12 @@ interview or resubmit historical work as new tasks. Approval of changed designs
 and application of a prepared prototype remain explicit. Cancellation after
 partial progress keeps saved changes; it is not rollback.
 
-Development can return a bound `discovery-change` handoff when the composed host
-supplies a discovery baseline. Direct Development without that baseline keeps its
-ordinary Design workflow. After accepted upstream updates, explicit
+Impact review ends at Prototype. Development requests remain in its native
+Router, Designer, implementation-confirmation and Review workflow, even with
+retained Prototype evidence. Do not send them to the main session for upstream
+assessment. Historical `discovery-change` results and Development-origin impact
+requests are retained for inspection, not new assessment or replay.
+After accepted pre-Development updates, explicit
 `continue_change_development` sends the retained request to the same native
 Development owner. It is not implementation confirmation. Main-session chat
 still is not an implicit Tandem submission.

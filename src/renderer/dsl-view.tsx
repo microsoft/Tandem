@@ -9,11 +9,14 @@ const styles = `${rendererCss}
 .uidl-surface { min-height: 100%; }
 `;
 
-function mount(host: HTMLElement, onSelect?: (id: string) => void) {
+function mount(host: HTMLElement, onSelect?: (id: string) => void, onNavigate?: (transitionId: string) => void) {
   const style = host.ownerDocument.createElement("style");
   style.textContent = styles;
   host.append(style);
-  return createRenderer(host, { mode: "interact", onSelect });
+  return createRenderer(host, { mode: "interact", onSelect, onEvent: event => {
+    const transitionId = event.action || event.destination;
+    if (event.type === "activate" && transitionId) onNavigate?.(transitionId);
+  } });
 }
 
 export function uiNodeLabel(node: UiNode): string {
@@ -22,21 +25,25 @@ export function uiNodeLabel(node: UiNode): string {
   return `${node.type}: ${typeof label === "string" ? label.slice(0, 80) : node.id}`;
 }
 
-export function DslView({ screen, selection }: {
+export function DslView({ screen, selection, onNavigate }: {
   screen: DslSketchScreen;
   selection?: { nodeId: string | null; picking: boolean; onSelect(id: string): void };
+  onNavigate?: (transitionId: string) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const renderer = useRef<UiRenderer | null>(null);
   const selectionRef = useRef(selection);
   selectionRef.current = selection;
+  const navigationRef = useRef(onNavigate);
+  navigationRef.current = onNavigate;
+  const content = JSON.stringify(screen.ui);
   const [error, setError] = useState("");
   useLayoutEffect(() => {
     const shadow = host.current!.shadowRoot ?? host.current!.attachShadow({ mode: "open" });
     const surface = host.current!.ownerDocument.createElement("div");
     surface.style.cssText = "width:100%;height:100%";
     shadow.append(surface);
-    renderer.current = mount(surface, id => selectionRef.current?.onSelect(id));
+    renderer.current = mount(surface, id => selectionRef.current?.onSelect(id), id => navigationRef.current?.(id));
     return () => { renderer.current?.dispose(); renderer.current = null; surface.remove(); };
   }, []);
   useLayoutEffect(() => {
@@ -46,11 +53,11 @@ export function DslView({ screen, selection }: {
     } catch (cause) {
       setError(`Could not render the UI DSL view: ${cause instanceof Error ? cause.message : String(cause)}`);
     }
-  }, [screen.ui]);
+  }, [content]);
   useLayoutEffect(() => {
     renderer.current!.setMode(selection?.picking ? "select" : "interact");
     renderer.current!.select(selection?.nodeId && Object.hasOwn(screen.ui.nodes, selection.nodeId) ? selection.nodeId : null);
-  }, [screen.ui, selection?.nodeId, selection?.picking]);
+  }, [content, selection?.nodeId, selection?.picking]);
   useLayoutEffect(() => {
     if (!selection?.picking || !selection.nodeId) return;
     const element = renderer.current?.getElement(selection.nodeId);

@@ -72,7 +72,6 @@ export function createHumanLoopController(options: {
   projectEffortControl?: boolean;
   contextProvider?(input: { role: HumanRole; request: RequestRecord; cycle: WorkCycle | null; state: HumanLoopState }): Promise<unknown>;
   onHandoff?(handoff: Handoff): Promise<void>;
-  onHandoffSettled?(handoff: Handoff): Promise<void>;
 }): HumanLoopController;
 export function createDurablePrivateSession(
   client: import("@github/copilot-sdk").CopilotClient, configuration: SessionConfig,

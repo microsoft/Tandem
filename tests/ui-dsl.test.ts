@@ -6,10 +6,48 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runInNewContext } from "node:vm";
 import { SketchStore } from "../src/sketch-store.js";
-import { hasScreenContent, readSketchState, sketchDocumentSchema, validateSketchDocument } from "../src/sketch.js";
+import { createSketchUi, hasScreenContent, readSketchState, sketchApprovalScope, sketchDocumentSchema, sketchFidelity, validateSketchDocument } from "../src/sketch.js";
+import { buildSketchPrompt, buildDevelopmentHandoffPrompt, buildPrototypeCheckpointPrompt } from "../src/planning-prompts.js";
 import { sketchDocument, screenPng } from "./helpers/sketch-lifecycle-fixture.js";
 import { createDocument } from "./helpers/ui-dsl-fixture.js";
 import rendererCss from "../src/vendor/ui-dsl/styles.js";
+
+test("new concepts use wireframe defaults while existing DSL retains its exact styling and approval identity", () => {
+    const existing = sketchDocument();
+    assert.equal(sketchFidelity(null, "build"), "wireframe");
+    assert.equal(sketchFidelity(null, "validate-existing"), "styled");
+    assert.equal(sketchFidelity(existing), "styled");
+    assert.deepEqual(validateSketchDocument(existing), existing);
+    assert.equal(Object.hasOwn(validateSketchDocument(existing), "fidelity"), false);
+    const wireframe = { ...existing, fidelity: "wireframe" as const };
+    wireframe.screens = [{ ...existing.screens[0], ui: createSketchUi("wireframe") }];
+    for (const [key, value] of Object.entries(wireframe.screens[0].ui.tokens)) {
+        if (!key.startsWith("color.")) continue;
+        assert.match(String(value), /^#([a-f0-9]{2})\1\1$/i, key);
+    }
+    assert.deepEqual(validateSketchDocument(wireframe), wireframe);
+    assert.match(sketchApprovalScope(wireframe), /Appearance is deferred/);
+    assert.match(sketchApprovalScope(existing), /saved layout and appearance/);
+    for (const fidelity of ["unknown", null, false, ""]) {
+        assert.throws(() => validateSketchDocument({ ...existing, fidelity }), /fidelity/);
+    }
+    const args = { prototypeId: "sample", projectRoot: "C:\\sample", action: "generate-sketch",
+        instruction: "Create the initial screens", requirements: {}, approach: "build", document: null };
+    assert.match(buildSketchPrompt(args), /WIREFRAME FOCUS/);
+    assert.match(buildSketchPrompt(args), /host supplies a neutral wireframe token kit/);
+    assert.match(buildSketchPrompt(args), /Button.action or Link.destination to the exact outgoing transition ID/);
+    for (const input of [{ ...args, approach: "validate-existing" }, { ...args, action: "revise-sketch", document: existing }]) {
+        assert.match(buildSketchPrompt(input), /EXISTING DESIGN FOCUS/);
+        assert.doesNotMatch(buildSketchPrompt(input), /WIREFRAME FOCUS/);
+    }
+    assert.match(buildDevelopmentHandoffPrompt({ handoffId: "saved", receiptPath: "receipt", snapshotPath: "snapshot",
+        sourcePath: null, disposition: "new", goal: "Build", uiDslPath: "document.json" }), /not final branding or production behavior/);
+    const interaction = buildPrototypeCheckpointPrompt({ prototypeId: "sample", projectRoot: "C:\\sample",
+        checkpoint: { id: "interaction", milestone: "interaction", workspacePath: "C:\\sample\\.tandem\\interaction", baseCheckpointId: "structure" },
+        goal: "Complete a task", approach: "build", requirements: {}, confirmed: [] });
+    assert.match(interaction, /Do not scaffold a replacement app/);
+    assert.doesNotMatch(interaction, /If no suitable GUI exists/);
+});
 
 test("DSL documents validate exact component contracts across realms without weakening legacy reads", () => {
     const value = sketchDocument();
