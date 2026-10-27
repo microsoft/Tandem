@@ -16,6 +16,7 @@ const statuses: Record<ChangeRequest["status"], string> = {
 
 export function changeRequestStatus(request: ChangeRequest): string {
     if (!isDiscoveryChangeRequest(request)) return "Historical Development request";
+    if (request.status === "cancelled" && request.replacedByRequestId) return "Review updated with new feedback";
     if (request.error && !["completed", "cancelled", "deferred"].includes(request.status)) return "Change needs attention";
     if (request.status === "proposed" && request.assessment?.question) return "A detail is needed";
     if (request.status === "completed") {
@@ -35,6 +36,9 @@ export function changeRequestResponse(request: ChangeRequest): string {
     if (!isDiscoveryChangeRequest(request)) {
         return "Retained as history. Upstream impact review ends at Prototype; continue this request in Development."
             + (request.error ? ` Recorded error: ${request.error}` : "");
+    }
+    if (request.status === "cancelled" && request.replacedByRequestId) {
+        return "Replaced by a new review using later feedback. Already applied changes and previous draft records were retained.";
     }
     if (request.error) return request.error;
     switch (request.status) {

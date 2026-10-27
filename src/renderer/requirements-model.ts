@@ -14,6 +14,15 @@ export function requirementNodes(state: Pick<TandemState, "requirements" | "deci
     }] : [];
 }
 
+export function requirementChange(before: DecisionNode | undefined, after: DecisionNode | undefined): "added" | "changed" | "removed" | null {
+    if (!before) return after ? "added" : null;
+    if (!after) return "removed";
+    const content = (node: DecisionNode) => ({
+        title: node.title, question: node.question, answer: node.answer, dependencies: node.dependencies,
+    });
+    return JSON.stringify(content(before)) === JSON.stringify(content(after)) ? null : "changed";
+}
+
 export function selectedRequirement(nodes: DecisionNode[], selectedId: string | null, followActive: boolean): DecisionNode | null {
     const selected = nodes.find((node) => node.id === selectedId);
     const active = nodes.find((node) => node.status === "active");

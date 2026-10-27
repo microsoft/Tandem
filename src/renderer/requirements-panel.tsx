@@ -6,7 +6,7 @@ import { buildDecisionGraphMermaid } from "../decision-diagram.js";
 import { decisionIsReady, requiresExplicitAnswer, type DecisionNode } from "../workflow.js";
 import { Diagram } from "./diagram.js";
 import { skippedStage, useAction, useDraft, useUi, type UiContextValue, type UiState } from "./ui-context.js";
-import { requirementDraftKey, requirementNodes, selectedRequirement, wholeGraphDefaults } from "./requirements-model.js";
+import { requirementChange, requirementDraftKey, requirementNodes, selectedRequirement, wholeGraphDefaults } from "./requirements-model.js";
 import { requirementsResearchIsCurrent } from "../requirements-research.js";
 import { SubstageStatusIcon, type SubstageStatus } from "./substage-status.js";
 
@@ -204,7 +204,9 @@ function requirementFormIdentity(node: DecisionNode): string {
     return JSON.stringify([node.id, node.question, node.answer]);
 }
 
-export function RequirementsPanel() {
+export function RequirementsPanel({ reviewBaseline }: {
+    reviewBaseline?: Pick<UiState, "requirements" | "decisionGraph">;
+} = {}) {
     const ui = useUi();
     const { state, pending, browseStage } = ui;
     const action = useAction(`requirements:${state.prototypeId}:${state.generation}`);
@@ -235,17 +237,30 @@ export function RequirementsPanel() {
     const defaultsFollowUp = useRef<{ scope: string; revision: number } | null>(null);
     const nodes = useMemo(() => requirementNodes(state), [state.requirements, state.decisionGraph, state.question]);
     const graph = useMemo(() => buildDecisionGraphMermaid(nodes), [nodes]);
-    const selected = selectedRequirement(nodes, selection.id, selection.followActive);
+    const reviewChanges = useMemo(() => new Map(nodes.map(node => [node.id, reviewBaseline
+        ? requirementChange(reviewBaseline.decisionGraph.nodes.find(before => before.id === node.id), node) : null] as const)),
+    [nodes, reviewBaseline]);
+    const changedQuestions = nodes.filter(node => reviewChanges.get(node.id));
+    const firstReviewQuestion = changedQuestions.find(node => decisionIsReady(node, nodes))
+        ?? nodes.find(node => node.status === "active") ?? changedQuestions.find(node => !node.answer) ?? changedQuestions[0];
+    const selected = selectedRequirement(nodes, selection.id ?? (reviewBaseline ? firstReviewQuestion?.id ?? null : null),
+        selection.id === null && reviewBaseline ? false : selection.followActive);
     const draftKey = selected ? requirementDraftKey(state, selected) : "";
     const draft = selected ? answerDrafts[draftKey] || initialAnswer(selected) : null;
     const isUsage = (state.requirements?.substage || (nodes.length ? "dag" : "usage")) === "usage";
-    const viewedSubstage = substageTab === "dag" && !nodes.length ? "usage" : substageTab ?? (isUsage ? "usage" : "dag");
+    const usageItems = state.requirements?.usageItems || [];
+    const addedUsages = reviewBaseline ? usageItems.filter(usage => !reviewBaseline.requirements.usageItems.includes(usage)) : [];
+    const removedUsages = reviewBaseline?.requirements.usageItems.filter(usage => !usageItems.includes(usage)) ?? [];
+    const usagesChanged = Boolean(reviewBaseline && JSON.stringify(usageItems) !== JSON.stringify(reviewBaseline.requirements.usageItems));
+    const usageListLabel = reviewBaseline ? state.stageReviewStatus?.appliedAt ? "Applied usages"
+        : state.stageReviewStatus?.discardedAt ? "Discarded draft usages" : "Draft usages" : "Accepted usages";
+    const viewedSubstage = substageTab === "dag" && !nodes.length ? "usage"
+        : substageTab ?? (isUsage || usagesChanged ? "usage" : "dag");
     const canEdit = editable(ui);
     const guidance = canEdit ? "" : writeGuidance(ui);
     const processing = state.processing as RequirementsProcessing | null;
     const workerBusy = processing?.status === "running";
     const busy = pending || action.busy || workerBusy;
-    const usageItems = state.requirements?.usageItems || [];
     const suggestions = state.requirements?.suggestions || [];
     const research = state.requirements?.research;
     const researchIsCurrent = requirementsResearchIsCurrent(state);
@@ -476,6 +491,11 @@ export function RequirementsPanel() {
         : activeAction === "generate-dag" || workerBusy && processing?.action === "generate-dag" ? ["running", "Generating requirements DAG"]
             : !nodes.length ? ["locked", "Complete the usage list to unlock the decision DAG"]
                 : !unanswered.length ? ["ready", "All decisions answered"] : ["active", "Decisions to answer"];
+    const usageRows = usageItems.map((usage, index) => <li className="usage-item" key={`${index}:${usage}`}
+        data-change={reviewBaseline ? addedUsages.includes(usage) ? "added" : "retained" : undefined}>
+        <span>{index + 1}. {usage}</span>
+        {reviewBaseline && <span className="requirement-change-badge">{addedUsages.includes(usage) ? "Added" : "Existing"}</span>}
+    </li>);
 
     return <Tabs.Root className="requirements-workspace" value={viewedSubstage} onValueChange={(value) => {
         if (value === "usage" || value === "dag") setSubstageTab(value);
@@ -483,13 +503,13 @@ export function RequirementsPanel() {
         <Tabs.Bar>
         <Tabs.List className="preview-tabs requirements-substages" aria-label="Requirements substages">
             <Tabs.Trigger id="usage-substage" value="usage" className="preview-tab requirements-substage substage-tab"
-                aria-label={`Usage list, ${usageStatusLabel}`}
+                aria-label={`Usage list, ${usageStatusLabel}${usagesChanged ? ", changed" : ""}`}
                 data-status={isUsage ? "active" : "complete"} aria-controls="requirements-usage-panel">
                 <span className="substage-index" aria-hidden="true">1</span><span>Usage list</span>
                 <SubstageStatusIcon status={isUsage ? "active" : "ready"} label={usageStatusLabel} />
             </Tabs.Trigger>
             <Tabs.Trigger id="dag-substage" value="dag" className="preview-tab requirements-substage substage-tab"
-                aria-label={`Decision DAG, ${dagStatusLabel}`}
+                aria-label={`Decision DAG, ${dagStatusLabel}${changedQuestions.length ? `, ${changedQuestions.length} new or changed questions` : ""}`}
                 data-status={isUsage ? "locked" : "active"} disabled={!nodes.length} aria-controls="requirements-dag-panel">
                 <span className="substage-index" aria-hidden="true">2</span><span>Decision DAG</span>
                 <SubstageStatusIcon status={dagStatus} label={dagStatusLabel} />
@@ -505,7 +525,7 @@ export function RequirementsPanel() {
                 <h2 className="usage-title">What should this help you do?</h2>
                 <p id="usage-help" className="visually-hidden">Add one goal at a time. Start with your own, or choose a suggestion below.</p>
                 <ul id="usage-items" className="usage-items">
-                    {usageItems.length ? usageItems.map((usage, index) => <li className="usage-item" key={`${index}:${usage}`}>{index + 1}. {usage}</li>)
+                    {usageItems.length ? usageRows
                         : <li className="muted">No usages added yet.</li>}
                 </ul>
                 <form id="usage-form" className="usage-form inline-composer" onSubmit={(event) => { event.preventDefault(); void submitUsage("add-usage"); }}>
@@ -554,15 +574,33 @@ export function RequirementsPanel() {
             </div>
             {!isUsage && <Collapsible.Root open={usagesExpanded} onOpenChange={setUsagesExpanded}>
                 <Collapsible.Trigger asChild><Button variant="item" className="usage-suggestion" type="button">
-                    <ChevronDown size={16} aria-hidden="true" />Accepted usages ({usageItems.length})
+                    <ChevronDown size={16} aria-hidden="true" />{usageListLabel} ({usageItems.length})
                 </Button></Collapsible.Trigger>
                 <Collapsible.Content>
-                    <ul className="usage-items" aria-label="Accepted usages">
-                        {usageItems.map((usage, index) => <li className="usage-item" key={`${index}:${usage}`}>{index + 1}. {usage}</li>)}
+                    <ul className="usage-items" aria-label={usageListLabel}>
+                        {usageRows}
                         {!usageItems.length && <li className="muted">No usages recorded.</li>}
                     </ul>
                 </Collapsible.Content>
             </Collapsible.Root>}
+            {removedUsages.length > 0 && <>
+                <p className="eyebrow">Removed usages</p>
+                <ul className="usage-items" aria-label="Removed usages">
+                    {removedUsages.map(usage => <li className="usage-item" key={usage} data-change="removed">
+                        <span>{usage}</span><span className="requirement-change-badge">Removed</span>
+                    </li>)}
+                </ul>
+            </>}
+            {usagesChanged && !addedUsages.length && !removedUsages.length && <p className="muted">Usage order changed. The previous order is available in Details.</p>}
+            {reviewBaseline && nodes.length > 0 && (changedQuestions.length > 0 || unanswered.length > 0) && <Button
+                variant="secondary" id="review-requirement-questions" type="button" onClick={() => {
+                    setSubstageTab("dag");
+                    setSelection({ id: null, followActive: true });
+                    setFocusRequest(revision => revision + 1);
+                }}>
+                <ArrowRight size={16} aria-hidden="true" />{unanswered.length
+                    ? `Review questions (${unanswered.length} to answer)` : `Review question changes (${changedQuestions.length})`}
+            </Button>}
             <p id="usage-message" className={usageError || dagFailed || activeAction || workerBusy || suggestionsLoading ? "usage-message" : "visually-hidden"} role={usageError || dagFailed ? "alert" : "status"} aria-live="polite"
                 data-status={usageError || dagFailed ? "error" : "idle"}>{usageMessage}</p>
         </section>
@@ -616,12 +654,16 @@ export function RequirementsPanel() {
                         {nodes.map((node) => <li key={node.id}>
                             <Button variant="item" type="button" data-ui-key={`decision-text:${node.id}`} data-decision-id={node.id}
                                 data-explicit-answer={requiresExplicitAnswer(node) || undefined}
+                                data-change={reviewChanges.get(node.id) || undefined}
                                 data-status={node.status} aria-pressed={node.id === selected?.id} onClick={() => selectDecision(node.id)}>
                                 {node.status === "answered" ? <Check size={15} aria-hidden="true" /> : decisionIsReady(node, nodes)
                                     ? <CircleDot size={15} aria-hidden="true" /> : <LockKeyhole size={15} aria-hidden="true" />}
                                 <span>{node.title} · {node.status === "toAnswer"
                                     ? decisionIsReady(node, nodes) ? "Ready to answer" : "To answer" : node.status}
                                     {node.review ? " · Review required" : ""}</span>
+                                {reviewChanges.get(node.id) && <span className="requirement-change-badge">
+                                    {reviewChanges.get(node.id) === "added" ? "New" : "Changed"}
+                                </span>}
                                 {requiresExplicitAnswer(node) && <span className="explicit-answer-badge">Explicit answer</span>}
                             </Button>
                         </li>)}
@@ -631,7 +673,9 @@ export function RequirementsPanel() {
                 </div>
             </div>
             <aside className="design-tree-inspector" aria-label="Selected decision" tabIndex={0} data-status-help={guidance}>
-                <p className="eyebrow">Selected question</p>
+                <p className="eyebrow">{selected && reviewChanges.get(selected.id)
+                    ? reviewChanges.get(selected.id) === "added" ? "New question" : "Changed question"
+                    : reviewBaseline && selected?.answer ? "Existing question - answer retained" : "Selected question"}</p>
                 <div id="question-host" className="question-card" ref={questionHost}
                     data-composer-expanded={expandedQuestion === draftKey || undefined}
                     onFocusCapture={() => setExpandedQuestion(draftKey)}>

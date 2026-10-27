@@ -8,7 +8,7 @@ import {
 import type { VisualSelection } from "./visual-directions.js";
 import { readVisualSelection, visualSelectionSchema } from "./visual-directions.js";
 import type { SketchDocument } from "./sketch.js";
-import { currentChangeReview, isCurrentStageChange, isDiscoveryChangeRequest, isLocalChange } from "./change-request-policy.js";
+import { currentChangeReview, isCurrentStageChange, isDiscoveryChangeRequest, isLocalChange, pendingUpstreamReviewStage } from "./change-request-policy.js";
 export { isLocalChange } from "./change-request-policy.js";
 
 export interface RequirementsDelta {
@@ -57,6 +57,8 @@ export interface ChangeRequest {
     assessment: ChangeAssessment | null;
     status: ChangeStatus;
     reviewId?: string | null;
+    replacesRequestId?: string | null;
+    replacedByRequestId?: string | null;
     error: string;
     clarifications: Array<{ question: string; answer: string }>;
     remainingStages: LifecycleStageId[];
@@ -106,6 +108,7 @@ const changeRequestSchema = object({
     assessment: nullable(changeAssessmentSchema),
     status: { type: "string", enum: ["queued", "analyzing", "proposed", "reviewing", "active", "deferred", "completed", "cancelled", "failed"] },
     reviewId: nullable(text(120)),
+    replacesRequestId: nullable(text(120)), replacedByRequestId: nullable(text(120)),
     error: text(2000, 0), clarifications: array(object({ question: text(2000), answer: text() }), 20),
     remainingStages: array(stageSchema, 5), workStarted: array(stageSchema, 5), affectedDecisionIds: strings(200, 120),
     snapshotPath: nullable(text(2000)), completedAt: nullable(text(100)),
@@ -116,7 +119,9 @@ export function readChangeRequests(value: unknown): ChangeRequest[] {
     if (value === undefined) return [];
     if (Array.isArray(value)) value = value.map(item => item && typeof item === "object" && !Array.isArray(item)
         ? { reviewId: null, sketchContext: null, ...item } : item);
-    validateRequirementsValue(value, array(changeRequestSchema, 200), "change requests");
+    validateRequirementsValue(Array.isArray(value) ? value.map(item => ({
+        replacesRequestId: null, replacedByRequestId: null, ...item,
+    })) : value, array(changeRequestSchema, 200), "change requests");
     const requests = value as ChangeRequest[];
     if (new Set(requests.map(request => request.id)).size !== requests.length ||
         new Set(requests.map(request => request.clientRequestId)).size !== requests.length ||
@@ -136,6 +141,16 @@ export function readChangeRequests(value: unknown): ChangeRequest[] {
         if (request.sketchContext && request.sketchContext.revisionId !== request.baseSketchRevisionId) {
             throw new Error("The saved design context does not match the request's source revision.");
         }
+        if (request.replacesRequestId) {
+            const previous = requests.find(item => item.id === request.replacesRequestId);
+            if (!previous || requests.indexOf(previous) >= requests.indexOf(request)
+                || !isDiscoveryChangeRequest(previous) || request.originStage !== "prototype") {
+                throw new Error("Saved review feedback has an invalid previous request.");
+            }
+        }
+        if (request.replacedByRequestId && !requests.some(item => item.id === request.replacedByRequestId && item.replacesRequestId === request.id)) {
+            throw new Error("The replaced review has no matching feedback request.");
+        }
         if (request.visualSelection) readVisualSelection(request.visualSelection);
         if (Boolean(request.developmentAdmission) !== Boolean(request.developmentRequest) ||
             request.developmentRequest && request.developmentRequest.id !== `change-${request.id}`) {
@@ -143,6 +158,20 @@ export function readChangeRequests(value: unknown): ChangeRequest[] {
         }
     }
     return structuredClone(requests);
+}
+
+export function previousChangeReviews(state: Pick<TandemState, "changeRequests">, request: ChangeRequest): ChangeRequest[] {
+    const previous: ChangeRequest[] = [];
+    let id = request.replacesRequestId;
+    while (id) {
+        const item = state.changeRequests?.find(candidate => candidate.id === id);
+        if (!item || previous.some(candidate => candidate.id === id) || id === request.id) {
+            throw new Error("The previous review context could not be verified.");
+        }
+        previous.unshift(item);
+        id = item.replacesRequestId;
+    }
+    return previous;
 }
 
 export function activeChange(state: Pick<TandemState, "changeRequests">): ChangeRequest | undefined {
@@ -198,14 +227,44 @@ export function readSketchChangeContext(value: unknown, source?: {
     return { revisionId: context.revisionId, screenId: context.screenId, nodeId: context.nodeId };
 }
 
+export function pendingPrototypeChange(state: TandemState): ChangeRequest | undefined {
+    const revisions: Array<{ id: string; clientRequestId?: string | null; checkpointId?: string | null; status: string }> =
+        state.prototypeReview.revisions ?? [];
+    return state.changeRequests?.find(request => isDiscoveryChangeRequest(request)
+        && ["active", "reviewing"].includes(request.status) && request.remainingStages[0] === "prototype"
+        && !revisions.some(revision => revision.clientRequestId === `change-${request.id}` && revision.status === "applied"
+            && state.prototypeFlow?.checkpoints.some(checkpoint => checkpoint.id === revision.checkpointId
+                && checkpoint.revisionId === revision.id && checkpoint.generation === state.generation && checkpoint.status === "ready")));
+}
+
+export function cancelPrototypeChange(state: TandemState, requestId: string, completedAt: string): Pick<TandemState, "prototypeFlow" | "prototypeReview"> {
+    const revisions: Array<{ id: string; clientRequestId?: string | null; status: string }> = state.prototypeReview.revisions ?? [];
+    const cancelled = new Set(revisions.filter(item => item.clientRequestId === `change-${requestId}`
+        && !["applied", "dismissed"].includes(item.status)).map(item => item.id));
+    const pending = state.prototypeFlow?.checkpoints.find(item => item.id === state.prototypeFlow?.pendingCheckpointId);
+    return {
+        prototypeFlow: pending?.revisionId && cancelled.has(pending.revisionId)
+            ? { ...state.prototypeFlow!, pendingCheckpointId: null } : state.prototypeFlow,
+        prototypeReview: { ...state.prototypeReview,
+            revisions: revisions.map(item => cancelled.has(item.id) ? { ...item, status: "dismissed", completedAt } : item),
+            ...(cancelled.has(state.prototypeReview.activeRevisionId) ? { activeRevisionId: null, question: null } : {}),
+        },
+    };
+}
+
 export function prototypeNeedsChangeUpdate(state: TandemState): boolean {
+    if (state.prototypeApproach.mode === "not-applicable") return false;
+    if (pendingPrototypeChange(state)) return true;
     const displayed = state.prototypeFlow?.checkpoints.find(item => item.id === state.prototypeFlow?.displayedCheckpointId);
-    if (!displayed) return false;
-    return Boolean((state.lifecycle.reviewId || state.changeRequests?.some(request => request.snapshotPath && request.assessment?.requirements
+    const reviewedInputs = Boolean(state.lifecycle.reviewId || state.changeRequests?.some(request => request.snapshotPath && request.assessment?.requirements
         && !request.reviewId && ["active", "completed", "cancelled"].includes(request.status))
-        || state.stageReviews?.some(review => review.appliedAt && ["prepare", "requirements"].includes(review.stage))) &&
-        displayed.requirementsDigest !== requirementsInputDigest(state) ||
-        (state.lifecycle.changeRequestId || state.lifecycle.reviewId) && state.sketch.current && displayed.sketchRevisionId !== state.sketch.current.id);
+        || state.stageReviews?.some(review => review.appliedAt && ["prepare", "requirements", "sketch"].includes(review.stage)));
+    if (!displayed) return Boolean(state.previewUrl && reviewedInputs);
+    const requirementsChanged = displayed.requirementsDigest
+        ? displayed.requirementsDigest !== requirementsInputDigest(state) : reviewedInputs;
+    const sketchesChanged = !state.lifecycle.skippedStages.some(item => item.stageId === "sketch")
+        && (displayed.sketchRevisionId ?? null) !== (state.sketch.current?.id ?? null);
+    return requirementsChanged || sketchesChanged;
 }
 
 export function changeBaselineDigest(state: TandemState, development: unknown = null): string {
@@ -263,33 +322,57 @@ export function applyRequirementsDelta(state: TandemState, delta: RequirementsDe
         deferred: patchSemanticList(state.deferred, delta.deferred) };
 }
 
-export function readChangeAssessment(value: unknown, state: TandemState): ChangeAssessment {
+export function readChangeAssessment(value: unknown, state: TandemState, request?: Pick<ChangeRequest, "replacesRequestId">): ChangeAssessment {
     validateRequirementsValue(value, changeAssessmentSchema, "change assessment");
     const assessment = structuredClone(value as ChangeAssessment);
+    const pending = request?.replacesRequestId ? pendingUpstreamReviewStage(state) : undefined;
+    const requiredReviews = pending ? lifecycleStages.slice(stageIndex(pending), stageIndex(state.lifecycle.currentStage))
+        .filter(stage => !state.lifecycle.completedStages.includes(stage.id)
+            && !state.lifecycle.skippedStages.some(skipped => skipped.stageId === stage.id)) : [];
     const stages = assessment.stages.map(item => item.stage);
     if (new Set(stages).size !== stages.length) throw new Error("Each affected stage must appear only once.");
     if (assessment.requirements) {
-        applyRequirementsDelta(state, assessment.requirements);
+        const delta = applyRequirementsDelta(state, assessment.requirements);
         if (!stages.includes("requirements")) throw new Error("A Requirements change must explicitly include Requirements.");
+        if (!assessment.question && requirementsInputDigest(state) === requirementsInputDigest({
+            ...state, requirements: { ...state.requirements, usageItems: delta.usages }, decisionGraph: delta.graph,
+            assumed: delta.assumed, deferred: delta.deferred,
+            prototypeApproach: assessment.requirements.prototypeApproach ?? state.prototypeApproach,
+        })) {
+            throw new Error("The Requirements patch makes no saved changes. Recheck the impact: update only the affected stage, or report that the request is already satisfied.");
+        }
         // Existing approval is bound to the complete requirements digest, even when screen bytes can be reused.
         if (state.sketch.current && !stages.includes("sketch")) {
             assessment.stages.push({ stage: "sketch", reason: "Review the retained designs against the changed requirements; unchanged screens are preserved." });
         }
-        if (state.prototypeFlow?.displayedCheckpointId && !stages.includes("prototype")) {
+        if ((state.prototypeFlow?.displayedCheckpointId || state.previewUrl) && !stages.includes("prototype")) {
             assessment.stages.push({ stage: "prototype", reason: "Update the saved prototype against the revised requirements and designs." });
         }
     }
-    if (assessment.stages.some(item => item.stage === "sketch") && state.prototypeFlow?.displayedCheckpointId &&
+    if (assessment.stages.some(item => item.stage === "sketch") && (state.prototypeFlow?.displayedCheckpointId || state.previewUrl) &&
         !assessment.stages.some(item => item.stage === "prototype")) {
         assessment.stages.push({ stage: "prototype", reason: "Bring the retained prototype into line with the reviewed designs." });
     }
-    if (assessment.stages.some(item => item.stage === "requirements") && !assessment.requirements && !assessment.question) {
+    if (assessment.stages.some(item => item.stage === "requirements") && !assessment.requirements && !assessment.question
+        && !requiredReviews.some(stage => stage.id === "requirements")) {
         throw new Error("Describe the Requirements delta or ask a concrete clarification before changing Requirements.");
     }
     assessment.stages.sort((left, right) => stageIndex(left.stage) - stageIndex(right.stage));
     const earliest: ChangeAssessment["startStage"] = assessment.stages.length ? assessment.stages[0]!.stage : "none";
     if (earliest !== assessment.startStage) throw new Error("The starting stage must be the earliest affected stage.");
     if (assessment.startStage === "none" && assessment.requirements) throw new Error("An unchanged outcome cannot contain a Requirements delta.");
+    if (requiredReviews.length) {
+        for (const stage of requiredReviews) {
+            if (!assessment.stages.some(item => item.stage === stage.id)) assessment.stages.push({
+                stage: stage.id, reason: `Previously applied changes still require ${stage.label} review. Retain saved content and confirm it against the accepted inputs.`,
+            });
+        }
+        if ((state.previewUrl || state.prototypeFlow?.displayedCheckpointId) && !assessment.stages.some(item => item.stage === "prototype")) {
+            assessment.stages.push({ stage: "prototype", reason: "Review the retained prototype against the already-applied upstream changes." });
+        }
+        assessment.stages.sort((left, right) => stageIndex(left.stage) - stageIndex(right.stage));
+        assessment.startStage = assessment.stages[0]!.stage;
+    }
     return assessment;
 }
 

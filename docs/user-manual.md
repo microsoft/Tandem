@@ -73,6 +73,14 @@ If accepted inputs changed meanwhile, the draft is kept but cannot overwrite
 them: compare it, discard it, then start a fresh review. Designs drafts support
 direct editing and typed revision instructions.
 
+Requirements reviews use the existing **Usage list** and **Decision DAG**.
+The "I want to..." list marks existing, added and removed usages; new or changed
+questions use the normal answer controls. Independent answers stay intact.
+Review status, remaining-question counts, change notices and baseline-loading
+errors appear in the bottom review pane, not above the usage and question editor.
+Use **Details** for the full before/after comparison, including removed questions,
+assumptions and deferred work. Nothing is accepted until **Apply changes**.
+
 After applying a Requirements review, affected Designs are marked stale.
 In the Designs draft, choose **Update designs from latest requirements** in the
 review pane when designs are stale. This updates the existing saved designs against the accepted
@@ -201,6 +209,8 @@ Its icon and border turn red, with an accessible **Review required** label, when
 your decision is needed. One review stays current until you resolve or cancel it.
 New change requests and unrelated edits/Continue actions are blocked; the work
 needed to complete that review remains available in its owning stage or draft.
+Prototype feedback is an exception: **Send** can re-evaluate the current review
+with new information without requiring **Finish Prototype**.
 The inline review-status card is omitted so the design keeps its space.
 The popup separates your request, the proposed update, impact details and the
 decision controls. A new required decision opens it automatically once; routine
@@ -222,7 +232,13 @@ constraints still need impact review. Once its patch is saved, the request no
 longer holds up additional Requirements edits.
 
 A genuine ambiguity asks one focused question in this same review. Submit the
-detail, review the proposal or cancel the request before sending another change.
+detail, review the proposal or cancel the request before sending an unrelated change.
+In Prototype, feedback instead revises the current review: active workers finish
+first, applied changes stay intact, and earlier requests and unapplied drafts
+remain in history. The new assessment uses the current accepted inputs and
+still-relevant earlier intent; nothing is approved by sending feedback.
+When another stage's review dims the Prototype editor, its feedback box remains
+available in the bottom review pane. Sending pauses while the final handoff is frozen.
 Older projects with multiple saved requests retain their full history: already
 admitted work is completed first, then pending requests are reviewed one at a
 time. Earlier deferred records remain saved, but new reviews cannot be put aside
@@ -231,17 +247,39 @@ with **Keep for later**. Reopening never replays unanswered or failed work.
 **Review Requirements draft** (or the named affected stage) opens an earlier-stage proposal without reopening that
 stage; only **Apply
 changes** updates its accepted content. Requirements keeps independent answers and shows previous
-answers for decisions that need review. The saved prototype remains available
-while its update is prepared. **Recheck impact** refreshes a stale proposal;
+answers for decisions that need review. The editor marks changed usages and questions;
+the bottom review pane's **Details** contains the full **Accepted / Draft**
+comparison, including assumption, deferred-work and prototype-approach changes.
+A clear request may add a usage or constraint without
+needing new questions; the comparison explains this rather than asking you to
+answer the same questions again. If the saved baseline cannot be read, retry the
+comparison before applying.
+
+After Apply, follow the next affected stage. When Designs needs review, update
+and approve its retained draft first. In Prototype, choose **Update for reviewed
+inputs**, inspect the prepared version, then **Show requested revision**.
+**Finish Prototype** remains unavailable until that update has been applied.
+This also works for older saved previews without checkpoint tracking. The saved
+preview stays available while a new version builds; a failed update can be
+retried without resubmitting the change or losing the previous version.
+**Recheck impact** refreshes a stale proposal;
 it does not approve it.
 An unanswered or unapplied request in current work does not prevent applying a
 separate ready draft. Those requests stay saved and are not approved, cancelled
 or deferred by Apply; an older proposal must be checked again if accepted inputs
 have changed. Running work, a change already being applied, conflicting inputs
 or unfinished work inside the draft still blocks Apply with a visible reason.
+Resolve a prepared prototype update before applying an earlier-stage draft so
+the update is not left referring to obsolete inputs. If a new change is queued
+behind an existing prototype update or clarification, those review controls
+remain usable; the new impact assessment starts after the earlier work is resolved.
 
 Cancel before approval leaves accepted work unchanged. Cancelling remaining
 work afterwards retains already saved changes rather than rolling them back.
+Unapplied candidates, failures and clarifications belonging to that cancelled
+request are put aside, with their records retained. Already applied upstream
+changes still require an up-to-date prototype; cancelling does not make an older
+preview current.
 Impact review applies only to stages through Prototype. Development handles its
 own Design changes, implementation confirmation and code Review; its requests do
 not automatically return to discovery or start a review in the main conversation.

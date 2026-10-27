@@ -5,7 +5,7 @@ import { ArrowRight, Check, ListChecks, RefreshCw, ShieldCheck, X } from "lucide
 import type { LifecycleStageId } from "../types.js";
 import type { ChangeRequest } from "../change-requests.js";
 import { lifecycleStages } from "../workflow.js";
-import { changeReviewNeedsAttention, currentChangeReview, isDiscoveryChangeRequest } from "../change-request-policy.js";
+import { changeReviewNeedsAttention, changeReviewWaitsForPrototype, currentChangeReview, isDiscoveryChangeRequest } from "../change-request-policy.js";
 import { hasActiveJobs, useAction, useChangeRequestDialog, useDraft, useUi, type UiState } from "./ui-context.js";
 import { useProjectView } from "./project-conversation.js";
 import { changeRequestResponse, changeRequestStatus } from "./change-request-feedback.js";
@@ -141,10 +141,12 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: {
         }
     }
     const waiting = ["queued", "analyzing"].includes(current.status);
-    const title = historical ? "Development request history" : needsDetail ? "Clarify this change" : current.status === "reviewing" ? "Continue change review"
+    const waitingForPrototype = current.id === required?.id && changeReviewWaitsForPrototype(state);
+    const title = historical ? "Development request history" : current.status === "cancelled" && current.replacedByRequestId ? "Review updated with new feedback"
+        : needsDetail ? "Clarify this change" : current.status === "reviewing" ? "Continue change review"
         : current.status === "failed" || error ? "Review needs attention"
         : current.status === "completed" ? "Change review complete" : settled ? "Cancelled change"
-        : waiting ? "Checking your request" : current.status === "active" ? "Preparing your update" : "Review change impact";
+        : waiting ? waitingForPrototype ? "Change queued" : "Checking your request" : current.status === "active" ? "Preparing your update" : "Review change impact";
     const primaryLabel = opensDraft && plan?.startStage !== "none" && plan
         ? `Review ${label(plan.startStage)} draft`
         : state.stageReview ? "Update this draft" : plan?.startStage === "development" ? "Review in Development" : "Apply change";
@@ -181,7 +183,9 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: {
                 <Dialog.Description className="review-description">{historical
                     ? "This Development request is retained as read-only history and no longer starts an upstream review. Continue in the Development conversation."
                     : required
-                    ? waiting ? "Your request is being checked. You can close this dialog and inspect your work while it runs."
+                    ? waiting ? waitingForPrototype
+                        ? "Close this dialog and resolve the existing prototype update or clarification. Your queued change will be checked afterwards."
+                        : "Your request is being checked. You can close this dialog and inspect your work while it runs."
                         : opensDraft || current.status === "reviewing"
                             ? "Review the affected stages in order. Each draft is separate from accepted work until you apply it."
                             : "Review the proposed update before continuing. Resolve this request before sending another change."
@@ -211,7 +215,7 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: {
                                 {!settled && current.status === "proposed" && <Button variant="secondary" id="recheck-change" className="plan-button secondary" disabled={busy}
                                     onClick={() => void decide("retry")}><RefreshCw size={14} aria-hidden="true" />Recheck impact</Button>}
                             </Disclosure>
-                        </section> : <p role="status">{changeRequestResponse(current)}</p>}
+                        </section> : <p role="status">{waitingForPrototype ? "Waiting for the existing prototype work to be reviewed." : changeRequestResponse(current)}</p>}
                         {needsDetail && <form id="change-detail-form" className="change-detail-form" onSubmit={event => {
                             event.preventDefault(); void decide(plan?.question ? "clarify" : "refine");
                         }}>
@@ -256,7 +260,7 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: {
                                 <ArrowRight size={15} aria-hidden="true" />{continueLabel}</Button>
                             : ["failed", "deferred"].includes(current.status) ? <Button variant="primary" className="plan-button" disabled={busy}
                                 onClick={() => void decide("retry")}><RefreshCw size={15} aria-hidden="true" />{current.status === "failed" ? "Retry review" : "Resume request"}</Button>
-                            : <Button variant="primary" className="plan-button" disabled>Checking request...</Button>}
+                            : <Button variant="primary" className="plan-button" disabled>{waitingForPrototype ? "Waiting for prototype review..." : "Checking request..."}</Button>}
                     </div>
                 </footer>
             </Dialog.Content>
