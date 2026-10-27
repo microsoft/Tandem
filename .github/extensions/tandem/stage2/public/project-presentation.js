@@ -275,6 +275,8 @@ export function installProjectPresentation({ document, window, changed, settings
         presentation: statusPresentation?.() ?? null, statusScope: context?.statusScope ?? null,
         installationStatus: snapshot.installation?.status,
         starting, canRetry: !starting && snapshot.installation?.canRetry === true, canReopen: !starting && snapshot.installation?.canReopen === true,
+        canInspectInitialRecovery: !starting && snapshot.installation?.canInspectInitialRecovery === true,
+        canInspectEmptyRepair: !starting && snapshot.installation?.canInspectEmptyRepair === true,
         active: !starting && snapshot.installation?.status === "ready",
         activeRequestId: snapshot.workflow?.activeRequestId ?? null,
         compacting: snapshot.workflow?.compaction?.active === true || snapshot.workflow?.compaction?.requested === true,
