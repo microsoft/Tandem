@@ -1,6 +1,7 @@
+import { Button, Disclosure, RadioGroup, Tabs, Textarea } from "./ui/index.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, Check, ChevronDown, CircleDot, ExternalLink, GitBranch, LoaderCircle, LockKeyhole, Plus, RefreshCw, Send, Sparkles } from "lucide-react";
-import { Collapsible, RadioGroup, Tabs } from "radix-ui";
+import { Collapsible } from "radix-ui";
 import { buildDecisionGraphMermaid } from "../decision-diagram.js";
 import { decisionIsReady, requiresExplicitAnswer, type DecisionNode } from "../workflow.js";
 import { Diagram } from "./diagram.js";
@@ -148,7 +149,7 @@ function DecisionQuestion({ node, nodes, draft, busy, canEdit, guidance, process
                     disabled={disabled}
                     onValueChange={(choice) => onChange({ choice, detail: "" })}
                 >
-                    {question.choices.map((choice, index) => <RadioGroup.Item
+                    {question.choices.map((choice, index) => <RadioGroup.Item presentation="choice"
                         className="choice"
                         key={`${index}:${choice}`}
                         value={choice}
@@ -162,7 +163,7 @@ function DecisionQuestion({ node, nodes, draft, busy, canEdit, guidance, process
                         {choice === question.recommended && !changing && <span className="recommended">Recommended</span>}
                     </RadioGroup.Item>)}
                 </RadioGroup.Root>}
-                {question.allowFreeText !== false && <textarea
+                {question.allowFreeText !== false && <Textarea
                     className="composer-input"
                     name="prototype-detail"
                     data-ui-key={`decision:${question.id}:detail`}
@@ -181,7 +182,7 @@ function DecisionQuestion({ node, nodes, draft, busy, canEdit, guidance, process
                     }}
                 />}
                 <div className="actions">
-                    <button
+                    <Button variant="primary"
                         id="decision-submit"
                         type="submit"
                         className="send"
@@ -191,7 +192,7 @@ function DecisionQuestion({ node, nodes, draft, busy, canEdit, guidance, process
                         <Send size={16} aria-hidden="true" />
                         {busy ? "Sending..." : !canEdit ? "Open installed Tandem to answer"
                             : blocked ? "Waiting for prerequisites" : changing ? "Update answer and dependents" : "Use this answer"}
-                    </button>
+                    </Button>
                     <p className="error" role="alert">{draft.error}</p>
                 </div>
             </form>
@@ -506,7 +507,7 @@ export function RequirementsPanel() {
                         : <li className="muted">No usages added yet.</li>}
                 </ul>
                 <form id="usage-form" className="usage-form inline-composer" onSubmit={(event) => { event.preventDefault(); void submitUsage("add-usage"); }}>
-                    <textarea
+                    <Textarea
                         className="composer-input"
                         id="usage-input"
                         value={usageDraft.value}
@@ -522,37 +523,37 @@ export function RequirementsPanel() {
                         aria-describedby="usage-help usage-message"
                         disabled={busy || !canEdit || !isUsage}
                     />
-                    <button id="add-usage" type="submit" disabled={busy || !canEdit || !isUsage} aria-describedby="usage-help usage-message">
+                    <Button variant="primary" id="add-usage" type="submit" disabled={busy || !canEdit || !isUsage} aria-describedby="usage-help usage-message">
                         <Plus size={16} aria-hidden="true" />{busy ? "Working..." : "Add usage"}
-                    </button>
+                    </Button>
                 </form>
-                <button id="generate-dag" className="generate-dag" type="button" disabled={busy || !canEdit || !usageItems.length || !isUsage}
+                <Button variant="primary" id="generate-dag" className="generate-dag" type="button" disabled={busy || !canEdit || !usageItems.length || !isUsage}
                     aria-describedby="usage-message"
                     data-status-help="Research relevant missing facts for your accepted usages, then generate questions. Findings do not accept decisions or add features."
                     onClick={() => void submitUsage("generate-dag")}>
                     {dagFailed ? <RefreshCw size={16} aria-hidden="true" /> : <GitBranch size={16} aria-hidden="true" />}
                     {activeAction === "generate-dag" || processing?.action === "generate-dag" && workerBusy
                         ? "Generating DAG..." : dagFailed ? "Retry requirements DAG" : "Generate requirements DAG"}
-                </button>
+                </Button>
                 </div>
                 <aside id="usage-suggestion-area" aria-label="Suggested usages" hidden={!suggestions.length && !suggestionsLoading}>
                     <p className="usage-suggestion-heading"><Sparkles size={16} aria-hidden="true" /> AI suggestions</p>
                     <ul id="usage-suggestions" className="usage-suggestions">
                         {suggestionsLoading && !suggestions.length && <li className="muted">Generating AI suggestions...</li>}
                         {suggestions.map((suggestion, index) => <li key={`${index}:${suggestion}`}>
-                            <button className="usage-suggestion" type="button" disabled={busy || !canEdit || !isUsage}
+                            <Button variant="item" className="usage-suggestion" type="button" disabled={busy || !canEdit || !isUsage}
                                 data-status-help="Add this suggestion to the accepted usage list."
                                 onClick={() => void submitUsage("add-usage", suggestion)}>
                                 <Plus size={15} aria-hidden="true" /><span>{suggestion}</span>
-                            </button>
+                            </Button>
                         </li>)}
                     </ul>
                 </aside>
             </div>
             {!isUsage && <Collapsible.Root open={usagesExpanded} onOpenChange={setUsagesExpanded}>
-                <Collapsible.Trigger className="usage-suggestion" type="button">
+                <Collapsible.Trigger asChild><Button variant="item" className="usage-suggestion" type="button">
                     <ChevronDown size={16} aria-hidden="true" />Accepted usages ({usageItems.length})
-                </Collapsible.Trigger>
+                </Button></Collapsible.Trigger>
                 <Collapsible.Content>
                     <ul className="usage-items" aria-label="Accepted usages">
                         {usageItems.map((usage, index) => <li className="usage-item" key={`${index}:${usage}`}>{index + 1}. {usage}</li>)}
@@ -563,7 +564,7 @@ export function RequirementsPanel() {
             <p id="usage-message" className={usageError || dagFailed || activeAction || workerBusy || suggestionsLoading ? "usage-message" : "visually-hidden"} role={usageError || dagFailed ? "alert" : "status"} aria-live="polite"
                 data-status={usageError || dagFailed ? "error" : "idle"}>{usageMessage}</p>
         </section>
-        {research && <details id="requirements-research" className="section" open>
+        {research && <Disclosure id="requirements-research" className="section" open>
             <summary>{researchIsCurrent ? "Research and sources" : "Earlier research and sources"}</summary>
             {!researchIsCurrent && <p className="muted">These findings belong to earlier inputs and are retained for reference.</p>}
             <p>{research.summary}</p>
@@ -579,7 +580,7 @@ export function RequirementsPanel() {
                 </a>)}
                 {!research.sources.length && <p className="muted">No external sources recorded.</p>}
             </div>
-        </details>}
+        </Disclosure>}
         </Tabs.Content>
         <Tabs.Content id="requirements-dag-panel" value="dag" forceMount hidden={viewedSubstage !== "dag"}
             className="requirements-dag-panel" aria-labelledby="dag-substage">
@@ -610,7 +611,7 @@ export function RequirementsPanel() {
                 <div className="decision-list-pane" role="region" aria-label="Requirement decision list" tabIndex={0}>
                     <ol id="decision-list" className="decision-list" aria-label="Requirement decisions" ref={decisionList}>
                         {nodes.map((node) => <li key={node.id}>
-                            <button type="button" data-ui-key={`decision-text:${node.id}`} data-decision-id={node.id}
+                            <Button variant="item" type="button" data-ui-key={`decision-text:${node.id}`} data-decision-id={node.id}
                                 data-explicit-answer={requiresExplicitAnswer(node) || undefined}
                                 data-status={node.status} aria-pressed={node.id === selected?.id} onClick={() => selectDecision(node.id)}>
                                 {node.status === "answered" ? <Check size={15} aria-hidden="true" /> : decisionIsReady(node, nodes)
@@ -619,7 +620,7 @@ export function RequirementsPanel() {
                                     ? decisionIsReady(node, nodes) ? "Ready to answer" : "To answer" : node.status}
                                     {node.review ? " · Review required" : ""}</span>
                                 {requiresExplicitAnswer(node) && <span className="explicit-answer-badge">Explicit answer</span>}
-                            </button>
+                            </Button>
                         </li>)}
                     </ol>
                     <p id="design-tree-status" className="diagram-status" role={defaultsError || action.error || defaultsFailed ? "alert" : "status"}
@@ -644,23 +645,23 @@ export function RequirementsPanel() {
                         onSubmit={() => void submitAnswer()}
                     /> : <p className="muted">The active decision will appear here.</p>}
                     {(unanswered.length > 0 || defaultsFailed || defaultsRunning) && <div className="actions">
-                        <button className="all-recommended" type="button" disabled={busy || !canEdit || !hasDefaults && !defaultsFailed}
+                        <Button variant="secondary" className="all-recommended" type="button" disabled={busy || !canEdit || !hasDefaults && !defaultsFailed}
                             data-ui-key={`decision:${selected?.question?.id || "graph"}:recommended`}
                             title="Approve the currently displayed recommended choices for ALL unanswered decisions with recommendations, including downstream nodes, in one reconciled batch. Questions marked Explicit answer are skipped. Changed decisions require review."
                             onClick={() => void applyDefaults()}>
                             <Sparkles size={16} aria-hidden="true" />
                             {defaultsRunning ? "Saving whole-graph defaults..." : defaultsFailed ? "Retry whole-graph defaults" : "Use whole-graph defaults"}
-                        </button>
-                        {defaultsFailed && <button type="button" className="review-current-defaults" disabled={busy || !canEdit || !hasDefaults}
+                        </Button>
+                        {defaultsFailed && <Button variant="secondary" type="button" className="review-current-defaults" disabled={busy || !canEdit || !hasDefaults}
                             title="Replace the failed batch only after approving a fresh snapshot of every current recommendation."
                             onClick={() => void applyDefaults(true)}>
                             <RefreshCw size={16} aria-hidden="true" />Review current whole-graph defaults
-                        </button>}
+                        </Button>}
                     </div>}
-                    {selected?.status !== "active" && nodes.some((node) => node.status === "active") && <button type="button"
+                    {selected?.status !== "active" && nodes.some((node) => node.status === "active") && <Button variant="secondary" type="button"
                         className="next-decision" onClick={() => setSelection({ id: null, followActive: true })}>
                         <ArrowRight size={16} aria-hidden="true" />Go to next unresolved decision
-                    </button>}
+                    </Button>}
                 </div>
             </aside>
         </div>

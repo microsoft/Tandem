@@ -21,6 +21,7 @@ All source paths and command working directories below are relative to the
 | [Settings and retained history](#project-settings-and-retained-history) | Shared settings, independent runtime ownership and retired process records. |
 | [Windows Forms host](#optional-windows-forms-host) | Alternative host requirements. |
 | [Development and packaging](#develop-validate-and-package) | Source layout, checks, packaging and qualification boundaries. |
+| [UI system and Storybook](ui-system.md) | Shared tokens, component contracts and development-only examples. |
 
 ## Implementation scope
 

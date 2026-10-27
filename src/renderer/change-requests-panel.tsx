@@ -1,5 +1,6 @@
+import { Button, DialogParts as Dialog, Disclosure, IconButton, Textarea } from "./ui/index.js";
 import { useEffect, useRef, useState } from "react";
-import { Dialog } from "radix-ui";
+
 import { ArrowRight, Check, ListChecks, RefreshCw, ShieldCheck, X } from "lucide-react";
 import type { LifecycleStageId } from "../types.js";
 import type { ChangeRequest } from "../change-requests.js";
@@ -155,11 +156,11 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: {
             <div className="change-summary" hidden={!showTrigger}>
                 <h2 id="change-impact-title" className="visually-hidden">{changeRequestStatus(current)}</h2>
                 <Dialog.Trigger asChild>
-                    <button id="toggle-change-details" type="button" className={`plan-button${compact || !attention ? " secondary" : ""} review-trigger`}
+                    <Button variant={compact || !attention ? "secondary" : "primary"} id="toggle-change-details" type="button" className={`plan-button${compact || !attention ? " secondary" : ""} review-trigger`}
                         aria-controls="change-request-details" data-status={attention ? "attention" : "idle"}
                         aria-label={attention ? "Review required" : "Open change review"}>
                         <ListChecks size={16} aria-hidden="true" />Review
-                    </button>
+                    </Button>
                 </Dialog.Trigger>
             </div>
             {!historical && error && <p id="change-action-status" className="error change-summary-error" role="alert">{error}</p>}
@@ -173,9 +174,9 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: {
                         <span className="review-eyebrow">{attention ? "Review required" : required ? "Change in progress" : "Change record"}</span>
                         <Dialog.Title>{title}</Dialog.Title>
                     </div>
-                    <Dialog.Close asChild><button id="close-change-details" className="review-close" type="button" aria-label="Close review">
+                    <Dialog.Close asChild><IconButton variant="ghost" id="close-change-details" className="review-close" type="button" aria-label="Close review">
                         <X size={18} aria-hidden="true" />
-                    </button></Dialog.Close>
+                    </IconButton></Dialog.Close>
                 </header>
                 <Dialog.Description className="review-description">{historical
                     ? "This Development request is retained as read-only history and no longer starts an upstream review. Continue in the Development conversation."
@@ -203,19 +204,19 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: {
                                 <h3><ShieldCheck size={15} aria-hidden="true" />Kept unchanged</h3>
                                 <ul>{plan.preserved.map(item => <li key={item}>{item}</li>)}</ul>
                             </section>}
-                            <details className="review-supporting"><summary>Impact details</summary>
+                            <Disclosure className="review-supporting"><summary>Impact details</summary>
                                 <p>{plan.reason}</p>
                                 {plan.stages.map(item => <p key={item.stage}><strong>{label(item.stage)}:</strong> {item.reason}</p>)}
                                 {plan.requirements && <p>{plan.requirements.usages.add.length} added usages and {plan.requirements.upsert.length} new or revised decisions. Independent answers stay unchanged.</p>}
-                                {!settled && current.status === "proposed" && <button id="recheck-change" className="plan-button secondary" disabled={busy}
-                                    onClick={() => void decide("retry")}><RefreshCw size={14} aria-hidden="true" />Recheck impact</button>}
-                            </details>
+                                {!settled && current.status === "proposed" && <Button variant="secondary" id="recheck-change" className="plan-button secondary" disabled={busy}
+                                    onClick={() => void decide("retry")}><RefreshCw size={14} aria-hidden="true" />Recheck impact</Button>}
+                            </Disclosure>
                         </section> : <p role="status">{changeRequestResponse(current)}</p>}
                         {needsDetail && <form id="change-detail-form" className="change-detail-form" onSubmit={event => {
                             event.preventDefault(); void decide(plan?.question ? "clarify" : "refine");
                         }}>
                             <label htmlFor="change-detail">{plan?.question || "What should change in this request?"}</label>
-                            <textarea className="composer-input" id="change-detail" rows={3} maxLength={4000}
+                            <Textarea className="composer-input" id="change-detail" rows={3} maxLength={4000}
                                 value={drafts[current.id] ?? ""} disabled={busy}
                                 placeholder={current.originStage === "sketch" ? "Name the screen and element, or describe its position." : "Add the detail needed for this change."}
                                 aria-describedby={error ? "change-dialog-error" : undefined}
@@ -229,33 +230,33 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: {
                                 ? "Open the draft to review it, then apply its changes. Accepted work stays unchanged until you apply."
                                 : "Review the updated work before continuing. Existing versions remain available."}
                         </p>}
-                        {current.sourceRequests.length > 0 && <details className="review-supporting"><summary>Original Development request</summary>
+                        {current.sourceRequests.length > 0 && <Disclosure className="review-supporting"><summary>Original Development request</summary>
                             {current.sourceRequests.map(request => <p key={request.id}>{request.message}</p>)}
-                        </details>}
-                        {current.clarifications.length > 0 && <details className="review-supporting"><summary>Previous clarifications</summary>
+                        </Disclosure>}
+                        {current.clarifications.length > 0 && <Disclosure className="review-supporting"><summary>Previous clarifications</summary>
                             {current.clarifications.map((item, index) => <p key={index}><strong>{item.question}</strong><br />{item.answer}</p>)}
-                        </details>}
+                        </Disclosure>}
                     </div>
                 </div>
                 <footer className="review-dialog-footer">
-                    {!settled && <button id="cancel-change" className="plan-button secondary review-cancel" type="button"
+                    {!settled && <Button variant="secondary" id="cancel-change" className="plan-button secondary review-cancel" type="button"
                         disabled={current.status === "reviewing" ? draftBusy : busy} onClick={() => void decide("cancel")}>
                         {current.status === "active" ? "Cancel remaining change" : "Cancel request"}
-                    </button>}
+                    </Button>}
                     <div className="review-footer-actions">
-                        {!settled && current.status === "proposed" && !needsDetail && <button className="plan-button secondary" disabled={busy}
-                            onClick={() => setRefining(current.id)}>Edit request</button>}
-                        {settled ? <Dialog.Close asChild><button className="plan-button" type="button">Done</button></Dialog.Close>
-                            : needsDetail ? <button className="plan-button" form="change-detail-form" type="submit"
-                            disabled={busy || !drafts[current.id]?.trim()}><ArrowRight size={15} aria-hidden="true" />Submit detail</button>
-                            : current.status === "proposed" && plan ? <button id="approve-change" className="plan-button" disabled={opensDraft ? draftBusy : busy}
-                                onClick={() => void approve()}>{opensDraft ? <ArrowRight size={15} aria-hidden="true" /> : <Check size={15} aria-hidden="true" />}{primaryLabel}</button>
-                            : ["active", "reviewing"].includes(current.status) ? <button id="continue-change-review" className="plan-button"
+                        {!settled && current.status === "proposed" && !needsDetail && <Button variant="secondary" className="plan-button secondary" disabled={busy}
+                            onClick={() => setRefining(current.id)}>Edit request</Button>}
+                        {settled ? <Dialog.Close asChild><Button variant="primary" className="plan-button" type="button">Done</Button></Dialog.Close>
+                            : needsDetail ? <Button variant="primary" className="plan-button" form="change-detail-form" type="submit"
+                            disabled={busy || !drafts[current.id]?.trim()}><ArrowRight size={15} aria-hidden="true" />Submit detail</Button>
+                            : current.status === "proposed" && plan ? <Button variant="primary" id="approve-change" className="plan-button" disabled={opensDraft ? draftBusy : busy}
+                                onClick={() => void approve()}>{opensDraft ? <ArrowRight size={15} aria-hidden="true" /> : <Check size={15} aria-hidden="true" />}{primaryLabel}</Button>
+                            : ["active", "reviewing"].includes(current.status) ? <Button variant="primary" id="continue-change-review" className="plan-button"
                                 disabled={current.status === "reviewing" ? draftBusy : busy} onClick={() => void continueReview()}>
-                                <ArrowRight size={15} aria-hidden="true" />{continueLabel}</button>
-                            : ["failed", "deferred"].includes(current.status) ? <button className="plan-button" disabled={busy}
-                                onClick={() => void decide("retry")}><RefreshCw size={15} aria-hidden="true" />{current.status === "failed" ? "Retry review" : "Resume request"}</button>
-                            : <button className="plan-button" disabled>Checking request...</button>}
+                                <ArrowRight size={15} aria-hidden="true" />{continueLabel}</Button>
+                            : ["failed", "deferred"].includes(current.status) ? <Button variant="primary" className="plan-button" disabled={busy}
+                                onClick={() => void decide("retry")}><RefreshCw size={15} aria-hidden="true" />{current.status === "failed" ? "Retry review" : "Resume request"}</Button>
+                            : <Button variant="primary" className="plan-button" disabled>Checking request...</Button>}
                     </div>
                 </footer>
             </Dialog.Content>

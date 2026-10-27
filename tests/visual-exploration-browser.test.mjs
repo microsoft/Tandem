@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createServer } from "node:http";
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { build } from "esbuild";
 import { rendererFixtureScript } from "./helpers/react-harness.ts";
 import { exploringPrototype } from "./helpers/visual-fixture.ts";
 import { promotePrototypeCheckpoint, prototypePreviewCheckpointId, restoreOriginalPrototype, updateVisualSelection } from "../src/prototype-flow.ts";
@@ -40,10 +42,10 @@ window.tandemPreviewState={capture:()=>({count}),restore:value=>{count=value.cou
 test("real browser keeps the original as Default, shares the toolbar and explicitly accepts visual choices", {
   skip: !browserAvailable, timeout: 120000,
 }, async t => {
-  const script = await rendererFixtureScript();
-  const [styles, theme] = await Promise.all([
-    readFile(new URL("../src/renderer/styles.css", import.meta.url), "utf8"),
-    readFile(new URL("../development/tandem/public/project-theme.css", import.meta.url), "utf8"),
+  const [script, styles] = await Promise.all([
+    rendererFixtureScript(),
+    build({ entryPoints: [fileURLToPath(new URL("../src/renderer/styles.css", import.meta.url))],
+      bundle: true, write: false, logLevel: "silent" }),
   ]);
   let state = exploringPrototype(), origin;
   const actions = [];
@@ -57,7 +59,7 @@ test("real browser keeps the original as Default, shares the toolbar and explici
         res.end(`<!doctype html><html><head><link rel="stylesheet" href="/styles.css"></head><body><div id="root"></div>
 <script src="/renderer.js"></script><script>window.fixture=TandemTest.mount();fetch("/api/state").then(r=>r.json()).then(s=>fixture.flushSync(()=>fixture.store.accept(s)));</script></body></html>`);
       } else if (url.pathname === "/renderer.js") { res.writeHead(200, { "Content-Type": "text/javascript" }); res.end(script); }
-      else if (url.pathname === "/styles.css") { res.writeHead(200, { "Content-Type": "text/css" }); res.end(theme + "\n" + styles.replace(/^@import[^\n]+\n/, "")); }
+      else if (url.pathname === "/styles.css") { res.writeHead(200, { "Content-Type": "text/css" }); res.end(styles.outputFiles[0].text); }
       else if (url.pathname === "/api/state") json(state);
       else if (url.pathname === "/api/project-entry") json({ projectPath: "C:\\fixture-project", startingPath: "preparation" });
       else if (url.pathname === "/api/project-entry/open") json({ developmentStarted: false, developmentContext: false });

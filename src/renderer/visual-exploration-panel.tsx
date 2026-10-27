@@ -1,6 +1,7 @@
+import { ActionLink, Button, Disclosure, IconButton, Select, ToggleGroup, Tooltip } from "./ui/index.js";
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { Check, ExternalLink, RefreshCw } from "lucide-react";
-import { ToggleGroup, Tooltip } from "radix-ui";
+
 import { awaitingVisualChoice, originalPrototypeCheckpointId, readVisualSelection, visualExplorationIsCurrent, visualPreviewUrl, visualSettingsValues,
   type VisualSelection, type VisualSettings } from "../visual-directions.js";
 import { hasActiveJobs, useAction, useDraft, useUi } from "./ui-context.js";
@@ -253,18 +254,18 @@ export function VisualExplorationPanel({ active, connected, inspecting, onInspec
   }
   const previewActions = <>
     {inspecting && <Tooltip.Root><Tooltip.Trigger asChild>
-      <button id="retry-visual-preview" type="button" className="plan-button secondary preview-recovery-action"
+      <IconButton variant="secondary" id="retry-visual-preview" type="button" className="plan-button secondary preview-recovery-action"
         aria-label="Recheck visual preview" data-error={previewUnavailable || previewError} disabled={availability.busy || !connected}
-        onClick={() => setRefresh(value => value + 1)}><RefreshCw size={16} aria-hidden="true" /></button>
+        onClick={() => setRefresh(value => value + 1)}><RefreshCw size={16} aria-hidden="true" /></IconButton>
     </Tooltip.Trigger><Tooltip.Portal><Tooltip.Content className="preview-recovery-tooltip" sideOffset={6}>
       <strong>Recheck visual preview</strong>{(previewError || availability.reason) && <p>{previewError ? bridge.error : availability.reason}</p>}
       <p>Recheck the saved preview and confirm its settings. Does not rebuild, regenerate, or restart it.</p>
     </Tooltip.Content></Tooltip.Portal></Tooltip.Root>}
     {inspecting && <PreviewRestart target="exploration" unavailable={previewUnavailable}
       changed={() => setRefresh(value => value + 1)} iconOnly />}
-    {inspecting && verified && checkpoint.previewUrl && <a id="open-visual-preview" className="plan-button secondary preview-open-action"
+    {inspecting && verified && checkpoint.previewUrl && <ActionLink variant="secondary" iconOnly id="open-visual-preview" className="plan-button secondary preview-open-action"
       href={visualPreviewUrl(checkpoint.previewUrl, selection)} target="_blank" rel="noreferrer"
-      aria-label="Open this direction" title="Open this direction"><ExternalLink size={16} aria-hidden="true" /></a>}
+      aria-label="Open this direction" title="Open this direction"><ExternalLink size={16} aria-hidden="true" /></ActionLink>}
   </>;
   return <>
     {renderActions ? renderActions(previewActions) : <div className="prototype-preview-actions">{previewActions}</div>}
@@ -325,12 +326,12 @@ export function VisualExplorationPanel({ active, connected, inspecting, onInspec
           </Fragment>)}</dl>
         </Tooltip.Content></Tooltip.Portal></Tooltip.Root>}
       </ToggleGroup.Root>
-      <button id="choose-visual-direction" type="button" className="plan-button preview-accept-action" disabled={choiceBlocked}
+      <Button variant="primary" id="choose-visual-direction" type="button" className="plan-button preview-accept-action" disabled={choiceBlocked}
         aria-describedby="visual-choice-help" aria-busy={Boolean(acceptance)}
         title={!inspecting ? "Accept the original prototype as Default."
           : !onApply ? "Accept is unavailable in this view." : "Apply the previewed direction and settings."}
         onClick={() => void accept()}><Check size={14} aria-hidden="true" />
-        {acceptance ? "Accepting..." : "Accept"}</button>
+        {acceptance ? "Accepting..." : "Accept"}</Button>
     </div>
     <p id="visual-selection-status" className={acceptance ? "muted" : "visually-hidden"} role="status">{acceptance
       ? acceptance.selection ? "Applying the accepted direction. The current prototype stays available." : "Restoring the original prototype."
@@ -343,17 +344,17 @@ export function VisualExplorationPanel({ active, connected, inspecting, onInspec
     {!current && <p role="status">These alternatives precede the current prototype. Keep them for reference; generate new directions before applying further changes.</p>}
     {inspecting && <>
       <div className="visual-exploration-tools">
-        <details id="visual-adjustments"><summary>Advanced settings</summary>
+        <Disclosure id="visual-adjustments"><summary>Advanced settings</summary>
           <div className="visual-settings">
             {(Object.keys(visualSettingsValues) as Array<keyof VisualSettings>).map(key => <label key={key}>
-              {settingLabels[key]}<select id={`visual-setting-${key}`} value={selection.settings[key]} disabled={controlsBlocked}
+              {settingLabels[key]}<Select id={`visual-setting-${key}`} value={selection.settings[key]} disabled={controlsBlocked}
                 onChange={event => void select(readVisualSelection({ directionId: selection.directionId,
                   settings: { ...selection.settings, [key]: event.target.value } }))}>
                 {visualSettingsValues[key].map(value => <option key={value} value={value}>{optionLabel(value)}</option>)}
-              </select>
+              </Select>
             </label>)}
           </div>
-        </details>
+        </Disclosure>
       </div>
     </>}
     {action.error && <p id="visual-action-error" className="revision-status" role="alert" data-status="error">{action.error}</p>}

@@ -1,3 +1,4 @@
+import { Button, Disclosure } from "./ui/index.js";
 import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { ChevronRight } from "lucide-react";
 import type { DslSketchScreen } from "../sketch.js";
@@ -71,10 +72,10 @@ export function DslStructure({ screen, selectedId, onSelect }: {
     if (next) tree.current?.querySelector<HTMLElement>(`[data-node-id="${next}"]`)?.focus({ preventScroll: true });
   }
   const tabStop = rows.some(row => row.node.id === selectedId) ? selectedId : screen.ui.root;
-  return <details id="sketch-structure" className="sketch-structure" open>
+  return <Disclosure id="sketch-structure" className="sketch-structure" open>
     <summary>Structure <span className="section-count">{Object.keys(screen.ui.nodes).length}</span></summary>
     <div ref={tree} id="sketch-structure-tree" className="sketch-structure-tree" role="tree" aria-label="UI component structure">
-      {rows.map(({ node, depth, position, siblings }, index) => <button key={node.id} type="button"
+      {rows.map(({ node, depth, position, siblings }, index) => <Button variant="item" key={node.id} type="button"
         className="sketch-structure-node" role="treeitem" data-node-id={node.id}
         style={{ paddingInlineStart: 4 + Math.min(depth - 1, 8) * 12 }}
         aria-level={depth} aria-posinset={position} aria-setsize={siblings}
@@ -92,7 +93,7 @@ export function DslStructure({ screen, selectedId, onSelect }: {
         </span>
         <span className="sketch-node-type">{node.type}</span>
         <span className="sketch-node-label">{uiNodeLabel(node).slice(node.type.length + 2)}</span>
-      </button>)}
+      </Button>)}
     </div>
-  </details>;
+  </Disclosure>;
 }

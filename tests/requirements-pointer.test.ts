@@ -107,8 +107,8 @@ test("defaults mouse activation stays on its button when focus leaves the answer
         t.diagnostic(JSON.stringify(await browser.evaluate('({events:window.pointerEvidence,status:document.querySelector("#design-tree-status").textContent,question:document.querySelector("#question-host").innerText})')));
         await browser.waitFor('Boolean(document.querySelector("[role=alertdialog]"))');
         const events = await browser.evaluate("window.pointerEvidence");
-        const down = events.find(event => event.type === "pointerdown" && event.target === "all-recommended");
-        const up = events.find(event => event.type === "pointerup" && event.target === "all-recommended");
+        const down = events.find(event => event.type === "pointerdown" && event.target.split(/\s+/).includes("all-recommended"));
+        const up = events.find(event => event.type === "pointerup" && event.target.split(/\s+/).includes("all-recommended"));
         assert.ok(down?.trusted && up?.trusted, JSON.stringify(events));
         assert.equal(up.top, down.top, "Moving focus to defaults must not collapse its preceding answer form.");
         assert.equal(answers, 0, "Opening confirmation is not authorization to submit defaults.");

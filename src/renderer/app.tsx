@@ -1,6 +1,7 @@
+import { AlertDialog, Button, Disclosure, IconButton, Tabs, Textarea, Tooltip } from "./ui/index.js";
 import { Component, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ErrorInfo, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { AlertDialog, Tabs, Tooltip } from "radix-ui";
+
 import { ArrowRight, Check, ChevronDown, CircleDot, ClipboardList, Code, FileText, FolderOpen, GitBranch, Layers, ListChecks, LockKeyhole, Monitor, PanelLeft, PanelLeftClose, PanelLeftOpen, PencilRuler, Pin, Play, RotateCcw, Sparkles, X } from "lucide-react";
 import { lifecycleStages } from "../workflow.js";
 import { awaitingVisualChoice } from "../visual-directions.js";
@@ -182,13 +183,13 @@ function GoalEntry() {
         });
       }}>
         <label htmlFor="start-goal">Your project goal</label>
-        <textarea className="composer-input" id="start-goal" ref={input} value={goal} onChange={(event) => { setGoal(event.currentTarget.value); action.setError(""); }}
+        <Textarea className="composer-input" id="start-goal" ref={input} value={goal} onChange={(event) => { setGoal(event.currentTarget.value); action.setError(""); }}
           rows={5} maxLength={4000} required disabled={!writable || pending} aria-invalid={Boolean(action.error)}
           aria-describedby="start-help start-message" placeholder="Build an app that helps my team triage customer requests." />
         <p id="start-help" className="visually-hidden">Describe who it is for and what it should help them do. You can refine the details together.</p>
         <div className="start-actions"><span id="goal-length" className="muted">{goal.length.toLocaleString()} / 4,000</span>
-          <button id="start-effort" className="plan-button" type="submit" disabled={!writable || pending || !goal.trim() || goal.length > 4000}
-            data-status-help="Starting checks workspace context and opens Requirements. Substantive research follows your accepted usages; implementation comes later."><Play size={16} aria-hidden="true" />{action.busy ? "Starting..." : "Start project"}</button></div>
+          <Button variant="primary" id="start-effort" className="plan-button" type="submit" disabled={!writable || pending || !goal.trim() || goal.length > 4000}
+            data-status-help="Starting checks workspace context and opens Requirements. Substantive research follows your accepted usages; implementation comes later."><Play size={16} aria-hidden="true" />{action.busy ? "Starting..." : "Start project"}</Button></div>
         <p id="start-message" className="start-message" role="status" data-status={action.error ? "error" : "idle"}>{action.error || (!writable ? "Open the writable Tandem provider to start this project." : "")}</p>
       </form>
     </div>
@@ -249,7 +250,7 @@ function PreparationRestart({ store, effortBusy, renderAction }: {
   if (project.entry.startingPath !== "preparation" && !state.effortReset) return null;
   if (isGoalEntry(state) && !state.effortReset && !reset.error) return null;
   const error = reset.error || state.effortReset?.error;
-  const button = <button id="reset-effort" className="plan-button secondary" type="button" disabled={disabled}
+  const button = <Button variant="secondary" id="reset-effort" className="plan-button secondary" type="button" disabled={disabled}
       aria-describedby="effort-message"
       title={project.active ? "Close the private runtime in Project settings before restarting Preparation." : "Archive upstream discovery; retain Development and admitted handoffs"}
       onClick={async () => {
@@ -265,7 +266,7 @@ function PreparationRestart({ store, effortBusy, renderAction }: {
           const saved = store.getSnapshot().state;
           if (!saved || !isGoalEntry(saved) || saved.generation === state.generation) throw new Error("Preparation restart has not been confirmed. Refresh the project state before retrying.");
         });
-      }}><RotateCcw size={15} aria-hidden="true" />{reset.busy ? "Restarting Preparation..." : "Restart Preparation..."}</button>;
+      }}><RotateCcw size={15} aria-hidden="true" />{reset.busy ? "Restarting Preparation..." : "Restart Preparation..."}</Button>;
   return <>
     {renderAction ? renderAction(button) : button}
     <p id="effort-message" className="effort-message" role="status" data-status={error ? "error" : "idle"}>
@@ -442,7 +443,7 @@ function Workspace(props: WorkspaceProps) {
   }
   const phaseActions = <section id="stage-workflow-actions" className="phase-actions" aria-label={`${selectedLabel} actions`} aria-describedby="stage-browsing stage-message">
     <div className="stage-primary-actions" ref={setPrototypeHeaderActions} />
-    <button id="complete-stage" className="complete-stage" type="button" hidden={reviewing || projectView.developmentEntered
+    <Button variant="primary" id="complete-stage" className="complete-stage" type="button" hidden={reviewing || projectView.developmentEntered
       || current === "prepare" || current === "development" || (current === "sketch" && sketchBlocked)
       || viewed !== current || Boolean(skippedStage(state, current))} aria-describedby="stage-message"
       aria-label={completionHelp} title={completionHelp} data-status-help={completionHelp}
@@ -468,15 +469,15 @@ function Workspace(props: WorkspaceProps) {
         });
       }}>
       <Check size={16} aria-hidden="true" /><span className="complete-stage-label">{completionLabel}</span>
-    </button>
+    </Button>
     <p id="stage-browsing" className="visually-hidden">{reviewing ? `Pinned ${selectedLabel} draft review. ${current} remains the current stage.`
       : readOnly ? `Viewing ${selectedLabel} · read only. Use the review panel for pending changes, or explicitly reopen the stage.` : ""}</p>
-    <button id="review-stage" className="complete-stage" type="button"
+    <Button variant="primary" id="review-stage" className="complete-stage" type="button"
       hidden={reviewing || ["prepare", "requirements", "sketch"].includes(viewed) || !earlierStage || !reviewTarget || Boolean(skippedStage(state, viewed)) || !canBrowseStage(state, reviewTarget)}
       disabled={pending || state.provider?.canSubmitAnswers === false}
       onClick={() => { if (reviewTarget) void reviewAction.run(() => openReview(reviewTarget)); }}><Pin size={15} aria-hidden="true" />{state.stageReviews?.some(item => item.stage === viewed
-        && item.generation === state.generation && !item.appliedAt && !item.discardedAt) ? "Resume draft review" : "Review changes"}</button>
-    <button id="reopen-stage" className="complete-stage" type="button" aria-describedby="stage-browsing"
+        && item.generation === state.generation && !item.appliedAt && !item.discardedAt) ? "Resume draft review" : "Review changes"}</Button>
+    <Button variant="secondary" id="reopen-stage" className="complete-stage" type="button" aria-describedby="stage-browsing"
       hidden={reviewing || viewed === "development" || !lifecycleStages.some(stage => stage.id === viewed) || !readOnly || Boolean(skippedStage(state, viewed)) || lifecycleStages.findIndex((stage) => stage.id === viewed) > lifecycleStages.findIndex((stage) => stage.id === current)}
       disabled={pending || state.provider?.canSubmitAnswers === false || hasActiveJobs(state)
         || state.changeRequests?.some(request => request.status === "reviewing")}
@@ -492,7 +493,7 @@ function Workspace(props: WorkspaceProps) {
           if (!stage) throw new Error("Historical stages cannot be reopened.");
           await post("/api/stage/reopen", { stageId: stage.id }); projectView.resumeDiscovery(); browseStage(stage.id);
         });
-      }}><RotateCcw size={16} aria-hidden="true" />Reopen {selectedLabel}</button>
+      }}><RotateCcw size={16} aria-hidden="true" />Reopen {selectedLabel}</Button>
     <p id="stage-message" className={stageAction.error ? "stage-message" : "visually-hidden"} title={stageAction.error || undefined} role="status" data-status={stageAction.error ? "error" : "idle"}>{stageAction.error || (state.lifecycle.outputs?.at(-1) ? "Saved " + state.lifecycle.outputs.at(-1)!.path : current === "prepare" ? "Preparation advances automatically when analysis completes." : "Complete the active stage to unlock the next.")}</p>
   </section>;
   return <UiContext.Provider value={{ ...ui, reviewStage: openReview }}><div className="app project-workspace-app">
@@ -506,17 +507,17 @@ function Workspace(props: WorkspaceProps) {
           <span className="project-entry-path">{projectView.entry.projectPath || "Reading project folder..."}</span>
           This starting choice is saved for this project folder, so you won't be asked again. Preparation can still progress into Development.
         </AlertDialog.Description>
-        {projectView.entry.error ? <div role="alert"><p>{projectView.entry.error}</p><button type="button" className="plan-button" onClick={() => void projectView.reloadEntry()}>Retry project entry</button></div>
-          : projectView.entry.startingPath ? <button id="resume-project-entry" type="button" className="plan-button" disabled={projectView.entry.busy}
-              onClick={() => void projectView.reloadEntry()}>Continue saved {projectView.entry.startingPath === "development" ? "Development" : "Preparation"} entry</button>
+        {projectView.entry.error ? <div role="alert"><p>{projectView.entry.error}</p><Button variant="primary" type="button" className="plan-button" onClick={() => void projectView.reloadEntry()}>Retry project entry</Button></div>
+          : projectView.entry.startingPath ? <Button variant="primary" id="resume-project-entry" type="button" className="plan-button" disabled={projectView.entry.busy}
+              onClick={() => void projectView.reloadEntry()}>Continue saved {projectView.entry.startingPath === "development" ? "Development" : "Preparation"} entry</Button>
           : projectView.entry.loading ? <p role="status">Reading project metadata...</p>
             : <div className="project-entry-choices">
-              <button id="entry-preparation" type="button" autoFocus disabled={projectView.entry.busy || state.provider?.canSubmitAnswers === false}
+              <Button variant="item" id="entry-preparation" type="button" autoFocus disabled={projectView.entry.busy || state.provider?.canSubmitAnswers === false}
                 onClick={() => void projectView.chooseEntry("preparation")}><strong>Start with Preparation</strong>
-                <span>Start here if your project is empty or you want help clarifying requirements and shaping the UX. Work through Requirements, Designs, and a Prototype before Development.</span></button>
-              <button id="entry-development" type="button" disabled={projectView.entry.busy || !canOpenDevelopment(state)}
+                <span>Start here if your project is empty or you want help clarifying requirements and shaping the UX. Work through Requirements, Designs, and a Prototype before Development.</span></Button>
+              <Button variant="item" id="entry-development" type="button" disabled={projectView.entry.busy || !canOpenDevelopment(state)}
                 onClick={() => void projectView.chooseEntry("development")}><strong>Go to Development</strong>
-                <span>Go directly to Development if you already have project files, an initial implementation, or a rough idea you want to work on. You can refine the Design there without going through Preparation.</span></button>
+                <span>Go directly to Development if you already have project files, an initial implementation, or a rough idea you want to work on. You can refine the Design there without going through Preparation.</span></Button>
             </div>}
         {state.provider?.canSubmitAnswers === false && <p role="status">This provider is read-only. Use the project's owning writable provider to make the initial choice.</p>}
       </AlertDialog.Content></AlertDialog.Portal>
@@ -525,9 +526,9 @@ function Workspace(props: WorkspaceProps) {
       <main id="studio-workspace" ref={workspace} className="workspace project-workspace" data-development={developmentView} data-context-open={contextOpen} data-context-collapsed={contextCollapsed}
         inert={!projectView.entry.ready || props.effortBusy}
         aria-busy={!projectView.entry.ready && projectView.entry.busy || props.effortBusy || Boolean(state.effortReset)} style={{ "--requirements-width": width + "px" } as CSSProperties}>
-        <button id="context-toggle" className="context-toggle" type="button" aria-expanded={contextOpen} aria-controls="requirements-pane" onClick={() => setContextOpen(!contextOpen)}>
+        <Button variant="item" id="context-toggle" className="context-toggle" type="button" aria-expanded={contextOpen} aria-controls="requirements-pane" onClick={() => setContextOpen(!contextOpen)}>
           <PanelLeft size={15} aria-hidden="true" /><span>Project context</span><span id="context-stage" className="context-stage">{lifecycleStages.find((stage) => stage.id === current)?.label}</span><ChevronDown className="context-chevron" size={16} aria-hidden="true" />
-        </button>
+        </Button>
         <aside id="requirements-pane" className="requirements" aria-label="Project context" onKeyDown={(event) => {
           if (event.key === "Escape" && contextOpen) { setContextOpen(false); document.getElementById("context-toggle")?.focus(); event.preventDefault(); }
         }}>
@@ -535,7 +536,7 @@ function Workspace(props: WorkspaceProps) {
             status={{ text: statusBarText, error: Boolean(statusBarError), action: nextAction?.label ?? null }}
             showNextAction={showNextAction} onHostedChange={setHosting} />
           <nav className="project-navigation" aria-label="Project navigation">
-            <button id="project-settings" type="button" className="plan-button" onClick={() => projectView.command("settings")}>Project settings</button>
+            <Button variant="item" id="project-settings" type="button" className="plan-button" onClick={() => projectView.command("settings")}>Project settings</Button>
             <Tabs.List id="project-contents" className="preview-tabs project-tabs" aria-label="Project contents">
               {stageTabs.map(tab => {
                 const skipped = skippedStage(state, tab.stage);
@@ -565,20 +566,20 @@ function Workspace(props: WorkspaceProps) {
                 {tab.stage === "prototype" && state.prototypeFlow?.pendingCheckpointId && <span className="artifact-count">Ready to inspect</span>}
               </Tabs.Trigger>; })}
             </Tabs.List>
-            <button id="project-current-work" type="button" className="plan-button"
+            <Button variant="item" id="project-current-work" type="button" className="plan-button"
               aria-label={projectView.developmentEntered ? `Current work: Development ${projectView.status}` : "Current work"}
               onClick={() => projectView.command("current-work")}>
               Current work{projectView.attention ? ` (${projectView.attention} needs attention)` : ""}
-            </button>
+            </Button>
           </nav>
           <div className="context-pane-heading" data-hosted={hosting.header || undefined}>
             <span className="project-folder" hidden={hosting.header} title={projectView.entry.projectPath}>{projectView.entry.projectPath.split(/[\\/]/).filter(Boolean).at(-1)}</span>
-            <button id="toggle-context-pane" className="context-collapse" type="button" aria-controls="requirements-pane"
+            <IconButton variant="ghost" id="toggle-context-pane" className="context-collapse" type="button" aria-controls="requirements-pane"
               aria-expanded={!contextCollapsed} aria-label={contextCollapsed ? "Expand project context" : "Collapse project context"}
               title={contextCollapsed ? "Expand project context" : "Collapse to stage activity bar"}
               onClick={() => { setDragging(null); setContextCollapsed((collapsed) => !collapsed); }}>
               {contextCollapsed ? <PanelLeftOpen size={16} aria-hidden="true" /> : <PanelLeftClose size={16} aria-hidden="true" />}
-            </button>
+            </IconButton>
           </div>
           {!projectView.visible && (projectView.error || ["unknown", "execution-unknown", "failed"].includes(projectView.status)) &&
             <p role="alert">Development needs attention. Open Current work to inspect the private session.</p>}
@@ -598,9 +599,9 @@ function Workspace(props: WorkspaceProps) {
             </div>
             <DevelopmentArtifactList active={developmentView} />
           </section>
-          <details className="section ledger-details" hidden={!(["confirmed", "assumed", "deferred"] as const).some(kind => state[kind]?.length)}><summary className="eyebrow ledger-summary">Requirement ledger</summary>
+          <Disclosure className="section ledger-details" hidden={!(["confirmed", "assumed", "deferred"] as const).some(kind => state[kind]?.length)}><summary className="eyebrow ledger-summary">Requirement ledger</summary>
             <div className="ledger">{(["confirmed", "assumed", "deferred"] as const).filter(kind => state[kind]?.length).map((kind) => <div key={kind}><h3>{kind[0].toUpperCase() + kind.slice(1)}</h3><ul id={kind}>{state[kind].map((text, index) => <li key={index}>{text}</li>)}</ul></div>)}</div>
-          </details>
+          </Disclosure>
         </aside>
         <div id="studio-splitter" className={"splitter" + (dragging !== null ? " is-dragging" : "")} role="separator" tabIndex={0}
           aria-label="Resize requirements and output panels" aria-orientation="vertical" aria-controls="requirements-pane preview-pane"
@@ -688,9 +689,9 @@ function Workspace(props: WorkspaceProps) {
     </Tabs.Root>
     <div id="next-action-bar" className="next-action-bar" hidden={hosting.status} data-status={statusBarError ? "error" : "idle"}>
       <span id="next-action-guide" role="status" title={statusBarText}>{statusBarText}</span>
-      <button id="show-next-action" type="button" hidden={!nextAction}
+      <IconButton variant="ghost" id="show-next-action" type="button" hidden={!nextAction}
         aria-label="Go to action" title={nextAction ? "Go to action: " + nextAction.label : "Go to action"}
-        onClick={showNextAction}><ArrowRight size={13} aria-hidden="true" /></button>
+        onClick={showNextAction}><ArrowRight size={13} aria-hidden="true" /></IconButton>
     </div>
   </div></UiContext.Provider>;
 }

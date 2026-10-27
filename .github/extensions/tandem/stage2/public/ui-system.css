@@ -1,0 +1,191 @@
+.tandem-button, :where(.human-app) button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--studio-control-gap);
+  box-sizing: border-box;
+  min-height: var(--tandem-button-height, var(--studio-control-height));
+  max-width: 100%;
+  margin: 0;
+  padding: calc((var(--tandem-button-height, var(--studio-control-height)) - var(--studio-control-line-height) - 2px) / 2) var(--studio-control-padding-inline);
+  border: 1px solid var(--tandem-control-border, var(--studio-control-border));
+  border-radius: var(--studio-radius-control);
+  background: var(--tandem-control-background, var(--studio-surface));
+  color: var(--tandem-control-color, var(--studio-text));
+  font: inherit;
+  font-weight: var(--tandem-control-weight, var(--studio-font-weight-semibold));
+  line-height: var(--studio-control-line-height);
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+.tandem-button[data-size="small"] { --tandem-button-height: var(--studio-control-height-small); }
+.tandem-button[data-size="large"] { --tandem-button-height: var(--studio-control-height-large); }
+.tandem-button[data-variant="secondary"] {
+  --tandem-control-border: var(--studio-control-border);
+  --tandem-control-background: var(--studio-surface);
+  --tandem-control-color: var(--studio-text);
+}
+.tandem-button[data-variant="primary"] {
+  --tandem-control-background: var(--studio-action-bg);
+  --tandem-control-border: var(--studio-action-border);
+  --tandem-control-color: var(--studio-on-action);
+  box-shadow: var(--studio-shadow);
+}
+.tandem-button[data-variant="danger"] {
+  --tandem-control-background: var(--studio-danger-action-bg);
+  --tandem-control-border: var(--studio-danger-action-bg);
+  --tandem-control-color: var(--studio-on-action);
+}
+.tandem-button[data-variant="ghost"], .tandem-button[data-variant="item"] {
+  --tandem-control-border: transparent;
+  --tandem-control-background: transparent;
+  --tandem-control-color: var(--studio-text);
+  --tandem-control-weight: 400;
+}
+.tandem-button[data-variant="item"] { justify-content: flex-start; text-align: start; }
+.tandem-button:is([data-variant="primary"], [data-variant="danger"]):hover:not(:disabled) { filter: brightness(.94); }
+.tandem-button:is([data-variant="secondary"], [data-variant="ghost"], [data-variant="item"]):hover:not(:disabled),
+:where(.human-app) button:hover:not(:disabled) {
+  border-color: var(--studio-accent);
+  background: var(--studio-accent-soft);
+}
+.tandem-button:disabled, :where(.human-app) button:disabled { opacity: .55; cursor: not-allowed; }
+.tandem-button > svg { flex: none; width: var(--studio-icon-size); height: var(--studio-icon-size); stroke-width: 1.8; }
+.tandem-button.tandem-icon-button, .tandem-toggle.tandem-icon-button {
+  flex: none; width: var(--tandem-button-height, var(--studio-control-height)); padding: 0; font-weight: inherit;
+}
+.tandem-button:is([aria-pressed="true"], [aria-selected="true"], [aria-current="true"], [aria-current="page"]), :where(.human-app) button:is([aria-pressed="true"], [aria-selected="true"], [aria-current="true"], [aria-current="page"]) {
+  border-color: var(--studio-accent); background: var(--studio-accent-soft); color: var(--studio-accent-strong);
+}
+a.tandem-button { text-decoration: none; }
+
+.tandem-field { display: grid; min-width: 0; gap: var(--studio-space-1); }
+.tandem-field > label, :where(.human-app) :is(.settings-fields, .access-request-picker) > label { font-weight: var(--studio-font-weight-semibold); }
+.tandem-input, :where(.human-app) :is(input, textarea, select) {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--studio-control-height);
+  padding: var(--studio-control-padding);
+  border: 1px solid var(--studio-control-border);
+  border-radius: var(--studio-radius-control);
+  background: var(--studio-surface);
+  color: var(--studio-text);
+  font: inherit;
+  font-weight: var(--font-weight-normal, 400);
+  line-height: var(--studio-control-line-height);
+}
+textarea.tandem-input, :where(.human-app) textarea { min-height: var(--studio-composer-expanded-height); resize: vertical; }
+.tandem-input:is([type="checkbox"], [type="radio"]), :where(.human-app) input:is([type="checkbox"], [type="radio"]) {
+  width: 16px; height: 16px; min-height: 16px; padding: 0; accent-color: var(--studio-accent); vertical-align: middle;
+}
+.tandem-input[type="range"], :where(.human-app) input[type="range"] { padding: 0; accent-color: var(--studio-accent); }
+.tandem-input:disabled, :where(.human-app) :is(input, textarea, select):disabled { opacity: .55; cursor: not-allowed; }
+.tandem-input[aria-invalid="true"], :where(.human-app) [aria-invalid="true"] { border-color: var(--studio-danger); }
+.tandem-field-description, .tandem-field-error {
+  margin: 0;
+  font-size: var(--studio-text-small);
+  line-height: var(--studio-line-height);
+  overflow-wrap: anywhere;
+}
+.tandem-field-description { color: var(--studio-muted); }
+.tandem-field-error { color: var(--studio-danger); }
+.tandem-disclosure > summary, :where(.human-app) summary {
+  cursor: pointer; font-weight: var(--studio-font-weight-semibold); line-height: var(--studio-line-height); overflow-wrap: anywhere;
+}
+.tandem-disclosure > summary:focus-visible {
+  outline: var(--studio-focus-width) solid var(--studio-focus); outline-offset: var(--studio-focus-offset);
+}
+
+.dialog-overlay { position: fixed; inset: 0; z-index: 100; background: var(--studio-overlay); }
+.dialog-content, .tandem-native-dialog, :where(.human-app) dialog {
+  position: fixed; left: 50%; top: 50%; z-index: 101; transform: translate(-50%, -50%);
+  width: min(480px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto;
+  box-sizing: border-box; padding: var(--studio-space-6); border: 1px solid var(--studio-border);
+  border-radius: var(--studio-radius-dialog); background: var(--studio-surface);
+  color: var(--studio-text); box-shadow: var(--studio-shadow-dialog);
+  font-family: var(--studio-font-family);
+}
+.dialog-content h2, .tandem-native-dialog h2 { margin: 0 0 var(--studio-space-3); font-size: var(--studio-text-title); }
+.dialog-content p { white-space: pre-line; line-height: 1.6; }
+.dialog-actions {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end;
+  gap: var(--studio-control-gap); margin-top: var(--studio-space-5);
+}
+.tandem-native-dialog, :where(.human-app) dialog { position: fixed; inset: 0; margin: auto; transform: none; }
+.tandem-native-dialog:not([open]), :where(.human-app) dialog:not([open]) { display: none; }
+.tandem-native-dialog::backdrop, :where(.human-app) dialog::backdrop { background: var(--studio-overlay); }
+
+.tandem-tab, .tandem-toggle {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--studio-control-gap);
+  box-sizing: border-box; min-height: var(--studio-tab-height); max-width: 100%;
+  padding: var(--studio-control-padding); border: 1px solid transparent; border-radius: var(--studio-radius-control);
+  background: transparent; color: var(--studio-muted); font: inherit; line-height: var(--studio-control-line-height); cursor: pointer;
+}
+.tandem-toggle { min-height: var(--studio-control-height); border-color: var(--studio-border); color: var(--studio-text); }
+.tandem-tab:hover:not(:disabled), .tandem-toggle:hover:not(:disabled) { background: var(--studio-panel); color: var(--studio-text); }
+.tandem-tab[data-state="active"], .tandem-toggle[data-state="on"] {
+  border-color: var(--studio-accent); background: var(--studio-accent-soft); color: var(--studio-accent-strong);
+}
+.tandem-tab:disabled, .tandem-toggle:disabled, .tandem-radio:disabled { opacity: .55; cursor: not-allowed; }
+.tandem-radio {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  box-sizing: border-box; width: 17px; height: 17px; padding: 0;
+  border: 1px solid var(--studio-control-border); border-radius: 50%; background: var(--studio-surface);
+  color: var(--studio-text); font: inherit; cursor: pointer;
+}
+.tandem-radio[data-presentation="choice"] {
+  display: flex; justify-content: flex-start; gap: var(--studio-control-gap);
+  width: 100%; height: auto; min-height: var(--studio-control-height); padding: var(--studio-control-padding);
+  border-radius: var(--studio-radius-control); text-align: start;
+}
+.tandem-radio[data-state="checked"] { border-color: var(--studio-accent); background: var(--studio-accent-soft); }
+.tandem-radio[data-presentation="control"] .tandem-radio-indicator { display: block; width: 9px; height: 9px; border-radius: 50%; background: var(--studio-accent); }
+.tandem-tooltip {
+  z-index: 150; max-width: min(360px, calc(100vw - 24px)); padding: var(--studio-space-2) var(--studio-space-3);
+  border: 1px solid var(--studio-border); border-radius: var(--studio-radius-control);
+  background: var(--studio-surface); color: var(--studio-text); box-shadow: var(--studio-shadow-dialog);
+  font: var(--studio-text-small)/var(--studio-line-height) var(--studio-font-family); overflow-wrap: anywhere;
+}
+.tandem-tooltip p { margin: var(--studio-space-1) 0; }
+
+.tandem-status {
+  display: flex; align-items: flex-start; gap: var(--studio-control-gap);
+  margin: var(--studio-space-2) 0; color: var(--studio-muted); line-height: var(--studio-line-height);
+}
+.tandem-status > svg { flex: none; margin-top: .2em; }
+.tandem-status > span { min-width: 0; overflow-wrap: anywhere; }
+.tandem-status[data-tone="success"] { color: var(--studio-success); }
+.tandem-status[data-tone="warning"] { color: var(--studio-warning); }
+.tandem-status[data-tone="danger"] { color: var(--studio-danger); }
+:where(.human-app) p[role="status"] { color: var(--studio-muted); line-height: var(--studio-line-height); }
+:where(.human-app) [role="alert"] { color: var(--studio-danger); }
+
+.tandem-button:focus-visible, .tandem-input:focus-visible, .tandem-tab:focus-visible, .tandem-toggle:focus-visible, .tandem-radio:focus-visible,
+:where(.human-app) :is(button, input, textarea, select, summary, a):focus-visible {
+  outline: var(--studio-focus-width) solid var(--studio-focus);
+  outline-offset: var(--studio-focus-offset);
+}
+.tandem-button[hidden], .tandem-field[hidden], .tandem-status[hidden], .tandem-tab[hidden], .tandem-toggle[hidden], .tandem-disclosure[hidden] { display: none; }
+.tandem-spin { animation: tandem-spin 1.2s linear infinite; }
+@keyframes tandem-spin { to { transform: rotate(360deg); } }
+@media (pointer: coarse) {
+  .tandem-button, :where(.human-app) button { --tandem-button-height: var(--studio-touch-target); min-width: var(--studio-touch-target); }
+  .tandem-button[data-size] { --tandem-button-height: var(--studio-touch-target); }
+  .tandem-input, .tandem-tab, .tandem-toggle, :where(.human-app) :is(input, textarea, select) { min-height: var(--studio-touch-target); }
+  .tandem-radio[data-presentation="choice"] { min-height: var(--studio-touch-target); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tandem-spin { animation: none; }
+  .tandem-button, :where(.human-app) button { transition: none; }
+}
+@media (forced-colors: active) {
+  .tandem-button, .tandem-input, .tandem-tab, .tandem-toggle, .tandem-radio, :where(.human-app) :is(button, input, textarea, select) { border-color: ButtonText; }
+  .tandem-button:disabled, .tandem-input:disabled { border-color: GrayText; color: GrayText; }
+  .tandem-button:focus-visible, .tandem-input:focus-visible { outline-color: Highlight; }
+  .tandem-input[aria-invalid="true"] { outline: 1px dashed CanvasText; }
+  .dialog-content, .tandem-native-dialog, :where(.human-app) dialog { border-color: CanvasText; }
+}

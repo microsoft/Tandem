@@ -1,3 +1,4 @@
+import { Disclosure } from "./ui/index.js";
 import { useEffect, useState } from "react";
 import { workflowBinding } from "../workflow-activity.js";
 import { useUi } from "./ui-context.js";
@@ -55,7 +56,7 @@ export function WorkflowActivity() {
         {failure && <p role="alert">{failure.label}: {labels[failure.status] || failure.status}</p>}
         {update && <p id="workflow-latest-update">{update}</p>}
         {!ended && !permissions && inactiveSeconds >= 60 && <p className="muted">No new activity for {Math.floor(inactiveSeconds / 60)}m {inactiveSeconds % 60}s.</p>}
-        <details id="workflow-activity-details"><summary>Details</summary>
+        <Disclosure id="workflow-activity-details"><summary>Details</summary>
             {ended && !Number.isFinite(elapsed) && <p>Request elapsed unavailable: terminal timestamp not available.</p>}
             <p className="muted">Workflow: {age(current?.lastNativeActivityAt ?? null, now)}</p>
             {current?.agents.map(agent => <div key={agent.id}>
@@ -65,6 +66,6 @@ export function WorkflowActivity() {
             </div>)}
             <p className="muted">Request: {binding.requestId} · Run: {binding.runId}</p>
             <p className="muted">Silence does not mean failure. Updates are not completion or verification evidence.</p>
-        </details>
+        </Disclosure>
     </section>;
 }

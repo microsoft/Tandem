@@ -1,3 +1,4 @@
+import { Button, Disclosure } from "./ui/index.js";
 import { useState, type ReactNode } from "react";
 import { ChevronRight, FileText, FileWarning, FolderOpen } from "lucide-react";
 import { lifecycleStages, isRetiredStage, retiredStages } from "../workflow.js";
@@ -20,14 +21,14 @@ function ArtifactGroup({ source, name, label, count, version, selected, children
   const updated = !disclosure.open && disclosure.seen !== version;
   const Heading = source === "development" ? "h4" : "h3";
   return <section className="artifact-stage-group" aria-label={`${source === "development" ? "Development " : ""}${label} artifacts`}>
-    <Heading className="artifact-stage-heading"><button id={id} type="button" className="artifact-group-toggle"
+    <Heading className="artifact-stage-heading"><Button variant="item" id={id} type="button" className="artifact-group-toggle"
       aria-expanded={disclosure.open} aria-controls={`${id}-items`} data-selected={selected}
       aria-label={`${label} artifacts, ${count} items${selected ? ", contains current selection" : ""}${updated ? ", new output" : ""}`}
       onClick={() => setDisclosure({ open: !disclosure.open, seen: version })}>
       <ChevronRight size={14} aria-hidden="true" /><span className="artifact-group-name">{label}</span>
       <span className="artifact-group-count">{count}</span>{updated && <span className="artifact-group-new">New</span>}
       {selected && <span className="visually-hidden">Current selection</span>}
-    </button></Heading>
+    </Button></Heading>
     <div id={`${id}-items`} hidden={!disclosure.open}>{children}</div>
   </section>;
 }
@@ -45,14 +46,14 @@ export function ArtifactList({ selectedArtifactId, active = true }: ArtifactSele
         selected={artifacts.some(item => item.id === selected)}>
         <ul className="artifact-stage-items">{artifacts.map(artifact => {
           const meta = [artifact.kind, artifact.path, artifact.reviewStatus === "stale" ? "stale" : ""].filter(Boolean).join(" · ");
-          return <li key={artifact.id}><button className="artifact-button" type="button" data-artifact-id={artifact.id}
+          return <li key={artifact.id}><Button variant="item" className="artifact-button" type="button" data-artifact-id={artifact.id}
             data-ui-key={`artifact:${artifact.id}`} aria-current={artifact.id === selected} title={`${artifact.title} · ${meta}`}
             data-stale={artifact.reviewStatus === "stale"} onClick={() => selectArtifact(artifact.id)}>
             {artifact.reviewStatus === "stale" ? <FileWarning className="artifact-icon" size={15} aria-hidden="true" />
               : <FileText className="artifact-icon" size={15} aria-hidden="true" />}
             <span className="artifact-copy"><span className="artifact-title">{artifact.title}</span>
               {meta && <span className="artifact-list-meta">{meta}</span>}</span>
-          </button></li>;
+          </Button></li>;
         })}</ul>
       </ArtifactGroup>;
     })}
@@ -74,13 +75,13 @@ export function DevelopmentArtifactList({ active }: { active: boolean }) {
         version={JSON.stringify(items.map(item => [item.id, item.binding]))}
         selected={active && items.some(item => item.id === view.selectedOutput)}>
         <ul className="artifact-stage-items">{items.map(item => <li key={item.id}>
-          <button type="button" className="artifact-button" data-development-output={item.id}
+          <Button variant="item" type="button" className="artifact-button" data-development-output={item.id}
             disabled={view.outputStatus !== "verified"} aria-current={active && view.selectedOutput === item.id}
             title={`${item.title} · ${item.detail}`} onClick={() => view.openOutput(item)}>
             <FileText className="artifact-icon" size={15} aria-hidden="true" />
             <span className="artifact-copy"><span className="artifact-title">{item.title}</span>
               <span className="artifact-list-meta">{item.detail}</span></span>
-          </button>
+          </Button>
         </li>)}</ul>
       </ArtifactGroup> : null;
     })}
@@ -108,10 +109,10 @@ export function ArtifactsPanel({ selectedArtifactId }: ArtifactSelectionProps) {
       <pre id="artifact-content" className="artifact-content" hidden={!artifact.content}>{artifact.content || ""}</pre>
       {isRetiredStage(artifact.stage) && <section aria-label="Historical review">
         <p>Read-only legacy evidence. It does not authorize Development or establish a current verification pass.</p>
-        {threads.map((thread, index) => <details key={`${thread.id}:${index}`}>
+        {threads.map((thread, index) => <Disclosure key={`${thread.id}:${index}`}>
           <summary>{thread.prompt} · {thread.status}</summary><pre>{thread.answer}</pre>
           {thread.error && <p>{thread.error}</p>}
-        </details>)}
+        </Disclosure>)}
       </section>}
     </div>
   </div>;

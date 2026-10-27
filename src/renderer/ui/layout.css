@@ -1,0 +1,64 @@
+/* Feature layout is separate from the shared control appearance. */
+.tandem-button.artifact-group-toggle, .tandem-button.artifact-button {
+  display: flex; justify-content: flex-start; width: 100%; text-align: start; white-space: normal;
+}
+.tandem-button.sketch-structure-node { justify-content: flex-start; width: 100%; min-height: var(--studio-control-height); gap: var(--studio-space-1); }
+.project-entry-choices > .tandem-button { display: grid; justify-items: start; gap: var(--studio-space-2); padding: var(--studio-space-4); border-color: var(--studio-border); }
+.project-tabs .tandem-tab { display: grid; grid-template-columns: 15px minmax(0, 1fr) auto; justify-content: start; text-align: start; white-space: normal; }
+.preview-tabs > .tandem-tab { flex: none; }
+.substage-tab.tandem-tab { gap: var(--studio-control-gap); font-weight: 400; }
+.substage-tab .substage-index { flex: none; }
+.tandem-button.context-toggle { display: none; justify-content: flex-start; width: 100%; }
+.project-workspace .tandem-button.context-collapse { display: none; }
+.tandem-button.review-close { align-self: flex-start; }
+.tandem-button.review-trigger[data-status="attention"] { color: var(--studio-accent-strong); border-color: var(--studio-accent); background: var(--studio-accent-soft); }
+.decision-list .tandem-button[data-explicit-answer="true"] { border-style: dashed; border-color: var(--studio-warning); }
+.tandem-button.feedback-send { font-size: var(--studio-text-small); }
+.feedback-composer .tandem-icon-button[data-status="error"] {
+  color: var(--studio-danger); border-color: var(--studio-danger); background: var(--studio-danger-soft);
+}
+.feedback-composer .tandem-icon-button, .diagram-toolbar .tandem-icon-button { flex: none; }
+.diagram-toolbar .tandem-button { white-space: nowrap; font-size: var(--studio-text-small); }
+.tandem-input.composer-input { min-height: var(--studio-composer-height); height: var(--studio-composer-height); }
+form:not(.feedback-composer):focus-within textarea.tandem-input.composer-input,
+form.feedback-composer > textarea.tandem-input.composer-input:focus,
+#question-host[data-composer-expanded="true"] textarea.tandem-input.composer-input,
+#question-host:focus-within textarea.tandem-input.composer-input { min-height: var(--studio-composer-expanded-height); }
+.start-form textarea.tandem-input.composer-input { min-height: 112px; height: auto; }
+.change-details-dialog textarea.tandem-input.composer-input { min-height: 96px; height: auto; }
+.sketch-transition :is(.tandem-input, .tandem-button) { min-width: 0; }
+.sketch-panel .sketch-pane-controls .tandem-toggle { border-radius: 0; }
+.sketch-panel .sketch-pane-controls .tandem-toggle:first-child { border-radius: var(--studio-radius-control) 0 0 var(--studio-radius-control); }
+.sketch-panel .sketch-pane-controls .tandem-toggle:last-child { border-radius: 0 var(--studio-radius-control) var(--studio-radius-control) 0; }
+.sketch-pane-controls .tandem-toggle + .tandem-toggle { margin-inline-start: -1px; }
+.sketch-pane-controls .tandem-toggle[data-state="on"] { z-index: 1; }
+.tandem-input.sketch-size-preset { width: 180px; }
+.tandem-button.preview-recovery-action, .tandem-button.preview-open-action {
+  flex: none; width: var(--studio-control-height); height: var(--studio-control-height); padding: 0;
+}
+.tandem-button.preview-recovery-action[data-error="true"] { color: var(--studio-danger); border-color: var(--studio-danger); }
+.tandem-toggle.visual-direction-toggle { text-align: start; }
+.tandem-radio .choice-control { flex: none; }
+.tandem-radio .radio-dot { display: block; width: 9px; height: 9px; border-radius: 50%; background: var(--studio-accent); }
+.tandem-radio[data-presentation="choice"][data-state="checked"] .choice-control { color: var(--studio-accent-strong); }
+.dialog-content.change-details-dialog, .dialog-content.review-details-dialog {
+  display: flex; flex-direction: column; padding: 0; overflow: hidden;
+}
+.dialog-content.change-details-dialog { width: min(740px, calc(100vw - 32px)); max-height: min(860px, calc(100dvh - 32px)); }
+.dialog-content.review-details-dialog { width: min(820px, calc(100vw - 32px)); max-height: min(860px, calc(100dvh - 32px)); }
+.dialog-content.handoff-review-dialog { width: min(640px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); }
+.dialog-content.diagram-source-dialog { width: min(900px, calc(100vw - 32px)); }
+.dialog-content.project-settings-dialog { display: flex; flex-direction: column; width: min(760px, calc(100vw - 24px)); height: min(820px, calc(100dvh - 24px)); padding: var(--studio-space-3); }
+.dialog-content.project-entry { width: min(640px, calc(100vw - 32px)); }
+.tandem-native-dialog.preview-restart-dialog { width: min(600px, calc(100vw - 32px)); }
+dialog.dialog-content { inset: 0; margin: auto; transform: none; }
+dialog.dialog-content:not([open]) { display: none; }
+#project-contents .tandem-tab[aria-current="step"] { background: var(--studio-accent-soft); color: var(--studio-text); box-shadow: inset 3px 0 0 var(--studio-accent); }
+#project-contents .tandem-tab[aria-selected="true"]:not([aria-current="step"]) { background: transparent; border-color: transparent; box-shadow: none; color: var(--studio-text); }
+@media (pointer: coarse) {
+  .tandem-button.preview-recovery-action, .tandem-button.preview-open-action { width: var(--studio-touch-target); height: var(--studio-touch-target); }
+}
+@media (max-width: 760px) {
+  .workspace:not(.project-workspace):not([data-development="true"]) > .tandem-button.context-toggle { display: flex; }
+  .tandem-button.context-collapse { display: none; }
+}

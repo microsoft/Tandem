@@ -32,6 +32,11 @@
       "sha256": "bdc508e1085c852d70825ee44a35e5f7a6561958939835ba429e0fc3d72338a5"
     },
     {
+      "path": "public/application.css",
+      "bytes": 461,
+      "sha256": "02c10808460dc3e6034fcd75aab72ff5024bbd25bf011401a1ad73e83fa3c426"
+    },
+    {
       "path": "public/artifacts/contract.js",
       "bytes": 190,
       "sha256": "e7c0ebef88577ea5b8fe3a3252f0173c6f3d13321aa7555232bfc31ebf63d364"
@@ -178,8 +183,8 @@
     },
     {
       "path": "public/human-loop.html",
-      "bytes": 16932,
-      "sha256": "b3beb87fdce5d86bf29ca8043fdc2f4be5c1f34c95ed2d78567eb0cfd58def42"
+      "bytes": 16732,
+      "sha256": "88a81e908d2b46076b01ab3f4e22588b3ca702c81a3da470e5ad21aa053cd241"
     },
     {
       "path": "public/implementation-confirmation.js",
@@ -218,8 +223,8 @@
     },
     {
       "path": "public/project-theme.css",
-      "bytes": 2414,
-      "sha256": "acc414d1c78c1a25366d4673531dd456a844408a7ba5ec4de770002848590941"
+      "bytes": 3777,
+      "sha256": "c4d5a88138712e7253f8b3dc9a5d7982cc9912f384fd46bb16054392e296db3d"
     },
     {
       "path": "public/project-workspace.css",
@@ -350,6 +355,16 @@
       "path": "public/styles.css",
       "bytes": 72597,
       "sha256": "4d455338dec1be66fa60fb3f2996dace7e3e4f089e301827a353d0c2e4967c5f"
+    },
+    {
+      "path": "public/ui-native.css",
+      "bytes": 7273,
+      "sha256": "124dab2ab73b97c54cb8fb3538e135bcf750c291cdc6f6f87d9108441f4e5633"
+    },
+    {
+      "path": "public/ui-system.css",
+      "bytes": 11843,
+      "sha256": "ae636b89be78e1ebac0ff025fb16408343a03ff62cd5b5b2d81f0982d82922f3"
     },
     {
       "path": "public/workflow-stop-control.js",

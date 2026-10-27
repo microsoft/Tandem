@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { Dialog } from "radix-ui";
+import { Button, Dialog, Disclosure, Status } from "./ui/index.js";
 import type { HandoffAdmission, HandoffReview } from "../development-handoff.js";
 import { canOpenDevelopment, useAction, useUi } from "./ui-context.js";
 import { useProjectView } from "./project-conversation.js";
@@ -106,42 +106,37 @@ export function HandoffReviewProvider({ children }: { children: ReactNode }) {
         busy: action.busy, checking, canReview, admission, error: action.error || receiptError, status, progress,
         requestId: sameSource ? reference?.requestId ?? null : null }}>
         {children}
-        <Dialog.Root open={open} onOpenChange={setOpen}>
-            <Dialog.Portal><Dialog.Overlay className="dialog-overlay" />
-                <Dialog.Content className="dialog-content handoff-review-dialog" onCloseAutoFocus={event => {
-                    event.preventDefault(); if (trigger.current?.isConnected) trigger.current.focus();
-                }}>
-                    <Dialog.Title>Review Prototype handoff</Dialog.Title>
-                    <Dialog.Description>Designer will read the saved evidence and create or refine Design in this project.
-                        Prototype scripts will not run. This does not implement the app.</Dialog.Description>
-                    {!review && action.busy && <p role="status">Reading the saved Prototype...</p>}
-                    {review && <>
-                        <p><strong>Project folder</strong><br /><span className="project-entry-path">{review.workspaceRoot}</span></p>
-                        <p><strong>Saved Prototype</strong> &mdash; revision {review.snapshotRevision}, {review.completedAt}<br />{review.prototype}</p>
-                        <p>{review.goal}</p>
-                        <details><summary>Saved feature specification</summary><pre>{review.specification}</pre></details>
-                        {([["Confirmed decisions", review.confirmed], ["Recorded answers", review.decisions],
-                            ["Assumptions (not confirmations)", review.assumed], ["Deferred work (not requested)", review.deferred]] as const).map(([title, items]) =>
-                            <details key={title}><summary>{title} ({items.length})</summary>
-                                {items.length ? <ul>{items.map((item, index) => <li key={index}>{item}</li>)}</ul> : <p>None recorded in this saved Prototype.</p>}</details>)}
-                        <p>Existing Design is refined in its own Development history, not replaced by the Prototype.
-                            Answer any Designer questions there. Implementation requires a separate confirmation.</p>
-                        {admission?.status === "uncertain" && <p>Reconciliation checks the same saved request. It may submit if absent and safe; used or retired work is never replayed.</p>}
-                        <details><summary>Source details</summary><p>{review.snapshotPath}<br />Snapshot: {review.snapshotHash}</p>
-                            {reference && <p>Retained request: {reference.requestId}</p>}</details>
-                    </>}
-                    {(action.error || changed) && <p role="alert">{changed ? "The saved Prototype changed. Close and review the new handoff before confirming." : action.error}</p>}
-                    <div className="dialog-actions">
-                        <button id="cancel-design-handoff" type="button" className="plan-button secondary"
-                            onClick={() => setOpen(false)}>Cancel</button>
-                        {review && <button id="confirm-design-handoff" type="button" className="plan-button"
-                            disabled={action.busy || pending || changed || !canReview} onClick={() => void submit()}>
-                            {admission?.status === "uncertain" ? "Reconcile saved handoff"
-                                : project.designRevision ? "Refine Design from Prototype" : "Create Design from Prototype"}</button>}
-                    </div>
-                </Dialog.Content>
-            </Dialog.Portal>
-        </Dialog.Root>
+        <Dialog open={open} onOpenChange={setOpen} className="handoff-review-dialog"
+            title="Review Prototype handoff"
+            description="Designer will read the saved evidence and create or refine Design in this project. Prototype scripts will not run. This does not implement the app."
+            onCloseAutoFocus={event => {
+                event.preventDefault(); if (trigger.current?.isConnected) trigger.current.focus();
+            }}
+            footer={<>
+                <Button id="cancel-design-handoff" onClick={() => setOpen(false)}>Cancel</Button>
+                {review && <Button id="confirm-design-handoff" variant="primary"
+                    disabled={action.busy || pending || changed || !canReview} onClick={() => void submit()}>
+                    {admission?.status === "uncertain" ? "Reconcile saved handoff"
+                        : project.designRevision ? "Refine Design from Prototype" : "Create Design from Prototype"}</Button>}
+            </>}>
+            {!review && action.busy && <Status role="status" busy>Reading the saved Prototype...</Status>}
+            {review && <>
+                <p><strong>Project folder</strong><br /><span className="project-entry-path">{review.workspaceRoot}</span></p>
+                <p><strong>Saved Prototype</strong> &mdash; revision {review.snapshotRevision}, {review.completedAt}<br />{review.prototype}</p>
+                <p>{review.goal}</p>
+                <Disclosure><summary>Saved feature specification</summary><pre>{review.specification}</pre></Disclosure>
+                {([["Confirmed decisions", review.confirmed], ["Recorded answers", review.decisions],
+                    ["Assumptions (not confirmations)", review.assumed], ["Deferred work (not requested)", review.deferred]] as const).map(([title, items]) =>
+                    <Disclosure key={title}><summary>{title} ({items.length})</summary>
+                        {items.length ? <ul>{items.map((item, index) => <li key={index}>{item}</li>)}</ul> : <p>None recorded in this saved Prototype.</p>}</Disclosure>)}
+                <p>Existing Design is refined in its own Development history, not replaced by the Prototype.
+                    Answer any Designer questions there. Implementation requires a separate confirmation.</p>
+                {admission?.status === "uncertain" && <p>Reconciliation checks the same saved request. It may submit if absent and safe; used or retired work is never replayed.</p>}
+                <Disclosure><summary>Source details</summary><p>{review.snapshotPath}<br />Snapshot: {review.snapshotHash}</p>
+                    {reference && <p>Retained request: {reference.requestId}</p>}</Disclosure>
+            </>}
+            {(action.error || changed) && <Status tone="danger" role="alert">{changed ? "The saved Prototype changed. Close and review the new handoff before confirming." : action.error}</Status>}
+        </Dialog>
     </Context.Provider>;
 }
 
@@ -168,13 +163,13 @@ export function HandoffControls({ prototype = false, active = true }: { prototyp
     const hasSnapshot = state.lifecycle.outputs.some(output => output.stageId === "prototype");
     if (!active || !view || !hasSnapshot || !view.status && !view.canReview && !view.error) return null;
     return <section className="development-handoff-status" aria-label="Prototype handoff">
-        {view.status && <p role="status">{view.status}</p>}
-        {view.canReview && <button id={prototype ? "review-prototype-handoff" : "continue-design"} type="button" className="plan-button"
+        {view.status && <Status role="status">{view.status}</Status>}
+        {view.canReview && <Button id={prototype ? "review-prototype-handoff" : "continue-design"} variant="primary"
             disabled={pending || view.busy} onClick={view.review}>
             {prototype ? "Continue to Development" : view.admission?.status === "uncertain" ? "Review handoff recovery"
-                : view.admission ? "Review saved handoff" : state.development ? "Review updated Prototype" : "Review Prototype handoff"}</button>}
-        {(view.error || view.admission?.status === "sending") && <button id={prototype ? "check-prototype-handoff" : "check-design-handoff"}
-            type="button" className="plan-button secondary" disabled={view.busy || view.checking} onClick={view.check}>Check handoff status</button>}
-        {view.error && <p role="alert">{view.error}</p>}
+                : view.admission ? "Review saved handoff" : state.development ? "Review updated Prototype" : "Review Prototype handoff"}</Button>}
+        {(view.error || view.admission?.status === "sending") && <Button id={prototype ? "check-prototype-handoff" : "check-design-handoff"}
+            disabled={view.busy || view.checking} onClick={view.check}>Check handoff status</Button>}
+        {view.error && <Status tone="danger" role="alert">{view.error}</Status>}
     </section>;
 }
