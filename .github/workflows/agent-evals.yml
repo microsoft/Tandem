@@ -7,7 +7,7 @@ on:
       - ".github/copilot-instructions.md"
       - "src/**"
       - "development/**"
-      - "scripts/evaluate.ts"
+      - "scripts/**"
       - "tests/**"
       - ".github/workflows/**"
       - "package.json"

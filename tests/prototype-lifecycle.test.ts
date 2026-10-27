@@ -120,7 +120,7 @@ test("ready checkpoints retain their own validated server start instructions for
         for (const [index, checkpoint] of saved.prototypeFlow!.checkpoints.entries()) {
             assert.equal(checkpoint.status, "ready", saved.processing.message);
             assert.deepEqual(JSON.parse(JSON.stringify(checkpoint.previewStart)), {
-                entrypoint: "app\\server.mjs", workingDirectory: "app", args: ["--port", String(12501 + index)],
+                entrypoint: join("app", "server.mjs"), workingDirectory: "app", args: ["--port", String(12501 + index)],
             });
         }
         assert.notDeepEqual(saved.prototypeFlow!.checkpoints[0].previewStart, saved.prototypeFlow!.checkpoints[1].previewStart);

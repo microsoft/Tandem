@@ -5,7 +5,7 @@
   "type": "module",
   "engines": { "node": ">=24.0.0" },
   "scripts": {
-    "test": "tsx --test tests/index.test.ts tests/execution-panels-react.test.tsx tests/requirements-panel.test.ts tests/review-process-panels.test.tsx tests/sketch-panel.test.tsx tests/browser-ui.test.ts tests/ui-primitives.test.ts tests/ui-consistency.test.ts",
+    "test": "tsx scripts/test.ts",
     "storybook": "storybook dev -p 6006 --exact-port --host 127.0.0.1 --no-open --ci --disable-telemetry",
     "build:storybook": "storybook build --output-dir dist/storybook --disable-telemetry",
     "eval": "tsx scripts/evaluate.ts",
