@@ -1,4 +1,5 @@
 /* Feature layout is separate from the shared control appearance. */
+.session-model-effort { max-width: 42%; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--studio-text-small); }
 .tandem-button.artifact-group-toggle, .tandem-button.artifact-button {
   display: flex; justify-content: flex-start; width: 100%; text-align: start; white-space: normal;
 }

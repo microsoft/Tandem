@@ -477,11 +477,13 @@ Completion checks the displayed checkpoint, source fingerprint, applicable sketc
 approval and outstanding feedback. A URL alone is not source evidence. An offline
 preview does not invalidate a retained, source-bound checkpoint.
 
-**Finish Prototype and save outputs** (or **Finish Requirements and save
-outputs** for a non-GUI project) saves Stage 1 evidence without opening a private
-Development session or submitting a Design request. Completion keeps the current
-upstream view; reopening completed Stage 1 without a handoff shows its saved
-artifacts. You may shut down at this point.
+**Finish Prototype** saves Stage 1 evidence and continues directly into Development.
+Its explicit intent is generation/request-bound before feature-spec generation;
+the resulting snapshot path is bound when completion saves it. Only settlement of
+that original request starts the normal handoff/admission path. Errors retain the
+snapshot and intent for explicit retry. Reopening alone never submits or replays
+retired work. Low-level save-only completion and non-GUI **Finish Requirements and
+save outputs** remain usable independently.
 
 Later, open Development explicitly and reference the saved Q&A, snapshot,
 approved designs or prototype source files in a normal message. Stage 1's
@@ -490,13 +492,11 @@ adopt a previous Development run, its canonical Design or session authority. Exi
 used Development work still requires its original owner and same-ID recovery; this
 does not bypass the desktop workspace's main-session ownership rules.
 
-Alternatively, **Continue to Development** opens a read-only handoff review.
-`GET /api/development/handoff-review` reads the completed snapshot, without
-creating a receipt or native session. Confirmation binds its snapshot hash,
-generation, source path, target workspace, owner and acceptance context; changed
-inputs fail before admission. Cancel has no backend mutation.
-**Create Design from Prototype** (or **Refine Design from Prototype**) asks the current
-host to retain an immutable bounded handoff under the **target worktree's**
+Older save-only snapshots offer a single **Continue to Development** action.
+`GET /api/development/handoff-review` remains a read-only source-inspection API,
+not a mandatory user-facing approval. Exact generation, snapshot, target, owner
+and source checks still run internally; changed inputs fail before admission.
+The Finish/Continue action asks the current host to retain an immutable bounded handoff under the **target worktree's**
 `.tandem\living-canvas\handoffs`. It includes exact completed snapshot bytes,
 artifact hashes, confirmed/assumed/deferred decisions, approved designs/assets,
 mock shortcuts and the displayed multi-file source. Dependency installations,
@@ -507,7 +507,7 @@ Stage 1's shared state root and the actual target worktree are recorded
 separately. Development implements in the real target workspace, not in the shared
 snapshot directory. Original inputs are preserved.
 
-For that optional strict route, one exact request ID, timestamp and message are persisted **before** admission.
+One exact request ID, timestamp and message are persisted **before** admission.
 Duplicate clicks, tabs and lost acknowledgements reconcile that envelope.
 Recovery retirement is never permission to deliver it again. Reopening an
 already-completed Prototype or legacy downstream effort offers an explicit
@@ -898,7 +898,7 @@ Verified successful completion is quiet only when its matching Design is visible
 and no questions or permissions need attention. The authenticated presentation
 bridge gives the visible root control ownership of that exact request's notice;
 standalone Development retains its own status.
-Uncertain admission offers review before **Reconcile saved handoff**;
+Uncertain admission offers **Reconcile saved request**;
 pending submission offers a read-only status check. Reconciliation remains
 idempotent and cannot revive a retired request. A newly saved Prototype offers a
 separate explicit continuation. Do not use unused-setup initialization, delete history, or substitute a
@@ -935,7 +935,7 @@ five-minute confirmation, not ordinary Retry, Reconcile, or implementation
 approval. The application rechecks the bound evidence and records consumption
 before issuing creation. Existing WAL frames, handoff files, request IDs and
 startup uncertainty remain retained; it sends no project/model request.
-After **Ready**, review and confirm the saved Prototype handoff to admit the
+After **Ready**, explicitly retry the saved Prototype continuation to admit the
 original prepared handoff. Never delete saved state or locks to bypass a
 rejected recovery check.
 
@@ -974,28 +974,27 @@ work. Main-session and private Development model/permission ownership remain
 independent. Close and Escape return focus to Project settings; closing or
 browsing another phase retains the settings document and its unsaved fields.
 
-Before first Development startup, the authenticated main-session catalog supplies
-model choices without creating a private session. **Save model for Development**
-writes the existing native preferences store, not the main model. The original
-private startup path validates and applies the saved model/effort and verifies
-native readback before work. Unavailable choices, incompatible effort and
-uncertain existing ownership remain explicit errors; a saved preference is not
-an actual running model. Once Ready, changes still use the native idle-only
-model-switch path.
+The shared Models section has independent **Main session model** and
+**Development model** selectors. Main uses its actual joined session's `model.list`,
+`getCurrent` and `switchTo` APIs. Changes require native idle/empty-queue proof,
+compatible current/shared effort and exact post-switch readback. Deferred switches,
+compaction confirmations and persistence failures are not success; hosts missing
+those APIs expose a precise unavailable state. No global model preference is set.
 
-First startup requires an explicit saved model. The root entry/open controls
-read the controller's model-selection preflight and open the same Project
-settings window when needed; startup remains a separate explicit action after
-saving. The native controller enforces the requirement before installation or
-private-session creation. A previously created but unselected private session
-uses that same prompt and its original model-switch path, not a replacement
-session. Prototype submission still needs its separate handoff review after
-model selection.
-The settings document reports scoped model readiness only after readback matches
-its displayed model/effort. Continue is disabled for unsaved choices, pending or
-failed writes, and stale/foreign readiness messages. Each opening gets a fresh
-scope; continuation still rechecks the native preflight and cannot resume after
-the user closes the window during that check.
+Private startup has no mandatory chooser. A saved Development override wins;
+otherwise first creation reads the main session's current model, checks the
+private catalog, passes that exact model into native creation and verifies it.
+This does not save an inherited value as an explicit user preference. Same-ID
+resume keeps the native session's saved model; later main switches do not affect
+Development. Effort is not inherited: native default/saved effort remains unless
+an explicit private/shared override applies. Unavailable or conflicting values
+remain visible errors, never fallback models.
+
+Current model/effort readouts use native reads in existing snapshot and model-change
+event paths, not requested preferences or a new polling scheduler. Root discovery
+shows main; Development shows private; unopened private state says not started.
+Missing effective effort is labeled native default/not reported. The standalone
+native conversation header and integrated host status area preserve the same distinction.
 
 The controller exposes a presentation-only startup phase through private runtime
 creation/recovery and final model/effort verification. Until it settles, the
@@ -1012,8 +1011,8 @@ snapshots, acceptances, Local/GitHub selections, receipts and existing
 `tandem-records` exports are preserved. No adapter substitution or publication
 occurs during this retirement.
 
-This does not retire the separately reviewed **Create Design from Prototype**
-handoff or native implementation confirmation. Design, Conversation and native
+This does not retire the exact Prototype-to-Designer handoff now carried by
+**Finish Prototype**, or native implementation confirmation. Design, Conversation and native
 results remain the ordinary Development evidence surfaces. The Requirement
 ledger still omits empty categories.
 

@@ -60,6 +60,18 @@ npm run browser -- --workspace C:\projects\my-app
 
 Both browser scripts build the app automatically. Pass launch options after `--`.
 
+Optionally choose the **main session's** model and reasoning effort using a model
+available to your account:
+
+```powershell
+npm run browser -- --workspace C:\projects\my-app --model gpt-6-astra --reasoning-effort low
+```
+
+Omitting these flags preserves native defaults and saved selection. Project
+settings has separate **Main session model** and **Development model** controls;
+see [model options](docs/quick-start.md#main-session-model-options) for
+creation-time Development inheritance and independent effort settings.
+
 If you also have Tandem installed, explicitly isolate a source preview from that
 installation:
 

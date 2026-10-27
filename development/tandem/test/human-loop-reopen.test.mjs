@@ -1068,9 +1068,11 @@ test("persisted model preferences allow original automatic creation and same-ses
   await f.installation.close(); await f.reopen(true);
   assert.equal(f.runtime.sessionId, identity);
   assert.equal((await f.runtime.modelSettings()).actual, "two");
+  assert.equal(Object.hasOwn(f.sessions.at(-1).config, "model"), false, "Same-ID resume must not replace the saved native model.");
   assert.deepEqual(await f.runtime.conversation(), messages);
   await f.installation.close(); f.setActualModel("one"); await f.reopen(true);
   assert.equal(f.counts.creates, 1); assert.equal(f.runtime.sessionId, identity);
+  assert.equal(Object.hasOwn(f.sessions.at(-1).config, "model"), false, "A mismatch is reported, not overwritten by creation preferences.");
   assert.match((await f.runtime.modelSettings()).error, /differs/);
   await assert.rejects(f.runtime.send({}), /differs/);
   await f.runtime.changeModel({ acceptActual: true });

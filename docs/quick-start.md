@@ -73,9 +73,14 @@ Use a model available to your account. The launcher checks the native catalog an
 actual readback before opening Tandem; it does not silently substitute a model.
 Omitting both options preserves native defaults and saved selection. If Stage 1
 effort remains pending with no actual model, stop the host and reopen the same
-folder with an explicit model. Development's private model is separate: select it
-in **Project settings > Private Canvas model**, then apply the shared effort and
-check both stage results before submitting work.
+folder with an explicit model. **Project settings** also provides separate,
+optional **Main session model** and **Development model** selectors in one window.
+Without a Development override, its first private session inherits the main
+session's actual current model, then keeps its own saved selection. Later main
+changes do not switch Development. Effort is not copied: native defaults/saved
+effort apply unless you explicitly choose a supported shared Project effort.
+The status area shows the viewed session's current model and effort; unreported
+values are labeled rather than guessed.
 
 **You should see:** your project folder and **Choose where to start**.
 Returning projects use their saved choice and progress. If startup fails, use
@@ -137,11 +142,12 @@ Use this path to clarify requirements and UX.
    Feedback is optional. For distinct layouts and styles, use
    **Explore visual directions (optional)** and [compare, refine and apply a
    direction](user-manual.md#explore-visual-directions).
-5. **Finish Prototype and save outputs** saves only; it does not request Design.
-   Select **Continue to Development**, review the saved specification, decisions,
-   assumptions, deferred work and target folder, then **Create Design from
-   Prototype** (or **Refine Design from Prototype**). **Cancel** starts nothing.
-   **Open Development** only opens the workspace without submitting the handoff.
+5. Select **Finish Prototype** once. Tandem saves the feature specification and
+   exact approved evidence, opens Development and asks Designer to create or
+   refine Design. Progress and errors appear in status; there is no second
+   handoff approval, required model chooser or Start Development step.
+   Answer native permission requests if they appear. Design review and the
+   later implementation confirmation remain separate.
 
 **Result:** saved discovery evidence and a Design to refine. A prototype can
 use mocks; finishing it does not prove a production app works or approve coding.
@@ -152,9 +158,9 @@ prototyping with a recorded reason and **Finish Requirements and save outputs**.
 
 Use this path for existing code, an initial implementation, or a rough idea.
 
-1. Complete project setup above. If no Development model is saved, Tandem opens
-   **Project settings** first: select a private model, **Save model for
-   Development**, then **Start Development with saved model**. Wait for **Ready**.
+1. Complete project setup above. Development uses its saved model override or
+   inherits the current main model at first creation. No model selection is
+   required; optional overrides are in Project settings. Wait for **Ready**.
    Opening Development does not submit a model request or approve implementation.
 2. Choose **Quick requests > Understand existing project**, review the inserted
    text and send it. Or use **Design something new** for an idea without code.

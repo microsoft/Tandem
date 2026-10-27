@@ -308,6 +308,10 @@ export class HumanLoopRuntime {
     await work;
     this.#notify({ kind: "permissions-reset" });
   }
+  async currentModelSelection() {
+    const value = await this.#transport.currentModelSelection();
+    return { modelId: value.model ?? undefined, reasoningEffort: value.reasoningEffort };
+  }
   async modelSettings() {
     const preferences = await this.#preferences.read();
     if (!this.#opened || this.#closed || this.#closing) return { models: [], actual: null, desired: preferences.model,

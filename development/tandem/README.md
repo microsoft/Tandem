@@ -23,6 +23,16 @@ publishes canonical Design; Planner and Implementer perform authorized work;
 Reviewer consolidates review. Read-only Agent requests do not require Design.
 The native runtime owns scheduling, tool execution and cleanup.
 
+Project settings provides separate optional **Main session model** and
+**Development model** controls. At first private creation, an explicit saved
+Development override wins; otherwise the actual current main model is inherited
+and verified against the private runtime. Same-ID resume retains Development's
+selection, and later main changes do not synchronize it. Reasoning effort remains
+native default/saved or explicitly overridden; it is not copied from main.
+The status area displays each owning session's current model/effort, with
+not-started, unreported and failed readback states shown honestly.
+Model settings never submit project work or authorize implementation.
+
 New and existing repositories use this same workflow. When asked to establish
 Design from existing code, Designer first explores the project read-only,
 creates an evidence-backed baseline using the normal artifacts, and raises

@@ -89,6 +89,7 @@ import { privateReviewRegistration } from "../development/tandem/src/native-evid
 import { DevelopmentHandoffs } from "./development-handoff.js";
 import { DevelopmentTransition } from "./development-transition.js";
 import { nodeMainConsent } from "./main-consent.js";
+import { readModelSelection } from "../development/tandem/public/model-selection.js";
 import { verifyPayload } from "./payload.js";
 import { assertLegacyCutover, assertUpstreamStage, legacyCutoverError, migrateLifecycle } from "./lifecycle.js";
 import {
@@ -191,6 +192,7 @@ const activeWorkContinuations = new Set<string>();
 const activePreparationRuns = new Map<string, Promise<any>>();
 const activeSuggestionRuns = new Map<string, Promise<any>>();
 const activePrototypeCompletions = new Set();
+const activeDevelopmentContinuations = new Set<string>();
 const projectStore = new ProjectStore<TandemState>({
     root: STATE_DIRECTORY,
     create: createState,
@@ -229,6 +231,13 @@ const nodePermissionOwner = process.env.TANDEM_NODE_MAIN_SESSION_ID;
 const workflowActivity = new NativeWorkflowActivity();
 const mainEffort = new MainSessionEffort(WORKSPACE_ROOT, () => session);
 let projectEffortChanging = false;
+let mainModelSelection: Awaited<ReturnType<typeof readModelSelection>> | null = null;
+async function refreshMainModelSelection() {
+    mainModelSelection = await readModelSelection(() => {
+        if (typeof session?.rpc?.model?.getCurrent !== "function") throw new Error("This host cannot report the main-session model.");
+        return session.rpc.model.getCurrent();
+    });
+}
 const browserDevelopmentAssets = readBrowserDevelopmentAssets();
 const development = createHumanLoopController({
     workspacePath: WORKSPACE_ROOT,
@@ -244,6 +253,16 @@ const development = createHumanLoopController({
         await assertDevelopmentAvailable();
     },
     contextProvider: () => handoffs.context(),
+    withMainModelChange: async operation => {
+        if (projectEffortChanging) throw new Error("Wait for the current project settings change.");
+        projectEffortChanging = true;
+        try {
+            return await developmentTransition.run(async () => {
+                await assertDevelopmentAvailable();
+                return operation();
+            });
+        } finally { projectEffortChanging = false; }
+    },
     inspectRepairAdmissions: () => handoffs.inspectUnadmitted(),
     withEmptyRepairExclusion: operation => developmentTransition.run(async () => {
         if (projectEffortChanging) throw new Error("Wait for the project effort choice before repairing Development.");
@@ -313,11 +332,14 @@ async function assertDevelopmentAvailable() {
 }
 
 async function continueDevelopment(prototypeId, extensionId, input?: Record<string, unknown>) {
-    await developmentGit.requireReady();
-    const origin = await loadState(prototypeId);
-    const identity = input ?? { generation: origin.generation, expectedRevision: origin.revision,
-        snapshotPath: origin.lifecycle.outputs.find(output => output.stageId === "prototype")?.path };
-    return developmentTransition.run(() => continueDevelopmentLocked(prototypeId, extensionId, identity));
+    activeDevelopmentContinuations.add(prototypeId);
+    try {
+        await developmentGit.requireReady();
+        const origin = await loadState(prototypeId);
+        const identity = input ?? { generation: origin.generation, expectedRevision: origin.revision,
+            snapshotPath: origin.lifecycle.outputs.find(output => output.stageId === "prototype")?.path };
+        return await developmentTransition.run(() => continueDevelopmentLocked(prototypeId, extensionId, identity));
+    } finally { activeDevelopmentContinuations.delete(prototypeId); }
 }
 
 async function continueDevelopmentLocked(prototypeId, extensionId, input: Record<string, unknown>) {
@@ -332,8 +354,10 @@ async function continueDevelopmentLocked(prototypeId, extensionId, input: Record
         }
         if (state.lifecycle.currentStage !== "development" || !output) throw new CanvasError("prototype_incomplete", "Complete Prototype first.");
         const receipt = await handoffs.prepare(state, input.reviewBinding);
-        if (state.development?.handoffId !== receipt.id) {
+        if (state.development?.handoffId !== receipt.id || state.developmentIntent?.status === "failed") {
             await persistState({ ...state, development: { handoffId: receipt.id, requestId: receipt.request.id, snapshotPath: output.path },
+                developmentIntent: state.developmentIntent?.generation === state.generation && state.developmentIntent.snapshotPath === output.path
+                    ? { ...state.developmentIntent, status: "starting", error: "" } : state.developmentIntent,
                 status: "Prototype retained. Starting the owned Development runtime for Design continuation." });
             publishState(prototypeId);
         }
@@ -352,7 +376,9 @@ async function continueDevelopmentLocked(prototypeId, extensionId, input: Record
         await withAnswerClaim(prototypeId, async () => {
             const current = await loadState(prototypeId);
             if (current.development?.handoffId === prepared.id) {
-                await persistState({ ...current, status: admission.message });
+                await persistState({ ...current, status: admission.message,
+                    developmentIntent: current.developmentIntent?.snapshotPath === prepared.source.snapshotPath
+                        ? { ...current.developmentIntent, status: "admitted", error: "" } : current.developmentIntent });
                 publishState(prototypeId);
             }
         });
@@ -360,13 +386,40 @@ async function continueDevelopmentLocked(prototypeId, extensionId, input: Record
         await withAnswerClaim(prototypeId, async () => {
             const current = await loadState(prototypeId);
             if (current.development?.handoffId === prepared.id) {
-                await persistState({ ...current, status: `Design continuation needs attention. The exact handoff was retained: ${error instanceof Error ? error.message : String(error)}` });
+                const reason = error instanceof Error ? error.message : String(error);
+                await persistState({ ...current,
+                    developmentIntent: current.developmentIntent?.snapshotPath === prepared.source.snapshotPath
+                        ? { ...current.developmentIntent, status: "failed", error: reason.slice(0, 4000) } : current.developmentIntent,
+                    status: `Design continuation needs attention. The exact handoff was retained: ${reason}` });
                 publishState(prototypeId);
             }
         });
         throw error;
     }
     return loadState(prototypeId);
+}
+
+async function continueFinishedPrototype(prototypeId: string, requestId: string) {
+    const state = await loadState(prototypeId);
+    const intent = state.developmentIntent;
+    if (!intent || intent.requestId !== requestId || intent.generation !== state.generation || intent.status !== "starting"
+        || state.stageReview || state.processing?.requestId !== requestId || state.processing?.status !== "success"
+        || state.lifecycle.currentStage !== "development") return;
+    try {
+        await continueDevelopment(prototypeId, PROVIDER_EXTENSION_ID, { generation: intent.generation,
+            expectedRevision: state.revision, snapshotPath: intent.snapshotPath });
+    } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        await withAnswerClaim(prototypeId, async () => {
+            const current = await loadState(prototypeId);
+            if (current.generation !== intent.generation || current.developmentIntent?.requestId !== requestId
+                || current.developmentIntent.status === "admitted") return;
+            await persistState({ ...current, developmentIntent: { ...current.developmentIntent, status: "failed", error: reason.slice(0, 4000) },
+                status: `Prototype saved. Development needs attention: ${reason}` });
+            publishState(prototypeId);
+        });
+        await logSafely(`Development continuation paused: ${reason}`, "warning");
+    }
 }
 
 function hasActiveWork(state) {
@@ -1414,6 +1467,7 @@ function normalizeStoredState(value, prototypeId): TandemState {
         implementation: isObject(value.implementation) ? structuredClone(value.implementation) : legacy.implementation,
         testing: isObject(value.testing) ? structuredClone(value.testing) : legacy.testing,
         development: value.development == null ? null : readDevelopmentReference(value.development),
+        developmentIntent: value.developmentIntent == null ? null : readDevelopmentIntent(value.developmentIntent),
         processing: normalizeProcessing(value.processing),
         suggestionProcessing: normalizeSuggestionProcessing(
             value.suggestionProcessing,
@@ -1429,6 +1483,18 @@ function readDevelopmentReference(value: unknown): TandemState["development"] {
         throw new ProjectStoreError("handoff_reference_invalid", "The saved Development handoff reference is invalid; it was preserved.", 422);
     }
     return { handoffId: value.handoffId, requestId: value.requestId, snapshotPath: value.snapshotPath };
+}
+
+function readDevelopmentIntent(value: unknown): NonNullable<TandemState["developmentIntent"]> {
+    if (!isObject(value) || typeof value.generation !== "string" || !value.generation || value.generation.length > 120
+        || typeof value.requestId !== "string" || !value.requestId || value.requestId.length > 120
+        || !["preparing", "starting", "failed", "admitted"].includes(value.status)
+        || value.snapshotPath !== null && (typeof value.snapshotPath !== "string" || value.snapshotPath.length > 2000)
+        || typeof value.error !== "string" || value.error.length > 4000) {
+        throw new ProjectStoreError("development_intent_invalid", "The saved Development continuation is invalid; it was preserved.", 422);
+    }
+    return { generation: value.generation, requestId: value.requestId, snapshotPath: value.snapshotPath,
+        status: value.status, error: value.error };
 }
 
 function normalizePreviewUrl(value, allowInvalidAsNull = false) {
@@ -1793,6 +1859,7 @@ async function resumeEffortRun(prototypeId, runId) {
 }
 
 async function refreshEntryAnswerCapability(entry) {
+    await refreshMainModelSelection();
     const wasEnabled = entry.canSubmitAnswers;
     let state = await loadState(entry.prototypeId);
     entry.canSubmitAnswers = await isPreferredAnswerProvider(entry.extensionId) &&
@@ -1826,6 +1893,7 @@ function publicState(entry, state) {
     const legacyContinuation = state.lifecycle.currentStage === "development" && state.lifecycle.migration && !state.development && !pendingChange(state);
     return {
         ...state,
+        mainModelSelection,
         prototypeNeedsUpdate: prototypeNeedsChangeUpdate(state),
         requirementsDigest: requirementsInputDigest(state),
         projectPath: WORKSPACE_ROOT,
@@ -3682,9 +3750,16 @@ async function completeLifecycleStage(prototypeId, requestedStageId, extensionId
                     : skipPrototype
                       ? `Requirements saved. Designs and Prototype are not applicable: ${state.prototypeApproach.reason} Continue in Development when you're ready.`
                     : currentStage === "development"
-                      ? "Prototype saved. Continue in Development when you're ready."
+                      ? state.developmentIntent?.generation === state.generation && state.developmentIntent.status === "preparing"
+                          ? "Prototype saved. Opening Development and preparing Design."
+                          : "Prototype saved. Continue in Development when you're ready."
                     : `${LIFECYCLE_STAGES.find((stage) => stage.id === stageId).label} completed. ${LIFECYCLE_STAGES.find((stage) => stage.id === currentStage).label} is now enabled.`,
             updatedAt: completedAt,
+            developmentIntent: !reviewDraft && !state.stageReview && stageId === "prototype"
+                && state.developmentIntent?.generation === state.generation
+                && state.developmentIntent.requestId === state.processing?.requestId && state.developmentIntent.status === "preparing"
+                ? { ...state.developmentIntent, status: "starting", snapshotPath: outputEntries.find(output => output.stageId === "prototype")!.path }
+                : state.developmentIntent,
             changeRequests: state.changeRequests?.map(request => {
                 if (!isDiscoveryChangeRequest(request) || !["active", "reviewing"].includes(request.status)) return request;
                 const remainingStages = request.remainingStages.filter(stage => !completedStageIds.includes(stage));
@@ -4163,6 +4238,7 @@ async function reopenLifecycleStageLocked(prototypeId, stageId, extensionId) {
                 ...state.prototypeReview, designSpecArtifactId: null, question: null, activeRevisionId: null,
             } : state.prototypeReview,
             development: null,
+            developmentIntent: null,
             processing: null,
             suggestionProcessing: null,
             phase: stageId === "prepare" ? fresh.phase : stageId === "requirements" ? "discovery" : "iterating",
@@ -5758,6 +5834,7 @@ function trackAnswerRun(prototypeId, requestId, work) {
         .finally(async () => {
             if (activeAnswerRuns.get(prototypeId) === tracked) {
                 activeAnswerRuns.delete(prototypeId);
+                await continueFinishedPrototype(prototypeId, requestId);
                 await continueChangeWork(prototypeId).then(() => continuePrototypeWork(prototypeId)).catch(async (error) => {
                     await logSafely(`Prototype continuation paused: ${error.message}`, "warning");
                     await withAnswerClaim(prototypeId, async () => {
@@ -6848,7 +6925,7 @@ async function submitRevisionClarification(
     );
 }
 
-async function beginPrototypeCompletion(entry, res) {
+async function beginPrototypeCompletion(entry, res, continueToDevelopment = false) {
     if (!(await isPreferredAnswerProvider(entry.extensionId))) {
         throw new CanvasError(
             "read_only_provider",
@@ -6857,6 +6934,10 @@ async function beginPrototypeCompletion(entry, res) {
     }
     const accepted = await withAnswerClaim(entry.prototypeId, async () => {
         const state = await loadState(entry.prototypeId);
+        if (continueToDevelopment && state.developmentIntent?.generation === state.generation
+            && ["preparing", "starting", "admitted"].includes(state.developmentIntent.status)
+            && (state.lifecycle.currentStage === "prototype" && state.processing?.requestId === state.developmentIntent.requestId
+                && state.processing.status === "running" || state.lifecycle.currentStage === "development")) return null;
         if (state.lifecycle.currentStage !== "prototype") {
             throw new CanvasError(
                 "stage_not_active",
@@ -6895,6 +6976,9 @@ async function beginPrototypeCompletion(entry, res) {
         };
         const pending = {
             ...state,
+            developmentIntent: continueToDevelopment && !state.stageReview
+                ? { generation: state.generation, requestId, snapshotPath: null, status: "preparing", error: "" }
+                : state.developmentIntent,
             status:
                 "Collecting prototype evidence and generating the draft feature specification...",
             processing: {
@@ -6918,6 +7002,7 @@ async function beginPrototypeCompletion(entry, res) {
     }, true);
 
     sendJson(res, 202, { accepted: true });
+    if (!accepted) return;
     startAnswerFactory(
         entry.prototypeId,
         accepted.requestId,
@@ -7330,7 +7415,7 @@ async function submitStageCompletion(entry, req, res) {
         body = await readRequestBody(req);
         const stageId = String(body.stageId || "");
         if (stageId === "prototype") {
-            await beginPrototypeCompletion(entry, res);
+            await beginPrototypeCompletion(entry, res, body.continueDevelopment === true);
             return;
         }
         const state = await completeLifecycleStage(
@@ -7676,8 +7761,9 @@ async function handleRequest(entry, req, res) {
         }
         if (req.method === "POST" && requestUrl.pathname === "/api/development/continue") {
             const input = await readRequestBody(req);
-            if (typeof input.reviewBinding !== "string" || !/^[a-f0-9]{64}$/.test(input.reviewBinding)) {
-                throw new CanvasError("handoff_review_required", "Review the saved Prototype handoff before confirming Design.");
+            if (typeof input.generation !== "string" || typeof input.snapshotPath !== "string" || !Number.isSafeInteger(input.expectedRevision)
+                || input.reviewBinding !== undefined && (typeof input.reviewBinding !== "string" || !/^[a-f0-9]{64}$/.test(input.reviewBinding))) {
+                throw new CanvasError("handoff_identity_required", "Continue from the exact saved Prototype. Reload its status before retrying.");
             }
             const state = await continueDevelopment(entry.prototypeId, entry.extensionId, input);
             entry.developmentContext = true;
@@ -9141,11 +9227,11 @@ session = await joinSession({
                 },
                 {
                     name: "continue_design",
-                    description: "After explicit confirmation of review_prototype_handoff, admit that exact snapshot to Designer, not implementation.",
+                    description: "Explicitly continue an exact saved Prototype into Designer, not implementation. Finish Prototype carries this intent automatically; inspection is optional.",
                     inputSchema: { type: "object", additionalProperties: false,
                         properties: { generation: { type: "string" }, snapshotPath: { type: "string" }, expectedRevision: { type: "integer" },
                             reviewBinding: { type: "string", pattern: "^[a-f0-9]{64}$" } },
-                        required: ["generation", "snapshotPath", "expectedRevision", "reviewBinding"] },
+                        required: ["generation", "snapshotPath", "expectedRevision"] },
                     handler: async ctx => {
                         if (!isObject(ctx.input)) throw new CanvasError("invalid_handoff", "Supply the exact displayed snapshot identity.");
                         return continueDevelopment(await resolvePrototypeId(ctx.instanceId, undefined), ctx.extensionId, {
@@ -9371,6 +9457,17 @@ session = await joinSession({
                     await persistCurrentPrototypeId(prototypeId);
                 }
                 let state = await loadState(prototypeId);
+                if (canSubmitAnswers && state.developmentIntent?.generation === state.generation && state.developmentIntent.status === "starting"
+                    && !activeDevelopmentContinuations.has(prototypeId) && !activeAnswerRuns.has(prototypeId)) {
+                    state = await withAnswerClaim(prototypeId, async () => {
+                        const current = await loadState(prototypeId);
+                        if (current.developmentIntent?.status !== "starting") return current;
+                        const next: TandemState = { ...current, developmentIntent: { ...current.developmentIntent, status: "failed",
+                            error: "The previous transition was interrupted. Retry Development to reconcile the exact saved request; no work was replayed." } };
+                        await persistState(next);
+                        return next;
+                    });
+                }
                 canSubmitAnswers = canSubmitAnswers && (!hasActiveWork(state) || !state.jobOwner ||
                     sameOwner(state.jobOwner, { sessionId: session.sessionId, workspaceRoot: WORKSPACE_ROOT }));
                 const entryConfigured = (await projectEntryView()).startingPath === "preparation";
@@ -9451,7 +9548,12 @@ session = await joinSession({
         }),
     ],
     onPermissionRequest: development.permissionHandler,
-    onEvent: event => { development.observe(event); workflowActivity.observe(event); },
+    onEvent: event => {
+        development.observe(event); workflowActivity.observe(event);
+        if (event.type === "session.model_change") void refreshMainModelSelection().then(() => {
+            for (const id of stateCache.keys()) publishState(id);
+        });
+    },
 });
 handoffs = new DevelopmentHandoffs(WORKSPACE_ROOT, SHARED_PROJECT_ROOT, session.sessionId);
 await development.attach(session);

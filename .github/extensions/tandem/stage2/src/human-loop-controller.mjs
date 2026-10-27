@@ -8,10 +8,21 @@ import { HumanLoopRuntime } from "./human-loop-runtime.mjs";
 import { HumanLoopEvents, createHumanLoopProvider, projectHumanProgress } from "./human-loop-provider.mjs";
 import { createNativePermissionLifecycle } from "./native-permission-lifecycle.mjs";
 import { HumanLoopPreferences, normalizeModelCatalog, validateProjectReasoningEffort } from "./human-loop-preferences.mjs";
+import { MainSessionModel } from "./main-session-model.mjs";
 
-export async function createDurablePrivateSession(client, configuration, onCreated) {
+export async function createDurablePrivateSession(client, configuration, onCreated, mainModel) {
   if (typeof client.start !== "function") throw new Error("Installed SDK cannot start the private native client.");
   await client.start();
+  if (!configuration.model && mainModel) {
+    const current = await mainModel();
+    if (!current || typeof current.modelId !== "string" || !current.modelId.trim()) {
+      throw new Error("The main session has not reported its current model. Select a main model or an explicit Development override in Project settings before creating Development.");
+    }
+    if (typeof client.listModels !== "function" || !normalizeModelCatalog(await client.listModels()).some(model => model.id === current.modelId)) {
+      throw new Error("The main-session model is unavailable for private Development. Choose an available Development override in Project settings; no fallback was selected.");
+    }
+    configuration = { ...configuration, model: current.modelId };
+  }
   if (typeof client.createSession !== "function" || typeof client.rpc?.sessions?.save !== "function") {
     throw new Error("Installed SDK lacks named, durable private-session creation APIs.");
   }
@@ -23,6 +34,12 @@ export async function createDurablePrivateSession(client, configuration, onCreat
   if (typeof session.rpc?.name?.set !== "function") throw new Error("Installed SDK cannot name the private session durably.");
   await session.rpc.name.set({ name: "Tandem Development" });
   await client.rpc.sessions.save({ sessionId: configuration.sessionId });
+  if (configuration.model && mainModel) {
+    if (typeof session.rpc?.model?.getCurrent !== "function"
+      || (await session.rpc.model.getCurrent()).modelId !== configuration.model) {
+      throw new Error("The created Development session did not confirm its requested model. Its original identity was retained; no project request was submitted.");
+    }
+  }
   return session;
 }
 
@@ -39,6 +56,14 @@ export function createHumanLoopController(options) {
   });
   const providers = new Map(), providerStarts = new Map();
   let session, installation, starting, closing, ending = false, changingSettings = false, startupPhase = null;
+  const mainModels = new MainSessionModel(() => session, async () => (await preferences.read()).projectReasoningEffort);
+  async function changeMainModel(input) {
+    assertSettingsIdle(); changingSettings = true;
+    try {
+      const change = () => mainModels.select(input);
+      return await (options.withMainModelChange ? options.withMainModelChange(change) : change());
+    } finally { changingSettings = false; events.touch(); }
+  }
   const reportError = error => events.append({ type: "human.setup-waiting", source: "system", summary: error.message });
   const toolHook = async input => installation?.guardMainTool(input);
   const permissionHandler = (request, invocation) => options.mainPermissionHandler
@@ -65,7 +90,11 @@ export function createHumanLoopController(options) {
       createRuntime: async runtimeOptions => new HumanLoopRuntime({
         ...runtimeOptions, contextProvider: options.contextProvider, withRequestAdmission: options.withRequestAdmission,
         projectEffortControl: options.projectEffortControl === true,
-        createPrivateSession: configuration => createDurablePrivateSession(runtimeOptions.client, configuration, runtimeOptions.afterNativeCreate),
+        createPrivateSession: configuration => createDurablePrivateSession(runtimeOptions.client, configuration, runtimeOptions.afterNativeCreate,
+          () => {
+            if (typeof session?.rpc?.model?.getCurrent !== "function") throw new Error("This host cannot read the main-session model for Development inheritance.");
+            return session.rpc.model.getCurrent();
+          }),
         onHandoff: async handoff => {
           events.append({ type: "human.handoff", source: "system", summary: handoff.result.outcome.summary,
             data: { requestId: handoff.requestId, resultId: handoff.result.resultId, kind: handoff.result.outcome.kind } });
@@ -87,9 +116,6 @@ export function createHumanLoopController(options) {
       const initializing = !installation.runtime || (await installation.read()).status !== "ready";
       if (initializing) { startupPhase = "starting"; events.touch(); }
       await options.beforeStart?.();
-      if (await requiresModelSelection()) throw Object.assign(
-        new Error("Choose and save a Development model in Project settings before starting Development."),
-        { code: "development_model_required" });
       const runtime = await installation.open(openOptions);
       if (initializing) { startupPhase = "verifying"; events.touch(); }
       if (options.projectEffortControl) await runtime.applyProjectEffort();
@@ -109,7 +135,8 @@ export function createHumanLoopController(options) {
     if (providerStarts.has(id)) return providerStarts.get(id);
     const opening = (async () => {
       const original = await createHumanLoopProvider({ repositoryRoot, publicDirectory, getInstallation: () => installation,
-        events, permissions, start, modelSettings, changeModel, getStartupPhase: () => startupPhase, finishEmptyRepair: async () => {
+        events, permissions, start, modelSettings, changeModel, mainModelSettings: () => mainModels.read(), changeMainModel,
+        getStartupPhase: () => startupPhase, finishEmptyRepair: async () => {
           const runtime = installation.runtime;
           if (!runtime) throw new Error("The repaired runtime is not available for readback.");
           if (options.projectEffortControl) await runtime.applyProjectEffort();
@@ -234,16 +261,11 @@ export function createHumanLoopController(options) {
       effortManaged: options.projectEffortControl === true, projectReasoningEffort: saved.projectReasoningEffort,
       deferred, canChange: deferred && models.length > 0 && !error && !saved.pendingModel && !starting && !closing && !ending && !changingSettings,
       error, capabilities: null, reason: deferred
-        ? "Development has not started. Save a model for startup; the private session will verify it before work begins. The main chat model is unchanged."
+        ? "Without an override, Development inherits the main model at first creation, then keeps its independent saved selection. Optional overrides are verified at startup."
         : "Open and reconcile the original Development owner before changing its model." };
   }
   async function requiresModelSelection() {
-    const current = await status();
-    if (["new", "prepared"].includes(current.installation.status)) return !(await preferences.read()).model;
-    if (current.installation.status === "ready" && installation?.runtime) {
-      const settings = await installation.runtime.modelSettings();
-      return !settings.actual && !settings.desired;
-    }
+    // Older hosts may query this before opening; native defaults require no chooser.
     return false;
   }
   async function changeModel(selection) {

@@ -11,6 +11,7 @@ import { HumanLoopPreferences, normalizeModelCatalog, validateProjectReasoningEf
 import { createBrowserEntry } from "../src/human-loop-browser-entry.mjs";
 import { createNativePermissionLifecycle } from "../src/native-permission-lifecycle.mjs";
 import { privateReviewRegistration } from "../src/native-evidence-workflow.mjs";
+import { MainSessionModel } from "../src/main-session-model.mjs";
 
 test("active extension isolates private history, keeps view ownership and registers no legacy execution tools", async () => {
   const root = await mkdtemp(join(tmpdir(), "human-extension-"));
@@ -50,7 +51,7 @@ test("active extension isolates private history, keeps view ownership and regist
     extension = await new AsyncFunction("process", "fileURLToPath", "randomUUID", "createCanvas", "joinSession", "PermissionBroker",
       "HumanLoopInstallation", "HumanLoopRuntime", "HumanLoopEvents", "createHumanLoopProvider", "openBrowserCanvas",
       "createBrowserEntry", "createNativePermissionLifecycle", "join", "homedir", "defineWorkflow", "privateReviewRegistration",
-      "HumanLoopPreferences", "normalizeModelCatalog", "validateProjectReasoningEffort", "projectHumanProgress",
+      "HumanLoopPreferences", "normalizeModelCatalog", "validateProjectReasoningEffort", "projectHumanProgress", "MainSessionModel",
       `${controllerSource}\n${source}`)(
       { cwd: () => root, env: {} }, fileURLToPath, () => "registration", definition => definition,
       async value => { registration = value; return main; }, PermissionBroker, Installation, class {}, HumanLoopEvents,
@@ -61,7 +62,7 @@ test("active extension isolates private history, keeps view ownership and regist
       async (...args) => { browserCalls.push(args); return { instanceId: "browser" }; },
       createBrowserEntry, createNativePermissionLifecycle, join, homedir, value => value,
       (define, get) => privateReviewRegistration(define, get, {}),
-      HumanLoopPreferences, normalizeModelCatalog, validateProjectReasoningEffort, projectHumanProgress,
+      HumanLoopPreferences, normalizeModelCatalog, validateProjectReasoningEffort, projectHumanProgress, MainSessionModel,
     );
     assert.equal(wakes, 0);
     assert.deepEqual(registration.canvases.map(({ id, displayName }) => ({ id, displayName })),

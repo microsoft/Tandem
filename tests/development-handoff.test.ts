@@ -173,7 +173,7 @@ test("review reads the exact completed snapshot without preparing anything and b
     assert.equal((await f.store.read(receipt.id)).source.snapshotHash, review.snapshotHash);
 });
 
-test("HTTP review/cancel starts nothing; bound confirmation submits once and preserves starting choice", async t => {
+test("HTTP summary inspection starts nothing; direct bound continuation submits once and preserves starting choice", async t => {
     const h = await extensionHarness({}, undefined, "", undefined, false, true);
     let server: Awaited<ReturnType<typeof h.api.startServer>> | undefined;
     t.after(async () => {
@@ -203,10 +203,10 @@ test("HTTP review/cancel starts nothing; bound confirmation submits once and pre
     await assert.rejects(access(join(h.root, ".tandem", "living-canvas", "handoffs")), { code: "ENOENT" });
     const input = { generation: review.generation, snapshotPath: review.snapshotPath,
         expectedRevision: (await h.api.loadState(state.prototypeId)).revision, reviewBinding: review.binding };
-    assert.equal((await post({ ...input, reviewBinding: undefined })).status, 409);
+    assert.equal((await post({ ...input, generation: undefined })).status, 409);
     assert.equal((await post({ ...input, reviewBinding: "0".repeat(64) })).status, 409);
     assert.equal(starts, 0); assert.equal(h.developmentRequests.length, 0);
-    const responses = await Promise.all([post(input), post(input)]);
+    const responses = await Promise.all([post({ ...input, reviewBinding: undefined }), post(input)]);
     for (const result of responses) assert.equal(result.status, 200, await result.text());
     assert.equal(h.developmentRequests.length, 1);
     assert.deepEqual(await get("api/project-entry"), entryBefore);

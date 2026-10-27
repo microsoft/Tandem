@@ -24,6 +24,7 @@ export interface RuntimeSnapshot {
 }
 
 export interface UiState extends TandemState {
+  mainModelSelection?: import("../../development/tandem/public/model-selection.js").ModelSelection | null;
   projectPath?: string;
   developmentBlocker?: string | null;
   prototypeNeedsUpdate?: boolean;

@@ -68,9 +68,9 @@ shim beside the composed provider or overwrite a user installation to test sourc
 
 ## Reviewed discovery handoff
 
-Finishing Prototype saves outputs without opening Development or submitting work.
-The user separately reviews the handoff and confirms **Create Design from
-Prototype** or **Refine Design from Prototype**. The host freezes exact documents,
+**Finish Prototype** saves outputs and carries that explicit user intent into
+Development's normal Designer request without another handoff approval or Start
+button. Older saved outputs retain an explicit continuation. The host freezes exact documents,
 approved designs/assets, multi-file prototype source (or a no-GUI disposition)
 and one immutable request envelope in the target workspace.
 
@@ -82,6 +82,9 @@ Design and its native owner are not replaced.
 
 Development changes stay in its private Design/Conversation workflow; historical
 `discovery-change` results do not authorize automatic upstream escalation.
+Optional Main and Development model selectors share Project settings. First
+private creation inherits the actual main model unless overridden; the existing
+private session then remains independent. Effort is not implicitly copied.
 Implementation requires a separate exact request/Design-bound confirmation.
 Implementer builds and validates agreed journeys; Reviewer is read-only and
 checks Design conformance and over-engineering, not independent certification.

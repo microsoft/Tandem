@@ -139,8 +139,10 @@ Detailed results are retained in session artifacts:
 `release-cleanup-root-suite.log`, `verified-development-suite.log`,
 `verified-lifecycle-tests.log`, `verified-pack.log` and `verified-zip.log`.
 
-The cleanup is prepared for commit and review PR publication, based on the source
-SHA recorded above. No known cleanup implementation blocker remains.
+The cleanup was published as commit
+`947b2572b424661c815dd1506d9d503df2035561` in
+[PR #60](https://github.com/microsoft/Tandem/pull/60). Follow-up findings and
+validation below are separate from that published candidate.
 Historical CI/local counts from the original audit are not these results.
 
 ## Review PR and manual qualification
@@ -151,7 +153,7 @@ publication and still matched `71c33d70018fe65a16c75254d0f31d6cc741bcb2`.
 The PR's live head commit, not the version label alone, identifies the candidate.
 
 - [ ] Linux CI and code review pass for the published head.
-- [ ] Launch a fresh blank target with `--source-preview` from that exact head;
+- [x] Launch a fresh blank target with `--source-preview` from that exact head;
   record its source SHA, complete payload digest and native identity separately.
 - [ ] User manually checks startup, Designs/Prototype review, private Development
   requests, implementation confirmation and Review on that candidate.
@@ -165,6 +167,131 @@ consent on the user's behalf. The existing older-build manual test is not eviden
 for this candidate and must remain untouched. Exact launch/PR receipts belong in
 session artifacts; capability-bearing URLs stay in the preview browser/terminal.
 Any later source commit requires fresh candidate-bound manual evidence.
+
+## Manual-feedback follow-up
+
+The user rejected the extra Prototype-to-Development transition steps while
+manually testing PR #60 at `947b2572b424661c815dd1506d9d503df2035561`.
+That manual run is not a pass and remains alive on its original payload.
+The user authorized separate ordinary CI and transition/model commits, followed
+by a normal merge of current main and a fresh exact-head manual preview. The
+original preview must remain untouched; nothing is globally installed.
+
+- [x] Combine Finish Prototype, exact internal handoff retention and normal
+  Designer admission into one user action; remove the intermediate review popup
+  and mandatory model/start controls. Keep native consent, normal Design review
+  and the later implementation confirmation.
+- [x] Persist generation/request/snapshot-bound Finish intent. Duplicate clicks
+  reconcile the same request; interrupted/failed startup retains source and
+  errors for explicit retry, not automatic replay on reopen.
+- [x] Apply the user's final model policy: two optional Main/Development selectors
+  in the same Project settings window; first private creation uses its explicit
+  override or inherits main's actual current model, then remains independent.
+  The earlier GPT 5.4 floor, mandatory early model selection and private-native-
+  default proposals were superseded. Effort is not copied.
+- [x] Read models and effort from the owning native APIs and show compact current
+  readouts; not-started, unreported defaults, pending changes and errors are not
+  presented as applied settings.
+- [x] Finish bounded source validation and review the diff before publication.
+  Preserve the remaining qualification limits below.
+
+### Follow-up validation and residual limits
+
+Validation completed on Windows with Node 24.22.1. Per the user's instruction to
+reduce repeated runs, the complete inventories were not rerun after targeted
+corrections. These results are not a claim of final green Linux CI.
+
+| Check | Result |
+| --- | --- |
+| Root check, Development build, generated extension and final `npm run pack` | Passed; version unchanged at **1.1.15** |
+| Transition, handoff, entry and renderer coverage | **123 passed** |
+| Final optional-settings, effort, header/readout and portable-path coverage | **52 passed** |
+| Actual merged-host and embedded-workspace browser cases | **2 passed** on focused rerun |
+| Complete root inventory through the new isolated runner | **1,112 passed, 12 failed, 6 skipped**; completed without heap exhaustion |
+| Complete Development canvas inventory | **1,131 passed, 2 failed, 2 existing skips** in 12m44s |
+| Corrections for both native-suite failures | Settings heading/tab order and the 320px composer layout each passed their targeted browser check |
+| Final exact-identity checks | First Finish admission, refused/interrupted startup without replay, and same-ID saved-model resume passed |
+| Final ZIP extraction and payload integrity | Passed; relocated controller/module loading also passed |
+
+The root run exposed ten obsolete or overly broad UI expectations, corrected
+and covered by the focused passes above. Its embedded resize assertion passed
+on focused rerun; an intermittent acceptance-lock `EPERM` also passed alone
+after failing twice under concurrent validation. The acceptance implementation,
+fixture and runtime imports are unchanged from published HEAD. No lock redesign,
+test disabling or force-exit workaround was applied. Those intermittent
+observations remain visible; a passing isolated test is not an all-green full
+run or proof of the race's root cause.
+
+The native run found the renamed **Models** heading and the newly crowded
+composer row. Updated assertions include the new Refresh models keyboard stop;
+the current-value readout now uses the existing conversation header, leaving
+Stop and current-status navigation in their original row. Both focused browser
+checks passed individually, not in one all-green combined run:
+
+| Corrected case | Existing passing evidence |
+| --- | --- |
+| `current status is quiet inline navigation in the composer action row` (includes 320px) | `followup-final-native-layout.log`, line 2; tool receipt shell 69. This same run still failed the separate Settings tab-order assertion at line 2061. |
+| `Settings sections distinguish access status from its action across narrow and wide panels` | `followup-final-settings-layout.log`, line 1; tool receipt shell 71, **1 passed, 0 failed**, after the Refresh models tab-stop correction. |
+| Refused/interrupted Finish recovery without replay | `followup-interrupted-recovery-final.log`, line 1; tool receipt shell 65, **1 passed, 0 failed**. The earlier fixture failure remains in `followup-final-targeted.log`. |
+
+The complete shared Development inventory was not rerun because its
+implementation is unchanged.
+
+The final local payload contains **156 files**, digest
+`93ca62c40a73385b0f73002fe666f1ee97b5489600a584a6a76431327c2651ca`.
+The final ZIP SHA-256 is
+`A49FEC67C84A6D2C24E8E7E1BEA6CCB20AB7275CD221248DA3F9ECF89635D6EA`.
+Neither replaced the running PR preview. Logs remain in session artifacts:
+`transition-full-root-first.log`, `transition-development-full.log`,
+`transition-focused-tests.log`, `transition-current-ui-tests.log`,
+`transition-layout-tests.log`, `acceptance-unchanged-baseline.log`,
+`followup-final-targeted.log`, `followup-interrupted-recovery-final.log`,
+`followup-final-native-layout.log`, `followup-final-settings-layout.log` and
+`followup-final-pack.log`. Earlier failures in these logs are not erased.
+
+Linux CI, review and renewed user manual qualification remain required on a
+subsequently published exact commit. No live or paid model validation was run,
+and native consent or implementation approval was not granted on the user's
+behalf. The original manual preview remains at `947b257`. A newer published head and
+fresh preview require their own exact-commit receipts; old manual evidence is
+not transferred.
+
+### Independent Linux CI correction
+
+PR #60 run `40461720524` failed on Linux. The concrete assertion was
+`tests/prototype-lifecycle.test.ts:122`: the fixture used native `join()` but its
+expected `previewStart.entrypoint` still hardcoded `app\\server.mjs`. The expected
+path now uses `join()` too; the required restart behavior is unchanged.
+
+Separately, Node PID 2499 exhausted its approximately 2 GiB V8 heap after the
+large `tests/index.test.ts` process had accumulated the renderer suites. Other
+entry-file processes continued and the earlier path assertion was still
+reported; the heap failure did not cause that path mismatch. The old run's
+partial total is not complete coverage.
+
+`npm test` now expands the unchanged index inventory into separate Node test
+processes, adds the same seven existing direct entries, and bounds concurrency
+to two. This releases each suite's renderer/VM heap between processes without
+skipping tests or increasing the heap limit. The existing monolithic index
+remains available for diagnosis. Changes to any script now trigger CI.
+Run/log evidence is retained as `pr60-linux-ci-failure.log` in session artifacts.
+Linux CI has not been rerun for this follow-up, so merge remains
+blocked on a new published head, CI, review and renewed user manual qualification.
+
+### Current-main integration and fresh preview
+
+Publication preflight found main advanced from `71c33d7` to
+`a9f718bc30f835d670d21e2f4de8730ff512eb3c` (PR #59, navigation styling and
+resizable Design sidebar panes). The user explicitly chose to integrate main
+now and check only the affected UI seams. The two reviewed follow-up commits
+remain separate from that ordinary merge; no amend, rebase or force push is
+authorized.
+
+Preserve both the navigation/sidebar changes and the cleanup's readable
+status/model controls. Regenerate emitted payloads from resolved source.
+Pre-integration results above cover unchanged content, not an all-green
+qualification of the merged candidate. Record narrow integration checks and
+the fresh preview's source/payload/native identities before manual handoff.
 
 ## Public-release history (unexecuted; separately gated)
 

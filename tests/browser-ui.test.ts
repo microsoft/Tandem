@@ -584,14 +584,15 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
         const browser = await openFixtureBrowser(t);
         await browser.call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
         await browser.call("Page.navigate", { url: `${origin}/host` });
-        await browser.waitFor(`document.querySelector(".host-application-status > span")?.textContent === ${JSON.stringify(savedPath)}
+        const selectionSuffix = " | Main: model/effort unavailable";
+        await browser.waitFor(`document.querySelector(".host-application-status > span")?.textContent === ${JSON.stringify(savedPath + selectionSuffix)}
             && document.querySelector("#tandem-application")?.contentDocument.querySelector("#next-action-bar")?.hidden`);
         const longStatus = `${savedPath} ${"Saved workspace status and help. ".repeat(40)}`;
         await browser.evaluate(`(() => {
             const frame = document.querySelector("#tandem-application").contentWindow;
             frame.workspaceFixture.flushSync(() => frame.workspaceFixture.store.accept(${JSON.stringify({ ...snapshot, revision: 2, status: longStatus })}));
         })()`);
-        await browser.waitFor(`document.querySelector(".host-application-status > span")?.title === ${JSON.stringify(longStatus)}`);
+        await browser.waitFor(`document.querySelector(".host-application-status > span")?.title === ${JSON.stringify(longStatus + selectionSuffix)}`);
         for (const width of [1280, 375]) {
             await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 800, deviceScaleFactor: 1, mobile: false });
             const geometry = await browser.evaluate(`(() => {
@@ -608,7 +609,7 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
             assert.equal(geometry.hiddenHeight, 0, "The old upper bar occupies no space.");
             assert.equal(geometry.workspaceHeight, geometry.frameHeight, "The workspace reclaims the removed row.");
             assert.equal(geometry.clipped, true);
-            assert.equal(geometry.title, longStatus);
+            assert.equal(geometry.title, longStatus + selectionSuffix);
             assert.equal(geometry.hintVisible, width > 680);
         }
         const activeRequirements = rendererState("requirements", 3);

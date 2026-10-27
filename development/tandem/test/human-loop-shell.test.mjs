@@ -2009,7 +2009,7 @@ test("Settings sections distinguish access status from its action across narrow 
   } }), { browser } = f;
   f.current.rememberedApprovals = { all: true, tools: [] };
   f.current.workflow.compaction = { active: false, canRequest: false };
-  const headings = ["Appearance", "Model", "Session access", "Workspace & context", "Diagnostics"];
+  const headings = ["Appearance", "Models", "Session access", "Workspace & context", "Diagnostics"];
   for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     f.preferences.theme = theme;
     await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 700, deviceScaleFactor: 1, mobile: false });
@@ -2056,6 +2056,9 @@ test("Settings sections distinguish access status from its action across narrow 
   f.current.rememberedApprovals = { all: true, tools: [] }; f.update();
   await browser.waitFor("document.querySelector('[data-session-access-off]')");
   await browser.evaluate("document.querySelector('#save-appearance').focus()");
+  await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 });
+  await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 });
+  assert.equal(await browser.evaluate("document.activeElement.id"), "refresh-models");
   await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 });
   await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 });
   assert.equal(await browser.evaluate("document.activeElement.matches('[data-session-access-off]')"), true);

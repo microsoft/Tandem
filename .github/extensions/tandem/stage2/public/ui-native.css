@@ -80,6 +80,8 @@
 .human-app #stop-options { min-width: var(--studio-control-height); padding-inline: var(--studio-space-1); }
 .human-app .state-history-step button { min-height: var(--history-target-size); min-width: var(--history-target-size); justify-content: center; padding: 0; }
 .human-app #focus-current-message { gap: var(--studio-control-gap); border: 0; }
+.human-app .session-model-effort { flex: 1 1 0; max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--studio-text-small); }
+.human-app[data-project-panel="workspace"] #development-model-effort { display: none; }
 .human-app :is(#compaction-approval, #empty-setup-approval, #initial-creation-approval) > button { margin-top: var(--studio-space-3); }
 .human-app dialog.annotation-editor { display: flex; flex-direction: column; gap: var(--studio-space-3); width: min(1000px, calc(100vw - 24px)); }
 .human-app dialog.annotation-editor:not([open]) { display: none; }

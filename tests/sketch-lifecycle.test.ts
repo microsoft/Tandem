@@ -256,9 +256,7 @@ test("Requirements generates designs once and cannot start Prototype before expl
     } finally { await fixture.close(); }
 });
 
-test("graphical Prototype completion saves approved evidence without starting or requesting Stage2", async () => {
-    const fixture = await extensionHarness();
-    try {
+async function readyGraphicalPrototype(fixture: Awaited<ReturnType<typeof extensionHarness>>) {
         await readyRequirements(fixture);
         generateDrawings(fixture);
         await fixture.api.completeLifecycleStage("sample", "requirements", "project:tandem");
@@ -285,6 +283,13 @@ test("graphical Prototype completion saves approved evidence without starting or
         ready.artifacts.push({ id: "draft-feature-spec", title: "Feature evidence", stage: "prototype",
             kind: "design-spec", path: "", language: "markdown", content: "Confirmed task interaction.", mermaid: "" });
         await fixture.api.persistState(ready);
+        return { ready, source, html };
+}
+
+test("low-level graphical completion still saves approved evidence independently of Development", async () => {
+    const fixture = await extensionHarness();
+    try {
+        const { ready, source, html } = await readyGraphicalPrototype(fixture);
         fixture.setBeforeDevelopmentStart(async () => { throw new Error("Stage1 cannot depend on private startup."); });
         const completed = await fixture.api.completeLifecycleStage("sample", "prototype", "project:tandem");
         assert.equal(completed.lifecycle.currentStage, "development");
@@ -300,6 +305,95 @@ test("graphical Prototype completion saves approved evidence without starting or
         assert.equal(await readFile(join(source, "index.html"), "utf8"), html);
         await new SketchStore(fixture.root).verifyApproval("sample", ready.sketch.current!, ready.sketch.approved!);
     } finally { await fixture.close(); }
+});
+
+for (const denied of [false, true]) test(`Finish Prototype carries exact saved input directly into Development (${denied ? "native refusal retained" : "single admission"})`, async () => {
+    const fixture = await extensionHarness({}, undefined, "", undefined, false, true);
+    const generation = Promise.withResolvers<void>(), permission = Promise.withResolvers<void>(), starting = Promise.withResolvers<void>();
+    const connection = new AbortController();
+    let server: { url: string } | undefined;
+    try {
+        const { ready, source, html } = await readyGraphicalPrototype(fixture);
+        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, workflow: {
+            run: async request => {
+                fixture.requests.push(request);
+                assert.equal(request.args.action, "generate-design-spec");
+                await generation.promise;
+                return { status: "completed", runId: "finish-spec", result: {
+                    status: "Feature specification prepared.", question: null, confirmed: [], assumed: [], deferred: [],
+                    artifactChanges: { upsert: [{ id: "draft-feature-spec", title: "Confirmed specification", stage: "prototype",
+                        kind: "feature-spec", path: "", language: "markdown", content: "Confirmed task interaction; no production backend.", mermaid: "" }], remove: [] },
+                } };
+            },
+        } } });
+        fixture.setBeforeDevelopmentStart(async () => {
+            starting.resolve(); await permission.promise;
+            if (denied) throw new Error("Native Development permission denied.");
+        });
+        server = await fixture.api.openTandem({ instanceId: "finish-direct", sessionId: "fixture-session",
+            extensionId: "project:tandem", input: { prototypeId: "sample" }, reason: "rehydrate" });
+        const finish = () => fetch(new URL("api/stage/complete", server!.url), { method: "POST",
+            headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stageId: "prototype", continueDevelopment: true }) });
+        assert.equal((await finish()).status, 202);
+        await fixture.waitForRequests(2);
+        const requested = await fixture.api.loadState("sample");
+        assert.equal(requested.developmentIntent!.requestId, requested.processing.requestId);
+        assert.equal(requested.developmentIntent!.status, "preparing");
+        assert.equal((await finish()).status, 202, "A duplicate Finish reuses the pending request.");
+        assert.equal(fixture.requests.length, 2);
+        generation.resolve();
+        await starting.promise;
+        const opening = await fixture.api.loadState("sample");
+        assert.equal(opening.lifecycle.currentStage, "development");
+        assert.equal(opening.developmentIntent!.status, "starting");
+        assert.equal(opening.developmentIntent!.generation, ready.generation);
+        assert.equal(opening.developmentIntent!.snapshotPath, opening.development!.snapshotPath);
+        assert.equal(fixture.developmentRequests.length, 0, "Native consent/startup remains a real boundary before Designer admission.");
+        assert.equal(opening.sketch.approved!.revisionId, ready.sketch.approved!.revisionId);
+        const events = await eventReader(server.url, AbortSignal.any([connection.signal, AbortSignal.timeout(15000)]));
+        permission.resolve();
+        try { await events(state => state.developmentIntent?.status === (denied ? "failed" : "admitted")); }
+        catch (cause) { throw new Error(JSON.stringify({ intent: (await fixture.api.loadState("sample")).developmentIntent,
+            requests: fixture.developmentRequests.length, logs: fixture.logs }), { cause }); }
+        const completed = await fixture.api.loadState("sample");
+        assert.equal(completed.developmentIntent!.status, denied ? "failed" : "admitted", JSON.stringify(fixture.logs));
+        assert.equal(fixture.developmentRequests.length, denied ? 0 : 1);
+        assert.equal(await readFile(join(source, "index.html"), "utf8"), html);
+        assert.equal(completed.sketch.approved!.revisionId, ready.sketch.approved!.revisionId);
+        assert.equal(completed.prototypeFlow!.displayedCheckpointId, ready.prototypeFlow!.displayedCheckpointId);
+        if (denied) assert.match(completed.developmentIntent!.error, /Native Development permission denied/);
+        else {
+            assert.equal(fixture.developmentRequests[0].id, completed.development!.requestId);
+            assert.match(String(fixture.developmentRequests[0].message), /Designer|Design/);
+            assert.equal((await finish()).status, 202);
+            assert.equal(fixture.developmentRequests.length, 1);
+        }
+        const reopened = await extensionHarness({}, fixture.root);
+        try {
+            await reopened.api.openTandem({ instanceId: "finish-reload", sessionId: "fixture-session",
+                extensionId: "project:tandem", input: { prototypeId: "sample" }, reason: "rehydrate" });
+            assert.equal(reopened.developmentRequests.length, 0, "Reload cannot replay an admitted request or implicitly retry refused startup.");
+            assert.equal((await reopened.api.loadState("sample")).development!.requestId, completed.development!.requestId);
+        } finally { await reopened.close(); }
+        if (denied) {
+            const current = await fixture.api.loadState("sample");
+            await fixture.api.persistState({ ...current, developmentIntent: { ...current.developmentIntent!, status: "starting", error: "" } });
+            const interrupted = await extensionHarness({}, fixture.root);
+            try {
+                await interrupted.api.openTandem({ instanceId: "finish-interrupted", sessionId: "fixture-session",
+                    extensionId: "project:tandem", input: { prototypeId: "sample" }, reason: "rehydrate" });
+                const retained = await interrupted.api.loadState("sample");
+                assert.equal(retained.developmentIntent!.status, "failed");
+                assert.match(retained.developmentIntent!.error, /interrupted.*no work was replayed/);
+                assert.equal(retained.development!.requestId, completed.development!.requestId);
+                assert.equal(retained.developmentIntent!.snapshotPath, completed.developmentIntent!.snapshotPath);
+                assert.equal(interrupted.developmentRequests.length, 0);
+            } finally { await interrupted.close(); }
+        }
+    } finally {
+        generation.resolve(); permission.resolve(); connection.abort();
+        await fixture.close();
+    }
 });
 
 test("design edits create immutable revisions and stale saves or previews cannot be approved", async () => {
