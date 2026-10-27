@@ -1,8 +1,9 @@
+import { Button, Disclosure, IconButton, Input, Select, Textarea, ToggleGroup } from "./ui/index.js";
 import {
   createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState,
   type KeyboardEvent, type ReactNode,
 } from "react";
-import { ToggleGroup } from "radix-ui";
+
 import {
   Check, CircleAlert, Clock, Hand, History, LoaderCircle, Monitor, MousePointer2, Plus, Redo2, RefreshCw, Save, Send, Sparkles, Trash2, Undo2, Workflow,
 } from "lucide-react";
@@ -714,22 +715,22 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
     return () => onDraftApprovalChange(null);
   }, [onDraftApprovalChange, approvalDisabled, state.revision, state.stageReview]);
   const approval = state.stageReview ? null : <div className="sketch-approval-actions">
-    <button id="sketch-approve" className="plan-button" type="button"
+    <Button variant="primary" id="sketch-approve" className="plan-button" type="button"
       title={document ? sketchApprovalScope(document) : undefined}
       hidden={approved}
       disabled={approvalDisabled}
-      onClick={() => void submit("approve")}><Check size={14} aria-hidden="true" />Approve designs and continue</button>
+      onClick={() => void submit("approve")}><Check size={14} aria-hidden="true" />Approve designs and continue</Button>
   </div>;
   const updateAction = state.sketch.status === "stale" && canEdit("sketch") && !legacy
-    ? <button id="sketch-update-requirements" className="plan-button" type="button" disabled={!requestWritable || !document || conflict || dirty}
+    ? <Button variant="primary" id="sketch-update-requirements" className="plan-button" type="button" disabled={!requestWritable || !document || conflict || dirty}
       title={dirty ? "Save or undo your local design edits before updating from requirements." : updateRequirementsLabel}
-      onClick={() => void submit("update")}><Sparkles size={15} aria-hidden="true" />{updateRequirementsLabel}</button> : null;
+      onClick={() => void submit("update")}><Sparkles size={15} aria-hidden="true" />{updateRequirementsLabel}</Button> : null;
 
   return <section className="sketch-stage" onKeyDown={keydown}>
     {renderApproval ? renderApproval(approval) : approval}
     {renderReviewActions?.(updateAction)}
     <div className="sketch-heading sketch-header-actions" role="group" aria-label="Design tools" aria-describedby="sketch-status">
-      <button id="sketch-add-screen" className="sketch-icon-button" type="button" title="Add screen" aria-label="Add screen"
+      <IconButton variant="secondary" id="sketch-add-screen" className="sketch-icon-button" type="button" title="Add screen" aria-label="Add screen"
         disabled={!writable || legacy || (document?.screens.length ?? 0) >= 8 || !acceptedDecisionIds(state).length}
         onClick={() => {
           let created = "";
@@ -738,27 +739,27 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
             draft.screens.push(item);
             created = item.id;
           })) setSelectedScreen(created);
-        }}><Plus size={16} aria-hidden="true" /></button>
-      <button id="sketch-undo" className="sketch-icon-button" type="button" title="Undo" aria-label="Undo"
+        }}><Plus size={16} aria-hidden="true" /></IconButton>
+      <IconButton variant="secondary" id="sketch-undo" className="sketch-icon-button" type="button" title="Undo" aria-label="Undo"
         disabled={!writable || (!editor.canUndo && !invalidFields)} onClick={undo}>
-        <Undo2 size={16} aria-hidden="true" /></button>
-      <button id="sketch-redo" className="sketch-icon-button" type="button" title="Redo" aria-label="Redo"
+        <Undo2 size={16} aria-hidden="true" /></IconButton>
+      <IconButton variant="secondary" id="sketch-redo" className="sketch-icon-button" type="button" title="Redo" aria-label="Redo"
         disabled={!writable || !editor.canRedo || invalidFields} onClick={redo}>
-        <Redo2 size={16} aria-hidden="true" /></button>
-      <button id="sketch-reload" className="sketch-icon-button" type="button"
+        <Redo2 size={16} aria-hidden="true" /></IconButton>
+      <IconButton variant="secondary" id="sketch-reload" className="sketch-icon-button" type="button"
         title={conflict ? "Discard local edits & load latest" : "Reload saved designs"}
         aria-label={conflict ? "Discard local edits & load latest" : "Reload saved designs"}
         disabled={action.busy || loadState.loading || hasActiveJobs(state) || !state.sketch}
-        onClick={() => void reload()}><RefreshCw size={16} aria-hidden="true" /></button>
-      <button id="sketch-generate" className="sketch-icon-button" type="button"
+        onClick={() => void reload()}><RefreshCw size={16} aria-hidden="true" /></IconButton>
+      <IconButton variant="secondary" id="sketch-generate" className="sketch-icon-button" type="button"
         title={sourceDocument ? "Regenerate designs" : "Generate designs"} aria-label={sourceDocument ? "Regenerate designs" : "Generate designs"}
         disabled={!requestWritable || conflict || dirty} onClick={() => void submit("generate")}>
         <Sparkles size={16} aria-hidden="true" />
-      </button>
-      <button id="sketch-save" className="sketch-icon-button" type="button" title="Save designs" aria-label="Save designs"
+      </IconButton>
+      <IconButton variant="secondary" id="sketch-save" className="sketch-icon-button" type="button" title="Save designs" aria-label="Save designs"
         disabled={!writable || !document || !editor.dirty && !(state.stageReview && state.sketch.status === "stale") || conflict || invalidFields} onClick={() => void submit("save")}>
         <Save size={16} aria-hidden="true" />
-      </button>
+      </IconButton>
     </div>
     <div id="sketch-status" className={incoming.preview || loadState.loading || action.busy || conflict || dirty || state.sketch.status === "stale" ? "muted" : "visually-hidden"} role="status" aria-live="polite" hidden={!status || generating}>
       <span>{status}</span>
@@ -768,9 +769,9 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
       processing={worker} preview={incoming.preview} hasScreen={Boolean(screen)} dirty={dirty} />}
     {recoverable && <div id="sketch-recovery" className="sketch-heading">
       <p className="muted">Continue from the retained pages and content, without starting over.</p>
-      <button id="sketch-retry-generation" className="plan-button" type="button"
+      <Button variant="primary" id="sketch-retry-generation" className="plan-button" type="button"
         disabled={!requestWritable || dirty || conflict || invalidFields}
-        onClick={() => void retryGeneration()}><RefreshCw size={15} aria-hidden="true" />Retry generation</button>
+        onClick={() => void retryGeneration()}><RefreshCw size={15} aria-hidden="true" />Retry generation</Button>
     </div>}
     <p id="sketch-empty" className="sketch-empty" hidden={Boolean(screen) || generating}
       data-status-help="Generate a first draft or add a screen to begin.">{legacy
@@ -782,7 +783,7 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
         <nav id="sketch-screens" className="sketch-list" aria-label="Screens">
           {document?.screens.map((item) => {
             const progress = screenStatus(item);
-            return <button key={item.id} type="button"
+            return <Button variant="item" key={item.id} type="button"
               data-ui-key={`sketch-screen:${item.id}`} aria-pressed={item.id === screen?.id}
               data-screen-status={progress ?? undefined}
               onClick={() => setSelectedScreen(item.id)}>
@@ -790,31 +791,31 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
               <span className="sketch-screen-label"><span>{item.title || item.id}</span>
                 {progress && <small>{screenStatusLabels[progress]}</small>}
               </span>
-            </button>;
+            </Button>;
           })}
         </nav>
-        <details className="sketch-screen-details">
+        <Disclosure className="sketch-screen-details">
           <summary>Screen details</summary>
           <label htmlFor="sketch-title">Screen title</label>
-          <input id="sketch-title" maxLength={500} disabled={!writable || !screen}
+          <Input id="sketch-title" maxLength={500} disabled={!writable || !screen}
             value={fieldValue(screenFieldKey("title"), screen?.title)} aria-invalid={fieldInvalid(screenFieldKey("title"))}
             onChange={(event) => editScreen((item) => { item.title = event.target.value; }, { key: screenFieldKey("title"), value: event.target.value })} />
           {(["purpose", "notes"] as const).map((field) => <div key={field}>
             <label htmlFor={`sketch-${field}`}>{field === "purpose" ? "Purpose" : "Notes"}</label>
-            <textarea id={`sketch-${field}`} rows={2} maxLength={field === "purpose" ? 500 : 4000}
+            <Textarea id={`sketch-${field}`} rows={2} maxLength={field === "purpose" ? 500 : 4000}
               disabled={!writable || !screen} value={fieldValue(screenFieldKey(field), screen?.[field])}
               aria-invalid={fieldInvalid(screenFieldKey(field))}
               onChange={(event) => editScreen((item) => { item[field] = event.target.value; }, { key: screenFieldKey(field), value: event.target.value })} />
           </div>)}
           <label htmlFor="sketch-decisions">Requirement decision IDs</label>
-          <input id="sketch-decisions" placeholder="Comma-separated IDs" disabled={!writable || !screen}
+          <Input id="sketch-decisions" placeholder="Comma-separated IDs" disabled={!writable || !screen}
             value={fieldValue(screenFieldKey("decisions"), screen?.decisionIds.join(", "))}
             aria-invalid={fieldInvalid(screenFieldKey("decisions"))}
             onBlur={() => finishField(screenFieldKey("decisions"))}
             onChange={(event) => editScreen((item) => {
               item.decisionIds = event.target.value.split(",").map((id) => id.trim()).filter(Boolean);
             }, { key: screenFieldKey("decisions"), value: event.target.value, keepInput: true })} />
-        </details>
+        </Disclosure>
         {screen && <DslStructure key={JSON.stringify([selectionKey, screen.id])}
           screen={screen} selectedId={selectedNodeId} onSelect={selectElement} />}
       </aside>
@@ -822,14 +823,14 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
         <SketchViewport context={JSON.stringify([identityOf(state), screen?.id])} width={screen?.width ?? 960}
           height={screen?.height ?? 640} blocked={!screen} tools={
             <div className="sketch-view-mode" role="group" aria-label="UI preview mode">
-              <button id="sketch-pick-element" className="sketch-icon-button" type="button" aria-pressed={pickingElement} disabled={!screen}
+              <IconButton variant="secondary" id="sketch-pick-element" className="sketch-icon-button" type="button" aria-pressed={pickingElement} disabled={!screen}
                 aria-label="Select elements" title="Select elements" onClick={() => setPickingElement(true)}>
                 <MousePointer2 size={15} aria-hidden="true" />
-              </button>
-              <button id="sketch-interact" className="sketch-icon-button" type="button" aria-pressed={!pickingElement} disabled={!screen}
+              </IconButton>
+              <IconButton variant="secondary" id="sketch-interact" className="sketch-icon-button" type="button" aria-pressed={!pickingElement} disabled={!screen}
                 aria-label="Interact with preview" title="Interact with preview controls" onClick={() => setPickingElement(false)}>
                 <Hand size={15} aria-hidden="true" />
-              </button>
+              </IconButton>
             </div>
           } viewActions={
             <ToggleGroup.Root id="sketch-pane-selector" className="sketch-pane-controls" type="single"
@@ -837,7 +838,7 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
               onValueChange={(value) => {
                 if (value === "" || value === "transitions" || value === "history") setSidePane(value);
               }}>
-              {sidePanes.map(({ id, label, target, Icon }) => <ToggleGroup.Item key={id} id={`sketch-toggle-${id}`}
+              {sidePanes.map(({ id, label, target, Icon }) => <ToggleGroup.Item iconOnly key={id} id={`sketch-toggle-${id}`}
                 className="sketch-icon-button" type="button" value={id}
                 title={`${sidePane === id ? "Hide" : "Show"} ${label.toLowerCase()}`}
                 aria-label={`${sidePane === id ? "Hide" : "Show"} ${label.toLowerCase()}`}
@@ -846,7 +847,7 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
               </ToggleGroup.Item>)}
             </ToggleGroup.Root>
           } sizeControl={
-            <select id="sketch-size-preset" className="sketch-size-preset" aria-label="Canvas size" title="Canvas size"
+            <Select id="sketch-size-preset" className="sketch-size-preset" aria-label="Canvas size" title="Canvas size"
               disabled={!writable || !screen} value={canvasPreset?.id ?? "custom"}
               onChange={(event) => editScreen((item) => {
                 const preset = SKETCH_SIZE_PRESETS.find((size) => size.id === event.target.value);
@@ -857,7 +858,7 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
               {SKETCH_SIZE_PRESETS.map((size) => <option key={size.id} value={size.id}>
                 {size.label} ({size.width} × {size.height})
               </option>)}
-            </select>
+            </Select>
           } help={<div className="sketch-page-heading">
             {pageStatus && screen && <div id="sketch-page-status" className="sketch-page-status"
               role="status" aria-live="polite" aria-atomic="true" data-status={pageStatus}>
@@ -870,10 +871,10 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
             {!pickingElement && document && screen && <nav className="sketch-flow-preview" aria-label="Preview screen flow">
               <span className="muted">Navigation preview only</span>
               {document.transitions.filter(item => item.fromScreenId === screen.id).map(transition =>
-                <button key={transition.id} type="button" title={transition.description}
+                <Button variant="secondary" key={transition.id} type="button" title={transition.description}
                   onClick={() => setSelectedScreen(transition.toScreenId)}>
                   {transition.trigger} &rarr; {document.screens.find(item => item.id === transition.toScreenId)?.title}
-                </button>)}
+                </Button>)}
             </nav>}
           </div>}>
           <div id="sketch-board" className="sketch-board" tabIndex={0} role="group"
@@ -909,25 +910,25 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
             };
             return <label key={field}>{({ fromScreenId: "From", toScreenId: "To", trigger: "Trigger", description: "Description" } satisfies Record<Exclude<keyof SketchTransition, "id">, string>)[field]}
               {field === "fromScreenId" || field === "toScreenId"
-                ? <select {...props}>{document.screens.map((item) => <option key={item.id} value={item.id}>{item.title || item.id}</option>)}</select>
-                : <input {...props} maxLength={500} />}
+                ? <Select {...props}>{document.screens.map((item) => <option key={item.id} value={item.id}>{item.title || item.id}</option>)}</Select>
+                : <Input {...props} maxLength={500} />}
             </label>;
           })}
-          <button type="button" disabled={!writable} onClick={() => {
+          <Button variant="secondary" type="button" disabled={!writable} onClick={() => {
             if (edit((draft) => { draft.transitions = draft.transitions.filter((item) => item.id !== transition.id); })) {
               updateDrafts(Object.fromEntries(Object.entries(draftsRef.current).filter(([key]) => !key.startsWith(`transition:${transition.id}:`))));
             }
-          }}><Trash2 size={14} aria-hidden="true" /> Remove transition</button>
+          }}><Trash2 size={14} aria-hidden="true" /> Remove transition</Button>
         </div>)}
       </div>
-      <button id="sketch-add-transition" type="button" disabled={!writable || !screen || (document?.transitions.length ?? 0) >= 40}
+      <Button variant="secondary" id="sketch-add-transition" type="button" disabled={!writable || !screen || (document?.transitions.length ?? 0) >= 40}
         onClick={() => edit((draft) => {
           draft.transitions.push({
             id: nextId("transition", draft.transitions.map((item) => item.id)),
             fromScreenId: screen!.id, toScreenId: draft.screens.find((item) => item.id !== screen!.id)?.id ?? screen!.id,
             trigger: "Continue", description: "",
           });
-        })}><Plus size={14} aria-hidden="true" /> Add transition</button>
+        })}><Plus size={14} aria-hidden="true" /> Add transition</Button>
         </aside>
         <aside id="sketch-revision-history" className="sketch-side-pane" aria-label="Revision history" hidden={sidePane !== "history"}>
           <h3>Revision history</h3>
@@ -945,10 +946,10 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
       <p id="sketch-message" className="sketch-error" role="alert" hidden={!message}>{message}</p>
       <section id="sketch-failed-revision" className="sketch-details" aria-label="Failed design revision" hidden={!retryInstruction || recoverable}>
         <p id="sketch-failed-instruction" className="muted">{retryInstruction ? "Failed revision instruction: " + retryInstruction : ""}</p>
-        <button id="sketch-retry-revision" type="button" aria-describedby="sketch-retry-help"
+        <Button variant="secondary" id="sketch-retry-revision" type="button" aria-describedby="sketch-retry-help"
           disabled={!requestWritable || !document || conflict || !retryInstruction || invalidFields || workerRequest?.kind === "update" && dirty}
           onClick={() => void submit(workerRequest?.kind === "update" ? "update" : "revise", retryInstruction)}>
-          <RefreshCw size={14} aria-hidden="true" />{workerRequest?.kind === "update" ? "Retry update" : "Retry same revision"}</button>
+          <RefreshCw size={14} aria-hidden="true" />{workerRequest?.kind === "update" ? "Retry update" : "Retry same revision"}</Button>
         <p id="sketch-retry-help" className="visually-hidden">{workerRequest?.kind === "update"
           ? "Retries the incremental update against saved designs. Save or undo local edits first; any new instruction below is kept."
           : "Retries the original instruction against these designs. Local edits are saved first; any new instruction below is kept."}</p>
@@ -959,8 +960,8 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
             <span>{new Date(item.at).toLocaleTimeString()}</span></div>
           <p><b>Request:</b> {item.request}</p>
           <p><b>Response:</b> {item.response}</p>
-          {item.changeRequestId && ui.changeRequestDialog && <button className="plan-button secondary" type="button"
-            onClick={event => ui.changeRequestDialog!.open(item.changeRequestId!, event.currentTarget)}>View this request</button>}
+          {item.changeRequestId && ui.changeRequestDialog && <Button variant="secondary" className="plan-button secondary" type="button"
+            onClick={event => ui.changeRequestDialog!.open(item.changeRequestId!, event.currentTarget)}>View this request</Button>}
         </li>)}
       </ol>
       <p className="muted" hidden={Boolean(history.length || message || retryInstruction)}>
@@ -969,15 +970,15 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
     </FeedbackHistory>
     <form id="sketch-revise-form" className="sketch-revise-form feedback-composer" onSubmit={(event) => { event.preventDefault(); void submit("revise"); }}>
       <label className="visually-hidden" htmlFor="sketch-instruction">Describe a design change</label>
-      <textarea className="composer-input" id="sketch-instruction" rows={1} maxLength={4000} disabled={!writable || Boolean(requiredReview)}
+      <Textarea className="composer-input" id="sketch-instruction" rows={1} maxLength={4000} disabled={!writable || Boolean(requiredReview)}
         value={instruction} onChange={(event) => setInstruction(event.currentTarget.value)} onKeyDown={sendShortcut}
         aria-describedby="sketch-focus sketch-status sketch-review-required"
         placeholder={wireframe ? "Change a layout, label or navigation path... (Ctrl+Enter)" : "Describe a design change... (Ctrl+Enter)"} />
-      <button id="sketch-revise" className="plan-button feedback-send" type="submit"
+      <Button variant="primary" id="sketch-revise" className="plan-button feedback-send" type="submit"
         title={state.sketch.status === "stale" ? "Update designs from latest requirements before sending a revision." : "Send design revision (Ctrl+Enter)"}
         disabled={!writable || !document || conflict || !instruction.trim() || invalidFields || Boolean(requiredReview) || state.sketch.status === "stale"}>
         <Send size={15} aria-hidden="true" /> Send
-      </button>
+      </Button>
       <FeedbackHistoryButton id="sketch-history-toggle" target="sketch-request-history-pane"
         open={historyOpen} error={Boolean(activeError)} errorLabel="Open request history and design errors"
         onToggle={() => setHistoryOpen(open => !open)} />

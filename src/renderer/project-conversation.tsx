@@ -1,3 +1,4 @@
+import { Button, Disclosure, NativeDialog } from "./ui/index.js";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { PanelRightClose, PanelRightOpen } from "lucide-react";
 import { canOpenDevelopment, hasActiveJobs, useUi, type UiState } from "./ui-context.js";
@@ -498,21 +499,21 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
             if (latest.current.view.outputStatus !== "verified") return;
             latest.current.showDesign();
             send({ type: "output-open", id: item.id, binding: item.binding });
-        } }}>{children}{git.dialog}{settingsRequested && <dialog ref={settingsDialog}
+        } }}>{children}{git.dialog}{settingsRequested && <NativeDialog ref={settingsDialog}
               role="dialog" aria-labelledby="project-settings-title" aria-describedby="project-settings-description"
               className="dialog-content project-settings-dialog" hidden={!settingsOpen}
               onCancel={event => { event.preventDefault(); closeSettings(); }}
               onKeyDown={event => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); closeSettings(); } }}>
               <div className="root-settings-heading"><h2 id="project-settings-title">Project settings</h2>
-                <button id="close-project-settings" className="plan-button secondary" onClick={closeSettings}>Close</button></div>
+                <Button variant="secondary" id="close-project-settings" className="plan-button secondary" onClick={closeSettings}>Close</Button></div>
               <p id="project-settings-description">{modelPrompt
                 ? settingsNext ? "Choose a private Development model below and save it, then start Development. No work has been submitted."
                     : "Choose a private Development model below and save it, then close settings and review your Prototype handoff again. No work has been submitted."
                 : "Shared project preferences and independent Development settings. Opening settings does not start Development."}</p>
-              {modelPrompt && settingsNext && <button id="start-development-after-model" className="plan-button"
+              {modelPrompt && settingsNext && <Button variant="primary" id="start-development-after-model" className="plan-button"
                 aria-describedby="model-continuation-help" aria-busy={continuing}
                 disabled={!modelReady || continuing || entry.busy || view.starting || pending} onClick={() => void continueDevelopment()}>
-                {continuing ? "Checking model..." : view.active ? "Continue to Development" : "Start Development with saved model"}</button>}
+                {continuing ? "Checking model..." : view.active ? "Continue to Development" : "Start Development with saved model"}</Button>}
               {modelPrompt && settingsNext && <p id="model-continuation-help" role="status">{continuing ? "Checking the saved model before continuing."
                 : modelReady ? "Model selection is saved. You can continue." : "Save or apply your model choice below to enable Continue."}</p>}
               {modelPrompt && (view.error || entry.error) && <p role="alert">{view.error || entry.error}</p>}
@@ -520,7 +521,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
                 : view.url ? <iframe ref={settingsFrame} id="project-settings-frame" title="Project settings controls"
                     src={`${view.url}?panel=settings`} onLoad={() => { setModelReady(false); sync(); }} />
                   : <p role={view.error ? "alert" : "status"}>{view.error || "Loading project settings..."}</p>}
-        </dialog>}
+        </NativeDialog>}
     </Context.Provider>;
 }
 export function ProjectConversation() {
@@ -557,21 +558,21 @@ export function ProjectConversation() {
         onLostPointerCapture={() => { drag.current = null; }} />
       <aside id="project-conversation" aria-label="Project conversation" data-history-collapsed={historyCollapsed && !view.visible}>
         {!view.visible && !historyCollapsed && <div className="project-conversation-heading"><strong>Discovery history</strong>
-            <button type="button" onClick={() => view.command("current-work")}>Current work</button></div>}
-        {!view.visible && <button id="toggle-discovery-history" className="plan-button secondary" type="button" aria-controls="discovery-history"
+            <Button variant="secondary" type="button" onClick={() => view.command("current-work")}>Current work</Button></div>}
+        {!view.visible && <Button variant="secondary" id="toggle-discovery-history" className="plan-button secondary" type="button" aria-controls="discovery-history"
             aria-label={historyCollapsed ? "Show discovery history" : "Hide discovery history"} title={historyCollapsed ? "Show discovery history" : "Hide discovery history"}
             aria-expanded={!historyCollapsed} onClick={() => setHistoryChoice(!historyCollapsed)}>
-            {historyCollapsed ? <PanelRightOpen size={16} aria-hidden="true" /> : <><PanelRightClose size={16} aria-hidden="true" />Hide history</>}</button>}
+            {historyCollapsed ? <PanelRightOpen size={16} aria-hidden="true" /> : <><PanelRightClose size={16} aria-hidden="true" />Hide history</>}</Button>}
         {view.visible && view.error && <p role="alert">{view.error}</p>}
         {view.url && view.workspaceRequested && <iframe ref={view.frame} id="project-conversation-frame" title="Private Development conversation"
             hidden={!view.visible} src={`${view.url}?panel=workspace`} onLoad={view.sync} allow="clipboard-read; clipboard-write" />}
         {!view.visible && <div id="discovery-history" className="discovery-history" aria-label="Discovery history" hidden={historyCollapsed}>
                 {discoveryEntries(state).map(item => <article key={item.id} data-entry-id={item.id}>
-                    <details><summary>{item.id.endsWith(":goal") ? "Original project brief" : item.text.split("\n")[0]!.slice(0, 100) + (item.text.length > 100 ? "..." : "")}</summary><p>{item.text}</p>
-                        {item.changeRequestId && changeRequestDialog && <button type="button" className="plan-button secondary"
+                    <Disclosure><summary>{item.id.endsWith(":goal") ? "Original project brief" : item.text.split("\n")[0]!.slice(0, 100) + (item.text.length > 100 ? "..." : "")}</summary><p>{item.text}</p>
+                        {item.changeRequestId && changeRequestDialog && <Button variant="secondary" type="button" className="plan-button secondary"
                             onClick={event => changeRequestDialog.open(item.changeRequestId!, event.currentTarget)}>
-                            {changeRequestActionLabel(state.changeRequests!.find(request => request.id === item.changeRequestId)!)}</button>}
-                    </details>
+                            {changeRequestActionLabel(state.changeRequests!.find(request => request.id === item.changeRequestId)!)}</Button>}
+                    </Disclosure>
                 </article>)}
                 {!state.goal && <p>{view.entry.startingPath === "development" ? "Preparation was not used for this project."
                     : "Project history will appear here. Use Preparation's goal form to begin."}</p>}

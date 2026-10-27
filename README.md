@@ -134,6 +134,10 @@ For Stage 2 changes, also follow its [contributor instructions](development/AGEN
 See the [engineering reference](docs/engineering-reference.md) for architecture
 boundaries, packaging, optional hosts and qualification limits.
 
+For shared UI components, tokens and isolated light/dark examples, see the
+[UI system guide](docs/ui-system.md). Run `npm run storybook` to open its local
+development server; this does not start Copilot or a project runtime.
+
 For automatic frontend rebuilds and browser refresh:
 
 ```powershell

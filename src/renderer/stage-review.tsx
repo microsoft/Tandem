@@ -1,6 +1,7 @@
+import { Button, DialogParts as Dialog, Disclosure, IconButton, Textarea } from "./ui/index.js";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
-import { Dialog } from "radix-ui";
+
 import { ArrowRight, Check, ChevronRight, ListChecks, Pin, Play, Send, ShieldCheck, X } from "lucide-react";
 import type { LifecycleStageId } from "../types.js";
 import type { ChangeRequest } from "../change-requests.js";
@@ -103,12 +104,12 @@ export function PendingReviewPane({ viewedStage, pinnedReview, onActionsContaine
     <p className="review-pane-guidance" role="status">{guidance}</p>
     {request && <ChangeReviewPath request={request} />}
     <div className="review-pane-actions">
-      {(!inThisTab || earlier || needsDialog || waiting) && <button id="continue-pending-review" className="plan-button" type="button" disabled={disabled}
+      {(!inThisTab || earlier || needsDialog || waiting) && <Button variant="primary" id="continue-pending-review" className="plan-button" type="button" disabled={disabled}
         onClick={event => void continueReview(event.currentTarget)}>
         {inThisTab ? <ListChecks size={15} aria-hidden="true" /> : <ArrowRight size={15} aria-hidden="true" />}
         {waiting ? "Preparing review..." : needsDialog ? "Review change" : earlier ? `${inThisTab ? "Open" : "Review"} ${targetLabel} draft`
           : inThisTab ? "Review in this tab" : `Go to ${targetLabel} review`}
-      </button>}
+      </Button>}
       {inThisTab && !earlier && !needsDialog && !waiting
         && <span className="review-stage-actions" ref={onActionsContainer} aria-label="Current stage review actions" />}
       <ReviewDetailsDialog request={request} />
@@ -248,37 +249,37 @@ function ReviewEditor({ parent, active, actionsContainer, headerActionsContainer
     });
   }
   const controls = <>
-    {canContinue && nextStage && <button id="continue-stage-review" className="complete-stage" type="button"
+    {canContinue && nextStage && <Button variant="primary" id="continue-stage-review" className="complete-stage" type="button"
       disabled={pending || parent.pending || hasActiveJobs(parent.state)}
       onClick={() => void action.run(async () => {
         if (nextIsEarlier && parent.reviewStage && parentRequest) await parent.reviewStage(nextStage, parentRequest);
         else { onExit(); onReturn(); }
-      })}><ArrowRight size={15} aria-hidden="true" />Review {reviewStageLabel(nextStage)}{nextIsEarlier ? " draft" : " update"}</button>}
-    {!settled && <button id="apply-stage-review" className="complete-stage" type="button" disabled={applyDisabled}
+      })}><ArrowRight size={15} aria-hidden="true" />Review {reviewStageLabel(nextStage)}{nextIsEarlier ? " draft" : " update"}</Button>}
+    {!settled && <Button variant="primary" id="apply-stage-review" className="complete-stage" type="button" disabled={applyDisabled}
       title={unsaved ? "Save or finish draft edits before applying." : status?.conflict
         || (canApproveDesign ? "Approve and apply the saved design draft." : status?.blocker) || "Apply the saved draft without moving the current stage."}
-      onClick={() => void apply()}><Check size={15} aria-hidden="true" />Apply changes</button>}
+      onClick={() => void apply()}><Check size={15} aria-hidden="true" />Apply changes</Button>}
     {stage === "prototype" && !settled && <>
-      <button id="build-review-preview" className="complete-stage" type="button"
+      <Button variant="primary" id="build-review-preview" className="complete-stage" type="button"
         disabled={blocked || Boolean(state.prototypeFlow?.pendingCheckpointId) || !queuedPreview && !state.prototypeNeedsUpdate}
-        onClick={() => void action.run(() => post("/api/prototype/start", {}))}><Play size={15} aria-hidden="true" />Build draft preview</button>
-      {!state.prototypeReview.designSpecArtifactId && <button id="finish-review-prototype" className="complete-stage" type="button"
+        onClick={() => void action.run(() => post("/api/prototype/start", {}))}><Play size={15} aria-hidden="true" />Build draft preview</Button>
+      {!state.prototypeReview.designSpecArtifactId && <Button variant="primary" id="finish-review-prototype" className="complete-stage" type="button"
         disabled={blocked || !prototypeReady} onClick={() => void action.run(() => post("/api/stage/complete", { stageId: "prototype" }))}>
-        Save draft outputs</button>}
+        Save draft outputs</Button>}
     </>}
     {stage === "sketch" && state.sketch.status !== "stale" && requestedChange && !requestedChange.workStarted.includes("sketch") && !settled
-      && <button id="prepare-review-drawings" className="complete-stage" type="button" disabled={blocked || dirty}
+      && <Button variant="primary" id="prepare-review-drawings" className="complete-stage" type="button" disabled={blocked || dirty}
         onClick={() => void action.run(() => post("/api/sketch", {
           action: !state.sketch.current ? "generate" : state.sketch.status === "stale" ? "update" : "revise",
           expectedRevision: state.sketch.current?.id ?? null,
           ...(state.sketch.status !== "stale" && state.sketch.current ? { instruction: requestedChange.message } : {}),
-        }))}>Prepare draft designs</button>}
-    <button id="return-to-current-stage" className="complete-stage review-secondary" type="button" onClick={onReturn}>
-      <ArrowRight size={15} aria-hidden="true" />{returnLabel}</button>
-    <button id="exit-stage-review" className="complete-stage review-secondary" type="button" onClick={async () => {
+        }))}>Prepare draft designs</Button>}
+    <Button variant="secondary" id="return-to-current-stage" className="complete-stage review-secondary" type="button" onClick={onReturn}>
+      <ArrowRight size={15} aria-hidden="true" />{returnLabel}</Button>
+    <Button variant="secondary" id="exit-stage-review" className="complete-stage review-secondary" type="button" onClick={async () => {
       if (dirty && !await confirm("Leave this review? Saved draft edits are kept, but unsaved editor changes will be lost. Switching to Current work instead keeps the editor open.", "Leave draft review")) return;
       onExit();
-    }}><X size={15} aria-hidden="true" />Close review</button>
+    }}><X size={15} aria-hidden="true" />Close review</Button>
   </>;
   const mergedReview = Boolean(actionsContainer);
   const reviewHeading = <div className="stage-review-heading">
@@ -310,8 +311,8 @@ function ReviewEditor({ parent, active, actionsContainer, headerActionsContainer
     <div className="pinned-review-buttons">
       {!settled && <span className="review-stage-actions" ref={setReviewControlsContainer} aria-label="Draft review actions" />}
       {controls}<ReviewDetailsDialog request={reviewRequest} />
-      {!settled && <button id="discard-stage-review" className="plan-button secondary" type="button" disabled={blocked}
-        onClick={() => void discard()}>Discard draft</button>}
+      {!settled && <Button variant="secondary" id="discard-stage-review" className="plan-button secondary" type="button" disabled={blocked}
+        onClick={() => void discard()}>Discard draft</Button>}
     </div>
     {error && <p id="stage-review-error" role="alert">{error}</p>}
     {!settled && status?.conflict && <p className="error" role="alert">{status.conflict}</p>}
@@ -344,11 +345,11 @@ function DraftBrief() {
     void action.run(() => post("/api/goal", { goal, expectedRevision: state.revision }));
   }}>
     <label htmlFor="review-brief">Draft project brief</label>
-    <textarea id="review-brief" value={goal} onChange={event => setGoal(event.target.value)} rows={3}
+    <Textarea id="review-brief" value={goal} onChange={event => setGoal(event.target.value)} rows={3}
       maxLength={4000} disabled={blocked} />
-    <button className="plan-button" type="submit" disabled={blocked || !goal.trim() || goal === state.goal}>Save draft brief</button>
-    <button id="analyze-review-brief" className="plan-button secondary" type="button" disabled={blocked || goal !== state.goal}
-      onClick={() => void action.run(() => post("/api/preparation/retry", {}))}>Analyze draft brief</button>
+    <Button variant="primary" className="plan-button" type="submit" disabled={blocked || !goal.trim() || goal === state.goal}>Save draft brief</Button>
+    <Button variant="secondary" id="analyze-review-brief" className="plan-button secondary" type="button" disabled={blocked || goal !== state.goal}
+      onClick={() => void action.run(() => post("/api/preparation/retry", {}))}>Analyze draft brief</Button>
     {action.error && <p role="alert">{action.error}</p>}
   </form>;
 }
@@ -364,13 +365,13 @@ function DraftRequirementRequest() {
   }, [text, ui.setReviewDirty]);
   if (state.requirements.substage !== "dag") return null;
   const history = (state.changeRequests ?? []).filter(item => item.originStage === "requirements").slice().reverse();
-  return <details className="stage-review-request"><summary>Add or reshape draft requirements</summary>
+  return <Disclosure className="stage-review-request"><summary>Add or reshape draft requirements</summary>
     <FeedbackHistory id="requirements-request-history" triggerId="requirements-history-toggle" inline
       label="Requirements request history" open={historyOpen} onClose={() => setHistoryOpen(false)}>
       <ol className="feedback-request-history">{history.map(item => <li key={item.id} data-status={changeRequestHistoryStatus(item)}>
         <p><b>Request:</b> {item.message}</p><p><b>Response:</b> {changeRequestResponse(item)}</p>
-        {ui.changeRequestDialog && <button className="plan-button secondary" type="button"
-          onClick={event => ui.changeRequestDialog!.open(item.id, event.currentTarget)}>View this request</button>}
+        {ui.changeRequestDialog && <Button variant="secondary" className="plan-button secondary" type="button"
+          onClick={event => ui.changeRequestDialog!.open(item.id, event.currentTarget)}>View this request</Button>}
       </li>)}</ol>
       {!history.length && <p className="muted">No requirement change requests yet.</p>}
     </FeedbackHistory>
@@ -384,22 +385,22 @@ function DraftRequirementRequest() {
       });
     }}>
       <label className="visually-hidden" htmlFor="review-requirement-request">Change only this draft</label>
-      <textarea id="review-requirement-request" className="composer-input" rows={1} maxLength={4000} value={text} onChange={event => setText(event.target.value)}
+      <Textarea id="review-requirement-request" className="composer-input" rows={1} maxLength={4000} value={text} onChange={event => setText(event.target.value)}
         placeholder="Describe a requirement change... (Ctrl+Enter)" onKeyDown={event => {
           if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) {
             event.preventDefault(); event.currentTarget.form?.requestSubmit();
           }
         }}
         disabled={pending || hasActiveJobs(state) || !ui.canEdit("requirements")} />
-      <button className="plan-button feedback-send" type="submit" aria-label="Prepare requirement changes"
+      <Button variant="primary" className="plan-button feedback-send" type="submit" aria-label="Prepare requirement changes"
         title="Prepare requirement changes (Ctrl+Enter)" disabled={pending || hasActiveJobs(state) || !text.trim() || !ui.canEdit("requirements")}>
-        <Send size={15} aria-hidden="true" />Send</button>
+        <Send size={15} aria-hidden="true" />Send</Button>
       <FeedbackHistoryButton id="requirements-history-toggle" target="requirements-request-history" open={historyOpen}
         error={Boolean(action.error || history.some(item => changeRequestHistoryStatus(item) === "error"))}
         onToggle={() => setHistoryOpen(open => !open)} />
     </form>
     {action.error && <p role="alert">{action.error}</p>}
-  </details>;
+  </Disclosure>;
 }
 
 function ReviewDetailsDialog({ request }: { request?: ChangeRequest }) {
@@ -407,13 +408,13 @@ function ReviewDetailsDialog({ request }: { request?: ChangeRequest }) {
   const pendingCheckpoint = state.prototypeFlow?.checkpoints.find(item => item.id === state.prototypeFlow?.pendingCheckpointId);
   const drafts = state.stageReviews?.filter(item => item.generation === state.generation && !item.appliedAt && !item.discardedAt) ?? [];
   return <Dialog.Root>
-    <Dialog.Trigger asChild><button className="plan-button secondary" type="button">Details</button></Dialog.Trigger>
+    <Dialog.Trigger asChild><Button variant="secondary" className="plan-button secondary" type="button">Details</Button></Dialog.Trigger>
     <Dialog.Portal><Dialog.Overlay className="dialog-overlay" />
       <Dialog.Content className="dialog-content review-details-dialog">
         <header className="review-details-heading"><div>
           <Dialog.Title>Review details</Dialog.Title>
           <Dialog.Description>Inspect the change and its saved context. Viewing details does not apply changes.</Dialog.Description>
-        </div><Dialog.Close asChild><button className="review-close" type="button" aria-label="Close review details"><X size={18} aria-hidden="true" /></button></Dialog.Close></header>
+        </div><Dialog.Close asChild><IconButton variant="ghost" className="review-close" type="button" aria-label="Close review details"><X size={18} aria-hidden="true" /></IconButton></Dialog.Close></header>
         <div className="review-details-body">
           {request && <section aria-label="Requested change">
             <h3>Change from {reviewStageLabel(request.originStage)}</h3>
@@ -438,7 +439,7 @@ function ReviewDetailsDialog({ request }: { request?: ChangeRequest }) {
                 <li key={item.id}>{item.suggestion || item.summary} - {item.status}</li>)}</ul></section>}
           </>}
         </div>
-        <footer className="review-details-footer"><Dialog.Close asChild><button className="plan-button" type="button">Done</button></Dialog.Close></footer>
+        <footer className="review-details-footer"><Dialog.Close asChild><Button variant="primary" className="plan-button" type="button">Done</Button></Dialog.Close></footer>
       </Dialog.Content>
     </Dialog.Portal>
   </Dialog.Root>;
@@ -488,7 +489,7 @@ function BaselineComparison() {
   return <section className="stage-review-comparison" aria-label="Accepted baseline comparison">
     <h3>Compare with the accepted baseline</h3>
     {loading && <p role="status">Reading the saved baseline...</p>}
-    {error && <p role="alert">{error} <button type="button" onClick={() => void load()}>Retry</button></p>}
+    {error && <p role="alert">{error} <Button variant="secondary" type="button" onClick={() => void load()}>Retry</Button></p>}
     {baseline && <>
       <p className="muted">Accepted revision {state.stageReview!.baselineRevision}; draft revision {state.revision}.</p>
       {stage === "requirements" ? changed.length ? <table><thead><tr><th>Requirement</th><th>Accepted</th><th>Draft</th></tr></thead>

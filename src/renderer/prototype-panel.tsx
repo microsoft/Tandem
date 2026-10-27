@@ -1,7 +1,8 @@
+import { ActionLink, Button, Disclosure, IconButton, RadioGroup, Tabs, Textarea, Tooltip } from "./ui/index.js";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { ArrowUpRight, Check, ExternalLink, LoaderCircle, Play, RefreshCw, Send, SkipForward, Sparkles } from "lucide-react";
-import { RadioGroup, Tabs, Tooltip } from "radix-ui";
+
 import type { DecisionQuestion } from "../workflow.js";
 import type { PrototypeCheckpoint } from "../prototype-flow.js";
 import { prototypeMilestoneLabels, prototypeMilestoneReady, prototypeSubstage,
@@ -55,7 +56,7 @@ function PendingPreviewAvailability({ active, connected }: { active: boolean; co
   }, [active, connected, binding, refresh]);
   if (!candidate) return null;
   const verified = result.binding === binding && result.available && !result.busy;
-  return <details id="pending-preview-availability" className="preview-verification-details" open={!verified}>
+  return <Disclosure id="pending-preview-availability" className="preview-verification-details" open={!verified}>
     <summary>{verified ? "Pending preview verified" : result.busy ? "Checking pending preview..." : "Pending preview unavailable"}</summary>
     <p role="status">{result.binding !== binding || result.busy ? "Checking pending saved preview..."
       : result.available ? "Pending saved version: live preview verified (not displayed)." : `Pending saved version is unavailable. ${result.reason} Restarting it will not change the displayed version.`}</p>
@@ -63,14 +64,14 @@ function PendingPreviewAvailability({ active, connected }: { active: boolean; co
       Prepared choice: {candidate.visual.manifest?.directions.find(item => item.id === candidate.visual?.selection?.directionId)?.name}.
       {" "}{Object.values(candidate.visual.selection.settings).join(" / ")}. These saved settings will be applied, not any later comparison draft.
     </p>}
-    <button className="plan-button secondary" type="button" disabled={result.busy || !connected} onClick={() => setRefresh(value => value + 1)}>Check pending preview</button>
+    <Button variant="secondary" className="plan-button secondary" type="button" disabled={result.busy || !connected} onClick={() => setRefresh(value => value + 1)}>Check pending preview</Button>
     {verified && candidate.previewUrl &&
       <a id={candidate.visual?.operation === "choose" ? "open-prepared-visual" : "open-pending-preview"}
         href={candidate.previewUrl} target="_blank" rel="noreferrer">
         {candidate.visual?.operation === "choose" ? "Open prepared direction (not applied)" : "Open pending prototype (not applied)"}
       </a>}
     <PreviewRestart target="pending" unavailable={result.binding === binding && !result.available && !result.busy} changed={() => setRefresh(value => value + 1)} />
-  </details>;
+  </Disclosure>;
 }
 
 function SavedMilestonePreview({ milestone, checkpoint, active, connected, renderActions }: {
@@ -111,15 +112,15 @@ function SavedMilestonePreview({ milestone, checkpoint, active, connected, rende
   if (!checkpoint) return <div className="preview-empty"><p>No saved {milestone.label} result yet.</p></div>;
   return <>
     {active && renderActions(<>
-      <button id={`retry-${milestone.id}-preview`} className="plan-button secondary preview-recovery-action" type="button"
+      <IconButton variant="secondary" id={`retry-${milestone.id}-preview`} className="plan-button secondary preview-recovery-action" type="button"
         aria-label={`Recheck ${milestone.label} preview`} title={`Recheck ${milestone.label} preview`}
         data-error={unavailable} disabled={!connected || result.busy} onClick={() => setRefresh(value => value + 1)}>
         <RefreshCw size={16} aria-hidden="true" />
-      </button>
+      </IconButton>
       <PreviewRestart target={milestone.id} unavailable={unavailable} changed={() => setRefresh(value => value + 1)} iconOnly />
-      {verified && checkpoint.previewUrl && <a id={`open-${milestone.id}-preview`} className="plan-button secondary preview-open-action"
+      {verified && checkpoint.previewUrl && <ActionLink variant="secondary" iconOnly id={`open-${milestone.id}-preview`} className="plan-button secondary preview-open-action"
         href={checkpoint.previewUrl} target="_blank" rel="noreferrer" aria-label={`Open ${milestone.label} preview`}
-        title={`Open ${milestone.label} preview`}><ExternalLink size={16} aria-hidden="true" /></a>}
+        title={`Open ${milestone.label} preview`}><ExternalLink size={16} aria-hidden="true" /></ActionLink>}
     </>)}
     <p className="saved-milestone-summary">Saved {milestone.label} result. Viewing it does not change the accepted prototype.</p>
     {!verified && <p id={`${milestone.id}-preview-availability`} className="revision-status" role="status"
@@ -176,13 +177,13 @@ function Clarification({ question }: { question: DecisionQuestion }) {
           <span>{choice}</span>
         </label>)}
       </RadioGroup.Root>
-      {question.allowFreeText !== false && <textarea className="composer-input" id="revision-question-detail" value={draft.detail}
+      {question.allowFreeText !== false && <Textarea className="composer-input" id="revision-question-detail" value={draft.detail}
         onChange={(event) => {
           const detail = event.currentTarget.value;
           setDraft((current) => ({ detail, choice: detail.trim() ? "" : current.choice, version: current.version + 1 }));
         }}
         maxLength={4000} disabled={blocked} placeholder={question.answerPlaceholder || "Optional clarification"} aria-label="Prototype clarification" />}
-      <button id="submit-clarification" type="submit" disabled={blocked}><Check size={16} />{action.busy ? "Sending..." : "Use this answer"}</button>
+      <Button variant="primary" id="submit-clarification" type="submit" disabled={blocked}><Check size={16} />{action.busy ? "Sending..." : "Use this answer"}</Button>
       <p role="status" className="revision-status" data-status={action.error ? "error" : "idle"}>{action.error}</p>
     </form>
   </div>;
@@ -449,36 +450,36 @@ export function PrototypePanel({ active: visible, connected, renderStageActions,
   const importantProgress = Boolean(candidate || failed || failedRevision || question);
   const previewActions = <div ref={setPreviewActionsContainer} className="prototype-preview-actions">
     {viewingPrimary && !(viewingVisual && inspectingVisual) && readyUrl && <Tooltip.Root><Tooltip.Trigger asChild>
-      <button id={`retry-${previewTarget}-preview`} className="plan-button secondary preview-recovery-action" type="button"
+      <IconButton variant="secondary" id={`retry-${previewTarget}-preview`} className="plan-button secondary preview-recovery-action" type="button"
         aria-label={`Recheck ${previewLabel}`} data-error={previewUnavailable} disabled={!connected || !visible || previewCheck.busy}
-        onClick={() => void checkPreview()}><RefreshCw size={16} aria-hidden="true" /></button>
+        onClick={() => void checkPreview()}><RefreshCw size={16} aria-hidden="true" /></IconButton>
     </Tooltip.Trigger><Tooltip.Portal><Tooltip.Content className="preview-recovery-tooltip" sideOffset={6}>
       <strong>Recheck {previewLabel}</strong>{previewCheck.reason && <p>{previewCheck.reason}</p>}
       <p>Recheck the saved preview. Does not rebuild, regenerate, or restart it.</p>
     </Tooltip.Content></Tooltip.Portal></Tooltip.Root>}
     {viewingPrimary && !(viewingVisual && inspectingVisual) && readyUrl && <PreviewRestart target={previewTarget} unavailable={previewUnavailable}
       changed={() => void checkPreview()} iconOnly />}
-    {viewingPrimary && !(viewingVisual && inspectingVisual) && readyUrl && showLivePreview && <a id="open-preview" className="plan-button secondary preview-open-action"
+    {viewingPrimary && !(viewingVisual && inspectingVisual) && readyUrl && showLivePreview && <ActionLink variant="secondary" iconOnly id="open-preview" className="plan-button secondary preview-open-action"
       href={readyUrl} target="_blank" rel="noreferrer" aria-label={`Open ${previewLabel}`} title={`Open ${previewLabel}`}
       data-status-help={`Open the ${previewLabel} in a new tab. Pending updates and visual alternatives are not applied.`}>
       <ExternalLink size={16} aria-hidden="true" />
-    </a>}
+    </ActionLink>}
   </div>;
 
-  const visualAction = <button id="request-prototype-visual" className="plan-button" hidden={!visualVisible}
+  const visualAction = <Button variant="primary" id="request-prototype-visual" className="plan-button" hidden={!visualVisible}
     disabled={blocked || unresolved.length > 0} onClick={() => void submitAction("visual")}>
-    <Sparkles size={16} />{visualStale ? "Explore current prototype" : "Explore visual directions (optional)"}</button>;
+    <Sparkles size={16} />{visualStale ? "Explore current prototype" : "Explore visual directions (optional)"}</Button>;
   const reviewControls = <div className="prototype-actions">
-    <button id="apply-prototype-update" className="plan-button" hidden={!candidate || chosenCandidate && Boolean(flow?.visualExploration)} disabled={blocked}
-      title="Switch the displayed preview to this saved version." onClick={() => void submitAction("apply-update")}><ArrowUpRight size={16} />{switchLabel}</button>
-    <button id="visual-back" className="plan-button secondary" hidden={!chosenCandidate || Boolean(flow?.visualExploration)} disabled={blocked}
-      onClick={() => void submitAction("visual-back")}>Back to alternatives</button>
+    <Button variant="primary" id="apply-prototype-update" className="plan-button" hidden={!candidate || chosenCandidate && Boolean(flow?.visualExploration)} disabled={blocked}
+      title="Switch the displayed preview to this saved version." onClick={() => void submitAction("apply-update")}><ArrowUpRight size={16} />{switchLabel}</Button>
+    <Button variant="secondary" id="visual-back" className="plan-button secondary" hidden={!chosenCandidate || Boolean(flow?.visualExploration)} disabled={blocked}
+      onClick={() => void submitAction("visual-back")}>Back to alternatives</Button>
     {!renderStageActions && visualAction}
-    <button id="skip-prototype-visual" className="plan-button secondary" hidden={!skipVisible} disabled={blocked}
-      onClick={() => void submitAction("skip-visual")}><SkipForward size={16} aria-hidden="true" />Skip visual direction</button>
-    <button id="retry-prototype-checkpoint" className="plan-button" hidden={!retryVisible || Boolean(state.stageReview)} disabled={blocked}
+    <Button variant="secondary" id="skip-prototype-visual" className="plan-button secondary" hidden={!skipVisible} disabled={blocked}
+      onClick={() => void submitAction("skip-visual")}><SkipForward size={16} aria-hidden="true" />Skip visual direction</Button>
+    <Button variant="primary" id="retry-prototype-checkpoint" className="plan-button" hidden={!retryVisible || Boolean(state.stageReview)} disabled={blocked}
       onClick={() => void submitAction("retry")}><RefreshCw size={16} />{failed ? "Retry " + prototypeMilestoneLabels[failed.milestone]
-        : failedRevision ? "Retry failed revision" : state.prototypeNeedsUpdate ? "Update for reviewed inputs" : "Continue prototype work"}</button>
+        : failedRevision ? "Retry failed revision" : state.prototypeNeedsUpdate ? "Update for reviewed inputs" : "Continue prototype work"}</Button>
   </div>;
   return <>
     {renderStageActions?.(visualAction)}
@@ -570,8 +571,8 @@ export function PrototypePanel({ active: visible, connected, renderStageActions,
           ? "Choose the prototype approach in Requirements before starting prototype work." : building
           ? "The runnable preview will appear here after its first checkpoint is validated. Feedback can be queued below." : validation
           ? "No prototype validation is running. Validate the existing app without replacing it." : "No prototype build is running. Start a build to create the runnable preview."}</p>
-          <button id="start-prototype" className="plan-button" hidden={!startVisible} disabled={pending || !canEdit("prototype") || hasActiveJobs(state)}
-            onClick={() => void action.run(() => post("/api/prototype/start", {}))}><Play size={16} />{validation ? state.previewStatus === "error" ? "Retry existing prototype validation" : "Validate existing prototype" : state.previewStatus === "error" ? "Retry prototype build" : "Start prototype"}</button>
+          <Button variant="primary" id="start-prototype" className="plan-button" hidden={!startVisible} disabled={pending || !canEdit("prototype") || hasActiveJobs(state)}
+            onClick={() => void action.run(() => post("/api/prototype/start", {}))}><Play size={16} />{validation ? state.previewStatus === "error" ? "Retry existing prototype validation" : "Validate existing prototype" : state.previewStatus === "error" ? "Retry prototype build" : "Start prototype"}</Button>
         </div>
       </div>
       <iframe key={checkpointKey + ":" + (showLivePreview ? "verified" : "unverified")} id="preview-frame" ref={frame} title="Runnable prototype" src={showLivePreview ? readyUrl || undefined : undefined} hidden={!showLivePreview || !viewingPrimary || viewingVisual && inspectingVisual}
@@ -630,7 +631,7 @@ export function PrototypePanel({ active: visible, connected, renderStageActions,
             ? { ...current, [feedbackKey]: { value: "", version: submitted + 1 } } : current);
         });
       }}>
-        <textarea className="composer-input" id="revision-input" value={draft.value} onChange={(event) => {
+        <Textarea className="composer-input" id="revision-input" value={draft.value} onChange={(event) => {
           const value = event.currentTarget.value;
           setFeedbackDrafts(current => ({ ...current, [feedbackKey]: { value, version: (current[feedbackKey]?.version ?? 0) + 1 } }));
         }} onKeyDown={event => {
@@ -641,9 +642,9 @@ export function PrototypePanel({ active: visible, connected, renderStageActions,
           rows={1} maxLength={4000} disabled={Boolean(state.effortReset)}
           placeholder={refiningVisual ? "Keep this layout, but simplify the toolbar..." : milestonePlaceholders[feedbackMilestone]}
           aria-label={refiningVisual ? `Feedback for ${visualFeedback?.name ?? "selected direction"}` : "Prototype revision suggestion"} aria-describedby="revision-status" />
-        <button id="submit-revision" className="plan-button feedback-send" type="submit" aria-describedby="revision-status"
+        <Button variant="primary" id="submit-revision" className="plan-button feedback-send" type="submit" aria-describedby="revision-status"
           aria-label={sendLabel} title={`${sendLabel} (Ctrl+Enter)`}
-          disabled={feedbackBlocked || unresolved.length >= 50}><Send size={15} aria-hidden="true" />Send</button>
+          disabled={feedbackBlocked || unresolved.length >= 50}><Send size={15} aria-hidden="true" />Send</Button>
         <FeedbackHistoryButton id="prototype-history-toggle" target="revision-history-details"
           open={historyOpen} error={Boolean(revisionError || failedRevision)} onToggle={() => setHistoryOpen(open => !open)} />
       </form>
@@ -655,8 +656,8 @@ export function PrototypePanel({ active: visible, connected, renderStageActions,
     </div>
     {savedOnly && state.lifecycle.outputs.some(output => output.stageId === "prototype") && !finalizing && <section className="prototype-progress" aria-label="Saved Prototype next step">
       {!state.stageReview && <HandoffControls prototype active={visible} />}
-      <button className="plan-button secondary" type="button" onClick={() => ui.browseStage("development")}>Open Development</button>
-      <details><summary>Returning later</summary><p>The saved Prototype remains available for review in Development. Opening Development does not submit it; confirm the handoff when ready.</p></details>
+      <Button variant="secondary" className="plan-button secondary" type="button" onClick={() => ui.browseStage("development")}>Open Development</Button>
+      <Disclosure><summary>Returning later</summary><p>The saved Prototype remains available for review in Development. Opening Development does not submit it; confirm the handoff when ready.</p></Disclosure>
     </section>}
   </>;
 }

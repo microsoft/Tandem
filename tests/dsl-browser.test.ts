@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { build } from "esbuild";
 import { createServer } from "node:http";
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { browserAvailable, openFixtureBrowser } from "../development/tandem/test/helpers/browser-fixture.mjs";
@@ -235,7 +235,8 @@ test("real browser renders isolated DSL views, preserves size and zoom, and expo
         bundle: true, write: false, platform: "browser", format: "iife",
         define: { "process.env.NODE_ENV": '"production"' }, logLevel: "silent",
     });
-    const css = await readFile(new URL("../src/renderer/styles.css", import.meta.url), "utf8");
+    const css = (await build({ entryPoints: [fileURLToPath(new URL("../src/renderer/styles.css", import.meta.url))],
+        bundle: true, write: false, logLevel: "silent" })).outputFiles[0].text;
     const server = createServer((request, response) => {
         response.setHeader("Content-Type", request.url === "/app.js" ? "text/javascript" : "text/html; charset=utf-8");
         response.end(request.url === "/app.js" ? script.outputFiles[0].text

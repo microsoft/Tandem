@@ -1,3 +1,4 @@
+import { Button } from "./ui/index.js";
 import { ExternalLink, RotateCcw } from "lucide-react";
 import type { PreparationState } from "../types.js";
 import { hasActiveJobs, useAction, useUi, type RuntimeSnapshot } from "./ui-context.js";
@@ -145,7 +146,7 @@ export function PreparationPanel() {
               </div>)}
               {!messages.length && <p className="muted">No activity yet.</p>}
             </div>
-            <button
+            <Button variant="primary"
               id="retry-preparation"
               className="retry-preparation"
               type="button"
@@ -155,7 +156,7 @@ export function PreparationPanel() {
               onClick={retry}
             >
               <RotateCcw size={16} aria-hidden="true" /> {action.busy ? "Retrying..." : "Retry preparation"}
-            </button>
+            </Button>
             <p id="preparation-stage-message" className={action.error || preparation.error || runtime?.error || ["failed", "needs-attention"].includes(preparation.status) ? "implementation-status" : "visually-hidden"} role="status" aria-live="polite"
               data-status={action.error || preparation.status === "failed" || runtime?.error ? "error" : "idle"}>
               {message}

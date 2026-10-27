@@ -1,8 +1,12 @@
+@layer tandem-legacy, tandem-ui, tandem-layout;
 @import "../../development/tandem/public/project-theme.css";
+@import "./ui/styles.css" layer(tandem-ui);
+@import "./ui/layout.css" layer(tandem-layout);
 
+@layer tandem-legacy {
 :root {
   color-scheme: light dark;
-  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  font-family: var(--studio-font-family);
   font-size: 13px;
   line-height: 1.5;
   background: var(--studio-surface);
@@ -372,17 +376,6 @@ button > .lucide { width: 16px; height: 16px; margin: 0; stroke-width: 1.8; }
 .stage-step-index > .lucide, .mark > .lucide { vertical-align: middle; }
 .mermaid-host.react-diagram > svg { width: var(--diagram-width, 100%) !important; min-width: 0; max-width: none !important; height: auto; }
 .react-diagram g.node[role="button"]:focus-visible { outline: 3px solid var(--studio-focus); outline-offset: 3px; }
-.dialog-overlay { position: fixed; inset: 0; z-index: 100; background: rgb(0 0 0 / 45%); }
-.dialog-content {
-  position: fixed; left: 50%; top: 50%; z-index: 101; transform: translate(-50%, -50%);
-  width: min(480px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto;
-  box-sizing: border-box; padding: 24px; border: 1px solid var(--studio-border);
-  border-radius: 12px; background: var(--studio-surface);
-  color: var(--studio-text); box-shadow: 0 20px 60px rgb(0 0 0 / 25%);
-}
-.dialog-content h2 { margin: 0 0 12px; font-size: var(--text-title-small, 20px); }
-.dialog-content p { white-space: pre-line; line-height: 1.6; }
-.dialog-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--studio-control-gap); margin-top: 20px; }
 .handoff-review-dialog { width: min(640px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow: auto; overflow-wrap: anywhere; }
 .handoff-review-dialog pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
 .handoff-review-dialog details { margin-block: 12px; }
@@ -3768,4 +3761,5 @@ textarea {
   .project-tabs { flex-direction: row; flex-wrap: wrap; }
   .project-workspace .topbar { padding: 4px 10px; }
   .project-workspace .project-navigation { padding: 6px 10px; }
+}
 }

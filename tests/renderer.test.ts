@@ -92,7 +92,7 @@ test("compact theme preserves host colors, standalone dark mode, and accessible 
         .map(path => readFile(new URL(path, import.meta.url), "utf8")))).join("\n");
     assert.match(css, /--studio-surface:\s*var\(--background-color-default,\s*light-dark\(/);
     assert.match(css, /--studio-text:\s*var\(--text-color-default,\s*light-dark\(/);
-    assert.match(css, /--studio-muted:\s*var\(--text-color-muted,\s*light-dark\(/);
+    assert.match(css, /--studio-muted:\s*var\(--text-color-muted,\s*color-mix\(in srgb,\s*var\(--studio-text\)/);
     assert.match(css, /:root\[data-color-mode="dark"\][^{]*\{\s*color-scheme:\s*dark/);
     assert.match(css, /:root\[data-color-mode="light"\][^{]*\{\s*color-scheme:\s*light/);
     assert.match(css, /@media \(pointer: coarse\)[\s\S]*?--studio-control-height:\s*44px/);

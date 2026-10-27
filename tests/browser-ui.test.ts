@@ -652,7 +652,12 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
                         && inner.querySelector("#studio-workspace").scrollHeight <= inner.querySelector("#studio-workspace").clientHeight + 1
                         && panel.scrollHeight <= panel.clientHeight + 1,
                     diagram:bounds(inner.querySelector(".design-tree-host")), decisions:bounds(inner.querySelector(".decision-list-pane")),
-                    dagPanel:bounds(inner.querySelector("#requirements-dag-panel")) };
+                    dagPanel:bounds(inner.querySelector("#requirements-dag-panel")),
+                    workspace: bounds(inner.querySelector("#studio-workspace")),
+                    columns: frame.contentWindow.getComputedStyle(inner.querySelector("#studio-workspace")).gridTemplateColumns,
+                    workspaceChildren: [...inner.querySelector("#studio-workspace").children].map(element => ({
+                        id: element.id, display: frame.contentWindow.getComputedStyle(element).display, ...bounds(element),
+                    })) };
             })()`);
             assert.equal(layout.outerFits, true, `The browser frame must fit the window at ${width}: ${JSON.stringify(layout)}`);
             assert.equal(layout.panelFits, true, `Requirements must not clip horizontally at ${width}: ${JSON.stringify(layout)}`);

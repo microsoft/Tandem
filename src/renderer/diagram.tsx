@@ -1,6 +1,7 @@
+import { Button, DialogParts as Dialog, IconButton } from "./ui/index.js";
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Code, Maximize, Minus, Plus, RotateCcw, X } from "lucide-react";
-import { Dialog } from "radix-ui";
+
 import { useDraft } from "./ui-context.js";
 
 export interface MermaidRenderer {
@@ -82,16 +83,16 @@ export function Diagram({ id, source, onNodeSelect, legend, label = "Diagram", l
       {legend}
       <div className="diagram-toolbar" role="toolbar" aria-label="Diagram controls">
         {svg && <>
-        <button type="button" aria-label="Zoom out" title="Zoom out" onClick={() => zoom(view.scale * .8)}><Minus size={16} aria-hidden="true" /></button>
-        <button type="button" aria-label="Zoom in" title="Zoom in" onClick={() => zoom(view.scale * 1.25)}><Plus size={16} aria-hidden="true" /></button>
-        <button type="button" aria-label="Actual size" title="Actual size" onClick={() => zoom(1)}><RotateCcw size={16} aria-hidden="true" />100%</button>
-        <button type="button" aria-label="Fit diagram" title="Fit diagram" onClick={() => setView({ mode: "fit", scale: 1 })}><Maximize size={16} aria-hidden="true" />Fit</button>
+        <IconButton size="small" variant="secondary" type="button" aria-label="Zoom out" title="Zoom out" onClick={() => zoom(view.scale * .8)}><Minus size={16} aria-hidden="true" /></IconButton>
+        <IconButton size="small" variant="secondary" type="button" aria-label="Zoom in" title="Zoom in" onClick={() => zoom(view.scale * 1.25)}><Plus size={16} aria-hidden="true" /></IconButton>
+        <Button size="small" variant="secondary" type="button" aria-label="Actual size" title="Actual size" onClick={() => zoom(1)}><RotateCcw size={16} aria-hidden="true" />100%</Button>
+        <Button size="small" variant="secondary" type="button" aria-label="Fit diagram" title="Fit diagram" onClick={() => setView({ mode: "fit", scale: 1 })}><Maximize size={16} aria-hidden="true" />Fit</Button>
         </>}
         <div className="diagram-source-controls">
           {svg && <span className="diagram-toolbar-output" aria-live="polite">{view.mode === "fit" ? "Fit" : Math.round(view.scale * 100) + "%"}</span>}
-          <Dialog.Trigger asChild><button id={`${id}-source-trigger`} type="button" title="Mermaid source" aria-controls={`${id}-source-dialog`}>
+          <Dialog.Trigger asChild><Button size="small" variant="secondary" id={`${id}-source-trigger`} type="button" title="Mermaid source" aria-controls={`${id}-source-dialog`}>
             <Code size={16} aria-hidden="true" />Mermaid source
-          </button></Dialog.Trigger>
+          </Button></Dialog.Trigger>
         </div>
       </div>
     </div>
@@ -109,9 +110,9 @@ export function Diagram({ id, source, onNodeSelect, legend, label = "Diagram", l
         aria-modal="true" aria-labelledby={`${id}-source-label`} aria-describedby={undefined}>
         <header className="diagram-source-heading">
           <Dialog.Title id={`${id}-source-label`}>Mermaid source</Dialog.Title>
-          <Dialog.Close asChild><button className="review-close" type="button" aria-label="Close Mermaid source">
+          <Dialog.Close asChild><IconButton variant="ghost" className="review-close" type="button" aria-label="Close Mermaid source">
             <X size={18} aria-hidden="true" />
-          </button></Dialog.Close>
+          </IconButton></Dialog.Close>
         </header>
         <pre tabIndex={0} role="region" aria-labelledby={`${id}-source-label`}>{source}</pre>
       </Dialog.Content>
