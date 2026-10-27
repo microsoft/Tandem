@@ -34,11 +34,19 @@ const AlertCancel = forwardRef<ComponentRef<typeof RadixAlertDialog.Cancel>, Com
   });
 export const AlertDialog = { ...RadixAlertDialog, Content: AlertContent, Overlay: AlertOverlay, Action: AlertAction, Cancel: AlertCancel };
 
+const TabBar = forwardRef<HTMLDivElement, ComponentPropsWithoutRef<"div">>(
+  function TabBar({ className = "", ...props }, ref) {
+    return <div {...props} ref={ref} data-ui="tab-bar" className={`tandem-tab-bar ${className}`.trim()} />;
+  });
+const TabList = forwardRef<ComponentRef<typeof RadixTabs.List>, ComponentPropsWithoutRef<typeof RadixTabs.List>>(
+  function TabList({ className = "", ...props }, ref) {
+    return <RadixTabs.List {...props} ref={ref} data-ui="tab-list" className={`tandem-tab-list ${className}`.trim()} />;
+  });
 const Tab = forwardRef<ComponentRef<typeof RadixTabs.Trigger>, ComponentPropsWithoutRef<typeof RadixTabs.Trigger>>(
   function Tab({ className = "", ...props }, ref) {
     return <RadixTabs.Trigger {...props} ref={ref} data-ui="tab" className={`tandem-tab ${className}`.trim()} />;
   });
-export const Tabs = { ...RadixTabs, Trigger: Tab };
+export const Tabs = { ...RadixTabs, Bar: TabBar, List: TabList, Trigger: Tab };
 
 const Toggle = forwardRef<ComponentRef<typeof RadixToggleGroup.Item>,
   ComponentPropsWithoutRef<typeof RadixToggleGroup.Item> & { iconOnly?: boolean }>(

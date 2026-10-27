@@ -363,8 +363,8 @@
     },
     {
       "path": "public/ui-system.css",
-      "bytes": 11843,
-      "sha256": "ae636b89be78e1ebac0ff025fb16408343a03ff62cd5b5b2d81f0982d82922f3"
+      "bytes": 14227,
+      "sha256": "b0086f8d05ff66d3c30c8e1caa1c53caaff23c108d47bd59bc2bd54f54659d92"
     },
     {
       "path": "public/workflow-stop-control.js",

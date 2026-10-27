@@ -510,7 +510,7 @@ export function PrototypePanel({ active: visible, connected, renderStageActions,
       <section id="prototype-progress" className="prototype-progress" aria-label="Prototype progress"
         aria-describedby={importantProgress ? "prototype-progress-message" : undefined}
         hidden={Boolean(unavailable) || (!flow && !readyUrl && !failedRevision && state.lifecycle.currentStage !== "prototype")}>
-        <div className="prototype-substage-bar">
+        <Tabs.Bar className="prototype-substage-bar">
           <Tabs.List id="prototype-milestones" className="preview-tabs prototype-milestones" aria-label="Prototype substages" hidden={!flow && Boolean(readyUrl)}>
           {milestones.map((milestone, index) => {
             const latest = checkpoints.filter((checkpoint) => prototypeSubstage(checkpoint.milestone) === milestone.id && !checkpoint.visualDismissedAt).at(-1)
@@ -538,7 +538,7 @@ export function PrototypePanel({ active: visible, connected, renderStageActions,
           })}
           </Tabs.List>
           {previewActions}
-        </div>
+        </Tabs.Bar>
         {importantProgress && <p id="prototype-progress-message" className="muted"
           role="status" data-essential="true">{message}</p>}
       </section>

@@ -259,7 +259,9 @@ styling from the editor. PNG approval previews use the same renderer and CSS at
 the saved viewport, independent of view zoom.
 
 The integrated Structure tree appears after Screen details, follows the DSL's
-ordered child IDs and synchronizes with the rendered selection. Select is the
+ordered child IDs and synchronizes with the rendered selection. The Screens list
+fits its content up to half the sidebar height; the expanded Structure tree fills
+the remaining space. Each pane scrolls independently. Select is the
 default persistent mode; Interact is explicit. Tree navigation and selection are
 view state, not edits or approval. Saved change targets retain their revision,
 screen and node identities; transient preview selections use a separate request

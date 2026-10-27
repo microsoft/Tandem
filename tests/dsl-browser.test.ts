@@ -61,6 +61,33 @@ test("real browser shows design generation before the first view and keeps live 
     assert.ok(address && typeof address !== "string");
     origin = `http://127.0.0.1:${address.port}`;
     const browser = await openFixtureBrowser(t);
+    async function checkSidebar(context: string) {
+        const layout = await browser.evaluate(`(() => {
+            const screens = document.querySelector("#sketch-screens"), sidebar = screens.closest(".sketch-sidebar");
+            const details = sidebar.querySelector(".sketch-screen-details"), tree = document.querySelector("#sketch-structure-tree");
+            const style = getComputedStyle(screens), buttons = [...screens.children];
+            const contentHeight = buttons.reduce((height, button) => height + button.getBoundingClientRect().height, 0)
+                + Math.max(0, buttons.length - 1) * parseFloat(style.rowGap)
+                + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)
+                + parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
+            return { screensHeight:screens.getBoundingClientRect().height, sidebarHeight:sidebar.getBoundingClientRect().height,
+                contentHeight, screensOverflow:style.overflowY, screensScrolls:screens.scrollHeight > screens.clientHeight,
+                detailsBelow:details.getBoundingClientRect().top >= screens.getBoundingClientRect().bottom,
+                treeBottom:tree.getBoundingClientRect().bottom, sidebarBottom:sidebar.getBoundingClientRect().bottom,
+                treeOverflow:getComputedStyle(tree).overflowY, treeScrolls:tree.scrollHeight > tree.clientHeight,
+                sidebarFits:sidebar.scrollHeight <= sidebar.clientHeight + 1 };
+        })()`);
+        assert.ok(layout.sidebarHeight > 0
+            && Math.abs(layout.screensHeight - Math.min(layout.contentHeight, layout.sidebarHeight / 2)) <= 1,
+            `Screens fits its content up to half the sidebar ${context}: ${JSON.stringify(layout)}`);
+        assert.equal(layout.screensOverflow, "auto", "Screens keeps its own scrolling area");
+        assert.equal(layout.detailsBelow, true, "Screen details remain below Screens");
+        assert.ok(Math.abs(layout.treeBottom - layout.sidebarBottom) <= 1,
+            `Structure fills the remaining sidebar without a bottom gap ${context}: ${JSON.stringify(layout)}`);
+        assert.equal(layout.treeOverflow, "auto", "Structure keeps its own scrolling area");
+        assert.equal(layout.sidebarFits, true, `The sidebar does not overflow ${context}: ${JSON.stringify(layout)}`);
+        return layout;
+    }
     await browser.call("Page.navigate", { url: origin });
     await browser.waitFor('Boolean(document.querySelector("#sketch-generation")) && !document.querySelector("#studio-workspace").inert');
     const elapsed = await browser.evaluate('document.querySelector("#sketch-generation-elapsed").textContent');
@@ -116,8 +143,14 @@ test("real browser shows design generation before the first view and keeps live 
         assert.match(layout.text, /Menu.*Waiting for design/);
         assert.match(layout.placeholder, /Menu.*Waiting for design/);
         assert.equal(layout.busy, "true");
+        const sidebar = await checkSidebar(`at ${width}px wide`);
+        assert.equal(sidebar.screensScrolls, false, "A short Screens list has no unused reserved height");
         if (process.env.TANDEM_UI_EVIDENCE) await writeFile(
             join(process.env.TANDEM_UI_EVIDENCE, `design-pages-waiting-${width}.png`), await browser.screenshot());
+    }
+    for (const height of [540, 960]) {
+        await browser.call("Emulation.setDeviceMetricsOverride", { width: 1280, height, deviceScaleFactor: 1, mobile: false });
+        await checkSidebar(`at ${height}px tall`);
     }
     await browser.evaluate('document.querySelectorAll("#sketch-screens button")[1].click()');
     await browser.waitFor('document.querySelector("#sketch-page-status").textContent.includes("Drink details")');
@@ -158,6 +191,49 @@ test("real browser shows design generation before the first view and keeps live 
     await browser.waitFor('document.querySelector("#sketch-page-status").dataset.status === "ready"');
     assert.equal(await browser.evaluate('document.querySelector("#sketch-board").getAttribute("aria-busy")'), "false");
     assert.equal(await browser.evaluate('document.querySelector("#sketch-approve").disabled'), true);
+    const dense = structuredClone(outline);
+    for (let index = 0; index < 32; index++) addUi(dense.screens[0], `action-${index}`, "Button", { label: `Action ${index}` });
+    for (let index = dense.screens.length; index < 8; index++) dense.screens.push({
+        ...dense.screens[1], id: `screen-${index}`, ui: createSketchUi("wireframe"),
+    });
+    dense.screens.forEach((screen, index) => { screen.title = `Screen ${index + 1} with a long navigation label`; });
+    await browser.evaluate(`designFixture.flushSync(() => designFixture.store.accept(${JSON.stringify({
+        ...live, sketchPreview: { ...live.sketchPreview, sequence: 4, document: dense,
+            screenStatuses: Object.fromEntries(dense.screens.map((screen, index) => [screen.id, index === 0 ? "ready" : "waiting"])) },
+    })}))`);
+    await browser.waitFor('document.querySelectorAll("#sketch-screens button").length === 8');
+    for (const [width, height] of [[1280, 540], [1280, 960], [375, 760]]) {
+        await browser.call("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+        const sidebar = await checkSidebar(`with long content at ${width}x${height}px`);
+        assert.equal(sidebar.screensScrolls, true, "Long Screens content scrolls at the 50% cap");
+        assert.equal(sidebar.treeScrolls, true, "Long Structure content scrolls within the remaining height");
+        if (process.env.TANDEM_UI_EVIDENCE) await writeFile(
+            join(process.env.TANDEM_UI_EVIDENCE, `design-sidebar-${width}-${height}.png`), await browser.screenshot());
+    }
+    await browser.evaluate(`document.querySelector("#sketch-structure summary").click()`);
+    assert.equal(await browser.evaluate('document.querySelector("#sketch-structure").open'), false);
+    assert.equal(await browser.evaluate('document.querySelector("#sketch-structure-tree").checkVisibility()'), false);
+    await browser.evaluate(`document.querySelector("#sketch-structure summary").click()`);
+    await checkSidebar("after expanding Structure");
+    await browser.evaluate(`document.querySelector("#sketch-structure-tree button").focus();
+        document.activeElement.dispatchEvent(new KeyboardEvent("keydown", {key:"End", bubbles:true}))`);
+    await browser.waitFor('document.querySelector("[data-node-id=action-31]").getAttribute("aria-selected") === "true"');
+    assert.equal(await browser.evaluate(`(() => {
+        const tree = document.querySelector("#sketch-structure-tree").getBoundingClientRect();
+        const selected = document.querySelector("[data-node-id=action-31]").getBoundingClientRect();
+        return selected.top >= tree.top && selected.bottom <= tree.bottom + 1;
+    })()`), true, "Keyboard selection still scrolls the selected component into view");
+    await browser.evaluate('document.querySelector(".sketch-screen-details summary").click()');
+    assert.equal(await browser.evaluate(`(() => {
+        const tree = document.querySelector("#sketch-structure-tree");
+        return tree.clientHeight >= tree.querySelector("button").getBoundingClientRect().height;
+    })()`), true, "Structure remains usable when expanded Screen details needs sidebar scrolling");
+    await browser.evaluate('document.querySelector(".sketch-screen-details summary").click()');
+    await checkSidebar("after closing Screen details");
+    await browser.evaluate(`designFixture.flushSync(() => designFixture.store.accept(${JSON.stringify({
+        ...live, sketchPreview: { ...live.sketchPreview, sequence: 5, screenStatuses: { main: "ready", details: "waiting" } },
+    })}))`);
+    await browser.waitFor('document.querySelectorAll("#sketch-screens button").length === 2');
     await browser.evaluate(`designFixture.flushSync(() => designFixture.store.accept(${JSON.stringify({
         ...initial, revision: 3, processing: { ...initial.processing, status: "error", message: "Design generation failed. Retry explicitly.",
             sketchRecovery: { phase: "content", preview: live.sketchPreview } },
