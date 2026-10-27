@@ -21,6 +21,7 @@ test("responsive layout and graph keyboard focus have explicit accessible styles
     assert.match(css, /\.preview\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
     assert.match(css, /\.prototype-view \.frame-wrap\s*\{[^}]*grid-template-rows:\s*minmax\(220px, 1fr\) auto/);
     assert.match(layout, /form:not\(\.feedback-composer\):focus-within textarea\.tandem-input\.composer-input/);
+    assert.match(layout, /form\.feedback-composer > textarea\.tandem-input\.composer-input:focus/);
     assert.doesNotMatch(css, /animation:\s*next-action/);
     assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.processing-indicator/);
 });

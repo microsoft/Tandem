@@ -333,7 +333,7 @@ function ReviewEditor({ parent, active, actionsContainer, headerActionsContainer
     </div>
     {error && <p id="stage-review-error" role="alert">{error}</p>}
     {!settled && status?.conflict && <p className="error" role="alert">{status.conflict}</p>}
-    {!settled && !status?.conflict && status?.blocker && !canApproveDesign && <p role="status">{status.blocker}</p>}
+    {!settled && !status?.conflict && status?.blocker && !canApproveDesign && <p className="muted" role="status">{status.blocker}</p>}
     {!settled && status && !status.changed && <p role="status">No saved changes to apply. Edit this draft or discard it to keep accepted work.</p>}
   </section>;
   return <div className="stage-review-workspace" data-review-stage={stage}>

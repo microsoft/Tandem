@@ -914,16 +914,16 @@ test("design requests bind the viewed screen and explicitly picked element witho
   initial.document.screens.push(buttonScreen(createScreen(initial.document, ["Requirement.Main_1"]), "Another action"));
   const h = await harness(initial);
   try {
-    await h.input("change-target", "primary-action");
+    await h.event(h.treeNode("primary-action"), "click");
     assert.equal(h.preview().querySelector('[data-ui-id="primary-action"]')!.getAttribute("data-selected"), "true");
     await h.selectScreen(1);
-    assert.equal(h.element<HTMLSelectElement>("change-target").value, "", "Identical node IDs on another screen are not the same selection.");
+    assert.equal(h.selectedNodeId(), null, "Identical node IDs on another screen are not the same selection.");
     assert.equal(h.preview().querySelector("[data-selected]"), null);
     await h.click("pick-element");
     assert.equal(h.element("pick-element").getAttribute("aria-pressed"), "true");
     await h.event(h.preview().querySelector('[data-ui-id="primary-action"]')!, "click");
     assert.equal(h.element("pick-element").getAttribute("aria-pressed"), "true", "Selection mode stays active after picking.");
-    assert.equal(h.element<HTMLSelectElement>("change-target").value, "primary-action");
+    assert.equal(h.selectedNodeId(), "primary-action");
     assert.equal(h.element<HTMLButtonElement>("save").disabled, true);
     assert.equal(h.element<HTMLButtonElement>("undo").disabled, true);
     await h.input("instruction", "Replace this block with an icon.");
@@ -940,17 +940,17 @@ test("design selection survives view updates but cannot silently target a new sa
   const initial = fixture();
   const h = await harness(initial);
   try {
-    await h.input("change-target", "primary-action");
+    await h.event(h.treeNode("primary-action"), "click");
     await h.hidden(true); await h.hidden(false);
     await h.sse({ ...h.server, revision: 2 });
-    assert.equal(h.element<HTMLSelectElement>("change-target").value, "primary-action");
+    assert.equal(h.selectedNodeId(), "primary-action");
     const newer = structuredClone(initial.document);
     newer.screens[0].notes = "Newer design";
     h.setDocument(newer);
     await h.sse({ ...h.server, revision: 3, sketch: { ...h.server.sketch,
       current: { ...h.server.sketch.current!, id: "drawing-new", documentHash: "new-hash" },
     } });
-    assert.equal(h.element<HTMLSelectElement>("change-target").value, "");
+    assert.equal(h.selectedNodeId(), null);
     assert.equal(h.preview().querySelector("[data-selected]"), null);
     await h.input("instruction", "Adjust this screen.");
     await h.click("revise");
@@ -973,7 +973,7 @@ test("Structure follows Screen details without a Selection section and preserves
   const h = await harness(initial);
   try {
     assert.equal(h.element<HTMLDetailsElement>("structure").open, true);
-    assert.equal(h.element("structure").previousElementSibling?.className, "sketch-screen-details");
+    assert.equal(h.element("structure").previousElementSibling?.classList.contains("sketch-screen-details"), true);
     assert.equal(h.element("workspace").querySelector("#sketch-selection"), null);
     assert.deepEqual([...h.element("structure-tree").querySelectorAll<HTMLButtonElement>("[data-node-id]")]
       .map(node => node.dataset.nodeId), ["screen", "layout", "heading", "form", "entry", "primary-action"]);
@@ -984,7 +984,7 @@ test("Structure follows Screen details without a Selection section and preserves
     await h.event(h.preview().querySelector('[data-ui-id="heading"]')!, "click");
     assert.equal(h.treeNode("heading").getAttribute("aria-selected"), "true");
     assert.equal(h.selectedNodeId(), "heading");
-    assert.equal(h.element<HTMLSelectElement>("change-target").value, "heading");
+    assert.equal(h.selectedNodeId(), "heading");
     assert.equal(h.preview().dataset.mode, "select");
     await h.event(h.preview().querySelector('[data-ui-id="primary-action"] span')!, "click");
     assert.equal(h.selectedNodeId(), "primary-action", "Selecting again does not require rearming a picker.");
@@ -998,10 +998,9 @@ test("Structure follows Screen details without a Selection section and preserves
     await h.event(h.treeNode("entry"), "click");
     assert.equal(h.preview().dataset.mode, "select", "Selecting in Structure restores the visible selection outline.");
     assert.equal(h.preview().querySelector('[data-ui-id="entry"]')!.getAttribute("data-selected"), "true");
-    assert.equal(h.element<HTMLSelectElement>("change-target").value, "entry");
-    await h.input("change-target", "");
-    assert.equal(h.selectedNodeId(), null);
-    assert.equal(h.preview().querySelector("[data-selected]"), null);
+    assert.equal(h.selectedNodeId(), "entry");
+    await h.event(h.treeNode("screen"), "click");
+    assert.equal(h.selectedNodeId(), "screen", "The whole screen is selectable through Structure without a retired target dropdown.");
     assert.equal(h.element<HTMLButtonElement>("save").disabled, true);
     assert.equal(h.element<HTMLButtonElement>("undo").disabled, true);
     assert.equal(JSON.stringify(initial.document), original);
@@ -1076,7 +1075,7 @@ test("Structure remains inspectable in read-only and streaming views without reu
 test("saving local design edits before revision binds the selected element to the saved revision", async () => {
   const h = await harness();
   try {
-    await h.input("change-target", "primary-action");
+    await h.event(h.treeNode("primary-action"), "click");
     await h.input("notes", "Keep these unsaved annotations.");
     await h.input("instruction", "Use an icon for this action.");
     await h.click("revise");
@@ -1097,7 +1096,7 @@ test("retrying a failed design request preserves its original target instead of 
     message: "The design worker failed.", sketchContext: context };
   const h = await harness(initial);
   try {
-    assert.equal(h.element<HTMLSelectElement>("change-target").value, "");
+    assert.equal(h.selectedNodeId(), null);
     await h.input("instruction", "Keep this different unsent request.");
     h.setPost(async () => { throw new Error("Retry transport unavailable."); });
     await h.click("retry-revision");
@@ -1163,7 +1162,7 @@ test("React sketch explicitly updates stale requirements without applying or los
     assert.equal(update.textContent, "Update designs from latest requirements");
     assert.equal(update.closest("#sketch-status"), h.element("status"));
     assert.equal(update.disabled, false);
-    assert.equal(h.element<HTMLButtonElement>("approve").disabled, true);
+    assert.equal(h.element("workspace").querySelector("#sketch-approve"), null, "The owning review pane handles approval through Apply changes.");
     await h.input("instruction", "Keep this follow-up instruction.");
     assert.equal(h.element<HTMLButtonElement>("revise").disabled, true);
     h.setConfirm(false);
@@ -1177,7 +1176,7 @@ test("React sketch explicitly updates stale requirements without applying or los
     assert.match(h.element("generation").textContent!, /existing designs remain visible/);
     assert.equal(h.element("screens").querySelector("button")!.getAttribute("data-screen-status"), "ready");
     assert.equal(h.element<HTMLInputElement>("instruction").value, "Keep this follow-up instruction.");
-    assert.equal(h.element<HTMLButtonElement>("approve").disabled, true);
+    assert.equal(h.element("workspace").querySelector("#sketch-approve"), null);
     assert.equal(h.completionBlocked, true);
     assert.equal(h.state.lifecycle.currentStage, "sketch");
     await h.sse({ ...h.server, revision: h.server.revision + 1,

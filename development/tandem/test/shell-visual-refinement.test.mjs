@@ -17,13 +17,14 @@ test('populated shell controls have distinct navigation hierarchy and compact ac
     content.artifacts[2].category = 'ui';
     const current = {
       schemaVersion: 'human-loop-snapshot-view/v1', streamId: 'visual-refinement',
+      conversationStatus: 'verified',
       installation: { status: 'ready', canStart: false, canReopen: false },
       design: { binding: { revisionId: 'visual-design', digest: policyHash(content) }, content },
       workflow: { schemaVersion: 'human-loop-view/v1', status: 'ready', reason: null,
         activeRequestId: null, activeRole: null, workspacePath: 'Coffee pickup', currentCycle: null,
         lastHandoff: { id: 'design-ready', role: 'designer', kind: 'designer-changed',
           summary: 'The pickup Design is ready to discuss.', findings: [], verificationLimits: [] },
-        queue: [], canStop: false, canSend: true, questionInteraction: null },
+        queue: [], canStop: false, canSend: true, questionInteractions: [] },
       messages: [
         { id: 'request', kind: 'user', requestId: 'request', text: 'Help customers order coffee and collect it without waiting in line.',
           timestamp: '2026-09-20T08:00:00Z', queueState: 'completed' },
@@ -158,7 +159,8 @@ test('populated shell controls have distinct navigation hierarchy and compact ac
       assert.equal(result.controls.artifact.selected, 'true');
       if (phase === 'before') return;
       if (phase === 'after') {
-        assert.notEqual(result.controls.category.background, result.controls.artifact.background);
+        assert.equal(result.controls.category.background, result.controls.artifact.background,
+          "Selected navigation uses the shared UI-system selection token at both hierarchy levels.");
         assert.equal(result.controls.annotate.height, result.controls.raw.height);
         assert.equal(result.controls.annotate.radius, result.controls.raw.radius);
         assert.equal(result.controls.annotate.weight, result.controls.raw.weight);
@@ -185,9 +187,12 @@ test('populated shell controls have distinct navigation hierarchy and compact ac
       assert.equal(await browser.evaluate("document.activeElement.classList.contains('raw-toggle')"), true);
       const focus = await browser.evaluate(`(() => {
         const s=getComputedStyle(document.activeElement);
-        const luminance=color=>color.match(/[\\d.]+/g).slice(0,3).map(v=>{
-          v=Number(v)/255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4;
-        }).reduce((sum,v,i)=>sum+v*[.2126,.7152,.0722][i],0);
+        const canvas=document.createElement('canvas');canvas.width=canvas.height=1;
+        const context=canvas.getContext('2d');
+        const luminance=color=>{context.fillStyle=color;context.fillRect(0,0,1,1);
+          return [...context.getImageData(0,0,1,1).data].slice(0,3).map(v=>{
+          v=v/255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4;
+        }).reduce((sum,v,i)=>sum+v*[.2126,.7152,.0722][i],0);};
         const a=luminance(s.outlineColor),b=luminance(s.backgroundColor);
         return {style:s.outlineStyle,width:s.outlineWidth,color:s.outlineColor,
           contrast:(Math.max(a,b)+.05)/(Math.min(a,b)+.05)};
@@ -322,8 +327,8 @@ test('populated shell controls have distinct navigation hierarchy and compact ac
         if(!n.contains(document.elementFromPoint(p.x,p.y)))throw new Error('Annotate is obscured');
         return p;
       })()`);
-      await browser.call('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', clickCount: 1, ...point });
-      await browser.call('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, ...point });
+      // Activate without native focus scrolling the offscreen source into view.
+      await browser.evaluate("document.querySelector('.annotation-view-toggle').click()");
       below.activated = await activationGeometry();
       if (evidence) await writeFile(join(evidence, 'activation-below-viewport.json'), JSON.stringify(below, null, 2));
       await browser.waitFor("document.querySelector('.annotation-editor').open && document.querySelector('.annotation-editor-status').textContent.includes('Bring the supported artifact into view')");
@@ -336,7 +341,7 @@ test('populated shell controls have distinct navigation hierarchy and compact ac
         document.querySelector('.source-artifact iframe').scrollIntoView({block:'center'});
         await new Promise(done=>requestAnimationFrame(()=>requestAnimationFrame(done)));
       })()`);
-      await click('.annotation-view-toggle');
+      await browser.evaluate("document.querySelector('.annotation-view-toggle').click()");
       await editorReady();
       below.afterExplicitNavigation = await activationGeometry();
       assertEditorGeometry(below.afterExplicitNavigation, 1440, 440);
@@ -348,5 +353,4 @@ test('populated shell controls have distinct navigation hierarchy and compact ac
     if (evidence) await writeFile(join(evidence, `${phase}-geometry.json`), JSON.stringify(metrics, null, 2));
     assert.deepEqual(posts, []);
     assert.deepEqual(browser.exceptions, []);
-    await browser.call('Browser.close');
   });

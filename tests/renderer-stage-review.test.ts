@@ -96,7 +96,8 @@ test("review mode pins an earlier-stage editor without unlocking accepted work o
     assert.equal(current(h).lifecycle.currentStage, "prototype");
     assert.equal(hidden(h, "reopen-stage"), true);
     assert.equal(hidden(h, "complete-stage"), true);
-    assert.match(h.get("stage-input-review").textContent!, /Requirements review.*Draft only/);
+    assert.match(h.get("stage-input-review").textContent!, /Requirements review.*Draft only.*Return to Prototype/);
+    assert.match(h.get("design-tree-workspace-tab").getAttribute("aria-label")!, /pinned draft review/);
     assert.equal(disabled(h, "review-requirement-request"), false);
     await h.input("review-requirement-request", "Keep this unsent draft while I work on Prototype.");
     const input = field(h, "review-requirement-request");
@@ -158,6 +159,7 @@ test("Apply is explicit, refuses unsent edits, and leaves the reviewed view pinn
     await h.click("apply-stage-review"); await h.confirm(true);
     assert.equal(current(h).lifecycle.currentStage, "prototype");
     assert.equal(current(h).decisionGraph.nodes[0].answer, "Draft task behavior");
+    assert.match(h.get("stage-input-review").textContent!, /Requirements review.*Applied/);
     assert.match(h.get("stage-input-review").textContent!, /Applied requirement changes/);
     assert.match(h.get("design-tree-panel").textContent!, /saved changes are now part of accepted work/);
     assert.equal(hidden(h, "design-tree-panel"), false);
@@ -195,7 +197,7 @@ test("requirement review uses the existing usages and questions instead of a top
     const comparison = h.document.querySelector(".stage-review-comparison")!;
     assert.ok(comparison.closest("#stage-input-review"), "Review information belongs with the review and approval controls.");
     assert.equal(h.get("design-tree-panel").querySelector(".stage-review-comparison, .stage-review-banner"), null);
-    assert.equal(comparison.querySelector("table"), null);
+    assert.equal(comparison.querySelector("table"), null, "The full comparison appears only when Details is opened.");
     const usages = h.document.querySelector('[aria-label="Draft usages"]')!;
     assert.equal(usages.closest("[hidden]"), null, "Usage changes open in the normal Usage list.");
     assert.match(usages.querySelector('[data-change="retained"]')!.textContent!, /I want to complete a task.*Existing/);
@@ -393,7 +395,7 @@ test("stale Designs review exposes a confirmed update scoped to its draft, not c
     await h.click("review-stage");
     assert.equal(disabled(h, "sketch-update-requirements"), false);
     assert.equal(disabled(h, "apply-stage-review"), true);
-    assert.equal(h.document.getElementById("sketch-approve"), null, "Draft approval is part of Apply, not a second approval action.");
+    assert.equal(h.document.getElementById("sketch-approve"), null, "Draft approval is bound to Apply changes, not a second approval.");
     assert.equal(h.document.querySelector("#prepare-review-drawings"), null);
     await h.click("sketch-update-requirements");
     assert.match(h.document.querySelector('[role="alertdialog"]')!.textContent!, /latest accepted requirements and DAG/);

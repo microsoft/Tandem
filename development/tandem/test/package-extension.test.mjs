@@ -122,7 +122,7 @@ test("packages the current provider and complete renderer graph for relocation, 
     "runtime-src/domain/backbone/artifact-store.ts",
     "runtime-src/domain/human-loop/model.ts", "runtime-src/domain/host-state-wal.ts",
     "runtime-src/permissions/permission-broker.ts", "runtime-src/event-store.ts",
-    "skills/implementation-reviewer/SKILL.md", "skills/backbone-designer/SKILL.md",
+    "skills/backbone-designer/SKILL.md", "skills/use-case-designer/SKILL.md",
   ]) assert.ok(names.includes(required), required);
   assert.deepEqual(await readFile(join(relocated, "INSTALL.md")), await readFile(join(repositoryRoot, "tandem", "INSTALL.md")));
   assert.match(await readFile(join(relocated, "src", "extension.mjs"), "utf8"),
@@ -146,6 +146,9 @@ test("packages the current provider and complete renderer graph for relocation, 
     assert.equal(names.includes(`runtime-src/${name}`), false);
   }
   for (const retired of [
+    "skills/implementation-reviewer/SKILL.md", "skills/implementation-gap-reviewer/SKILL.md",
+    "skills/implementation-lifecycle-reconciler/SKILL.md", "skills/implementation-index-maintainer/SKILL.md",
+    "skills/design-impact-classifier/SKILL.md",
     "src/legacy-extension.mjs", "src/living-canvas-provider.mjs", "src/request-router.mjs",
     "src/workflow-host-runtime.mjs", "src/implementation-coordinator.mjs",
     "runtime-src/domain/workflow/private-sdk-transport.ts",

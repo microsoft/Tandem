@@ -60,6 +60,20 @@ npm run browser -- --workspace C:\projects\my-app
 
 Both browser scripts build the app automatically. Pass launch options after `--`.
 
+Optionally choose the **main session's** model and reasoning effort using a model
+available to your account:
+
+```powershell
+npm run browser -- --workspace C:\projects\my-app --model gpt-6-astra --reasoning-effort low
+```
+
+Omitting these flags preserves saved selection. With no selected main model,
+standalone startup activates and verifies the native preferred model without
+forcing an effort level. Project
+settings has separate **Main session model** and **Development model** controls;
+see [model options](docs/quick-start.md#main-session-model-options) for
+creation-time Development inheritance and independent effort settings.
+
 If you also have Tandem installed, explicitly isolate a source preview from that
 installation:
 
@@ -102,22 +116,11 @@ Private launch URLs must not be shared.
 | [Quick start](docs/quick-start.md) | Open your first project and reach an implementation decision. |
 | [The Tandem story](docs/the-tandem-story.md) | Understand the vision through a concrete example. |
 | [User manual](docs/user-manual.md) | Learn the workspace and everyday controls. |
-| [Task recipes](docs/use-cases.md) | Revise a prototype, refine Design, or export an outcome. |
+| [Task recipes](docs/use-cases.md) | Revise a prototype, refine Design, or inspect saved outcomes. |
 | [Troubleshooting](docs/troubleshooting.md) | Handle queued work, unavailable previews, Stop and reopen. |
 
 The [documentation index](docs/README.md) also links advanced configuration and
 engineering references.
-
-<details>
-<summary>Optional presentation background</summary>
-
-The [six-slide opening presentation](development/docs/tandem-opening-slides-v2.html#1)
-and [extended background deck](development/docs/tandem-opening-slides-light.html#1)
-provide historical illustrations, a development walkthrough and discussion notes.
-The guides above stand on their own. Open the checked-out HTML locally; the
-screenshots are not evidence of current capabilities or test results.
-
-</details>
 
 ## Development and contributions
 
@@ -125,12 +128,14 @@ Work from source in `src` and `development\tandem`; do not hand-edit the generat
 extension under `.github\extensions\tandem`. From the repository root:
 
 ```powershell
+npm ci
+npm --prefix development\tandem ci
 npm run check
 npm test
 npm run build
 ```
 
-For Stage 2 changes, also follow its [contributor instructions](development/AGENTS.md).
+For Development changes, also follow its [contributor instructions](development/AGENTS.md).
 See the [engineering reference](docs/engineering-reference.md) for architecture
 boundaries, packaging, optional hosts and qualification limits.
 

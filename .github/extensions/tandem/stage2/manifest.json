@@ -3,8 +3,8 @@
   "files": [
     {
       "path": "INSTALL.md",
-      "bytes": 7459,
-      "sha256": "787780cc438c5dde1553668778fcd3218e0e90690c35e73ff765a1a434f64cb2"
+      "bytes": 7998,
+      "sha256": "8723be841f17f353710f1601a9c62784b078f154d622d3ee2a20f34e6e56744a"
     },
     {
       "path": "extension.mjs",
@@ -173,8 +173,8 @@
     },
     {
       "path": "public/human-loop-app.js",
-      "bytes": 62878,
-      "sha256": "959838de05fe058b61ed63a29d2cc7feb9d07c952e672b1bb80d00daed02c6f1"
+      "bytes": 65286,
+      "sha256": "da9dfd2e95be76b362a7f8766ffa52b2c2b2edcb3b37a95e6b51176488a5a061"
     },
     {
       "path": "public/human-loop-shell.css",
@@ -183,8 +183,8 @@
     },
     {
       "path": "public/human-loop.html",
-      "bytes": 16732,
-      "sha256": "88a81e908d2b46076b01ab3f4e22588b3ca702c81a3da470e5ad21aa053cd241"
+      "bytes": 17442,
+      "sha256": "fcdd421db3fd7a429348bc9a8480c6a63faa79688d45999f3534ba4cc2166888"
     },
     {
       "path": "public/implementation-confirmation.js",
@@ -200,6 +200,16 @@
       "path": "public/markdown.js",
       "bytes": 4614,
       "sha256": "37b4cad04fe6c6ec3846d55e8ac92a8f0d26210e4ed778dcb778cceeb33668f4"
+    },
+    {
+      "path": "public/model-selection.d.ts",
+      "bytes": 428,
+      "sha256": "45d9f180ada0b2e951f9872affd320a4312205385a2e3a831b8ac3627d85920c"
+    },
+    {
+      "path": "public/model-selection.js",
+      "bytes": 1627,
+      "sha256": "713587e2378aec45a30c19de3528652fa8cb7d4ef850804bc267fb3607a18ba9"
     },
     {
       "path": "public/panel-splitter.js",
@@ -218,8 +228,8 @@
     },
     {
       "path": "public/project-presentation.js",
-      "bytes": 20035,
-      "sha256": "f8bb1f250f16659e8fbad3f7b6aa6295464d41f39cbe093674e15e04901f4bb5"
+      "bytes": 20093,
+      "sha256": "95cf5a4f75f2873292cb532aa6d3d6aaa8e439ac962d964fe783ca50f573e68f"
     },
     {
       "path": "public/project-theme.css",
@@ -358,8 +368,8 @@
     },
     {
       "path": "public/ui-native.css",
-      "bytes": 7273,
-      "sha256": "124dab2ab73b97c54cb8fb3538e135bcf750c291cdc6f6f87d9108441f4e5633"
+      "bytes": 7691,
+      "sha256": "241f5e9b9534755c7ac4147efc8172c558e80b21abe9dce4c4dc7a5bd37e64e6"
     },
     {
       "path": "public/ui-system.css",
@@ -562,34 +572,9 @@
       "sha256": "688535a0a0118cd57989e1c32fd7e0c476212bc16f72383279b487eeae3f45ff"
     },
     {
-      "path": "skills/design-impact-classifier/SKILL.md",
-      "bytes": 4553,
-      "sha256": "784168b8497cd94d7784f493d11cf8d94c1efb554883fab5151d0a318dfa701e"
-    },
-    {
       "path": "skills/gui-designer/SKILL.md",
       "bytes": 1873,
       "sha256": "f4eb6a05b39fcba62e3aa540ae757df79dad2842975d7e6b9ff5222881bdff89"
-    },
-    {
-      "path": "skills/implementation-gap-reviewer/SKILL.md",
-      "bytes": 3967,
-      "sha256": "b486355d4ac745b1b7b522b7ba17190f023abb6f26a9f55b28fbc726c38c31a3"
-    },
-    {
-      "path": "skills/implementation-index-maintainer/SKILL.md",
-      "bytes": 2924,
-      "sha256": "eb556599405a0053a9d85123f748678db41e01a2b3dde9621227538b25bc503a"
-    },
-    {
-      "path": "skills/implementation-lifecycle-reconciler/SKILL.md",
-      "bytes": 2718,
-      "sha256": "dcbee59ee921df65e03a3d0e743b49f1aef08f3cf08dc598998ad361a0c60ce6"
-    },
-    {
-      "path": "skills/implementation-reviewer/SKILL.md",
-      "bytes": 4617,
-      "sha256": "8889b0abfbd462b7a55644f25bc6ea520ef22c4a6797c7c5e0a8b969e68882a7"
     },
     {
       "path": "skills/module-designer/SKILL.md",
@@ -643,8 +628,8 @@
     },
     {
       "path": "src/human-loop-controller.mjs",
-      "bytes": 20456,
-      "sha256": "10ad4d0d4071270d6b527c9b0a59563d8637c36c1ac4726c05aa1c587dcfb232"
+      "bytes": 22973,
+      "sha256": "71c3fa593382f045d1663b62c3b57e29afba56f8a0720c49f86fcb7f80096774"
     },
     {
       "path": "src/human-loop-design-store.mjs",
@@ -658,8 +643,8 @@
     },
     {
       "path": "src/human-loop-installation.mjs",
-      "bytes": 48369,
-      "sha256": "d3a2462539f87d7818a69038c1ce852f7db3329ab68b0226b45ab302ad2d8eb7"
+      "bytes": 51340,
+      "sha256": "127588f59de328aa49b10814a779866dd5f9d02fc07a50eebefbd742954a74d4"
     },
     {
       "path": "src/human-loop-native-files.mjs",
@@ -688,8 +673,8 @@
     },
     {
       "path": "src/human-loop-provider.mjs",
-      "bytes": 45482,
-      "sha256": "b8955e48a432036258e7cecaf2091b58f58b672b8b5a2b50f4e636a14572c509"
+      "bytes": 47107,
+      "sha256": "5d096e3165b41d03150b64334ecc178224e2e1e8210acf8b760e4f81348324c7"
     },
     {
       "path": "src/human-loop-recovery.mjs",
@@ -703,8 +688,8 @@
     },
     {
       "path": "src/human-loop-runtime.mjs",
-      "bytes": 73857,
-      "sha256": "8c5610a7503e88979fb67e4c1ad87d66c2bd4908ca0d1f6c5631c68d17b59e03"
+      "bytes": 74100,
+      "sha256": "0054ee4fad11e46880a896795730a49cc69e93e08614dbc6b992285412b9dfe2"
     },
     {
       "path": "src/human-loop-startup.mjs",
@@ -723,13 +708,18 @@
     },
     {
       "path": "src/human-loop-transport.mjs",
-      "bytes": 88981,
-      "sha256": "248c9527a8c18e600d782b86c4110016f5099fd2909b6627de7fffa4569ad36a"
+      "bytes": 89193,
+      "sha256": "9c00042be032a79ef2e6c9c070ea7af74ff58b18c6734e0aa10c09200c35f375"
     },
     {
       "path": "src/human-loop-workspace.mjs",
       "bytes": 23967,
       "sha256": "45eff1a84509562e998d2cc65f76c30bd5ca664dae2fa2723140c680434c4714"
+    },
+    {
+      "path": "src/main-session-model.mjs",
+      "bytes": 5599,
+      "sha256": "aec6209184ea9b95a45b6ed9cfc3d4bab7528825bd26225e2360b20b67df19f8"
     },
     {
       "path": "src/native-evidence-workflow.mjs",

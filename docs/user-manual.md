@@ -68,6 +68,7 @@ does not switch the pinned tab.
 Every review panel has a **Details** button that opens the change context in a
 popup. In a draft review, the same popup includes **Compare with the accepted baseline**,
 showing what the draft started from.
+When Apply is blocked, the review pane shows the reason without requiring a hover.
 If accepted inputs changed meanwhile, the draft is kept but cannot overwrite
 them: compare it, discard it, then start a fresh review. Designs drafts support
 direct editing and typed revision instructions.
@@ -327,8 +328,9 @@ Change and feedback boxes share an input, **Send**, and **History** layout.
 **Send** keeps the current target and queues feedback when work is already running.
 **History** shows the recorded requests and their status without applying changes.
 Inspect any clarifications before continuing. Finish requires the necessary milestones, current
-design approval and resolved submitted feedback. **Finish Prototype and save
-outputs** retains evidence; it starts neither Design nor implementation.
+design approval and resolved submitted feedback. **Finish Prototype** retains
+evidence and continues directly into Development's Design workflow. It does not
+authorize implementation.
 Non-GUI work can retain a reason/specification without fabricating screens.
 
 ### Explore visual directions
@@ -360,7 +362,7 @@ The top toolbar's **Recheck**, **Restart** and open-preview controls follow the
 view on screen: the original for **Default**, or the shared comparison preview
 for a named direction. There is no second set of controls below the directions.
 Unavailable previews show their error beside the preview area.
-**Finish Prototype and save outputs** saves the accepted version, not an
+**Finish Prototype** saves the accepted version, not an
 unaccepted comparison.
 
 Select **Default** and **Accept** to keep the original and resume queued ordinary
@@ -372,11 +374,10 @@ comparisons. Resolve submitted feedback before finishing.
 
 ### Continue into Development
 
-**Continue to Development** opens a handoff summary, not a model request.
-Check its saved specification, decisions, assumptions, deferred work and target
-folder, then confirm **Create Design from Prototype** (or **Refine Design from
-Prototype**). Cancel changes nothing. **Open Development** is navigation only.
-After confirmation, status distinguishes submission, Designer work and published
+**Finish Prototype** is the single action for saving the accepted Prototype and
+preparing Design in Development. The internal handoff preserves the specification,
+decisions, assumptions, deferrals, approved designs and source identities without
+requiring another review popup or Start button. Status distinguishes submission, Designer work and published
 Design/questions. If activity is unavailable, it says unverified rather than
 claiming completion. Scripts do not run and implementation remains separately
 confirmed. Once the matching Design is verified and visible, the completed
@@ -384,7 +385,9 @@ handoff status clears and stays out of the workspace after later Design
 revisions. Results remain in Conversation; the original saved request/source
 records remain on disk.
 New handoffs, unanswered questions and unverified or failed work still show their
-current status. Routine checking, setup and Designer progress use the existing
+current status. Older save-only outputs and interrupted transitions offer one
+explicit **Continue to Development** or **Retry Development** action. Reopening
+alone never replays a retired request. Routine checking, setup and Designer progress use the existing
 bottom status bar without adding a header or moving the workspace. Review and
 recovery controls stay beside the handoff; questions, permissions and actionable
 errors stay in their owning Development controls. The standalone Development
@@ -520,27 +523,38 @@ choice can be pending before it opens; this does not start it.
 **Refresh status** rereads without work. Busy, unsupported, unavailable or partial
 application is not success and needs explicit resolution.
 
-Before first opening Development, choose **Private Canvas model > Save model
-for Development**. The choice is saved without creating a private session or
-starting work. Startup checks that the saved model and effort are still available,
-applies them, and verifies the actual private model; it never silently substitutes
-another model. Once Development is Ready, **Apply model** changes that running
-private session only. The main/discovery model belongs to the launching host.
-If you start Development without a saved model, Tandem opens this same settings
-window before creating its private session. Choose and save a model, then select
-**Start Development with saved model**. Closing settings cancels the startup
-continuation. Saving a model by itself never starts Development.
-Continue stays disabled until the displayed model choice is saved or applied.
-Changing that choice disables it again; a failed or pending save never enables
-it. While startup checks the saved model, the button shows **Checking model...**.
-Development then shows **Starting Development...** and **Verifying Development
+The same **Models** section contains two independent, optional selectors:
+**Main session model** changes the actual idle owning main session; **Development
+model** saves an override before creation or changes the idle private session
+after creation. Neither selector creates a session or sends a project request.
+Standalone startup preserves an existing main selection. If none is selected,
+it activates the native catalog's preferred available model and verifies the
+result before opening the project; it does not copy another chat's model or
+force an effort level.
+
+With no Development override, first creation reads and inherits the current main
+model. Same-ID resume retains Development's saved model, and later main changes
+do not synchronize it. An unavailable main readback or unsupported inherited
+model is an explicit startup error, not permission to substitute a model.
+Main switches preserve the current/shared effort when supported, and refuse busy
+or incompatible changes. Native deferred changes or required compaction
+confirmation are not reported as applied.
+
+The status area shows **Main: model · Effort: level** during discovery and
+**Development: model · Effort: level** inside Development. Before private creation
+it says **not started**. An unspecified/unreported effort says **native default
+(not reported)**; errors and unavailable readbacks never show a requested value
+as the actual model. Settings exposes the same native values and separate overrides.
+
+Development shows **Starting Development...** and **Verifying Development
 model...** until initialization finishes. These are progress states, not warnings.
 Permissions still require your response, and a failed startup or model check
 remains visible once the operation settles.
 The browser CLI accepts
 `--model <id>` and optional `--reasoning-effort <level>` for that main session;
-see the [quick start](quick-start.md). These options do not choose Development's
-private model. Resolve pending private model intent using the offered retry or
+see the [quick start](quick-start.md). They configure main at startup and therefore
+affect first-creation inheritance only when no Development override exists.
+Resolve pending private model intent using the offered retry or
 **Accept actual model** only if you want the reported model.
 
 The same Project settings window includes **Theme**, **Text size**,

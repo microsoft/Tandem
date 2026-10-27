@@ -161,19 +161,20 @@ test("permission settlement does not start setup; explicit opening starts once a
   assert.equal(starts, 1);
 });
 
-test("HTTP projection drops the exact completed prompt, keeps other prompts and never infers Ready", async t => {
+test("private HTTP projection drops the exact completed prompt, keeps other private prompts and never infers Ready", async t => {
   const root = await mkdtemp(join(tmpdir(), "native-permission-projection-")), events = new HumanLoopEvents();
   const permissions = new PermissionBroker(events), errors = [];
   const lifecycle = createNativePermissionLifecycle({ permissions, reportError: error => errors.push(error.message) });
-  lifecycle.attach("main");
+  lifecycle.attach("private");
   let starts = 0;
   const provider = await createHumanLoopProvider({ repositoryRoot: root,
     publicDirectory: fileURLToPath(new URL("../public/", import.meta.url)), surface: "browser",
-    getInstallation: () => ({ read: async () => ({ status: "new" }), runtime: null }),
+    getInstallation: () => ({ read: async () => ({ status: "new" }), runtime: null,
+      configuration: { owner: { privateSessionId: "private" } } }),
     events, permissions, start: async () => { starts++; } });
   t.after(async () => { await provider.close(); events.close(); await rm(root, { recursive: true, force: true }); });
   const a = request("first"), b = request("second");
-  const first = lifecycle.request(a, { sessionId: "main" }), second = lifecycle.request(b, { sessionId: "main" });
+  const first = lifecycle.request(a, { sessionId: "private" }), second = lifecycle.request(b, { sessionId: "private" });
   lifecycle.observe(requested("first-native", a)); lifecycle.observe(requested("second-native", b));
   const [firstId, secondId] = permissions.list().map(view => view.id);
   const snapshot = async () => (await (await fetch(new URL("/api/snapshot", provider.url))).json());

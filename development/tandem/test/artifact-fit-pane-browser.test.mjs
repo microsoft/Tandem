@@ -147,5 +147,4 @@ test('explicit Fit reveals the complete overview in the saved integrated outer-p
   });
   if(evidence)await writeFile(join(evidence,'results.json'),JSON.stringify(receipts,null,2));
   assert.deepEqual(browser.exceptions,[]);
-  await browser.call('Browser.close');
 });

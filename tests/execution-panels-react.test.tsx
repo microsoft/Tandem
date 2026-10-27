@@ -5,7 +5,6 @@ import React, { act, type ComponentType } from "react";
 import { createProcessState } from "../src/process-state.js";
 import { emptySketchState } from "../src/sketch.js";
 import type { LifecycleStageId } from "../src/types.js";
-import type { CommandEvidence } from "../src/verification.js";
 import type { UiContextValue, UiState } from "../src/renderer/ui-context.js";
 
 function fixture(stage: LifecycleStageId): UiState {

@@ -95,7 +95,7 @@ test('Fit and manual zoom retain the complete authored HTML content beyond its n
     await writeFile(join(evidence,'fit-metrics.json'),JSON.stringify(before,null,2));
     await writeFile(join(evidence,'fit.png'),await browser.screenshot());
   }
-  if(process.env.TANDEM_FIT_DIAGNOSE){console.log(JSON.stringify(before));await browser.call('Browser.close');return;}
+  if(process.env.TANDEM_FIT_DIAGNOSE){console.log(JSON.stringify(before));return;}
   assert.ok(before.native.height>=before.content.bottom,'The full content, not just the declared canvas, must be inside the capture surface.');
   assert.ok(before.frame.height<=before.viewport.height+1,'Fit must contain the complete surface without vertical clipping.');
   if(!process.env.TANDEM_FIT_ARTIFACT){
@@ -277,5 +277,4 @@ test('Fit and manual zoom retain the complete authored HTML content beyond its n
   assert.equal(oversized.capture,null);
   if(evidence)await writeFile(join(evidence,'validation.json'),JSON.stringify(receipts,null,2));
   assert.deepEqual(browser.exceptions,[]);
-  await browser.call('Browser.close');
 });

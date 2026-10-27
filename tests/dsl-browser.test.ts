@@ -215,8 +215,10 @@ test("real browser shows design generation before the first view and keeps live 
     assert.equal(await browser.evaluate('document.querySelector("#sketch-structure-tree").checkVisibility()'), false);
     await browser.evaluate(`document.querySelector("#sketch-structure summary").click()`);
     await checkSidebar("after expanding Structure");
-    await browser.evaluate(`document.querySelector("#sketch-structure-tree button").focus();
-        document.activeElement.dispatchEvent(new KeyboardEvent("keydown", {key:"End", bubbles:true}))`);
+    await browser.call("Page.bringToFront");
+    await browser.evaluate('document.querySelector("#sketch-structure-tree button").focus()');
+    await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "End", code: "End", windowsVirtualKeyCode: 35 });
+    await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "End", code: "End", windowsVirtualKeyCode: 35 });
     await browser.waitFor('document.querySelector("[data-node-id=action-31]").getAttribute("aria-selected") === "true"');
     assert.equal(await browser.evaluate(`(() => {
         const tree = document.querySelector("#sketch-structure-tree").getBoundingClientRect();

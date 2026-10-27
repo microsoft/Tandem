@@ -235,7 +235,7 @@ test("pinned draft review keeps lifecycle styling, editor state and controls usa
         <script>window.__renderMermaid = async () => ({ svg: '<svg xmlns="http://www.w3.org/2000/svg" width="360" height="180" viewBox="0 0 360 180"><text x="20" y="40">Synthetic task decision</text></svg>' });
         ${script.replaceAll("</script", "<\\/script")}
         window.workspaceFixture = TandemTest.mount();
-        workspaceFixture.flushSync(() => workspaceFixture.store.accept(${JSON.stringify(initial)}));
+        fetch("/api/state").then(response => response.json()).then(state => workspaceFixture.flushSync(() => workspaceFixture.store.accept(state)));
         </script></body></html>`;
     const h = await extensionHarness({}, undefined, html, undefined, false, true);
     await h.api.persistState({ ...initial, revision: 0 });
@@ -257,6 +257,10 @@ test("pinned draft review keeps lifecycle styling, editor state and controls usa
     });
     await h.api.persistState(draft);
     const server = await h.api.startServer("pinned-browser", "sample", "project:tandem", true);
+    const preparedReview = await fetch(new URL("api/reviews/open", server.url), { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stageId: "requirements", expectedGeneration: initial.generation }) });
+    assert.equal(preparedReview.status, 200, "Seed a saved draft for explicit resume through the review pane.");
     t.after(async () => {
         clearInterval(server.heartbeat);
         await new Promise<void>(resolve => { server.server.close(() => resolve()); server.server.closeAllConnections(); });
@@ -441,23 +445,27 @@ test("stale Designs has a visible keyboard-accessible update action at wide and 
     initial.sketch = { ...emptySketchState(), status: "stale", current: revision, history: [revision] };
     await h.api.persistState({ ...initial, revision: 0 });
     server = await h.api.startServer("stale-design-browser", "sample", "project:tandem", true);
+    const preparedReview = await fetch(new URL("api/reviews/open", server.url), { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stageId: "sketch", expectedGeneration: initial.generation }) });
+    assert.equal(preparedReview.status, 200);
     const browser = await openFixtureBrowser(t);
     await browser.call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
     await browser.call("Page.navigate", { url: server.url });
     await browser.waitFor('Boolean(document.querySelector("#sketch-workspace-tab")) && !document.querySelector("#studio-workspace").inert');
     await browser.evaluate('document.querySelector("#sketch-workspace-tab").dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))');
-    await browser.waitFor('document.querySelector("#review-stage")?.hidden === false');
-    await browser.evaluate('document.querySelector("#review-stage").click()');
+    await browser.waitFor('document.querySelector("#continue-pending-review")?.disabled === false');
+    await browser.evaluate('document.querySelector("#continue-pending-review").click()');
     await browser.waitFor('document.querySelector("#sketch-update-requirements")?.disabled === false');
     for (const width of [1280, 375]) {
         await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: false });
         await browser.evaluate('document.querySelector("#sketch-update-requirements").focus()');
         const layout = await browser.evaluate(`(() => {
-            const action = document.querySelector("#sketch-update-requirements"), status = document.querySelector("#sketch-status");
+            const action = document.querySelector("#sketch-update-requirements"), status = document.querySelector("#stage-input-review");
             const bounds = element => { const r = element.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, height: r.height }; };
             return { action: bounds(action), status: bounds(status), label: action.textContent, focused: document.activeElement === action,
                 visible: getComputedStyle(status).display !== "none", currentStage: workspaceFixture.store.getSnapshot().state.lifecycle.currentStage,
-                approvalDisabled: document.querySelector("#sketch-approve").disabled, applyDisabled: document.querySelector("#apply-stage-review").disabled };
+                separateApproval: Boolean(document.querySelector("#sketch-approve")), applyDisabled: document.querySelector("#apply-stage-review").disabled };
         })()`);
         if (process.env.TANDEM_UI_EVIDENCE) {
             await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `stale-design-review-${width}.png`), await browser.screenshot());
@@ -466,7 +474,7 @@ test("stale Designs has a visible keyboard-accessible update action at wide and 
         assert.equal(layout.visible, true);
         assert.equal(layout.focused, true);
         assert.equal(layout.currentStage, "prototype");
-        assert.equal(layout.approvalDisabled, true);
+        assert.equal(layout.separateApproval, false);
         assert.equal(layout.applyDisabled, true);
         assert.ok(layout.action.height > 0 && layout.action.left >= -1 && layout.action.right <= width + 1, JSON.stringify(layout));
         assert.ok(layout.action.top >= layout.status.top - 1 && layout.action.bottom <= layout.status.bottom + 1, JSON.stringify(layout));

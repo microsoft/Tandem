@@ -118,7 +118,14 @@ This establishes a baseline; it does not rewrite the application.
 Review the proposed Design and answer any questions in Tandem. When satisfied,
 send a separate request to implement it. Review permission requests as they appear.
 
-**Settings > Model** selects the private workflow model independently of main chat.
+**Project settings > Models** has optional **Main session model** and **Development
+model** selectors. First private creation uses an explicit Development override,
+or inherits the current main model when none is saved. Same-ID resume keeps the
+private session's model; later main changes do not synchronize it.
+Main changes use supported native session APIs with idle/readback checks; an
+unsupported host reports the limitation rather than replacing its session.
+The status area shows current model and effort for the owning stage, with
+not-started/unavailable and native-default/not-reported states kept explicit.
 The optional **Reasoning effort** list contains only levels advertised for that
 model. **No explicit override** preserves native model-selection behavior; Tandem
 does not impose an effort default. Apply is available only while the private

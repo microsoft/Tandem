@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { readModelSelection } from "../public/model-selection.js";
 import { randomUUID } from "node:crypto";
 import { readFile, realpath, lstat } from "node:fs/promises";
 import { resolve, relative, isAbsolute, extname, sep } from "node:path";
@@ -280,7 +281,8 @@ async function body(request) {
 }
 
 export async function createHumanLoopProvider({ repositoryRoot, publicDirectory, getInstallation, events, permissions, start, finishEmptyRepair, openBrowser,
-  openProjectFolder: revealProject = openProjectFolder, surface = "canvas", projectHost = null, modelSettings, changeModel, getStartupPhase = () => null }) {
+  openProjectFolder: revealProject = openProjectFolder, surface = "canvas", projectHost = null, modelSettings, changeModel,
+  mainModelSettings, changeMainModel, getStartupPhase = () => null }) {
   requireCondition(["canvas", "browser"].includes(surface), "Unsupported Tandem delivery surface.");
   if (projectHost) requireCondition(/^http:\/\/127\.0\.0\.1:\d+$/.test(projectHost.origin)
     && /^[a-zA-Z0-9-]{1,100}$/.test(projectHost.channel), "Invalid project presentation binding.");
@@ -291,7 +293,11 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
   const attachments = new AnnotationAttachmentStore(root);
   const preferences = new HumanLoopPreferences(root);
   async function settings() {
-    return { preferences: await preferences.read(), model: modelSettings ? await modelSettings()
+    return { preferences: await preferences.read(),
+      mainModel: mainModelSettings ? await mainModelSettings()
+        : { sessionId: null, actual: null, reasoningEffort: null, models: [], canChange: false, error: null,
+          reason: "This host does not expose its main-session model controls." },
+      model: modelSettings ? await modelSettings()
       : runtime()?.modelSettings ? await runtime().modelSettings()
         : { models: [], actual: null, canChange: false, reason: "The authenticated model catalog is not available in this view." } };
   }
@@ -304,13 +310,19 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
     const privateEvents = projectPrivateEvents(events.list(), privateId);
     if (startup || !running || !["ready", "closed"].includes(installed.status)) return { schemaVersion: "human-loop-snapshot-view/v1", streamId: events.streamId,
       installation: installed, startup,
+      modelSelection: { status: !running && ["new", "prepared"].includes(installed.status) ? "not-started" : "unavailable",
+        modelId: null, reasoningEffort: null, error: null },
       conversationStatus: "unverified", workflow: null, design: null, messages: [], events: privateEvents,
       accessRequests: privateId ? permissions.list(privateId) : [], processes: { apps: [], commands: [] } };
-    const [state, readiness, originals, design, processes] = await Promise.all([
+    const [state, readiness, originals, design, processes, modelSelection] = await Promise.all([
       running.state(), running.readiness(), running.conversation(), running.currentDesign(), running.commands.read(),
+      readModelSelection(() => {
+        if (typeof running.currentModelSelection !== "function") throw new Error("The private runtime does not expose model readback.");
+        return running.currentModelSelection();
+      }),
     ]);
     return { schemaVersion: "human-loop-snapshot-view/v1", streamId: events.streamId,
-      installation: installed, startup, workflow: projectHumanLoopView(state, readiness, design),
+      installation: installed, startup, modelSelection, workflow: projectHumanLoopView(state, readiness, design),
       conversationStatus: "verified", design, cycles: state.cycles.map(projectHumanCycle), messages: projectHumanConversation(state, originals), events: privateEvents,
       historyRequests: state.requests.slice(-500).map(({ id, receivedAt }) => ({ id, receivedAt })),
       recoveries: (state.recoveries ?? []).map(({ id, recoveredAt }) => ({ id, recoveredAt })),
@@ -326,6 +338,15 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
       }
       const path = new URL(request.url, url).pathname;
       if (request.method === "GET" && path === "/api/settings") return json(response, 200, await settings());
+      if (request.method === "POST" && path === "/api/settings/main-model") {
+        const data = object(await body(request), ["model", "sessionId", "expectedModel"]);
+        requireCondition(typeof changeMainModel === "function", "This host cannot change the main-session model.");
+        requireCondition(typeof data.model === "string" && data.model.trim() === data.model && data.model.length > 0 && data.model.length <= 200
+          && typeof data.sessionId === "string" && data.sessionId.length > 0 && data.sessionId.length <= 200
+          && (data.expectedModel === null || typeof data.expectedModel === "string" && data.expectedModel.length <= 200), "Invalid main model selection.");
+        await changeMainModel(data);
+        return json(response, 200, await settings());
+      }
       if (request.method === "POST" && path === "/api/settings") {
         const data = object(await body(request), ["theme", "fontSize"]);
         await preferences.update(data); events.touch();

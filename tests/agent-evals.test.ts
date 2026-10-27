@@ -149,7 +149,7 @@ test("PR triggers include every source, test, and workflow while live stays manu
     const workflow = await readFile(resolve(".github", "workflows", "agent-evals.yml"), "utf8");
     const pullRequest = workflow.split("  workflow_dispatch:")[0];
     for (const path of [
-        "src/**", "development/**", "tests/**", "scripts/evaluate.ts", "skills/**", ".github/workflows/**",
+        "src/**", "development/**", "tests/**", "scripts/**", "skills/**", ".github/workflows/**",
         ".github/copilot-instructions.md", "package.json", "package-lock.json", "tsconfig*.json",
     ]) assert.ok(pullRequest.includes(`- "${path}"`));
     assert.deepEqual([...workflow.matchAll(/node-version:\s*"([^"]+)"/g)].map(match => match[1]), ["24", "24"],
@@ -162,6 +162,10 @@ test("PR triggers include every source, test, and workflow while live stays manu
     assert.match(workflow, /in-flight costs can exceed it/);
     assert.doesNotMatch(workflow, /max_tokens|max-tokens/);
     assert.doesNotMatch(workflow, /^\s*(pull_request_target|schedule):/m);
+    assert.doesNotMatch(workflow, /npm install --global.*@github\/copilot/);
+    assert.match(workflow, /npm --prefix development\/tandem ci/);
+    assert.match(workflow, /npm run pack && node --import tsx --test tests\/payload\.test\.ts/);
+    assert.match(workflow, /TANDEM_PACKAGED_ZIP: dist\/tandem-extension\.zip/);
 });
 
 test("fake runner reports model, prompt fingerprints, actual usage, and a successful exit code", async () => {

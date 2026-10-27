@@ -7,6 +7,7 @@ export interface HumanLoopRuntimeHandle {
   store: { load(): Promise<HumanLoopState> };
   send(request: HumanRequest): Promise<HumanRequest>;
   readiness(): Promise<{ status: string; reason?: string | null }>;
+  currentModelSelection?(): Promise<{ modelId?: string; reasoningEffort: string | null }>;
   transport: { inspectIdle(): Promise<unknown> };
   workspace: { capture(): Promise<SnapshotRef>; verifySnapshot(ref: SnapshotRef): Promise<unknown> };
   currentDesign(): Promise<{ binding: DesignBinding; content: unknown }>;
@@ -66,6 +67,7 @@ export function createHumanLoopController(options: {
   runtimeRoot?: string;
   mainPermissionHandler?: NonNullable<SessionConfig["onPermissionRequest"]>;
   withRequestAdmission?<T>(operation: () => Promise<T>): Promise<T>;
+  withMainModelChange?<T>(operation: () => Promise<T>): Promise<T>;
   withEmptyRepairExclusion?<T>(operation: () => Promise<T>): Promise<T>;
   inspectRepairAdmissions?(): Promise<unknown>;
   beforeStart?(): Promise<void>;
@@ -76,4 +78,9 @@ export function createHumanLoopController(options: {
 export function createDurablePrivateSession(
   client: import("@github/copilot-sdk").CopilotClient, configuration: SessionConfig,
   onCreated?: (sessionId: string) => Promise<void>,
+  mainModel?: () => Promise<{ modelId?: string; reasoningEffort?: string }>,
 ): Promise<CopilotSession>;
+export function preparePrivateSessionConfiguration(
+  client: import("@github/copilot-sdk").CopilotClient, configuration: SessionConfig,
+  mainModel?: () => Promise<{ modelId?: string; reasoningEffort?: string }>,
+): Promise<SessionConfig>;

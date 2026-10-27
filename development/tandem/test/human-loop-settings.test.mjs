@@ -88,6 +88,38 @@ test("unopened model settings save authenticated preferences without reserving a
   assert.equal(f.session.sends.length, 0);
 });
 
+test("one Settings window exposes independent main and Development model controls without creating private work", { skip: !browserAvailable }, async t => {
+  const f = await fixture(t, {}, true, false);
+  let current = "one";
+  const changes = [];
+  const controller = createHumanLoopController({ workspacePath: f.root, projectEffortControl: true,
+    sdkModulePath: import.meta.resolve("@github/copilot-sdk") });
+  await controller.attach({ sessionId: "main", rpc: {
+    model: {
+      getCurrent: async () => ({ modelId: current, reasoningEffort: "low" }),
+      list: async () => ({ list: ["one", "two"].map(id => ({ id, capabilities: { supports: { reasoning_effort: ["low"] } } })) }),
+      switchTo: async input => { changes.push(input); current = input.modelId; return { modelId: current }; },
+    },
+    metadata: { isProcessing: async () => ({ processing: false }), activity: async () => ({ hasActiveWork: false }) },
+    queue: { pendingItems: async () => ({ items: [], steeringMessages: [] }) },
+  } });
+  t.after(async () => { await controller.close(); controller.events.close(); });
+  const provider = await controller.openView("settings", { surface: "browser" });
+  const browser = await openFixtureBrowser(t);
+  await browser.call("Page.navigate", { url: provider.url });
+  await browser.waitFor("document.querySelector('#setting-main-model')?.value==='one' && !document.querySelector('#setting-model').disabled");
+  await browser.evaluate("document.querySelector('#canvas-settings summary').click()");
+  assert.equal(await browser.evaluate("document.querySelector('#setting-main-model').closest('details')===document.querySelector('#setting-model').closest('details')"), true);
+  await browser.evaluate("document.querySelector('#setting-main-model').value='two';document.querySelector('#setting-main-model').dispatchEvent(new Event('change'));document.querySelector('#apply-main-model').click()");
+  await browser.waitFor("document.querySelector('#main-model-setting-status').textContent.includes('Actual main model: two') && !document.querySelector('#setting-model').disabled");
+  assert.equal(changes.length, 1); assert.equal((await f.preferences.read()).model, null);
+  await browser.evaluate("document.querySelector('#setting-model').value='one';document.querySelector('#setting-model').dispatchEvent(new Event('change'));document.querySelector('#apply-model').click()");
+  await browser.waitFor("document.querySelector('#model-setting-status').textContent.includes('Saved selection: one')");
+  assert.equal(current, "two"); assert.equal((await f.preferences.read()).model, "one");
+  assert.equal(controller.installation.configuration, null); assert.equal(f.session.sends.length, 0);
+  assert.equal(await browser.evaluate("document.querySelector('#development-model-effort').textContent"), "Development: not started");
+});
+
 for (const failed of [false, true]) test(`startup projection stays in progress through native model verification (${failed ? "failed readback" : "success"})`, async t => {
   const f = await fixture(t, { model: "one", reasoningEffort: "low", projectReasoningEffort: "low" }, true);
   const controller = await unopenedController(t, f);
@@ -167,30 +199,57 @@ test("reusing a ready runtime does not project another initialization or hide it
   }
 });
 
-test("first Development startup asks for a model before reserving ownership, even with saved effort", async t => {
-  const f = await fixture(t, { projectReasoningEffort: "low" }, true, false), controller = await unopenedController(t, f);
-  assert.equal(await controller.requiresModelSelection(), true);
-  await assert.rejects(controller.start(), error => error.code === "development_model_required");
-  assert.equal((await controller.status()).startup, null, "Failed admission cannot leave a permanent startup indicator.");
+test("fresh Development reaches the native startup boundary without requiring a model selection or catalog query", async t => {
+  const f = await fixture(t, {}, true, false), controller = await unopenedController(t, f, async () => {
+    assert.fail("The entry gate must not select a model before native creation.");
+  });
+  let starts = 0;
+  t.mock.method(controller.installation, "open", async () => { starts++; throw new Error("Native consent pending."); });
+  assert.equal(await controller.requiresModelSelection(), false);
+  await assert.rejects(controller.start(), /Native consent pending/);
+  assert.equal(starts, 1);
+  assert.equal((await controller.status()).startup, null);
   assert.equal(controller.installation.runtime, null);
   assert.equal(controller.installation.configuration, null);
-  const provider = await controller.openView("settings");
-  const response = await fetch(new URL("api/runtime/start", provider.url), { method: "POST",
-    headers: { "content-type": "application/json" }, body: "{}" });
-  assert.equal(response.status, 409);
-  assert.equal((await response.json()).code, "development_model_required");
-  await controller.changeModel({ model: "one" });
-  assert.equal(await controller.requiresModelSelection(), false);
-  assert.equal(controller.installation.configuration, null);
+  assert.equal((await f.preferences.read()).model, null);
   assert.equal(f.session.sends.length, 0);
 });
 
-test("a ready but unselected private model asks for selection without replacing its existing session", async t => {
+for (const saved of [false, true]) test(`transport preferences ${saved ? "honor the explicit private model" : "leave missing model and effort unset for the creation adapter"} without a popup or project request`, async t => {
+  const f = await fixture(t, saved ? { model: "two" } : {}, true, false);
+  const controller = await unopenedController(t, f);
+  let opened = false;
+  t.mock.method(controller.installation, "read", async () => ({ status: opened ? "ready" : "new" }));
+  const runtime = t.mock.getter(controller.installation, "runtime", () => opened ? f.runtime : null);
+  t.mock.method(controller.installation, "open", async () => { await f.runtime.open(); opened = true; return f.runtime; });
+  t.mock.method(f.runtime, "wake", () => {});
+  const before = await f.preferences.read();
+  assert.equal(await controller.requiresModelSelection(), false);
+  assert.deepEqual(await f.preferences.read(), before, "Checking availability never writes a model preference.");
+  const started = await controller.start();
+  assert.equal(started, f.runtime);
+  const expected = saved ? "two" : "one";
+  assert.equal(f.session.config.model, saved ? "two" : undefined);
+  assert.equal(Object.hasOwn(f.session.config, "model"), saved);
+  assert.equal(Object.hasOwn(f.session.config, "reasoningEffort"), false);
+  assert.deepEqual(await f.preferences.read(), before, "Native default does not become an invented saved user override.");
+  assert.equal((await f.runtime.modelSettings()).actual, expected);
+  assert.equal((await f.runtime.modelSettings()).actualReasoningEffort, null);
+  assert.equal((await f.runtime.readiness()).modelBlocked, false);
+  assert.equal(f.session.sends.length, 0);
+  assert.equal(f.session.config.requestExtensions, false);
+  await f.runtime.close();
+  runtime.mock.restore();
+  await controller.close(); controller.events.close();
+});
+
+test("a ready private session without explicit selection keeps its identity and exposes optional settings", async t => {
   const f = await fixture(t, {}, true), controller = await unopenedController(t, f);
   f.actual(undefined);
   t.mock.method(controller.installation, "read", async () => ({ status: "ready" }));
   const runtime = t.mock.getter(controller.installation, "runtime", () => f.runtime);
-  assert.equal(await controller.requiresModelSelection(), true);
+  assert.equal(await controller.requiresModelSelection(), false);
+  assert.equal((await f.runtime.modelSettings()).actual, null, "Unknown actual model must not be invented from the main session.");
   await f.runtime.changeModel({ model: "one" });
   assert.equal(await controller.requiresModelSelection(), false);
   assert.equal(f.runtime.sessionId, "private");
@@ -312,17 +371,20 @@ test("Settings can save a model before Development exists and retains it across 
   assert.deepEqual(browser.exceptions, []);
 });
 
-test("standalone Start Development opens its existing model settings instead of failing after private creation", { skip: !browserAvailable }, async t => {
+test("standalone startup uses native defaults and exposes startup errors without a mandatory model popup", { skip: !browserAvailable }, async t => {
   const f = await fixture(t, {}, true, false), controller = await unopenedController(t, f);
   const provider = await controller.openView("settings", { surface: "browser" });
+  t.mock.method(controller.installation, "open", async () => { throw new Error("Native consent pending."); });
   const browser = await openFixtureBrowser(t);
   await browser.call("Page.navigate", { url: provider.url });
   await browser.waitFor("document.querySelector('#initialize').checkVisibility() && !document.querySelector('#initialize').disabled && !document.querySelector('#setting-model').disabled");
   await browser.evaluate("document.querySelector('#initialize').click()");
-  await browser.waitFor("document.querySelector('#canvas-settings').open && !document.querySelector('#setting-model').disabled");
+  await browser.waitFor("document.querySelector('#notice').textContent.includes('Native consent pending')");
+  assert.equal(await browser.evaluate("document.querySelector('#canvas-settings').open"), false);
   assert.equal(controller.installation.configuration, null);
   assert.equal(controller.installation.runtime, null);
-  assert.match(await browser.evaluate("document.querySelector('#notice').textContent"), /Choose and save a Development model/);
+  assert.equal((await f.preferences.read()).model, null);
+  await browser.evaluate("document.querySelector('#canvas-settings summary').click()");
   await browser.evaluate(`document.querySelector('#setting-model').value='one';
     document.querySelector('#setting-model').dispatchEvent(new Event('change'));
     document.querySelector('#apply-model').click();`);
