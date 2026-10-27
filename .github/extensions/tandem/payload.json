@@ -4,8 +4,8 @@
   "files": [
     {
       "path": "extension.mjs",
-      "bytes": 2992730,
-      "sha256": "fc72b4fde8df0cb0c01453ed18882f03209361035e3bd8e28fa941b1bb9dedb6"
+      "bytes": 3002774,
+      "sha256": "dfd0645ef547af0a8148e5d1c4b7cbc6181ec30d87c37287d3271b25c294cf23"
     },
     {
       "path": "preview-launcher.mjs",
@@ -793,5 +793,5 @@
       "sha256": "92b92e76eb4ac3bee96c6bbdde06ed1f7d9c0088576a51db1276c567dbb207f8"
     }
   ],
-  "digest": "dbdfc584cb85fd09a7730fd6e293b48150d9c3cd5c60c0f5516abc6e840987ec"
+  "digest": "86d1f73de00986731d263cff0ebb717f6366490c7ee4ef653014b36c2127cec2"
 }

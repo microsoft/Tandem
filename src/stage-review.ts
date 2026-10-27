@@ -81,6 +81,12 @@ export function stageReviewDigest(state: TandemState, stage: ReviewStage): strin
     });
 }
 
+export function stageReviewHasChanges(parent: TandemState, draft: TandemState): boolean {
+    const review = draft.stageReview;
+    return Boolean(review && (!parent.lifecycle.completedStages.includes(review.stage)
+        || stageReviewDigest(draft, review.stage) !== review.baselineDigest));
+}
+
 export function stageReviewConflict(parent: TandemState, draft: TandemState): string {
     const review = draft.stageReview;
     if (!review || review.parentId !== parent.prototypeId) return "This draft belongs to another project.";

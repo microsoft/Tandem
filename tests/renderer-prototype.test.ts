@@ -6,6 +6,68 @@ import { exploringPrototype } from "./helpers/visual-fixture.js";
 
 const frame = (h: Harness) => h.get<HTMLIFrameElement>("preview-frame");
 
+for (const legacy of [false, true]) test(`${legacy ? "legacy" : "tracked"} previews expose the required update rather than Finish after review`, async t => {
+    const value = legacy ? state("prototype") : readyPrototype();
+    value.previewStatus = "ready";
+    value.previewUrl = "http://127.0.0.1:9999/";
+    value.prototypeNeedsUpdate = true;
+    value.lifecycle.reviewId = "review-11111111-1111-4111-8111-111111111111";
+    const h = await setup(t, value);
+    assert.equal(hidden(h, "retry-prototype-checkpoint"), false);
+    assert.equal(disabled(h, "retry-prototype-checkpoint"), false);
+    assert.equal(text(h, "retry-prototype-checkpoint"), "Update for reviewed inputs");
+    assert.equal(disabled(h, "complete-stage"), true);
+    assert.match(text(h, "prototype-progress-message"), /does not yet include the reviewed inputs/);
+    assert.match(text(h, "next-action-guide"), /Update the prototype for reviewed inputs/);
+    assert.equal(disabled(h, "request-prototype-visual"), true, "Optional appearance work cannot bypass the required update.");
+    h.setFetch(async () => response({ ...value, revision: value.revision + 1,
+        processing: { status: "running", action: "submit-revision", requestedAt: value.updatedAt } }));
+    await h.click("retry-prototype-checkpoint");
+    assert.deepEqual(h.requests.find(item => item.path === "/api/prototype/action")!.body,
+        { action: "retry", expectedRevision: value.revision });
+    assert.equal(current(h).previewUrl, value.previewUrl);
+});
+
+test("an unlinked upstream review points to stale Designs before offering a prototype update", async t => {
+    const value = readyPrototype();
+    value.prototypeNeedsUpdate = true;
+    value.lifecycle.reviewId = "review-11111111-1111-4111-8111-111111111111";
+    value.lifecycle.completedStages = ["prepare", "requirements"];
+    const h = await setup(t, value);
+    assert.equal(text(h, "continue-pending-review"), "Review Designs draft");
+    assert.equal(disabled(h, "continue-pending-review"), false);
+    assert.equal(disabled(h, "retry-prototype-checkpoint"), true);
+    assert.equal(disabled(h, "complete-stage"), true);
+    assert.match(text(h, "pending-review-title"), /Designs review/);
+    assert.equal(h.requests.length, 0, "Opening the view never starts a build.");
+});
+
+test("a queued change leaves the earlier prepared prototype actionable instead of waiting on itself", async t => {
+    const value = readyPrototype(1, true);
+    value.changeRequests = [{
+        version: 1, id: "queued-change", clientRequestId: "queued-client", originStage: "prototype",
+        message: "Add saving.", submittedAt: value.updatedAt, status: "queued", assessment: null,
+        analysisId: null, baselineDigest: null, error: "", clarifications: [], remainingStages: [], workStarted: [],
+        affectedDecisionIds: [], snapshotPath: null, completedAt: null, baseCheckpointId: "structure",
+        baseSketchRevisionId: null, visualSelection: null, sourceResultId: null, sourceRequests: [],
+        developmentAdmission: null, developmentRequest: null,
+    }];
+    const h = await setup(t, value);
+    assert.equal(disabled(h, "apply-prototype-update"), false);
+    assert.equal(disabled(h, "submit-revision"), true, "Drafting is allowed, but another change cannot be submitted.");
+    assert.equal(disabled(h, "complete-stage"), true);
+    assert.match(h.document.querySelector(".review-pane-guidance")!.textContent!, /existing prototype.*queued/);
+    assert.match(text(h, "next-action-guide"), /Show the prepared prototype version/);
+    h.setFetch(async () => response({ ...value, revision: 2,
+        changeRequests: [{ ...value.changeRequests[0], status: "analyzing" }],
+        prototypeFlow: { ...value.prototypeFlow, pendingCheckpointId: null, displayedCheckpointId: "interaction" },
+        processing: { status: "running", action: "assess-change", requestedAt: value.updatedAt } }));
+    await h.click("apply-prototype-update");
+    await waitFor(h, () => h.requests.some(item => item.path === "/api/prototype/action"));
+    assert.equal(h.requests.find(item => item.path === "/api/prototype/action")!.body.action, "apply-update");
+    assert.equal(current(h).prototypeFlow.displayedCheckpointId, "interaction");
+});
+
 test("one Prototype tab combines layout and behavior while preserving accepted legacy checkpoints", async t => {
     const h = await setup(t, readyPrototype(1, true));
     assert.deepEqual(Array.from(h.get("prototype-milestones").querySelectorAll("[role=tab]"), item => item.getAttribute("data-milestone")), ["prototype", "visual"]);

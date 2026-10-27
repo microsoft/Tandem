@@ -4,10 +4,12 @@ import { createStageReview, mergeStageReview, stageReviewDigest, type StageRevie
 import { setup, state, decision, response, browse, disabled, hidden, field, current, sketchSetup } from "./renderer-fixtures.test.js";
 import type { UiState } from "../src/renderer/ui-context.js";
 
-async function fixture(t: Parameters<typeof setup>[0], changed = false, usageMode = false, blocker: string | null = null) {
+async function fixture(t: Parameters<typeof setup>[0], changed: boolean | "usage-only" = false, usageMode = false,
+    blocker: string | null = null, baselineError = "") {
     let parent = state("prototype");
     parent.requirements.substage = "dag";
     parent.decisionGraph.nodes = [decision("task", "answered")];
+    const baseline = structuredClone(parent);
     const reference: StageReviewReference = { version: 1, id: "review-11111111-1111-1111-1111-111111111111",
         stage: "requirements", generation: parent.generation, createdAt: parent.updatedAt, appliedAt: null, discardedAt: null };
     const draft: UiState = { ...createStageReview(parent, reference), revision: 1, provider: parent.provider };
@@ -16,7 +18,7 @@ async function fixture(t: Parameters<typeof setup>[0], changed = false, usageMod
         draft.decisionGraph.nodes = [];
     }
     if (changed) {
-        draft.decisionGraph.nodes[0].answer = "Draft task behavior";
+        if (changed !== "usage-only") draft.decisionGraph.nodes[0].answer = "Draft task behavior";
         draft.requirements.usageItems.push("I want to share a task list.");
         draft.revision++;
     }
@@ -47,7 +49,8 @@ async function fixture(t: Parameters<typeof setup>[0], changed = false, usageMod
             return response(parent);
         }
         if (path.startsWith(`/api/reviews/${reference.id}/`)) {
-            if (path.endsWith("/baseline")) return response({ state: parent, document: null });
+            if (path.endsWith("/baseline")) return baselineError ? response({ error: baselineError }, 409)
+                : response({ state: baseline, document: null });
             if (options.method === "POST") return mutate(path, options);
             return response(snapshot());
         }
@@ -56,6 +59,7 @@ async function fixture(t: Parameters<typeof setup>[0], changed = false, usageMod
     await browse(h, "requirements");
     await h.click("review-stage");
     return { h, draft, reference, failApply(message: string) { failure = message; },
+        restoreBaseline() { baselineError = ""; },
         setDraftMutation(handler: typeof mutate) { mutate = handler; } };
 }
 
@@ -85,7 +89,7 @@ test("review mode pins an earlier-stage editor without unlocking accepted work o
     assert.equal(current(h).lifecycle.currentStage, "prototype");
     assert.equal(hidden(h, "reopen-stage"), true);
     assert.equal(hidden(h, "complete-stage"), true);
-    assert.match(h.get("design-tree-panel").textContent!, /Pinned draft review.*Current work: Prototype/);
+    assert.match(h.get("stage-input-review").textContent!, /Requirements review.*Draft only/);
     assert.equal(disabled(h, "review-requirement-request"), false);
     await h.input("review-requirement-request", "Keep this unsent draft while I work on Prototype.");
     const input = field(h, "review-requirement-request");
@@ -144,7 +148,8 @@ test("Apply is explicit, refuses unsent edits, and leaves the reviewed view pinn
     await h.click("apply-stage-review"); await h.confirm(true);
     assert.equal(current(h).lifecycle.currentStage, "prototype");
     assert.equal(current(h).decisionGraph.nodes[0].answer, "Draft task behavior");
-    assert.match(h.get("design-tree-panel").textContent!, /Applied review/);
+    assert.match(h.get("design-tree-panel").textContent!, /Applied requirement changes/);
+    assert.match(h.get("design-tree-panel").textContent!, /saved changes are now part of accepted work/);
     assert.equal(hidden(h, "design-tree-panel"), false);
     assert.equal(disabled(h, "review-requirement-request"), true);
     const ids = Array.from(h.document.querySelectorAll("[id]"), node => node.id);
@@ -177,11 +182,39 @@ test("a real parent work blocker is shown before Apply rather than as a failed r
 
 test("baseline comparison includes usage changes as well as changed decisions", async t => {
     const { h } = await fixture(t, true);
-    const comparison = h.document.querySelector<HTMLDetailsElement>(".stage-review-comparison")!;
-    comparison.open = true;
-    await h.fire(comparison, "toggle");
+    const comparison = h.document.querySelector(".stage-review-comparison")!;
+    assert.ok(comparison.closest("#design-tree-panel"));
+    assert.equal(comparison.closest('[role="dialog"], [hidden]'), null, "Changes are visible before opening Details.");
     assert.match(comparison.textContent!, /Usages.*I want to share a task list/s);
     assert.match(comparison.textContent!, /Draft task behavior/);
+});
+
+test("a usage-only review explains why no questions are needed and shows the actual delta before Apply", async t => {
+    const { h, draft } = await fixture(t, "usage-only");
+    const comparison = h.document.querySelector(".stage-review-comparison")!;
+    assert.match(comparison.textContent!, /No new questions need answers/);
+    assert.match(comparison.textContent!, /Usages.*I want to share a task list/s);
+    assert.equal(comparison.querySelectorAll("tbody tr").length, 1, "Unchanged answers are not presented as changes.");
+    assert.equal(draft.decisionGraph.nodes[0].answer, decision("task", "answered").answer);
+    assert.equal(disabled(h, "apply-stage-review"), false);
+    await h.click("apply-stage-review");
+    await h.confirm(true);
+    assert.ok(current(h).requirements.usageItems.includes("I want to share a task list."));
+    assert.equal(current(h).lifecycle.currentStage, "prototype");
+    assert.equal(h.requests.filter(item => item.options.method === "POST" && /prototype/.test(item.path)).length, 0);
+    assert.match(comparison.textContent!, /Accepted revision 1/, "The comparison stays bound to its immutable baseline.");
+});
+
+test("a missing baseline keeps Apply disabled with an explicit retry instead of a blind acceptance", async t => {
+    const { h, restoreBaseline } = await fixture(t, "usage-only", false, null, "The saved baseline could not be read.");
+    const comparison = h.document.querySelector(".stage-review-comparison")!;
+    assert.match(comparison.textContent!, /saved baseline could not be read/);
+    assert.equal(disabled(h, "apply-stage-review"), true);
+    assert.equal(h.requests.some(item => item.path === "/api/reviews/apply"), false);
+    restoreBaseline();
+    await h.click(comparison.querySelector("button")!);
+    assert.equal(disabled(h, "apply-stage-review"), false);
+    assert.match(comparison.textContent!, /I want to share a task list/);
 });
 
 test("read-only providers can inspect earlier content but cannot open an editable review", async t => {
@@ -234,7 +267,7 @@ test("stale Designs review exposes a confirmed update scoped to its draft, not c
     await h.click("review-stage");
     assert.equal(disabled(h, "sketch-update-requirements"), false);
     assert.equal(disabled(h, "apply-stage-review"), true);
-    assert.equal(disabled(h, "sketch-approve"), true);
+    assert.equal(h.document.getElementById("sketch-approve"), null, "Draft approval is part of Apply, not a second approval action.");
     assert.equal(h.document.querySelector("#prepare-review-drawings"), null);
     await h.click("sketch-update-requirements");
     assert.match(h.document.querySelector('[role="alertdialog"]')!.textContent!, /latest accepted requirements and DAG/);
@@ -247,6 +280,6 @@ test("stale Designs review exposes a confirmed update scoped to its draft, not c
     assert.equal(current(h).sketch.current!.id, parent.sketch.current!.id);
     assert.equal(current(h).sketch.status, "stale");
     assert.equal(disabled(h, "apply-stage-review"), true);
-    assert.equal(disabled(h, "sketch-approve"), true);
+    assert.equal(h.document.getElementById("sketch-approve"), null);
     assert.equal(h.requests.some(item => item.path === "/api/reviews/apply" || item.path === "/api/stage/complete"), false);
 });

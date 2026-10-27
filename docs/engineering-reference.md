@@ -338,7 +338,9 @@ survive reload. Composer and Discovery-history actions open the exact record and
 restore focus to their original control. Older errors cannot label newer requests
 as blocked. Completed records remain inspectable without mutation controls.
 Pinned Apply gates on active/uncertain parent work and approved active changes,
-not queued assessments, unapproved proposals or failed/deferred requests.
+and on a prepared prototype candidate that must be resolved before its inputs
+change. Queued assessments, unapproved proposals and failed/deferred requests
+alone do not block Apply.
 Both the Apply endpoint and its public readiness state use the same parent-work
 check. Saving a reviewed stage checks pending requests in that draft while still
 validating the merged stage's artifacts and source bindings. Unrelated parent
@@ -349,6 +351,10 @@ request. New independent submissions are rejected atomically while that request
 is outstanding, including the HTTP and canvas paths; duplicate submission IDs
 remain idempotent. Unrelated edits and stage completion stay gated, while the
 current review's required stage updates and pinned-draft work remain possible.
+Queued changes waiting for an existing prototype candidate, clarification or
+revision do not lock those predecessor controls. Their assessment waits until
+the earlier work is resolved, including automatic candidates without a feedback
+revision. This uses the same browser-safe policy as the review pane and edit gate.
 Older queues and deferred records are preserved rather than cancelled or merged;
 they resume one at a time after the current review resolves. New deferral is not
 an escape from required review. Rehydration continues eligible queued work only through
@@ -386,7 +392,16 @@ Scoped lifecycle records add `changeRequestId` to the existing version-3 format
 so completed stages need not be a contiguous prefix. Earlier version-3 records
 retain their original normalization. Updated prototype checkpoints also bind the
 Requirements digest; a retained old preview is not current evidence for changed
-requirements. Request, analysis, native delivery and artifact identities remain
+requirements. Freshness follows recorded Requirements/design identities even
+without lifecycle review flags; legacy previews lacking those bindings require
+an explicit update after accepted upstream changes. A change whose next stage is
+Prototype also requires its own applied, checkpoint-bound feedback revision,
+not merely a matching input digest. Opening an earlier draft alone does not
+invalidate the accepted preview. The explicit refresh path uses the original
+change's stable feedback identity, carries its complete context to the worker,
+and preserves the displayed version until promotion. Retry reuses failed work;
+optional visual exploration cannot substitute for the required update.
+Request, analysis, native delivery and artifact identities remain
 separate. Errors and uncertain delivery are retained, not converted into approval.
 
 Upstream impact review is confined to discovery, through Prototype. Development
@@ -555,6 +570,12 @@ parent generation, stage and eventual Apply/discard outcome; the draft's
 `stageReview` binding identifies its accepted baseline. Draft state and its
 immutable baseline live under `.tandem/efforts/review-<id>/`. Opening a draft copies
 only state metadata, not application source, and dispatches no worker.
+Requirements renders its immutable Accepted/Draft comparison directly in the
+editor, including no-question usage and ledger changes. Apply waits for a
+successfully read, identity-matching baseline; failures expose Retry. Unchanged
+assessment patches are rejected rather than creating empty reviews. Applied and
+discarded comparisons remain inspectable with their actual outcome. After Apply,
+unlinked reviews route to the earliest invalidated stage just like linked changes.
 
 Continuing a change into another pinned stage copies its original request,
 source identities and accumulated affected-decision scope into a stage-local

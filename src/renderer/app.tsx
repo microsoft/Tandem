@@ -20,7 +20,7 @@ import { ProjectConversation, ProjectConversationProvider, useProjectView } from
 import { DiscoveryRecovery } from "./discovery-recovery.js";
 import { ChangeRequestsPanel } from "./change-requests-panel.js";
 import { changeRequestActionLabel, changeRequestReviewStage } from "./change-request-feedback.js";
-import { changeReviewBlocksEditing, currentChangeReview } from "../change-request-policy.js";
+import { changeReviewBlocksEditing, currentChangeReview, pendingUpstreamReviewStage } from "../change-request-policy.js";
 import { PendingReviewPane, StageReviewWorkspace } from "./stage-review.js";
 import { Brand } from "./brand.js";
 import { useStandaloneHeader, type ApplicationStatus, type StandaloneHosting } from "./standalone-header.js";
@@ -39,9 +39,7 @@ export const isGoalEntry = (state: UiState) => !state.goal?.trim() && state.life
 
 export function canCompleteStage(state: UiState): boolean {
   const stage = state.lifecycle.currentStage;
-  if (state.lifecycle.reviewId && !state.stageReview && lifecycleStages.some((item, index) =>
-    index < lifecycleStages.findIndex(current => current.id === stage)
-    && !state.lifecycle.completedStages.includes(item.id) && !skippedStage(state, item.id))) return false;
+  if (pendingUpstreamReviewStage(state)) return false;
   if (changeReviewBlocksEditing(state)) return false;
   if (state.effortReset || state.provider?.canSubmitAnswers === false || skippedStage(state, stage)
     || state.lifecycle.completedStages.includes(stage) || hasActiveJobs(state)) return false;
@@ -51,7 +49,7 @@ export function canCompleteStage(state: UiState): boolean {
       && state.requirements?.substage === "dag" && Boolean(state.decisionGraph?.nodes?.length)
       && state.decisionGraph.nodes.every((node) => Boolean(node.answer));
     case "sketch": return isSketchRevisionApproved(state.sketch);
-    case "prototype": return state.previewStatus === "ready" && !state.prototypeNeedsUpdate && state.prototypeApproach?.mode !== "undecided" && !prototypeCompletionBlocked(state);
+    case "prototype": return state.previewStatus === "ready" && state.prototypeApproach?.mode !== "undecided" && !prototypeCompletionBlocked(state);
     case "development": return false;
   }
 }
@@ -412,7 +410,7 @@ function Workspace(props: WorkspaceProps) {
         ["sketch-retry-revision", "Retry the failed design revision", "sketch-history-toggle"], ["complete-stage", "Finish Designs and continue to Prototype"],
         ["sketch-approve", "Approve designs and continue"], ["sketch-generate", "Generate screen designs"]],
       prototype: [["apply-prototype-update", "Show the prepared prototype version"], ["extend-prototype-budget", "Review an additional prototype work window"],
-        ["retry-prototype-checkpoint", "Retry incomplete prototype work"], ["start-prototype", "Start the prototype build"],
+        ["retry-prototype-checkpoint", state.prototypeNeedsUpdate ? "Update the prototype for reviewed inputs" : "Retry incomplete prototype work"], ["start-prototype", "Start the prototype build"],
         ["submit-clarification", "Answer the prototype clarification"], ["complete-stage", "Finish prototype iteration"]],
       development: state.development ? [] : [["continue-design", "Review the saved Prototype handoff"]],
     }[current] as [string, string, string?][]];

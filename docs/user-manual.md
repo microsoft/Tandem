@@ -230,17 +230,38 @@ with **Keep for later**. Reopening never replays unanswered or failed work.
 **Review Requirements draft** (or the named affected stage) opens an earlier-stage proposal without reopening that
 stage; only **Apply
 changes** updates its accepted content. Requirements keeps independent answers and shows previous
-answers for decisions that need review. The saved prototype remains available
-while its update is prepared. **Recheck impact** refreshes a stale proposal;
+answers for decisions that need review. The draft shows an **Accepted / Draft**
+comparison before Apply, including usage, decision, assumption, deferred-work and
+prototype-approach changes. A clear request may add a usage or constraint without
+needing new questions; the comparison explains this rather than asking you to
+answer the same questions again. If the saved baseline cannot be read, retry the
+comparison before applying.
+
+After Apply, follow the next affected stage. When Designs needs review, update
+and approve its retained draft first. In Prototype, choose **Update for reviewed
+inputs**, inspect the prepared version, then **Show requested revision**.
+**Finish Prototype** remains unavailable until that update has been applied.
+This also works for older saved previews without checkpoint tracking. The saved
+preview stays available while a new version builds; a failed update can be
+retried without resubmitting the change or losing the previous version.
+**Recheck impact** refreshes a stale proposal;
 it does not approve it.
 An unanswered or unapplied request in current work does not prevent applying a
 separate ready draft. Those requests stay saved and are not approved, cancelled
 or deferred by Apply; an older proposal must be checked again if accepted inputs
 have changed. Running work, a change already being applied, conflicting inputs
 or unfinished work inside the draft still blocks Apply with a visible reason.
+Resolve a prepared prototype update before applying an earlier-stage draft so
+the update is not left referring to obsolete inputs. If a new change is queued
+behind an existing prototype update or clarification, those review controls
+remain usable; the new impact assessment starts after the earlier work is resolved.
 
 Cancel before approval leaves accepted work unchanged. Cancelling remaining
 work afterwards retains already saved changes rather than rolling them back.
+Unapplied candidates, failures and clarifications belonging to that cancelled
+request are put aside, with their records retained. Already applied upstream
+changes still require an up-to-date prototype; cancelling does not make an older
+preview current.
 Impact review applies only to stages through Prototype. Development handles its
 own Design changes, implementation confirmation and code Review; its requests do
 not automatically return to discovery or start a review in the main conversation.

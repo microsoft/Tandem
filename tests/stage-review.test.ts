@@ -107,6 +107,10 @@ test("design edits and approvals stay isolated until Apply; Apply preserves curr
 test("earlier-stage Apply preserves newer current-stage work and records dependent outputs as needing review", async t => {
     const { h, parent } = await fixture(); t.after(() => h.close());
     const draft = await h.api.openStageReview("sample", provider, { stageId: "requirements", expectedGeneration: parent.generation });
+    await assert.rejects(h.api.applyStageReview("sample", provider, {
+        reviewId: draft.prototypeId, expectedRevision: draft.revision,
+    }), /No saved changes to apply/);
+    assert.equal((await h.api.loadState("sample")).sketch.status, "approved", "An empty Apply cannot invalidate downstream work.");
     draft.decisionGraph.nodes[0].answer = "Change";
     await h.api.persistState(draft);
     const current = await h.api.loadState("sample");

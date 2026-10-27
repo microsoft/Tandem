@@ -13,7 +13,7 @@ import { awaitingVisualChoice, originalPrototypeCheckpointId, prototypePreviewCh
   type VisualSelection } from "../visual-directions.js";
 import { VisualExplorationPanel } from "./visual-exploration-panel.js";
 import { HandoffControls } from "./handoff-review.js";
-import { currentChangeReview } from "../change-request-policy.js";
+import { currentChangeReview, pendingUpstreamReviewStage } from "../change-request-policy.js";
 import { SubstageStatusIcon, type SubstageStatus } from "./substage-status.js";
 import { FeedbackHistory, FeedbackHistoryButton } from "./feedback-history.js";
 
@@ -140,7 +140,7 @@ export function milestoneReady(state: UiState, milestone: PrototypeSubstage): bo
 }
 export function prototypeCompletionBlocked(state: UiState): boolean {
   const flow = state.prototypeFlow;
-  return hasActiveJobs(state) || Boolean(state.prototypeReview?.question)
+  return hasActiveJobs(state) || Boolean(state.prototypeNeedsUpdate) || Boolean(state.prototypeReview?.question)
     || (state.prototypeReview?.revisions || []).some((revision: Revision) => unresolvedStatuses.includes(revision.status))
     || Boolean(flow && (flow.pendingCheckpointId || !milestoneReady(state, "prototype")
       || (flow.visualRequested && !milestoneReady(state, "visual"))));
@@ -330,10 +330,12 @@ export function PrototypePanel({ active: visible, connected, renderStageActions,
   }, [visible, connected, checkPreview]);
   const milestonesReady = milestoneReady(state, "prototype")
     && (!flow?.visualRequested || milestoneReady(state, "visual"));
-  const blocked = pending || !canEdit("prototype") || hasActiveJobs(state) || finalizing || Boolean(question);
+  const blocked = pending || !canEdit("prototype") || hasActiveJobs(state) || finalizing || Boolean(question)
+    || Boolean(pendingUpstreamReviewStage(state));
   const validation = state.prototypeApproach?.mode === "validate-existing";
-  const startVisible = !unavailable && !building && !readyUrl && !flow && state.previewStatus !== "ready" && state.lifecycle.currentStage === "prototype";
-  const retryVisible = Boolean(flow || failedRevision) && !candidate && !question && !building
+  const startVisible = !unavailable && !building && !readyUrl && !flow && !state.prototypeNeedsUpdate
+    && state.previewStatus !== "ready" && state.lifecycle.currentStage === "prototype";
+  const retryVisible = Boolean(flow || failedRevision || state.prototypeNeedsUpdate) && !candidate && !question && !building
     && Boolean(failed || failedRevision || !milestonesReady || unresolved.length || state.prototypeNeedsUpdate);
   const visualStale = Boolean(flow?.visualExploration && !visualExplorationIsCurrent(flow));
   const visualVisible = Boolean(flow && (!flow.visualExploration && (!flow.visualRequested || milestoneReady(state, "visual")) || visualStale)
@@ -432,6 +434,7 @@ export function PrototypePanel({ active: visible, connected, renderStageActions,
     : building ? readyUrl ? "Your working preview stays available while the next checkpoint builds." : "Building the first runnable checkpoint. No preview is available yet; you can already queue feedback."
     : failed ? "The latest update failed. " + failed.summary + (readyUrl ? " Your working preview is unchanged." : "")
     : failedRevision ? "A feedback revision failed. Retry the failed revision to continue."
+    : state.prototypeNeedsUpdate ? "The saved prototype does not yet include the reviewed inputs or requested changes. Update it, inspect the prepared version, then show that version before finishing."
     : flow && awaitingVisualChoice(flow) ? "Accept a different direction, or finish Prototype with the currently applied design."
     : milestonesReady ? "Prototype is ready. Finish Prototype, or optionally explore visual directions."
     : "Build and try one complete primary task. Visual exploration is optional.";
@@ -447,7 +450,7 @@ export function PrototypePanel({ active: visible, connected, renderStageActions,
     : candidate ? candidateLabel + ". Switching the displayed version is separate from optional feedback."
     : "Try the prototype, then describe any revision you want.");
   const recentApplied = new Set(revisions.filter((item) => item.status === "applied").slice(-5).map((item) => item.id));
-  const importantProgress = Boolean(candidate || failed || failedRevision || question);
+  const importantProgress = Boolean(candidate || failed || failedRevision || question || state.prototypeNeedsUpdate);
   const previewActions = <div ref={setPreviewActionsContainer} className="prototype-preview-actions">
     {viewingPrimary && !(viewingVisual && inspectingVisual) && readyUrl && <Tooltip.Root><Tooltip.Trigger asChild>
       <IconButton variant="secondary" id={`retry-${previewTarget}-preview`} className="plan-button secondary preview-recovery-action" type="button"
@@ -467,7 +470,7 @@ export function PrototypePanel({ active: visible, connected, renderStageActions,
   </div>;
 
   const visualAction = <Button variant="primary" id="request-prototype-visual" className="plan-button" hidden={!visualVisible}
-    disabled={blocked || unresolved.length > 0} onClick={() => void submitAction("visual")}>
+    disabled={blocked || unresolved.length > 0 || state.prototypeNeedsUpdate} onClick={() => void submitAction("visual")}>
     <Sparkles size={16} />{visualStale ? "Explore current prototype" : "Explore visual directions (optional)"}</Button>;
   const reviewControls = <div className="prototype-actions">
     <Button variant="primary" id="apply-prototype-update" className="plan-button" hidden={!candidate || chosenCandidate && Boolean(flow?.visualExploration)} disabled={blocked}
@@ -522,6 +525,7 @@ export function PrototypePanel({ active: visible, connected, renderStageActions,
               : latest?.status === "clarifying" ? ["attention", "Needs clarification"]
               : latest?.status === "failed" ? ["failed", "Failed - retry available"]
               : milestone.id === "visual" && flow && awaitingVisualChoice(flow) ? ["inspect", "Compare & choose"]
+              : milestone.id === "prototype" && state.prototypeNeedsUpdate ? ["attention", "Update required"]
               : milestoneReady(state, milestone.id) ? ["ready", "Ready"]
               : milestone.id === "visual" && !flow?.visualRequested ? ["optional", "Optional"]
               : latest?.status === "ready" ? ["partial", "Partial preview"] : ["waiting", "Waiting"];

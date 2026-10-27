@@ -3578,8 +3578,12 @@ textarea {
 .stage-review-safety { display: flex; align-items: flex-start; gap: 6px; margin: 0; color: var(--studio-muted); font-size: 11px; }
 .stage-review-safety > svg { flex: none; margin-top: 2px; }
 .stage-review-comparison { min-width: 0; overflow: auto; }
+.stage-review-workspace > .stage-review-comparison { flex: 0 1 auto; min-height: 0; max-height: 40%; padding: 12px; border-bottom: 1px solid var(--studio-border); }
+.stage-review-workspace > .stage-review-comparison[data-unanswered="0"] { max-height: 60%; }
+.stage-review-comparison h3 { margin: 0 0 8px; font-size: 13px; }
+.stage-review-comparison p { margin: 8px 0; }
 .stage-review-request summary { cursor: pointer; }
-.stage-review-comparison table { width: 100%; border-collapse: collapse; }
+.stage-review-comparison table { width: 100%; table-layout: fixed; border-collapse: collapse; }
 .stage-review-comparison td, .stage-review-comparison th { padding: 6px; border: 1px solid var(--studio-border); text-align: start; overflow-wrap: anywhere; }
 .stage-review-comparison td { white-space: pre-wrap; }
 .stage-review-comparison figure { margin: 12px 0; }

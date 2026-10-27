@@ -18,7 +18,7 @@ import { SketchStore } from "../src/sketch-store.js";
 import { sketchDocument } from "./helpers/sketch-lifecycle-fixture.js";
 import { addUi } from "./helpers/ui-dsl-fixture.js";
 import { requirementsInputDigest } from "../src/requirements-reconciliation.js";
-import { changeReviewBlocksEditing, changeReviewNeedsAttention, currentChangeReview } from "../src/change-request-policy.js";
+import { changeReviewBlocksEditing, changeReviewNeedsAttention, currentChangeReview, pendingUpstreamReviewStage } from "../src/change-request-policy.js";
 
 const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 export function node(id: string, dependencies: string[] = [], answer: string | null = "Keep"): DecisionNode {
@@ -82,6 +82,97 @@ test("invalid topology, invented answers, invalid defaults and omitted Requireme
     assert.throws(() => applyRequirementsDelta(state, defaults), /valid choices/);
     assert.throws(() => readChangeAssessment({ ...assessment(), stages: [{ stage: "prototype", reason: "Wrong" }] }, state), /include Requirements/);
     assert.throws(() => readChangeAssessment({ ...assessment(), startStage: "prototype" }, state), /earliest/);
+});
+
+test("legacy saved previews are included in requirements and design review paths", () => {
+    const state = baseState();
+    state.previewUrl = "http://127.0.0.1:4321/";
+    state.previewStatus = "ready";
+    assert.equal(state.prototypeFlow, null);
+    const requirements = assessment();
+    requirements.stages = [{ stage: "requirements", reason: "Add the requested usage." }];
+    assert.deepEqual(readChangeAssessment(requirements, state).stages.map(item => item.stage), ["requirements", "prototype"]);
+    assert.deepEqual(readChangeAssessment({ ...requirements, requirements: null, startStage: "sketch",
+        stages: [{ stage: "sketch", reason: "Change the agreed layout." }] }, state).stages.map(item => item.stage), ["sketch", "prototype"]);
+    assert.equal(requirements.stages.length, 1, "Normalization must not rewrite the worker's input.");
+});
+
+test("unchanged Requirements patches cannot create empty reviews, while real no-question deltas and ambiguities remain valid", () => {
+    const state = baseState();
+    const plan = assessment();
+    plan.requirements!.upsert = [];
+    plan.requirements!.usages.add = [...state.requirements.usageItems];
+    assert.throws(() => readChangeAssessment(plan, state), /makes no saved changes/);
+    assert.equal(readChangeAssessment({ ...plan, question: "Which behavior should change?" }, state).question, "Which behavior should change?");
+    plan.requirements!.remove = ["appearance"];
+    plan.requirements!.assumptions = { add: ["Keep data local"], remove: ["Mock simulation"] };
+    plan.requirements!.deferred = { add: ["Cloud storage"], remove: ["Real robot integration"] };
+    const result = applyRequirementsDelta(state, readChangeAssessment(plan, state).requirements!);
+    assert.equal(result.graph.nodes.every(item => item.answer === "Keep"), true);
+    assert.deepEqual(result.assumed, ["Keep data local"]);
+    assert.deepEqual(result.deferred, ["Cloud storage"]);
+    assert.deepEqual(result.affected, ["appearance"]);
+});
+
+test("prototype freshness follows saved input bindings, including legacy previews and partially cancelled reviews", async t => {
+    const { h, initial } = await fixture(); t.after(() => h.close());
+    const state = structuredClone(initial);
+    const displayed = state.prototypeFlow!.checkpoints.find(item => item.id === state.prototypeFlow!.displayedCheckpointId)!;
+    displayed.requirementsDigest = requirementsInputDigest(state);
+    assert.equal(prototypeNeedsChangeUpdate(state), false);
+    state.assumed.push("An accepted changed constraint");
+    assert.equal(prototypeNeedsChangeUpdate(state), true, "Changed bindings cannot rely on a lifecycle marker to become stale.");
+    state.assumed.pop();
+    assert.equal(prototypeNeedsChangeUpdate(state), false);
+    const request = { ...proposed(), status: "cancelled" as const, snapshotPath: "changes\\baseline.json" };
+    state.changeRequests = [request];
+    delete displayed.requirementsDigest;
+    assert.equal(prototypeNeedsChangeUpdate(state), true, "Cancelling remaining work does not undo an already saved requirements patch.");
+    state.changeRequests = [];
+    state.prototypeFlow = null;
+    assert.equal(prototypeNeedsChangeUpdate(state), false, "Unchanged legacy previews remain inspectable.");
+    state.lifecycle.reviewId = "review-11111111-1111-4111-8111-111111111111";
+    assert.equal(prototypeNeedsChangeUpdate(state), true, "A reviewed legacy preview has no current input evidence.");
+    state.prototypeApproach.mode = "not-applicable";
+    assert.equal(prototypeNeedsChangeUpdate(state), false, "A bypassed prototype must not acquire a mandatory build.");
+});
+
+test("an accepted change needs its own applied prototype revision even when requirement inputs already match", async t => {
+    const { h, initial } = await fixture(); t.after(() => h.close());
+    const state = structuredClone(initial);
+    const displayed = state.prototypeFlow!.checkpoints.find(item => item.id === state.prototypeFlow!.displayedCheckpointId)!;
+    displayed.requirementsDigest = requirementsInputDigest(state);
+    const request = { ...proposed(), status: "reviewing" as const, remainingStages: ["prototype" as const],
+        reviewId: "review-11111111-1111-4111-8111-111111111111" };
+    state.changeRequests = [request];
+    assert.equal(prototypeNeedsChangeUpdate(state), true);
+    const revision = { id: "requested-revision", clientRequestId: `change-${request.id}`, checkpointId: "prepared", status: "ready" };
+    state.prototypeReview.revisions = [revision];
+    const prepared = { ...displayed, id: "prepared", requestId: "prepared", revisionId: revision.id };
+    state.prototypeFlow!.checkpoints.push(prepared);
+    state.prototypeFlow!.pendingCheckpointId = prepared.id;
+    assert.equal(prototypeNeedsChangeUpdate(state), true, "A prepared candidate is not an applied change.");
+    revision.status = "applied";
+    state.prototypeFlow!.displayedCheckpointId = prepared.id;
+    state.prototypeFlow!.pendingCheckpointId = null;
+    assert.equal(prototypeNeedsChangeUpdate(state), false);
+    prepared.revisionId = "unrelated-revision";
+    assert.equal(prototypeNeedsChangeUpdate(state), true, "An unrelated checkpoint cannot satisfy this request.");
+});
+
+test("review routing finds the earliest invalidated stage and respects skipped stages and pinned drafts", () => {
+    const state = baseState();
+    state.lifecycle.reviewId = "review-11111111-1111-4111-8111-111111111111";
+    state.lifecycle.completedStages = ["prepare"];
+    assert.equal(pendingUpstreamReviewStage(state), "requirements");
+    state.lifecycle.completedStages.push("requirements");
+    assert.equal(pendingUpstreamReviewStage(state), "sketch");
+    state.lifecycle.skippedStages.push({ stageId: "sketch", reason: "Legacy stage was not used.", skippedAt: state.updatedAt });
+    assert.equal(pendingUpstreamReviewStage(state), undefined);
+    state.lifecycle.skippedStages = [];
+    state.stageReview = { version: 1, parentId: "parent", stage: "prototype",
+        baselineDigest: "a".repeat(64), baselineRevision: 1 };
+    assert.equal(pendingUpstreamReviewStage(state), undefined, "A pinned draft retains its independent stage scope.");
 });
 
 test("scoped activation retains the preview, checkpoints, independent stages and historical output identities", () => {
@@ -246,6 +337,116 @@ async function assess(f: Awaited<ReturnType<typeof fixture>>, result = assessmen
 function approval(request: ChangeRequest) {
     return { requestId: request.id, analysisId: request.analysisId, baselineDigest: request.baselineDigest, decision: "approve" };
 }
+
+test("already-satisfied requests finish assessment without creating an empty draft or rebuilding a preview", async t => {
+    const f = await fixture(); t.after(() => f.h.close());
+    const { state } = await assess(f, { ...assessment(), startStage: "none", stages: [], requirements: null,
+        summary: "The requested behavior is already part of the accepted work." });
+    assert.equal(state.changeRequests![0].status, "completed");
+    assert.deepEqual(plain(state.lifecycle), plain(f.initial.lifecycle));
+    assert.deepEqual(plain(state.decisionGraph), plain(f.initial.decisionGraph));
+    assert.equal(state.stageReviews?.length ?? 0, 0);
+    assert.equal(prototypeNeedsChangeUpdate(state), false);
+    assert.equal(f.h.requests.length, 1);
+});
+
+for (const feedback of [false, true]) test(`a queued change waits behind an ${feedback ? "existing feedback update" : "automatic checkpoint"} without blocking its application`, async t => {
+    const f = await fixture(); t.after(() => f.h.close());
+    const source = f.initial.prototypeFlow!.checkpoints.at(-1)!;
+    const prepared = { ...source, id: "previous-update", requestId: "previous-update",
+        baseCheckpointId: source.id, sourceCheckpointId: source.id, revisionId: feedback ? "previous-feedback" : null,
+        requirementsDigest: requirementsInputDigest(f.initial) };
+    f.initial.prototypeFlow!.checkpoints.push(prepared);
+    f.initial.prototypeFlow!.pendingCheckpointId = prepared.id;
+    if (feedback) f.initial.prototypeReview.revisions = [{
+        id: "previous-feedback", suggestion: "Improve the playback label.", status: "ready", summary: "Prepared label.",
+        clientRequestId: "previous-feedback-client", baseCheckpointId: source.id, checkpointId: prepared.id,
+        clarifications: [], submittedAt: f.initial.updatedAt, completedAt: f.initial.updatedAt,
+    }];
+    await f.h.api.persistState(f.initial);
+    worker(f.h, assessment());
+    const receipt = await f.h.api.submitChangeRequest("sample", "project:tandem", {
+        message: "Save and reload sequences.", clientRequestId: "queued-after-update",
+    });
+    const queued = await f.h.api.loadState("sample");
+    assert.equal(queued.changeRequests![0].status, "queued");
+    assert.equal(f.h.requests.length, 0, "Assessment must wait until the earlier candidate is resolved.");
+    assert.equal(changeReviewBlocksEditing(queued), false, "The queued request cannot lock the action it is waiting for.");
+    f.h.setPreviewHtml(`<meta name="tandem-prototype-id" content="sample"><meta name="tandem-prototype-checkpoint" content="${prepared.id}">`);
+    await f.h.api.prototypeAction("sample", "project:tandem", { action: "apply-update", checkpointId: prepared.id });
+    await f.h.waitForRequests(); await f.h.api.waitForAnswer("sample");
+    const assessed = await f.h.api.loadState("sample");
+    assert.equal(assessed.prototypeFlow!.displayedCheckpointId, prepared.id);
+    assert.equal(assessed.changeRequests![0].id, receipt.requestId);
+    assert.equal(assessed.changeRequests![0].status, "proposed");
+    assert.equal(changeReviewBlocksEditing(assessed), true, "Only the predecessor work is exempt from the review gate.");
+    assert.equal(f.h.requests.length, 1);
+});
+
+test("a queued change leaves the existing prototype clarification answerable and waits for its candidate", async t => {
+    const f = await fixture(); t.after(() => f.h.close());
+    const source = f.initial.prototypeFlow!.checkpoints.at(-1)!;
+    const question = { id: "playback-detail", text: "Which playback label?", choices: ["Start", "Play", "Run"],
+        recommended: "Play", rationale: "", allowFreeText: true, answerPlaceholder: "" };
+    f.initial.prototypeReview.question = question;
+    f.initial.prototypeReview.activeRevisionId = "previous-feedback";
+    f.initial.prototypeReview.revisions = [{
+        id: "previous-feedback", suggestion: "Improve playback.", status: "clarifying", summary: "",
+        clientRequestId: "previous-client", baseCheckpointId: source.id, checkpointId: null,
+        clarifications: [], submittedAt: f.initial.updatedAt, completedAt: null,
+    }];
+    await f.h.api.persistState(f.initial);
+    worker(f.h, assessment());
+    await f.h.api.submitChangeRequest("sample", "project:tandem", {
+        message: "Save and reload sequences.", clientRequestId: "queued-after-question",
+    });
+    assert.equal(f.h.requests.length, 0);
+    const server = await f.h.api.startServer("queued-clarification-http", "sample", "project:tandem", true);
+    t.after(async () => {
+        clearInterval(server.heartbeat);
+        await new Promise<void>(resolve => { server.server.close(() => resolve()); server.server.closeAllConnections(); });
+    });
+    const response = await fetch(new URL("/api/answer", server.url), { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "clarify-revision", questionId: question.id, answer: "Play" }) });
+    assert.equal(response.status, 202, await response.text());
+    await f.h.waitForRequests(); await f.h.api.waitForAnswer("sample");
+    const ready = await f.h.api.loadState("sample");
+    assert.ok(ready.prototypeFlow!.pendingCheckpointId, ready.processing.message);
+    assert.equal(ready.changeRequests![0].status, "queued");
+    assert.deepEqual(plain(ready.prototypeReview.revisions[0].clarifications), [{ question: question.text, answer: "Play" }]);
+    await f.h.api.prototypeAction("sample", "project:tandem", { action: "apply-update", checkpointId: ready.prototypeFlow!.pendingCheckpointId });
+    await f.h.waitForRequests(2); await f.h.api.waitForAnswer("sample");
+    assert.equal((await f.h.api.loadState("sample")).changeRequests![0].status, "proposed");
+    assert.equal(f.h.requests.length, 2);
+});
+
+test("an upstream draft cannot strand a prepared prototype on older inputs", async t => {
+    const f = await fixture(); t.after(() => f.h.close());
+    const source = f.initial.prototypeFlow!.checkpoints.at(-1)!;
+    const prepared = { ...source, id: "prepared-before-review", requestId: "prepared-before-review",
+        baseCheckpointId: source.id, sourceCheckpointId: source.id, requirementsDigest: requirementsInputDigest(f.initial) };
+    f.initial.prototypeFlow!.checkpoints.push(prepared);
+    f.initial.prototypeFlow!.pendingCheckpointId = prepared.id;
+    await f.h.api.persistState(f.initial);
+    const draft = await f.h.api.openStageReview("sample", "project:tandem", {
+        stageId: "requirements", expectedGeneration: f.initial.generation,
+    });
+    draft.requirements.usageItems.push("I want to save a sequence.");
+    await f.h.api.persistState(draft);
+    await assert.rejects(f.h.api.applyStageReview("sample", "project:tandem", {
+        reviewId: draft.prototypeId, expectedRevision: draft.revision,
+    }), /show the prepared prototype update/);
+    assert.equal((await f.h.api.loadState("sample")).prototypeFlow!.pendingCheckpointId, prepared.id);
+    f.h.setPreviewHtml(`<meta name="tandem-prototype-id" content="sample"><meta name="tandem-prototype-checkpoint" content="${prepared.id}">`);
+    await f.h.api.prototypeAction("sample", "project:tandem", { action: "apply-update", checkpointId: prepared.id });
+    const accepted = await f.h.api.applyStageReview("sample", "project:tandem", {
+        reviewId: draft.prototypeId, expectedRevision: draft.revision,
+    });
+    assert.equal(accepted.prototypeFlow!.displayedCheckpointId, prepared.id);
+    assert.equal(prototypeNeedsChangeUpdate(accepted), true);
+    assert.equal(f.h.requests.length, 0);
+});
 
 test("composed Development receives retained handoffs without a live baseline or settlement callback", async () => {
     const f = await fixture();
@@ -557,6 +758,10 @@ test("cancelling a pinned proposal retains current work and cannot abandon a run
         await assert.rejects(f.h.api.reopenLifecycleStage("sample", "requirements", "project:tandem"), /review draft work/);
         draft.processing = null; await f.h.api.persistState(draft);
         const current = await f.h.api.loadState("sample");
+        current.processing = { action: "submit-revision", status: "running", requestId: "linked-prototype-work",
+            changeRequestId: state.changeRequests![0].id, requestedAt: current.updatedAt };
+        await f.h.api.persistState(current);
+        await assert.rejects(f.h.api.decideChangeRequest("sample", "project:tandem", decision), /Wait for this change's prototype work/);
         current.processing = { action: "build-prototype", status: "running", requestId: "current-work", requestedAt: current.updatedAt };
         await f.h.api.persistState(current);
         const cancelled = await f.h.api.decideChangeRequest("sample", "project:tandem", decision);
@@ -607,6 +812,41 @@ test("cancelling a proposed change preserves the baseline and does not start a r
         assert.deepEqual(plain(next.decisionGraph), plain(f.initial.decisionGraph));
         assert.equal(f.h.requests.length, 1);
     } finally { await f.h.close(); }
+});
+
+for (const status of ["ready", "failed", "clarifying"] as const) test(`cancelling a ${status} prototype change releases its own pending work without losing history`, async t => {
+    const f = await fixture(); t.after(() => f.h.close());
+    const request = { ...proposed(), status: "active" as const, remainingStages: ["prototype" as const],
+        assessment: { ...assessment(), requirements: null, startStage: "prototype" as const,
+            stages: [{ stage: "prototype" as const, reason: "Revise playback." }] } };
+    const source = f.initial.prototypeFlow!.checkpoints.at(-1)!;
+    const checkpoint = { ...source, id: "cancelled-update", requestId: "cancelled-update", revisionId: "cancelled-feedback",
+        sourceCheckpointId: source.id, baseCheckpointId: source.id, status,
+        previewUrl: status === "ready" ? source.previewUrl : null };
+    f.initial.prototypeFlow!.checkpoints.push(checkpoint);
+    f.initial.prototypeFlow!.pendingCheckpointId = status === "ready" ? checkpoint.id : null;
+    f.initial.changeRequests = [request];
+    f.initial.prototypeReview.revisions = [{
+        id: checkpoint.revisionId, clientRequestId: `change-${request.id}`, suggestion: request.message, status,
+        checkpointId: checkpoint.id, baseCheckpointId: source.id, summary: "Retained attempted update.",
+        clarifications: [], submittedAt: f.initial.updatedAt, completedAt: status === "clarifying" ? null : f.initial.updatedAt,
+    }];
+    f.initial.prototypeReview.activeRevisionId = checkpoint.revisionId;
+    if (status === "clarifying") f.initial.prototypeReview.question = {
+        id: "cancelled-question", text: "Which label?", choices: ["Start", "Play", "Run"],
+        recommended: "Play", allowFreeText: true, rationale: "", answerPlaceholder: "",
+    };
+    await f.h.api.persistState(f.initial);
+    const cancelled = await f.h.api.decideChangeRequest("sample", "project:tandem", { requestId: request.id, decision: "cancel" });
+    assert.equal(cancelled.changeRequests![0].status, "cancelled");
+    assert.equal(cancelled.prototypeFlow!.displayedCheckpointId, source.id);
+    assert.equal(cancelled.prototypeFlow!.pendingCheckpointId, null);
+    assert.equal(cancelled.prototypeFlow!.checkpoints.at(-1)!.id, checkpoint.id);
+    assert.equal(cancelled.prototypeReview.revisions[0].status, "dismissed");
+    assert.equal(cancelled.prototypeReview.question, null);
+    assert.equal(prototypeNeedsChangeUpdate(cancelled), false);
+    assert.equal(f.h.api.stageCompletionError(cancelled, "prototype", { requirePrototypeSpec: false }), null);
+    assert.equal(f.h.requests.length, 0);
 });
 
 test("an unanswered impact question blocks new requests without losing the pending review", async () => {
@@ -933,9 +1173,14 @@ test("public prototype feedback reaches impact assessment rather than the writab
     }
 });
 
-test("applying a draft usage keeps Prototype current and builds a delta only when explicitly requested", async () => {
+for (const legacy of [false, true]) test(`applying a draft usage explicitly updates the ${legacy ? "legacy" : "tracked"} prototype through its public retry action`, async () => {
     const f = await fixture();
+    const server = await f.h.api.startServer("review-update-http", "sample", "project:tandem", true);
     try {
+        if (legacy) {
+            f.initial.prototypeFlow = null;
+            await f.h.api.persistState(f.initial);
+        }
         const plan = assessment(); plan.requirements!.upsert = [];
         const { state } = await assess(f, plan);
         const changed = await f.h.api.decideChangeRequest("sample", "project:tandem", approval(state.changeRequests![0]));
@@ -946,21 +1191,93 @@ test("applying a draft usage keeps Prototype current and builds a delta only whe
         });
         assert.equal(accepted.lifecycle.currentStage, "prototype");
         assert.equal(f.h.requests.length, 1, "Apply does not start another preview.");
-        await f.h.api.beginPrototypeBuild("sample", "project:tandem");
+        const published = await (await fetch(new URL("/api/state", server.url))).json();
+        assert.equal(published.prototypeNeedsUpdate, true);
+        assert.match(f.h.api.stageCompletionError(accepted, "prototype")!, /Update and apply the prototype/);
+        await assert.rejects(f.h.api.prototypeAction("sample", "project:tandem", { action: "visual" }), /Update and apply the prototype/);
+        const response = await fetch(new URL("/api/prototype/action", server.url), { method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "retry", expectedRevision: published.revision }) });
+        assert.equal(response.status, 200, await response.text());
         await f.h.waitForRequests(2); await f.h.api.waitForAnswer("sample");
         const ready = await f.h.api.loadState("sample");
         const checkpoint = ready.prototypeFlow!.checkpoints.at(-1)!;
-        assert.equal(checkpoint.sourceCheckpointId, "old-interaction");
+        const originalId = legacy ? `legacy-interaction-${ready.generation}` : "old-interaction";
+        assert.equal(checkpoint.sourceCheckpointId, originalId);
         assert.equal(checkpoint.milestone, "prototype");
         assert.equal(checkpoint.requirementsDigest, requirementsInputDigest(ready));
-        assert.equal(ready.prototypeFlow!.displayedCheckpointId, "old-interaction");
+        assert.equal(ready.prototypeFlow!.displayedCheckpointId, originalId);
+        assert.equal(ready.processing.changeRequestId, state.changeRequests![0].id);
+        assert.equal(prototypeNeedsChangeUpdate(ready), true, "The user must inspect and show the prepared version.");
+        const workerRequest = f.h.requests[1] as { args: { state: { changeRequest: ChangeRequest } } };
+        assert.equal(workerRequest.args.state.changeRequest.id, state.changeRequests![0].id,
+            "The worker must receive the full original request, not just a generic refresh instruction.");
         assert.deepEqual(plain(ready.decisionGraph), plain(f.initial.decisionGraph));
         const applied = await f.h.api.prototypeAction("sample", "project:tandem", { action: "apply-update", checkpointId: checkpoint.id });
+        assert.equal(prototypeNeedsChangeUpdate(applied), false);
         assert.equal(f.h.api.stageCompletionError(applied, "prototype", { requirePrototypeSpec: false }), null);
         assert.equal(f.h.requests.length, 2, "only assessment and the requested delta ran");
-    } finally { await f.h.close(); }
+    } finally {
+        clearInterval(server.heartbeat);
+        await new Promise<void>(resolve => { server.server.close(() => resolve()); server.server.closeAllConnections(); });
+        await f.h.close();
+    }
 });
 
+test("a stale checkpoint without review flags can be rebuilt and applied without reopening or resetting", async t => {
+    const f = await fixture(); t.after(() => f.h.close());
+    f.initial.prototypeFlow!.checkpoints.at(-1)!.requirementsDigest = "a".repeat(64);
+    await f.h.api.persistState(f.initial);
+    worker(f.h, assessment());
+    assert.equal(prototypeNeedsChangeUpdate(await f.h.api.loadState("sample")), true);
+    await f.h.api.beginPrototypeBuild("sample", "project:tandem");
+    await f.h.waitForRequests(); await f.h.api.waitForAnswer("sample");
+    const ready = await f.h.api.loadState("sample");
+    assert.ok(ready.prototypeFlow!.pendingCheckpointId, ready.processing.message);
+    const applied = await f.h.api.prototypeAction("sample", "project:tandem", {
+        action: "apply-update", checkpointId: ready.prototypeFlow!.pendingCheckpointId,
+    });
+    assert.equal(prototypeNeedsChangeUpdate(applied), false);
+    assert.equal(applied.generation, f.initial.generation);
+    assert.equal(applied.lifecycle.reviewId, undefined);
+    assert.equal(applied.prototypeFlow!.checkpoints[1].id, "old-interaction");
+    assert.equal(f.h.requests.length, 1);
+});
+
+test("a failed reviewed-input update retains its request and preview across reload and explicit retry", async t => {
+    const f = await fixture(); t.after(() => f.h.close());
+    const plan = assessment(); plan.requirements!.upsert = [];
+    const { state } = await assess(f, plan);
+    const reviewing = await f.h.api.decideChangeRequest("sample", "project:tandem", approval(state.changeRequests![0]));
+    const draft = await f.h.api.loadState(reviewing.changeRequests![0].reviewId!);
+    await f.h.api.applyStageReview("sample", "project:tandem", { reviewId: draft.prototypeId, expectedRevision: draft.revision });
+    f.h.setPreviewFetch(async () => new Response("Preview unavailable", { status: 503 }));
+    await f.h.api.beginPrototypeBuild("sample", "project:tandem");
+    await f.h.waitForRequests(2); await f.h.api.waitForAnswer("sample");
+    const failed = await f.h.api.loadState("sample");
+    assert.equal(failed.processing.status, "error");
+    assert.equal(failed.prototypeFlow!.displayedCheckpointId, "old-interaction");
+    assert.equal(failed.prototypeFlow!.pendingCheckpointId, null);
+    assert.equal(prototypeNeedsChangeUpdate(failed), true);
+    const revisionId = failed.prototypeReview.revisions[0].id;
+    await f.h.api.continueChangeWork("sample");
+    assert.equal(f.h.requests.length, 2, "Reload cannot automatically repeat a failed update.");
+    f.h.setPreviewFetch(async () => {
+        const current = await f.h.api.loadState("sample");
+        const id = current.prototypeFlow!.activeCheckpointId ?? current.prototypeFlow!.pendingCheckpointId;
+        return new Response(`<meta name="tandem-prototype-id" content="sample"><meta name="tandem-prototype-checkpoint" content="${id}">`);
+    });
+    await f.h.api.beginPrototypeBuild("sample", "project:tandem");
+    await f.h.waitForRequests(3); await f.h.api.waitForAnswer("sample");
+    const ready = await f.h.api.loadState("sample");
+    assert.ok(ready.prototypeFlow!.pendingCheckpointId, ready.processing.message);
+    assert.equal(ready.prototypeReview.revisions.length, 1, "Retry reuses the saved feedback identity.");
+    assert.equal(ready.prototypeReview.revisions[0].id, revisionId);
+    const applied = await f.h.api.prototypeAction("sample", "project:tandem", { action: "apply-update", checkpointId: ready.prototypeFlow!.pendingCheckpointId });
+    assert.equal(prototypeNeedsChangeUpdate(applied), false);
+    assert.equal(applied.processing.changeRequestId, state.changeRequests![0].id);
+    assert.equal(f.h.requests.length, 3);
+});
 test("scoped design results cannot modify unrelated manual screen content", () => {
     const previous = sketchDocument(), changed = plain(previous);
     changed.screens[0].notes = "Unrequested rewrite";

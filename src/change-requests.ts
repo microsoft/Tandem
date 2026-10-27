@@ -198,14 +198,44 @@ export function readSketchChangeContext(value: unknown, source?: {
     return { revisionId: context.revisionId, screenId: context.screenId, nodeId: context.nodeId };
 }
 
+export function pendingPrototypeChange(state: TandemState): ChangeRequest | undefined {
+    const revisions: Array<{ id: string; clientRequestId?: string | null; checkpointId?: string | null; status: string }> =
+        state.prototypeReview.revisions ?? [];
+    return state.changeRequests?.find(request => isDiscoveryChangeRequest(request)
+        && ["active", "reviewing"].includes(request.status) && request.remainingStages[0] === "prototype"
+        && !revisions.some(revision => revision.clientRequestId === `change-${request.id}` && revision.status === "applied"
+            && state.prototypeFlow?.checkpoints.some(checkpoint => checkpoint.id === revision.checkpointId
+                && checkpoint.revisionId === revision.id && checkpoint.generation === state.generation && checkpoint.status === "ready")));
+}
+
+export function cancelPrototypeChange(state: TandemState, requestId: string, completedAt: string): Pick<TandemState, "prototypeFlow" | "prototypeReview"> {
+    const revisions: Array<{ id: string; clientRequestId?: string | null; status: string }> = state.prototypeReview.revisions ?? [];
+    const cancelled = new Set(revisions.filter(item => item.clientRequestId === `change-${requestId}`
+        && !["applied", "dismissed"].includes(item.status)).map(item => item.id));
+    const pending = state.prototypeFlow?.checkpoints.find(item => item.id === state.prototypeFlow?.pendingCheckpointId);
+    return {
+        prototypeFlow: pending?.revisionId && cancelled.has(pending.revisionId)
+            ? { ...state.prototypeFlow!, pendingCheckpointId: null } : state.prototypeFlow,
+        prototypeReview: { ...state.prototypeReview,
+            revisions: revisions.map(item => cancelled.has(item.id) ? { ...item, status: "dismissed", completedAt } : item),
+            ...(cancelled.has(state.prototypeReview.activeRevisionId) ? { activeRevisionId: null, question: null } : {}),
+        },
+    };
+}
+
 export function prototypeNeedsChangeUpdate(state: TandemState): boolean {
+    if (state.prototypeApproach.mode === "not-applicable") return false;
+    if (pendingPrototypeChange(state)) return true;
     const displayed = state.prototypeFlow?.checkpoints.find(item => item.id === state.prototypeFlow?.displayedCheckpointId);
-    if (!displayed) return false;
-    return Boolean((state.lifecycle.reviewId || state.changeRequests?.some(request => request.snapshotPath && request.assessment?.requirements
+    const reviewedInputs = Boolean(state.lifecycle.reviewId || state.changeRequests?.some(request => request.snapshotPath && request.assessment?.requirements
         && !request.reviewId && ["active", "completed", "cancelled"].includes(request.status))
-        || state.stageReviews?.some(review => review.appliedAt && ["prepare", "requirements"].includes(review.stage))) &&
-        displayed.requirementsDigest !== requirementsInputDigest(state) ||
-        (state.lifecycle.changeRequestId || state.lifecycle.reviewId) && state.sketch.current && displayed.sketchRevisionId !== state.sketch.current.id);
+        || state.stageReviews?.some(review => review.appliedAt && ["prepare", "requirements", "sketch"].includes(review.stage)));
+    if (!displayed) return Boolean(state.previewUrl && reviewedInputs);
+    const requirementsChanged = displayed.requirementsDigest
+        ? displayed.requirementsDigest !== requirementsInputDigest(state) : reviewedInputs;
+    const sketchesChanged = !state.lifecycle.skippedStages.some(item => item.stageId === "sketch")
+        && (displayed.sketchRevisionId ?? null) !== (state.sketch.current?.id ?? null);
+    return requirementsChanged || sketchesChanged;
 }
 
 export function changeBaselineDigest(state: TandemState, development: unknown = null): string {
@@ -269,17 +299,24 @@ export function readChangeAssessment(value: unknown, state: TandemState): Change
     const stages = assessment.stages.map(item => item.stage);
     if (new Set(stages).size !== stages.length) throw new Error("Each affected stage must appear only once.");
     if (assessment.requirements) {
-        applyRequirementsDelta(state, assessment.requirements);
+        const delta = applyRequirementsDelta(state, assessment.requirements);
         if (!stages.includes("requirements")) throw new Error("A Requirements change must explicitly include Requirements.");
+        if (!assessment.question && requirementsInputDigest(state) === requirementsInputDigest({
+            ...state, requirements: { ...state.requirements, usageItems: delta.usages }, decisionGraph: delta.graph,
+            assumed: delta.assumed, deferred: delta.deferred,
+            prototypeApproach: assessment.requirements.prototypeApproach ?? state.prototypeApproach,
+        })) {
+            throw new Error("The Requirements patch makes no saved changes. Recheck the impact: update only the affected stage, or report that the request is already satisfied.");
+        }
         // Existing approval is bound to the complete requirements digest, even when screen bytes can be reused.
         if (state.sketch.current && !stages.includes("sketch")) {
             assessment.stages.push({ stage: "sketch", reason: "Review the retained designs against the changed requirements; unchanged screens are preserved." });
         }
-        if (state.prototypeFlow?.displayedCheckpointId && !stages.includes("prototype")) {
+        if ((state.prototypeFlow?.displayedCheckpointId || state.previewUrl) && !stages.includes("prototype")) {
             assessment.stages.push({ stage: "prototype", reason: "Update the saved prototype against the revised requirements and designs." });
         }
     }
-    if (assessment.stages.some(item => item.stage === "sketch") && state.prototypeFlow?.displayedCheckpointId &&
+    if (assessment.stages.some(item => item.stage === "sketch") && (state.prototypeFlow?.displayedCheckpointId || state.previewUrl) &&
         !assessment.stages.some(item => item.stage === "prototype")) {
         assessment.stages.push({ stage: "prototype", reason: "Bring the retained prototype into line with the reviewed designs." });
     }

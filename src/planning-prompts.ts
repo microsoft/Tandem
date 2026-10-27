@@ -527,6 +527,8 @@ export function buildChangeAssessmentPrompt(input: unknown): string {
         "matching IDs and dependencies. Never supply answers or include unchanged questions.",
         "The host retains independent answers and reopens affected descendants with previous answers.",
         "Add an unambiguous requested capability to usages without manufacturing a questionnaire.",
+        "A Requirements change may need no new questions, but its patch must still record the actual",
+        "usage, decision, constraint or approach changes. Never send an empty or unchanged patch just to force a review.",
         "An additive change in the current unfinished Requirements stage need not reopen existing",
         "answers or ask for confirmation again. New questions still require their own user answers;",
         "do not convert suggestions into accepted answers or change unrelated assumptions/deferrals.",
