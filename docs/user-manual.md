@@ -489,6 +489,11 @@ The same **Models** section contains two independent, optional selectors:
 **Main session model** changes the actual idle owning main session; **Development
 model** saves an override before creation or changes the idle private session
 after creation. Neither selector creates a session or sends a project request.
+Standalone startup preserves an existing main selection. If none is selected,
+it activates the native catalog's preferred available model and verifies the
+result before opening the project; it does not copy another chat's model or
+force an effort level.
+
 With no Development override, first creation reads and inherits the current main
 model. Same-ID resume retains Development's saved model, and later main changes
 do not synchronize it. An unavailable main readback or unsupported inherited

@@ -80,4 +80,16 @@ export class MainSessionModel {
     } finally { this.#changing = false; }
     return this.read();
   }
+  async initializeDefault() {
+    if ((await this.#current()).actual) return;
+    const models = await this.#models();
+    const current = await this.#current();
+    if (current.actual) return;
+    if (!models.length) throw new Error("No available native main model was reported. Select an available model before starting this project.");
+    await this.select({ model: models[0].id, sessionId: current.sessionId, expectedModel: null });
+  }
+}
+
+export async function initializeMainSessionModel(session) {
+  await new MainSessionModel(() => session, async () => null).initializeDefault();
 }

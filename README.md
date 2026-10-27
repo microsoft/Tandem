@@ -67,7 +67,9 @@ available to your account:
 npm run browser -- --workspace C:\projects\my-app --model gpt-6-astra --reasoning-effort low
 ```
 
-Omitting these flags preserves native defaults and saved selection. Project
+Omitting these flags preserves saved selection. With no selected main model,
+standalone startup activates and verifies the native preferred model without
+forcing an effort level. Project
 settings has separate **Main session model** and **Development model** controls;
 see [model options](docs/quick-start.md#main-session-model-options) for
 creation-time Development inheritance and independent effort settings.

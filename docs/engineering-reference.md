@@ -909,6 +909,21 @@ the reported ownership/history error rather than treating it as success.
 
 ### Recover an incomplete first Development startup
 
+Model inheritance and availability are checked before the durable native-create
+boundary. A failed preflight leaves creation **not requested**: Project settings
+can save an available Development override, and explicit **Retry runtime** uses
+the same reserved identity. Saving settings never retries or admits a handoff.
+
+The `8053076` missing-main-model bug marked creation requested before that
+preflight. Its existing receipt is not cleared or treated as absent. The narrow
+compatibility recovery exposes **Inspect unused setup recovery** instead of an
+ineffective ordinary retry. It reuses complete startup-history and native
+absence checks, rejects any created/Ready/used or indeterminate identity, and
+requires **Authorize one-time initialization** for the original reserved ID.
+The original issued receipt remains in history. After Ready, explicitly
+reconcile the retained handoff once; recovery does not admit it or approve
+implementation.
+
 New setup checks the actual Git root read-only before reserving native setup.
 The guided entry can offer **Set up this folder and continue** for explicit local
 Git initialization and a preserving `.tandem/` ignore rule. It never commits,
@@ -997,6 +1012,13 @@ event paths, not requested preferences or a new polling scheduler. Root discover
 shows main; Development shows private; unopened private state says not started.
 Missing effective effort is labeled native default/not reported. The standalone
 native conversation header and integrated host status area preserve the same distinction.
+
+Standalone startup makes an unselected main model concrete before opening the
+project: it reads the owning native catalog, selects its preferred available
+model through the idle-checked native API, and requires matching readback.
+Existing selections and explicit launcher overrides are not replaced; effort is
+not forced. This is model selection, not a model prompt or a copied parent-chat
+preference. An unavailable catalog or unconfirmed switch fails explicitly.
 
 The controller exposes a presentation-only startup phase through private runtime
 creation/recovery and final model/effort verification. Until it settles, the

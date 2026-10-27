@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MainSessionModel } from "../src/main-session-model.mjs";
+import { MainSessionModel, initializeMainSessionModel } from "../src/main-session-model.mjs";
 import { createDurablePrivateSession } from "../src/human-loop-controller.mjs";
 
 function fixture() {
@@ -20,8 +20,51 @@ function fixture() {
     queue: { pendingItems: async () => ({ items: [], steeringMessages: [] }) },
   } };
   return { session, calls, model: new MainSessionModel(() => session, async () => desired),
-    busy(value) { busy = value; }, desired(value) { desired = value; }, actual(value) { actual = value; } };
+    busy(value) { busy = value; }, desired(value) { desired = value; }, actual(value) { actual = value; }, effort(value) { effort = value; } };
 }
+
+test("fresh standalone main selects and verifies its native preferred model before direct Development inherits it", async () => {
+  const f = fixture();
+  f.actual(undefined); f.effort(undefined);
+  await initializeMainSessionModel(f.session);
+  assert.deepEqual(await f.session.rpc.model.getCurrent(), { modelId: "main-one", reasoningEffort: undefined });
+  assert.deepEqual(f.calls, [{ modelId: "main-one", requireAvailable: true, runCompactionPreflight: true }]);
+  const configurations = [];
+  let privateModel;
+  const client = { start: async () => {}, listModels: async () => [{ id: "main-one" }],
+    createSession: async configuration => {
+      configurations.push(configuration); privateModel = configuration.model;
+      return { sessionId: configuration.sessionId, rpc: { name: { set: async () => {} },
+        model: { getCurrent: async () => ({ modelId: privateModel }) } } };
+    }, rpc: { sessions: { save: async () => {} } } };
+  await createDurablePrivateSession(client, { sessionId: "private" }, undefined, f.session.rpc.model.getCurrent);
+  assert.equal(configurations[0].model, "main-one");
+  assert.equal(Object.hasOwn(configurations[0], "reasoningEffort"), false);
+  f.actual("main-two");
+  assert.equal(privateModel, "main-one");
+  assert.equal(configurations.length, 1);
+});
+
+test("standalone startup preserves an existing native selection without replacing it from a catalog", async () => {
+  const f = fixture();
+  f.session.rpc.model.list = async () => assert.fail("A saved selection must not be replaced by a preferred default.");
+  await initializeMainSessionModel(f.session);
+  assert.equal((await f.session.rpc.model.getCurrent()).modelId, "main-one");
+  assert.equal(f.calls.length, 0);
+});
+
+test("standalone default activation refuses missing choices and unconfirmed native switches", async () => {
+  const f = fixture();
+  f.actual(undefined); f.effort(undefined);
+  const list = f.session.rpc.model.list;
+  f.session.rpc.model.list = async () => ({ list: [] });
+  await assert.rejects(initializeMainSessionModel(f.session), /model list is unavailable or invalid/);
+  assert.equal(f.calls.length, 0);
+  f.session.rpc.model.list = list;
+  f.session.rpc.model.switchTo = async () => ({ deferred: true, queueId: "pending" });
+  await assert.rejects(initializeMainSessionModel(f.session), /pending|confirmation/);
+  assert.equal((await f.session.rpc.model.getCurrent()).modelId, undefined);
+});
 
 test("main settings read actual native selection and switch only that idle owned session with effort readback", async () => {
   const f = fixture();

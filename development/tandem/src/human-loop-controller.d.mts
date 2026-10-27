@@ -80,3 +80,7 @@ export function createDurablePrivateSession(
   onCreated?: (sessionId: string) => Promise<void>,
   mainModel?: () => Promise<{ modelId?: string; reasoningEffort?: string }>,
 ): Promise<CopilotSession>;
+export function preparePrivateSessionConfiguration(
+  client: import("@github/copilot-sdk").CopilotClient, configuration: SessionConfig,
+  mainModel?: () => Promise<{ modelId?: string; reasoningEffort?: string }>,
+): Promise<SessionConfig>;

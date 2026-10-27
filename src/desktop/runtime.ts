@@ -1,4 +1,5 @@
 import { dirname, join, resolve } from "node:path";
+import { initializeMainSessionModel } from "../../development/tandem/src/main-session-model.mjs";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { CopilotClient, type CopilotSession, type ExtensionLaunchProvider, type ResumeSessionConfig } from "@github/copilot-sdk";
@@ -226,6 +227,8 @@ export async function runDesktopRuntime(options: {
                 && current.reasoningEffort !== options.modelSelection.reasoningEffort) {
                 throw new Error("The native host did not confirm the requested model/effort; its identity was retained without starting work.");
             }
+        } else {
+            await initializeMainSessionModel(session);
         }
         signal.throwIfAborted();
         if (!session.workspacePath) throw new Error("The Copilot runtime did not provide a durable session workspace.");

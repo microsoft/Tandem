@@ -628,8 +628,8 @@
     },
     {
       "path": "src/human-loop-controller.mjs",
-      "bytes": 21967,
-      "sha256": "544cec68e29a078f4c0798674a28110fbca1ed17f92e049b2646575d94d3fc3b"
+      "bytes": 22973,
+      "sha256": "71c3fa593382f045d1663b62c3b57e29afba56f8a0720c49f86fcb7f80096774"
     },
     {
       "path": "src/human-loop-design-store.mjs",
@@ -643,8 +643,8 @@
     },
     {
       "path": "src/human-loop-installation.mjs",
-      "bytes": 48369,
-      "sha256": "d3a2462539f87d7818a69038c1ce852f7db3329ab68b0226b45ab302ad2d8eb7"
+      "bytes": 51340,
+      "sha256": "127588f59de328aa49b10814a779866dd5f9d02fc07a50eebefbd742954a74d4"
     },
     {
       "path": "src/human-loop-native-files.mjs",
@@ -688,8 +688,8 @@
     },
     {
       "path": "src/human-loop-runtime.mjs",
-      "bytes": 74054,
-      "sha256": "669fba48446c6d505369905ceb1e570be2c0ff8b261afcb6d019bced1e945f2f"
+      "bytes": 74100,
+      "sha256": "0054ee4fad11e46880a896795730a49cc69e93e08614dbc6b992285412b9dfe2"
     },
     {
       "path": "src/human-loop-startup.mjs",
@@ -708,8 +708,8 @@
     },
     {
       "path": "src/human-loop-transport.mjs",
-      "bytes": 88981,
-      "sha256": "248c9527a8c18e600d782b86c4110016f5099fd2909b6627de7fffa4569ad36a"
+      "bytes": 89193,
+      "sha256": "9c00042be032a79ef2e6c9c070ea7af74ff58b18c6734e0aa10c09200c35f375"
     },
     {
       "path": "src/human-loop-workspace.mjs",
@@ -718,8 +718,8 @@
     },
     {
       "path": "src/main-session-model.mjs",
-      "bytes": 4999,
-      "sha256": "6815a90424dd1e4bc26bdfab6ce4dde02cd3c9c0afca003e62a4fa1dc7eb4a4c"
+      "bytes": 5599,
+      "sha256": "aec6209184ea9b95a45b6ed9cfc3d4bab7528825bd26225e2360b20b67df19f8"
     },
     {
       "path": "src/native-evidence-workflow.mjs",

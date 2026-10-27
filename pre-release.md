@@ -324,6 +324,60 @@ overwritten. The new launch receipt and PR body bind the exact merge SHA,
 main base, payload and native identity. Stop at initial UI or actual native
 consent; Linux CI, review and user manual qualification remain merge gates.
 
+## Startup/preflight recovery follow-up
+
+The `8053076` manual test exposed a real ordering bug: private creation was
+durably marked requested before inheritance validation, which then failed
+without calling `client.createSession`. The failed runtime object also disabled
+the Development override the error recommended.
+
+The source correction:
+
+- Validates model inheritance/catalog/API readiness before consuming native
+  creation intent. Proven not-requested failures keep optional Settings usable,
+  including after reopening; explicit retry retains the reserved identity.
+- Reuses the existing inspected, one-time initialization confirmation for the
+  exact old missing-main-model v3 failure. It checks complete history, stops the
+  failed creator, verifies native metadata/in-use/storage absence, rejects
+  present or uncertain state, and preserves the original issued receipt.
+  Recovery never automatically admits the handoff or approves implementation.
+- Makes an unselected standalone main concrete at startup using the owning
+  native preferred model and verified native switching/readback, before project
+  UI or private creation. Existing main selections and explicit launch choices
+  are preserved. No fixed model, copied parent-chat preference, forced effort or
+  per-worker model override is introduced.
+
+The focused nine-case group passed eight cases; its empty-catalog test expected
+different error wording. That one assertion was corrected and passed alone.
+The two recovery cases also passed after adding cold-settings/reopen guards.
+Root type checking and the Development build passed. Logs:
+`startup-recovery-default-final.log`, `startup-default-error-final.log` and
+`startup-cold-recovery-final.log`. No full suite was rerun.
+
+A separate supported read-only native lookup on 2026-10-27 at 09:17:41 UTC
+reported reserved private ID `8aec0704-adc8-4bab-95b5-62098a114362` absent in
+metadata, in-use ownership and storage. Its inspection client closed cleanly.
+This diagnostic is not recovery authorization; the UI rechecks before and after
+the user's explicit confirmation. Evidence:
+`pr60-8053076-manual/reserved-native-lookup.log`.
+
+The user authorized ordinary publication, a safe restart of only the blocked
+`8053076` host using the same project/main/private identities, and a separate
+blank direct-entry test on the new candidate. This does not authorize recovery
+confirmation, handoff submission, project work, PR merge or auto-merge.
+Before stopping, verify idle main work and authoritative absence for the
+reserved private ID; preserve identity/artifact hashes and the original journal
+prefix across the ordinary relaunch. Keep the old `947b257` preview untouched.
+After loading the corrected source into the
+same project, use **Inspect unused setup recovery**, review the original ID,
+then **Authorize one-time initialization**. After Ready, click the retained
+handoff action once (**Retry Development** for the failed prepared intent;
+**Reconcile saved request** only when admission is uncertain).
+
+Recovering this poisoned receipt is not a pass for normal transition behavior.
+Two manual cases remain on the next candidate: normal **Finish Prototype ->
+Development**, and a fresh direct **Go to Development** with no launch overrides.
+
 ## Public-release history (unexecuted; separately gated)
 
 - [ ] Decide between a new public snapshot and a controlled rewrite of the existing

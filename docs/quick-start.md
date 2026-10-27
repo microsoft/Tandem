@@ -71,7 +71,11 @@ npm run browser -- --workspace C:\projects\counter --model gpt-6-astra --reasoni
 
 Use a model available to your account. The launcher checks the native catalog and
 actual readback before opening Tandem; it does not silently substitute a model.
-Omitting both options preserves native defaults and saved selection. If Stage 1
+Omitting both options preserves the native session's saved selection. If it has
+no selected model, standalone startup selects the first available model in the
+owning native catalog's preferred-default order and verifies actual readback
+before opening the project. It does not choose a fixed effort level or copy
+another Copilot chat's settings. If Stage 1
 effort remains pending with no actual model, stop the host and reopen the same
 folder with an explicit model. **Project settings** also provides separate,
 optional **Main session model** and **Development model** selectors in one window.

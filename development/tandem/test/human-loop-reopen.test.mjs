@@ -15,6 +15,7 @@ import { sharedDesign } from "./helpers/shared-design-fixture.mjs";
 import { createHumanTask } from "../src/human-loop-task.mjs";
 import { ImageAttachmentStore } from "../runtime-src/domain/workflow/image-attachment.ts";
 import { projectHumanConversation } from "../src/human-loop-provider.mjs";
+import { createDurablePrivateSession, createHumanLoopController, preparePrivateSessionConfiguration } from "../src/human-loop-controller.mjs";
 
 const content = sharedDesign();
 const design = { binding: { revisionId: "design", digest: policyHash(content) }, content };
@@ -245,6 +246,104 @@ async function emptyCreatedFixture(t) {
   await assert.rejects(f.reopen(true), /private session is unavailable/);
   return f;
 }
+
+for (const legacyIssued of [false, true]) test(`model preflight recovery preserves the reserved owner (${legacyIssued ? "8053076 issued receipt" : "unrequested creation"})`, async t => {
+  let controller;
+  t.after(async () => { if (controller) { await controller.close(); controller.events.close(); } });
+  const f = await fixture(t, { deferred: true, empty: true, model: "one" });
+  await new HumanLoopPreferences(f.workspace).update({ model: null });
+  let mainModel;
+  const main = f.options.mainSession;
+  main.on = () => () => {};
+  main.getEvents = async () => [];
+  main.rpc.model = {
+    getCurrent: async () => ({ modelId: mainModel }),
+    list: async () => ({ list: ["one", "two"].map(id => ({ id, capabilities: { supports: { reasoning_effort: ["low", "high"] } } })) }),
+    switchTo: async ({ modelId }) => { mainModel = modelId; return { modelId }; },
+  };
+  const makeRuntime = f.options.createRuntime;
+  f.options.createRuntime = input => makeRuntime({ ...input,
+    ...(!legacyIssued ? { preparePrivateSession: configuration => preparePrivateSessionConfiguration(input.client, configuration, main.rpc.model.getCurrent) } : {}),
+    createPrivateSession: configuration => createDurablePrivateSession(input.client, configuration, input.afterNativeCreate, main.rpc.model.getCurrent),
+  });
+  controller = createHumanLoopController({ workspacePath: f.workspace, projectEffortControl: true });
+  await controller.attach(main);
+  const bridge = controller.installation;
+  t.mock.method(bridge, "read", () => f.installation.read());
+  t.mock.method(bridge, "open", input => f.reopen(false, input?.retry));
+  t.mock.method(bridge, "canConfigureBeforeNativeCreation", () => f.installation.canConfigureBeforeNativeCreation());
+  t.mock.method(bridge, "close", () => f.installation.close());
+  t.mock.getter(bridge, "runtime", () => f.installation.runtime);
+  t.mock.getter(bridge, "configuration", () => f.installation.configuration);
+  await assert.rejects(controller.start(), /main session has not reported/);
+  const failed = JSON.parse(await f.record().read());
+  const reserved = failed.configuration.owner.privateSessionId;
+  assert.equal(f.counts.creates, 0, "The model failure precedes the actual native create call.");
+  assert.equal(failed.nativeCreation.status, legacyIssued ? "requested" : "not-requested");
+  const settings = await controller.modelSettings();
+  assert.equal(settings.canChange, !legacyIssued);
+  if (!legacyIssued) {
+    const restored = new HumanLoopInstallation(f.options);
+    assert.equal(await restored.canConfigureBeforeNativeCreation(), true);
+    assert.equal(restored.configuration.owner.privateSessionId, reserved);
+    assert.deepEqual(settings.models.map(item => item.id), ["one", "two"]);
+    await controller.changeModel({ model: "one" });
+    assert.equal(f.counts.creates, 0, "Saving an override cannot create or retry a session.");
+    await controller.start({ retry: true });
+  } else {
+    await assert.rejects(controller.changeModel({ model: "one" }), /reconcile/);
+    assert.equal((await f.installation.read()).canRetry, false);
+    assert.equal((await f.installation.read()).canInspectInitialRecovery, true);
+    const loadSdk = f.options.loadSdk, sdk = await loadSdk();
+    for (const uncertain of [false, true]) {
+      f.options.loadSdk = async () => ({ ...sdk, CopilotClient: class extends sdk.CopilotClient {
+        async getSessionMetadata(sessionId) {
+          if (uncertain) throw new Error("Native lookup unavailable.");
+          return { sessionId, isRemote: false };
+        }
+      } });
+      await assert.rejects(f.installation.requestInitialCreationRecovery(), uncertain ? /lookup unavailable/ : /exists or its metadata is indeterminate/);
+      assert.equal(f.counts.creates, 0, "Present or unavailable native state cannot authorize creation.");
+    }
+    f.options.loadSdk = loadSdk;
+    const provider = await controller.openView("preflight-settings");
+    const response = await fetch(new URL("api/settings/main-model", provider.url), { method: "POST",
+      headers: { "content-type": "application/json" }, body: JSON.stringify({ model: "one", sessionId: "main", expectedModel: null }) });
+    assert.equal(response.status, 200, await response.clone().text());
+    assert.equal((await response.json()).mainModel.actual, "one", "Only verified readback reports the applied main selection.");
+    const inspection = await f.installation.requestInitialCreationRecovery();
+    assert.equal(inspection.privateSessionId, reserved);
+    assert.equal(f.counts.creates, 0, "Inspection never initializes the reserved identity.");
+    assert.equal(JSON.parse(await f.record().read()).nativeCreation.requestId, failed.nativeCreation.requestId);
+    await f.installation.decideInitialCreationRecovery({ confirmationId: inspection.confirmationId, approve: true });
+    assert.deepEqual(await f.installation.decideInitialCreationRecovery({ confirmationId: inspection.confirmationId, approve: true }),
+      { recovered: true, duplicate: true });
+  }
+  const ready = JSON.parse(await f.record().read());
+  assert.equal(ready.phase, "ready");
+  assert.equal(ready.nativeCreation.sessionId, reserved);
+  assert.equal(f.installation.runtime.sessionId, reserved);
+  assert.equal((await f.installation.runtime.currentModelSelection()).modelId, "one");
+  assert.equal(f.counts.creates, 1);
+  assert.equal(f.counts.sends, 0, "Ready does not admit the saved handoff or authorize implementation.");
+  assert.equal((await f.installation.runtime.state()).requests.length, 0);
+  const savedReady = new HumanLoopInstallation(f.options);
+  assert.equal(await savedReady.canConfigureBeforeNativeCreation(), false);
+  assert.equal(savedReady.configuration, null, "Reading Settings must not consume the normal saved-session reopen path.");
+  const history = await getHostStateWal(f.workspace).history(f.record().namespace, f.record().key);
+  assert.ok(history.some(entry => entry.content && JSON.parse(entry.content).nativeCreation?.requestId === failed.nativeCreation.requestId
+    && JSON.parse(entry.content).phase === "unknown"), "The original failed receipt stays in history.");
+});
+
+test("issued creation with a different failure cannot use model-preflight recovery", async t => {
+  const f = await fixture(t, { deferred: true, empty: true, model: "one", failCreate: "after-create" });
+  await assert.rejects(f.reopen(), /acknowledgement was lost/);
+  assert.equal(JSON.parse(await f.record().read()).nativeCreation.status, "requested");
+  assert.equal(await f.installation.canConfigureBeforeNativeCreation(), false);
+  await assert.rejects(f.installation.requestInitialCreationRecovery(), /incomplete startup/);
+  assert.equal(f.counts.creates, 1);
+  f.installation.runtime.commands.releaseWriter();
+});
 
 test("verified empty-created repair is same-ID, one-use and preserves all original audit without a request", async t => {
   const f = await emptyCreatedFixture(t);
