@@ -62,7 +62,7 @@ test("a no-question Requirements review visibly leads a legacy preview through e
     await h.api.persistState(initial);
     h.setPreviewFetch(fetch);
     const usage = "I want to save and reload a task.";
-    const plan: ChangeAssessment = {
+    let plan: ChangeAssessment = {
         version: 1, startStage: "requirements", summary: "Add saving and reloading while retaining the task workflow.",
         reason: "This adds one unambiguous capability, not a new unanswered product decision.",
         stages: [{ stage: "requirements", reason: "Record the new usage." }, { stage: "prototype", reason: "Wire the saved task interaction." }],
@@ -107,11 +107,17 @@ test("a no-question Requirements review visibly leads a legacy preview through e
         await browser.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
         const layout = await browser.evaluate(`(() => {
             const comparison = document.querySelector(".stage-review-comparison"), rect = comparison.getBoundingClientRect();
-            const row = comparison.querySelector("tbody tr").getBoundingClientRect();
+            const usages = document.querySelector('[aria-label="Draft usages"]');
+            const row = usages.querySelector('[data-change="added"]').getBoundingClientRect();
+            const panel = document.querySelector("#requirements-usage-panel").getBoundingClientRect();
+            const review = document.querySelector("#stage-input-review").getBoundingClientRect();
             return { width:innerWidth, height:rect.height, bottom:rect.bottom, rowBottom:row.bottom,
-                text:comparison.textContent, inDialog:Boolean(comparison.closest("[role=dialog]")),
+                text:comparison.textContent, usages:usages.textContent, inDialog:Boolean(comparison.closest("[role=dialog]")),
+                inReviewPane:Boolean(comparison.closest("#stage-input-review")) && rect.top >= review.top && rect.bottom <= review.bottom,
+                aboveEditor:Boolean(document.querySelector(".stage-review-workspace > .stage-review-comparison, .stage-review-workspace > .stage-review-banner")),
+                table:Boolean(document.querySelector(".stage-review-workspace table")),
                 visible:comparison.checkVisibility() && rect.height > 0, fits:rect.left >= 0 && rect.right <= innerWidth + 1,
-                changesVisible:row.bottom <= rect.bottom,
+                changesVisible:usages.checkVisibility() && row.top >= panel.top && row.bottom <= panel.bottom,
                 pageFits:document.documentElement.scrollWidth <= innerWidth + 1,
                 applyEnabled:!document.querySelector("#apply-stage-review").disabled,
                 currentStage:workspaceFixture.store.getSnapshot().state.lifecycle.currentStage };
@@ -119,8 +125,11 @@ test("a no-question Requirements review visibly leads a legacy preview through e
         if (process.env.TANDEM_UI_EVIDENCE) await writeFile(
             join(process.env.TANDEM_UI_EVIDENCE, `requirements-change-review-${width}.png`), await browser.screenshot());
         assert.match(layout.text, /No new questions need answers/);
-        assert.match(layout.text, /I want to save and reload a task/);
+        assert.match(layout.usages, /I want to complete a task.*Existing.*I want to save and reload a task.*Added/);
+        assert.equal(layout.table, false);
         assert.equal(layout.inDialog, false);
+        assert.equal(layout.inReviewPane, true);
+        assert.equal(layout.aboveEditor, false);
         assert.equal(layout.visible && layout.fits && layout.changesVisible && layout.pageFits && layout.applyEnabled, true, JSON.stringify(layout));
         assert.equal(layout.currentStage, "prototype");
     }
@@ -158,6 +167,51 @@ test("a no-question Requirements review visibly leads a legacy preview through e
     assert.equal(applied.prototypeReview.revisions[0].status, "applied");
     assert.equal(await readFile(join(h.root, "index.html"), "utf8"), original);
     assert.equal(h.requests.length, 2);
+    const reviewedRequest = applied.changeRequests![0];
+    assert.equal(reviewedRequest.status, "reviewing", "An applied cross-stage update can still be awaiting Finish Prototype.");
+    for (const width of [1280, 375]) {
+        await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: false });
+        await browser.evaluate('document.querySelector("#revision-input").scrollIntoView({block:"nearest"}); document.querySelector("#revision-input").focus()');
+        const feedback = await browser.evaluate(`(() => {
+            const input = document.querySelector("#revision-input"), send = document.querySelector("#submit-revision");
+            const rect = send.getBoundingClientRect();
+            return { enabled:!send.disabled, visible:input.checkVisibility() && send.checkVisibility(),
+                label:send.getAttribute("aria-label"),
+                reachable:send.contains(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)),
+                finishEnabled:!document.querySelector("#complete-stage").disabled };
+        })()`);
+        assert.ok(feedback.enabled && feedback.visible && feedback.reachable && feedback.finishEnabled, JSON.stringify(feedback));
+        assert.equal(feedback.label, "Re-evaluate change");
+        if (process.env.TANDEM_UI_EVIDENCE) await writeFile(
+            join(process.env.TANDEM_UI_EVIDENCE, `prototype-review-feedback-${width}.png`), await browser.screenshot());
+    }
+    plan = { ...plan, summary: "Add task archiving while retaining saving.",
+        requirements: { ...plan.requirements!, usages: { add: ["I want to archive completed tasks."], remove: [] } } };
+    await browser.call("Input.insertText", { text: "Also let me archive completed tasks." });
+    await browser.evaluate('document.querySelector("#submit-revision").click()');
+    await h.waitForRequests(3); await h.api.waitForAnswer("sample");
+    await browser.evaluate("workspaceFixture.store.refresh()");
+    await browser.waitFor('Boolean(document.querySelector("#approve-change"))');
+    const reevaluated = await h.api.loadState("sample");
+    assert.equal(reevaluated.lifecycle.currentStage, "prototype");
+    assert.equal(reevaluated.prototypeFlow!.displayedCheckpointId, applied.prototypeFlow!.displayedCheckpointId);
+    assert.equal(reevaluated.changeRequests!.at(-1)!.replacesRequestId, reviewedRequest.id);
+    assert.equal(reevaluated.changeRequests!.at(-1)!.status, "proposed");
+    assert.deepEqual(reevaluated.requirements, applied.requirements, "Sending feedback does not apply the newly proposed requirements.");
+    await browser.evaluate('document.querySelector("#close-change-details").click()');
+    await browser.waitFor('Boolean(document.querySelector("#stage-input-review #revision-input"))');
+    await browser.evaluate('document.querySelector("#revision-input").scrollIntoView({block:"nearest"}); document.querySelector("#revision-input").focus()');
+    await browser.call("Input.insertText", { text: "Keep this follow-up draft while I inspect requirements." });
+    assert.equal(await browser.evaluate('document.querySelector("#revision-input").value'), "Keep this follow-up draft while I inspect requirements.");
+    assert.equal(await browser.evaluate('document.querySelector("#revision-input").closest("[inert]") === null'), true);
+    assert.equal(await browser.evaluate('document.querySelector("#submit-revision").disabled'), false);
+    await browser.evaluate('document.querySelector("#submit-revision").scrollIntoView({block:"nearest"})');
+    assert.equal(await browser.evaluate(`(() => {
+        const button = document.querySelector("#submit-revision"), rect = button.getBoundingClientRect();
+        return button.contains(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2));
+    })()`), true, "Feedback remains reachable while the upstream review locks the preview.");
+    if (process.env.TANDEM_UI_EVIDENCE) await writeFile(
+        join(process.env.TANDEM_UI_EVIDENCE, "prototype-review-feedback-upstream.png"), await browser.screenshot());
     assert.deepEqual(browser.exceptions, []);
     await browser.call("Page.navigate", { url: "about:blank" });
 });
@@ -169,7 +223,8 @@ test("pinned draft review keeps lifecycle styling, editor state and controls usa
     initial.prototypeId = "sample";
     initial.sketch = emptySketchState();
     initial.requirements.substage = "dag";
-    initial.decisionGraph.nodes = [decision("task", "answered")];
+    initial.requirements.usageItems = ["I want to complete a task."];
+    initial.decisionGraph.nodes = [decision("task", "answered"), decision("visibility", "answered")];
     const [script, styles] = await Promise.all([
         rendererFixtureScript(),
         build({ entryPoints: [fileURLToPath(new URL("../src/renderer/styles.css", import.meta.url))],
@@ -184,6 +239,23 @@ test("pinned draft review keeps lifecycle styling, editor state and controls usa
         </script></body></html>`;
     const h = await extensionHarness({}, undefined, html, undefined, false, true);
     await h.api.persistState({ ...initial, revision: 0 });
+    const draft = await h.api.openStageReview("sample", "project:tandem", {
+        stageId: "requirements", expectedGeneration: initial.generation,
+    });
+    draft.requirements.usageItems.push("I want to share a task list with my team.");
+    draft.decisionGraph.nodes[1] = {
+        ...decision("visibility", "toAnswer"), title: "Completed task visibility", dependencies: ["sharing"],
+        question: { id: "visibility", text: "Who should see completed tasks after a list is shared?",
+            choices: ["Keep existing visibility", "Everyone on the list", "Only the person who completed the task"],
+            recommended: "Keep existing visibility", allowFreeText: true },
+    };
+    draft.decisionGraph.nodes.push({
+        ...decision("sharing"), title: "Shared list access",
+        question: { id: "sharing", text: "Who can see your shared task list?",
+            choices: ["Only people I invite", "Anyone with the link", "Everyone in my workspace"],
+            recommended: "Only people I invite", allowFreeText: true },
+    });
+    await h.api.persistState(draft);
     const server = await h.api.startServer("pinned-browser", "sample", "project:tandem", true);
     t.after(async () => {
         clearInterval(server.heartbeat);
@@ -199,10 +271,51 @@ test("pinned draft review keeps lifecycle styling, editor state and controls usa
         if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, "pinned-review-entry.png"), await browser.screenshot());
         throw new Error(`${cause instanceof Error ? cause.message : cause}\n${await browser.evaluate("document.body.innerText")}\n${JSON.stringify(h.logs)}`);
     }
+    await browser.evaluate("workspaceFixture.store.refresh()");
     await browser.evaluate('document.querySelector("#design-tree-workspace-tab").dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }))');
-    await browser.waitFor('document.querySelector("#review-stage")?.hidden === false');
-    await browser.evaluate('document.querySelector("#review-stage").click()');
+    await browser.waitFor('document.querySelector("#continue-pending-review")?.disabled === false');
+    await browser.evaluate('document.querySelector("#continue-pending-review").click()');
     await browser.waitFor('Boolean(document.querySelector("[data-review-stage=requirements]"))');
+    await browser.waitFor('Boolean(document.querySelector("#review-requirement-questions"))');
+    await browser.evaluate('document.querySelector("#review-requirement-questions").click()');
+    await browser.waitFor('document.querySelector("#requirements-dag-panel")?.hidden === false && document.querySelector("#question-host")?.contains(document.activeElement)');
+    for (const width of [1280, 375]) {
+        await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: false });
+        const questions = await browser.evaluate(`(() => {
+            const panel = document.querySelector("#requirements-dag-panel"), host = document.querySelector("#question-host");
+            const bounds = panel.getBoundingClientRect();
+            return { text:host.textContent, heading:document.querySelector(".design-tree-inspector .eyebrow").textContent,
+                visible:panel.checkVisibility() && host.checkVisibility(),
+                fits:bounds.left >= 0 && bounds.right <= innerWidth + 1,
+                pageFits:document.documentElement.scrollWidth <= innerWidth + 1,
+                newCount:panel.querySelectorAll('[data-change="added"]').length,
+                changedCount:panel.querySelectorAll('[data-change="changed"]').length,
+                submitCount:document.querySelectorAll("#decision-submit").length,
+                applyDisabled:document.querySelector("#apply-stage-review").disabled,
+                reviewSummary:Boolean(document.querySelector("#stage-input-review .stage-review-comparison")),
+                aboveEditor:Boolean(document.querySelector(".stage-review-workspace > .stage-review-comparison, .stage-review-workspace > .stage-review-banner")),
+                table:Boolean(document.querySelector(".stage-review-workspace table")) };
+        })()`);
+        assert.match(questions.text, /Who can see your shared task list.*Only people I invite/s);
+        assert.equal(questions.heading, "New question");
+        assert.equal(questions.newCount, 1);
+        assert.equal(questions.changedCount, 1);
+        assert.equal(questions.submitCount, 1);
+        assert.equal(questions.table, false);
+        assert.equal(questions.reviewSummary, true);
+        assert.equal(questions.aboveEditor, false);
+        assert.ok(questions.visible && questions.fits && questions.pageFits && questions.applyDisabled, JSON.stringify(questions));
+        if (process.env.TANDEM_UI_EVIDENCE) await writeFile(
+            join(process.env.TANDEM_UI_EVIDENCE, `requirements-question-review-${width}.png`), await browser.screenshot());
+        await browser.evaluate('document.querySelector("#decision-submit").scrollIntoView({block:"nearest"})');
+        const answerControl = await browser.evaluate(`(() => {
+            const button = document.querySelector("#decision-submit"), panel = document.querySelector("#requirements-dag-panel");
+            const rect = button.getBoundingClientRect(), viewport = panel.getBoundingClientRect();
+            return { visible:rect.top >= viewport.top && rect.bottom <= viewport.bottom,
+                reachable:button.contains(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)) };
+        })()`);
+        assert.ok(answerControl.visible && answerControl.reachable, JSON.stringify(answerControl));
+    }
     await browser.evaluate(`(() => {
         document.querySelector(".stage-review-request").open = true;
         window.pinnedEditor = document.querySelector("#review-requirement-request");
@@ -214,10 +327,10 @@ test("pinned draft review keeps lifecycle styling, editor state and controls usa
         await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: false });
         await browser.evaluate('document.querySelector("#review-requirement-request").scrollIntoView({block:"end"})');
         const layout = await browser.evaluate(`(() => {
-            const header = document.querySelector(".previewbar"), banner = document.querySelector(".stage-review-banner");
+            const header = document.querySelector(".previewbar");
             const current = document.querySelector("#live-preview-tab"), reviewed = document.querySelector("#design-tree-tab");
             const bounds = element => { const r = element.getBoundingClientRect(); return { left:r.left, right:r.right, top:r.top, bottom:r.bottom, height:r.height }; };
-            return { header:bounds(header), banner:bounds(banner), fits:header.scrollWidth <= header.clientWidth + 1,
+            return { header:bounds(header), fits:header.scrollWidth <= header.clientWidth + 1,
                 viewport:innerWidth, current:current.getAttribute("aria-current"), reviewed:reviewed.getAttribute("aria-current"),
                 currentColor:getComputedStyle(current).backgroundColor, reviewedColor:getComputedStyle(reviewed).backgroundColor,
                 reviewedUnderline:getComputedStyle(reviewed, "::after").display,

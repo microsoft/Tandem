@@ -4,7 +4,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
     activateChange, applyRequirementsDelta, changeBaselineDigest, readChangeAssessment, readChangeRequests, preserveUnchangedScreens,
-    prototypeNeedsChangeUpdate, activeChange, pendingChange, nextChangeWork, readSketchChangeContext, isLocalChange,
+    prototypeNeedsChangeUpdate, activeChange, pendingChange, nextChangeWork, previousChangeReviews, readSketchChangeContext, isLocalChange,
     type ChangeAssessment, type ChangeRequest, type RequirementsDelta,
 } from "../src/change-requests.js";
 import { migrateLifecycle } from "../src/lifecycle.js";
@@ -302,21 +302,29 @@ async function fixture(gitReady = false) {
     await h.api.persistState(initial);
     return { h, initial: await h.api.loadState("sample") };
 }
-function worker(h: Awaited<ReturnType<typeof extensionHarness>>, result: ChangeAssessment, sessionId = h.session.sessionId) {
+function worker(h: Awaited<ReturnType<typeof extensionHarness>>, result: ChangeAssessment | (() => ChangeAssessment),
+    sessionId = h.session.sessionId, holdPrototype?: Promise<void>, holdAssessment?: Promise<void>) {
     h.api.setSession({ ...h.session, sessionId, rpc: { ...h.session.rpc, workflow: { run: async (request: any) => {
         h.requests.push(plain(request));
         const runId = `run-${h.requests.length}`;
         if (request.args.action === "assess-change") {
+            const assessmentResult = typeof result === "function" ? result() : result;
+            await holdAssessment;
             const output = await h.api.answerFactory.run({ args: request.args, runId, phase() {}, log() {},
                 step: (_: string, action: () => Promise<unknown>) => action(),
                 agent: async (prompt: string, options: any) => {
                     assert.match(prompt, /Do not use tools/);
                     assert.equal(options.agent, h.api.textWorkerAgent.name);
                     assert.equal(options.schema.properties.requirements.anyOf[0].additionalProperties, false);
-                    return plain(result);
+                    if (request.args.state.changeRequest.replacesRequestId) {
+                        assert.match(prompt, /previousChangeReviews/);
+                        assert.match(prompt, /latest feedback, which takes precedence/);
+                    }
+                    return plain(assessmentResult);
                 } });
             return { runId, status: "completed", result: output };
         }
+        await holdPrototype;
         const checkpoint = request.args.state.prototypeFlow.checkpoints.at(-1);
         h.setPreviewHtml(`<meta name="tandem-prototype-id" content="sample"><meta name="tandem-prototype-checkpoint" content="${checkpoint.id}">`);
         return { runId, status: "completed", result: {
@@ -1217,11 +1225,186 @@ for (const legacy of [false, true]) test(`applying a draft usage explicitly upda
         assert.equal(prototypeNeedsChangeUpdate(applied), false);
         assert.equal(f.h.api.stageCompletionError(applied, "prototype", { requirePrototypeSpec: false }), null);
         assert.equal(f.h.requests.length, 2, "only assessment and the requested delta ran");
+        const oldRequest = applied.changeRequests![0];
+        const newPlan = assessment();
+        newPlan.requirements!.upsert = [];
+        newPlan.requirements!.usages.add = ["I want to export a motion sequence."];
+        worker(f.h, newPlan);
+        const feedback = { suggestion: "Also let me export motion sequences.", clientRequestId: "review-again",
+            baseCheckpointId: checkpoint.id, replacesRequestId: oldRequest.id };
+        const send = () => fetch(new URL("/api/revision", server.url), {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(feedback),
+        });
+        const sent = await send();
+        assert.equal(sent.status, 202, await sent.text());
+        await f.h.waitForRequests(3); await f.h.api.waitForAnswer("sample");
+        const reassessed = await f.h.api.loadState("sample"), nextRequest = reassessed.changeRequests!.at(-1)!;
+        assert.equal(nextRequest.status, "proposed");
+        assert.equal(nextRequest.replacesRequestId, oldRequest.id);
+        assert.equal(reassessed.changeRequests![0].replacedByRequestId, nextRequest.id);
+        assert.equal(reassessed.lifecycle.currentStage, "prototype", "Feedback must not require or simulate Finish Prototype.");
+        assert.deepEqual(plain(reassessed.decisionGraph), plain(applied.decisionGraph));
+        assert.deepEqual(plain(reassessed.requirements), plain(applied.requirements));
+        assert.equal(reassessed.prototypeFlow!.displayedCheckpointId, checkpoint.id);
+        assert.equal(reassessed.prototypeReview.revisions[0].status, "applied");
+        assert.equal(reassessed.stageReviews![0].appliedAt, applied.stageReviews![0].appliedAt);
+        const assessmentInput = (f.h.requests[2] as { args: { state: { previousChangeReviews: ChangeRequest[] } } }).args.state;
+        assert.equal(assessmentInput.previousChangeReviews[0].id, oldRequest.id);
+        assert.equal(assessmentInput.previousChangeReviews[0].message, oldRequest.message);
+        assert.equal((await send()).status, 202, "Retrying the acknowledged feedback stays idempotent after its predecessor is replaced.");
+        assert.equal(f.h.requests.length, 3);
+        await assert.rejects(f.h.api.submitChangeRequest("sample", "project:tandem", {
+            message: "Change the wrong review.", clientRequestId: "stale-review", replacesRequestId: oldRequest.id,
+        }), /review changed/i);
+        const nextReview = await f.h.api.decideChangeRequest("sample", "project:tandem", approval(nextRequest));
+        const nextDraft = await f.h.api.loadState(nextReview.changeRequests!.at(-1)!.reviewId!);
+        assert.equal(nextDraft.changeRequests![0].id, oldRequest.id, "Pinned drafts retain the replacement chain's source identities.");
+        assert.ok(nextDraft.requirements.usageItems.includes("I want to export a motion sequence."));
+        assert.ok(nextDraft.requirements.usageItems.includes("I want to save and reload a motion sequence."));
+        assert.equal((await f.h.api.loadState("sample")).requirements.usageItems.includes("I want to export a motion sequence."), false);
     } finally {
         clearInterval(server.heartbeat);
         await new Promise<void>(resolve => { server.server.close(() => resolve()); server.server.closeAllConnections(); });
         await f.h.close();
     }
+});
+
+test("review feedback waits for its active worker and re-evaluates the latest feedback without losing history", async t => {
+    const f = await fixture();
+    let release!: () => void;
+    const waiting = new Promise<void>(resolve => { release = resolve; });
+    t.after(async () => { release(); await f.h.close(); });
+    let plan: ChangeAssessment = { ...assessment(), startStage: "prototype", requirements: null,
+        stages: [{ stage: "prototype", reason: "Adjust the prototype controls." }] };
+    worker(f.h, () => plan, f.h.session.sessionId, waiting);
+    const original = await f.h.api.submitChangeRequest("sample", "project:tandem", {
+        message: "Adjust playback controls.", clientRequestId: "original-change",
+    });
+    await f.h.waitForRequests(2);
+    const working = await f.h.api.loadState("sample");
+    assert.equal(working.processing.status, "running");
+    plan = { ...assessment(), question: "Should the earlier playback behavior also change?" };
+    const first = await f.h.api.submitChangeRequest("sample", "project:tandem", {
+        message: "Also let me save sequences.", clientRequestId: "first-feedback", replacesRequestId: original.requestId,
+    });
+    const latest = await f.h.api.submitChangeRequest("sample", "project:tandem", {
+        message: "Keep saving local.", clientRequestId: "latest-feedback", replacesRequestId: first.requestId,
+    });
+    const queued = await f.h.api.loadState("sample");
+    assert.equal(f.h.requests.length, 2, "Feedback cannot replace the in-flight worker.");
+    assert.equal(queued.processing.requestId, working.processing.requestId);
+    assert.equal(currentChangeReview(queued)!.id, latest.requestId);
+    assert.equal(queued.changeRequests![0].status, "active");
+    release();
+    await f.h.api.waitForAnswer("sample");
+    await f.h.waitForRequests(3); await f.h.api.waitForAnswer("sample");
+    const assessed = await f.h.api.loadState("sample");
+    assert.equal(assessed.changeRequests![0].status, "cancelled");
+    assert.equal(assessed.changeRequests![1].status, "cancelled");
+    assert.equal(assessed.changeRequests![2].status, "proposed");
+    assert.equal(assessed.changeRequests![0].replacedByRequestId, first.requestId);
+    assert.equal(assessed.changeRequests![1].replacedByRequestId, latest.requestId);
+    assert.equal(assessed.prototypeFlow!.displayedCheckpointId, "old-interaction");
+    assert.equal(assessed.prototypeFlow!.pendingCheckpointId, null);
+    assert.equal(assessed.prototypeReview.revisions[0].status, "dismissed");
+    assert.equal(assessed.prototypeFlow!.checkpoints.at(-1)!.status, "ready", "The obsolete candidate remains in history.");
+    assert.deepEqual(previousChangeReviews(assessed, assessed.changeRequests![2]).map(item => item.id), [original.requestId, first.requestId]);
+    const inputs = (f.h.requests[2] as { args: { state: { previousChangeReviews: ChangeRequest[] } } }).args.state;
+    assert.deepEqual(inputs.previousChangeReviews.map(item => item.message), ["Adjust playback controls.", "Also let me save sequences."]);
+    assert.deepEqual(plain(assessed.requirements), plain(f.initial.requirements));
+    assert.equal(f.h.requests.length, 3, "Only the newest queued feedback is assessed.");
+});
+
+test("re-evaluation waits for pinned-draft work and preserves its saved contents after retiring the old review", async t => {
+    const f = await fixture(); t.after(() => f.h.close());
+    const { state } = await assess(f);
+    const old = state.changeRequests![0];
+    const reviewing = await f.h.api.decideChangeRequest("sample", "project:tandem", approval(old));
+    const draft = await f.h.api.loadState(reviewing.changeRequests![0].reviewId!);
+    draft.requirements.usageItems.push("I want to retain this draft for reference.");
+    draft.processing = { status: "running", action: "answer-decision", requestId: "draft-work", requestedAt: draft.updatedAt };
+    await f.h.api.persistState(draft);
+    const feedback = await f.h.api.submitChangeRequest("sample", "project:tandem", {
+        message: "Reconsider the saving workflow.", clientRequestId: "revise-draft-review", replacesRequestId: old.id,
+    });
+    const waiting = await f.h.api.loadState("sample");
+    assert.equal(waiting.changeRequests!.at(-1)!.status, "queued");
+    assert.equal(waiting.stageReviews![0].discardedAt, null);
+    assert.equal(f.h.requests.length, 1);
+    draft.processing = null;
+    await f.h.api.persistState(draft);
+    await f.h.api.continueChangeWork("sample");
+    await f.h.waitForRequests(2); await f.h.api.waitForAnswer("sample");
+    const revised = await f.h.api.loadState("sample");
+    assert.equal(currentChangeReview(revised)!.id, feedback.requestId);
+    assert.ok(revised.stageReviews![0].discardedAt);
+    assert.equal(revised.stageReviews![0].appliedAt, null);
+    assert.deepEqual(plain(revised.requirements), plain(f.initial.requirements));
+    assert.ok((await f.h.api.loadState(draft.prototypeId)).requirements.usageItems.includes("I want to retain this draft for reference."));
+    assert.ok(await readFile(join(f.h.root, ".tandem", "efforts", draft.prototypeId, "review-baseline.json"), "utf8"));
+});
+
+test("feedback during assessment prevents the superseded local proposal from starting work", async t => {
+    const f = await fixture();
+    let release!: () => void;
+    const waiting = new Promise<void>(resolve => { release = resolve; });
+    t.after(async () => { release(); await f.h.close(); });
+    let plan: ChangeAssessment = { ...assessment(), startStage: "prototype", requirements: null,
+        stages: [{ stage: "prototype", reason: "A local control update." }] };
+    worker(f.h, () => plan, f.h.session.sessionId, undefined, waiting);
+    const original = await f.h.api.submitChangeRequest("sample", "project:tandem", {
+        message: "Adjust playback controls.", clientRequestId: "slow-assessment",
+    });
+    await f.h.waitForRequests();
+    const pending = await f.h.api.loadState("sample");
+    assert.equal(pending.changeRequests![0].status, "analyzing");
+    plan = { ...assessment(), question: "Should this replace the playback change?" };
+    const feedback = await f.h.api.submitChangeRequest("sample", "project:tandem", {
+        message: "Reconsider the playback change.", clientRequestId: "newer-feedback", replacesRequestId: original.requestId,
+    });
+    release();
+    await f.h.api.waitForAnswer("sample");
+    await f.h.waitForRequests(2); await f.h.api.waitForAnswer("sample");
+    const latest = await f.h.api.loadState("sample");
+    assert.equal(currentChangeReview(latest)!.id, feedback.requestId);
+    assert.equal(latest.changeRequests![0].status, "cancelled");
+    assert.equal(latest.changeRequests![1].status, "proposed");
+    assert.equal(latest.prototypeReview.revisions.length, 0, "The superseded local proposal must not queue a prototype worker.");
+    assert.deepEqual(plain(latest.prototypeFlow), plain(f.initial.prototypeFlow));
+    assert.equal(f.h.requests.length, 2);
+});
+
+test("replacement provenance is validated while legacy request records remain readable", () => {
+    const original = proposed();
+    const feedback: ChangeRequest = { ...proposed(), id: "new-feedback", clientRequestId: "new-client",
+        replacesRequestId: original.id, status: "queued", assessment: null, analysisId: null, baselineDigest: null };
+    const saved = readChangeRequests([original, feedback]);
+    assert.equal(currentChangeReview({ changeRequests: saved })!.id, feedback.id);
+    assert.equal(saved[0].replacesRequestId, undefined);
+    assert.throws(() => readChangeRequests([feedback, original]), /invalid previous request/);
+    assert.throws(() => readChangeRequests([{ ...original, replacedByRequestId: "missing" }]), /matching feedback/);
+    assert.throws(() => readChangeRequests([original, { ...feedback, replacesRequestId: feedback.id }]), /invalid previous request/);
+});
+
+test("re-evaluation retains required upstream reviews without inventing a second requirements patch", () => {
+    const state = baseState();
+    state.lifecycle.reviewId = "review-11111111-1111-4111-8111-111111111111";
+    state.lifecycle.completedStages = ["prepare", "requirements"];
+    state.previewUrl = "http://127.0.0.1:12345/";
+    const local: ChangeAssessment = { ...assessment(), startStage: "prototype", requirements: null,
+        stages: [{ stage: "prototype", reason: "A cosmetic update." }] };
+    const request = { replacesRequestId: "previous-review" };
+    const reviewed = readChangeAssessment(local, state, request);
+    assert.equal(reviewed.startStage, "sketch");
+    assert.deepEqual(reviewed.stages.map(stage => stage.stage), ["sketch", "prototype"]);
+    assert.equal(reviewed.requirements, null);
+    state.lifecycle.completedStages = ["prepare"];
+    const earlier = readChangeAssessment(local, state, request);
+    assert.equal(earlier.startStage, "requirements");
+    assert.deepEqual(earlier.stages.map(stage => stage.stage), ["requirements", "sketch", "prototype"]);
+    assert.equal(earlier.requirements, null, "Already-required confirmation does not manufacture a delta or repeat answers.");
+    assert.doesNotThrow(() => readChangeAssessment(earlier, state, request));
+    assert.throws(() => readChangeAssessment(earlier, state), /Requirements delta/);
 });
 
 test("a stale checkpoint without review flags can be rebuilt and applied without reopening or resetting", async t => {

@@ -142,7 +142,8 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: {
     }
     const waiting = ["queued", "analyzing"].includes(current.status);
     const waitingForPrototype = current.id === required?.id && changeReviewWaitsForPrototype(state);
-    const title = historical ? "Development request history" : needsDetail ? "Clarify this change" : current.status === "reviewing" ? "Continue change review"
+    const title = historical ? "Development request history" : current.status === "cancelled" && current.replacedByRequestId ? "Review updated with new feedback"
+        : needsDetail ? "Clarify this change" : current.status === "reviewing" ? "Continue change review"
         : current.status === "failed" || error ? "Review needs attention"
         : current.status === "completed" ? "Change review complete" : settled ? "Cancelled change"
         : waiting ? waitingForPrototype ? "Change queued" : "Checking your request" : current.status === "active" ? "Preparing your update" : "Review change impact";

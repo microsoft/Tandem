@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { setup, state, decision, response, progressivePrototype, readyPrototype, checkpoint,
     text, field, disabled, hidden, current, submit, browse, waitFor, type Harness } from "./renderer-fixtures.test.js";
 import { exploringPrototype } from "./helpers/visual-fixture.js";
+import type { ChangeRequest } from "../src/change-requests.js";
 
 const frame = (h: Harness) => h.get<HTMLIFrameElement>("preview-frame");
 
@@ -54,7 +55,7 @@ test("a queued change leaves the earlier prepared prototype actionable instead o
     }];
     const h = await setup(t, value);
     assert.equal(disabled(h, "apply-prototype-update"), false);
-    assert.equal(disabled(h, "submit-revision"), true, "Drafting is allowed, but another change cannot be submitted.");
+    assert.equal(disabled(h, "submit-revision"), false, "Feedback can revise the queued review without bypassing the earlier candidate.");
     assert.equal(disabled(h, "complete-stage"), true);
     assert.match(h.document.querySelector(".review-pane-guidance")!.textContent!, /existing prototype.*queued/);
     assert.match(text(h, "next-action-guide"), /Show the prepared prototype version/);
@@ -66,6 +67,95 @@ test("a queued change leaves the earlier prepared prototype actionable instead o
     await waitFor(h, () => h.requests.some(item => item.path === "/api/prototype/action"));
     assert.equal(h.requests.find(item => item.path === "/api/prototype/action")!.body.action, "apply-update");
     assert.equal(current(h).prototypeFlow.displayedCheckpointId, "interaction");
+});
+
+function prototypeReviewState() {
+    const value = readyPrototype();
+    const review: ChangeRequest = {
+        version: 1, id: "current-review", clientRequestId: "original-client", originStage: "prototype",
+        message: "Add saving.", submittedAt: value.updatedAt, status: "reviewing",
+        assessment: { version: 1, summary: "Add saving.", reason: "A new capability.", startStage: "requirements",
+            stages: [{ stage: "requirements", reason: "Record saving." }, { stage: "prototype", reason: "Try saving." }],
+            preserved: ["Existing task behavior"], affectedScreenIds: [], question: null,
+            requirements: { usages: { add: ["I want to save tasks."], remove: [] }, upsert: [], remove: [],
+                assumptions: { add: [], remove: [] }, deferred: { add: [], remove: [] }, prototypeApproach: null } },
+        reviewId: "review-11111111-1111-4111-8111-111111111111",
+        analysisId: "analysis", baselineDigest: "a".repeat(64), error: "", clarifications: [],
+        remainingStages: ["prototype"], workStarted: ["requirements", "prototype"], affectedDecisionIds: [],
+        snapshotPath: "retained-review.json", completedAt: null, baseCheckpointId: "interaction",
+        baseSketchRevisionId: null, visualSelection: null, sourceResultId: null, sourceRequests: [],
+        developmentAdmission: null, developmentRequest: null,
+    };
+    value.changeRequests = [review];
+    return value;
+}
+
+test("Prototype feedback re-evaluates the current review without requiring Finish Prototype", async t => {
+    const value = prototypeReviewState(), h = await setup(t, value);
+    assert.equal(disabled(h, "complete-stage"), false);
+    assert.equal(disabled(h, "submit-revision"), false);
+    assert.equal(h.get("submit-revision").getAttribute("aria-label"), "Re-evaluate change");
+    assert.match(text(h, "revision-status"), /without finishing Prototype/);
+    assert.match(h.document.querySelector(".review-pane-guidance")!.textContent!, /Send feedback to re-evaluate/);
+    h.setFetch(async () => response(value));
+    await h.input("revision-input", "Add a milk option.");
+    await h.click("submit-revision");
+    const sent = h.requests.find(item => item.path === "/api/revision")!;
+    assert.equal(sent.body.replacesRequestId, value.changeRequests[0].id);
+    assert.equal(sent.body.suggestion, "Add a milk option.");
+    assert.equal(sent.body.baseCheckpointId, "interaction");
+    assert.equal(field(h, "revision-input").value, "");
+    assert.equal(h.requests.some(item => item.path === "/api/stage/complete"), false);
+    assert.equal(current(h).lifecycle.currentStage, "prototype");
+});
+
+test("feedback stays interactive in the bottom pane while an upstream review makes the prototype read-only", async t => {
+    const value = prototypeReviewState();
+    value.changeRequests[0].remainingStages = ["requirements", "prototype"];
+    const h = await setup(t, value);
+    assert.equal(h.get("live-preview-panel").hasAttribute("inert"), true);
+    assert.ok(h.get("revision-input").closest("#stage-input-review"));
+    assert.equal(h.get("revision-input").closest("[inert]"), null);
+    assert.equal(h.document.querySelectorAll("#revision-input").length, 1);
+    assert.equal(disabled(h, "submit-revision"), false);
+    assert.equal(disabled(h, "complete-stage"), true);
+    h.setFetch(async () => response(value));
+    await h.input("revision-input", "Reconsider the saving workflow.");
+    await h.click("submit-revision");
+    assert.equal(h.requests.find(item => item.path === "/api/revision")!.body.replacesRequestId, "current-review");
+    assert.equal(current(h).prototypeFlow.displayedCheckpointId, "interaction");
+});
+
+test("review feedback transport retries keep the original request binding after the current review changes", async t => {
+    const value = prototypeReviewState(), h = await setup(t, value);
+    h.setFetch(async () => { throw new Error("Lost feedback acknowledgement"); });
+    await h.input("revision-input", "Add a milk option.");
+    await h.click("submit-revision");
+    const original = h.requests.find(item => item.path === "/api/revision")!.body;
+    const next = { ...value, revision: 2, changeRequests: [
+        { ...value.changeRequests[0], status: "cancelled", replacedByRequestId: "new-review" },
+        { ...value.changeRequests[0], id: "new-review", clientRequestId: original.clientRequestId,
+            message: original.suggestion, replacesRequestId: "current-review", status: "queued",
+            assessment: null, remainingStages: [], reviewId: null },
+    ] };
+    h.render(next); await h.flush();
+    assert.equal(field(h, "revision-input").value, "Add a milk option.");
+    h.setFetch(async () => response(next));
+    await h.click("submit-revision");
+    assert.deepEqual(h.requests.filter(item => item.path === "/api/revision")[1].body, original);
+    assert.equal(field(h, "revision-input").value, "");
+});
+
+test("re-evaluation cannot bypass read-only ownership or the frozen Prototype handoff", async t => {
+    const value = prototypeReviewState(), h = await setup(t, value);
+    h.render({ ...value, revision: 2, provider: { ...value.provider, canSubmitAnswers: false } });
+    await h.flush();
+    assert.equal(disabled(h, "submit-revision"), true);
+    h.render({ ...value, revision: 3, processing: { status: "running", action: "generate-design-spec" } });
+    await h.flush();
+    assert.equal(disabled(h, "submit-revision"), true);
+    assert.match(text(h, "revision-status"), /frozen input/);
+    assert.equal(h.requests.some(item => item.path === "/api/revision"), false);
 });
 
 test("one Prototype tab combines layout and behavior while preserving accepted legacy checkpoints", async t => {

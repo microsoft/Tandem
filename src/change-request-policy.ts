@@ -14,14 +14,28 @@ export function isDiscoveryChangeRequest(request: Pick<ChangeRequest, "originSta
     return request.originStage !== "development";
 }
 
+export function hasPendingReviewFeedback(state: Pick<TandemState, "changeRequests">, requestId: string): boolean {
+    return Boolean(state.changeRequests?.some(request => request.replacesRequestId === requestId
+        && !["completed", "cancelled", "deferred"].includes(request.status)));
+}
+
 export function currentChangeReview(state: Pick<TandemState, "changeRequests" | "stageReview">): ChangeRequest | undefined {
     const requests = state.changeRequests?.filter(request => isDiscoveryChangeRequest(request)
         && !["completed", "cancelled", "deferred"].includes(request.status)
         && !(state.stageReview?.changeRequestId === request.id && request.status === "active")) ?? [];
-    return requests.find(request => request.status === "active")
+    let current = requests.find(request => request.status === "active")
         ?? requests.find(request => request.status === "reviewing")
         ?? requests.find(request => request.status === "analyzing")
         ?? requests[0];
+    const visited = new Set<string>();
+    while (current) {
+        if (visited.has(current.id)) throw new Error("Saved review feedback contains a circular replacement.");
+        visited.add(current.id);
+        const replacement = requests.find(request => request.replacesRequestId === current!.id);
+        if (!replacement) return current;
+        current = replacement;
+    }
+    return undefined;
 }
 
 export function changeReviewWaitsForPrototype(state: TandemState): boolean {

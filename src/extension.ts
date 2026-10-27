@@ -35,10 +35,10 @@ import {
 } from "./requirements-research.js";
 import {
     activateChange, activeChange, cancelPrototypeChange, changeAssessmentSchema, changeBaselineDigest, completeSavedChange, isLocalChange, nextChangeWork, pendingChange,
-    pendingPrototypeChange, preserveUnchangedScreens, prototypeNeedsChangeUpdate, readChangeAssessment, readChangeRequests, readSketchChangeContext, sketchChangeContextSchema,
+    pendingPrototypeChange, preserveUnchangedScreens, previousChangeReviews, prototypeNeedsChangeUpdate, readChangeAssessment, readChangeRequests, readSketchChangeContext, sketchChangeContextSchema,
     type ChangeRequest,
 } from "./change-requests.js";
-import { changeReviewBlocksEditing, changeReviewWaitsForPrototype, currentChangeReview, isDiscoveryChangeRequest, pendingUpstreamReviewStage } from "./change-request-policy.js";
+import { changeReviewBlocksEditing, changeReviewWaitsForPrototype, currentChangeReview, hasPendingReviewFeedback, isDiscoveryChangeRequest, pendingUpstreamReviewStage } from "./change-request-policy.js";
 import {
     createStageReview, isReviewStage, mergeStageReview, readStageReviewDraft, readStageReviews,
     stageReviewConflict, stageReviewDigest, stageReviewHasChanges, type StageReviewReference,
@@ -1881,6 +1881,9 @@ async function openStageReview(prototypeId: string, extensionId: string, input: 
             || request.status === "reviewing" && request.remainingStages[0] !== input.stageId)) {
             throw new CanvasError("change_decision_stale", "Review the current change proposal before opening its draft.");
         }
+        if (request && hasPendingReviewFeedback(parent, request.id)) {
+            throw new CanvasError("change_review_stale", "New feedback is re-evaluating this review. Review its latest proposal before opening another draft.");
+        }
         const existing = parent.stageReviews?.find(item => item.stage === input.stageId && item.generation === parent.generation
             && !item.appliedAt && !item.discardedAt);
         if (existing) {
@@ -1905,7 +1908,7 @@ async function openStageReview(prototypeId: string, extensionId: string, input: 
         await writeJsonAtomically(baselinePath, parent);
         if (request) {
             const draftRequest = reviewDraftRequest(draft, request);
-            draft.changeRequests = [draftRequest];
+            draft.changeRequests = [...previousChangeReviews(parent, request), draftRequest];
             if (request.status === "proposed") {
                 draft = activateChange(draft, draftRequest, relative(SHARED_PROJECT_ROOT, baselinePath));
             }
@@ -1955,7 +1958,9 @@ async function restoreReviewDraftRequest(state: TandemState): Promise<TandemStat
         const previous = draft.changeRequests?.find(item => item.id === request.id);
         if (previous) scopes.push(previous);
     }
-    return { ...state, changeRequests: [...state.changeRequests ?? [], reviewDraftRequest(state, {
+    return { ...state, changeRequests: [...state.changeRequests ?? [],
+        ...previousChangeReviews(parent, request).filter(item => !state.changeRequests?.some(saved => saved.id === item.id)),
+        reviewDraftRequest(state, {
         ...request, affectedDecisionIds: [...new Set(scopes.flatMap(item => item.affectedDecisionIds))],
         workStarted: [...new Set(scopes.flatMap(item => item.workStarted))],
     })] };
@@ -3980,6 +3985,10 @@ async function submitChangeRequest(prototypeId: string, extensionId: string, inp
     const message = typeof input.message === "string" ? input.message.trim() : "";
     const clientRequestId = typeof input.clientRequestId === "string" ? input.clientRequestId : randomUUID();
     const providedSketchContext = readSketchChangeContext(input.sketchContext);
+    const replacesRequestId = input.replacesRequestId;
+    if (replacesRequestId !== undefined && (typeof replacesRequestId !== "string" || !/^[A-Za-z0-9._-]{1,120}$/.test(replacesRequestId))) {
+        throw new CanvasError("change_request_invalid", "Identify the current review before sending feedback to re-evaluate it.");
+    }
     if (!message || message.length > 4000 || !/^[A-Za-z0-9._-]{1,120}$/.test(clientRequestId)) {
         throw new CanvasError("change_request_invalid", "Enter a change of 1-4,000 characters with a valid request identity.");
     }
@@ -3993,6 +4002,7 @@ async function submitChangeRequest(prototypeId: string, extensionId: string, inp
         const previous = state.changeRequests?.find(item => item.clientRequestId === clientRequestId);
         if (previous) {
             if (previous.originStage !== originStage || previous.message !== message || previous.sourceResultId !== (input.sourceResultId ?? null) ||
+                (previous.replacesRequestId ?? undefined) !== replacesRequestId ||
                 JSON.stringify(previous.sourceRequests) !== JSON.stringify([]) ||
                 JSON.stringify(previous.visualSelection) !== JSON.stringify(input.visualSelection ?? null) ||
                 JSON.stringify(readSketchChangeContext(previous.sketchContext)) !== JSON.stringify(providedSketchContext) ||
@@ -4001,7 +4011,18 @@ async function submitChangeRequest(prototypeId: string, extensionId: string, inp
             }
             return { requestId: previous.id };
         }
-        if (currentChangeReview(state)) {
+        const currentReview = currentChangeReview(state);
+        if (replacesRequestId) {
+            const previous = state.changeRequests?.find(item => item.id === replacesRequestId);
+            if (state.stageReview || state.lifecycle.currentStage !== "prototype" || originStage !== "prototype"
+                || !previous || !isDiscoveryChangeRequest(previous)
+                || (currentReview ? currentReview.id !== replacesRequestId : previous.status !== "completed")) {
+                throw new CanvasError("change_review_stale", "The review changed. Refresh it before sending this feedback; your draft has not been applied.");
+            }
+            if (state.processing?.action === "generate-design-spec" && ["starting", "running"].includes(state.processing.status)) {
+                throw new CanvasError("processing_in_progress", "The prototype handoff is being finalized. Keep your feedback draft until it finishes.");
+            }
+        } else if (currentReview) {
             throw new CanvasError("change_review_required", "Resolve the current review before sending another change. Your new message has not been submitted.");
         }
         if (input.expectedGeneration !== undefined && input.expectedGeneration !== state.generation ||
@@ -4037,9 +4058,12 @@ async function submitChangeRequest(prototypeId: string, extensionId: string, inp
             baselineDigest: null, analysisId: null, assessment: null, status: "queued", error: "",
             clarifications: [], remainingStages: [], workStarted: [], affectedDecisionIds: [], snapshotPath: null, completedAt: null,
             developmentAdmission: null, developmentRequest: null,
+            ...(typeof replacesRequestId === "string" ? { replacesRequestId } : {}),
         };
         await persistState({ ...state, changeRequests: readChangeRequests([...state.changeRequests ?? [], request]),
-            status: "Change saved. Its affected stages will be checked without replacing your current work.", updatedAt: now });
+            status: replacesRequestId
+                ? "Feedback saved for re-evaluation. Active work will finish first; applied changes and earlier drafts are retained."
+                : "Change saved. Its affected stages will be checked without replacing your current work.", updatedAt: now });
         publishState(prototypeId);
         return { requestId: request.id };
     });
@@ -4049,10 +4073,44 @@ async function submitChangeRequest(prototypeId: string, extensionId: string, inp
 }
 
 async function continueChangeWork(prototypeId: string): Promise<void> {
-    const snapshot = await loadState(prototypeId);
+    let snapshot = await loadState(prototypeId);
     if (hasActiveWork(snapshot) || activeAnswerRuns.has(prototypeId) || snapshot.effortReset) return;
     const first = nextChangeWork(snapshot);
     if (!first) return;
+    if (first.status === "queued" && first.replacesRequestId) {
+        const prepared = await withAnswerClaim(prototypeId, async () => {
+            const current = await loadState(prototypeId);
+            if (hasActiveWork(current) || activeAnswerRuns.has(prototypeId)
+                || nextChangeWork(current)?.id !== first.id || nextChangeWork(current)?.status !== "queued") return false;
+            const previous = previousChangeReviews(current, first);
+            const unresolved = previous.filter(item => !["completed", "cancelled"].includes(item.status));
+            const drafts = current.stageReviews?.filter(item => unresolved.some(request => request.id === item.changeRequestId)
+                && !item.appliedAt && !item.discardedAt) ?? [];
+            for (const reference of drafts) {
+                if (hasActiveWork(await loadState(reference.id)) || activeAnswerRuns.has(reference.id)) return false;
+            }
+            const successors = [...previous.slice(1), first];
+            if (!unresolved.length && previous.every((item, index) => item.replacedByRequestId === successors[index]!.id)) return true;
+            const at = new Date().toISOString();
+            let next = current;
+            for (const request of unresolved) next = { ...next, ...cancelPrototypeChange(next, request.id, at) };
+            next = { ...next,
+                stageReviews: next.stageReviews?.map(item => drafts.some(draft => draft.id === item.id) ? { ...item, discardedAt: at } : item),
+                changeRequests: next.changeRequests!.map(item => {
+                    const index = previous.findIndex(request => request.id === item.id);
+                    return index < 0 ? item : { ...item, replacedByRequestId: successors[index]!.id,
+                        ...(unresolved.some(request => request.id === item.id)
+                            ? { status: "cancelled" as const, completedAt: at } : {}) };
+                }),
+                status: "Re-evaluating the review with your new feedback. Applied changes and previous draft records are retained.",
+            };
+            await persistState(next);
+            publishState(prototypeId);
+            return true;
+        });
+        if (!prepared) return;
+        snapshot = await loadState(prototypeId);
+    }
     if (first.status === "active") {
         if (completeSavedChange(snapshot) !== snapshot) {
             await withAnswerClaim(prototypeId, async () => {
@@ -4135,6 +4193,11 @@ async function resumeChangeWork(prototypeId: string): Promise<void> {
         });
         await logSafely(message, "warning");
     }
+    const state = await loadState(prototypeId);
+    if (state.stageReview) {
+        const parent = await loadState(state.stageReview.parentId);
+        if (currentChangeReview(parent)?.replacesRequestId) await resumeChangeWork(parent.prototypeId);
+    }
 }
 
 async function decideChangeRequest(prototypeId: string, extensionId: string, input: Record<string, unknown>, automatic = false) {
@@ -4183,6 +4246,13 @@ async function decideChangeRequest(prototypeId: string, extensionId: string, inp
         }
         if (decision === "cancel" && request.status === "cancelled" ||
             decision === "approve" && ["active", "reviewing", "completed"].includes(request.status)) return state;
+        if (decision === "approve" && hasPendingReviewFeedback(state, request.id)) {
+            if (automatic) {
+                await logSafely("Skipped automatic approval of an assessment replaced by newer feedback.", "info");
+                return state;
+            }
+            throw new CanvasError("change_review_stale", "New feedback is re-evaluating this review. Review the latest proposal before applying changes.");
+        }
         if (hasActiveWork(state)) throw new CanvasError("processing_in_progress", "Wait for current work or stop it before changing this request.");
         if (["completed", "cancelled"].includes(request.status)) throw new CanvasError("change_decision_stale", "This change is already settled.");
         if (decision === "defer") {
@@ -4803,6 +4873,8 @@ function sendJson(res, statusCode, value) {
 }
 
 function factoryStateSnapshot(state) {
+    const reviewRequest = state.processing?.action === "assess-change"
+        ? state.changeRequests?.find(request => request.id === state.processing.changeRequestId) : null;
     let remainingArtifactCharacters = 120_000;
     const artifacts = state.artifacts.filter(artifact => !isRetiredStage(artifact.stage)).map((artifact) => {
         const content = artifact.content.slice(
@@ -4848,6 +4920,7 @@ function factoryStateSnapshot(state) {
         previewUrl: state.previewUrl,
         previewStatus: state.previewStatus,
         prototypeFlow: state.prototypeFlow,
+        ...(reviewRequest?.replacesRequestId ? { previousChangeReviews: previousChangeReviews(state, reviewRequest) } : {}),
         processing: state.processing?.prototypeCheckpointId ? {
             prototypeCheckpointId: state.processing.prototypeCheckpointId,
         } : state.processing?.sketchRequest ? { sketchRequest: state.processing.sketchRequest,
@@ -5204,7 +5277,7 @@ async function applyFactoryResult(prototypeId, requestId, run) {
             if (!request || request.status !== "analyzing" || request.analysisId !== requestId) {
                 throw new Error("The assessment no longer owns this change request.");
             }
-            const assessment = readChangeAssessment(result, current);
+            const assessment = readChangeAssessment(result, current, request);
             const document = current.sketch.current ? await sketchStore.read(sketchPrototypeId(current), current.sketch.current) : null;
             if (assessment.affectedScreenIds.some(id => !document?.screens.some(screen => screen.id === id))) {
                 throw new Error("The change assessment names an unknown design. Reference exact existing screen IDs.");
@@ -5216,7 +5289,7 @@ async function applyFactoryResult(prototypeId, requestId, run) {
             const nextRequest: ChangeRequest = { ...request, assessment,
                 status: assessment.startStage === "none" && !assessment.question ? "completed" : "proposed",
                 completedAt: assessment.startStage === "none" && !assessment.question ? completedAt : null };
-            const local = isLocalChange(current, nextRequest);
+            const local = isLocalChange(current, nextRequest) && !hasPendingReviewFeedback(current, request.id);
             await persistState({ ...current, changeRequests: current.changeRequests.map(item => item.id === request.id ? nextRequest : item),
                 processing: { ...current.processing, status: "success", completedAt,
                     message: local ? "Change understood. Preparing the requested update." : "Change impact ready to review." },
@@ -6022,6 +6095,8 @@ function trackAnswerRun(prototypeId, requestId, work) {
                         publishState(prototypeId);
                     });
                 });
+                const latest = await loadState(prototypeId);
+                if (latest.stageReview) await resumeChangeWork(latest.stageReview.parentId);
             }
         });
     activeAnswerRuns.set(prototypeId, tracked);
@@ -6941,12 +7016,16 @@ async function submitPrototypeRevision(entry, req, res) {
     }
 
     if ((await loadState(entry.prototypeId)).stageReview) {
+        if (body.replacesRequestId !== undefined) {
+            throw new CanvasError("review_scope_changed", "Re-evaluate the parent review from its Prototype feedback, not from inside a pinned draft.");
+        }
         const queued = await queuePrototypeRevision(entry.prototypeId, entry.extensionId, body);
         sendJson(res, 202, { accepted: true, requestId: queued.revisionId, status: "draft" });
         return;
     }
     const queued = await submitChangeRequest(entry.prototypeId, entry.extensionId, {
         message: suggestion, originStage: "prototype", baseCheckpointId: body.baseCheckpointId, clientRequestId: body.clientRequestId,
+        ...(body.replacesRequestId !== undefined ? { replacesRequestId: body.replacesRequestId } : {}),
         ...(body.visualSelection !== undefined ? { visualSelection: body.visualSelection } : {}),
     });
     sendJson(res, 202, { accepted: true, requestId: queued.requestId, status: "queued" });
@@ -9553,11 +9632,12 @@ session = await joinSession({
                 },
                 {
                     name: "request_change",
-                    description: "Assess one explicit user change against retained project work. Earlier-stage changes are proposed for review, not silently applied.",
+                    description: "Assess an explicit user change against retained work. For Prototype feedback revising an open review, pass its replacesRequestId; active workers finish first and applied changes are retained. Earlier-stage changes still require review.",
                     inputSchema: {
                         type: "object", additionalProperties: false,
                         properties: { prototypeId: { type: "string" }, message: { type: "string", minLength: 1, maxLength: 4000 },
                             clientRequestId: { type: "string", pattern: "^[A-Za-z0-9._-]{1,120}$" },
+                            replacesRequestId: { type: "string", pattern: "^[A-Za-z0-9._-]{1,120}$" },
                             originStage: { type: "string", enum: ["requirements", "sketch", "prototype"] },
                             sketchContext: sketchChangeContextSchema },
                         required: ["message", "clientRequestId"],

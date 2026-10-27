@@ -3,7 +3,7 @@ import test from "node:test";
 import { JSDOM } from "jsdom";
 import { decisionIsReady, type DecisionNode } from "../src/workflow.js";
 import type { UiContextValue, UiState } from "../src/renderer/ui-context.js";
-import { requirementDraftKey, requirementNodes, selectedRequirement, wholeGraphDefaults } from "../src/renderer/requirements-model.js";
+import { requirementChange, requirementDraftKey, requirementNodes, selectedRequirement, wholeGraphDefaults } from "../src/renderer/requirements-model.js";
 import { buildDecisionGraphMermaid } from "../src/decision-diagram.js";
 
 function decision(id: string, status: DecisionNode["status"] = "active"): DecisionNode {
@@ -93,6 +93,22 @@ test("React Requirements draft identity includes effort, question definition and
     assert.notEqual(requirementDraftKey(value, { ...node, question: { ...node.question!, recommended: "B" } }), before);
     assert.notEqual(requirementDraftKey(value, { ...node, answer: "A" }), before);
     assert.notEqual(requirementDraftKey({ ...value, generation: "new" }, node), before);
+});
+
+test("requirement review compares saved content, not derived decision status", () => {
+    const node = decision("existing", "answered");
+    assert.equal(requirementChange(undefined, node), "added");
+    assert.equal(requirementChange(node, undefined), "removed");
+    assert.equal(requirementChange(undefined, undefined), null);
+    assert.equal(requirementChange(node, structuredClone(node)), null);
+    assert.equal(requirementChange(node, { ...node, status: "active" }), null);
+    for (const change of [
+        { title: "Updated title" },
+        { question: { ...node.question!, recommended: "B" } },
+        { question: { ...node.question!, allowFreeText: false } },
+        { answer: "B" },
+        { dependencies: ["new-prerequisite"] },
+    ]) assert.equal(requirementChange(node, { ...node, ...change }), "changed");
 });
 
 test("React Requirements follows unresolved decisions without overriding explicit read-only or active selection", () => {

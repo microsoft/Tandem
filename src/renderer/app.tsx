@@ -288,6 +288,7 @@ function Workspace(props: WorkspaceProps) {
   const workspace = useRef<HTMLElement>(null);
   const [stageActionsContainer, setStageActionsContainer] = useState<HTMLElement | null>(null);
   const [reviewControlsContainer, setReviewControlsContainer] = useState<HTMLElement | null>(null);
+  const [reviewFeedbackContainer, setReviewFeedbackContainer] = useState<HTMLElement | null>(null);
   const [prototypeHeaderActions, setPrototypeHeaderActions] = useState<HTMLElement | null>(null);
   const [approvalContainer, setApprovalContainer] = useState<HTMLElement | null>(null);
   const [sketchApprovalStatus, setSketchApprovalStatus] = useState("");
@@ -314,6 +315,7 @@ function Workspace(props: WorkspaceProps) {
   const requiredReviewStage = changeRequestReviewStage(currentChangeReview(state));
   const contentBlockedByReview = Boolean(showStageTabs && requiredReviewStage && viewed !== requiredReviewStage);
   const reviewing = review?.stageReview?.stage === viewed;
+  const feedbackOutsideEditor = contentBlockedByReview && viewed === "prototype" && current === "prototype" && !reviewing;
   const reviewTarget = lifecycleStages.find(stage => stage.id === viewed)?.id;
   const earlierStage = reviewTarget !== undefined
     && lifecycleStages.findIndex(stage => stage.id === reviewTarget) < lifecycleStages.findIndex(stage => stage.id === current);
@@ -665,6 +667,9 @@ function Workspace(props: WorkspaceProps) {
                   ? actions => createPortal(actions, reviewControlsContainer) : undefined}
                 renderApproval={actions => activeTab === "sketch" && approvalContainer ? createPortal(actions, approvalContainer) : null} /></SketchCompletionContext.Provider>
               : tab.stage === "prototype" ? <PrototypePanel active={activeTab === "preview" && projectView.entry.ready}
+                allowReviewFeedback={!projectView.developmentEntered}
+                renderFeedback={feedbackOutsideEditor
+                  ? feedback => reviewFeedbackContainer ? createPortal(feedback, reviewFeedbackContainer) : null : undefined}
                 renderReviewActions={activeTab === "preview" && reviewControlsContainer
                   ? actions => createPortal(actions, reviewControlsContainer) : undefined}
                 renderStageActions={activeTab === "preview" && prototypeHeaderActions
@@ -680,6 +685,7 @@ function Workspace(props: WorkspaceProps) {
               onActionsContainer={setReviewControlsContainer} />}
             {showStageTabs && <section id="stage-review-actions" ref={setStageActionsContainer} className="phase-actions"
               aria-label={`${selectedLabel} review and preview actions`} />}
+            {feedbackOutsideEditor && <div className="review-feedback" ref={setReviewFeedbackContainer} />}
           </div>
         </section>
         <ProjectConversation />

@@ -349,7 +349,15 @@ old proposals rather than implicitly approving or discarding them.
 The shared review policy chooses admitted work first, otherwise the pending
 request. New independent submissions are rejected atomically while that request
 is outstanding, including the HTTP and canvas paths; duplicate submission IDs
-remain idempotent. Unrelated edits and stage completion stay gated, while the
+remain idempotent. Prototype feedback can explicitly bind `replacesRequestId` to
+that current review to request re-evaluation instead. Replacement links are
+validated and preserve the previous request/analysis identities. At a safe
+boundary after parent and pinned-draft workers finish, only the replaced review's
+unapplied candidates and open drafts are retired; their files, records, applied
+changes and unrelated work remain intact. The latest queued feedback includes
+its predecessor chain in assessment context and still requires the normal
+approval steps. Rehydration resumes this queue without replaying old patches.
+Unrelated edits and stage completion stay gated, while the
 current review's required stage updates and pinned-draft work remain possible.
 Queued changes waiting for an existing prototype candidate, clarification or
 revision do not lock those predecessor controls. Their assessment waits until
