@@ -71,7 +71,7 @@ test("standalone status handoff preserves live help and scoped navigation, with 
     await h.sendHeaderMessage({ type: "tandem:header:connect", statusBar: true });
     assert.equal(h.get("next-action-bar").hidden, true);
     const value = header(h.headerMessages);
-    assert.equal(value.status?.text, h.get("next-action-guide").textContent);
+    assert.equal(value.status?.text, `${h.get("next-action-guide").textContent} | ${h.get("session-model-effort").textContent}`);
     assert.equal(value.status?.error, false);
     assert.equal(value.status?.action, "Add the first usage");
     const focus = h.document.activeElement;

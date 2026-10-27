@@ -79,15 +79,17 @@ export class HumanLoopTransport {
   #retiredWorkflowRuns = new Set();
   #compaction = new HumanLoopCompaction((event) => this.#notify(event));
   #createPrivateSession;
+  #preparePrivateSession;
   #beforeNativeCreate;
   #afterNativeCreate;
 
-  constructor({ owner, client, workflowBootstrap, workspace, store, tools = [], nativeFiles = false, nativeShells = null, verifyOwnership, authorizeTool, permissionHandler, now, onProgress, validateResult, validateAttachment, createPrivateSession, beforeNativeCreate, afterNativeCreate }) {
+  constructor({ owner, client, workflowBootstrap, workspace, store, tools = [], nativeFiles = false, nativeShells = null, verifyOwnership, authorizeTool, permissionHandler, now, onProgress, validateResult, validateAttachment, createPrivateSession, preparePrivateSession, beforeNativeCreate, afterNativeCreate }) {
     this.#owner = parseHumanLoopOwner(owner);
     requireCondition(typeof verifyOwnership === "function" && typeof authorizeTool === "function",
       "One-copy transport requires explicit ownership and tool-authority verifiers.");
     this.#client = client; this.#workspace = workspace; this.#store = store;
     this.#createPrivateSession = createPrivateSession ?? (configuration => client.createSession(configuration));
+    this.#preparePrivateSession = preparePrivateSession;
     this.#beforeNativeCreate = beforeNativeCreate;
     this.#afterNativeCreate = afterNativeCreate;
     this.#workflowBootstrap = workflowBootstrap;
@@ -277,6 +279,7 @@ export class HumanLoopTransport {
 
   async create() { return this.#openSession(null); }
   async #createOwnedSession(configuration) {
+    if (this.#preparePrivateSession) configuration = await this.#preparePrivateSession(configuration);
     if (this.#beforeNativeCreate) {
       requireCondition(typeof this.#client.start === "function", "Native creation requires a started private client.");
       await this.#client.start();

@@ -10,6 +10,27 @@ import { createPayload, stagePayload, verifyPayload } from "../src/payload.js";
 import { assertComposedProvider, assertComposedVersion, canvasActionResult, createSourcePreviewLaunchProvider, developmentCloseResult } from "../src/desktop/runtime.js";
 import { nodeMainConsent } from "../src/main-consent.js";
 
+test("extension ZIP extracts to a complete verified payload, including the preview launcher",
+    { skip: !process.env.TANDEM_PACKAGED_ZIP }, async () => {
+    const root = await mkdtemp(join(tmpdir(), "tandem-zip-"));
+    try {
+        const archive = resolve(process.env.TANDEM_PACKAGED_ZIP!);
+        const run = promisify(execFile);
+        if (process.platform === "win32") await run("tar", ["-xf", archive, "-C", root]);
+        else await run("unzip", ["-q", archive, "-d", root]);
+        const directory = join(root, "extensions", "tandem");
+        const manifest = await verifyPayload(directory);
+        const metadata = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+        assert.equal(manifest.version, metadata.version);
+        assert.ok(manifest.files.some(file => file.path === "preview-launcher.mjs"));
+        assert.deepEqual(await readFile(join(root, "skills", "tandem", "SKILL.md")),
+            await readFile(join(directory, "skills", "tandem", "SKILL.md")));
+        assert.deepEqual(await readFile(join(root, "LICENSE")), await readFile(new URL("../LICENSE", import.meta.url)));
+        await rm(join(directory, "preview-launcher.mjs"));
+        await assert.rejects(verifyPayload(directory), /ENOENT/);
+    } finally { await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
+});
+
 test("standalone archive contains every manifest file with matching hashes",
     { skip: !process.env.TANDEM_PACKAGED_ARCHIVE }, async () => {
     const root = await mkdtemp(join(tmpdir(), "tandem-archive-"));

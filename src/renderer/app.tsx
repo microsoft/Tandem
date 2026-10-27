@@ -15,6 +15,7 @@ import { PrototypePanel, prototypeCompletionBlocked } from "./prototype-panel.js
 import { ArtifactList, ArtifactsPanel, DevelopmentArtifactList } from "./artifacts-panel.js";
 import { DevelopmentPanel } from "./development-panel.js";
 import { HandoffReviewProvider, useHandoffStatus } from "./handoff-review.js";
+import { modelSelectionLabel } from "../../development/tandem/public/model-selection.js";
 import { WorkflowActivity } from "./workflow-activity.js";
 import { ProjectConversation, ProjectConversationProvider, useProjectView } from "./project-conversation.js";
 import { DiscoveryRecovery } from "./discovery-recovery.js";
@@ -113,7 +114,7 @@ function EffortApp({ state, store, version, connectionError, confirm }: {
   const [busy, setBusyKeys] = useState<Set<string>>(() => new Set());
   const changeRequestDialog = useChangeRequestDialog();
   const [activeTab, setActiveTab] = useState<TabId>(() =>
-    state.lifecycle.currentStage === "development" && !state.development
+    state.lifecycle.currentStage === "development" && !state.development && !state.developmentIntent
       && state.lifecycle.outputs.some(output => output.stageId === "prototype")
       ? canBrowseStage(state, "prototype") ? "preview" : "design-tree" : tabFor(state.lifecycle.currentStage));
   const [selectedArtifact, setSelectedArtifact] = useState<string | null>(null);
@@ -135,10 +136,11 @@ function EffortApp({ state, store, version, connectionError, confirm }: {
     const stage = state.lifecycle.currentStage;
     if (previousStage.current !== stage) {
       const previous = previousStage.current;
-      setActiveTab((current) => stage !== "development" && current === tabFor(previous) ? tabFor(stage) : current);
+      setActiveTab((current) => (stage !== "development" || state.developmentIntent?.generation === state.generation)
+        && current === tabFor(previous) ? tabFor(stage) : current);
       previousStage.current = stage;
     }
-  }, [state.lifecycle.currentStage]);
+  }, [state.lifecycle.currentStage, state.developmentIntent, state.generation]);
   useEffect(() => {
     document.body.classList.toggle("prototype-view", activeTab === "preview");
     return () => document.body.classList.remove("prototype-view");
@@ -302,6 +304,10 @@ function Workspace(props: WorkspaceProps) {
   const atStart = isGoalEntry(state);
   const developmentView = activeTab === "development";
   const showStageTabs = !atStart && !developmentView && activeTab !== "content";
+  useLayoutEffect(() => {
+    const selected = document.querySelector<HTMLElement>('#stage-workspace-tabs [aria-selected="true"]');
+    if (selected === document.activeElement) selected?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [activeTab, showStageTabs]);
   const contextHelp = useStatusHelp(`${activeTab}:${contextOpen}:${contextCollapsed}:${atStart}:${projectView.entry.ready}`);
   const previousAtStart = useRef(atStart);
   useEffect(() => { if (state.effortReset) onTabChange("preparation"); }, [state.effortReset?.requestId]);
@@ -337,7 +343,8 @@ function Workspace(props: WorkspaceProps) {
     : current === "requirements" && state.prototypeApproach.mode === "not-applicable" ? "Finish Requirements and save outputs"
     : current === "sketch" ? "Finish Designs and continue"
     : current === "prepare" ? "Preparation runs automatically" : "Finish " + (lifecycleStages.find((stage) => stage.id === current)?.label || current).toLowerCase();
-  const completionHelp = contextCollapsed && !allComplete && !stageAction.busy && !["prepare", "development"].includes(current)
+  const completionHelp = current === "prototype" && !finalizingPrototype ? "Finish Prototype and prepare Design in Development"
+    : contextCollapsed && !allComplete && !stageAction.busy && !["prepare", "development"].includes(current)
     ? "Next stage: " + completionLabel : completionLabel;
   const selectedLabel = lifecycleStages.find((stage) => stage.id === viewed)?.label || viewed;
   const handoffStatus = useHandoffStatus(activeTab === "development");
@@ -349,6 +356,9 @@ function Workspace(props: WorkspaceProps) {
   const savedPrototype = state.lifecycle.currentStage === "development" && state.lifecycle.outputs.some(output => output.stageId === "prototype")
     && state.status === "Prototype outputs saved. Stage 1 is complete. You can close now and open Development later with these files as input.";
   const privateStatus = activeTab === "development" ? projectView.presentation : null;
+  const selection = developmentView ? projectView.modelSelection : state.mainModelSelection;
+  const selectionLabel = developmentView && !projectView.developmentEntered ? "Development: not started"
+    : modelSelectionLabel(selection, developmentView ? "Development" : "Main");
   const authoritativeActivity = privateStatus?.kind === "active" && !handoffStatus.busy && !pending
     && !hasActiveJobs(state) && (!handoffStatus.rootStatus || savedPrototype) ? privateStatus.text : "";
   const statusBarText = statusBarError || (privateStatus?.kind === "attention" ? privateStatus.text : "")
@@ -414,7 +424,7 @@ function Workspace(props: WorkspaceProps) {
       prototype: [["apply-prototype-update", "Show the prepared prototype version"], ["extend-prototype-budget", "Review an additional prototype work window"],
         ["retry-prototype-checkpoint", "Retry incomplete prototype work"], ["start-prototype", "Start the prototype build"],
         ["submit-clarification", "Answer the prototype clarification"], ["complete-stage", "Finish prototype iteration"]],
-      development: state.development ? [] : [["continue-design", "Review the saved Prototype handoff"]],
+      development: state.development ? [] : [["continue-design", "Continue to Development"]],
     }[current] as [string, string, string?][]];
     const update = () => {
       const candidate = candidates.find(([id, , revealId]) => {
@@ -465,7 +475,7 @@ function Workspace(props: WorkspaceProps) {
               throw new Error("The applied prototype changed. Review its current version before finishing.");
             }
           }
-          await post("/api/stage/complete", { stageId: current });
+          await post("/api/stage/complete", { stageId: current, ...(current === "prototype" ? { continueDevelopment: true } : {}) });
         });
       }}>
       <Check size={16} aria-hidden="true" /><span className="complete-stage-label">{completionLabel}</span>
@@ -533,7 +543,7 @@ function Workspace(props: WorkspaceProps) {
           if (event.key === "Escape" && contextOpen) { setContextOpen(false); document.getElementById("context-toggle")?.focus(); event.preventDefault(); }
         }}>
           <Header version={props.version} connectionError={props.connectionError}
-            status={{ text: statusBarText, error: Boolean(statusBarError), action: nextAction?.label ?? null }}
+            status={{ text: `${statusBarText} | ${selectionLabel}`, error: Boolean(statusBarError), action: nextAction?.label ?? null }}
             showNextAction={showNextAction} onHostedChange={setHosting} />
           <nav className="project-navigation" aria-label="Project navigation">
             <Button variant="item" id="project-settings" type="button" className="plan-button" onClick={() => projectView.command("settings")}>Project settings</Button>
@@ -688,6 +698,7 @@ function Workspace(props: WorkspaceProps) {
       </main>
     </Tabs.Root>
     <div id="next-action-bar" className="next-action-bar" hidden={hosting.status} data-status={statusBarError ? "error" : "idle"}>
+      <span id="session-model-effort" className="session-model-effort" title={selection?.error || selectionLabel}>{selectionLabel}</span>
       <span id="next-action-guide" role="status" title={statusBarText}>{statusBarText}</span>
       <IconButton variant="ghost" id="show-next-action" type="button" hidden={!nextAction}
         aria-label="Go to action" title={nextAction ? "Go to action: " + nextAction.label : "Go to action"}

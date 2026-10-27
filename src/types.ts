@@ -160,6 +160,10 @@ export interface TandemState {
     suggestionProcessing: any;
     reloadReceipt: any;
     development?: { handoffId: string; requestId: string; snapshotPath: string } | null;
+    developmentIntent?: {
+        generation: string; requestId: string; snapshotPath: string | null;
+        status: "preparing" | "starting" | "failed" | "admitted"; error: string;
+    } | null;
     changeRequests?: import("./change-requests.js").ChangeRequest[];
     stageReviews?: import("./stage-review.js").StageReviewReference[];
     stageReview?: import("./stage-review.js").StageReviewDraft;

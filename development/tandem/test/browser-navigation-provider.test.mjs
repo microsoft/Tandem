@@ -40,6 +40,13 @@ test("CLI browser surface uses safe native tabs without Host navigation, workflo
       assert.equal(tabs[0].canAccessOpener, false);
       assert.equal(f.destinationRequests(), i + 1);
       await f.browser.call("Target.closeTarget", { targetId: tabs[0].targetId });
+      let closed = false;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        closed = !(await f.browser.call("Target.getTargets")).targetInfos.some(item => item.targetId === tabs[0].targetId);
+        if (closed) break;
+        await new Promise(done => setTimeout(done, 20));
+      }
+      assert.equal(closed, true, "The owned tab must close before testing another activation gesture.");
       assert.equal(await f.evaluate("document.querySelector('#current-state-title').textContent"), "Ready");
     }
     await f.browser.call("Page.bringToFront");

@@ -51,9 +51,9 @@ test("one ready combined checkpoint enables completion and optional visuals with
     assert.equal(disabled(h, "complete-stage"), true);
     assert.equal(hidden(h, "request-prototype-visual"), true);
 });
-function bridge(h: Harness, owner = frame(h)) {
+function bridge(h: Harness, owner = frame(h), onCapture?: () => void) {
     const messages: { data: any; origin: string }[] = [];
-    owner.contentWindow!.postMessage = (data: any, origin: any) => { messages.push({ data, origin }); };
+    owner.contentWindow!.postMessage = (data: any, origin: any) => { messages.push({ data, origin }); onCapture?.(); };
     return messages;
 }
 async function message(h: Harness, details: Record<string, unknown>) {
@@ -663,11 +663,12 @@ test("unsupported and oversized UTF-8 preview responses cannot block explicit pr
 });
 
 test("changed candidates are rejected during capture without mutation or preview replacement", async (t) => {
-    const h = await setup(t, readyPrototype(1, true)), displayed = frame(h), messages = bridge(h);
-    await h.click("apply-prototype-update");
+    const h = await setup(t, readyPrototype(1, true)), displayed = frame(h);
     const changed = readyPrototype(2, true);
     changed.prototypeFlow.checkpoints.push(checkpoint("new-interaction", "interaction")); changed.prototypeFlow.pendingCheckpointId = "new-interaction";
-    h.render(changed); await reply(h, messages[0], { scroll: 20 });
+    const messages = bridge(h, displayed, () => h.render(changed));
+    await h.click("apply-prototype-update");
+    await reply(h, messages[0], { scroll: 20 });
     assert.equal(h.requests.length, 0); assert.equal(frame(h), displayed);
     assert.match(text(h, "prototype-action-status"), /update changed/);
     h.render({ ...changed, revision: 3 });

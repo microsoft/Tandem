@@ -38,6 +38,9 @@ export function parseHumanLoopConfiguration(value) {
     cli: file(data.cli, "path"), node: file(data.node, "path"), buildId: text(data.buildId) };
 }
 
+// Compatibility classification only; recovery still requires full absence proof and explicit confirmation.
+const legacyModelPreflightFailure = "The main session has not reported its current model. Select a main model or an explicit Development override in Project settings before creating Development.";
+
 export class HumanLoopInstallation {
   #root;
   #main;
@@ -72,6 +75,25 @@ export class HumanLoopInstallation {
   }
   get runtime() { return this.#runtime; }
   get configuration() { return this.#configuration; }
+  async canConfigureBeforeNativeCreation() {
+    if (this.#opening || this.#closeWork || this.#setupRecovery) return false;
+    await this.#verifyMain();
+    if (!this.#configuration && await this.#file.journalExists()
+      && !await new HumanLoopPreferences(this.#root).isOnlySavedState()) {
+      const saved = JSON.parse(await this.#file.read());
+      if (saved.schemaVersion !== "human-loop-installation/v3" || saved.nativeCreation?.status !== "not-requested"
+        || !["prepared", "unknown"].includes(saved.phase)) return false;
+      await this.#loadClosed();
+    }
+    return this.#recordVersion === "human-loop-installation/v3"
+      && this.#nativeCreation?.status === "not-requested" && !this.#runtime?.sessionId
+      && ["prepared", "creating", "unknown"].includes(this.#phase);
+  }
+  #hasUnconfirmedModelPreflight() {
+    return this.#recordVersion === "human-loop-installation/v3" && this.#phase === "unknown"
+      && this.#nativeCreation?.status === "requested" && !this.#nativeCreation.authorization
+      && this.#initialFailure === legacyModelPreflightFailure;
+  }
 
   async #verifyMain() {
     const receipt = this.#registration;
@@ -197,8 +219,11 @@ export class HumanLoopInstallation {
     return [...new Set([this.#initialFailure, this.#reason].filter(Boolean))].join(" Latest startup result: ");
   }
   #retryRequired() {
+    const recovery = this.#hasUnconfirmedModelPreflight()
+      ? "Select Inspect unused setup recovery inside Development. Ordinary Retry cannot resolve the unconfirmed creation receipt. "
+      : "Runtime startup needs an explicit Retry after a failed attempt; select Retry runtime inside Development. ";
     return Object.assign(new Error(`${this.#failureSummary() || "Saved startup is incomplete."} `
-      + "Runtime startup needs an explicit Retry after a failed attempt; select Retry runtime inside Development. "
+      + recovery
       + "Reconcile Design handoff does not authorize startup recovery or send the retained request."), { code: "human-loop-retry-required" });
   }
   async #open(retry, authorization = null) {
@@ -238,7 +263,7 @@ export class HumanLoopInstallation {
       requireCondition(!authorization || (emptyRepair
         ? this.#recordVersion === "human-loop-installation/v3" && this.#nativeCreation?.status === "created"
           && policyHash(this.#nativeCreation) === authorization.repair.previousCreationDigest
-        : this.#recordVersion === "human-loop-installation/v2" && this.#nativeCreation === null),
+        : this.#recordVersion === "human-loop-installation/v2" && this.#nativeCreation === null || this.#hasUnconfirmedModelPreflight()),
         "Legacy initial-creation authorization cannot replace an issued or confirmed native creation.");
       if (allowInitialCreation) await inspectUnusedStartup(configuration);
       const installed = await (this.#options.discoverRuntime ?? discoverInstalledRuntime)({
@@ -394,9 +419,10 @@ export class HumanLoopInstallation {
   async #inspectLegacyInitialCreation() {
     await this.#verifyMain();
     await this.#loadClosed();
-    requireCondition(this.#recordVersion === "human-loop-installation/v2" && this.#nativeCreation === null
+    const legacy = this.#recordVersion === "human-loop-installation/v2" && this.#nativeCreation === null;
+    requireCondition((legacy || this.#hasUnconfirmedModelPreflight())
       && this.#phase === "unknown" && this.#closeProof === null,
-    "One-time unused-setup recovery is only for legacy incomplete setup, never a missing created session.");
+    "One-time unused-setup recovery requires legacy setup or an unconfirmed model preflight, never a missing created session.");
     const configuration = this.#configuration, ownerDigest = policyHash(configuration.owner);
     const history = await getHostStateWal(this.#root).history(this.#file.namespace, this.#file.key);
     requireCondition(history.length > 0, "Complete installation history is required for unused-setup recovery.");
@@ -406,7 +432,8 @@ export class HumanLoopInstallation {
     for (const [index, entry] of history.entries()) {
       requireCondition(entry.content !== null, "Installation history contains deleted state; recovery cannot infer an unused identity.");
       const record = JSON.parse(entry.content);
-      requireCondition(record.schemaVersion === "human-loop-installation/v2" && record.nativeCreation === undefined
+      requireCondition(record.schemaVersion === this.#recordVersion
+        && (legacy ? record.nativeCreation === undefined : record.nativeCreation !== undefined)
         && ["prepared", "creating", "unknown", "recovering", "closing"].includes(record.phase)
         && (index > 0 || record.phase === "prepared" && entry.cause === "human-loop-prepare")
         && (index === 0 || entry.cause === `human-loop-installation:${record.phase}`)
@@ -414,6 +441,16 @@ export class HumanLoopInstallation {
         && policyHash(parseHumanLoopConfiguration(record.configuration).owner) === ownerDigest
         && record.configuration.runtimeDirectory === configuration.runtimeDirectory,
       "Installation history contains prior Ready, confirmed native creation/close, changed ownership or an unverified origin; no replacement is allowed.");
+      if (!legacy) {
+        const creation = parseNativeCreation(record.nativeCreation, configuration.owner.privateSessionId);
+        requireCondition(creation.status !== "created" && !creation.authorization
+          && (index > 0 || creation.status === "not-requested")
+          && (previous?.nativeCreation.status !== "requested"
+            || policyHash(creation) === policyHash(previous.nativeCreation))
+          && (creation.status !== "requested" || previous?.nativeCreation.status === "requested"
+            || record.phase === "creating" && previous?.phase === "creating"),
+        "Creation history contains a confirmation, consumed authorization or changed issued identity.");
+      }
       let valid = false;
       if (record.phase === "prepared") {
         valid = (!previous || ["prepared", "unknown"].includes(previous.phase) && previous.closeId === null && previous.reopenId === null)
@@ -471,7 +508,8 @@ export class HumanLoopInstallation {
     this.#setupRecovery = true; this.#recoveryConfirmation = null;
     try {
       await this.#verifyMain(); await this.#loadClosed();
-      requireCondition(this.#recordVersion === "human-loop-installation/v2" && this.#phase === "unknown" && this.#closeProof === null,
+      requireCondition((this.#recordVersion === "human-loop-installation/v2" || this.#hasUnconfirmedModelPreflight())
+        && this.#phase === "unknown" && this.#closeProof === null,
         "Only a legacy incomplete startup can be inspected; active or created runtimes are not changed.");
       if (this.#runtime) {
         await this.#runtime.releaseFailedStartup();
@@ -485,7 +523,7 @@ export class HumanLoopInstallation {
         mainSessionId: this.#configuration.owner.mainSessionId, workspacePath: this.#root,
         reason: this.#failureSummary(),
         message: "The verified saved setup never reached Ready and contains no project work. Native lookup reports this exact reserved identity absent, with no history or live owner. "
-          + "Legacy records cannot prove whether an old creation call was issued. Explicitly authorize one initialization of this reserved ID, not restoration of a lost session. "
+          + "The retained records do not establish a created session. Explicitly authorize one initialization of this reserved ID, not restoration of a lost session. "
           + "All existing files, handoffs and startup audit remain unchanged. No model request or implementation is started.",
       };
     } finally { this.#setupRecovery = false; }
@@ -656,19 +694,25 @@ export class HumanLoopInstallation {
     if (!this.#configuration && await this.#file.journalExists() && !await new HumanLoopPreferences(this.#root).isOnlySavedState()) {
       const content = await this.#file.read(), saved = content ? JSON.parse(content) : null;
       const retry = saved?.phase === "unknown" || saved?.nativeCreation?.status === "not-requested" && saved.phase !== "prepared";
+      const preflight = saved?.schemaVersion === "human-loop-installation/v3" && saved.phase === "unknown"
+        && saved.nativeCreation?.status === "requested" && !saved.nativeCreation.authorization
+        && saved.initialFailure === legacyModelPreflightFailure;
       return {
-        schemaVersion: "human-loop-installation-view/v1", status: "saved-state", canStart: !retry, canRetry: retry, canReopen: false,
-        canInspectInitialRecovery: saved?.schemaVersion === "human-loop-installation/v2" && saved.phase === "unknown" && saved.closeProof === null,
+        schemaVersion: "human-loop-installation-view/v1", status: "saved-state", canStart: !retry, canRetry: retry && !preflight, canReopen: false,
+        canInspectInitialRecovery: saved?.phase === "unknown" && saved.closeProof === null
+          && (saved.schemaVersion === "human-loop-installation/v2" || preflight),
         reason: saved?.reason ?? this.#reason ?? "Retained Conversation and Design will be verified automatically before Ready. Previous work will not be resumed.",
       };
     }
     return { schemaVersion: "human-loop-installation-view/v1", status: this.#phase,
       reason: ["ready", "closed"].includes(this.#phase) ? this.#reason : this.#failureSummary() || null,
       canStart: ["new", "prepared"].includes(this.#phase) && !this.#failedStartup,
-      canRetry: this.#failedStartup || this.#recoverSaved && this.#nativeCreation?.status === "not-requested",
+      canRetry: !this.#hasUnconfirmedModelPreflight()
+        && (this.#failedStartup || this.#recoverSaved && this.#nativeCreation?.status === "not-requested"),
       canInspectEmptyRepair: this.#recordVersion === "human-loop-installation/v3" && this.#phase === "unknown"
         && this.#nativeCreation?.status === "created" && !this.#nativeCreation.authorization,
-      canInspectInitialRecovery: this.#recordVersion === "human-loop-installation/v2" && this.#phase === "unknown" && this.#closeProof === null,
+      canInspectInitialRecovery: (this.#recordVersion === "human-loop-installation/v2" || this.#hasUnconfirmedModelPreflight())
+        && this.#phase === "unknown" && this.#closeProof === null,
       canReopen: this.#phase === "closed" && Boolean(this.#configuration) };
   }
   async close() {

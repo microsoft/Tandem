@@ -18,6 +18,7 @@ import { parseRoleMention } from './role-hint.js';
 import { installRoleSuggestions } from './role-suggestions.js';
 import { developmentStatus, developmentStartup } from './development-status.js';
 import { createQueuedRequests } from './queued-requests.js';
+import { modelSelectionLabel } from './model-selection.js';
 
 const $ = (id) => document.getElementById(id);
 const splitter = installPanelSplitter({ layout: document.querySelector('.human-layout'),
@@ -83,7 +84,7 @@ const stopControl = createWorkflowStopControl({
 const renderStopControl = () => stopControl.render(snapshot?.workflow, { connected: controlsConnected, pending: Boolean(stopRequest) });
 const make = (tag, text) => { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; return node; };
 let settingsBusy = false, settingsLoaded = false, settingsLoading = null, settingsVersion = 0;
-let settingsModel = null, effortModel = null, settingsVerified = false;
+let settingsModel = null, settingsMainModel = null, effortModel = null, settingsVerified = false;
 let selectedOutput = null;
 let pendingOutputFocus = null;
 let lastVerifiedDesign = null;
@@ -127,6 +128,24 @@ function settingsError(error) {
 }
 function applySettings(value, preserveAppearanceDraft = false) {
   const preferences = value.preferences, model = value.model;
+  const main = value.mainModel;
+  const mainSelect = $('setting-main-model'), mainDraft = mainSelect.value;
+  mainSelect.replaceChildren(...(main?.models ?? []).map(({ id, name }) => {
+    const option = make('option', name); option.value = id; return option;
+  }));
+  if (!main?.models?.length || !main.actual) {
+    const option = make('option', main?.actual ? main.actual : 'Native default or saved selection (not yet reported)');
+    option.value = ''; mainSelect.prepend(option);
+  }
+  mainSelect.value = main?.models?.some(({ id }) => id === mainDraft) ? mainDraft : main?.actual ?? '';
+  settingsMainModel = main;
+  mainSelect.disabled = settingsBusy || !main?.canChange;
+  $('apply-main-model').disabled = settingsBusy || !main?.canChange || !mainSelect.value || mainSelect.value === main.actual;
+  $('refresh-models').disabled = settingsBusy;
+  $('main-model-setting-status').textContent = main
+    ? [`Actual main model: ${main.actual ?? 'not yet verified'}.`, `Reasoning effort: ${main.reasoningEffort ?? 'native default, not explicitly reported'}.`,
+      main.error, main.reason].filter(Boolean).join(' ')
+    : 'This host does not expose its main-session model controls.';
   document.body.dataset.theme = preferences.theme;
   document.body.dataset.fontSize = preferences.fontSize;
   projectPresentation?.appearance(preferences);
@@ -139,7 +158,7 @@ function applySettings(value, preserveAppearanceDraft = false) {
     const option = make('option', name); option.value = id; return option;
   }));
   if (!model.models.length || !model.actual && !model.pending && !model.desired) {
-    const option = make('option', model.startup ? 'Verifying Development model...' : model.models.length ? 'Choose a private model' : 'Model catalog unavailable'); option.value = '';
+    const option = make('option', model.startup ? 'Verifying Development model...' : model.models.length ? 'Inherit main at first creation (no override)' : 'Model catalog unavailable'); option.value = '';
     $('setting-model').prepend(option);
   }
   $('setting-model').value = model.models.some(({ id }) => id === desired) ? desired : model.pending ?? model.actual ?? model.desired ?? '';
@@ -154,7 +173,9 @@ function applySettings(value, preserveAppearanceDraft = false) {
     model.startup ? 'Verifying Development model...' : model.deferred ? 'Development has not started.' : `Actual private model: ${model.actual ?? 'not yet verified'}.`,
     model.deferred || model.startup ? '' : `Actual reasoning effort: ${model.actualReasoningEffort ?? 'not explicitly reported'}.`,
     model.effortManaged ? `Reasoning effort is controlled by the project effort control (${model.projectReasoningEffort ?? 'no shared choice yet'}).` : '',
-    model.desired ? `Saved selection: ${model.desired}${model.deferred ? ' (applies at startup)' : ''}.` : '',
+    model.desired ? `Saved selection: ${model.desired}${model.deferred ? ' (applies at startup)' : ''}.`
+      : model.deferred ? 'No override: inherits the current main model at first creation, then remains independent.'
+        : 'No explicit override; this Development session retains its own native model.',
     model.desiredReasoningEffort ? `Saved reasoning effort: ${model.desiredReasoningEffort}.` : '',
     model.pending ? `Pending selection: ${model.pending}.` : '',
     model.pendingReasoningEffort ? `Pending reasoning effort: ${model.pendingReasoningEffort}.` : '',
@@ -185,7 +206,7 @@ async function saveSettings(path, data) {
   settingsBusy = true; settingsVersion++; settingsError(null);
   settingsVerified = false;
   projectPresentation?.modelSettingsChanged();
-  for (const id of ['save-appearance', 'apply-model', 'accept-actual-model', 'setting-model', 'setting-effort']) $(id).disabled = true;
+  for (const id of ['save-appearance', 'apply-model', 'accept-actual-model', 'setting-model', 'setting-effort', 'setting-main-model', 'apply-main-model', 'refresh-models']) $(id).disabled = true;
   try {
     const value = await post(path, data);
     if (path === '/api/settings/model') effortModel = null;
@@ -211,6 +232,16 @@ document.addEventListener('keydown', (event) => {
   }
 });
 $('save-appearance').onclick = () => saveSettings('/api/settings', { theme: $('setting-theme').value, fontSize: $('setting-font').value });
+$('refresh-models').onclick = () => { void refreshSettings(true); };
+$('setting-main-model').onchange = () => {
+  $('apply-main-model').disabled = settingsBusy || !settingsMainModel?.canChange
+    || !$('setting-main-model').value || $('setting-main-model').value === settingsMainModel.actual;
+};
+$('apply-main-model').onclick = () => {
+  if (!settingsMainModel?.canChange || $('apply-main-model').disabled) return;
+  void saveSettings('/api/settings/main-model', { model: $('setting-main-model').value,
+    sessionId: settingsMainModel.sessionId, expectedModel: settingsMainModel.actual });
+};
 $('apply-model').onclick = () => saveSettings('/api/settings/model', { action: 'select', model: $('setting-model').value,
   reasoningEffort: $('setting-effort').value || null });
 $('setting-model').onchange = () => {
@@ -404,6 +435,8 @@ function render() {
   clipboard.refresh();
   if (!snapshot) return;
   const view = snapshot.workflow;
+  $('development-model-effort').textContent = modelSelectionLabel(snapshot.modelSelection, 'Development');
+  $('development-model-effort').title = snapshot.modelSelection?.error || $('development-model-effort').textContent;
   const installed = snapshot.installation;
   const startup = developmentStartup(snapshot);
   const startupLabel = startup === 'verifying' ? 'Verifying Development model...' : 'Starting Development...';

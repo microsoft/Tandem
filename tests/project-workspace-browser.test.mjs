@@ -671,18 +671,12 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       };
       await browser.waitFor('Boolean(document.querySelector("#entry-preparation"))');
       assert.equal(await browser.evaluate('document.querySelector("#project-conversation-frame")===null'), true);
-      modelSelectionRequired = true;
-      await clickRoot("#entry-development");
-      await browser.waitFor('document.querySelector(".project-settings-dialog")?.open');
-      await waitSettings('document.activeElement.id==="setting-model"');
-      assert.equal(await browser.evaluate('document.querySelector("[role=alertdialog]")===null'), true);
       assert.equal(startingPath, null);
       assert.equal(active, false);
-      await clickRoot("#close-project-settings");
-      await browser.waitFor('Boolean(document.querySelector("#entry-preparation"))');
-      modelSelectionRequired = false;
       await clickRoot("#entry-preparation");
       await browser.waitFor('!document.querySelector("#entry-preparation")');
+      assert.equal(await browser.evaluate('Boolean(document.querySelector(".project-settings-dialog[open]"))'), false,
+        "Initial entry does not impose model selection.");
       const push = async () => {
         value.revision++;
         for (const response of rootEvents) response.write(`data: ${JSON.stringify(value)}\n\n`);
@@ -701,8 +695,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
           preserved: ["Joint controls", "Playback", "Chosen appearance"], affectedScreenIds: [], question: null, requirements: null },
       }];
       await push();
-      await browser.waitFor('Boolean(document.querySelector("#toggle-change-details"))');
-      await clickRoot("#toggle-change-details");
+      await browser.waitFor('document.querySelector("#continue-pending-review")?.checkVisibility()');
       await browser.waitFor('document.querySelector("#approve-change")?.checkVisibility()');
       for (const width of [1360, 760, 390]) {
         await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: false });
@@ -1025,7 +1018,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       assert.equal(await browser.evaluate('document.querySelector("#preview-frame").contentDocument.querySelector("#preview-button").textContent'), "Preview interaction accepted");
       await browser.call("Emulation.setDeviceMetricsOverride", { width: 390, height: 1000, deviceScaleFactor: 1, mobile: false });
       holdPreviewChecks = true;
-      assert.equal(await browser.evaluate('!!document.querySelector(".phase-actions #retry-current-preview")'), true);
+      assert.equal(await browser.evaluate('!!document.querySelector(".prototype-substage-bar #retry-current-preview")'), true);
       await clickRoot("#retry-current-preview");
       await browser.waitFor('document.querySelector("#preview-availability").textContent.includes("Checking current preview")');
       const pendingPrototype = readyPrototype(1, true);
@@ -1060,37 +1053,37 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await clickRoot("#development-tab");
       assert.equal(active, false, "Artifact navigation is not initialization.");
       modelSelectionRequired = true;
-      await clickRoot("#enter-development");
+      await clickRoot("#project-settings");
       await browser.waitFor('document.querySelector(".project-settings-dialog")?.open');
-      await waitSettings('document.activeElement.id==="setting-model"');
+      await waitSettings('!document.querySelector("#setting-model").disabled');
       assert.equal(mutations.some(item => item.path === "/api/development/open"), false);
       assert.equal(await browser.evaluate('document.querySelector("#project-conversation-frame")===null'), true);
-      assert.equal(await browser.evaluate('document.querySelector("#start-development-after-model").disabled'), true);
-      await browser.evaluate('document.querySelector("#start-development-after-model").click()');
+      assert.equal(await browser.evaluate('document.querySelector("#start-development-after-model")'), null);
+      assert.equal(await settingsInside('document.querySelector("#setting-main-model").closest("#canvas-settings") === document.querySelector("#setting-model").closest("#canvas-settings")'), true);
       assert.equal(mutations.some(item => item.path === "/api/development/open"), false);
       await settingsInside(`document.querySelector("#setting-model").value="fixture";
         document.querySelector("#setting-model").dispatchEvent(new Event("change"));`);
-      assert.equal(await browser.evaluate('document.querySelector("#start-development-after-model").disabled'), true, "Selecting a draft is not applying it.");
+      assert.equal(modelSelectionRequired, true, "Selecting a draft is not applying it.");
       modelSaveFailure = true;
       await settingsInside('document.querySelector("#apply-model").click()');
       await waitSettings('document.querySelector("#settings-error").textContent.includes("Fixture model selection rejected") && !document.querySelector("#apply-model").disabled');
-      assert.equal(await browser.evaluate('document.querySelector("#start-development-after-model").disabled'), true, "A failed save does not enable Continue.");
+      assert.equal(active, false, "A failed settings save does not start Development.");
       modelSaveFailure = false;
       let releaseModel;
       modelSaveWait = new Promise(resolve => { releaseModel = resolve; });
       await settingsInside('document.querySelector("#apply-model").click()');
       await waitSettings('document.querySelector("#apply-model").disabled');
-      assert.equal(await browser.evaluate('document.querySelector("#start-development-after-model").disabled'), true, "An in-flight save does not enable Continue.");
+      assert.equal(active, false, "An in-flight settings save does not start Development.");
       releaseModel(); modelSaveWait = null;
       await waitSettings('document.querySelector("#model-setting-status").textContent.includes("Saved selection: fixture") && !document.querySelector("#apply-model").disabled');
-      await browser.waitFor('!document.querySelector("#start-development-after-model").disabled');
       await settingsInside('document.querySelector("#setting-model").value=""; document.querySelector("#setting-model").dispatchEvent(new Event("change"))');
-      await browser.waitFor('document.querySelector("#start-development-after-model").disabled');
+      assert.equal(await settingsInside('document.querySelector("#apply-model").disabled'), true);
       await settingsInside('document.querySelector("#setting-model").value="fixture"; document.querySelector("#setting-model").dispatchEvent(new Event("change"))');
-      await browser.waitFor('!document.querySelector("#start-development-after-model").disabled');
+      await waitSettings('!document.querySelector("#apply-model").disabled');
       assert.equal(modelSelectionRequired, false);
       assert.equal(active, false, "Saving alone never starts Development.");
-      await clickRoot("#start-development-after-model");
+      await clickRoot("#close-project-settings");
+      await clickRoot("#enter-development");
       await browser.waitFor('Boolean(document.querySelector("#project-conversation-frame"))');
       await browser.waitFor('document.querySelector(".brand-artwork").naturalWidth > 0');
       let frame;
@@ -1273,10 +1266,21 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       assert.equal(await inside('document.querySelector("#messages").textContent.includes("Discovery evidence")'), false);
       assert.equal(await browser.evaluate('document.querySelector("#discovery-history") === null'), true);
       const checkRootChrome = async () => {
-        const styles = await browser.evaluate(`["#project-settings","#project-current-work",".topbar"].map(selector=>{
-          const element=document.querySelector(selector), style=getComputedStyle(element);
-          return {selector,background:style.backgroundColor,color:style.color,height:element.getBoundingClientRect().height};
-        })`);
+        const styles = await browser.evaluate(`(() => {
+          const canvas=document.createElement("canvas");canvas.width=canvas.height=1;
+          const context=canvas.getContext("2d");
+          const rgba=color=>{context.clearRect(0,0,1,1);context.fillStyle=color;context.fillRect(0,0,1,1);return [...context.getImageData(0,0,1,1).data];};
+          return ["#project-settings","#project-current-work",".topbar"].map(selector=>{
+            const element=document.querySelector(selector), style=getComputedStyle(element);
+            let background=null;
+            for(let node=element;node;node=node.parentElement){
+              const color=rgba(getComputedStyle(node).backgroundColor);
+              if(color[3]===255){background="rgb("+color.slice(0,3).join(", ")+")";break;}
+              if(color[3]!==0)throw new Error("Unexpected partially transparent chrome background");
+            }
+            return {selector,background,color:style.color,height:element.getBoundingClientRect().height};
+          });
+        })()`);
         const luminance = color => {
           const channels = color.match(/[\d.]+/g).slice(0, 3).map(value => {
             const channel = Number(value) / (color.startsWith("color(srgb ") ? 1 : 255);

@@ -28,7 +28,7 @@ const packageMetadata = JSON.parse(
     await readFile(join(repositoryRoot, "package.json"), "utf8"),
 );
 if (Number(process.versions.node.split(".")[0]) < 24 || process.versions.electron || process.versions.bun) {
-    throw new Error("Tandem requires actual Node 24 or newer, including its preserved Stage 2 runtime.");
+    throw new Error("Tandem requires actual Node 24 or newer, including its preserved Development runtime.");
 }
 const targetRoot = desktop || browser ? runtimeDirectory : extensionRoot;
 async function stageComposition() {

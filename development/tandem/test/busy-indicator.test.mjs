@@ -39,13 +39,13 @@ test("Working and Stopping use clear static reduced-motion glyphs and animate on
           assert.equal(first.border, "0px");
           assert.equal(first.radius, "0px");
           assert.notEqual(first.shadow, "none", "Reduced-motion Working is a static ellipsis, not an outlined frozen ring.");
-          assert.equal(first.label, "Working");
+          assert.equal(first.label, "Development needs attention", "A bare fixture status without an active request cannot claim execution.");
         }
         if (media === "reduce" && status === "stopping") {
           assert.equal(first.border, "0px");
           assert.equal(first.radius, "1px");
           assert.equal(first.width, "8px", "Reduced-motion Stopping is a static stop square.");
-          assert.equal(first.label, "Stopping after current step");
+          assert.equal(first.label, "Development needs attention");
         }
       }
     }

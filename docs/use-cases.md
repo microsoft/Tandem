@@ -70,12 +70,12 @@ the revision; the agent should not infer a requirement solely from what you trie
 
 **Use when:** finished discovery should inform Development's Design.
 
-1. Select **Continue to Development** from the saved Prototype, or **Review
-   Prototype handoff** in Development.
-2. Review the exact saved specification, decisions, assumptions, deferred work
-   and target folder. Confirm **Create Design from Prototype** or **Refine Design
-   from Prototype**. **Cancel** creates no handoff and starts no work.
-3. Follow the handoff status. Designer can take several minutes; answer any
+1. Select **Finish Prototype** for the current accepted version. Saving its
+   specification/evidence and continuing to Development are one action.
+   Older save-only outputs offer **Continue to Development**.
+2. Follow status while the exact handoff is retained and Designer starts.
+   There is no additional handoff-review or model-selection popup.
+3. Designer can take several minutes; answer any
    permission request in the owning session. When Design is ready, inspect it
    and answer blocking/advisory questions in Development.
 

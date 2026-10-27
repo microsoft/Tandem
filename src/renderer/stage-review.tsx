@@ -316,6 +316,7 @@ function ReviewEditor({ parent, active, actionsContainer, headerActionsContainer
     </div>
     {error && <p id="stage-review-error" role="alert">{error}</p>}
     {!settled && status?.conflict && <p className="error" role="alert">{status.conflict}</p>}
+    {!settled && status?.blocker && !canApproveDesign && <p className="muted" role="status">{status.blocker}</p>}
   </section>;
   return <div className="stage-review-workspace" data-review-stage={stage}>
     {active && actionsContainer && createPortal(reviewActions, actionsContainer)}

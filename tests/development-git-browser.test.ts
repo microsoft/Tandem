@@ -150,7 +150,7 @@ for (const startingPath of ["preparation", "development"]) test(`packaged guided
         }
     });
 
-test("packaged handoff review cancels without startup and confirms the exact real saved input once",
+test("packaged saved-input continuation submits once without a handoff review or second startup control",
     { skip: !browserAvailable || !process.env.TANDEM_PACKAGED_EXTENSION, timeout: 90_000 }, async t => {
         const h = await extensionHarness({}, undefined, await packagedHtml(), undefined, false, true);
         const state = h.api.createState("packaged-handoff", "Synthetic command-line counter");
@@ -174,16 +174,11 @@ test("packaged handoff review cancels without startup and confirms the exact rea
             await browser.evaluate('document.querySelector("#development-tab").dispatchEvent(new MouseEvent("mousedown", {bubbles:true,button:0})); document.querySelector("#development-tab").click()');
             await browser.waitFor('Boolean(document.querySelector("#continue-design"))');
             assert.equal(starts, 0);
-            await browser.evaluate('document.querySelector("#continue-design").focus(); document.querySelector("#continue-design").click()');
-            await browser.waitFor('Boolean(document.querySelector("#confirm-design-handoff"))');
-            assert.match(await browser.evaluate('document.querySelector(".handoff-review-dialog").textContent'), /In-memory count.*Synchronization/s);
-            await browser.evaluate('document.querySelector("#cancel-design-handoff").click()');
-            await browser.waitFor('!document.querySelector(".handoff-review-dialog")');
-            assert.equal(starts, 0); assert.equal(h.developmentRequests.length, 0);
+            assert.equal(h.developmentRequests.length, 0);
             await assert.rejects(lstat(join(h.root, ".tandem", "living-canvas", "handoffs")), { code: "ENOENT" });
-            await browser.evaluate('document.querySelector("#continue-design").click()');
-            await browser.waitFor('document.querySelector("#confirm-design-handoff")?.disabled === false');
-            await browser.evaluate('document.querySelector("#confirm-design-handoff").click(); document.querySelector("#confirm-design-handoff")?.click()');
+            await browser.evaluate('document.querySelector("#continue-design").focus(); document.querySelector("#continue-design").click()');
+            assert.equal(await browser.evaluate('document.querySelector("#confirm-design-handoff")'), null);
+            await browser.evaluate('document.querySelector("#continue-design")?.click()');
             await browser.waitFor('document.querySelector("#next-action-guide").textContent==="Opening Development..."');
             await started.promise;
             assert.equal(starts, 1); assert.equal(h.developmentRequests.length, 0);

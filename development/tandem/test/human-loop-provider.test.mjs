@@ -341,9 +341,11 @@ test("packaged private UI shows Prototype work instead of an unexplained empty D
     const browser = await f.openBrowser();
     await browser.call("Emulation.setDeviceMetricsOverride", { width: 390, height: 520, deviceScaleFactor: 1, mobile: false });
     await browser.call("Page.navigate", { url: f.provider.url });
-    await browser.waitFor('document.querySelector("#prototype-handoff-activity")?.textContent.includes("Designer is reading")');
+    await browser.waitFor('document.querySelector("#current-state-title")?.textContent === "Designer working..."');
+    assert.equal(await browser.evaluate('document.querySelector("#prototype-handoff-activity").hidden'), true,
+      "Routine handoff progress uses the shared current-status surface.");
     assert.match(await browser.evaluate('document.querySelector("#assessment-card").textContent'), /saved Prototype request is tracked in Conversation/);
-    await browser.evaluate('document.querySelector("#prototype-handoff-activity").scrollIntoView({block:"nearest"})');
+    await browser.evaluate('document.querySelector("#current-state-title").scrollIntoView({block:"nearest"})');
     assert.equal(await browser.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'), true);
     f.setInstallationStatus("unknown");
     await browser.waitFor('document.querySelector("#backbone-state").textContent === "Design unverified"');
@@ -360,7 +362,8 @@ test("packaged private UI shows Prototype work instead of an unexplained empty D
       source: { role: "designer", resultId: "result", requestId: id, requestIds: [id], cycleId: null, design: f.state.design, planDigest: null },
     });
     f.events.touch();
-    await browser.waitFor('document.querySelector("#prototype-handoff-activity").textContent.includes("Questions: 2, including 1 blocking")');
+    await browser.waitFor('document.querySelector("#show-questions").textContent === "Questions (2, 1 blockers)"');
+    assert.equal(await browser.evaluate('document.querySelector("#current-state-title").textContent'), "Questions need your answer");
     assert.equal(await browser.evaluate('document.querySelector("#backbone-state").textContent'), "Current Design");
     assert.equal(f.received.length, 0); assert.equal((f.state.implementationConfirmations ?? []).length, 0);
     assert.deepEqual(browser.exceptions, []);
@@ -536,7 +539,9 @@ test("private permission UI captures exact IDs, rejects foreign ownership and ex
         if (event.type === "permission.granted") { unsubscribe(); withdrawn.abort(); request("late"); }
       });
       await browser.evaluate('document.querySelector("[data-access-batch=once]").click()');
-      await browser.waitFor('document.body.textContent.includes("1 were no longer pending")');
+      await browser.waitFor('document.querySelector("[data-access-batch=once]")?.textContent.includes("(1)")');
+      assert.equal(await browser.evaluate('document.querySelector("#current-state-title").textContent'), "Permission response needed",
+        "An unresolved permission takes precedence over a transient acknowledgement.");
       assert.equal(f.permissions.list("private").length, 1);
       assert.ok(!ids.includes(f.permissions.list("private")[0].id));
       await browser.waitFor('document.querySelector("[data-access-batch=all]")?.disabled === false');
@@ -1001,7 +1006,7 @@ for (const format of ["mermaid", "html", "svg"]) test(`isolated ${format} snapsh
     await browser.evaluate(`(() => {
       const section=document.querySelector('[data-design-artifact="${id}"]');
       const spacer=document.createElement('div');spacer.style.height='800px';
-      section.querySelector('.perspective-toolbar').after(spacer);
+      section.before(spacer);
       document.querySelector('#design-panel').scrollTop=0;
       section.querySelector('[data-annotate-artifact]').click();
     })()`);
@@ -1221,7 +1226,7 @@ test("actual browser entrypoint renders dynamic shared artifacts, answers and or
   const browser = await f.openBrowser();
   await browser.call("Emulation.setDeviceMetricsOverride", { width: 1500, height: 1100, deviceScaleFactor: 1, mobile: false });
   await browser.call("Page.navigate", { url: f.provider.url });
-  await browser.waitFor("document.querySelector('#current-state-title').textContent === 'Waiting for your answers'");
+  await browser.waitFor("document.querySelector('#current-state-title').textContent === 'Questions need your answer'");
   const controls = await browser.evaluate("({notice:document.querySelector('#notice').textContent, inputs:[...document.querySelectorAll('.human-loop-questions input,.human-loop-questions select,.human-loop-questions button')].map(n=>({tag:n.tagName,type:n.type,text:n.textContent}))})");
   assert.ok(await browser.evaluate("!document.querySelector('#send').disabled"), JSON.stringify(controls));
   assert.ok(await browser.evaluate("Boolean(document.querySelector('.human-loop-questions select'))"), JSON.stringify(controls));

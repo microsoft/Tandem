@@ -32,14 +32,20 @@
     <p id="project-effort-error" role="alert" hidden></p>
   </section>
   <section class="settings-section" aria-labelledby="model-settings-title">
-    <h3 id="model-settings-title">Model</h3>
+    <h3 id="model-settings-title">Models</h3>
     <div class="settings-fields">
-      <label>Private Canvas model<select id="setting-model" aria-describedby="model-setting-status" disabled><option>Loading model choices...</option></select></label>
+      <label>Main session model<select id="setting-main-model" aria-describedby="main-model-setting-status" disabled><option>Loading main model...</option></select></label>
+      <button id="apply-main-model" type="button" disabled>Apply main model</button>
+      <button id="refresh-models" type="button">Refresh models</button>
+    </div>
+    <p id="main-model-setting-status" role="status">Main uses its native default, saved selection or startup override. Changes do not switch an existing Development session.</p>
+    <div class="settings-fields">
+      <label>Development model<select id="setting-model" aria-describedby="model-setting-status" disabled><option>Loading model choices...</option></select></label>
       <label id="private-effort-setting">Reasoning effort<select id="setting-effort" aria-describedby="model-setting-status" disabled><option value="">No explicit override</option></select></label>
       <button id="apply-model" type="button" disabled>Apply model</button>
       <button id="accept-actual-model" type="button" hidden>Accept actual model</button>
     </div>
-    <p id="model-setting-status" role="status">Loading saved Development model preferences. This does not change the main chat model or start Development.</p>
+    <p id="model-setting-status" role="status">Without an override, Development inherits the main model only at first creation, then keeps its own saved selection. This does not change main or start Development.</p>
   </section>
   <section id="remembered-approvals" class="settings-section" aria-label="Session access" hidden></section>
   <section class="settings-section" aria-labelledby="workspace-settings-title">
@@ -110,7 +116,7 @@
     aria-controls="design-panel conversation-panel" aria-label="Resize Design and Conversation"
     title="Drag to resize panels, or use Left and Right arrow keys"></div>
   <section id="conversation-panel" class="panel activity-panel human-conversation" aria-labelledby="conversation-pane-title">
-    <div class="panel-heading"><h2 id="conversation-pane-title" class="visually-hidden">Conversation</h2><button id="show-questions" type="button" aria-controls="question-panel" aria-expanded="false">Questions (0)</button><span class="connection"><i class="status-dot"></i><span id="connection-status">Connecting</span></span></div>
+    <div class="panel-heading"><h2 id="conversation-pane-title" class="visually-hidden">Conversation</h2><button id="show-questions" type="button" aria-controls="question-panel" aria-expanded="false">Questions (0)</button><span id="development-model-effort" class="session-model-effort">Development: not started</span><span class="connection"><i class="status-dot"></i><span id="connection-status">Connecting</span></span></div>
     <button id="initialize" type="button" hidden>Initialize runtime</button>
     <button id="inspect-initial-creation" type="button" hidden>Inspect unused setup recovery</button>
     <button id="repair-empty-setup" type="button" hidden>Repair Development setup</button>

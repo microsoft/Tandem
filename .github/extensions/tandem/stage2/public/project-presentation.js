@@ -271,6 +271,7 @@ export function installProjectPresentation({ document, window, changed, settings
         items: catalog.items.map(({ target, ...item }) => item),
         selected: catalog.items.find(item => item.id === selection?.id && item.binding === selection?.binding)?.id ?? null });
       send({ type: "status", status: starting ? "starting" : snapshot.workflow?.status ?? snapshot.installation?.status ?? "unavailable",
+        modelSelection: snapshot.modelSelection ?? null,
         presentation: statusPresentation?.() ?? null, statusScope: context?.statusScope ?? null,
         installationStatus: snapshot.installation?.status,
         starting, canRetry: !starting && snapshot.installation?.canRetry === true, canReopen: !starting && snapshot.installation?.canReopen === true,

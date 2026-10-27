@@ -30,7 +30,7 @@ invocation:
 This is the loaded Tandem skill. Do not invoke the skill again.
 
 Stage 1 is optional: **Preparation -> Requirements -> Designs -> Prototype**
-collects Q&A and prototype evidence, not formal Design. Stage 2 can open directly
+collects Q&A and prototype evidence, not formal Design. Development can open directly
 or later with saved Stage 1 files as explicit input. Development is PR #14's
 original human-loop application, not a renamed version of the old
 Design/Plan/Implement/Test factory pipeline.
@@ -230,17 +230,18 @@ silently becoming a different server. Restart reviews saved or detected startup
 choices; manual server paths and line-separated arguments belong under Advanced
 setup. Restart does not generate, promote or approve a prototype.
 
-**Finish Prototype and save outputs** retains `generate-design-spec`, which
+**Finish Prototype** retains `generate-design-spec`, which
 creates `draft-feature-spec` at Prototype. It is not the retired technical
 Design stage. Resolve outstanding feedback, pending checkpoints and applicable
 sketch approval first. An offline preview does not invalidate already recorded,
 source-bound input; absent or changed required files are explicit blockers.
 
-Finishing Prototype (or non-GUI Requirements) saves output only. It must not
-start a private Stage 2 session or submit a Design request. The user can close
-Stage 1 and later explicitly open Development with the saved documents/source
-as ordinary file references. No Stage 1 connection has to remain alive.
-Files are evidence, not authority to replace an existing used Stage 2 owner,
+Finish Prototype carries one explicit user intent through saving the specification
+and source evidence into normal Development startup and Designer admission.
+Do not ask for a second handoff approval, model-selection popup or Start button.
+Low-level save-only completion and non-GUI Requirements remain independently
+usable. Saved documents/source can still be used later as ordinary file references.
+Files are evidence, not authority to replace an existing used Development owner,
 import canonical Design or replay an old request.
 
 ## Scoped changes before Development
@@ -272,12 +273,10 @@ still is not an implicit Tandem submission.
 
 ## Prototype handoff to Development
 
-**Finish Prototype and save outputs** never requests Development work.
-**Continue to Development** opens a read-only summary of the exact saved
-specification, decisions, assumptions, deferred work and target folder.
-Cancel creates no receipt or request. Only **Create Design from Prototype**
-(or **Refine Design from Prototype**) confirms the reviewed binding and asks
-the current host to freeze an immutable receipt and exact documents/source under the
+**Finish Prototype** saves the accepted input and enters Development to prepare
+Design in one action. **Continue to Development** remains for older save-only
+snapshots and explicit recovery. No intermediate handoff-review UI is required.
+The current host still freezes an immutable receipt and exact documents/source under the
 target workspace's `.tandem\living-canvas\handoffs`. The receipt identifies the
 effort, generation, completed snapshot revision/hash, artifact and asset hashes,
 approved sketch, displayed checkpoint/source manifest, original shared state
@@ -285,16 +284,16 @@ root, actual target worktree, and one exact request ID/timestamp/message.
 The snapshot retains confirmed, assumed and deferred decisions and mock
 shortcuts without reclassifying them.
 
-For canvas actions, present `review_prototype_handoff` before explicit user
-confirmation of `continue_design` with its `reviewBinding`. Navigation is
-**Open Development**, never implicit submission. Once admitted, show authoritative
+For canvas actions, `review_prototype_handoff` is optional read-only inspection;
+`continue_design` still requires an explicit exact-snapshot continuation request.
+Navigation/reload alone is never submission. Once admitted, show authoritative
 request/Designer/Design/questions status instead of another submission action.
 Unknown activity remains unverified; never invent progress or inject a model turn.
 
 Use that ordinary persisted request through `HumanLoopRuntime.send`. Router
 selects Designer; Designer reads the retained documents/source read-only and
 publishes through `stage_human_design` and `submit_designer_outcome`. Do not
-convert the upstream sketch directly into canonical Stage 2 Design, execute
+convert the upstream sketch directly into canonical Development Design, execute
 prototype scripts, or copy prototype files onto production files automatically.
 
 Preserve confirmed intent and the approved experience. Ask only about
@@ -310,7 +309,7 @@ retirement. Opening/refreshing Development alone sends no project request.
 
 ## Native Development workflow
 
-Keep the original Stage 2 Design/Conversation UI and controls in its full-size
+Keep the original Development Design/Conversation UI and controls in its full-size
 isolated iframe. Its document, CSS, scripts and absolute API routes are not
 ported into React. Navigation away is not Stop or Close and should not discard
 an unsent draft.
@@ -367,13 +366,15 @@ For an unrelated canonical project, use another workspace.
 Project settings is the same window in every phase. Appearance, shared reasoning
 effort and native Development settings retain their original owners; opening
 settings does not start Development or grant consent.
-Before first startup, **Save model for Development** records the user's private
-model choice. Startup validates and applies that saved preference, then verifies
-native readback; saving is not proof of a running model. Catalog failures or
-unavailable model/effort choices never authorize a fallback.
-If first startup has no saved private model, ask through Project settings before
-creating the session. Saving the selection alone must not resume startup or
-submit a handoff; the user explicitly continues afterward.
+Project settings contains optional **Main session model** and **Development
+model** selectors. Without a Development override, first creation inherits the
+actual current main model, checks availability and verifies private readback.
+Same-ID resume and later main changes preserve the independent private selection.
+There is no fixed model-version floor and no mandatory chooser. Effort is not
+copied: native defaults/saved effort or the explicitly supported shared override
+apply. Current model/effort readouts must report native values, not requested
+preferences; not-started/unavailable values stay explicit. Native consent and
+implementation confirmation remain required, and settings alone submit no work.
 
 The obsolete acceptance, capture/export, delivery and linked-intake workflow is
 retired, including `process_action`. Do not recreate or relocate those controls.
@@ -388,7 +389,7 @@ Conversation and results rather than manufacturing acceptance or test evidence.
 Use actual Node 24+. Keep one composed provider and the real joined main session.
 Check the preferred provider's protocol/version/full-payload identity; an old
 user provider must fail visibly, not be overridden. Package/stage the complete
-Stage 2 modules, `runtime-src`, original public assets, vendors/licenses and skills.
+Development modules, `runtime-src`, original public assets, vendors/licenses and skills.
 Do not hand-edit generated `extension.mjs` or update user installations without
 authorization.
 
@@ -397,8 +398,8 @@ shutdown. Preserve separate saved/closed/uncertain outcomes even if local saving
 fails. Close view, Stop after this step, Stop now, Close runtime, workspace switch
 and app exit are different actions.
 
-Use production builders in `src\planning-prompts.ts` and the Stage 2 role JSON,
-not evaluation-only prompt copies. Run root and Stage 2 checks plus the targeted
+Use production builders in `src\planning-prompts.ts` and the Development role JSON,
+not evaluation-only prompt copies. Run root and Development checks plus the targeted
 bridge/browser cases. Skipped browsers are not UI evidence; no-model native API
 qualification is not a model-driven implementation journey. Live evaluations
 require explicit model, case/time and credit limits.

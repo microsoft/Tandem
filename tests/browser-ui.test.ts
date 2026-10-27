@@ -584,14 +584,15 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
         const browser = await openFixtureBrowser(t);
         await browser.call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
         await browser.call("Page.navigate", { url: `${origin}/host` });
-        await browser.waitFor(`document.querySelector(".host-application-status > span")?.textContent === ${JSON.stringify(savedPath)}
+        const selectionSuffix = " | Main: model/effort unavailable";
+        await browser.waitFor(`document.querySelector(".host-application-status > span")?.textContent === ${JSON.stringify(savedPath + selectionSuffix)}
             && document.querySelector("#tandem-application")?.contentDocument.querySelector("#next-action-bar")?.hidden`);
         const longStatus = `${savedPath} ${"Saved workspace status and help. ".repeat(40)}`;
         await browser.evaluate(`(() => {
             const frame = document.querySelector("#tandem-application").contentWindow;
             frame.workspaceFixture.flushSync(() => frame.workspaceFixture.store.accept(${JSON.stringify({ ...snapshot, revision: 2, status: longStatus })}));
         })()`);
-        await browser.waitFor(`document.querySelector(".host-application-status > span")?.title === ${JSON.stringify(longStatus)}`);
+        await browser.waitFor(`document.querySelector(".host-application-status > span")?.title === ${JSON.stringify(longStatus + selectionSuffix)}`);
         for (const width of [1280, 375]) {
             await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 800, deviceScaleFactor: 1, mobile: false });
             const geometry = await browser.evaluate(`(() => {
@@ -608,7 +609,7 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
             assert.equal(geometry.hiddenHeight, 0, "The old upper bar occupies no space.");
             assert.equal(geometry.workspaceHeight, geometry.frameHeight, "The workspace reclaims the removed row.");
             assert.equal(geometry.clipped, true);
-            assert.equal(geometry.title, longStatus);
+            assert.equal(geometry.title, longStatus + selectionSuffix);
             assert.equal(geometry.hintVisible, width > 680);
         }
         const activeRequirements = rendererState("requirements", 3);
@@ -778,6 +779,7 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
             await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape" });
             await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape" });
             await browser.waitFor('!document.querySelector("#tandem-application").contentDocument.querySelector(".diagram-source-dialog")');
+            await browser.waitFor('document.querySelector("#tandem-application").contentDocument.activeElement.id === "design-tree-host-source-trigger"');
             assert.equal(await browser.evaluate('document.querySelector("#tandem-application").contentDocument.activeElement.id'), "design-tree-host-source-trigger");
             if (width >= 1000) {
                 const historyScroll = await browser.evaluate(`(() => {
@@ -988,6 +990,7 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
                     trigger.focus();
                 })()`);
                 await browser.waitFor(`(document.querySelector("#tandem-application")?.contentDocument ?? document).querySelector("#${tab}-workspace-tab")?.getAttribute("aria-selected") === "true"`);
+                await browser.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
                 const layout = await browser.evaluate(`(() => {
                     const inner = document.querySelector("#tandem-application")?.contentDocument ?? document;
                     const header = inner.querySelector(".previewbar"), actions = inner.querySelector("#stage-workflow-actions");
@@ -1016,7 +1019,7 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
                 assert.ok(layout.actions.top >= layout.header.top - 1 && layout.actions.bottom <= layout.header.bottom + 1,
                     "Stage controls remain inside the tab bar, not in a bottom strip.");
                 assert.ok(layout.selected.left >= layout.tabs.left - 1 && layout.selected.right <= layout.tabs.right + 1,
-                    "The focused stage tab stays visible in the horizontal scroller.");
+                    `The focused stage tab stays visible in the horizontal scroller: ${JSON.stringify(layout)}`);
                 assert.ok(layout.panel.top >= layout.header.bottom - 1, "Content begins below the shared header.");
                 for (const control of layout.controls) {
                     assert.ok(control.left >= layout.actions.left - 1 && control.right <= layout.actions.right + 1);

@@ -128,27 +128,29 @@ for (const status of ["queued", "analyzing", "proposed", "reviewing", "active", 
     });
 }
 
-test("Designs keeps one red review trigger after History and approval on the right of the tab header", async t => {
+test("Designs keeps required review in its pane, separate from History and tab-header approval", async t => {
     const h = await reactHarness(t), drawing = sketchFixture();
     const change: ChangeRequest = { ...request(), originStage: "sketch", message: "Create an About Us page." };
     const initial = { ...drawing.value, changeRequests: [change] };
     h.setFetch(async () => response({ sketch: initial.sketch, document: drawing.document }));
     h.render(initial); await h.flush();
     assert.equal(h.document.getElementById("sketch-change-feedback"), null);
-    assert.equal(h.get("sketch-history-toggle").nextElementSibling, h.get("sketch-review-change"));
-    assert.equal(h.get("sketch-review-change").closest("form"), h.get("sketch-revise-form"));
+    assert.equal(h.document.getElementById("sketch-review-change"), null);
+    assert.equal(h.get("sketch-revise-form").lastElementChild, h.get("sketch-history-toggle"));
+    assert.ok(h.get("continue-pending-review").closest("#stage-input-review"));
     assert.ok(h.get("sketch-approve").closest(".previewbar"));
     assert.ok(h.get("stage-workspace-tabs").compareDocumentPosition(h.get("sketch-approve")) & h.window.Node.DOCUMENT_POSITION_FOLLOWING);
-    assert.equal(h.get("sketch-review-change").dataset.status, "attention");
-    assert.equal(h.get("sketch-review-change").getAttribute("aria-label"), "Review required");
+    assert.match(h.get("stage-input-review").textContent!, /Review required.*Requirements review/);
+    assert.match(h.get("continue-pending-review").textContent!, /Review Requirements draft/);
     assert.equal(h.get<HTMLTextAreaElement>("sketch-instruction").disabled, true);
     assert.equal(h.get<HTMLButtonElement>("sketch-approve").disabled, true);
-    assert.match(h.get("next-action-guide").textContent!, /Review this change/);
-    await h.click("sketch-review-change");
-    assert.equal(h.document.querySelector(".change-original")!.textContent, change.message);
-    assert.ok(h.get("approve-change"));
-    await h.click("close-change-details");
-    assert.equal(h.document.activeElement?.id, "sketch-review-change");
+    assert.match(h.get("next-action-guide").textContent!, /Continue the required review/);
+    const details = [...h.get("stage-input-review").querySelectorAll("button")].find(button => button.textContent === "Details")!;
+    await h.click(details);
+    assert.equal(h.document.querySelector(".review-details-request")!.textContent, change.message);
+    assert.equal(h.document.getElementById("approve-change"), null, "Details alone never applies an earlier-stage change.");
+    await h.click(h.document.querySelector<HTMLButtonElement>('[aria-label="Close review details"]')!);
+    assert.equal(h.document.activeElement, details);
     assert.equal(h.get<HTMLTextAreaElement>("sketch-instruction").disabled, true, "Closing permits inspection, not more changes.");
     await h.click(h.get("sketch-screens").querySelector("button")!);
     await h.click("sketch-history-toggle");
@@ -165,7 +167,7 @@ test("a design review action error stays visible after closing the compact dialo
     } };
     h.setFetch(async () => response({ sketch: drawing.value.sketch, document: drawing.document }));
     h.render({ ...drawing.value, changeRequests: [change] }); await h.flush();
-    await h.click("sketch-review-change");
+    await h.click("continue-pending-review");
     h.setFetch(async () => response({ error: "The review could not be applied. Your design was preserved." }, 409));
     await h.click("approve-change");
     await h.click("close-change-details");
@@ -223,7 +225,7 @@ test("design feedback reflects its exact submitted request without leaving stale
     await h.click("sketch-history-toggle");
     assert.equal(h.get("sketch-request-history").querySelectorAll("li").length, 1, "A saved request replaces its local submission row.");
     assert.equal(h.get("sketch-request-history").querySelector("li")!.dataset.status, "waiting");
-    await h.click("sketch-review-change");
+    await h.click(h.get("sketch-request-history").querySelector("button")!);
     assert.equal(h.document.querySelector(".change-original")!.textContent, submitted.message);
     assert.equal(h.requests.filter(item => item.options.method === "POST").length, 1);
     assert.deepEqual(h.errors, []);
@@ -247,7 +249,8 @@ test("completed design feedback remains inspectable without an inline status car
     await h.click(h.get("sketch-screens").querySelectorAll("button")[1]);
     assert.equal(h.get<HTMLInputElement>("sketch-title").value, second.title);
     assert.equal(h.store.getSnapshot().state.sketch.approved, null);
-    await h.click("sketch-review-change");
+    await h.click("sketch-history-toggle");
+    await h.click(h.get("sketch-request-history").querySelector("button")!);
     assert.equal(h.document.querySelector(".change-original")!.textContent, change.message);
     assert.equal(h.document.getElementById("approve-change"), null);
     assert.equal(h.requests.filter(item => item.options.method === "POST").length, 0);
@@ -276,12 +279,12 @@ test("failed design work is not presented as still progressing and links to the 
             answer: change.message, message: "The design worker could not complete the revision." } };
     h.setFetch(async () => response({ sketch: initial.sketch, document: drawing.document }));
     h.render(initial); await h.flush();
-    assert.equal(h.get("sketch-review-change").dataset.status, "attention");
+    assert.match(h.get("stage-input-review").textContent!, /Review required/);
     assert.equal(h.get<HTMLButtonElement>("sketch-approve").disabled, true, "A failed scoped change cannot be skipped by approving the old design.");
-    await h.click("sketch-review-change");
+    await h.click("sketch-history-toggle");
+    await h.click(h.get("sketch-request-history").querySelector("button")!);
     assert.match(h.get("change-dialog-error").textContent!, /could not complete/);
     await h.click("close-change-details");
-    await h.click("sketch-history-toggle");
     assert.equal(h.get("sketch-request-history-pane").hidden, false);
     assert.equal(h.get("sketch-request-history").querySelector("li")!.dataset.status, "error");
     assert.equal(h.requests.filter(item => item.options.method === "POST").length, 0, "Opening failure details cannot retry implicitly.");
@@ -346,7 +349,7 @@ test("change details open in a bounded dialog without moving stage navigation or
     await browser.call("Page.navigate", { url: `http://127.0.0.1:${address.port}/` });
     await browser.waitFor('Boolean(document.querySelector("#sketch-board .dsl-view")?.shadowRoot?.querySelector("[data-ui-id]")) && !document.querySelector("#studio-workspace").inert');
     assert.equal(await browser.evaluate('document.querySelector("#sketch-structure").open'), true);
-    assert.equal(await browser.evaluate('document.querySelector("#sketch-structure").previousElementSibling.className'), "sketch-screen-details");
+    assert.equal(await browser.evaluate('document.querySelector("#sketch-structure").previousElementSibling.classList.contains("sketch-screen-details")'), true);
     assert.equal(await browser.evaluate('document.querySelector("#sketch-selection")'), null);
     assert.equal(await browser.evaluate('document.querySelector("#sketch-board .dsl-view").shadowRoot.querySelector(".uidl-surface").dataset.mode'), "select");
     let revision = initial.revision;
@@ -360,9 +363,11 @@ test("change details open in a bounded dialog without moving stage navigation or
                 ...initial, revision: ++revision, changeRequests: changes,
             })}))`);
             await browser.evaluate(`(async () => {
-                const toggle = document.querySelector("#sketch-review-change");
-                if (${history === "expanded"}) toggle?.click();
-                else document.querySelector("#close-change-details")?.click();
+                if (${history === "expanded"}) {
+                    document.querySelector("#sketch-history-toggle").click();
+                    await new Promise(resolve => requestAnimationFrame(resolve));
+                    document.querySelector("#sketch-request-history button").click();
+                } else document.querySelector("#close-change-details")?.click();
                 await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
                 const history = document.querySelector(".change-history");
                 if (history) history.open = ${history === "expanded"};
@@ -374,7 +379,8 @@ test("change details open in a bounded dialog without moving stage navigation or
                     return rect ? { top: rect.top, bottom: rect.bottom, height: rect.height, left: rect.left, right: rect.right } : null;
                 };
                 return { changes: bounds("#stage-input-review"), tabs: bounds(".previewbar"), panel: bounds("#sketch-panel"),
-                    input: bounds("#sketch-revise-form"), review: bounds("#sketch-review-change"), history: bounds("#sketch-history-toggle"),
+                    input: bounds("#sketch-revise-form"), history: bounds("#sketch-history-toggle"),
+                    retiredTrigger: Boolean(document.querySelector("#sketch-review-change")),
                     approve: bounds("#sketch-approve"),
                     controls: bounds(".sketch-header-actions"), board: bounds(".sketch-board-wrap"), viewport: bounds("#preview-pane"),
                     pageFits: document.documentElement.scrollWidth <= innerWidth + 1 };
@@ -385,7 +391,8 @@ test("change details open in a bounded dialog without moving stage navigation or
             const context = `${width}px / ${history}: ${JSON.stringify(layout)}`;
             if (layout.changes && layout.changes.height > 0) assert.ok(layout.changes.top >= layout.panel.bottom - 1, context);
             assert.ok(layout.approve.top >= layout.tabs.top - 1 && layout.approve.bottom <= layout.tabs.bottom + 1, context);
-            assert.ok(Math.abs(layout.review.top - layout.history.top) <= 1 && layout.review.left >= layout.history.right, context);
+            assert.equal(layout.retiredTrigger, false, context);
+            assert.ok(layout.history.top >= layout.input.top && layout.history.bottom <= layout.input.bottom + 1, context);
             assert.ok(layout.panel.top >= layout.tabs.bottom - 1, context);
             assert.ok(layout.controls.top >= layout.tabs.bottom - 1, context);
             assert.ok(layout.panel.height > layout.controls.height, context);
@@ -395,6 +402,7 @@ test("change details open in a bounded dialog without moving stage navigation or
             if (history === "expanded") {
                 assert.equal(await browser.evaluate('document.querySelector("#change-request-details")?.getAttribute("role")'), "dialog");
                 await browser.evaluate('document.querySelector("#close-change-details").click()');
+                await browser.evaluate('document.querySelector("#sketch-history-toggle").click()');
             }
         }
     }
@@ -435,40 +443,39 @@ test("change details open in a bounded dialog without moving stage navigation or
         if (process.env.TANDEM_UI_EVIDENCE) {
             await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `long-impact-${width}-${fontSize}-collapsed.png`), await browser.screenshot());
         }
-        assert.ok(compact.height <= 150, `A long impact report must start compact: ${context}`);
+        assert.ok(compact.height <= Math.min(height * 0.4, 320) + 1,
+            `The review pane must obey its 40vh / 320px cap, even with long reports: ${context}`);
         assert.ok(compact.boardHeight >= (width > 600 ? 200 : 80), `Keep usable design space: ${context}`);
         assert.equal(compact.finishVisible, false, context);
         assert.equal(compact.approveVisible, true, context);
         assert.equal(compact.controlsFit, true, context);
         const attention = await browser.evaluate(`(() => {
-            const button = document.querySelector("#sketch-review-change"), style = getComputedStyle(button);
+            const button = document.querySelector("#continue-pending-review"), style = getComputedStyle(button);
             const canvas = document.createElement("canvas"); canvas.width = canvas.height = 1;
             const ctx = canvas.getContext("2d");
             const rgb = color => { ctx.fillStyle = color; ctx.fillRect(0, 0, 1, 1); return [...ctx.getImageData(0, 0, 1, 1).data].slice(0, 3); };
             const luminance = color => rgb(color).map(x => x / 255).map(x => x <= .04045 ? x / 12.92 : ((x + .055) / 1.055) ** 2.4)
                 .reduce((sum, x, i) => sum + x * [.2126, .7152, .0722][i], 0);
             const fg = luminance(style.color), bg = luminance(style.backgroundColor);
-            return { red: rgb(style.color), border: rgb(style.borderColor),
+            return {
                 contrast: (Math.max(fg, bg) + .05) / (Math.min(fg, bg) + .05),
-                label: button.getAttribute("aria-label"), blocked: document.querySelector("#sketch-instruction").disabled,
+                label: button.textContent, blocked: document.querySelector("#sketch-instruction").disabled,
                 inlineCard: Boolean(document.querySelector("#sketch-change-feedback")),
                 approvalHeader: Boolean(document.querySelector(".previewbar #sketch-approve")) };
         })()`);
         assert.equal(attention.blocked, true);
         assert.equal(attention.inlineCard, false);
         assert.equal(attention.approvalHeader, true);
-        assert.equal(attention.label, "Review required");
-        assert.deepEqual(attention.red, attention.border);
-        assert.ok(attention.red[0] > attention.red[1] * 1.5 && attention.red[0] > attention.red[2] * 1.5, JSON.stringify(attention));
+        assert.equal(attention.label, "Review change");
         assert.ok(attention.contrast >= 4.5, JSON.stringify(attention));
-        await browser.evaluate('document.querySelector("#sketch-review-change").scrollIntoView({block:"nearest"}); document.querySelector("#sketch-review-change").focus()');
+        await browser.evaluate('document.querySelector("#continue-pending-review").scrollIntoView({block:"nearest"}); document.querySelector("#continue-pending-review").focus()');
         const beforePopup = await browser.evaluate(`(() => {
             const board = document.querySelector("#sketch-board-wrap").getBoundingClientRect();
             return { boardHeight: board.height, boardTop: board.top, boardWidth: board.width };
         })()`);
         await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" });
         await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
-        await browser.waitFor('document.querySelector("#sketch-review-change").getAttribute("aria-expanded") === "true"');
+        await browser.waitFor('Boolean(document.querySelector("#change-request-details"))');
         const popup = await browser.evaluate(`(() => {
             const dialog = document.querySelector("#change-request-details"), rect = dialog.getBoundingClientRect();
             const board = document.querySelector("#sketch-board-wrap").getBoundingClientRect();
@@ -508,7 +515,7 @@ test("change details open in a bounded dialog without moving stage navigation or
         }
         await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
         await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
-        await browser.waitFor('!document.querySelector("#change-request-details") && document.activeElement.id === "sketch-review-change"');
+        await browser.waitFor('!document.querySelector("#change-request-details") && document.activeElement.id === "continue-pending-review"');
     }
     const cleanReview: ChangeRequest = { ...change, status: "reviewing", message: "Create a page of about us.",
         remainingStages: ["requirements", "sketch"], assessment: { ...change.assessment!,
@@ -524,7 +531,11 @@ test("change details open in a bounded dialog without moving stage navigation or
                 ...initial, revision: ++revision, changeRequests: [cleanReview],
             })}))`);
         await browser.evaluate('new Promise(resolve => setTimeout(resolve, 50))');
-        await browser.evaluate('if (!document.querySelector("#change-request-details")) document.querySelector("#sketch-review-change").click()');
+        await browser.evaluate(`(async () => { if (!document.querySelector("#change-request-details")) {
+            document.querySelector("#sketch-history-toggle").click();
+            await new Promise(resolve => requestAnimationFrame(resolve));
+            document.querySelector("#sketch-request-history button").click();
+        } })()`);
         await browser.waitFor('Boolean(document.querySelector("#continue-change-review"))');
         assert.equal(await browser.evaluate('Boolean(document.querySelector("#change-request-picker, #sketch-change-feedback"))'), false);
         const footer = await browser.evaluate(`(() => {
@@ -540,6 +551,7 @@ test("change details open in a bounded dialog without moving stage navigation or
         if (process.env.TANDEM_UI_EVIDENCE) await writeFile(
             join(process.env.TANDEM_UI_EVIDENCE, `single-review-${width}-${mode}.png`), await browser.screenshot());
         await browser.evaluate('document.querySelector("#close-change-details").click()');
+        await browser.evaluate('document.querySelector("#sketch-history-toggle").click()');
     }
     await browser.evaluate('document.documentElement.dataset.colorMode = "light"');
     await browser.evaluate(`workspaceFixture.flushSync(() => workspaceFixture.store.accept(${JSON.stringify({
@@ -560,12 +572,12 @@ test("change details open in a bounded dialog without moving stage navigation or
     })()`);
     await browser.call("Input.dispatchMouseEvent", { type: "mousePressed", ...target, button: "left", clickCount: 1 });
     await browser.call("Input.dispatchMouseEvent", { type: "mouseReleased", ...target, button: "left", clickCount: 1 });
-    await browser.waitFor(`document.querySelector("#sketch-change-target").value === "${targetId}"`);
+    await browser.waitFor(`document.querySelector('#sketch-structure-tree [aria-selected="true"]')?.dataset.nodeId === "${targetId}"`);
     assert.equal(await browser.evaluate('document.querySelector("#sketch-pick-element").getAttribute("aria-pressed")'), "true");
     assert.equal(await browser.evaluate('document.querySelector("#sketch-save").disabled'), true, "Picking context cannot modify the design.");
     assert.equal(await browser.evaluate(`document.querySelector("#sketch-board .dsl-view").shadowRoot.querySelector("[data-selected]").dataset.uiId`), targetId);
     assert.equal(await browser.evaluate(`document.querySelector('#sketch-structure-tree [data-node-id="${targetId}"]').getAttribute("aria-selected")`), "true");
-    assert.equal(await browser.evaluate('document.querySelector("#sketch-change-target").value'), targetId);
+    assert.equal(await browser.evaluate('document.querySelector(\'#sketch-structure-tree [aria-selected="true"]\')?.dataset.nodeId'), targetId);
     assert.deepEqual(await browser.evaluate(`(() => {
         const node=document.querySelector("#sketch-board .dsl-view").shadowRoot.querySelector("[data-selected]");
         const style=getComputedStyle(node); return [style.outlineStyle,style.outlineWidth];
@@ -573,20 +585,20 @@ test("change details open in a bounded dialog without moving stage navigation or
     await browser.evaluate('document.querySelector("#sketch-interact").click()');
     await browser.waitFor('document.querySelector("#sketch-board .dsl-view").shadowRoot.querySelector(".uidl-surface").dataset.mode === "interact"');
     await browser.evaluate('document.querySelector("#sketch-board .dsl-view").shadowRoot.querySelector("[data-ui-id=heading]").click()');
-    assert.equal(await browser.evaluate('document.querySelector("#sketch-change-target").value'), targetId);
+    assert.equal(await browser.evaluate('document.querySelector(\'#sketch-structure-tree [aria-selected="true"]\')?.dataset.nodeId'), targetId);
     await browser.evaluate('document.querySelector("#sketch-structure-tree [data-node-id=heading]").focus()');
-    await browser.waitFor('document.querySelector("#sketch-change-target").value === "heading"');
+    await browser.waitFor('document.querySelector(\'#sketch-structure-tree [aria-selected="true"]\')?.dataset.nodeId === "heading"');
     assert.equal(await browser.evaluate('document.querySelector("#sketch-board .dsl-view").shadowRoot.querySelector(".uidl-surface").dataset.mode'), "select");
     await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "End", code: "End", windowsVirtualKeyCode: 35 });
     await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "End", code: "End", windowsVirtualKeyCode: 35 });
-    await browser.waitFor(`document.querySelector("#sketch-change-target").value === "${targetId}"`);
+    await browser.waitFor(`document.querySelector('#sketch-structure-tree [aria-selected="true"]')?.dataset.nodeId === "${targetId}"`);
     await browser.evaluate('document.querySelector("#sketch-zoom-actual").click()');
     await browser.evaluate('document.querySelector("#sketch-zoom-out").click()');
     await browser.waitFor('document.querySelector("#sketch-zoom").textContent === "80%"');
-    assert.equal(await browser.evaluate('document.querySelector("#sketch-change-target").value'), targetId);
+    assert.equal(await browser.evaluate('document.querySelector(\'#sketch-structure-tree [aria-selected="true"]\')?.dataset.nodeId'), targetId);
     await browser.evaluate('document.querySelector("#sketch-structure-tree [data-node-id=heading]").click()');
     await browser.evaluate(`document.querySelector('#sketch-structure-tree [data-node-id="${targetId}"]').click()`);
-    await browser.waitFor(`document.querySelector("#sketch-change-target").value === "${targetId}"`);
+    await browser.waitFor(`document.querySelector('#sketch-structure-tree [aria-selected="true"]')?.dataset.nodeId === "${targetId}"`);
     assert.equal(await browser.evaluate(`(() => {
         const viewport=document.querySelector("#sketch-board-wrap").getBoundingClientRect();
         const element=document.querySelector("#sketch-board .dsl-view").shadowRoot.querySelector("[data-selected]").getBoundingClientRect();
@@ -684,7 +696,8 @@ test("impact review stays beside the existing prototype and submits the exact di
         changeRequestId: "change", analysisId: "analysis", baselineDigest: "a".repeat(64) });
     assert.equal(h.store.getSnapshot().state.previewUrl, initial.previewUrl);
     assert.equal(h.store.getSnapshot().state.lifecycle.currentStage, "prototype");
-    assert.match(h.get("design-tree-panel").textContent!, /Pinned draft review/);
+    assert.match(h.get("stage-input-review").textContent!, /Requirements reviewDraft only/);
+    assert.match(h.get("design-tree-workspace-tab").getAttribute("aria-label")!, /pinned draft review/);
     assert.equal(h.document.getElementById("change-request-details"), null, "The dialog must close to reveal the opened draft.");
     assert.equal(h.errors.length, 0, h.errors.join("\n"));
 });

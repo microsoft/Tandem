@@ -7,6 +7,7 @@ import { test, type TestContext } from "node:test";
 import { reactHarness, state, response } from "./helpers/react-harness.js";
 import { browserAvailable, openFixtureBrowser } from "../development/tandem/test/helpers/browser-fixture.mjs";
 import { projectDiscovery } from "../src/renderer/project-conversation.js";
+import { readyPrototype } from "./renderer-fixtures.test.js";
 
 function reviewFixture(value: ReturnType<typeof state>) {
     return { binding: "b".repeat(64), generation: value.generation, snapshotPath: value.lifecycle.outputs[0].path,
@@ -151,24 +152,23 @@ test("handoff presentation distinguishes exact admission, pending, uncertainty a
     assert.equal(mutations().length, 0, "Checking pending admission cannot send or reconcile work.");
     admissionStatus = "uncertain";
     value = { ...value, revision: value.revision + 1 }; h.render(value); await h.flush();
-    assert.match(h.get("continue-design").textContent!, /Review handoff recovery/);
-    assert.match(h.document.querySelector(".development-handoff-status")!.textContent!, /may submit only if not admitted/);
+    assert.match(h.get("continue-design").textContent!, /Reconcile saved request/);
+    assert.match(h.document.querySelector(".development-handoff-status")!.textContent!, /submits only if absent and safe/);
     invalid = true;
     value = { ...value, revision: value.revision + 1 }; h.render(value); await h.flush();
     assert.equal(h.document.querySelector("#continue-design"), null);
     assert.match(h.document.querySelector(".development-handoff-status [role=alert]")!.textContent!, /changed/);
     invalid = false; admissionStatus = "prepared";
     await h.click("check-design-handoff");
-    assert.match(h.get("continue-design").textContent!, /Review saved handoff/);
+    assert.match(h.get("continue-design").textContent!, /Continue to Development/);
     await h.click("continue-design");
-    assert.equal(mutations().length, 0);
-    await h.click("confirm-design-handoff");
     assert.equal(mutations().length, 1);
+    assert.equal(h.document.querySelector("#confirm-design-handoff"), null);
     assert.equal(h.document.querySelector("#continue-design"), null);
     value = { ...value, revision: value.revision + 1, lifecycle: { ...value.lifecycle,
         outputs: [{ ...value.lifecycle.outputs[0], path: ".tandem/efforts/fixture/stages/prototype-r8.json" }] } };
     h.render(value); await h.flush();
-    assert.match(h.get("continue-design").textContent!, /updated Prototype/);
+    assert.match(h.get("continue-design").textContent!, /Continue to Development/);
     assert.equal(mutations().length, 1, "A new saved input is an explicit action, not automatic admission.");
     h.render({ ...value, revision: value.revision + 1, preparation: { ...value.preparation, status: "running" } }); await h.flush();
     assert.equal(h.document.querySelector("#continue-design"), null);
@@ -176,13 +176,15 @@ test("handoff presentation distinguishes exact admission, pending, uncertainty a
     assert.deepEqual(h.errors, []);
 });
 
-test("Prototype review cancel/Escape is read-only, changed input blocks confirmation, and double confirmation submits once", async t => {
+test("direct continuation verifies the exact saved input, rejects drift and submits once without a handoff modal", async t => {
     const h = await reactHarness(t);
     let value = state("development");
     value.lifecycle.outputs = [{ stageId: "prototype", path: ".tandem/efforts/fixture/stages/prototype-r7.json", completedAt: value.updatedAt }];
     const sent = Promise.withResolvers<Response>();
+    const inspected = Promise.withResolvers<Response>();
+    let delayInspection = true;
     h.setFetch(async (path, options) => {
-        if (path === "/api/development/handoff-review") return response(reviewFixture(value));
+        if (path === "/api/development/handoff-review") return delayInspection ? inspected.promise : response(reviewFixture(value));
         if (path === "/api/development/continue") {
             assert.equal(options.method, "POST");
             assert.equal(JSON.parse(String(options.body)).reviewBinding, "b".repeat(64));
@@ -197,27 +199,21 @@ test("Prototype review cancel/Escape is read-only, changed input blocks confirma
     h.render(value); await h.flush();
     const posts = () => h.requests.filter(request => request.options.method === "POST");
     const trigger = h.get("review-prototype-handoff"); trigger.focus();
+    const previousReview = reviewFixture(value);
     await h.click(trigger);
-    assert.match(h.document.querySelector('[role="dialog"]')!.textContent!, /Assumptions \(not confirmations\).*In-memory data.*Deferred work \(not requested\).*Synchronization/);
-    assert.match(h.document.querySelector('[role="dialog"]')!.textContent!, /C:\\fixture-project/);
-    await h.click("cancel-design-handoff");
     assert.equal(posts().length, 0); assert.equal(h.presentationRequests.length, 0);
-    assert.equal(h.document.activeElement, trigger);
-    await h.click(trigger);
-    await h.fire(h.document.querySelector('[role="dialog"]')!, "keydown", { key: "Escape", code: "Escape" });
     assert.equal(h.document.querySelector('[role="dialog"]'), null);
-    assert.equal(posts().length, 0);
-    await h.click(trigger);
     value = { ...value, revision: value.revision + 1, lifecycle: { ...value.lifecycle,
         outputs: [{ ...value.lifecycle.outputs[0], path: ".tandem/efforts/fixture/stages/prototype-r8.json" }] } };
     h.render(value); await h.flush();
-    assert.equal(h.get<HTMLButtonElement>("confirm-design-handoff").disabled, true);
-    assert.match(h.document.querySelector('[role="dialog"] [role="alert"]')!.textContent!, /changed/);
-    await h.click("cancel-design-handoff");
-    await h.click(trigger);
-    const confirm = h.get("confirm-design-handoff");
-    await h.click(confirm); await h.click(confirm);
+    inspected.resolve(response(previousReview)); await h.flush();
+    assert.match(h.document.querySelector(".development-handoff-status [role=alert]")!.textContent!, /changed/);
+    assert.equal(posts().length, 0, "A changed source cannot borrow the earlier click.");
+    delayInspection = false;
+    await h.click(trigger); await h.click(trigger);
     assert.equal(posts().length, 1);
+    assert.equal(h.document.querySelector("#confirm-design-handoff"), null);
+    assert.equal(h.document.querySelector("#enter-development"), null, "No second Start Development step follows continuation.");
     assert.equal(h.get("development-panel").hidden, false);
     assert.equal(h.get("next-action-guide").textContent, "Opening Development...");
     value = { ...value, revision: value.revision + 1, development: {
@@ -250,10 +246,10 @@ test("failed handoff startup surfaces the exact error without a blank view or au
         throw new Error(`Unexpected ${path}`);
     });
     h.render(value); await h.flush();
-    await h.click("review-prototype-handoff"); await h.click("confirm-design-handoff");
+    await h.click("review-prototype-handoff");
     assert.match(h.get("development-panel").textContent!, /Native session permission denied.*Open the owning session/);
     assert.equal(h.requests.filter(request => request.options.method === "POST").length, 1);
-    assert.ok(h.get("check-design-handoff"));
+    assert.match(h.get("continue-design").textContent!, /Retry Development/);
 });
 
 test("verified handoff Design removes the root banner without hiding active, stale, permission or failed readback", async t => {
@@ -314,7 +310,7 @@ test("verified handoff Design removes the root banner without hiding active, sta
     value = { ...value, revision: value.revision + 1, lifecycle: { ...value.lifecycle,
         outputs: [{ ...value.lifecycle.outputs[0], path: ".tandem/efforts/fixture/stages/prototype-r8.json" }] } };
     h.render(value); await h.flush();
-    assert.match(h.get("continue-design").textContent!, /updated Prototype/);
+    assert.match(h.get("continue-design").textContent!, /Continue to Development/);
     assert.equal(h.get("project-conversation-frame"), frame);
     assert.equal(h.requests.some(request => request.options.method === "POST"), false);
     assert.deepEqual(h.errors, []);
@@ -576,6 +572,63 @@ for (const stage of ["requirements", "prototype"] as const) test(`${stage} compl
     assert.equal(reopened.requests.length, 0, "Browsing Design must not initialize the runtime.");
     assert.ok(reopened.get("continue-design"));
     assert.equal(reopened.document.querySelector("#project-conversation-frame"), null);
+});
+
+test("Finish Prototype expresses one direct Development intent and follows its saved completion without another action", async t => {
+    const h = await reactHarness(t);
+    const before = readyPrototype();
+    h.setFetch(async (path, options) => {
+        if (path === "/api/state") return response(before);
+        assert.equal(path, "/api/stage/complete");
+        assert.deepEqual(JSON.parse(String(options.body)), { stageId: "prototype", continueDevelopment: true });
+        return response({ accepted: true });
+    });
+    h.render(before); await h.flush();
+    await h.click("complete-stage");
+    assert.equal(h.requests.filter(item => item.options.method === "POST").length, 1);
+    const completed = { ...before, revision: 2, stage: "development", lifecycle: {
+        ...before.lifecycle, currentStage: "development", completedStages: ["prepare", "requirements", "sketch", "prototype"],
+        outputs: [{ stageId: "prototype", path: ".tandem/efforts/fixture/stages/prototype-r2.json", completedAt: before.updatedAt }],
+    }, developmentIntent: { generation: before.generation, requestId: "finish", snapshotPath: ".tandem/efforts/fixture/stages/prototype-r2.json",
+        status: "starting", error: "" } };
+    h.render(completed); await h.flush();
+    assert.equal(h.get("development-panel").hidden, false);
+    assert.ok(h.get("project-conversation-frame"));
+    for (const id of ["confirm-design-handoff", "continue-design", "enter-development", "start-development-after-model"]) {
+        assert.equal(h.document.getElementById(id), null, `${id} must not be another required transition action.`);
+    }
+    assert.equal(h.document.querySelector('[role="dialog"]'), null);
+    assert.equal(h.requests.filter(item => item.options.method === "POST").length, 1, "The browser does not duplicate the backend-owned admission.");
+});
+
+test("model and effort readouts follow the viewed owning session without treating requested values as applied", async t => {
+    const h = await reactHarness(t, undefined, "development");
+    const value = { ...state("requirements"), mainModelSelection: {
+        status: "reported" as const, modelId: "actual-main", reasoningEffort: "low", error: null,
+    } };
+    h.render(value); await h.flush();
+    const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
+    const publish = async (modelSelection: unknown) => {
+        h.window.dispatchEvent(new h.window.MessageEvent("message", { origin: "http://127.0.0.1:8765", source: frame.contentWindow,
+            data: { protocol: "tandem-project/v1", channel: "fixture-project", type: "status",
+                status: "ready", active: true, modelSelection, requestedModel: "not-applied" } }));
+        await h.flush();
+    };
+    await publish({ status: "not-started", modelId: null, reasoningEffort: null, error: null });
+    assert.equal(h.get("session-model-effort").textContent, "Development: not started");
+    await publish({ status: "reported", modelId: "actual-private", reasoningEffort: null, error: null });
+    assert.match(h.get("session-model-effort").textContent!, /Development: actual-private.*native default \(not reported\)/);
+    await h.fire(h.get("design-tree-tab"), "mousedown", { button: 0 });
+    assert.equal(h.get("session-model-effort").textContent, "Main: actual-main · Effort: low");
+    h.render({ ...value, revision: 2, mainModelSelection: { ...value.mainModelSelection, modelId: "new-main", reasoningEffort: "high" } });
+    await h.flush();
+    assert.equal(h.get("session-model-effort").textContent, "Main: new-main · Effort: high");
+    await h.fire(h.get("development-tab"), "mousedown", { button: 0 });
+    assert.match(h.get("session-model-effort").textContent!, /actual-private/);
+    await publish({ status: "unavailable", modelId: null, reasoningEffort: null, error: "Native read failed" });
+    assert.equal(h.get("session-model-effort").textContent, "Development: model/effort unavailable");
+    assert.equal(h.get("session-model-effort").title, "Native read failed");
+    assert.equal(h.requests.length, 0);
 });
 
 test("Development mounts one isolated full workspace and navigation keeps its original frame", async t => {
@@ -848,33 +901,27 @@ test("real React Development keeps handoff controls in view across long-status h
         assert.equal(await inFrame('document.querySelector("#draft").value'), "Unsent private draft survives hover and navigation.");
         assert.equal(frameLoads, 1, "The private iframe must not remount or reload.");
         assertBounded(await measure("1280-return-from-upstream"));
-        await click("#continue-design");
-        await browser.waitFor('document.querySelector("#confirm-design-handoff")?.disabled === false');
         assert.equal(requests.filter(request => request.path === "/api/development/continue").length, 0);
         for (const [width, height] of [[640, 420], [390, 520]]) {
             await browser.call("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
-            await browser.evaluate('document.querySelector("#confirm-design-handoff").scrollIntoView({block:"nearest"})');
+            await browser.evaluate('document.querySelector("#continue-design").scrollIntoView({block:"nearest"})');
             const geometry = await browser.evaluate(`(() => {
-                const dialog = document.querySelector('[role="dialog"]').getBoundingClientRect();
-                const button = document.querySelector("#confirm-design-handoff").getBoundingClientRect();
-                return { left: dialog.left, right: dialog.right, top: dialog.top, bottom: dialog.bottom,
-                    buttonVisible: document.elementFromPoint(button.left + button.width / 2, button.top + button.height / 2)?.id === "confirm-design-handoff" };
+                const control = document.querySelector("#continue-design"), button = control.getBoundingClientRect();
+                const hit = document.elementFromPoint(button.left + button.width / 2, button.top + button.height / 2);
+                return { left: button.left, right: button.right, top: button.top, bottom: button.bottom,
+                    buttonVisible: control === hit || control.contains(hit), modal: Boolean(document.querySelector('[role="dialog"]')) };
             })()`);
             assert.ok(geometry.left >= 0 && geometry.right <= width && geometry.top >= 0 && geometry.bottom <= height);
             assert.equal(geometry.buttonVisible, true);
+            assert.equal(geometry.modal, false, "The transition needs no intermediate approval modal.");
         }
-        await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
-        await browser.waitFor('!document.querySelector(\'[role="dialog"]\')');
-        await browser.waitFor('document.activeElement.id === "continue-design"');
         await browser.call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
         await click("#continue-design");
-        await browser.waitFor('document.querySelector("#confirm-design-handoff")?.disabled === false');
-        await click("#confirm-design-handoff");
         await browser.waitFor('document.querySelector("#continue-design")?.disabled === false');
         assert.deepEqual(requests.filter(request => request.path === "/api/development/continue"), [{
             path: "/api/development/continue",
             body: { generation: value.generation, expectedRevision: snapshot.revision, snapshotPath, reviewBinding: "b".repeat(64) },
-        }], "A deliberate hit-tested confirmation submits exactly once to the recording fixture endpoint.");
+        }], "A deliberate hit-tested continuation submits exactly once to the recording fixture endpoint.");
         assert.equal(requests.filter(request => request.path === "/api/development/open").length, 0);
         const events = await browser.evaluate("window.developmentFixture.events");
         for (const type of ["pointerover", "pointerout", "focusin", "keydown"]) {
