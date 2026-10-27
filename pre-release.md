@@ -293,6 +293,37 @@ Pre-integration results above cover unchanged content, not an all-green
 qualification of the merged candidate. Record narrow integration checks and
 the fresh preview's source/payload/native identities before manual handoff.
 
+The reviewed CI correction is commit `c069b58`; transition/model settings and
+the user-requested README launch-option example are commit `fd9b6eb`.
+The ordinary main merge preserves PR #59's shared tab bars, navigation states
+and resizable sidebar, along with the cleanup's compact review bounds, readable
+sidebar labels and native model/status controls. Source conflicts were resolved
+in `src/renderer/ui/layout.css` and `tests/renderer.test.ts`; emitted payloads
+were rebuilt rather than hand-merged.
+
+Integration qualification on 2026-10-27:
+
+- The affected navigation, sidebar, focus, Finish and current-readout selection
+  ran **16 tests: 15 passed, 1 failed**, with no skips. The new sidebar case's
+  synthetic End-key step did not settle. Using native browser keyboard events
+  after focusing the owned test page preserved its exact selection/scroll
+  assertions; that single case then passed. Logs:
+  `integrated-main-ui-seams.log` and `integrated-main-sidebar-final.log`.
+- `npm run pack` passed type checking and regenerated source packaging.
+  Actual integrated ZIP extraction and `verifyPayload` passed. No full
+  inventory or live/model evaluation was rerun.
+- Version remains **1.1.15**, with **156 payload files**, digest
+  `f98c8d4d73d66dedddbc196d9f187a7db827bbd1f4b93e3d72a216f817c47dc9`.
+  ZIP SHA-256:
+  `41103D049E7FBA7ACE37ED3445759B1029D03C0493836C3D0B8F4AC0C47FC47B`.
+
+The user requested a **fresh test**, not a restart of the old one. Publish the
+normal merge to existing PR #60 and build its browser preview in a separate
+commit-export directory so the active `947b257` browser runtime is not
+overwritten. The new launch receipt and PR body bind the exact merge SHA,
+main base, payload and native identity. Stop at initial UI or actual native
+consent; Linux CI, review and user manual qualification remain merge gates.
+
 ## Public-release history (unexecuted; separately gated)
 
 - [ ] Decide between a new public snapshot and a controlled rewrite of the existing

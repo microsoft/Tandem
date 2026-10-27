@@ -5,16 +5,16 @@
 }
 .tandem-button.sketch-structure-node { justify-content: flex-start; width: 100%; min-height: var(--studio-control-height); gap: var(--studio-space-1); }
 .project-entry-choices > .tandem-button { display: grid; justify-items: start; gap: var(--studio-space-2); padding: var(--studio-space-4); border-color: var(--studio-border); }
-.project-tabs .tandem-tab { display: grid; grid-template-columns: 15px minmax(0, 1fr) auto; justify-content: start; gap: var(--studio-space-1); padding-inline: var(--studio-space-2); text-align: start; white-space: normal; }
-.preview-tabs > .tandem-tab { flex: none; }
+.project-tabs.tandem-tab-list { overflow: visible; }
+.artifact-library-nav.tandem-tab-list { margin-bottom: var(--studio-space-2); }
+.project-tabs .tandem-tab { display: grid; grid-template-columns: 15px minmax(0, 1fr) auto; max-width: 100%; justify-content: start; gap: var(--studio-space-1); padding-inline: var(--studio-space-2); text-align: start; white-space: normal; }
+#project-contents .tandem-tab::after { display: none; }
 @media (max-height: 700px) {
   .stage-input-review:has(.review-guidance-pane, .pinned-review-actions) { max-height: min(16vh, 100px); }
 }
 @media (max-height: 700px) and (max-width: 760px) {
   .stage-input-review:has(.review-guidance-pane, .pinned-review-actions) { max-height: 90px; }
 }
-.substage-tab.tandem-tab { gap: var(--studio-control-gap); font-weight: 400; }
-.substage-tab .substage-index { flex: none; }
 .tandem-button.context-toggle { display: none; justify-content: flex-start; width: 100%; }
 .project-workspace .tandem-button.context-collapse { display: none; }
 .tandem-button.review-close { align-self: flex-start; }

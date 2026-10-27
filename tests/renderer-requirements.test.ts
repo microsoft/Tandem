@@ -146,6 +146,7 @@ test("Requirements substage tabs retain usages, research and decision drafts wit
         checks: [], sources: [{ title: "Reference", url: "https://example.com/reference", purpose: "Background" }],
     };
     const h = await setup(t, value);
+    assert.equal(text(h, "design-tree-phase"), "Requirements decisions");
     assert.equal(h.get("dag-substage").getAttribute("role"), "tab");
     assert.equal(h.get("dag-substage").getAttribute("aria-label"), "Decision DAG, Decisions to answer");
     assert.equal(h.get("usage-substage").getAttribute("aria-label"), "Usage list, Usage list complete");
@@ -175,6 +176,7 @@ test("Requirements substage tabs retain usages, research and decision drafts wit
     const later = { ...value, revision: 3, lifecycle: { ...value.lifecycle,
         currentStage: "prototype", completedStages: ["prepare", "requirements", "sketch"] } };
     h.render(later); await browse(h, "requirements");
+    assert.equal(h.document.getElementById("design-tree-phase"), null, "Completed Requirements does not show a redundant saved badge.");
     await h.fire(h.get("usage-substage"), "mousedown", { button: 0 });
     assert.equal(h.get("usage-substage").getAttribute("aria-selected"), "true");
     await h.fire(h.get("dag-substage"), "mousedown", { button: 0 });

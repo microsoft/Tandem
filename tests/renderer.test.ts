@@ -10,15 +10,16 @@ import "./renderer-prototype.test.js";
 import "./renderer-panels.test.js";
 
 test("responsive layout and graph keyboard focus have explicit accessible styles", async () => {
-    const css = await readFile(new URL("../src/renderer/styles.css", import.meta.url), "utf8");
+    const [css, shared, layout] = await Promise.all(["../src/renderer/styles.css", "../development/tandem/public/ui-system.css",
+        "../src/renderer/ui/layout.css"]
+        .map(path => readFile(new URL(path, import.meta.url), "utf8")));
     assert.match(css, /container:\s*output\s*\/\s*inline-size/);
     assert.match(css, /@container output \(max-width: 680px\)/);
     assert.match(css, /g\.node\[data-selectable="true"\]:focus-visible\s*\{\s*outline:\s*3px solid/);
     assert.match(css, /\.workspace\[data-context-open="true"\] \.requirements\s*\{\s*display: block/);
-    assert.match(css, /\.preview-tabs\s*\{[^}]*overflow-x: auto/);
+    assert.match(shared, /\.tandem-tab-list\s*\{[^}]*overflow-x: auto/);
     assert.match(css, /\.preview\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
     assert.match(css, /\.prototype-view \.frame-wrap\s*\{[^}]*grid-template-rows:\s*minmax\(220px, 1fr\) auto/);
-    const layout = await readFile(new URL("../src/renderer/ui/layout.css", import.meta.url), "utf8");
     assert.match(layout, /form:not\(\.feedback-composer\):focus-within textarea\.tandem-input\.composer-input/);
     assert.match(layout, /form\.feedback-composer > textarea\.tandem-input\.composer-input:focus/);
     assert.doesNotMatch(css, /animation:\s*next-action/);
@@ -40,12 +41,12 @@ test("navigation headers and below-input actions retain bounded independent layo
 });
 
 test("compact density is shared by all stage headers, panels, controls, and composers", async () => {
-    const css = await readFile(new URL("../src/renderer/styles.css", import.meta.url), "utf8");
-    const theme = await readFile(new URL("../development/tandem/public/project-theme.css", import.meta.url), "utf8");
-    const rules = (selector: string) => {
-        const start = css.search(new RegExp("^" + selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + " \\{", "m"));
+    const [css, theme, layout] = await Promise.all(["../src/renderer/styles.css", "../development/tandem/public/project-theme.css",
+        "../src/renderer/ui/layout.css"].map(path => readFile(new URL(path, import.meta.url), "utf8")));
+    const rules = (selector: string, source = css) => {
+        const start = source.search(new RegExp("^" + selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + " \\{", "m"));
         assert.ok(start >= 0, `Missing ${selector}`);
-        return css.slice(start, css.indexOf("}", start));
+        return source.slice(start, source.indexOf("}", start));
     };
     for (const [token, size] of [["space", 8], ["card-padding", 10], ["control-height", 30], ["tab-height", 36]]) {
         assert.match(theme, new RegExp(`--studio-${token}:\\s*${size}px`));
@@ -68,8 +69,7 @@ test("compact density is shared by all stage headers, panels, controls, and comp
     assert.match(rules("form textarea.composer-input"), /height:\s*var\(--studio-composer-height\)/);
     assert.match(rules("#question-host:focus-within textarea.composer-input"), /var\(--studio-composer-expanded-height\)/);
     assert.match(rules(".start-form textarea.composer-input"), /min-height:\s*112px/);
-    const layout = await readFile(new URL("../src/renderer/ui/layout.css", import.meta.url), "utf8");
-    assert.match(layout, /\.tandem-input\.composer-input\s*\{[^}]*min-height:\s*var\(--studio-composer-height\)/);
+    assert.match(rules(".tandem-input.composer-input", layout), /min-height:\s*var\(--studio-composer-height\)/);
     assert.match(rules(".artifact-content"), /line-height:\s*1\.55/);
     assert.match(rules(".requirements"), /padding-inline-end:\s*4px/);
     assert.match(rules(".requirements"), /scrollbar-width:\s*thin/);

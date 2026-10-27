@@ -4,8 +4,8 @@
   "files": [
     {
       "path": "extension.mjs",
-      "bytes": 2995435,
-      "sha256": "9d7ffc32e785c0ee30b3798adff9da53caf35411ad4315d84e7a948e207f1f04"
+      "bytes": 2995591,
+      "sha256": "54c1da6224bddcc940335c2215e6d7a248fdb00fc5f517b28146a7cab25bfd1f"
     },
     {
       "path": "preview-launcher.mjs",
@@ -30,7 +30,7 @@
     {
       "path": "stage2/manifest.json",
       "bytes": 25488,
-      "sha256": "775e4ed38121b6cb0013d3478a7f16c14e9912f07380c35404b68a38616fa757"
+      "sha256": "02e6b3d0676011ef1afe9713b7f0cf063ad6b3ea4191c00d8766436b62d03ab0"
     },
     {
       "path": "stage2/package.json",
@@ -394,8 +394,8 @@
     },
     {
       "path": "stage2/public/ui-system.css",
-      "bytes": 11843,
-      "sha256": "ae636b89be78e1ebac0ff025fb16408343a03ff62cd5b5b2d81f0982d82922f3"
+      "bytes": 14227,
+      "sha256": "b0086f8d05ff66d3c30c8e1caa1c53caaff23c108d47bd59bc2bd54f54659d92"
     },
     {
       "path": "stage2/public/workflow-stop-control.js",
@@ -783,5 +783,5 @@
       "sha256": "92b92e76eb4ac3bee96c6bbdde06ed1f7d9c0088576a51db1276c567dbb207f8"
     }
   ],
-  "digest": "93ca62c40a73385b0f73002fe666f1ee97b5489600a584a6a76431327c2651ca"
+  "digest": "f98c8d4d73d66dedddbc196d9f187a7db827bbd1f4b93e3d72a216f817c47dc9"
 }

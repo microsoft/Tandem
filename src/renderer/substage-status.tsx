@@ -19,6 +19,6 @@ export type SubstageStatus = keyof typeof statusIcons;
 export function SubstageStatusIcon({ status, label }: { status: SubstageStatus; label: string }) {
   const Icon = statusIcons[status];
   return <span className="substage-status" data-status={status} role="img" aria-label={label} title={label}>
-    <Icon size={14} aria-hidden="true" className={status === "running" ? "spin" : undefined} />
+    <Icon size={14} aria-hidden="true" className={status === "running" ? "tandem-spin" : undefined} />
   </span>;
 }

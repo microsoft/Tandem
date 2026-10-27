@@ -3,6 +3,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, within } from "storybook/test";
 import { Check, History, List, X } from "lucide-react";
 import { ActionLink, AlertDialog, Button, Disclosure, IconButton, RadioGroup, Tabs, ToggleGroup, Tooltip } from "./index.js";
+import { SubstageStatusIcon, type SubstageStatus } from "../substage-status.js";
 
 const meta = {
   title: "Controls/Navigation and choices",
@@ -13,9 +14,16 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
+const substageExamples = [
+  { title: "Requirements", labels: ["Usage list", "Decision DAG"], status: "ready", statusLabel: "All decisions answered" },
+  { title: "Prototype", labels: ["Prototype", "Visual exploration"], status: "running", statusLabel: "Building" },
+  { title: "Failed update", labels: ["Prototype", "Visual exploration"], status: "failed", statusLabel: "Failed - retry available" },
+  { title: "Locked decision", labels: ["Usage list", "Decision DAG"], status: "locked", statusLabel: "Complete the usage list to unlock" },
+] satisfies Array<{ title: string; labels: [string, string]; status: SubstageStatus; statusLabel: string }>;
+
 export const TabNavigation: Story = {
   render: () => <Tabs.Root defaultValue="requirements">
-    <Tabs.List className="tandem-story-row" aria-label="Example stages">
+    <Tabs.List aria-label="Example stages">
       <Tabs.Trigger value="requirements">Requirements</Tabs.Trigger>
       <Tabs.Trigger value="designs">Designs</Tabs.Trigger>
       <Tabs.Trigger value="prototype" disabled>Prototype</Tabs.Trigger>
@@ -29,6 +37,34 @@ export const TabNavigation: Story = {
     await expect(canvas.getByRole("tab", { name: "Designs" })).toHaveFocus();
     await expect(canvas.getByRole("tabpanel")).toHaveTextContent("Review the sample designs");
   },
+};
+
+export const SubstageNavigation: Story = {
+  render: () => <div className="tandem-story-stack">
+    {substageExamples.map(({ title, labels, status, statusLabel }) => <Tabs.Root key={title} defaultValue={status === "locked" ? "0" : "1"}>
+      <p>{title}</p>
+      <Tabs.Bar>
+        <Tabs.List aria-label={title + " substages"}>
+          {labels.map((label, index) => <Tabs.Trigger key={label} value={String(index)} className="substage-tab"
+            disabled={index === 1 && status === "locked"} data-status={index === 1 ? status : "complete"}
+            aria-label={`${label}, ${index === 1 ? statusLabel : "Ready"}`}>
+            <span className="substage-index" aria-hidden="true">{index + 1}</span><span>{label}</span>
+            <SubstageStatusIcon status={index === 1 ? status : "ready"} label={index === 1 ? statusLabel : "Ready"} />
+          </Tabs.Trigger>)}
+        </Tabs.List>
+        {title === "Prototype" && <IconButton aria-label="Preview history"><History size={16} aria-hidden="true" /></IconButton>}
+      </Tabs.Bar>
+      {labels.map((label, index) => <Tabs.Content key={label} value={String(index)}><p>Saved {label.toLowerCase()} sample.</p></Tabs.Content>)}
+    </Tabs.Root>)}
+    <Tabs.Root defaultValue="first">
+      <Tabs.Bar><Tabs.List aria-label="Long substage labels">
+        <Tabs.Trigger value="first">Review the saved prototype and its interaction states</Tabs.Trigger>
+        <Tabs.Trigger value="second">Compare optional visual directions before continuing</Tabs.Trigger>
+      </Tabs.List></Tabs.Bar>
+      <Tabs.Content value="first"><p>Labels scroll within the tab list instead of widening the page.</p></Tabs.Content>
+      <Tabs.Content value="second"><p>Keyboard navigation keeps the selected tab reachable.</p></Tabs.Content>
+    </Tabs.Root>
+  </div>,
 };
 
 export const ChoiceCards: Story = {
