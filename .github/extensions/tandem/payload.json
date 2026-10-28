@@ -4,8 +4,8 @@
   "files": [
     {
       "path": "extension.mjs",
-      "bytes": 3020794,
-      "sha256": "192cb71a6319aff522fe07b4324435dc19f11f6dbf8e9a34ea0df7510b9614cc"
+      "bytes": 3021964,
+      "sha256": "3e1d58035da107d2cf9fd6021b16fd9db82432b12febaa48d05787709c1a863a"
     },
     {
       "path": "preview-launcher.mjs",
@@ -30,7 +30,7 @@
     {
       "path": "stage2/manifest.json",
       "bytes": 25488,
-      "sha256": "d484a44f3baddec337d80637362de5a1ee1793efb2f288c818111073f7ca4b11"
+      "sha256": "c8b7bd75a995d19ab9fd9ddbe640e4bec9a8acad6e0fa907c15110598331a67d"
     },
     {
       "path": "stage2/package.json",
@@ -194,8 +194,8 @@
     },
     {
       "path": "stage2/public/human-loop-app.js",
-      "bytes": 65286,
-      "sha256": "da9dfd2e95be76b362a7f8766ffa52b2c2b2edcb3b37a95e6b51176488a5a061"
+      "bytes": 65424,
+      "sha256": "21ac3d87d06a20f47d78fe3b69529c0f9f55b79b20ed7a4f900ec982a1eada5e"
     },
     {
       "path": "stage2/public/human-loop-shell.css",
@@ -249,8 +249,8 @@
     },
     {
       "path": "stage2/public/project-presentation.js",
-      "bytes": 20093,
-      "sha256": "95cf5a4f75f2873292cb532aa6d3d6aaa8e439ac962d964fe783ca50f573e68f"
+      "bytes": 20301,
+      "sha256": "987b9e2fa1bb1b117b3f1807024da337e28d6f38eec704f65bd314da707c1440"
     },
     {
       "path": "stage2/public/project-theme.css",
@@ -783,5 +783,5 @@
       "sha256": "92b92e76eb4ac3bee96c6bbdde06ed1f7d9c0088576a51db1276c567dbb207f8"
     }
   ],
-  "digest": "92aa5919cb0654220cef56a2c37a3534765e598206a13743508704f4a994ae9e"
+  "digest": "da3e4e9ffafa4222e83aebd61e30c00978e2267583bef0dcafef2c1b925beee6"
 }

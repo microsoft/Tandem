@@ -378,6 +378,85 @@ Recovering this poisoned receipt is not a pass for normal transition behavior.
 Two manual cases remain on the next candidate: normal **Finish Prototype ->
 Development**, and a fresh direct **Go to Development** with no launch overrides.
 
+## Follow-up UI fixes (separate PR after #60)
+
+The user superseded the request to finalize PR #60 with
+**"no need, we shall have another pr"**.
+[PR #60](https://github.com/microsoft/Tandem/pull/60) merged on 2026-10-27 at
+`ad3977b72fd241f10ae640eb45cbc093ac15aeee`. This separate follow-up contains
+the source, test and generated changes below; they were not part of merged
+PR #60. Earlier **"seems ok"** feedback is not a blanket manual-test pass.
+
+- Disable Preparation only for saved direct-Development entry, redirect stale
+  unused-Preparation navigation, and retain Preparation-first history.
+- Honor native recovery capabilities instead of offering an invalid handoff
+  Retry; show the existing recovery action and inspection progress. After Ready,
+  label the retained submission **Continue saved Prototype**.
+- Reuse the two passing focused navigation checks and the passing recovery-CTA
+  regression. Cross-phase fixtures now explicitly model Preparation-first entry
+  with an existing Development context rather than calling it direct entry.
+- The prior local `npm run pack` passed type checking, source build and payload
+  generation. That run and the focused checks above are reused unchanged-content
+  evidence, not reruns on this follow-up commit. Version remains **1.1.15**.
+- Publication checks verified the preserved patch's SHA256 and all 14 applied
+  Git blob identities, plus the merged base's tree equality with `950db97`.
+  Dependency-free checks verified all 156 composed-payload and 152 Stage 2 file
+  hashes/sizes, the canonical payload digest, matching changed native asset copies,
+  and `git diff --check`. Only this publication-status text differs from the patch.
+  No dependencies were installed, tests/builds/packaging rerun, previews restarted,
+  or user installations changed.
+- CI passed for `950db97`; this follow-up requires its own PR CI result.
+  Existing failed/intermittent results above remain historical limits.
+
+A read-only observation of the user's `950db97` TinyBoard fixture showed
+Prototype completed, `generate-design-spec` succeeded and the saved transition
+intent admitted, bound to `prototype-r69.json` and
+`handoff-32a62412adab6950320b6bfa57e13bce4788e8641ac41c5d99c8ac4b9ac9f27c`.
+The agent did not click Finish. This evidence and all preview receipts remain
+bound to `950db97`, not silently transferred to the follow-up UI changes. PR merge,
+final review and interpretation of manual coverage remain with the user.
+
+### PR #62 CI fixture correction
+
+[Run 40496393843](https://github.com/microsoft/Tandem/actions/runs/40496393843)
+on `f1222b64da4a610df00ccd616d71a5926a62f6d2` reported 1,103 passing, one failing
+and 29 skipped tests. The sole failure was the permission-ownership fixture at
+`tests/standalone-header.test.ts:130`: it selected direct Development entry but
+expected the intentionally disabled Preparation panel to open.
+
+The exact assertion was reproduced locally after `npm ci --no-audit --no-fund`
+restored missing locked root dependencies. The fixture now uses the existing
+Preparation-first entry with retained Development context and explicitly checks
+that Preparation is enabled. All private-session permission assertions remain
+unchanged; no runtime or generated payload changed.
+
+One targeted run passed all four selected cases: permission ownership, persisted
+direct Development entry, retained Preparation-first history, and recovery CTA.
+No full suite, release build, packaging, native/manual preview or paid model test
+was rerun. The correction still requires its own PR CI result.
+
+### Current-main integration for PR #62
+
+The fixture-correction head `522853c` could not start fresh PR CI because current
+main conflicted in generated `extension.mjs` and `payload.json`. The authorized
+normal merge integrates `72a42fa87a6ecc78a7da33f20914f0f4e9241a1b` without rebasing
+or force-pushing. Maintainable source merged without conflicts; main's review
+behavior and the two UI fixes remain. Unmerged API refactor `00f0284` is excluded.
+
+`npm run check` and `npm run build` passed. The build regenerated both conflicted
+files from merged source rather than selecting either stale payload. Root version
+remains **1.1.15** and the Development package version remains **0.1.0**.
+Production payload verification and nested-manifest checks verified all 156
+composed and 152 Stage 2 file identities, the digest and changed native asset copies.
+
+One targeted run passed five cases: persisted direct-entry navigation,
+Preparation-first history, upstream-review feedback in the bottom pane, pinned
+earlier-stage review navigation, and actual generated-payload relocation. The
+unchanged permission-ownership and recovery-CTA cases reuse the preceding
+four-case pass. PR-relative whitespace checks passed; inherited main-only source
+was preserved. No full local suite, release ZIP, native/manual preview, deployment
+or paid model test was run. Fresh PR CI must report against the integrated head.
+
 ## Public-release history (unexecuted; separately gated)
 
 - [ ] Decide between a new public snapshot and a controlled rewrite of the existing

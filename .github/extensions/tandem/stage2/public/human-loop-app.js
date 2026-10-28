@@ -454,6 +454,7 @@ function render() {
     : installed?.status === 'saved-state' ? 'Verify saved runtime' : 'Initialize runtime';
   $('inspect-initial-creation').hidden = Boolean(startup) || !installed?.canInspectInitialRecovery;
   $('inspect-initial-creation').disabled = initialCreationInspecting;
+  $('inspect-initial-creation').textContent = initialCreationInspecting ? 'Inspecting saved setup...' : 'Inspect unused setup recovery';
   $('repair-empty-setup').hidden = Boolean(startup) || !installed?.canInspectEmptyRepair;
   $('repair-empty-setup').disabled = emptySetupBusy;
   $('shutdown').disabled = !view || !['ready', 'unknown'].includes(installed?.status);

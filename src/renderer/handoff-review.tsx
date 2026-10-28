@@ -54,7 +54,7 @@ export function HandoffReviewProvider({ children }: { children: ReactNode }) {
         return () => { cancelled = true; controller.abort(); };
     }, [sameSource, key, state.revision, check]);
     const eligible = canOpenDevelopment(state) && state.lifecycle.currentStage === "development" && Boolean(snapshot);
-    const canContinue = eligible && !checking && !project.starting && intent?.status !== "starting"
+    const canContinue = eligible && !checking && !project.starting && !project.recoveryAction && intent?.status !== "starting"
         && (!sameSource || admission?.status === "prepared" || admission?.status === "uncertain");
     async function submit() {
         if (!canContinue || pending || action.busy || submitting.current) return;
@@ -88,7 +88,8 @@ export function HandoffReviewProvider({ children }: { children: ReactNode }) {
         : admission?.status === "admitted" ? activity ? handoffProgress(activity, project.designBinding, project.permissions)
             : "Waiting for verified Development activity..."
           : intent?.status === "starting" && !error ? "Opening Development with the saved Prototype..." : "");
-    const status = admission?.status === "sending" ? "Development is receiving the saved request. Check its status; do not submit again."
+    const status = project.recoveryAction ? `Use ${project.recoveryAction === "initial-creation" ? "Inspect unused setup recovery" : "Repair Development setup"} in the right-hand Development conversation pane. This retains the saved request; continue it only after the runtime is Ready.`
+        : admission?.status === "sending" ? "Development is receiving the saved request. Check its status; do not submit again."
         : admission?.status === "uncertain" ? "Admission is uncertain. Continue checks the exact saved request and submits only if absent and safe. Retired work is never replayed."
             : intent?.status === "starting" && !error ? progress
                 : receiptError ? "Saved handoff status is unverified."
@@ -119,6 +120,7 @@ export function useHandoffStatus(active: boolean) {
 
 export function HandoffControls({ prototype = false, active = true }: { prototype?: boolean; active?: boolean }) {
     const view = useContext(Context);
+    const project = useProjectView();
     const { pending, state } = useUi();
     const hasSnapshot = state.lifecycle.outputs.some(output => output.stageId === "prototype");
     if (!active || !view || !hasSnapshot || !view.status && !view.canContinue && !view.error) return null;
@@ -126,9 +128,10 @@ export function HandoffControls({ prototype = false, active = true }: { prototyp
         {view.status && <Status role="status">{view.status}</Status>}
         {view.canContinue && <Button id={prototype ? "review-prototype-handoff" : "continue-design"} variant="primary"
             disabled={pending || view.busy} onClick={view.continue}>
-            {view.admission?.status === "uncertain" ? "Reconcile saved request" : view.error ? "Retry Development" : "Continue to Development"}</Button>}
-        {(view.error || view.admission?.status === "sending") && !view.canContinue && <Button id={prototype ? "check-prototype-handoff" : "check-design-handoff"}
+            {view.admission?.status === "uncertain" ? "Reconcile saved request" : project.active && view.admission?.status === "prepared"
+                ? "Continue saved Prototype" : view.error ? "Retry Development" : "Continue to Development"}</Button>}
+        {!project.recoveryAction && (view.error || view.admission?.status === "sending") && !view.canContinue && <Button id={prototype ? "check-prototype-handoff" : "check-design-handoff"}
             disabled={view.busy || view.checking} onClick={view.check}>Check handoff status</Button>}
-        {view.error && <Status tone="danger" role="alert">{view.error}</Status>}
+        {!project.recoveryAction && view.error && <Status tone="danger" role="alert">{view.error}</Status>}
     </section>;
 }
