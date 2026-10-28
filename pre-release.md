@@ -470,3 +470,257 @@ or paid model test was run. Fresh PR CI must report against the integrated head.
   Do not absorb the separate unmerged release-root documents workstream.
 - [ ] Decide how to handle old branches/tags, PRs, cached references and collaborator
   cutover before any authorized publication or visibility change.
+
+## Unattended release qualification - 2026-10-28
+
+The user authorized one prioritized test/fix pass, not publication, deployment,
+history changes or a version bump. This pass fetched and verified clean main at
+`72a42fa87a6ecc78a7da33f20914f0f4e9241a1b`, tree
+`4a2be9a9d7947017d2f24192b8237c3f90296e36`, version **1.1.15**.
+This includes PR #61, whose deterministic CI was green at `a74f41a9`.
+PR #62 was separate, unmerged work when qualification began: its earlier permission-header failure was
+classified and corrected by its owner as a fixture/start-path mismatch, not a
+proven permission regression. Its head `b18493c8` subsequently passed deterministic
+CI and merged as `32f2039306de9408f25cbca9598db44968e9afba` (tree
+`36798cb52411276ddfecdf3ae7e5bf4fda501aff`). The final fetch records that newer
+main without merging it into this qualification worktree or transferring the
+earlier evidence to its UI changes. Its private creation/transport source and
+dependency manifests are unchanged from the tested candidate. The incoming application-interface change
+`00f0284` is also excluded.
+
+### Known limitation: unused native Development does not survive clean reopen
+
+**Accepted for this release, not fixed.** During continued examination the user
+explicitly said **"this is a old known issue let's ignore"**. It is no longer
+a release blocker. Investigation, probes, fixes and upstream-report work on
+this issue stopped; existing evidence below remains historical failure evidence,
+not a pass. The acceptance does not apply to unrelated used-session data loss.
+
+- **Observed:** actual isolated source-preview startup in a fresh empty target
+  verified the exact session provider and payload, activated/read back the native
+  preferred main model, completed consented Git setup and reached private
+  Development **Ready** without a model turn. Orderly host close completed.
+  Reopening the same target retained the main identity and discovery generation,
+  but the original private identity became unavailable. The application preserved
+  that identity and reported `unknown` / `execution-unknown`; it did not replace
+  the session or submit work.
+- **Impact:** a user who opens Development, closes it before sending a request,
+  then returns can be stranded at recovery. This was initially flagged as a
+  blocker and subsequently accepted by the user; it is not a passing native journey.
+- **Narrow diagnosis:** supported native metadata, in-use and storage APIs
+  confirm the private ID is absent after close. A separate no-model probe found
+  that create/name/readback succeed while `sessions.save` returns `{}` and
+  metadata/storage remain absent even before shutdown. The documented
+  `workspaces.ensure` operation does not change that result. The SDK save
+  contract flushes an existing writer and explicitly permits a no-op when none
+  exists; RPC success is not durable journal evidence.
+- **Supported notification probe:** one truthful `session.rpc.log` notification
+  with `ephemeral: false` returned an event ID and appeared once as `session.info`.
+  Save still returned `{}`, and native metadata/storage remained absent both
+  before and after clean shutdown. No further event variants were tried.
+- **Status:** known and accepted, unresolved. Original failure receipts and workspace WAL are
+  preserved. The supported SDK/runtime persistence boundary requires a fix;
+  no speculative production workaround was applied. No dummy prompt, replacement
+  identity, automatic reset or direct native-storage write was used.
+
+The opt-in regression uses the production private-creation helper and real
+native create/name/save/stop APIs, then checks the exact identity through a cold
+client before attempting resume:
+
+```powershell
+$env:TANDEM_NATIVE_DURABILITY = '1'
+node --import tsx --test tests\native-durability.test.ts
+Remove-Item Env:\TANDEM_NATIVE_DURABILITY
+```
+
+It intentionally makes no model request and grants no permissions. The final
+run failed at the missing cold metadata assertion with clean client shutdown,
+not at a mock or a timeout. Its first diagnostic run hit the initial 60-second
+whole-test deadline while closing; that evidence is retained. The test now
+allows 180 seconds for both native client lifecycles and cleanup; production
+timeouts are unchanged. Without explicit opt-in this test is skipped, never
+counted as a pass. Existing test inventory expansion/concurrency is unchanged.
+
+### New evidence and limits
+
+| Distinct coverage | Result |
+| --- | --- |
+| Root metering, startup, model/effort, recovery, handoff and acceptance boundaries | 181 passed, no skips |
+| Native model/settings/recovery/permission fixtures | 80 passed, no skips |
+| Current PR #61 review, DSL, Design updates and Prototype/Finish flows | 128 passed, no skips |
+| Actual ZIP and standalone tarball extraction, controller relocation and packaged Git/handoff browsers | 27 passed, no skips, including both entry paths across eight Git scenarios each |
+| Actual artifact fit/overflow, narrow storyboard and source-bound document browsers | 10 passed, no skips |
+| Missing-prerequisite production-factory normalization regression | 1 passed |
+| Root check/pack, browser pack and Development build | Passed; no version change or generated-source drift |
+| Maintained Markdown file links and packaged CLI options | 101 links in 16 guides resolved; help/options checked |
+| Actual no-model source-preview/direct Development/clean reopen | Failed at private reopen; startup/main readback and first private Ready were observed |
+| Opt-in production-helper native durability regression | Failed at absent cold metadata; 0 skipped/cancelled in the final run |
+
+Browser fixtures use the actual packaged/source renderer with synthetic native
+adapters unless explicitly labeled actual native above. They do not establish
+model-driven implementation, Review or permission acceptance. The historical
+acceptance-lock race did not reproduce in this bounded core group; that is not
+proof its root cause is resolved. No broad suite was repeated merely to obtain
+another green count.
+
+Four serial **gpt-6.1-sol** prompt-only cases consumed **4.08507 actual AI
+credits** (`4,085,070,000 totalNanoAiu`) in the existing metered runner. New GUI,
+existing GUI and non-GUI probes passed. Missing-prerequisites failed only its raw
+readiness label; all explicit deferral/no-invention checks passed. Production's
+existing factory overrides a worker's `ready` label when upstream checks are
+`missing`; the added regression verifies that exact receipt-bound path still
+advances to Requirements with `needs-attention`. The raw probe failure remains
+recorded and is not represented as a native user-flow failure or rerun for green.
+
+The assignment has **two unused live cases and 15.91493 credits remaining**,
+with no overshoot or unknown usage. Each case had a 1,200-second limit including
+startup. Full native model-driven journeys remain unrun: the product surface
+does not expose supported aggregate main/private/factory credit accounting for
+this shared budget. No alternative evaluation framework or unmetered model
+fixture was created.
+
+Dependabot metadata shows **14 open alerts: 5 high, 6 medium, 3 low**, not
+exploitability findings. Runtime `zod@4.3.6` appears through the SDK in both
+lockfiles; other affected paths include `undici`, `brace-expansion`, `fast-uri`,
+`ajv` and `katex`. Dependency triage, final native qualification, review of the
+separate incoming changes, public-document/provenance review and explicit
+publication approval remain outstanding. This pass is not security certification
+or a declaration that the repository is bug-free.
+
+Detailed matrix, actual-usage ledger and receipts are retained in the release
+qualification session artifacts: `qualification-matrix.md`,
+`qualification-ledger.json`, `qualification-live-report.json`,
+`native-startup-receipt.json`, `native-owned-metadata.log` and
+`native-durability-probe.json`, plus `native-lifecycle-probe.json` and
+`qualification-native-regression-final.log`. Individual test logs preserve both failures and
+passes. The exact candidate payload digest is
+`92aa5919cb0654220cef56a2c37a3534765e598206a13743508704f4a994ae9e`;
+ZIP SHA-256 is
+`4A17EE97115A06C1C0DFE13DEC938CDD323D65145D0961899CDF4EE377B415DC`;
+standalone tarball SHA-256 is
+`B9EDDCDCF6F8547210E34CCDBD6379F943B004F15FBFD227745B082224EB5999`.
+
+### Continued examination on merged main
+
+The user requested continued release examination without resetting the budget.
+The prior report/regressions were preserved in local commit `bff0a00e`; an
+ordinary merge of main `32f2039306de9408f25cbca9598db44968e9afba` produced
+`6ea7ffb6f756d21ea5b41a05a02cf04569dffa67`, tree
+`85f4964d23a7ce7c2f8844bdc0b70ce74eaea153`. Production/UI source exactly matched
+merged PR #62 before the dependency/documentation corrections below. Its owner's
+unchanged focused seam results are reused; earlier `72a42fa` evidence is not
+silently relabeled. Nothing was merged into main, published or deployed.
+
+#### Dependency corrections and remaining decisions
+
+| Dependency | Proposed change | Scope and remaining qualification |
+| --- | --- | --- |
+| undici | 8.10.2 -> 8.12.3 | Compatible JSDOM development dependency patch; addresses alert entries 49/48/47 in the proposed lock range. It does not update Node's built-in fetch. |
+| brace-expansion | 5.0.9 -> 5.0.12 | Compatible packaging-tool dependency patch; addresses entries 3/2/1. |
+| ajv | 8.17.1 -> 8.18.0 | Compatible artifact compiler update; addresses entry 24. Production does not enable the advisory's `$data` mode. |
+| fast-uri | 3.1.8 -> 3.1.9 | Compatible AJV compiler dependency patch; addresses entries 45/44/43/42. No fast-uri code appears in the production documents bundle graph. |
+| zod | Remains 4.3.6; patched version 4.6.6 | Entries 46/41 remain, explicitly accepted/deferred for this release. SDK 1.0.18 pins it exactly. No automatic SDK upgrade or local override was applied. |
+| katex | Remains 0.16.47; patched version 0.18.2 | Entry 39 remains, explicitly accepted/deferred for this release. It is actually shipped inside Mermaid despite its development npm classification. No override was applied. |
+
+These changes address **11 alert entries in proposed lockfile ranges**, pending
+publication and re-audit, not 11 GitHub alerts already closed. The user explicitly
+said **"for 2nd point, let's ignore now and keep a eye on the dependent libs"**.
+The three remaining Zod/KaTeX entries are accepted known risks for this release,
+**not fixed and not current release blockers**. Dependabot remains enabled and
+the alerts were not dismissed. Installed dependency presence and
+advisory severity are not proof of a reachable exploit. KaTeX requires an
+additional pollution/options-influence condition; renderer gates do not make
+the dependency patched or establish universal safety.
+
+Dependency watchlist, last checked **2026-10-28** using configured-registry metadata:
+
+| Watch | Compatible patched-release condition | Last observation |
+| --- | --- | --- |
+| Copilot SDK -> Zod; `GHSA-mrhx-c7xc-m3w5`, alerts 46/41, locked 4.3.6 | A supported SDK declares/resolves Zod >=4.6.6; qualify SDK/native contracts before adopting it. | SDK 1.0.28 still pins 4.3.6 and declares CLI 1.0.105; upgrading it would not resolve the Zod alert. |
+| Mermaid -> KaTeX; `GHSA-238p-pmpm-9mq7`, alert 39, locked 0.16.47 | A compatible Mermaid release admits KaTeX >=0.18.2, with actual lock resolution and artifact/browser qualification. | Mermaid 12.2.0 declares ^0.18.0, so it is a compatible-parent candidate for later review. Not adopted under the user's deferral; the range alone is not a fixed lock or pass. |
+
+Recheck during remaining qualification or before release; no indefinite polling
+or automation was created. Material watchlist changes go to the coordinator.
+
+The actual bundle graph includes two AJV runtime helpers in the documents
+bundle and KaTeX in Mermaid. Regenerating artifacts with the patched compiler
+changed only two dependency-version headings in notices; all four JavaScript
+vendor bundles remain unchanged. Existing vendor line endings were preserved
+before regenerating the hash-bound payload, avoiding unrelated vendor churn.
+
+#### Install and documentation corrections
+
+- Fixed the standalone Development guide's command from nonexistent root
+  `--prefix tandem` to `--prefix development\tandem`. Executed the corrected
+  command into a new owned artifact folder: **152 files**, no installation.
+- Clarified that this standalone package is not the composed
+  Preparation-to-Development app and must not overwrite that installation.
+  Removed the false project-over-user precedence claim; the composed host
+  explicitly prefers the running user provider.
+- Corrected stale Mermaid/esbuild versions in the artifact-format guide.
+  The source quick-start link uses a public URL so it also works from the
+  distributed standalone guide.
+- Public-registry portability remains **unverified**, not proven broken.
+  The root lock contains 507 Microsoft public-feed URLs and one npmjs URL;
+  Development contains 112 public-feed and 79 npmjs URLs. Anonymous
+  TLS-verifying downloads of all four patched packages matched locked
+  integrity. These feeds were not shown to be internal-only.
+- Direct npmjs metadata failed TLS transport with Node, system curl, web fetch
+  and the supported process-local `--use-system-ca` option. No global registry/
+  certificate settings or TLS verification were changed. A clean external
+  public-registry installation and comparison to its advertised dist integrity
+  are still needed; local mirrored restore is not that evidence.
+
+#### Focused follow-up evidence
+
+After the dependency changes, the affected JSDOM/transport/evaluation-isolation
+and integrated permission group passed **54 tests**; document/schema and actual
+document-browser checks passed **10**. Root checks, artifact rebuild, integrated
+and browser builds, actual ZIP/tarball extraction and relocation passed.
+The eight payload checks had no skips. These are justified affected-surface
+checks, not a repeated full test campaign.
+
+The cumulative paid budget remains **4/6 cases and 4.08507/20 actual credits**;
+no model calls were made during this continuation. The first pass's raw
+readiness-label probe failure and unmetered-native-E2E coverage limit remain
+recorded. The accepted unused-session issue is not counted as a blocker or fix.
+
+Before the user waived that issue, version inspection established an important
+qualification: SDK package 1.0.18 and CLI package metadata 1.0.94 do not prove
+the executing binary was stock 1.0.94. A later inspection of the recorded npm
+loader reports `1.0.102-0.unstable.r40141230562.g130d689`. The original binary
+was not separately hashed/version-read during the failure, and default SDK
+probes use a different platform-runtime entrypoint. Those observations remain
+separate; no stock-runtime comparison was made. Existing sanitized report files
+are private, unposted and parked after the waiver.
+
+The detailed all-alert triage is `qualification-dependency-triage.md` in session
+artifacts. Logs include `qualification-patched-tooling.log`,
+`qualification-patched-artifacts.log`, `qualification-shipped-dependencies.log`,
+`qualification-anonymous-package-integrity.log`, `qualification-public-registry.log`
+and `qualification-standalone-package.log`. Final candidate/archive identities
+are retained in the cumulative `qualification-ledger.json`.
+
+### Authorized PR and isolated public-install CI
+
+The user explicitly authorized opening a PR and running a clean-install check
+in CI. This supersedes the earlier no-publication status only for this branch's
+review PR and its CI; merge, release/version bump, visibility/history changes,
+deployment and global installation remain unauthorized.
+
+The new **Clean public install (Windows)** job uses a fresh GitHub-hosted Windows
+runner and Node 24, no restored npm cache, an initially absent per-job cache,
+empty npm user/global configuration and no supplied registry/model credentials.
+It configures the public npm registry while preserving legitimate lockfile
+resolved URLs. Both root and `development\tandem` run ordinary `npm ci` with
+normal lifecycle scripts and TLS verification enabled. The job retains only
+ordinary install output and a candidate/version/exit-code receipt, not
+configuration dumps or raw credential/debug artifacts.
+
+This job runs no native sessions, model evaluations or application workers.
+Protected live evaluations remain manually gated and are not requested.
+Its result is pending until the exact published head's CI reports; local
+mirrored installation and metadata access are not substituted for that result.
+All previously recorded tests/packages are reused unchanged-content evidence,
+except the focused workflow contract check. User-accepted unused-session and
+Zod/KaTeX risks remain unfixed and are not current release blockers.

@@ -99,6 +99,51 @@ for (const effort of [undefined, "low"]) test(`automatic Preparation binds its r
     } finally { await fixture.close(); }
 });
 
+test("missing workspace prerequisites override a ready worker label without blocking Requirements", async () => {
+    const fixture = await extensionHarness();
+    try {
+        await writeFile(join(fixture.root, "package.json"), '{"name":"synthetic-checkout"}');
+        const state = fixture.api.createState("missing-prerequisites", "Plan a mock checkout without live payments.");
+        const { pending, args } = await requestPreparation(fixture, state);
+        const checks = [
+            { label: "Payment credentials", status: "missing", detail: "No credentials configured; use mocks." },
+            { label: "Browser runtime", status: "missing", detail: "No browser installed; defer execution." },
+        ];
+        const deferred = ["Supply payment credentials before real charges.", "Install a browser before browser execution."];
+        const labels: string[] = [];
+        const result = await fixture.api.preparationFactory.run({
+            args, runId: "missing-prerequisites-run", phase() {}, log() {},
+            step: async (_key: string, work: () => Promise<unknown>) => work(),
+            agent: async (_prompt: string, options: { label: string }) => {
+                labels.push(options.label);
+                if (options.label === "prepare:workspace") return { summary: "Execution prerequisites are missing.", checks };
+                assert.equal(options.label, "prepare:context");
+                return { requiresSourceResearch: false, handoff: {
+                    ...goalOnlyHandoff(), summary: "Ready to discuss mock checkout requirements.",
+                    suggestedUsages: ["I want to try mock payment approval and rejection."], deferred,
+                } };
+            },
+        });
+        assert.deepEqual(labels, ["prepare:workspace", "prepare:context"]);
+        fixture.api.setSession({ ...fixture.session, workflow: {
+            waitForRun: async () => ({ runId: "missing-prerequisites-run", status: "completed", result }),
+        } });
+        await fixture.api.waitForEffortRun(state.prototypeId, "missing-prerequisites-run");
+        await fixture.api.settlePreparationRun(state.prototypeId,
+            { runId: "missing-prerequisites-run", status: "completed", result },
+            tokenFor(pending, "missing-prerequisites-run"));
+        const current = await fixture.api.loadState(state.prototypeId);
+        assert.equal(current.preparation.status, "needs-attention");
+        assert.deepEqual(JSON.parse(JSON.stringify(current.preparation.checks)), checks);
+        assert.deepEqual(Array.from(current.deferred), deferred);
+        assert.equal(current.lifecycle.currentStage, "requirements");
+        assert.equal(current.generation, pending.generation);
+        assert.equal(current.preparation.processing?.requestId, pending.preparation.processing?.requestId);
+        assert.equal(current.preparation.processing?.runId, "missing-prerequisites-run");
+        assert.equal(fixture.developmentRequests.length, 0);
+    } finally { await fixture.close(); }
+});
+
 test("empty and metadata-only projects use one goal-only worker and persist a replayable handoff", async (t) => {
     for (const metadata of ["none", "Git", "guided Git setup"]) await t.test(metadata, async () => {
         const fixture = await extensionHarness({}, undefined, "", undefined, false, metadata === "guided Git setup");

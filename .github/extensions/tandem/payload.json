@@ -19,8 +19,8 @@
     },
     {
       "path": "stage2/INSTALL.md",
-      "bytes": 7998,
-      "sha256": "8723be841f17f353710f1601a9c62784b078f154d622d3ee2a20f34e6e56744a"
+      "bytes": 8618,
+      "sha256": "58cfb96ce182c3f6a2c3afbd9ff06d7dee77ecb630f10b6388aabe80be3a6d2c"
     },
     {
       "path": "stage2/extension.mjs",
@@ -30,7 +30,7 @@
     {
       "path": "stage2/manifest.json",
       "bytes": 25488,
-      "sha256": "c8b7bd75a995d19ab9fd9ddbe640e4bec9a8acad6e0fa907c15110598331a67d"
+      "sha256": "7afb50ec9746e87fdbdaf455ee280003826d6a0c26ed52b8dc76fc3be34431b8"
     },
     {
       "path": "stage2/package.json",
@@ -90,7 +90,7 @@
     {
       "path": "stage2/public/artifacts/vendor/LICENSES.json",
       "bytes": 264383,
-      "sha256": "7aeb9d0c7c77bcae8cb8ba89686a1ba9cc11b76cb10096716b0f3bc35af05bac"
+      "sha256": "e584c96ebaea994f10b0af4dc1fefbe62331649c79d62f784c18b42ec70373e9"
     },
     {
       "path": "stage2/public/artifacts/vendor/documents.js",
@@ -783,5 +783,5 @@
       "sha256": "92b92e76eb4ac3bee96c6bbdde06ed1f7d9c0088576a51db1276c567dbb207f8"
     }
   ],
-  "digest": "da3e4e9ffafa4222e83aebd61e30c00978e2267583bef0dcafef2c1b925beee6"
+  "digest": "aa9b2415cb9a636da81360a0245afaaea0bb4a6a4efa48250031e0216e8d3f5d"
 }

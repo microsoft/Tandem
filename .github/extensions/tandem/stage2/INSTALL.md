@@ -1,8 +1,13 @@
-# Tandem quick start
+# Standalone Development extension
 
 Tandem is a Copilot extension for designing, building and reviewing a project
 together, in a new or existing repository. This is a **developer preview**;
 try it on a test repository or a copy of your existing project first.
+
+This guide packages only the native Development extension. For the composed
+Preparation-to-Development browser app, use the
+[source quick start](https://github.com/microsoft/Tandem/blob/main/docs/quick-start.md).
+Do not install this standalone package over a composed Tandem installation.
 
 ## Before you start
 
@@ -17,7 +22,7 @@ portable package from this repository. From the repository root, run:
 
 ```powershell
 New-Item -ItemType Directory -Path C:\staging -Force | Out-Null
-npm --prefix tandem run package:extension -- C:\staging\tandem
+npm --prefix development\tandem run package:extension -- C:\staging\tandem
 ```
 
 `C:\staging\tandem` must not already exist. After the command succeeds,
@@ -63,7 +68,11 @@ To pin Tandem for one repository, copy the complete package into an empty
 creating worktrees from that commit; untracked files in the original checkout
 do not appear in new worktrees. User-wide installation avoids this requirement.
 
-A project-local `tandem` overrides the user-wide `tandem` in that working copy.
+Do not rely on a project-local copy to override a user-wide installation.
+The composed Tandem host prefers the running user provider and rejects an
+incompatible preferred package rather than falling back. Keep one intended
+installation active; use the source quick start's explicit `--source-preview`
+option when testing the composed checkout alongside an installed package.
 To switch a test project to the user-wide copy, close its Tandem runtime and
 Copilot session before removing the redundant local package. Keep this source
 repository's development shim when working on Tandem itself. Do not load an old

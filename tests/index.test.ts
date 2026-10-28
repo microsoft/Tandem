@@ -58,6 +58,7 @@ import "./requirements-pointer.test.js";
 import "./effort-recovery.test.js";
 import "./desktop.test.js";
 import "./terminal-sdk.test.js";
+import "./native-durability.test.js";
 import "./browser-host.test.js";
 import "./browser-development.test.js";
 import "./browser-notice-browser.test.js";

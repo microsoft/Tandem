@@ -271,8 +271,8 @@ external resources, navigation, animation and arbitrary execution are not
 supported. The format contract exports the exact supported syntax and bounds
 used by admission and generation.
 
-The packaged versions are Mermaid 11.12.0, parse5 7.3.0 and css-tree 3.1.0;
-esbuild 0.25.10 rebuilds the checked-in browser bundles with
+The packaged versions are Mermaid 12.1.0, parse5 7.3.0 and css-tree 3.1.0;
+esbuild 0.28.2 rebuilds the checked-in browser bundles with
 `npm --prefix tandem run build:artifacts`. Licenses travel in
 `public/artifacts/vendor/LICENSES.json`. The deployed package needs no npm
 installation.
