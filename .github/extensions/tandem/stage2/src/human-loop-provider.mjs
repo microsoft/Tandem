@@ -98,6 +98,7 @@ export function projectHumanLoopView(state, readiness, design = null) {
   const lastStop = state.stops.at(-1);
   return {
     schemaVersion: "human-loop-view/v1", status: readiness.status, reason: readiness.reason,
+    queryFailure: readiness.queryFailure ?? null,
     compaction: readiness.compaction,
     canResetApprovals: readiness.canResetApprovals === true,
     activeRequestId: state.activeRequestId, activeRole: state.activeTask?.binding.role ?? null,
@@ -138,7 +139,7 @@ export function projectHumanLoopView(state, readiness, design = null) {
             : `${role} execution is ${task.condition || "unverified"}. Inspect Development before taking another action.`;
       const label = ["retired", "stopped", "discarded", "cancelled", "rejected"].includes(request.status)
         ? `Saved Prototype request is ${request.status}. It will not be replayed. Use a new explicit Development message to continue.`
-        : state.uncertainty || state.stop || ["execution-unknown", "stopping", "failed"].includes(readiness.status)
+        : state.uncertainty || state.stop || active && readiness.queryFailure || ["execution-unknown", "stopping", "failed"].includes(readiness.status)
             || active && readiness.status === "closed"
           ? `Development needs attention: ${readiness.reason || readiness.status}. The saved request is preserved.`
           : workLabel ? workLabel
@@ -152,7 +153,7 @@ export function projectHumanLoopView(state, readiness, design = null) {
                 : request.status === "handoff-pending" ? "Request result is saved; Development is preparing its presentation."
                   : "Prototype handoff admitted and queued. Waiting for Development to process this exact request.";
       const attention = ["retired", "stopped", "discarded", "cancelled", "rejected"].includes(request.status)
-        || Boolean(state.uncertainty || state.stop || openQuestions.length)
+        || Boolean(state.uncertainty || state.stop || openQuestions.length || active && readiness.queryFailure)
         || ["execution-unknown", "stopping", "failed"].includes(readiness.status)
         || active && readiness.status === "closed" || task && !["running", "queued", "ended"].includes(task.condition)
         || handoff?.presented && handoff.result.outcome.kind === "execution-failure"
@@ -501,6 +502,10 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
       }
       if (request.method === "POST" && path === "/api/runtime/close") {
         request.input; return respond(200, await getInstallation().close());
+      }
+      if (request.method === "POST" && path === "/api/runtime/continue-query") {
+        const data = object(request.input, ["taskId", "errorId"]);
+        return respond(200, await requireRuntime().continueQuery({ taskId: text(data.taskId), errorId: text(data.errorId) }));
       }
       if (request.method === "POST" && path === "/api/project/open-folder") {
         object(request.input, []);

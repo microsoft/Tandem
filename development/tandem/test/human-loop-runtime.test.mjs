@@ -234,7 +234,11 @@ async function fixture(t, script, { onHandoff, contextProvider, onProgress, auto
       }
       this.turnId = "0"; this.start();
       this.interactionId = id;
-      const packet = JSON.parse(options.prompt.split("\n").at(-1));
+      const input = JSON.parse(options.prompt.split("\n").at(-1));
+      this.queryPackets ??= new Map();
+      const packet = input.binding ? input : this.queryPackets.get(input.taskId);
+      assert.ok(packet, "Query continuation must use retained native task context.");
+      this.queryPackets.set(packet.binding.id, packet);
       history.push({ role: packet.binding.role, taskId: packet.binding.internalTaskId, requestId: packet.binding.requestId,
         cycleId: packet.binding.cycleId, context: packet.context });
       const run = (async () => {
@@ -741,14 +745,17 @@ test("pending confirmation survives durable reload, keeps queued work separate, 
     assert.deepEqual(f.history.map(h => h.role), ["router"]);
   });
 
-for (const queryError of [false, true]) test(`incomplete parent Review keeps implementation and admits queued normal work: query=${queryError}`, { timeout: 30_000 }, async t => {
+for (const queryError of [false, true]) test(`parent Review keeps implementation and admits queued work after ${queryError ? "explicit query continuation" : "advisory missing-result failure"}`, { timeout: 30_000 }, async t => {
   let enterReview, releaseReview;
+  let reviewed = false;
   const reached = new Promise(resolve => { enterReview = resolve; });
   const release = new Promise(resolve => { releaseReview = resolve; });
   const f = await fixture(t, async (packet, session) => {
     if (packet.binding.role === "router") return route(session, packet,
       packet.context.request.id === "build" ? "implement" : "answer");
     if (packet.binding.role === "reviewer") {
+      if (queryError && reviewed) return ordinary(packet, session);
+      reviewed = true;
       enterReview();
       await release;
       if (queryError) session.emit("session.error", { errorType: "query", message: "Native review query failed." });
@@ -764,6 +771,24 @@ for (const queryError of [false, true]) test(`incomplete parent Review keeps imp
     `Review was not reached: ${JSON.stringify({ view, errors: f.errors.map(error => error.message) })}`))]);
   await f.send("next", "Explain the retained implementation.");
   releaseReview();
+  if (queryError) {
+    await waitFor(async () => (await f.runtime.readiness()).status === "waiting-query", "retained Reviewer query wait");
+    const before = await f.runtime.state(), failure = (await f.runtime.readiness()).queryFailure;
+    assert.equal(before.activeTask.binding.role, "reviewer");
+    assert.equal(before.activeTask.result, null);
+    assert.equal(before.requests[1].status, "waiting");
+    assert.ok(before.cycles[0].implementationResult);
+    assert.equal(before.uncertainty, null);
+    await f.runtime.continueQuery({ taskId: failure.taskId, errorId: failure.id });
+    assert.equal((await f.runtime.whenIdle()).status, "ready", f.errors.map(error => error.stack).join("\n"));
+    const after = await f.runtime.state();
+    assert.deepEqual(after.cycles[0].implementationResult, before.cycles[0].implementationResult);
+    assert.deepEqual(after.cycles[0].baseline, before.cycles[0].baseline);
+    assert.deepEqual(after.cycles[0].acceptance, before.cycles[0].acceptance);
+    assert.equal(after.cycles[0].reviewResult.outcome.kind, "review-result");
+    assert.deepEqual(after.requests.map(request => request.status), ["completed", "completed"]);
+    return;
+  }
   await waitFor(() => f.history.filter(entry => entry.role === "reviewer").length === (queryError ? 1 : 2),
     "expected single Reviewer continuation");
   assert.equal((await f.runtime.whenIdle()).status, "ready", f.errors.map(error => error.stack).join("\n"));

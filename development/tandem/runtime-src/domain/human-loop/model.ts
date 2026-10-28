@@ -43,6 +43,7 @@ export interface RoleExecution {
   terminal: { resultId: string; toolCallId: string; eventId: string; acknowledged: boolean; reason?: 'completion-timeout' } | null;
   turnEnd?: { resultId: string; toolCallId: string; toolEventId: string; eventId: string; turnId: string; interactionId: string };
   inputs?: RoleInput[];
+  queryErrors?: Array<{ id: string; inputId: string; reason: string }>;
 }
 export interface Handoff {
   id: string; requestId: string; requestIds: string[]; cycleId: string | null; result: RoleResult; snapshot: SnapshotRef | null;
@@ -347,6 +348,7 @@ const authorities: Record<string, Authority> = {
   'receive-request': 'user', 'admit-request': 'host', 'start-cycle': 'host', 'resume-cycle': 'host', 'prepare-replan': 'host',
   'start-role': 'host', 'role-acknowledged': 'runtime', 'role-started': 'runtime', 'permission-state': 'runtime',
   'role-input-prepared': 'host', 'role-input-bound': 'runtime', 'continuation-acknowledged': 'runtime',
+  'role-query-failed': 'runtime', 'continue-role-query': 'user', 'cancel-query-continuation': 'host',
   'submit-result': 'agent', 'report-progress': 'agent', 'confirm-role-end': 'host', 'apply-result': 'host',
   'accept-plan': 'host', 'present-handoff': 'host', 'request-stop': 'user', 'confirm-stop': 'host', 'execution-unknown': 'host',
   'execution-failed': 'host',
@@ -624,16 +626,50 @@ export function transitionHumanLoop(current: HumanLoopState, authority: Authorit
         && data.taskId === task.binding.id && data.dispatchId === task.binding.dispatchId && data.inputDigest === task.binding.inputDigest,
       'Sent-envelope evidence differs from its live immutable task.');
       const inputs = task.inputs ??= [];
+      requireCondition(envelope.kind !== 'query-continuation', 'Query continuation requires an explicit human action.');
       requireCondition(envelope.kind === 'initial' ? inputs.length === 0 && task.messageId === null
-        : inputs.length === 1 && inputs[0]?.native && inputs[0].acknowledgementId,
+        : inputs.length > 0 && inputs.every(input => input.native && input.acknowledgementId)
+          && !inputs.some(input => input.kind === 'continuation'),
       'Only the first input and one same-role continuation may be prepared.');
       inputs.push({ ...envelope, acknowledgementId: null, native: null });
       break;
     }
+    case 'role-query-failed': {
+      const data = object(command.data, ['taskId', 'errorId', 'inputId', 'reason']), task = activeTask(state);
+      const input = task.inputs?.findLast(input => input.native);
+      requireCondition(data.taskId === task.binding.id && input?.native?.user.id === data.inputId
+        && !task.result && !task.end && !task.completion && !state.stop,
+      'Query failure must belong to the current delivered role input.');
+      const id = text(data.errorId);
+      requireCondition(!task.queryErrors?.some(error => error.id === id), 'Query error identity was reused.');
+      (task.queryErrors ??= []).push({ id, inputId: text(data.inputId), reason: text(data.reason) });
+      break;
+    }
+    case 'continue-role-query': {
+      const data = object(command.data, ['taskId', 'errorId', 'envelope']), task = activeTask(state);
+      requireHumanRequestRunning(state, task.binding.requestId, task.binding.id);
+      const error = task.queryErrors?.at(-1), input = task.inputs?.at(-1), envelope = parseRoleInputEnvelope(data.envelope);
+      requireCondition(data.taskId === task.binding.id && error?.id === data.errorId
+        && error?.inputId === input?.native?.user.id && input?.acknowledgementId
+        && !state.stop && !task.result && !task.end && !task.completion
+        && envelope.kind === 'query-continuation' && !task.inputs?.some(input => input.queryErrorId === data.errorId),
+      'Continue requires the current query error and acknowledged task; completed, stopped or unconfirmed work cannot be resent.');
+      task.inputs!.push({ ...envelope, queryErrorId: text(data.errorId), acknowledgementId: null, native: null });
+      break;
+    }
+    case 'cancel-query-continuation': {
+      const data = object(command.data, ['taskId', 'errorId']), task = activeTask(state), input = task.inputs?.at(-1);
+      requireCondition(data.taskId === task.binding.id && input
+        && (data.errorId === null ? input.kind === 'continuation' : input.queryErrorId === data.errorId)
+        && !input.native && !input.acknowledgementId, 'Only an unsent query continuation may be withdrawn.');
+      task.inputs!.pop();
+      break;
+    }
     case 'role-input-bound': {
-      const data = object(command.data, ['taskId', 'dispatchId', 'kind', 'user', 'turnId', 'startEventId']);
-      const task = activeTask(state), kind = choice(data.kind, ['initial', 'continuation'] as const);
-      const input = task.inputs?.find(input => input.kind === kind), user = parseNativeUserEvidence(data.user);
+      const data = object(command.data, ['taskId', 'dispatchId', 'kind', 'user', 'turnId', 'startEventId',
+        ...(Object.hasOwn(command.data ?? {}, 'queryErrorId') ? ['queryErrorId'] : [])]);
+      const task = activeTask(state), kind = choice(data.kind, ['initial', 'continuation', 'query-continuation'] as const);
+      const input = task.inputs?.find(input => input.kind === kind && input.queryErrorId === data.queryErrorId), user = parseNativeUserEvidence(data.user);
       const turnId = text(data.turnId), startEventId = text(data.startEventId);
       requireCondition(data.taskId === task.binding.id && data.dispatchId === task.binding.dispatchId
         && !task.result && !task.end && input && !input.native && user.interactionId
@@ -648,8 +684,10 @@ export function transitionHumanLoop(current: HumanLoopState, authority: Authorit
       break;
     }
     case 'continuation-acknowledged': {
-      const data = object(command.data, ['taskId', 'dispatchId', 'messageId']);
-      const task = activeTask(state), input = task.inputs?.find(input => input.kind === 'continuation'), messageId = text(data.messageId);
+      const data = object(command.data, ['taskId', 'dispatchId', 'messageId',
+        ...(Object.hasOwn(command.data ?? {}, 'queryErrorId') ? ['queryErrorId'] : [])]);
+      const task = activeTask(state), input = task.inputs?.find(input => input.kind === (data.queryErrorId ? 'query-continuation' : 'continuation')
+        && input.queryErrorId === data.queryErrorId), messageId = text(data.messageId);
       requireCondition(data.taskId === task.binding.id && data.dispatchId === task.binding.dispatchId && input
         && !input.acknowledgementId && messageId !== task.messageId
         && (!input.native?.user.messageId || input.native.user.messageId === messageId),

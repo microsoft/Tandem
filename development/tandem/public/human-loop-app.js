@@ -501,6 +501,10 @@ function render() {
       }
     },
     stop: () => requestStopAfterStep(),
+    continueQuery: async input => {
+      try { await post('/api/runtime/continue-query', input); }
+      finally { await refresh(); }
+    },
     refresh: () => refresh(), discuss: () => $('message').focus(),
     inspectReference: (binding, reference) => {
       const fromQuestion = !$('question-panel').hidden;

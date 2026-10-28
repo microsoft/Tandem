@@ -485,16 +485,19 @@ export class HumanLoopRuntime {
     const confirmation = currentImplementationConfirmation(state);
     const awaitingAnswer = hasQuestionBlockers(state);
     const openPrerequisite = state.questions.some(q => questionBlocksNewWork(state, q));
+    const queryFailure = await this.#transport.queryFailureStatus();
     return {
       schemaVersion: "human-loop-runtime-view/v1",
       status: this.#closed ? "closed" : state.uncertainty || this.#queueFailure ? "execution-unknown"
         : this.#modelError ? "waiting-runtime"
         : state.stop ? "stopping" : this.#presentationError ? "presentation-pending"
-          : this.#availabilityError ? "waiting-runtime" : state.activeTask?.condition === "waiting-permission"
+          : this.#availabilityError ? "waiting-runtime" : queryFailure ? queryFailure.processing ? "working" : "waiting-query"
+            : state.activeTask?.condition === "waiting-permission"
             ? "waiting-permission" : confirmation?.status === "pending" ? "waiting-confirmation"
               : state.activeRequestId ? "working" : awaitingAnswer ? "waiting-answer" : "ready",
       modelBlocked: Boolean(this.#modelError || this.#modelChanging),
-      reason: this.#modelError ?? state.uncertainty?.reason ?? this.#queueFailure ?? this.#presentationError ?? this.#availabilityError
+      queryFailure,
+      reason: this.#modelError ?? state.uncertainty?.reason ?? this.#queueFailure ?? this.#presentationError ?? this.#availabilityError ?? queryFailure?.reason
         ?? (state.stop?.mode === "after-step"
           ? "Stop requested. Further steps are blocked. Current work may still be running or waiting for permission; waiting for its verified settlement. Saved results and partial work are retained."
           : confirmation?.status === "pending" ? "Awaiting your implementation decision. Planner has not started; queued requests remain preserved."
@@ -529,6 +532,10 @@ export class HumanLoopRuntime {
     this.#admission = work.then(() => undefined, () => undefined);
     return work;
     });
+  }
+  async continueQuery(input) {
+    requireCondition(this.#opened && !this.#closed && !this.#closing, "The original runtime is not connected.");
+    return this.#transport.continueQuery(input);
   }
   async executionQueue() { return humanExecutionQueue(await this.#store.load()); }
   async decideImplementation({ confirmationId, decision }) {

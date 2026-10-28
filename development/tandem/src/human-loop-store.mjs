@@ -142,6 +142,11 @@ export class HumanLoopStore {
         await this.recordMessage({ id: `implementation-decision:${confirmation.id}`, requestId: confirmation.requestId,
           role: "host", kind: "status", content: implementationDecisionMessage(confirmation), timestamp: confirmation.decidedAt });
       }
+      if (type === "role-query-failed") {
+        await this.recordMessage({ id: `query-error:${data.errorId}`, requestId: state.activeTask.binding.requestId,
+          role: "host", kind: "status", timestamp: new Date().toISOString(),
+          content: `Model query failed: ${data.reason}\nThe current task and completed work are retained. If native processing stops, choose Continue to resume this same task.` });
+      }
       if (type === "execution-unknown" && !state.uncertainty) {
         const binding = state.activeTask?.binding, timestamp = new Date().toISOString();
         const bounded = value => typeof value === "string" ? value.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 256) : null;

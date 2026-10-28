@@ -277,6 +277,255 @@ function capturedDispatch(session, order = ["user", "start", "ack"], change = ()
   return () => { for (const emit of pending.splice(0)) emit(); };
 }
 
+async function queryFailure(f, message = "Provider detail-503; token=secret-value") {
+  f.session.emit("session.error", { errorType: "query", message });
+  const event = structuredClone(f.session.history.at(-1));
+  await f.transport.drain();
+  return { event, status: await f.transport.queryFailureStatus() };
+}
+
+async function continueQueryFixture(f, role) {
+  await f.transport.drain();
+  const before = await f.store.load(), code = await readFile(join(f.root, "app.js"), "utf8");
+  const sends = f.session.sends.length, grants = structuredClone(f.broker.remembered(f.session.sessionId));
+  f.session.processing = true;
+  const { event, status } = await queryFailure(f);
+  assert.match(status.reason, /Provider detail-503/);
+  assert.ok(!status.reason.includes("secret-value"));
+  assert.equal(status.taskId, before.activeTask.binding.id);
+  const after = await f.store.load(), { queryErrors, ...retainedTask } = after.activeTask;
+  assert.deepEqual(retainedTask, before.activeTask);
+  assert.equal(queryErrors.at(-1).id, event.id);
+  for (const key of ["activeRequestId", "cycles", "requests", "design", "implementationConfirmations", "executions", "handoffs"]) {
+    assert.deepEqual(after[key], before[key], `${role}: ${key} is unchanged by a query failure`);
+  }
+  assert.equal(after.uncertainty, null);
+  assert.ok((await f.store.messages()).some(item => item.content.includes("Provider detail-503")));
+  f.session.config.onEvent(event);
+  await assert.rejects(f.transport.continueQuery({ taskId: status.taskId, errorId: status.id }), /still processing/);
+  f.session.processing = false;
+  f.session.emit("assistant.idle", {});
+  f.session.emit("session.idle", {});
+  await f.transport.drain();
+  assert.equal(f.session.sends.length, sends, "A query failure must not trigger the missing-result retry");
+  assert.equal((await f.transport.queryFailureStatus()).canContinue, true);
+  const input = { taskId: status.taskId, errorId: status.id };
+  const results = await Promise.all([f.transport.continueQuery(input), f.transport.continueQuery(input)]);
+  assert.deepEqual(results[0], results[1]);
+  await f.transport.drain();
+  assert.equal(f.session.sends.length, sends + 1);
+  assert.equal(f.session.sends.at(-1).attachments, undefined);
+  const nudge = JSON.parse(f.session.sends.at(-1).prompt.split("\n").at(-1));
+  assert.equal(nudge.inputDigest, before.activeTask.binding.inputDigest);
+  assert.equal(nudge.context, undefined, "No task packet replay");
+  await f.transport.continueQuery(input);
+  assert.equal(f.session.sends.length, sends + 1);
+  f.session.emit("session.error", { errorType: "query", message: "Delayed old error" }, event.id);
+  await f.transport.drain();
+  assert.equal(await f.transport.queryFailureStatus(), null);
+  assert.equal((await f.store.load()).activeTask.inputs.at(-1).queryErrorId, status.id);
+  assert.equal(await readFile(join(f.root, "app.js"), "utf8"), code);
+  assert.equal(f.session.aborts, 0);
+  assert.deepEqual(f.broker.remembered(f.session.sessionId), grants);
+  assert.deepEqual((await replayDurableState(f.root)).state, await f.store.load());
+}
+
+test("query continuation retains Router, Planner, Implementer and Reviewer tasks, work and approvals", async t => {
+  const f = await fixture(t);
+  const { packet, outcome } = await beginReview(f, role => continueQueryFixture(f, role));
+  await f.finish(packet, "submit_whole_plan_review", outcome);
+  assert.equal((await f.store.load()).cycles[0].phase, "completed");
+});
+
+for (const role of ["designer", "agent"]) test(`query continuation retains the ${role} task and context`, async t => {
+  const f = await fixture(t);
+  await f.request(); const router = await f.begin("router");
+  await f.finish(router, "submit_human_route", { kind: "route", intent: role === "designer" ? "design" : "answer",
+    cycleId: null, summary: "Requested role.", resolvedQuestions: [] });
+  const packet = await f.begin(role);
+  await continueQueryFixture(f, role);
+  await f.finish(packet, role === "designer" ? "submit_designer_outcome" : "submit_readonly_answer",
+    role === "designer" ? { kind: "designer-unchanged", summary: "Keep Design.", explanation: "The retained Design meets the request.", questions: [] }
+      : { kind: "answer", summary: "Done.", report: "Same task continued.", evidenceRefs: [] });
+});
+
+test("query failures leave native retries, owned tools and late results usable without a host send", async t => {
+  const f = await fixture(t, { nativeFiles: true });
+  await f.request(); const packet = await f.begin("router");
+  const { status } = await queryFailure(f);
+  assert.deepEqual(await nativeAdmission(f, "diagnose-query", "view", { path: "app.js" }), {});
+  nativeCompletion(f, "diagnose-query"); await f.transport.drain();
+  await f.finish(packet, "submit_human_route", { kind: "route", intent: "answer", cycleId: null,
+    summary: "Native retries resolved the failure.", resolvedQuestions: [] });
+  await assert.rejects(f.transport.continueQuery({ taskId: packet.binding.id, errorId: status.id }), /No private role/);
+  assert.equal(f.session.sends.length, 1);
+});
+
+for (const winner of ["result", "stop", "close"]) test(`query continuation cannot send after a racing ${winner}`, async t => {
+  const f = await fixture(t);
+  await f.request(); const packet = await f.begin("router");
+  const { status } = await queryFailure(f);
+  f.session.processing = false;
+  const entered = Promise.withResolvers(), release = Promise.withResolvers();
+  t.mock.method(f.session.rpc.metadata, "isProcessing", async () => {
+    entered.resolve(); await release.promise; return { processing: false };
+  });
+  const continuation = f.transport.continueQuery({ taskId: packet.binding.id, errorId: status.id });
+  const rejected = assert.rejects(continuation, /already saved|Stop owns|unavailable|changed|no longer current/);
+  await entered.promise;
+  try {
+    if (winner === "result") await f.finish(packet, "submit_human_route", { kind: "route", intent: "answer",
+      cycleId: null, summary: "Result won.", resolvedQuestions: [] });
+    else if (winner === "stop") {
+      await f.dispatch("user", "request-stop", { stopId: "query-stop" });
+      await f.transport.stop("query-stop");
+    } else await f.transport.close();
+  } finally { release.resolve(); }
+  await rejected;
+  assert.equal(f.session.sends.length, 1);
+});
+
+test("query continuation ignores background activity but refuses pending native input and withdrawn ownership", async t => {
+  const f = await fixture(t);
+  await f.request(); const packet = await f.begin("router");
+  const { status } = await queryFailure(f);
+  f.session.processing = false;
+  t.mock.method(f.session.rpc.metadata, "activity", async () => ({ hasActiveWork: true }));
+  t.mock.method(f.session.rpc.queue, "pendingItems", async () => ({ items: [], steeringMessages: [{ content: "pending" }] }));
+  const input = { taskId: packet.binding.id, errorId: status.id };
+  await assert.rejects(f.transport.continueQuery(input), /pending input|steering input/);
+  t.mock.method(f.session.rpc.queue, "pendingItems", async () => ({ items: [], steeringMessages: [] }));
+  assert.equal((await f.transport.queryFailureStatus()).canContinue, true);
+  f.revoke();
+  await assert.rejects(f.transport.continueQuery(input), /not authorized/);
+  assert.equal(f.session.sends.length, 1);
+});
+
+for (const type of ["session.shutdown", "authentication"]) test(`query change preserves baseline unknown protection for ${type}`, async t => {
+  const f = await fixture(t);
+  await f.request(); await f.begin("router");
+  f.session.emit(type === "authentication" ? "session.error" : type, { errorType: type, message: "Not a query failure." });
+  await assert.rejects(f.transport.drain(), /private runtime reported interruption/);
+  await waitFor(async () => (await f.store.load()).uncertainty, "baseline unknown protection");
+  assert.equal(await f.transport.queryFailureStatus(), null);
+});
+
+test("query continuation preserves remembered native approvals and ignores retired query errors", async t => {
+  const f = await fixture(t, { nativeFiles: true });
+  await f.request(); const packet = await f.begin("router");
+  const path = join(f.root, "app.js");
+  assert.deepEqual(await nativeAdmission(f, "grant-before-query", "view", { path }), {});
+  const permission = f.session.config.onPermissionRequest({ kind: "read", toolCallId: "grant-before-query", path,
+    intention: "Read current work" }, { sessionId: f.session.sessionId });
+  await waitFor(() => f.broker.list().length === 1, "explicit native approval");
+  await f.broker.decide(f.broker.list()[0].id, "all");
+  assert.equal((await permission).kind, "approve-once");
+  nativeCompletion(f, "grant-before-query");
+  const { status, event } = await queryFailure(f);
+  f.session.processing = false;
+  await f.transport.continueQuery({ taskId: packet.binding.id, errorId: status.id });
+  await f.transport.drain();
+  assert.equal(f.broker.remembered(f.session.sessionId).all, true);
+  assert.deepEqual(await nativeAdmission(f, "grant-after-query", "view", { path }), {});
+  assert.equal((await f.session.config.onPermissionRequest({ kind: "read", toolCallId: "grant-after-query", path,
+    intention: "Read retained work" }, { sessionId: f.session.sessionId })).kind, "approve-once");
+  assert.equal(f.broker.list().length, 0);
+  nativeCompletion(f, "grant-after-query");
+  await f.finish(packet, "submit_human_route", { kind: "route", intent: "answer", cycleId: null,
+    summary: "Retained authority.", resolvedQuestions: [] });
+  const next = await f.begin("agent");
+  f.session.emit("session.error", { errorType: "query", message: "Late previous-role error" }, event.id);
+  await f.transport.drain();
+  assert.equal(await f.transport.queryFailureStatus(), null);
+  assert.equal((await f.store.load()).uncertainty, null);
+  await f.finish(next, "submit_readonly_answer", { kind: "answer", summary: "Done.", report: "Current role remained owned.", evidenceRefs: [] });
+});
+
+test("query continuation preserves successive error/input identities on the same task", async t => {
+  const f = await fixture(t);
+  await f.request(); const packet = await f.begin("router");
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { status } = await queryFailure(f);
+    f.session.processing = false;
+    await f.transport.continueQuery({ taskId: packet.binding.id, errorId: status.id });
+    await f.transport.drain();
+  }
+  assert.equal((await f.store.load()).activeTask.queryErrors.length, 2);
+  assert.equal((await f.store.load()).activeTask.inputs.length, 3);
+  await f.finish(packet, "submit_human_route", { kind: "route", intent: "answer", cycleId: null,
+    summary: "Same task finished after explicit continuations.", resolvedQuestions: [] });
+});
+
+test("query continuation preparation yields to native processing and can be retried only when unsent", async t => {
+  const f = await fixture(t);
+  await f.request(); const packet = await f.begin("router");
+  const { status } = await queryFailure(f);
+  f.session.processing = false;
+  const dispatch = f.store.dispatch.bind(f.store);
+  let race = true;
+  t.mock.method(f.store, "dispatch", async (...args) => {
+    const state = await dispatch(...args);
+    if (args[2] === "continue-role-query" && race) { race = false; f.session.processing = true; }
+    return state;
+  });
+  const input = { taskId: packet.binding.id, errorId: status.id };
+  await assert.rejects(f.transport.continueQuery(input), /Native work resumed/);
+  assert.equal(f.session.sends.length, 1);
+  assert.equal((await f.store.load()).activeTask.inputs.length, 1);
+  f.session.processing = false;
+  await f.transport.continueQuery(input);
+  await f.transport.drain();
+  assert.equal(f.session.sends.length, 2);
+});
+
+test("query continuation does not weaken uncertain acknowledgement protection", async t => {
+  const f = await fixture(t);
+  await f.request(); const packet = await f.begin("router");
+  const { status } = await queryFailure(f);
+  f.session.processing = false;
+  f.session.onSend = async () => { throw new Error("lost query continuation ACK"); };
+  await assert.rejects(f.transport.continueQuery({ taskId: packet.binding.id, errorId: status.id }), /lost query continuation ACK/);
+  await assert.rejects(f.transport.drain(), /acknowledgement is uncertain/);
+  assert.ok((await f.store.load()).uncertainty);
+  assert.equal(f.session.sends.length, 2);
+});
+
+for (const afterPrepared of [false, true]) test(`query failure cancels an unsent missing-result retry without consuming it: prepared=${afterPrepared}`, async t => {
+  const f = await fixture(t);
+  await f.request(); const packet = await f.begin("router");
+  const entered = Promise.withResolvers(), release = Promise.withResolvers();
+  const record = f.store.recordMessage.bind(f.store);
+  let intercepted = false;
+  t.mock.method(f.store, "recordMessage", async message => {
+    if (!afterPrepared && !intercepted && message.id === `continuation:${packet.binding.id}`) {
+      intercepted = true; entered.resolve(); await release.promise;
+    }
+    return record(message);
+  });
+  const dispatch = f.store.dispatch.bind(f.store);
+  t.mock.method(f.store, "dispatch", async (...args) => {
+    const state = await dispatch(...args);
+    if (afterPrepared && !intercepted && args[2] === "role-input-prepared") {
+      intercepted = true; entered.resolve(); await release.promise;
+    }
+    return state;
+  });
+  f.session.emit("session.idle", {});
+  await entered.promise;
+  const { status } = await queryFailure(f);
+  release.resolve();
+  await new Promise(resolve => setImmediate(resolve));
+  await f.transport.drain();
+  assert.equal(f.session.sends.length, 1);
+  f.session.processing = false;
+  await f.transport.continueQuery({ taskId: packet.binding.id, errorId: status.id });
+  await f.transport.drain();
+  f.session.emit("session.idle", {});
+  await waitFor(() => f.session.sends.length === 3, "original missing-result policy after explicit query continuation");
+  await f.transport.drain();
+  assert.equal((await f.store.load()).activeTask.inputs.at(-1).kind, "continuation");
+});
+
 const capturedOrders = [
   ["user", "start", "ack"], ["start", "user", "ack"], ["ack", "user", "start"],
   ["ack", "start", "user"], ["user", "ack", "start"], ["start", "ack", "user"],
@@ -1186,12 +1435,17 @@ for (const grant of ["all", "once"]) test(`same-session grants survive roles and
   assert.deepEqual(f.broker.remembered(f.session.sessionId), { all: grant === "all", tools: [] });
 });
 
-for (const queryError of [false, true]) test(`whole parent Review failure ends advisably and releases a distinct request: query=${queryError}`, { timeout: 30_000 }, async t => {
+for (const queryError of [false, true]) test(`whole parent Review retains implementation across ${queryError ? "query continuation" : "advisory missing-result failure"}`, { timeout: 30_000 }, async t => {
   const f = await fixture(t, { nativeFiles: true });
-  const { packet } = await beginReview(f);
+  const { packet, outcome } = await beginReview(f);
   const implementation = structuredClone((await f.store.load()).cycles[0].implementationResult);
-  if (queryError) f.session.emit("session.error", { errorType: "query", message: "Native model query failed." });
-  else {
+  if (queryError) {
+    await continueQueryFixture(f, "reviewer");
+    await f.finish(packet, "submit_whole_plan_review", outcome);
+    assert.deepEqual((await f.store.load()).cycles[0].implementationResult, implementation);
+    return;
+  }
+  {
     const sends = f.session.sends.length;
     f.session.emit("session.idle", { mode: "interactive" });
     await waitFor(() => f.session.sends.length === sends + 1, "same-role recovery");

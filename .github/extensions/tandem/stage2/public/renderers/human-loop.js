@@ -11,6 +11,7 @@ const statusLabels = {
   'waiting-answer': 'Waiting for your answers',
   'waiting-permission': 'Waiting for permission',
   'waiting-confirmation': 'Waiting for implementation confirmation',
+  'waiting-query': 'Model query failed; task retained',
   stopping: 'Stopping after current step',
   'execution-unknown': 'Execution state unknown',
   'presentation-pending': 'Result presentation pending',
@@ -432,6 +433,7 @@ function createState(container) {
   status.setAttribute('aria-live', 'polite');
   const reason = make('p');
   const role = make('p', '', 'human-loop-muted');
+  const queryFailure = make('p', '', 'human-loop-muted');
   const errorNode = make('p', '', 'human-loop-error');
   errorNode.setAttribute('role', 'alert');
   const cycle = make('section');
@@ -439,28 +441,34 @@ function createState(container) {
   const handoff = make('section');
   const queue = make('section');
   const controls = make('div', undefined, 'human-loop-actions');
-  const state = { document, root, status, reason, role, errorNode, cycle, questions, handoff, queue,
+  const state = { document, root, status, reason, role, queryFailure, errorNode, cycle, questions, handoff, queue,
     actions: {}, forms: new Map(), localError: null };
-  for (const [name, label] of [['stop', 'Stop after current step'], ['refresh', 'Refresh status'], ['discuss', 'Discuss']]) {
+  for (const [name, label] of [['continueQuery', 'Continue'], ['stop', 'Stop after current step'], ['refresh', 'Refresh status'], ['discuss', 'Discuss']]) {
     const button = make('button', label);
     button.type = 'button';
     button.dataset.humanLoopAction = name;
     button.addEventListener('click', async () => {
       if (button.disabled || button.hidden || !state.view || typeof state.actions[name] !== 'function') return;
       if (name === 'stop' && !state.view.canStop) return;
+      if (name === 'continueQuery' && (!state.view.queryFailure?.canContinue || state.continuing)) return;
+      const continuation = name === 'continueQuery'
+        ? { taskId: state.view.queryFailure.taskId, errorId: state.view.queryFailure.id } : undefined;
       try {
         state.localError = null;
         updateError(state);
-        await state.actions[name]();
+        if (continuation) { state.continuing = true; button.disabled = true; }
+        await state.actions[name](continuation);
       } catch (error) {
         state.localError = error instanceof Error ? error.message : String(error);
         updateError(state);
+      } finally {
+        if (continuation) { state.continuing = false; button.disabled = !state.view?.queryFailure?.canContinue; }
       }
     });
     state[name] = button;
     controls.append(button);
   }
-  root.append(status, role, reason, errorNode,
+  root.append(status, role, reason, queryFailure, errorNode,
     make('p', 'Only effective prerequisites and their pending answer processing hold ordinary work. Advisory questions can be answered later. Blocking answers have FIFO priority; each submitted batch remains a separate request. The backend determines queue order.', 'human-loop-muted human-loop-guidance'),
     questions, cycle, handoff, queue,
     make('p', 'Stop after current step asks the current agent to cease further work, then waits for its verified settlement. Already-admitted tools or permissions may still finish; the requested outcome may remain incomplete. No next step starts. Queued requests are discarded; code and completed results are retained.', 'human-loop-muted human-loop-guidance'),
@@ -663,7 +671,7 @@ export function renderHumanLoop(container, { view, busy = false, error = null, q
     state.status.textContent = 'Unsupported human-loop view';
     state.reason.textContent = 'Refresh with a compatible human-loop-view/v1 projection.';
     for (const node of [state.role, state.cycle, state.handoff, state.queue]) node.hidden = true;
-    for (const name of ['stop', 'refresh', 'discuss']) state[name].disabled = true;
+    for (const name of ['continueQuery', 'stop', 'refresh', 'discuss']) state[name].disabled = true;
     return;
   }
   state.status.textContent = humanLoopStatusLabel(view.status);
@@ -675,6 +683,9 @@ export function renderHumanLoop(container, { view, busy = false, error = null, q
     'presentation-pending': 'The result is awaiting presentation; no completion is inferred.',
   }[view.status] ?? '');
   state.reason.hidden = !state.reason.textContent;
+  state.queryFailure.textContent = view.queryFailure ? view.queryFailure.blocker
+    ?? 'Your task, conversation and completed work are retained. Continue resumes this same task.' : '';
+  state.queryFailure.hidden = !state.queryFailure.textContent;
   state.role.hidden = !view.activeRole;
   state.role.textContent = view.activeRole ? `Active role: ${view.activeRole}` : '';
   renderQuestions(state, view.questionInteractions ?? (view.questionInteraction ? [view.questionInteraction] : []));
@@ -692,6 +703,8 @@ export function renderHumanLoop(container, { view, busy = false, error = null, q
     state.queue.replaceChildren();
   }
   state.stop.disabled = !view.canStop || typeof state.actions.stop !== 'function';
+  state.continueQuery.hidden = !view.queryFailure;
+  state.continueQuery.disabled = busy || state.continuing || !view.queryFailure?.canContinue || typeof state.actions.continueQuery !== 'function';
   state.refresh.disabled = busy || typeof state.actions.refresh !== 'function';
   state.discuss.hidden = typeof state.actions.discuss !== 'function';
   state.discuss.disabled = busy || !view.canSend;

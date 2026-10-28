@@ -23,6 +23,10 @@ export function developmentStatus(snapshot, acknowledgement = null) {
     return { kind: "attention", text: "Questions need your answer", requestId };
   if (workflow?.implementationConfirmations?.some(item => item.status === "pending"))
     return { kind: "attention", text: "Implementation confirmation needed", requestId };
+  if (workflow?.queryFailure && ['working', 'waiting-query'].includes(workflow.status)) return {
+    kind: workflow.queryFailure.processing === true ? "active" : "attention",
+    text: workflow.queryFailure.processing === true ? "Native agent is still processing"
+      : workflow.queryFailure.canContinue ? "Model query failed; Continue when ready" : "Model query failed; task retained", requestId };
   if (workflow?.reason || installation?.reason)
     return { kind: "attention", text: "Development needs attention", requestId };
   if (workflow?.compaction?.error) return { kind: "attention", text: "Context compaction failed; see details", requestId };
