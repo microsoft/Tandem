@@ -4,8 +4,8 @@
   "files": [
     {
       "path": "extension.mjs",
-      "bytes": 3058819,
-      "sha256": "3e966b6ed9d63df4efb193acb5e04b9a901765a139749c84d355a248c35f7700"
+      "bytes": 3059825,
+      "sha256": "01a2cab28a2bcd89ce79be3b1aa344dec5a676c97d998a7c6ee507da2163732c"
     },
     {
       "path": "preview-launcher.mjs",
@@ -30,7 +30,7 @@
     {
       "path": "stage2/manifest.json",
       "bytes": 25987,
-      "sha256": "6148f5a5d6bec49985ce49a9c7c411fcae4fd966eef912368d71b7d109d940c6"
+      "sha256": "30a7b6453ca628fcc9a81c97fef01572ec6ba832e58d8f2379aac71831e8336b"
     },
     {
       "path": "stage2/package.json",
@@ -394,8 +394,8 @@
     },
     {
       "path": "stage2/public/ui-native.css",
-      "bytes": 7598,
-      "sha256": "e7b97a121f506120a36f9f40c77a982c80e72a35428945643a9de54e08ce6243"
+      "bytes": 7963,
+      "sha256": "cf8b04010843e916cfb8bb79ee5545f31130e38d1cdc6831242739478024fa59"
     },
     {
       "path": "stage2/public/ui-system.css",
@@ -709,8 +709,8 @@
     },
     {
       "path": "stage2/src/human-loop-provider.mjs",
-      "bytes": 49011,
-      "sha256": "6b71809e86b443f5f3ba09c246f3c47f7765dbd87a4bdf0eb1c1f4aebab06461"
+      "bytes": 49679,
+      "sha256": "810bb01e8c5ced51b40eaba7442156fd6c78320c69187c8e20db39f46c34aa20"
     },
     {
       "path": "stage2/src/human-loop-recovery.mjs",
@@ -798,5 +798,5 @@
       "sha256": "92b92e76eb4ac3bee96c6bbdde06ed1f7d9c0088576a51db1276c567dbb207f8"
     }
   ],
-  "digest": "cae1fa88cc992a58443718a19adc33ef559f965cbc896e40fd07e80de5b76fe4"
+  "digest": "7eb91385e7330bd969aad4c63bedb7db92331c9c292c5e5a2ccfd6ccee0670ce"
 }

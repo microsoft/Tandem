@@ -373,14 +373,18 @@ foreign or unverified worker.
 Current-stage design-only changes settle when their revised draft and matching
 terminal run receipt have been saved, not when the whole Designs stage is
 approved. Current-stage Requirements patches settle when saved; purely additive
-requests can proceed without another impact decision, while edits to existing
-decisions, removals and assumption/deferral changes still require review.
-New questions never acquire automatic answers. Rehydration can settle older
+requests, edits to existing decisions, removals and assumption/deferral changes
+proceed without another impact decision when they affect only that unfinished
+stage. Changed decisions retain their previous answers for explicit reconfirmation;
+new questions never acquire automatic answers. Rehydration can settle older
 requests left active by these behaviors using their bound receipts and saved
 state, verifying design source bytes where applicable; it never reapplies,
 regenerates or approves them. Prototype
-updates still require their existing explicit Apply action. Cross-stage and
-consequential Requirements changes retain impact review and sparse reconciliation.
+updates still require their existing explicit Apply action. Changes affecting
+multiple stages retain impact review and sparse reconciliation. Applying the
+last affected prototype update completes its linked review without completing
+the whole Prototype stage. Completed requests and their restore points remain
+in history, but no longer keep the review pane open.
 
 Design requests bind the viewed screen and optional explicitly picked UI node
 to the source revision. Both HTTP and canvas actions validate those identities.
@@ -612,6 +616,11 @@ active request. It does not reapply the Requirements delta or restart earlier
 stages. Applying a draft carries its recorded scope forward. An explicit Designs
 action also restores missing request context in older linked drafts from their
 parent and applied review records, after checking that the baseline still matches.
+Returning to the working Designs stage also retains the reviewing request's
+instruction, scope and identity when updating the saved DSL; it never reapplies
+the earlier Requirements patch. Both renderer and backend gate approval on the
+current requirements digest and a saved update beyond the request's original
+design revision. A failed linked update cannot approve or finish the old designs.
 Stale Designs exposes **Update designs from latest requirements**; preparing the
 draft, approving it and applying it remain separate actions.
 The `update` design action always runs an incremental `revise-sketch` worker from

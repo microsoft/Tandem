@@ -635,9 +635,6 @@ export function RequirementsPanel({ reviewBaseline }: {
                             + (nodes.some((node) => node.status === "toAnswer") ? ` · ${nodes.filter((node) => node.status === "toAnswer").length} to answer` : "")
                         : "Waiting for the active decision..."}</p>
                 </div>
-                {!state.lifecycle.completedStages.includes("requirements") && <span id="design-tree-phase" className="design-tree-phase">
-                    {state.requirements.substage === "usage" ? "Collecting usages" : "Requirements decisions"}
-                </span>}
             </div>
             <div className="design-tree-body">
                 {nodes.length > 0 && <div className="design-tree-host">

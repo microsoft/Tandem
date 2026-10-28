@@ -21,7 +21,7 @@ import { ProjectConversation, ProjectConversationProvider, useProjectView } from
 import { DiscoveryRecovery } from "./discovery-recovery.js";
 import { ChangeRequestsPanel } from "./change-requests-panel.js";
 import { changeRequestActionLabel, changeRequestReviewStage } from "./change-request-feedback.js";
-import { changeReviewBlocksEditing, currentChangeReview, pendingUpstreamReviewStage } from "../change-request-policy.js";
+import { changeReviewBlocksEditing, currentChangeReview, pendingUpstreamReviewStage, sketchNeedsChangeUpdate } from "../change-request-policy.js";
 import { PendingReviewPane, StageReviewWorkspace } from "./stage-review.js";
 import { Brand } from "./brand.js";
 import { useStandaloneHeader, type ApplicationStatus, type StandaloneHosting } from "./standalone-header.js";
@@ -55,7 +55,8 @@ export function canCompleteStage(state: UiState): boolean {
     case "requirements": return state.preparation?.status !== "not-started" && state.prototypeApproach?.mode !== "undecided"
       && state.requirements?.substage === "dag" && Boolean(state.decisionGraph?.nodes?.length)
       && state.decisionGraph.nodes.every((node) => Boolean(node.answer));
-    case "sketch": return isSketchRevisionApproved(state.sketch);
+    case "sketch": return !sketchNeedsChangeUpdate(state, state.requirementsDigest)
+      && isSketchRevisionApproved(state.sketch, state.requirementsDigest);
     case "prototype": return state.previewStatus === "ready" && state.prototypeApproach?.mode !== "undecided" && !prototypeCompletionBlocked(state);
     case "development": return false;
   }
@@ -299,7 +300,8 @@ function Workspace(props: WorkspaceProps) {
   const [review, setReview] = useDraft<UiState | null>("pinned-stage-review", null);
   useEffect(() => {
     if (review?.stageReview?.changeRequestId && state.changeRequests?.some(request =>
-      request.id === review.stageReview?.changeRequestId && request.abandonment)) setReview(null);
+      request.id === review.stageReview?.changeRequestId
+        && (request.abandonment || ["completed", "cancelled"].includes(request.status)))) setReview(null);
   }, [review, state.changeRequests, setReview]);
   const workspace = useRef<HTMLElement>(null);
   const [stageActionsContainer, setStageActionsContainer] = useState<HTMLElement | null>(null);

@@ -1,5 +1,6 @@
 import type { ChangeRequest } from "./change-requests.js";
 import type { LifecycleStageId, TandemState } from "./types.js";
+import { sketchNeedsRequirementsUpdate } from "./sketch.js";
 import { lifecycleStages } from "./workflow.js";
 
 export function pendingUpstreamReviewStage(state: TandemState, stage = state.lifecycle.currentStage): LifecycleStageId | undefined {
@@ -66,7 +67,26 @@ export function changeReviewNeedsAttention(state: TandemState): boolean {
     if (review.status === "proposed") return Boolean(review.error) || !isLocalChange(state, review);
     if (["reviewing", "failed"].includes(review.status)) return true;
     return review.status === "active" && (Boolean(review.error)
-        || state.processing?.status === "error" || Boolean(state.prototypeFlow?.pendingCheckpointId || state.prototypeReview.question));
+        || state.processing?.status === "error" || Boolean(state.prototypeReview.question)
+        || !isLocalChange(state, review) && Boolean(state.prototypeFlow?.pendingCheckpointId));
+}
+
+export function currentSketchChange(state: Pick<TandemState, "changeRequests" | "lifecycle">): ChangeRequest | undefined {
+    if (state.lifecycle.currentStage !== "sketch") return undefined;
+    const requests = state.changeRequests?.filter(request => isDiscoveryChangeRequest(request)
+        && request.remainingStages[0] === "sketch") ?? [];
+    return requests.find(request => request.status === "active") ?? requests.find(request => request.status === "reviewing");
+}
+
+export function sketchNeedsChangeUpdate(
+    state: Pick<TandemState, "sketch" | "changeRequests" | "lifecycle" | "processing">, requirementsDigest?: string,
+): boolean {
+    if (sketchNeedsRequirementsUpdate(state.sketch, requirementsDigest)) return true;
+    const request = currentSketchChange(state);
+    return Boolean(request && (!state.sketch.current || state.sketch.current.id === request.baseSketchRevisionId
+        || request.error || state.processing?.status === "error"
+            && (state.processing.changeRequestId === request.id || !state.processing.changeRequestId
+                && ["generate-sketch", "revise-sketch"].includes(state.processing.action))));
 }
 
 export function isCurrentStageChange(state: TandemState, request: ChangeRequest): boolean {
@@ -79,11 +99,5 @@ export function isCurrentStageChange(state: TandemState, request: ChangeRequest)
 
 export function isLocalChange(state: TandemState, request: ChangeRequest): boolean {
     if (!isCurrentStageChange(state, request)) return false;
-    const delta = request.assessment!.requirements;
-    if (["sketch", "prototype"].includes(request.originStage)) return !delta;
-    return Boolean(request.originStage === "requirements" && delta && !delta.prototypeApproach
-        && !delta.usages.remove.length && !delta.remove.length
-        && !delta.assumptions.add.length && !delta.assumptions.remove.length
-        && !delta.deferred.add.length && !delta.deferred.remove.length
-        && delta.upsert.every(node => !state.decisionGraph.nodes.some(current => current.id === node.id)));
+    return request.originStage === "requirements" ? Boolean(request.assessment!.requirements) : !request.assessment!.requirements;
 }
