@@ -51,7 +51,7 @@ export function response(body: unknown, status = 200): Response {
   return { ok: status < 400, status, json: async () => body } as Response;
 }
 
-export async function reactHarness(t?: TestContext, headerHost?: { origin: string; channel: string }, startingPath: "preparation" | "development" | null = "preparation", modelSelectionRequired = false) {
+export async function reactHarness(t?: TestContext, headerHost?: { origin: string; channel: string }, startingPath: "preparation" | "development" | null = "preparation", modelSelectionRequired = false, retainedDevelopment = false) {
   const hash = headerHost ? "#" + new URLSearchParams({ "tandem-host": headerHost.origin, "header-channel": headerHost.channel }) : "";
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
     url: "http://127.0.0.1:4567/" + hash, runScripts: "outside-only", pretendToBeVisual: true,
@@ -108,9 +108,9 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
       if (path === "/api/project-entry/open") {
         entryRequests.push(path);
         if (entryGate) await entryGate(path, options);
-        const developmentStarted = !entryOpened && startingPath === "development";
+        const developmentStarted = !entryOpened && !retainedDevelopment && startingPath === "development";
         entryOpened = true;
-        return response({ developmentStarted, developmentContext: startingPath === "development" });
+        return response({ developmentStarted, developmentContext: retainedDevelopment || startingPath === "development" });
       }
       if (path === "/api/development/view") {
         presentationRequests.push(path);

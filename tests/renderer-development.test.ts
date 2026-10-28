@@ -18,7 +18,7 @@ function reviewFixture(value: ReturnType<typeof state>) {
 }
 
 test("consolidated status is Development-only and rejects previous-generation presentation", async t => {
-    const h = await reactHarness(t, undefined, "development");
+    const h = await reactHarness(t, undefined, "preparation", false, true);
     let value = state("development");
     h.render(value); await h.flush();
     let frame = h.get<HTMLIFrameElement>("project-conversation-frame");
@@ -48,6 +48,45 @@ test("consolidated status is Development-only and rejects previous-generation pr
     assert.notEqual(h.get("next-action-guide").textContent, "Stale role must not show");
     await send("Reviewer working...");
     assert.equal(h.get("next-action-guide").textContent, "Reviewer working...");
+    assert.deepEqual(h.errors, []);
+});
+
+test("post-Stop recovery capability replaces invalid handoff Retry without submitting until verified Ready", async t => {
+    const h = await reactHarness(t, undefined, "development"), value = state("development");
+    const snapshotPath = ".tandem/efforts/fixture/stages/prototype-r7.json", id = `handoff-${"a".repeat(64)}`;
+    value.lifecycle.outputs = [{ stageId: "prototype", path: snapshotPath, completedAt: value.updatedAt }];
+    value.development = { handoffId: id, requestId: id, snapshotPath };
+    value.developmentIntent = { generation: value.generation, requestId: "finish", snapshotPath, status: "failed",
+        error: "Previous model preflight failed; Stop disconnected the uncreated private runtime." };
+    h.setFetch(async (path, options) => {
+        assert.notEqual(options.method, "POST", "Status/recovery projection cannot submit or retry work.");
+        if (path === "/api/state") return response(value);
+        assert.equal(path, "/api/development/handoff");
+        return response({ generation: value.generation, snapshotPath, handoffId: id,
+            admission: { version: 1, handoffId: id, requestId: id, privateSessionId: null, status: "prepared", message: "Not submitted." } });
+    });
+    h.render(value); await h.flush();
+    const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
+    const send = async (ready: boolean, scope = JSON.stringify([value.prototypeId, value.generation])) => {
+        h.window.dispatchEvent(new h.window.MessageEvent("message", { source: frame.contentWindow, origin: "http://127.0.0.1:8765",
+            data: { protocol: "tandem-project/v1", channel: "fixture-project", type: "status", statusScope: scope,
+                status: ready ? "ready" : "unknown", installationStatus: ready ? "ready" : "unknown",
+                active: ready, starting: false, canRetry: false, canReopen: false,
+                canInspectInitialRecovery: !ready, canInspectEmptyRepair: false, reason: value.developmentIntent!.error } }));
+        await h.flush();
+    };
+    await send(false);
+    assert.equal(h.document.querySelector("#continue-design"), null);
+    assert.equal(h.document.querySelector("#check-design-handoff"), null);
+    assert.match(h.document.querySelector(".development-handoff-status")!.textContent!, /Inspect unused setup recovery.*right-hand/);
+    assert.equal(h.document.querySelector(".development-handoff-status [role=alert]"), null);
+    assert.equal(h.get("project-conversation-frame"), frame);
+    await send(true, '["foreign","generation"]');
+    assert.equal(h.document.querySelector("#continue-design"), null);
+    await send(true);
+    assert.equal(h.get("continue-design").textContent, "Continue saved Prototype");
+    assert.equal(h.requests.filter(request => request.options.method === "POST").length, 0);
+    assert.match(value.developmentIntent.error, /Previous model preflight failed/);
     assert.deepEqual(h.errors, []);
 });
 
@@ -160,7 +199,7 @@ test("handoff presentation distinguishes exact admission, pending, uncertainty a
     assert.match(h.document.querySelector(".development-handoff-status [role=alert]")!.textContent!, /changed/);
     invalid = false; admissionStatus = "prepared";
     await h.click("check-design-handoff");
-    assert.match(h.get("continue-design").textContent!, /Continue to Development/);
+    assert.equal(h.get("continue-design").textContent, "Continue saved Prototype");
     await h.click("continue-design");
     assert.equal(mutations().length, 1);
     assert.equal(h.document.querySelector("#confirm-design-handoff"), null);
@@ -335,7 +374,7 @@ test("direct Development remains the current phase through startup, failure, rea
 });
 
 test("Project settings reuses one settings document across Development and discovery without process controls", async t => {
-    const h = await reactHarness(t, undefined, "development");
+    const h = await reactHarness(t, undefined, "preparation", false, true);
     const value = state("development");
     value.lifecycle.outputs = [{ stageId: "prototype", path: ".tandem\\prototype-r1.json", completedAt: value.updatedAt }];
     h.render(value); await h.flush();
@@ -463,7 +502,7 @@ test("composed reload is root-owned and rejects foreign, stale, active and unkno
 });
 
 test("Design availability defers to the current phase marker without hiding new output or attention", async t => {
-    const h = await reactHarness(t, undefined, "development");
+    const h = await reactHarness(t, undefined, "preparation", false, true);
     h.render(state("development")); await h.flush();
     const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
     const send = async (designRevision: string) => {
@@ -632,7 +671,7 @@ test("model and effort readouts follow the viewed owning session without treatin
 });
 
 test("Development mounts one isolated full workspace and navigation keeps its original frame", async t => {
-    const h = await reactHarness(t, undefined, "development");
+    const h = await reactHarness(t, undefined, "preparation", false, true);
     h.setFetch(async path => {
         assert.equal(path, "/api/development/open", "Opening must not send a project request.");
         return response({ url: "http://127.0.0.1:8765/" });
@@ -753,7 +792,7 @@ test("real React Development keeps handoff controls in view across long-status h
                 response.end(JSON.stringify(reviewFixture(snapshot)));
             } else if (path === "/api/project-entry") {
                 response.writeHead(200, { "Content-Type": "application/json" });
-                response.end(JSON.stringify({ projectPath: "C:\\layout-fixture", startingPath: "development" }));
+                response.end(JSON.stringify({ projectPath: "C:\\layout-fixture", startingPath: "preparation" }));
             } else if (path === "/api/project-entry/open") {
                 response.writeHead(200, { "Content-Type": "application/json" });
                 response.end(JSON.stringify({ developmentContext: true, developmentStarted: false }));

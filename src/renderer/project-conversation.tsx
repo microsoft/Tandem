@@ -86,6 +86,7 @@ interface ProjectView {
     compacting: boolean;
     presentation: DevelopmentStatus | null;
     modelSelection: ModelSelection | null;
+    recoveryAction: "initial-creation" | "empty-setup" | null;
     activate(retry?: boolean): Promise<void>; command(command: string): void;
     outputs: ProjectOutput[]; outputStatus: string; outputReason: string; outputError: string; selectedOutput: string | null;
     openOutput(item: ProjectOutput): void;
@@ -112,6 +113,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
         handoffActivity: null as HandoffActivity[] | null, designBinding: null as HandoffDesign | null, permissions: 0, activeRequestId: null as string | null, compacting: false,
         presentation: null as DevelopmentStatus | null,
         modelSelection: null as ModelSelection | null,
+        recoveryAction: null as ProjectView["recoveryAction"],
         presentationScope: "",
         outputs: [] as ProjectOutput[], outputStatus: "unverified", outputReason: "Development outputs have not been verified.",
         outputError: "", selectedOutput: null as string | null });
@@ -381,10 +383,16 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
             if (message.type === "status" && typeof message.status === "string") {
                 if (message.statusScope !== undefined && message.statusScope !== null
                     && message.statusScope !== JSON.stringify([state.prototypeId, state.generation])) return;
-                const retryable = message.starting !== true && (message.canRetry === true || message.canReopen === true || ["failed", "unknown", "closed"].includes(message.installationStatus));
-                const settled = message.active === true || retryable;
-                if (retryable) startRequested.current = false;
-                setView(v => ({ ...v, status: message.status.slice(0, 80), detail: typeof message.reason === "string" ? message.reason.slice(0, 2000) : "",
+                const recoveryAction = message.starting !== true && message.statusScope === JSON.stringify([state.prototypeId, state.generation])
+                    ? message.canInspectInitialRecovery === true ? "initial-creation" : message.canInspectEmptyRepair === true ? "empty-setup" : null : null;
+                const retryable = message.starting !== true && !recoveryAction && (message.canRetry === true || message.canReopen === true
+                    || message.canRetry === undefined && message.canReopen === undefined && ["failed", "unknown", "closed"].includes(message.installationStatus));
+                const settled = message.active === true || retryable || recoveryAction !== null
+                    || message.starting !== true && ["failed", "unknown", "closed", "saved-state"].includes(message.installationStatus);
+                if (settled) startRequested.current = false;
+                setView(v => ({ ...v, status: message.status.slice(0, 80), recoveryAction,
+                    detail: recoveryAction ? `Use ${recoveryAction === "initial-creation" ? "Inspect unused setup recovery" : "Repair Development setup"} in the Development conversation pane. The saved handoff has not been submitted.`
+                        : typeof message.reason === "string" ? message.reason.slice(0, 2000) : "",
                     modelSelection: validModelSelection(message.modelSelection) ? message.modelSelection : null,
                     handoffActivity: Array.isArray(message.handoffActivity) && message.handoffActivity.length <= 100
                         && message.handoffActivity.every(validHandoffActivity) ? message.handoffActivity : null,
@@ -442,6 +450,7 @@ export function ProjectConversationProvider({ children, designVisible, viewedSta
     }, []);
     return <Context.Provider value={{ ...view, maintenanceError: providerReload.view.error ? providerReload.view.message : "",
         presentation: view.presentationScope === JSON.stringify([state.prototypeId, state.generation]) ? view.presentation : null,
+        recoveryAction: view.presentationScope === JSON.stringify([state.prototypeId, state.generation]) ? view.recoveryAction : null,
         detail: !view.presentationScope || view.presentationScope === JSON.stringify([state.prototypeId, state.generation]) ? view.detail : "",
         visible: designVisible, settingsOpen, workspaceRequested: workspaceRequested.current, entry, chooseEntry: path => loadEntry(true, path), reloadEntry: () => loadEntry(),
         gitSetupVisible: git.visible, requireDevelopmentGit: git.requireReady,
