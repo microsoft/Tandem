@@ -15,6 +15,7 @@ import { sharedDesign as legacySharedDesign, sharedDesignV3 as sharedDesign } fr
 import { mailSketch, shapeSketch } from "./fixtures/sketch-v2.mjs";
 import { createTemplate } from "../public/sketch/templates.js";
 import { multiFormatDesign } from "./fixtures/multi-format.mjs";
+import { commandJourney } from "./fixtures/sequence-punctuation.mjs";
 
 const none = { revisionId: null, digest: null };
 const baseline = { id: "existing-code", digest: "a".repeat(64) };
@@ -180,6 +181,54 @@ test("initial staging validates a generic collection without publishing or chang
   assert.deepEqual((await readdir(f.root)).sort(), [".tandem", "TANDEM.md", "app.js"]);
   const result = changed(f.packet, staged.artifactRef);
   assert.deepEqual(await f.adapter.validateOutcome(f.packet, result), result);
+});
+
+test("Designer rejects sequence grammar before staging and accepts an explicit same-task source correction", async t => {
+  const f = await fixture(t), input = sharedDesign();
+  input.artifacts.push(commandJourney());
+  const [tool] = f.adapter.tools(), context = { task: f.packet, toolCallId: "sequence-preflight" };
+  const before = await fileEvidence(f.root), state = await f.store.load(), exact = JSON.stringify(input);
+  const error = /command-journey.*Parse error on line 7:[\s\S]*#59;/;
+  await assert.rejects(tool.validate(input, context), error);
+  await assert.rejects(tool.execute(input, context), error);
+  assert.deepEqual(await fileEvidence(f.root), before);
+  assert.deepEqual(await f.store.load(), state);
+  assert.equal(JSON.stringify(input), exact);
+  input.artifacts[input.artifacts.length - 1] = commandJourney({ escaped: true });
+  assert.equal(await tool.validate(input, context), undefined);
+  assert.deepEqual(await fileEvidence(f.root), before);
+  const { artifactRef } = await tool.execute(input, context), result = changed(f.packet, artifactRef);
+  await f.adapter.validateOutcome(f.packet, result);
+  assert.deepEqual(await f.store.load(), state, "No automatic result, retry or lifecycle transition.");
+  assert.equal(await f.artifacts.inspectCurrent(), null);
+  await f.finish(f.packet, result);
+  const publication = await f.publish(result), published = await f.adapter.read();
+  assert.deepEqual(published.content, input);
+  assert.equal(publication.current.digest, policyHash(input));
+});
+
+test("historical malformed sequence sources remain exact when another part of the Design is revised", async t => {
+  const f = await fixture(t), input = sharedDesign();
+  input.artifacts.push(commandJourney());
+  const revision = await publishCanonical(f.root, f.artifacts, input, none);
+  const before = await canonicalEvidence(f.root), published = await f.adapter.read();
+  assert.equal(published.binding.digest, policyHash(input));
+  assert.deepEqual(published.content, input);
+  assert.deepEqual((await f.adapter.readRevision(published.binding)).content, revision.input);
+  const packet = createHumanTask({ id: "retained-source-designer", dispatchId: "retained-source-dispatch",
+    sessionId: "private", requestId: "request", cycleId: null, role: "designer", internalTaskId: null,
+    before: baseline, design: published.binding }, { design: input });
+  const state = await f.store.load();
+  const adapter = new HumanLoopDesigner({ owner: f.owner, verifyOwnership: f.verifyOwnership,
+    store: { load: async () => ({ ...state, design: published.binding,
+      activeTask: { ...state.activeTask, binding: packet.binding } }) } });
+  const revised = structuredClone(input);
+  revised.summary = "Only the Design summary changed.";
+  await adapter.tools()[0].validate(revised, { task: packet });
+  await adapter.tools()[0].execute(revised, { task: packet });
+  revised.artifacts.at(-1).source += "\n";
+  await assert.rejects(adapter.tools()[0].validate(revised, { task: packet }), /command-journey.*Parse error on line 7/);
+  assert.deepEqual(await canonicalEvidence(f.root), before);
 });
 
 test("multi-format source retains legacy completion reads and exact prior revision across restart", async (t) => {

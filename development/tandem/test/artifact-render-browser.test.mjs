@@ -7,6 +7,7 @@ import { createServer } from 'node:http';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { commandJourney } from './fixtures/sequence-punctuation.mjs';
 
 const executable = process.env.TANDEM_BROWSER_EXECUTABLE ?? 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -134,10 +135,31 @@ test('local browser renders all passive artifact formats and exposes same-origin
     try { await broken.ready; } catch { rejected = true; }
     if (!rejected || broken.captureElement !== null || !broken.querySelector('[role="alert"]')) throw new Error('Failed renderer did not expose an explicit non-capturable error');
     broken.dispose(); broken.remove();
-    return outputs;
+    const [retained, corrected] = ${JSON.stringify([commandJourney(), commandJourney({ escaped: true })])};
+    const failedSequence = renderArtifact(document,retained);
+    document.body.append(failedSequence);
+    let sequenceError = '';
+    try { await failedSequence.ready; } catch (error) { sequenceError = error.message; }
+    if (!sequenceError || failedSequence.captureElement !== null || !failedSequence.querySelector('[role="alert"]')) throw new Error('Retained malformed sequence must fail visibly without a capture surface');
+    failedSequence.dispose(); failedSequence.remove();
+    const fixedSequence = renderArtifact(document,corrected);
+    document.body.append(fixedSequence);
+    await fixedSequence.ready;
+    const sequenceText = [...fixedSequence.captureElement.contentDocument.querySelectorAll('svg text')].map(node=>node.textContent).join('\\n');
+    fixedSequence.dispose(); fixedSequence.remove();
+    return {outputs,sequenceError,sequenceText};
   })()` });
   assert.equal(result.exceptionDetails, undefined, JSON.stringify(result.exceptionDetails));
-  const outputs = result.result.value;
+  const { outputs, sequenceError, sequenceText } = result.result.value;
+  assert.match(sequenceError, /Parse error on line 7/);
+  for (const text of [
+    'stdout MM:SS plus newline; exit 0',
+    'Total minutes do not wrap; seconds have two digits',
+    'Minutes have at least two digits; 5 seconds becomes 00:05',
+    'Short stderr diagnostic; empty stdout; exit 2',
+    'Valid retry returns formatted duration and exit 0',
+  ]) assert.ok(sequenceText.includes(text), `Rendered sequence preserves literal punctuation: ${text}`);
+  assert.doesNotMatch(sequenceText, /#59;/);
   assert.equal(outputs.length, 8);
   assert.deepEqual(outputs[6].erColors, { foreground: 'rgb(36, 61, 56)', background: 'rgb(245, 242, 233)' });
   assert.match(outputs[6].text, /places/);
