@@ -303,11 +303,22 @@ would invalidate a static snapshot. Fixed/sticky positioning and authored
 scrolling are unsupported.
 
 Admission checks Mermaid's family, source bounds and passive-source
-restrictions synchronously. Its full grammar and layout are checked by
-Mermaid during browser rendering; a grammar/rendering failure displays an
-error and exposes no capture surface. This is not a guarantee that every
-admitted source will render successfully, nor evidence of general model
-generation quality.
+restrictions synchronously. Designer staging also checks new or changed
+`sequenceDiagram` sources with the shipped Mermaid parser before writing a
+staged artifact. Syntax errors identify the artifact and retain the parser's
+line diagnostic, allowing correction through the same authoring tool without
+accepting a result or starting another workflow. In sequence message and Note
+text, write a literal semicolon as `#59;`: for example,
+`CLI-->>User: stdout MM:SS#59; exit 0`. Raw semicolons separate Mermaid statements;
+valid statement separators must not be replaced.
+
+This authoring check does not rewrite source, revalidate unchanged historical
+sequence sources, or change saved revisions/digests. Historical malformed
+sources remain readable and fail visibly if rendered. Other Mermaid families'
+full grammar, and all diagrams' layout, remain checked during browser rendering;
+a grammar/rendering failure displays an error and exposes no capture surface.
+This is not a guarantee that every admitted source will render successfully,
+nor evidence of general model generation quality.
 
 Fit is a whole-artifact overview, not a global font-readability stretch.
 Zoom preserves uniform geometry, with scrolling for detail. Authored HTML

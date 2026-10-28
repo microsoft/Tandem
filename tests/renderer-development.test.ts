@@ -17,6 +17,61 @@ function reviewFixture(value: ReturnType<typeof state>) {
         deferred: ["Synchronization"], decisions: ["Reset: preserve keyboard focus"] };
 }
 
+for (const retained of [false, true]) test(`direct Development ${retained ? "reopen" : "entry"} projects private Ready and active work instead of unused Preparation`, async t => {
+    const h = await reactHarness(t, undefined, "development", false, retained);
+    const value = state("prepare");
+    value.goal = "";
+    value.status = "Enter a goal to start a new Tandem effort.";
+    h.render(value); await h.flush();
+    const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
+    const send = async (working: boolean) => {
+        const requestId = working ? "native-continuation" : null;
+        const text = working ? "Designer working..." : "Ready";
+        h.window.dispatchEvent(new h.window.MessageEvent("message", { origin: "http://127.0.0.1:8765", source: frame.contentWindow,
+            data: { protocol: "tandem-project/v1", channel: "fixture-project", type: "status",
+                statusScope: JSON.stringify([value.prototypeId, value.generation]), status: working ? "working" : "ready",
+                active: true, starting: false, activeRequestId: requestId,
+                presentation: { kind: working ? "active" : "idle", text, requestId } } }));
+        await h.flush();
+        assert.equal(h.get("next-action-guide").textContent, text);
+        assert.doesNotMatch(h.get("next-action-guide").textContent!, /Enter a goal/);
+    };
+    await send(false);
+    await send(true);
+    h.render({ ...value, revision: value.revision + 1, status: "Unused Preparation prompt with different wording." });
+    await h.flush();
+    assert.equal(h.get("next-action-guide").textContent, "Designer working...", "Ownership does not depend on English status text.");
+    await send(false);
+    assert.equal(h.get("project-conversation-frame"), frame);
+    assert.equal(h.requests.length, 0, "Projecting status must not submit or retry work.");
+    assert.deepEqual(h.errors, []);
+});
+
+test("Preparation-first entry and historical browsing retain upstream status despite private presentation", async t => {
+    const h = await reactHarness(t, undefined, "preparation", false, true);
+    let value = state("prepare");
+    value.goal = "";
+    value.status = "Enter a goal to start a new Tandem effort.";
+    h.render(value); await h.flush();
+    await h.fire(h.get("development-tab"), "mousedown", { button: 0 });
+    const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
+    h.window.dispatchEvent(new h.window.MessageEvent("message", { origin: "http://127.0.0.1:8765", source: frame.contentWindow,
+        data: { protocol: "tandem-project/v1", channel: "fixture-project", type: "status",
+            statusScope: JSON.stringify([value.prototypeId, value.generation]), status: "working", active: true,
+            activeRequestId: "native-request", presentation: { kind: "active", text: "Designer working...", requestId: "native-request" } } }));
+    await h.flush();
+    assert.equal(h.get("next-action-guide").textContent, value.status);
+    value = { ...state("development", value.revision + 1), status: "Saved Preparation-first history." };
+    h.render(value); await h.flush();
+    assert.equal(h.get("next-action-guide").textContent, value.status);
+    for (const tab of ["preparation-tab", "design-tree-tab", "sketch-tab", "live-preview-tab"]) {
+        await h.fire(h.get(tab), "mousedown", { button: 0 });
+        assert.equal(h.get("next-action-guide").textContent, value.status, `${tab} keeps its upstream status.`);
+    }
+    assert.equal(h.requests.length, 0);
+    assert.deepEqual(h.errors, []);
+});
+
 test("consolidated status is Development-only and rejects previous-generation presentation", async t => {
     const h = await reactHarness(t, undefined, "preparation", false, true);
     let value = state("development");
@@ -92,6 +147,8 @@ test("post-Stop recovery capability replaces invalid handoff Retry without submi
 
 test("Development startup progress spans verification without premature model prompts or retry state", async t => {
     const h = await reactHarness(t, undefined, "development"), value = state("prepare");
+    value.goal = "";
+    value.status = "Enter a goal to start a new Tandem effort.";
     h.render(value); await h.flush();
     const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
     let modelChecks = 0;
@@ -111,10 +168,26 @@ test("Development startup progress spans verification without premature model pr
     assert.equal(modelChecks, 0);
     await send({ status: "ready", starting: false, installationStatus: "ready", active: true,
         presentation: { kind: "idle", text: "Ready", requestId: null } });
-    assert.doesNotMatch(h.get("next-action-guide").textContent!, /Starting|Verifying|needs attention/);
+    assert.equal(h.get("next-action-guide").textContent, "Ready");
+    await send({ status: "ready", starting: false, installationStatus: "ready", active: true, permissions: 1,
+        presentation: { kind: "attention", text: "Permission response needed", requestId: null } });
+    assert.equal(h.get("next-action-guide").textContent, "Permission response needed");
     await send({ status: "unknown", starting: false, installationStatus: "unknown", active: false, reason: "Native creation failed.",
         presentation: { kind: "attention", text: "Development setup needs attention", requestId: null } });
     assert.equal(h.get("next-action-guide").textContent, "Development setup needs attention");
+    await send({ status: "unknown", starting: false, installationStatus: "unknown", active: false,
+        canInspectInitialRecovery: true });
+    assert.match(h.get("next-action-guide").textContent!, /Inspect unused setup recovery/);
+    await send({ status: "failed", starting: false, installationStatus: "failed", active: false, reason: "Native startup unavailable." });
+    assert.equal(h.get("next-action-guide").textContent, "Native startup unavailable.");
+    await send({ status: "ready", starting: false, installationStatus: "ready", active: true,
+        presentation: { kind: "idle", text: "Ready", requestId: null } });
+    h.store.setConnectionError("Connection interrupted. Retrying..."); await h.flush();
+    assert.equal(h.get("next-action-guide").textContent, "Connection interrupted. Retrying...");
+    h.render({ ...value, revision: value.revision + 1, developmentBlocker: "Development ownership could not be verified." }); await h.flush();
+    assert.equal(h.get("next-action-guide").textContent, "Development ownership could not be verified.");
+    assert.equal(h.requests.length, 0);
+    assert.deepEqual(h.errors, []);
 });
 
 test("Discovery and Development artifact groups keep separate disclosure keys through live index updates", async t => {
@@ -287,6 +360,7 @@ test("failed handoff startup surfaces the exact error without a blank view or au
     h.render(value); await h.flush();
     await h.click("review-prototype-handoff");
     assert.match(h.get("development-panel").textContent!, /Native session permission denied.*Open the owning session/);
+    assert.equal(h.get("next-action-guide").textContent, "Native session permission denied. Open the owning session to resolve access.");
     assert.equal(h.requests.filter(request => request.options.method === "POST").length, 1);
     assert.match(h.get("continue-design").textContent!, /Retry Development/);
 });
@@ -344,6 +418,7 @@ test("verified handoff Design removes the root banner without hiding active, sta
     held = Promise.resolve(response({ error: "Receipt cannot be verified." }, 409));
     value = { ...value, revision: value.revision + 1 }; h.render(value); await h.flush();
     assert.match(h.document.querySelector(".development-handoff-status [role=alert]")!.textContent!, /cannot be verified/);
+    assert.equal(h.get("next-action-guide").textContent, "Receipt cannot be verified.");
     assert.ok(h.get("check-design-handoff"));
     held = null;
     value = { ...value, revision: value.revision + 1, lifecycle: { ...value.lifecycle,

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { artifactSchema, artifactRules, validateArtifact, artifactReferences } from '../public/artifacts/contract.js';
+import { artifactSchema, artifactRules, validateArtifact, validateArtifactForAuthoring, artifactReferences } from '../public/artifacts/contract.js';
+import { commandJourney } from './fixtures/sequence-punctuation.mjs';
 
 const artifact = (format, source, extra = {}) => ({
   schemaVersion: 'artifact/v1', format, id: 'example', title: 'Example',
@@ -140,5 +141,69 @@ test('Mermaid allows bounded passive diagrams and never exposes generated DOM ID
     'graph LR\nclassDef x stroke-width:13px', 'classDiagram\nclass Foo {\n<<script>>\n}',
     'graph LR\n' + 'A'.repeat(501), 'graph LR\n' + '\n'.repeat(250), 'graph LR\n' + 'A '.repeat(10_001)]) {
     assert.throws(() => validateArtifact(artifact('mermaid', source)), /Invalid artifact/);
+  }
+});
+
+test('sequence authoring rejects the retained CLI punctuation failure without rewriting source', async () => {
+  const input = commandJourney(), before = JSON.stringify(input);
+  assert.deepEqual(validateArtifact(input), input, 'Historical read validation is unchanged.');
+  await assert.rejects(validateArtifactForAuthoring(input), /command-journey.*Parse error on line 7:[\s\S]*literal message or Note text.*#59;/);
+  assert.equal(JSON.stringify(input), before);
+  const corrected = commandJourney({ escaped: true });
+  assert.deepEqual(await validateArtifactForAuthoring(corrected), corrected);
+  assert.equal(JSON.stringify(input), before);
+  assert.match(artifactRules.join('\n'), /literal semicolon as #59;/);
+});
+
+test('sequence message and note punctuation uses the shipped grammar, not semicolon replacement', async () => {
+  for (const text of [
+    'A-->>B: stdout MM:SS plus newline; exit 0',
+    'Note over A,B: Total minutes do not wrap; seconds have two digits',
+    'Note over A,B: Minutes have at least two digits; 5 seconds becomes 00:05',
+    'A-->>B: Short stderr diagnostic; empty stdout; exit 2',
+  ]) await assert.rejects(validateArtifactForAuthoring(artifact('mermaid', `sequenceDiagram\n${text}`)), /could not be parsed.*Parse error/s);
+  for (const source of [
+    'sequenceDiagram; participant A; participant B; A->>B: Hello; B-->>A: Bye;',
+    'sequenceDiagram\nA->>B: Hello;\nNote over A,B: Note;\nB-->>A: Bye',
+    'sequenceDiagram\r\nA->>B: 00:05, (retry)! #59; exit 0\r\nNote over A,B: Minutes#59; seconds',
+    'sequenceDiagram\n%% explanation; not a statement\nA->>B: Query? [5], 00:05!',
+    'sequenceDiagram\nA->>B: Value #59; text; B-->>A: Acknowledged',
+  ]) {
+    const input = artifact('mermaid', source);
+    assert.deepEqual(await validateArtifactForAuthoring(input), input);
+  }
+  await assert.rejects(validateArtifactForAuthoring(artifact('mermaid', 'sequenceDiagram\nA->>B Hello')), /could not be parsed/);
+});
+
+test('authoring retains exact historical sequence sources but checks changed source or identity', async () => {
+  const input = commandJourney(), previous = structuredClone(input);
+  assert.deepEqual(await validateArtifactForAuthoring(input, { previous }), input);
+  assert.deepEqual(await validateArtifactForAuthoring({ ...input, title: 'New caption' }, { previous }),
+    { ...input, title: 'New caption' });
+  for (const changed of [{ ...input, source: `${input.source}\n` }, { ...input, id: 'new-journey' }]) {
+    await assert.rejects(validateArtifactForAuthoring(changed, { previous }), /could not be parsed/);
+  }
+  assert.deepEqual(previous, input);
+});
+
+test('sequence authoring validation does not change other format boundaries or passive restrictions', async () => {
+  for (const [format, source] of [
+    ['mermaid', 'flowchart LR; A["Minutes; seconds"] --> B["00:05"]'],
+    ['mermaid', 'stateDiagram-v2\n[*] --> Ready\nReady --> Done'],
+    ['mermaid', 'erDiagram\nUSER ||--o{ ORDER : places'],
+    ['mermaid', 'classDiagram\nAnimal <|-- Dog'],
+    ['html', '<div style="color:#123;padding:4px">Minutes; seconds</div>'],
+    ['svg', '<svg><text>Minutes; seconds</text></svg>'],
+  ]) {
+    const input = artifact(format, source);
+    assert.deepEqual(await validateArtifactForAuthoring(input), input);
+  }
+  for (const source of [
+    'sequenceDiagram\n%%{init: {securityLevel: "loose"}}%%\nA->>B: Hi',
+    'sequenceDiagram\nA->>B: <script>',
+    'sequenceDiagram\nA->>B: https://example.com',
+  ]) {
+    const input = artifact('mermaid', source);
+    await assert.rejects(validateArtifactForAuthoring(input, { previous: input }), /Invalid artifact/);
   }
 });

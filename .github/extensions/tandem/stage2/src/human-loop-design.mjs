@@ -9,6 +9,7 @@ import { parseHumanTask } from "./human-loop-task.mjs";
 import { HumanLoopDesignStore, sharedDesignBinding } from "./human-loop-design-store.mjs";
 import { designSchema, designGenerationContract, validateDesign, validateDesignReferences, designReferenceCatalog } from "../public/sketch/design-contract.js";
 import { validateSketchSchema } from "../public/sketch/contract.js";
+import { validateArtifactForAuthoring } from "../public/artifacts/contract.js";
 
 const same = (a, b) => policyHash(a) === policyHash(b);
 const bindingOf = sharedDesignBinding;
@@ -114,6 +115,13 @@ export class HumanLoopDesigner {
       "Shared Design exceeds the pinned generation resource bound.");
     validateSketchSchema(args, designSchema, "design");
     const output = validateDesign(args, { previous: current?.input ?? null });
+    for (const artifact of output.artifacts) {
+      if (artifact.schemaVersion === "artifact/v1" && artifact.format === "mermaid") {
+        await validateArtifactForAuthoring(artifact, {
+          previous: current?.input.artifacts.find(previous => previous.id === artifact.id) ?? null,
+        });
+      }
+    }
     signal?.throwIfAborted();
     return { schemaVersion: "human-design-artifact/v2", ownerDigest: this.#ownerDigest,
       binding: packet.binding, previousContent: current?.input ?? null, output };

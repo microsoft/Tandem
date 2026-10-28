@@ -1081,6 +1081,13 @@ warnings, and keeps request/retry controls unavailable. Pending permissions rema
 actionable. Clearing the phase publishes the actual Ready or failure state; no
 error is erased, and this adds no role-completion or execution gate.
 
+For saved direct-Development entry, the root footer uses the validated private
+presentation instead of the unused Preparation status while discovery remains
+at empty goal entry. This projection does not match status text or change runtime
+ownership. Connection, startup, recovery, permission and handoff errors/progress
+retain their existing priority; Preparation-first and earlier-stage browsing
+retain their upstream status.
+
 The obsolete acceptance, capture, export, delivery, adapter configuration and
 linked-intake controls have been removed, not moved into settings. The public
 `process_action` canvas action is no longer registered; `/api/process` returns

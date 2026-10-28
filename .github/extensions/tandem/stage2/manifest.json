@@ -38,8 +38,8 @@
     },
     {
       "path": "public/artifacts/contract.js",
-      "bytes": 190,
-      "sha256": "e7c0ebef88577ea5b8fe3a3252f0173c6f3d13321aa7555232bfc31ebf63d364"
+      "bytes": 220,
+      "sha256": "c0fd54763988a3d7f3b646201872956663d06fcffa9938d229f8ed66ef16ca92"
     },
     {
       "path": "public/artifacts/document-views.js",
@@ -63,8 +63,8 @@
     },
     {
       "path": "public/artifacts/validation.js",
-      "bytes": 26855,
-      "sha256": "63d776a9ff79992709edbed51cdf919b920cf8d35ac3551f937efc5f90669f5c"
+      "bytes": 28192,
+      "sha256": "42822a56a668eb6006f47de37d0684393bee92afd648fc3485a79bbf61669859"
     },
     {
       "path": "public/artifacts/vendor/LICENSES.json",
@@ -653,8 +653,8 @@
     },
     {
       "path": "src/human-loop-design.mjs",
-      "bytes": 13714,
-      "sha256": "7abceceb60d68bdcb54b68f140323088b6f229ca08ec38ce639e7cd8553c5269"
+      "bytes": 14117,
+      "sha256": "2986d2a339e3e2fcf88691627655c59e57ad90b0912f8f831742c4f837b45bd6"
     },
     {
       "path": "src/human-loop-installation.mjs",
