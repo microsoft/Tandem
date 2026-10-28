@@ -4,8 +4,8 @@
   "files": [
     {
       "path": "extension.mjs",
-      "bytes": 3039498,
-      "sha256": "66cabf5215584cca3ebb7a59e453003c3e4cfddeca7eba449137b897a188b68d"
+      "bytes": 3040635,
+      "sha256": "f9663c28b40eb58f02d0fe7c604670ed606f88196335a3ccc2cd14634346d1ce"
     },
     {
       "path": "preview-launcher.mjs",
@@ -19,8 +19,8 @@
     },
     {
       "path": "stage2/INSTALL.md",
-      "bytes": 7998,
-      "sha256": "8723be841f17f353710f1601a9c62784b078f154d622d3ee2a20f34e6e56744a"
+      "bytes": 8618,
+      "sha256": "58cfb96ce182c3f6a2c3afbd9ff06d7dee77ecb630f10b6388aabe80be3a6d2c"
     },
     {
       "path": "stage2/extension.mjs",
@@ -30,7 +30,7 @@
     {
       "path": "stage2/manifest.json",
       "bytes": 25987,
-      "sha256": "d86f7160c7254450aba3435272e7fcb7464d1c39930f385aabd3bfe24b71b3c2"
+      "sha256": "6148f5a5d6bec49985ce49a9c7c411fcae4fd966eef912368d71b7d109d940c6"
     },
     {
       "path": "stage2/package.json",
@@ -90,7 +90,7 @@
     {
       "path": "stage2/public/artifacts/vendor/LICENSES.json",
       "bytes": 264383,
-      "sha256": "7aeb9d0c7c77bcae8cb8ba89686a1ba9cc11b76cb10096716b0f3bc35af05bac"
+      "sha256": "e584c96ebaea994f10b0af4dc1fefbe62331649c79d62f784c18b42ec70373e9"
     },
     {
       "path": "stage2/public/artifacts/vendor/documents.js",
@@ -199,8 +199,8 @@
     },
     {
       "path": "stage2/public/human-loop-app.js",
-      "bytes": 65286,
-      "sha256": "da9dfd2e95be76b362a7f8766ffa52b2c2b2edcb3b37a95e6b51176488a5a061"
+      "bytes": 65424,
+      "sha256": "21ac3d87d06a20f47d78fe3b69529c0f9f55b79b20ed7a4f900ec982a1eada5e"
     },
     {
       "path": "stage2/public/human-loop-shell.css",
@@ -254,8 +254,8 @@
     },
     {
       "path": "stage2/public/project-presentation.js",
-      "bytes": 20093,
-      "sha256": "95cf5a4f75f2873292cb532aa6d3d6aaa8e439ac962d964fe783ca50f573e68f"
+      "bytes": 20301,
+      "sha256": "987b9e2fa1bb1b117b3f1807024da337e28d6f38eec704f65bd314da707c1440"
     },
     {
       "path": "stage2/public/project-theme.css",
@@ -798,5 +798,5 @@
       "sha256": "92b92e76eb4ac3bee96c6bbdde06ed1f7d9c0088576a51db1276c567dbb207f8"
     }
   ],
-  "digest": "5e6b074b18c6bf206b3294bf122616a5059fd4d8641bba51de29b1c45f6cd5d5"
+  "digest": "6bb00351527ee4d810e44fa15a54f1b56dac55ca654535bf2d72c3d77b0e2341"
 }

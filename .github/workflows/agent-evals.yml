@@ -36,6 +36,69 @@ permissions:
   contents: read
 
 jobs:
+  public-install:
+    name: Clean public install (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install both locked dependency trees without credentials or a warm cache
+        shell: pwsh
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $directory = Join-Path $env:RUNNER_TEMP 'tandem-public-install'
+          New-Item -ItemType Directory -Path $directory -ErrorAction Stop | Out-Null
+          Get-ChildItem Env: | Where-Object { $_.Name -match '^(NPM_CONFIG_|NODE_AUTH_TOKEN$|NPM_TOKEN$|GH_TOKEN$|GITHUB_TOKEN$|COPILOT_GITHUB_TOKEN$)' } |
+            ForEach-Object { Remove-Item "Env:$($_.Name)" }
+          $env:NPM_CONFIG_USERCONFIG = Join-Path $directory 'user.npmrc'
+          $env:NPM_CONFIG_GLOBALCONFIG = Join-Path $directory 'global.npmrc'
+          New-Item -ItemType File -Path $env:NPM_CONFIG_USERCONFIG, $env:NPM_CONFIG_GLOBALCONFIG | Out-Null
+          $env:NPM_CONFIG_CACHE = Join-Path $directory 'cache'
+          $env:NPM_CONFIG_REGISTRY = 'https://registry.npmjs.org/'
+          $env:NPM_CONFIG_STRICT_SSL = 'true'
+          $env:NPM_CONFIG_IGNORE_SCRIPTS = 'false'
+          foreach ($path in @('.npmrc', 'development\tandem\.npmrc', 'node_modules', 'development\tandem\node_modules', $env:NPM_CONFIG_CACHE)) {
+            if (Test-Path -LiteralPath $path) { throw "Clean-install precondition failed: $path already exists." }
+          }
+          $receipt = Join-Path $directory 'receipt.md'
+          @(
+            '# Cache-isolated unauthenticated Windows install'
+            "Checked-out commit: $env:GITHUB_SHA"
+            "PR head: $env:PR_HEAD_SHA"
+            "Node: $(node --version); npm: $(npm --version)"
+            'Registry: https://registry.npmjs.org/; user/global config empty; initial cache absent.'
+            'Lockfile resolved URLs retained; TLS verification enabled; lifecycle scripts enabled.'
+          ) | Set-Content -LiteralPath $receipt
+          $failed = $false
+          foreach ($target in @(@{ Name = 'root'; Path = '.' }, @{ Name = 'development'; Path = 'development\tandem' })) {
+            npm --prefix $target.Path ci --foreground-scripts --ignore-scripts=false --no-audit --no-fund 2>&1 |
+              Tee-Object -FilePath (Join-Path $directory "$($target.Name).log")
+            $code = $LASTEXITCODE
+            "$($target.Name) npm ci exit code: $code" | Add-Content -LiteralPath $receipt
+            if ($code -ne 0) { $failed = $true }
+          }
+          Get-Content -LiteralPath $receipt | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+          if ($failed) { throw 'At least one clean public dependency installation failed; see retained install logs.' }
+      - name: Retain install output and candidate receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-install-windows-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/tandem-public-install/receipt.md
+            ${{ runner.temp }}/tandem-public-install/root.log
+            ${{ runner.temp }}/tandem-public-install/development.log
+          if-no-files-found: warn
+          retention-days: 14
+
   deterministic:
     name: Deterministic behavioral-eval harness
     runs-on: ubuntu-latest

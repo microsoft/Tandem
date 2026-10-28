@@ -284,6 +284,10 @@ function Workspace(props: WorkspaceProps) {
   const { state, pending, browseStage, post, confirm } = ui;
   const projectView = useProjectView();
   const { activeTab, onTabChange, selectedArtifact, contextOpen, setContextOpen, sketchBlocked } = props;
+  const directDevelopment = projectView.entry.startingPath === "development";
+  useLayoutEffect(() => {
+    if (directDevelopment && activeTab === "preparation") onTabChange("development");
+  }, [directDevelopment, activeTab, onTabChange]);
   const stageAction = useAction("stage");
   const reviewAction = useAction("stage-review");
   const [review, setReview] = useDraft<UiState | null>("pinned-stage-review", null);
@@ -447,6 +451,7 @@ function Workspace(props: WorkspaceProps) {
   }, [state, pending, atStart, current, showStageTabs, reviewing]);
   function navigate(tab: string) {
     const target = stageTabs.find((item) => item.value === tab);
+    if (directDevelopment && target?.stage === "prepare") return;
     if (target && !canBrowseStage(state, target.stage)) return;
     onTabChange(tab as TabId);
     setContextOpen(false);
@@ -562,7 +567,8 @@ function Workspace(props: WorkspaceProps) {
                 const progress = currentPhase ? "active" : skipped ? "skipped" : completed ? "complete" : needsReview ? "review" : "locked";
                 const progressLabel = completed ? "Completed, accepted work locked" : needsReview ? "Needs review" : "";
                 return <Tabs.Trigger key={tab.value} value={tab.value} id={tab.id + "-tab"}
-                className="preview-tab" data-stage-id={tab.stage} data-status={progress} disabled={tab.stage === "development" ? !canOpenDevelopment(state) : tab.stage !== "prepare" && !canBrowseStage(state, tab.stage)}
+                className="preview-tab" data-stage-id={tab.stage} data-status={progress} disabled={tab.stage === "prepare" ? directDevelopment
+                  : tab.stage === "development" ? !canOpenDevelopment(state) : !canBrowseStage(state, tab.stage)}
                 title={`${skipped?.reason || output?.path || label}${progressLabel ? `. ${progressLabel}` : ""}${designStatus ? `. ${designStatus}` : ""}`}
                 aria-current={currentPhase ? "step" : undefined}
                 aria-label={`${label}${currentPhase ? ", Current phase" : ""}${progressLabel ? `, ${progressLabel}` : ""}${skipped ? `, not applicable. ${skipped.reason}` : ""}${designStatus ? `, ${designStatus}` : ""}`}

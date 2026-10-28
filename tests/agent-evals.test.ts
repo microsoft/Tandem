@@ -152,8 +152,19 @@ test("PR triggers include every source, test, and workflow while live stays manu
         "src/**", "development/**", "tests/**", "scripts/**", "skills/**", ".github/workflows/**",
         ".github/copilot-instructions.md", "package.json", "package-lock.json", "tsconfig*.json",
     ]) assert.ok(pullRequest.includes(`- "${path}"`));
-    assert.deepEqual([...workflow.matchAll(/node-version:\s*"([^"]+)"/g)].map(match => match[1]), ["24", "24"],
-        "Deterministic and protected live jobs use the application's supported Node runtime.");
+    assert.deepEqual([...workflow.matchAll(/node-version:\s*"([^"]+)"/g)].map(match => match[1]), ["24", "24", "24"],
+        "Public install, deterministic and protected live jobs use the application's supported Node runtime.");
+    const publicInstall = workflow.split("  public-install:")[1].split("  deterministic:")[0];
+    assert.match(publicInstall, /runs-on: windows-latest/);
+    assert.match(publicInstall, /persist-credentials: false/);
+    assert.doesNotMatch(publicInstall, /cache: npm|secrets\.|NODE_TLS_REJECT_UNAUTHORIZED|strict-ssl=false/);
+    assert.match(publicInstall, /NPM_CONFIG_REGISTRY = 'https:\/\/registry\.npmjs\.org\/'/);
+    assert.match(publicInstall, /NPM_CONFIG_USERCONFIG/);
+    assert.match(publicInstall, /NPM_CONFIG_GLOBALCONFIG/);
+    assert.match(publicInstall, /NPM_CONFIG_CACHE/);
+    assert.match(publicInstall, /Path = '\.'/);
+    assert.match(publicInstall, /Path = 'development\\tandem'/);
+    assert.match(publicInstall, /ci --foreground-scripts --ignore-scripts=false/);
     assert.match(workflow, /if: github\.event_name == 'workflow_dispatch' && github\.ref == format/);
     assert.match(workflow, /environment: copilot-evals/);
     assert.match(workflow, /secrets\.COPILOT_EVAL_TOKEN/);

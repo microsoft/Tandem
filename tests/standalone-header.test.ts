@@ -115,7 +115,7 @@ test("saved Prototype does not project a legacy building phase into Development"
 });
 
 test("permission ownership follows the private session, not the viewed discovery tab or viewport", async (t) => {
-    const h = await reactHarness(t, host, "development");
+    const h = await reactHarness(t, host, "preparation", false, true);
     h.render(state("development"));
     await h.flush();
     await h.sendHeaderMessage({ type: "tandem:header:connect" });
@@ -126,6 +126,7 @@ test("permission ownership follows the private session, not the viewed discovery
     }, "http://127.0.0.1:8765", frame.contentWindow);
     await status(true, "ready");
     assert.equal(header(h.headerMessages).permissionScope, "development");
+    assert.equal(h.get<HTMLButtonElement>("preparation-tab").disabled, false);
     await h.fire(h.get("preparation-tab"), "mousedown", { button: 0, ctrlKey: false });
     assert.equal(h.get("preparation-panel").hidden, false);
     assert.equal(header(h.headerMessages).permissionScope, "development");
