@@ -1177,6 +1177,29 @@ try {
 Bridge tests cover source retention, exact request reconciliation, migration,
 retired routes, native capability/provider conflicts and extracted payload hashes.
 Development owns its role/runtime, confirmation, Stop/reopen, WAL and browser tests.
+
+Deterministic UI state coverage is split between state matrices and existing
+interaction journeys:
+
+| Surface | State coverage |
+| --- | --- |
+| `tests\application-availability.test.ts` | Every declared upstream operation across all lifecycle stages; read-only/reset fences, human-only actions, pinned-review scope, review outcomes, change statuses, active work and abandonment eligibility. |
+| `tests\renderer-workflow-states.test.ts` | Preparation statuses, Requirements substages and prototype approaches, Designs states and exact approval bindings, Prototype checkpoint/preview/feedback states, active and unconfirmed work, navigation, composer ownership, connection recovery and host completion blockers. |
+| `tests\renderer-*.test.ts`, `tests\change-requests-ui.test.ts` | User actions and transitions: retained drafts, retries, confirmation, stale responses, review/apply/discard, optional visual choices and Development handoff. |
+| `development\tandem\test\human-loop-renderer.test.mjs`, `tests\handoff-presentation.test.mjs` | Native workflow/runtime labels, answer authority, pending submissions, startup, permission/question/implementation gates, uncertain execution and verified-result presentation. |
+
+Run the upstream matrices with
+`node --import tsx --test tests\application-availability.test.ts tests\renderer-workflow-states.test.ts`.
+Run the native renderer suite from `development\tandem` with
+`node --test test\human-loop-renderer.test.mjs`. Add cases to these matrices when a state
+or guard changes, alongside the relevant interaction regression. Stage completion
+must honor the host's projected blockers as well as local editing/busy guards;
+unconfirmed failure or cancellation is not settled work. Prototype additionally
+projects readiness for Finish's existing explicit keep-current-visual step, without
+relaxing the primitive completion command or waiving other blockers.
+
+These are deterministic fixture checks, not an exhaustive Cartesian product of
+every UI input or proof of a live model-driven journey.
 Browser fixtures must actually execute to establish UI coverage; skips are not
 qualification. Native no-model startup/control/recovery qualification is distinct
 from a model-driven Design/implementation journey.

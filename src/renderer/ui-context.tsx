@@ -3,7 +3,7 @@ import type { HistoricalStageId, LifecycleStageId, TandemState } from "../types.
 import type { SketchPreview } from "../sketch-stream.js";
 import type { WorkflowActivitySnapshot } from "../workflow-activity.js";
 import { isPendingFactoryRun } from "../agent-runner.js";
-import { lifecycleStages } from "../workflow.js";
+import { hasUnconfirmedExecution, lifecycleStages } from "../workflow.js";
 
 export interface RuntimeAgent {
   id?: string;
@@ -26,6 +26,7 @@ export interface RuntimeSnapshot {
 export interface UiState extends TandemState {
   application?: {
     protocol: string;
+    canFinishPrototypeWithCurrentVisual?: boolean;
     operations: Record<string, import("../../development/tandem/runtime-src/application-interface.js").ApplicationAvailability>;
   };
   mainModelSelection?: import("../../development/tandem/public/model-selection.js").ModelSelection | null;
@@ -145,6 +146,7 @@ export function hasActiveJobs(state: UiState): boolean {
     || Boolean(state.preparation?.processing && !state.preparation.processing.completedAt)
     || state.suggestionProcessing?.status === "running"
     || Boolean(state.planning?.processing)
+    || hasUnconfirmedExecution(state.implementation) || hasUnconfirmedExecution(state.testing)
     || ["starting", "running"].includes(state.implementation?.status)
     || ["starting", "running"].includes(state.testing?.status)
     || state.previewStatus === "starting"

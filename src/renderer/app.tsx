@@ -40,6 +40,12 @@ export const isGoalEntry = (state: UiState) => !state.goal?.trim() && state.life
 
 export function canCompleteStage(state: UiState): boolean {
   const stage = state.lifecycle.currentStage;
+  const availability = state.application?.operations["stages.complete"];
+  // Finish can explicitly keep the current visual before submitting stage completion.
+  const keepCurrentVisual = stage === "prototype" && state.prototypeFlow && awaitingVisualChoice(state.prototypeFlow)
+    && state.application?.canFinishPrototypeWithCurrentVisual && availability?.status === "blocked"
+    && availability.blockers.length > 0 && availability.blockers.every(blocker => blocker.code === "stage_not_ready");
+  if (availability && availability.status !== "available" && !keepCurrentVisual) return false;
   if (pendingUpstreamReviewStage(state)) return false;
   if (changeReviewBlocksEditing(state)) return false;
   if (state.effortReset || state.provider?.canSubmitAnswers === false || skippedStage(state, stage)
@@ -343,6 +349,7 @@ function Workspace(props: WorkspaceProps) {
   }
   const readOnly = projectView.developmentEntered || viewed !== current || state.lifecycle.completedStages.includes(viewed);
   const complete = !pending && canCompleteStage(state) && (current !== "sketch" || !sketchBlocked);
+  const completionBlocker = canCompleteStage(state) ? "" : state.application?.operations["stages.complete"]?.blockers[0]?.message || "";
   const allComplete = lifecycleStages.every((stage) => state.lifecycle.completedStages.includes(stage.id) || skippedStage(state, stage.id));
   const finalizingPrototype = current === "prototype" && state.processing?.action === "generate-design-spec"
     && ["starting", "running"].includes(state.processing.status);
@@ -351,9 +358,9 @@ function Workspace(props: WorkspaceProps) {
     : current === "requirements" && state.prototypeApproach.mode === "not-applicable" ? "Finish Requirements and save outputs"
     : current === "sketch" ? "Finish Designs and continue"
     : current === "prepare" ? "Preparation runs automatically" : "Finish " + (lifecycleStages.find((stage) => stage.id === current)?.label || current).toLowerCase();
-  const completionHelp = current === "prototype" && !finalizingPrototype ? "Finish Prototype and prepare Design in Development"
+  const completionHelp = completionBlocker || (current === "prototype" && !finalizingPrototype ? "Finish Prototype and prepare Design in Development"
     : contextCollapsed && !allComplete && !stageAction.busy && !["prepare", "development"].includes(current)
-    ? "Next stage: " + completionLabel : completionLabel;
+    ? "Next stage: " + completionLabel : completionLabel);
   const selectedLabel = lifecycleStages.find((stage) => stage.id === viewed)?.label || viewed;
   const handoffStatus = useHandoffStatus(activeTab === "development");
   const statusBarError = props.connectionError || stageAction.error || reviewAction.error || projectView.maintenanceError || state.effortReset?.error
@@ -376,7 +383,9 @@ function Workspace(props: WorkspaceProps) {
     || (activeTab === "sketch" && !reviewing && !pending && !hasActiveJobs(state) ? sketchApprovalStatus : "")
     || (nextAction ? "Next action: " + nextAction.label
     : (handoffStatus.busy ? handoffStatus.text : "") || developmentStatus
-    || (pending || hasActiveJobs(state) ? state.status : "") || (!savedPrototype ? upstreamStatus : "")
+    || (pending || hasActiveJobs(state) ? state.status : "")
+    || (viewed === current && !["prepare", "development"].includes(current) ? completionBlocker : "")
+    || (!savedPrototype ? upstreamStatus : "")
     || (privateStatus?.kind === "active" ? privateStatus.text : "") || handoffStatus.text || privateStatus?.text
     || (activeTab === "development" && projectView.developmentEntered ? "Development" : "")
     || (savedPrototype ? "Prototype saved. Continue in Development when you're ready."
@@ -514,7 +523,7 @@ function Workspace(props: WorkspaceProps) {
           await post("/api/stage/reopen", { stageId: stage.id }); projectView.resumeDiscovery(); browseStage(stage.id);
         });
       }}><RotateCcw size={16} aria-hidden="true" />Reopen {selectedLabel}</Button>
-    <p id="stage-message" className={stageAction.error ? "stage-message" : "visually-hidden"} title={stageAction.error || undefined} role="status" data-status={stageAction.error ? "error" : "idle"}>{stageAction.error || (state.lifecycle.outputs?.at(-1) ? "Saved " + state.lifecycle.outputs.at(-1)!.path : current === "prepare" ? "Preparation advances automatically when analysis completes." : "Complete the active stage to unlock the next.")}</p>
+    <p id="stage-message" className={stageAction.error ? "stage-message" : "visually-hidden"} title={stageAction.error || undefined} role="status" data-status={stageAction.error ? "error" : "idle"}>{stageAction.error || completionBlocker || (state.lifecycle.outputs?.at(-1) ? "Saved " + state.lifecycle.outputs.at(-1)!.path : current === "prepare" ? "Preparation advances automatically when analysis completes." : "Complete the active stage to unlock the next.")}</p>
   </section>;
   return <UiContext.Provider value={{ ...ui, reviewStage: openReview }}><div className="app project-workspace-app">
     {!projectView.entry.ready && (projectView.entry.loading || projectView.entry.busy) && !projectView.gitSetupVisible && !projectView.settingsOpen

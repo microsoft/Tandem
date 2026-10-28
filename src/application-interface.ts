@@ -212,7 +212,8 @@ export function upstreamAvailability(operation: UpstreamOperation, state: Applic
     return applicationAvailability(operation, actor, blockers, input);
 }
 
-export function projectApplicationCapabilities(state: ApplicationState) {
+export function projectApplicationCapabilities(state: ApplicationState, { canFinishPrototypeWithCurrentVisual = false } = {}) {
     return { protocol: APPLICATION_PROTOCOL,
+        canFinishPrototypeWithCurrentVisual,
         operations: Object.fromEntries(upstreamOperations.map(operation => [operation.id, upstreamAvailability(operation, state, "user")])) };
 }

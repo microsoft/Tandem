@@ -620,22 +620,35 @@ test('100% internal progress never invents whole Review or whole-plan completion
   assert.doesNotMatch(ui.container.textContent, /No findings reported/);
 });
 
-test('user input, permission, unknown execution and pending presentation remain distinct', () => {
+test('every workflow and runtime status has a truthful label and an explicit answer gate', () => {
   const ui = fixture();
   ui.all('select')[0].value = 'option:a';
   ui.all('select')[0].fire('change');
   for (const [status, label] of [
+    ['ready', 'Ready'],
     ['waiting-answer', 'Waiting for your answers'],
     ['working', 'Working'],
     ['waiting-permission', 'Waiting for permission'],
+    ['waiting-confirmation', 'Waiting for implementation confirmation'],
     ['execution-unknown', 'Execution state unknown'],
     ['presentation-pending', 'Result presentation pending'],
     ['stopping', 'Stopping after current step'], ['closed', 'Closed'],
+    ['new', 'Preparing runtime'], ['prepared', 'Preparing runtime'],
+    ['saved-state', 'Saved runtime'], ['creating', 'Starting runtime'], ['reopening', 'Reopening runtime'],
+    ['waiting-runtime', 'Execution state unknown'], ['unrecognized', 'Execution state unknown'],
   ]) {
-    ui.render({ ...ui.view, status });
+    const view = { ...ui.view, status }, before = structuredClone(view);
+    ui.render(view);
     assert.equal(ui.all('h2')[0].textContent, label);
     assert.equal(ui.action('submitAnswers').disabled,
-      !['waiting-answer', 'working', 'waiting-permission'].includes(status));
+      !['ready', 'waiting-answer', 'working', 'waiting-permission'].includes(status), status);
+    ui.render(view, { busy: true });
+    assert.equal(ui.action('submitAnswers').disabled, true, `${status}: pending submission`);
+    ui.render({ ...view, questionInteraction: { ...view.questionInteraction, canAnswer: false } });
+    assert.equal(ui.action('submitAnswers').disabled, true, `${status}: withdrawn answer authority`);
+    assert.equal(ui.all('select')[0].value, 'option:a', `${status}: retained draft`);
+    assert.deepEqual(view, before);
+    assert.deepEqual(ui.calls, { answers: [], stop: 0, refresh: 0, discuss: 0 });
   }
 });
 
@@ -680,12 +693,14 @@ test('real Edge retains textarea focus/caret and source safety across live snaps
     const renderer = await readFile(new URL('../public/renderers/human-loop.js', import.meta.url));
     const decisions = await readFile(new URL('../public/review-decisions.js', import.meta.url));
     const questionPresentation = await readFile(new URL('../public/question-presentation.js', import.meta.url));
+    const composerEnter = await readFile(new URL('../public/composer-enter.js', import.meta.url));
     const css = await readFile(new URL('../public/renderers/human-loop.css', import.meta.url));
     const server = createServer((request, response) => {
       const resource = {
         '/human-loop.js': ['text/javascript', renderer],
         '/review-decisions.js': ['text/javascript', decisions],
         '/question-presentation.js': ['text/javascript', questionPresentation],
+        '/composer-enter.js': ['text/javascript', composerEnter],
         '/human-loop.css': ['text/css', css],
         '/': ['text/html', '<!doctype html><link rel="stylesheet" href="/human-loop.css"><main id="fixture"></main>'],
       }[request.url];
