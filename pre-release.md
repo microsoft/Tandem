@@ -416,6 +416,25 @@ The agent did not click Finish. This evidence and all preview receipts remain
 bound to `950db97`, not silently transferred to the follow-up UI changes. PR merge,
 final review and interpretation of manual coverage remain with the user.
 
+### PR #62 CI fixture correction
+
+[Run 40496393843](https://github.com/microsoft/Tandem/actions/runs/40496393843)
+on `f1222b64da4a610df00ccd616d71a5926a62f6d2` reported 1,103 passing, one failing
+and 29 skipped tests. The sole failure was the permission-ownership fixture at
+`tests/standalone-header.test.ts:130`: it selected direct Development entry but
+expected the intentionally disabled Preparation panel to open.
+
+The exact assertion was reproduced locally after `npm ci --no-audit --no-fund`
+restored missing locked root dependencies. The fixture now uses the existing
+Preparation-first entry with retained Development context and explicitly checks
+that Preparation is enabled. All private-session permission assertions remain
+unchanged; no runtime or generated payload changed.
+
+One targeted run passed all four selected cases: permission ownership, persisted
+direct Development entry, retained Preparation-first history, and recovery CTA.
+No full suite, release build, packaging, native/manual preview or paid model test
+was rerun. The correction still requires its own PR CI result.
+
 ## Public-release history (unexecuted; separately gated)
 
 - [ ] Decide between a new public snapshot and a controlled rewrite of the existing
