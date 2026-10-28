@@ -40,7 +40,7 @@
   --background-color-muted: initial; --text-color-muted: initial; --border-color-default: initial;
 }
 .human-app :is(#save-appearance, #apply-model, #accept-actual-model, #approve-compaction, #approve-empty-setup,
-  #approve-initial-creation, #apply-project-effort, #activate-project-development, #send, #annotation-capture,
+  #approve-initial-creation, #apply-project-effort, #activate-project-development, #annotation-capture,
   [data-implementation-decision="approved"], [data-access-decision="once"], [data-annotation-action="attach"],
   #show-questions[data-unanswered="true"], .human-loop-questions button[type="submit"]) {
   --tandem-control-background: var(--studio-action-bg);
@@ -48,7 +48,7 @@
   --tandem-control-color: var(--studio-on-action);
 }
 .human-app :is(#save-appearance, #apply-model, #accept-actual-model, #approve-compaction, #approve-empty-setup,
-  #approve-initial-creation, #apply-project-effort, #activate-project-development, #send, #annotation-capture,
+  #approve-initial-creation, #apply-project-effort, #activate-project-development, #annotation-capture,
   [data-implementation-decision="approved"], [data-access-decision="once"], [data-annotation-action="attach"],
   #show-questions[data-unanswered="true"], .human-loop-questions button[type="submit"]):hover:not(:disabled) {
   background: var(--accent-fill-hover); color: var(--studio-on-action); border-color: var(--studio-action-bg);
@@ -73,9 +73,13 @@
 .human-app .human-loop-questions :is(select, textarea) { width: 100%; font-weight: 400; }
 .human-app .human-loop-questions select { min-height: var(--studio-control-height); }
 .human-app .human-loop-questions button[type="submit"] { min-height: var(--studio-control-height); }
+.human-app .activity-panel > .command-bar { grid-template-columns: minmax(0, 1fr); }
 .human-app .command-composer { border-right: 1px solid var(--studio-border); border-radius: var(--studio-radius); padding-right: var(--studio-space-3); }
-.human-app #message { min-height: var(--studio-composer-expanded-height); height: auto; }
-.human-app #send { width: var(--studio-control-height); min-width: var(--studio-control-height); padding: 0; align-self: end; font-size: var(--studio-text-title); border-radius: var(--studio-radius-control); }
+.human-app .composer-input-wrap { position: relative; --composer-send-width: var(--studio-control-height); }
+.human-app .composer-input-wrap:has(#send[data-retry="true"]) { --composer-send-width: calc(var(--studio-control-height) * 4); }
+.human-app #message { min-height: var(--studio-composer-expanded-height); height: auto; padding-inline-end: calc(var(--composer-send-width) + var(--studio-space-6) + var(--studio-space-2)); }
+.human-app #send { position: absolute; inset-inline-end: var(--studio-space-6); bottom: var(--studio-space-1); width: var(--composer-send-width); min-width: var(--studio-control-height); max-width: none; padding: 0; font-size: var(--studio-text-title); border-radius: var(--studio-radius-control); }
+.human-app #send[data-retry="true"] { font-size: var(--studio-text-small); }
 .human-app #send::before { content: none; }
 .human-app #stop-options { min-width: var(--studio-control-height); padding-inline: var(--studio-space-1); }
 .human-app .state-history-step button { min-height: var(--history-target-size); min-width: var(--history-target-size); justify-content: center; padding: 0; }

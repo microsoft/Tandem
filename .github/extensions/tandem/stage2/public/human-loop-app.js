@@ -411,10 +411,10 @@ function renderComposer() {
   summary.tabIndex = presetsBlocked ? -1 : 0;
   for (const button of $('quick-requests').querySelectorAll('button')) button.disabled = presetsBlocked;
   if (presetsBlocked) $('quick-requests').open = false;
-  $('send').textContent = pendingSubmitted && !sending ? 'Retry exact request' : '↑';
+  $('send').textContent = pendingSubmitted && !sending ? 'Retry exact request' : '\u21b5';
   $('send').dataset.retry = String(pendingSubmitted && !sending);
   $('send').setAttribute('aria-label', pendingSubmitted && !sending ? 'Retry exact request' : 'Send message');
-  $('send').title = pendingSubmitted && !sending ? 'Retry exact request' : 'Send message';
+  $('send').title = pendingSubmitted && !sending ? 'Retry exact request' : 'Send message (Enter)';
   renderRoleHint();
   roleSuggestions.refresh();
 }

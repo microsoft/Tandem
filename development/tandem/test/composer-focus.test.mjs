@@ -5,7 +5,7 @@ import test from "node:test";
 import { browserAvailable } from "./helpers/browser-fixture.mjs";
 import { humanLoopUiFixture } from "./helpers/human-loop-ui-fixture.mjs";
 
-test("composer focus highlights its existing border beside Send without clipping or resizing long drafts",
+test("composer focus highlights its existing border around inline Send without clipping or resizing long drafts",
   { skip: !browserAvailable, timeout: 60_000 }, async t => {
     const f = await humanLoopUiFixture(t, {
       ...(process.env.QUESTIONS_PACKAGE_PUBLIC ? { publicDirectory: resolve(process.env.QUESTIONS_PACKAGE_PUBLIC) } : {}),
@@ -32,6 +32,7 @@ test("composer focus highlights its existing border beside Send without clipping
           return {input:r.toJSON(),send:s.toJSON(),outline:style.outlineStyle,
             border:style.borderColor,borderWidth:style.borderWidth,
             paddingLeft:parseFloat(style.paddingLeft),paddingRight:parseFloat(style.paddingRight),
+            textRight:r.left+input.clientLeft+input.clientWidth-parseFloat(style.paddingRight),
             horizontalOverflow:input.scrollWidth>input.clientWidth+1,verticalScroll:input.scrollHeight>input.clientHeight,
             focus:document.activeElement===input,start:input.selectionStart,end:input.selectionEnd,text:input.value};
         })()`);
@@ -53,14 +54,15 @@ test("composer focus highlights its existing border beside Send without clipping
     }
     for (const measured of measurements) {
       assert.equal(measured.outline, "none", "Focus does not add another outline");
-      assert.ok(measured.input.right <= measured.send.left);
+      assert.ok(measured.send.left >= measured.textRight && measured.send.right < measured.input.right);
+      assert.ok(measured.send.top >= measured.input.top && measured.send.bottom < measured.input.bottom);
       assert.ok(measured.paddingLeft >= 4 && measured.paddingRight >= 4);
     }
     assert.deepEqual(f.requests, []);
     assert.deepEqual(f.browser.exceptions, []);
   });
 
-test("composer wrapper closes its right edge and corners independently of the compact Send button",
+test("composer keeps a complete border with one inline Send clear of text, scrollbars and resizing",
   { skip: !browserAvailable, timeout: 60_000 }, async t => {
     const f = await humanLoopUiFixture(t, {
       ...(process.env.QUESTIONS_PACKAGE_PUBLIC ? { publicDirectory: resolve(process.env.QUESTIONS_PACKAGE_PUBLIC) } : {}),
@@ -71,11 +73,12 @@ test("composer wrapper closes its right edge and corners independently of the co
       await f.evaluate(panel === "workspace"
         ? 'document.body.dataset.projectPanel="workspace"; document.body.dataset.projectDesign="false"; document.body.dataset.projectStacked="false"'
         : 'delete document.body.dataset.projectPanel');
-      for (const width of [848, 390]) for (const theme of ["light", "dark"]) {
+      for (const width of [848, 390, 320]) for (const theme of ["light", "dark"]) {
         await f.browser.call("Emulation.setDeviceMetricsOverride", { width, height: 620, deviceScaleFactor: 1, mobile: false });
         await f.evaluate(`document.body.dataset.theme=${JSON.stringify(theme)}`);
-        for (const draft of ["empty", "focused", "long"]) {
-          const text = draft === "long" ? "LongUnbrokenDraft".repeat(40) + "\nSecond line" : "";
+        for (const draft of ["empty", "focused", "long", "multiline"]) {
+          const text = draft === "long" ? "LongUnbrokenDraft".repeat(40) + "\nSecond line"
+            : draft === "multiline" ? "First line\nSecond line\nThird line\nFourth line" : "";
           await f.evaluate(`(() => {
             const input=document.querySelector("#message");
             input.value=${JSON.stringify(text)};
@@ -86,19 +89,26 @@ test("composer wrapper closes its right edge and corners independently of the co
           })()`);
           const geometry = await f.evaluate(`(() => {
             const wrapper=document.querySelector(".command-composer"), input=document.querySelector("#message"),
-              send=document.querySelector("#send"), style=getComputedStyle(wrapper), sendStyle=getComputedStyle(send);
+              send=document.querySelector("#send"), style=getComputedStyle(wrapper), sendStyle=getComputedStyle(send),
+              inputStyle=getComputedStyle(input), r=input.getBoundingClientRect(), s=send.getBoundingClientRect();
             return {wrapper:wrapper.getBoundingClientRect().toJSON(),input:input.getBoundingClientRect().toJSON(),
               send:send.getBoundingClientRect().toJSON(),rightWidth:style.borderRightWidth,rightStyle:style.borderRightStyle,
               leftWidth:style.borderLeftWidth,rightColor:style.borderRightColor,leftColor:style.borderLeftColor,
               topRight:style.borderTopRightRadius,topLeft:style.borderTopLeftRadius,
               bottomRight:style.borderBottomRightRadius,bottomLeft:style.borderBottomLeftRadius,
               paddingRight:parseFloat(style.paddingRight),paddingLeft:parseFloat(style.paddingLeft),
-              sendAlign:sendStyle.alignSelf,text:input.value,
+              text:input.value,textRight:r.left+input.clientLeft+input.clientWidth-parseFloat(inputStyle.paddingRight),
+              scrollbarLeft:r.left+input.clientLeft+input.clientWidth,
+              resizeClear:document.elementFromPoint(r.right-4,r.bottom-4)===input,
+              sendHit:send.contains(document.elementFromPoint(s.left+s.width/2,s.top+s.height/2)),
+              sendCount:document.querySelectorAll("#composer button[type=submit]").length,
+              sendInside:wrapper.contains(send),sendPosition:sendStyle.position,sendLabel:send.getAttribute("aria-label"),
+              sendBackground:sendStyle.backgroundColor,sendText:send.textContent,
               focus:document.activeElement===input,
               rightEdgeHit:document.elementFromPoint(wrapper.getBoundingClientRect().right-.5,
                 wrapper.getBoundingClientRect().top+20)===wrapper};
           })()`);
-          measurements.push({ panel, width, theme, draft, ...geometry });
+          measurements.push({ panel, width, theme, draft, expectedText: text, ...geometry });
           if (process.env.COMPOSER_FOCUS_EVIDENCE && width === 848 && draft === "empty") {
             await mkdir(process.env.COMPOSER_FOCUS_EVIDENCE, { recursive: true });
             const clip = await f.evaluate(`(() => {
@@ -123,12 +133,20 @@ test("composer wrapper closes its right edge and corners independently of the co
       assert.equal(measured.paddingRight, measured.paddingLeft, context);
       assert.ok(measured.input.right < measured.wrapper.right, context);
       assert.equal(measured.rightEdgeHit, true, context);
-      assert.ok(measured.wrapper.right <= measured.send.left && measured.send.right <= measured.width, context);
-      assert.ok(Math.abs(measured.send.bottom - measured.wrapper.bottom) <= 1, context);
-      assert.ok(measured.send.height < measured.wrapper.height, context + ": Send stays compact");
-      assert.equal(measured.sendAlign, "end", context);
+      assert.ok(measured.textRight < measured.send.left && measured.send.right < measured.scrollbarLeft, context);
+      assert.ok(measured.send.top >= measured.input.top && measured.send.bottom < measured.input.bottom, context);
+      assert.ok(measured.input.bottom - measured.send.bottom <= 8, context + ": Send stays at the lower edge");
+      assert.ok(measured.send.height >= 30 && measured.send.width >= 30, context);
+      assert.equal(measured.sendCount, 1, context);
+      assert.equal(measured.sendInside, true, context);
+      assert.equal(measured.sendPosition, "absolute", context);
+      assert.equal(measured.sendLabel, "Send message", context);
+      assert.equal(measured.sendText, "\u21b5", context);
+      assert.equal(measured.sendBackground, "rgba(0, 0, 0, 0)", context + ": no separate blue button");
+      assert.equal(measured.sendHit, true, context);
+      assert.equal(measured.resizeClear, true, context);
       assert.equal(measured.focus, measured.draft !== "empty", context);
-      assert.equal(measured.text, measured.draft === "long" ? "LongUnbrokenDraft".repeat(40) + "\nSecond line" : "", context);
+      assert.equal(measured.text, measured.expectedText, context);
     }
     assert.deepEqual(f.requests, []);
     assert.deepEqual(f.browser.exceptions, []);

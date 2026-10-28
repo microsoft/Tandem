@@ -182,6 +182,63 @@ test("chat Enter uses the existing submit envelope and modified Enter preserves 
   assert.deepEqual(browser.exceptions, []);
 });
 
+test("inline Send supports pointer, keyboard and touch without bypassing disabled, empty or IME guards",
+  { skip: !browserAvailable, timeout: 60_000 }, async t => {
+    const f = await fixture(t), { browser } = f;
+    f.current.accessRequests = [];
+    f.current.workflow.questionInteraction = null;
+    await browser.call("Page.navigate", { url: f.url });
+    await browser.waitFor('!document.querySelector("#send").disabled');
+    const key = async (key, code, windowsVirtualKeyCode, text) => {
+      await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key, code, windowsVirtualKeyCode, ...(text ? { text } : {}) });
+      await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key, code, windowsVirtualKeyCode });
+    };
+    await click(browser, "#send");
+    assert.equal(f.posts.length, 0, "An empty draft is never submitted.");
+    for (const [index, method] of ["pointer", "Enter", "Space", "touch"].entries()) {
+      const message = `Exact ${method} draft.\nSecond line.`;
+      await browser.evaluate(`document.querySelector("#message").value=${JSON.stringify(message)};
+        document.querySelector("#message").dispatchEvent(new Event("input",{bubbles:true}));
+        document.querySelector("#message").focus()`);
+      await key("Tab", "Tab", 9);
+      assert.equal(await browser.evaluate('document.activeElement.id'), "send");
+      assert.notEqual(await browser.evaluate('getComputedStyle(document.querySelector("#send")).outlineStyle'), "none");
+      if (method === "pointer") await click(browser, "#send");
+      else if (method === "touch") {
+        await browser.call("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+        await browser.call("Emulation.setDeviceMetricsOverride", { width: 390, height: 700, deviceScaleFactor: 1, mobile: true });
+        await browser.evaluate('document.querySelector("#composer").scrollIntoView({block:"end"})');
+        const point = await browser.evaluate(`(() => {
+          const r=document.querySelector("#send").getBoundingClientRect();
+          return {x:r.left+r.width/2,y:r.top+r.height/2,width:r.width,height:r.height};
+        })()`);
+        assert.ok(point.width >= 44 && point.height >= 44, "Coarse pointers get a touch-sized target.");
+        await browser.call("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: point.x, y: point.y }] });
+        await browser.call("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+        await browser.call("Emulation.setTouchEmulationEnabled", { enabled: false });
+      } else await key(method === "Space" ? " " : "Enter", method, method === "Space" ? 32 : 13, method === "Space" ? " " : "\r");
+      await browser.waitFor('document.querySelector("#message").value === "" && !document.querySelector("#send").disabled');
+      assert.equal(f.posts.length, index + 1, method + " submits once");
+      assert.equal(f.posts[index].path, "/api/requests");
+      assert.equal(f.posts[index].data.message, message);
+      assert.ok(f.posts[index].data.id);
+    }
+    assert.equal(new Set(f.posts.map(post => post.data.id)).size, 4);
+    await browser.evaluate('document.querySelector("#message").value="Retained draft"; document.querySelector("#message").focus()');
+    f.current.workflow.canSend = false; f.update();
+    await browser.waitFor('document.querySelector("#send").disabled');
+    await key("Enter", "Enter", 13, "\r");
+    await browser.evaluate('document.querySelector("#send").click()');
+    assert.equal(f.posts.length, 4);
+    f.current.workflow.canSend = true; f.update();
+    await browser.waitFor('!document.querySelector("#send").disabled');
+    await browser.call("Input.imeSetComposition", { text: "composing", selectionStart: 9, selectionEnd: 9 });
+    await key("Enter", "Enter", 13, "\r");
+    assert.equal(f.posts.length, 4, "IME confirmation is not Send.");
+    await browser.call("Input.insertText", { text: "composed" });
+    assert.deepEqual(browser.exceptions, []);
+  });
+
 async function capture(browser, name, geometry) {
   if (!process.env.HUMAN_SHELL_EVIDENCE) return;
   await mkdir(process.env.HUMAN_SHELL_EVIDENCE, { recursive: true });
@@ -957,12 +1014,15 @@ for (const responseKind of ["accepted", "wrong-identity", "wrong-status"]) test(
     f.current.workflow.questionInteraction = null;
     f.current.workflow.status = "ready";
     try {
+      await browser.call("Emulation.setDeviceMetricsOverride", { width: 390, height: 700, deviceScaleFactor: 1, mobile: false });
       await browser.call("Page.navigate", { url: f.url });
       await browser.waitFor("document.querySelector('#send') && !document.querySelector('#send').disabled");
       await browser.evaluate("document.querySelector('#message').value='Exact delayed request.'");
       await click(browser, "#send");
       await postStarted.promise; f.update(); await snapshotStarted.promise;
       await browser.waitFor("document.querySelector('#send').disabled");
+      await browser.evaluate('document.querySelector("#send").click()');
+      assert.equal(f.posts.length, 1, "Busy Send cannot duplicate the request.");
       assert.equal(await browser.evaluate("document.querySelector('#quick-requests summary').getAttribute('aria-disabled')"), "true");
       assert.equal(await browser.evaluate("Array.from(document.querySelectorAll('[data-quick-request]')).every(button=>button.disabled)"), true);
       await browser.evaluate("document.querySelector('[data-quick-request]').dispatchEvent(new MouseEvent('click', {bubbles:true}))");
@@ -979,6 +1039,16 @@ for (const responseKind of ["accepted", "wrong-identity", "wrong-status"]) test(
       } else {
         assert.equal(await browser.evaluate("document.querySelector('#message').value"), "Exact delayed request.");
         assert.equal(await browser.evaluate("document.querySelector('#send').textContent"), "Retry exact request");
+        const retry = await browser.evaluate(`(() => {
+          const input=document.querySelector("#message"),button=document.querySelector("#send"),
+            r=input.getBoundingClientRect(),b=button.getBoundingClientRect(),style=getComputedStyle(input);
+          return {left:b.left,right:b.right,bottom:b.bottom,inputRight:r.right,inputBottom:r.bottom,
+            textRight:r.left+input.clientLeft+input.clientWidth-parseFloat(style.paddingRight),
+            label:button.getAttribute("aria-label"),clipped:button.scrollWidth>button.clientWidth};
+        })()`);
+        assert.ok(retry.textRight < retry.left && retry.right < retry.inputRight && retry.bottom < retry.inputBottom);
+        assert.equal(retry.label, "Retry exact request");
+        assert.equal(retry.clipped, false, "The inline retry label remains readable.");
         assert.equal(await browser.evaluate("document.querySelector('#quick-requests summary').getAttribute('aria-disabled')"), "true");
         await browser.evaluate("document.querySelector('[data-quick-request]').dispatchEvent(new MouseEvent('click', {bubbles:true}))");
         assert.equal(await browser.evaluate("document.querySelector('#message').value"), "Exact delayed request.");
@@ -2454,8 +2524,8 @@ test("Stop stays below the composer at its left edge while Send remains inside a
     })()`);
     assert.ok(Math.abs(geometry.stop.left - geometry.input.left) <= 1, JSON.stringify(geometry));
     assert.ok(geometry.stop.top >= Math.max(geometry.input.bottom, geometry.send.bottom) + 5, JSON.stringify(geometry));
-    assert.ok(Math.abs(geometry.send.left - geometry.input.right) <= 1, JSON.stringify(geometry));
-    assert.ok(Math.abs(geometry.send.bottom - geometry.input.bottom) <= 1, JSON.stringify(geometry));
+    assert.ok(geometry.send.left > geometry.input.left && geometry.send.right < geometry.input.right, JSON.stringify(geometry));
+    assert.ok(geometry.send.top > geometry.input.top && geometry.send.bottom < geometry.input.bottom, JSON.stringify(geometry));
     assert.ok(geometry.stop.right <= geometry.send.right && geometry.scrollWidth <= width, JSON.stringify(geometry));
     assert.equal(geometry.text, "Stop after this step");
     assert.equal(geometry.type, "button");

@@ -132,9 +132,12 @@ specificity. `src\renderer\ui\layout.css` preserves intentional layout differenc
 such as navigation rows, compact graph toolbars, composer expansion, selected
 tree items, dialog sizes and context-dependent visibility. Keep such exceptions
 explicit and avoid new blanket overrides or `!important`.
-The native composer wrapper keeps a complete border and rounded corners in this
-layout layer: the compact, bottom-aligned Send button no longer supplies the
-wrapper's right edge. Its textarea retains the shared control's own focus border.
+The native composer wrapper keeps a complete border and rounded corners. Its
+single ghost Send button sits inside the textarea's lower-right corner as a
+return-arrow shortcut, retaining button semantics, focus, and the existing submit
+operation. Text padding reserves the control's width (including its explicit
+retry label), and an inset keeps the scrollbar and resize handle accessible.
+The textarea retains the shared control's own focus border and keyboard handling.
 
 Development retains its renderer, readable question cards, native dialogs and
 independent workflow. Generated UI DSL views, user-authored artifact contents,
