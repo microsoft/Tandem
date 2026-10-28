@@ -951,6 +951,14 @@ used to make a session durable.
 
 ### Continue after an admitted role failed
 
+Native shell task-registry `completed`/`failed` values describe lifecycle, not a
+concrete process exit code. A later exact owned shell exit notification or tool
+result supplies that outcome, including nonzero command failure, without making
+the private workflow `execution-unknown`. Recorded concrete exit codes and exact
+notification identities still cannot be contradicted. Cancellation and
+interruption evidence remain distinct and retained; neither process completion
+nor exit 0 substitutes for the role's declared result or proves tests passed.
+
 An admitted request held as `execution-unknown` is **not unused setup**. Use
 Development **Close runtime** or the host's normal **Stop**, then reopen the updated
 application in the same workspace. Same-ID recovery retains Conversation,

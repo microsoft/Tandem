@@ -30,7 +30,7 @@
     {
       "path": "stage2/manifest.json",
       "bytes": 25987,
-      "sha256": "961d7fd6230b74369bcd957fc3b5fa62efa80f4b1363a60a3e0c6d95d762862c"
+      "sha256": "c1b7809e9f65c65c28f03afd9c9f9ca28eb1e11b71196a305b8f489075ddef81"
     },
     {
       "path": "stage2/package.json",
@@ -694,8 +694,8 @@
     },
     {
       "path": "stage2/src/human-loop-native-shells.mjs",
-      "bytes": 38352,
-      "sha256": "9da583dda0e364e919dc75de02eef3dc9e03284c59d57c43a7cc65fce1e1476d"
+      "bytes": 39026,
+      "sha256": "5c210cfb343e6476628dc409644457888e50d23281a66af4f8f263d9905c9c21"
     },
     {
       "path": "stage2/src/human-loop-native-writer.mjs",
@@ -798,5 +798,5 @@
       "sha256": "92b92e76eb4ac3bee96c6bbdde06ed1f7d9c0088576a51db1276c567dbb207f8"
     }
   ],
-  "digest": "321eab1eee95fbadf17c67944be890f47928a050d1b0b73c0dce53067de3e995"
+  "digest": "55e437ec786ed1f553b0a4fa890ba67ed7eaeb05b6200ef26d08e87532531ad5"
 }

@@ -673,8 +673,8 @@
     },
     {
       "path": "src/human-loop-native-shells.mjs",
-      "bytes": 38352,
-      "sha256": "9da583dda0e364e919dc75de02eef3dc9e03284c59d57c43a7cc65fce1e1476d"
+      "bytes": 39026,
+      "sha256": "5c210cfb343e6476628dc409644457888e50d23281a66af4f8f263d9905c9c21"
     },
     {
       "path": "src/human-loop-native-writer.mjs",

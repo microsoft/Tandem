@@ -2442,6 +2442,109 @@ for (const invalid of ["interaction", "session", "reused-turn"]) test(`native wa
   } finally { finish.resolve(); }
 });
 
+for (const order of ["binding-first", "refresh-first", "exit-first"]) for (const exitCode of [0, 1])
+  test(`Implementer retains normal native exit ${exitCode} without redispatch or uncertainty (${order})`, { timeout: 90_000 }, async t => {
+    const tasks = [], launches = [], command = "node synthetic-server.mjs";
+    const output = exitCode === 0 ? "Synthetic server exited with code 0."
+      : "Error: synthetic fixture startup failed.\nSynthetic server exited with code 1.";
+    const f = await fixture(t, async (packet, session, runtime) => {
+      if (packet.binding.role === "router") return route(session, packet, "implement");
+      if (packet.binding.role === "implementer" && packet.binding.internalTaskId === "engine") {
+        await session.call("powershell", { command, shellId: "fixture-server", mode: "async" });
+        const sends = session.sends.length;
+        if (order === "refresh-first") {
+          tasks[0].status = "completed"; tasks[0].completedAt = new Date().toISOString();
+          await waitFor(async () => {
+            await runtime.commands.refreshTasks(packet.binding.id);
+            return (await runtime.commands.evidenceForCycle(packet.binding.cycleId))[0].status === "completed";
+          }, "registry lifecycle completion before native exit");
+        }
+        if (order !== "exit-first") {
+          const [entry] = await runtime.commands.evidenceForCycle(packet.binding.cycleId);
+          assert.equal(entry.status, "completed"); assert.equal(entry.exitCode, null);
+        }
+        // This separate failed probe cannot supply the background server's exit.
+        await session.call("powershell", { command: "node synthetic-probe.mjs", shellId: "fixture-probe", mode: "sync" });
+        session.emit("system.notification", { kind: { type: "shell_completed", shellId: "fixture-server", exitCode } },
+          { sessionId: null, agentId: null });
+        const notification = structuredClone(session.events.at(-1));
+        session.emit("assistant.message", { content: "", toolRequests: [{ toolCallId: "fixture-auto-read",
+          name: "read_powershell", arguments: { shellId: "fixture-server", delay: 0 } }] });
+        session.emit("tool.execution_start", { toolCallId: "fixture-auto-read", toolName: "read_powershell",
+          arguments: { shellId: "fixture-server", delay: 0 } });
+        session.emit("tool.execution_complete", { toolCallId: "fixture-auto-read", success: true,
+          result: { content: output } });
+        await runtime.transport.drain();
+        if (order === "exit-first") {
+          tasks[0].status = "completed"; tasks[0].completedAt = new Date().toISOString();
+          await runtime.commands.refreshTasks(packet.binding.id);
+        }
+        session.config.onEvent(notification);
+        session.config.onEvent(structuredClone(session.events.at(-1)));
+        await runtime.transport.drain();
+        const state = await runtime.state(), rows = (await runtime.commands.read()).nativeSessions;
+        assert.equal(state.uncertainty, null);
+        assert.equal(state.activeTask.binding.id, packet.binding.id);
+        assert.equal(state.activeTask.result, null, "Process exit is not role-result authority.");
+        assert.equal(rows.find(row => row.shellId === "fixture-server").exitCode, exitCode);
+        assert.equal(rows.find(row => row.shellId === "fixture-server").status, exitCode === 0 ? "completed" : "failed");
+        assert.equal(rows.find(row => row.shellId === "fixture-probe").exitCode, 1);
+        await session.call("read_powershell", { shellId: "fixture-server", delay: 0 });
+        session.emit("assistant.message", { content: `The server exited with code ${exitCode}; the probe independently exited with code 1.` });
+        await runtime.transport.drain();
+        assert.equal(session.sends.length, sends, "Native exit/output cannot retry or redispatch the Implementer.");
+      }
+      return ordinary(packet, session);
+    }, { permissionHandler: () => ({ kind: "approve-once" }), nativeShell: async args => {
+      launches.push(args.shellId);
+      if (args.shellId === "fixture-probe") return { contents: [{ type: "shell_exit", shellId: args.shellId, exitCode: 1 }] };
+      tasks.push({ type: "shell", id: args.shellId, command, startedAt: new Date().toISOString(),
+        status: order === "binding-first" ? "completed" : "running",
+        ...(order === "binding-first" ? { completedAt: new Date().toISOString() } : {}),
+        attachmentMode: "attached", executionMode: "background" });
+      return { contents: [] };
+    }, nativeControl: async () => ({ contents: [{ type: "shell_exit", shellId: "fixture-server", exitCode }] }) });
+    f.session.rpc.tasks = { list: async () => ({ tasks: structuredClone(tasks) }),
+      cancel: async () => assert.fail("An ordinary command exit must not cause cancellation.") };
+    await f.send("native-lifecycle", "Implement the agreed synthetic fixture.");
+    const readiness = await f.runtime.whenIdle();
+    assert.equal(readiness.status, "ready", JSON.stringify({ readiness, errors: f.errors.map(e => e.message) }));
+    assert.deepEqual(launches, ["fixture-server", "fixture-probe"]);
+    assert.deepEqual(f.errors, []);
+    const state = await f.runtime.state();
+    assert.equal(state.uncertainty, null);
+    assert.equal(state.executions.filter(e => e.binding.role === "implementer" && e.binding.internalTaskId === "engine").length, 1);
+    const outputEvents = f.session.events.filter(event => event.type === "tool.execution_complete"
+      && event.data.toolCallId === "fixture-auto-read");
+    assert.equal(outputEvents.length, 1, "The synthetic native tool result is retained once, not fabricated or resent by the host.");
+    assert.equal(outputEvents[0].data.result.content, output);
+    await f.runtime.transport.inspectIdle();
+    assert.ok((await f.runtime.conversation()).some(message => message.role === "implementer"
+      && message.content.includes(`server exited with code ${exitCode}; the probe independently exited with code 1`)));
+  });
+
+test("a contradictory concrete native exit still makes private execution unknown without retry", { timeout: 60_000 }, async t => {
+  let launches = 0;
+  const f = await fixture(t, async (packet, session, runtime) => {
+    if (packet.binding.role === "router") return route(session, packet, "answer");
+    await session.call("powershell", { command: "node synthetic-finite.mjs", shellId: "concrete", mode: "sync" });
+    session.emit("system.notification", { kind: { type: "shell_completed", shellId: "concrete", exitCode: 0 } });
+    await assert.rejects(runtime.transport.drain(), /Native exit notification conflicts/);
+  }, { permissionHandler: () => ({ kind: "approve-once" }), nativeShell: async () => {
+    launches++;
+    return { contents: [{ type: "shell_exit", shellId: "concrete", exitCode: 1 }] };
+  } });
+  await f.send("conflicting-exit", "Inspect the synthetic command result.");
+  const readiness = await f.runtime.whenIdle(), state = await f.runtime.state();
+  assert.equal(readiness.status, "execution-unknown");
+  assert.match(state.uncertainty.reason, /Native exit notification conflicts/);
+  assert.equal(state.activeTask.result, null);
+  assert.equal(launches, 1);
+  assert.equal(f.session.sends.length, 2, "Only the requested Router and Agent turns were sent.");
+  assert.equal((await f.runtime.commands.read()).nativeSessions[0].exitCode, 1);
+  assert.deepEqual(f.errors, []);
+});
+
 test("automatic output collection settles its owned shell without model admission or false uncertainty", { timeout: 90_000 }, async t => {
   const collecting = Promise.withResolvers(), finish = Promise.withResolvers();
   let grants = 0;
