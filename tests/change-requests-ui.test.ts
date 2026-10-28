@@ -25,6 +25,118 @@ function request(): ChangeRequest {
         } };
 }
 
+test("the review pane abandons the entire saved review only after confirmation with exact bindings", async t => {
+    const h = await reactHarness(t), initial = state("prototype");
+    const change: ChangeRequest = { ...request(), status: "completed", completedAt: initial.updatedAt,
+        restorePoint: { requestId: "change", generation: initial.generation, digest: "b".repeat(64) } };
+    initial.changeRequests = [change];
+    h.render(initial); await h.flush();
+    assert.ok(h.get("stage-input-review").contains(h.get("abandon-change-review")));
+    assert.match(h.get("stage-input-review").textContent!, /until Finish Prototype/);
+    await h.click("abandon-change-review");
+    const confirmation = h.document.querySelector('[role="alertdialog"]')!;
+    assert.match(confirmation.textContent!, /before the original request/);
+    assert.match(confirmation.textContent!, /already applied/);
+    assert.equal(h.requests.filter(item => item.options.method === "POST").length, 0);
+    await h.confirm(false);
+    assert.equal(h.requests.filter(item => item.options.method === "POST").length, 0);
+    const restored = { ...initial, revision: initial.revision + 1, changeRequests: [{ ...change, status: "cancelled" as const,
+        abandonment: { abandonedAt: initial.updatedAt, snapshotPath: ".tandem\\retained-review.json" } }] };
+    h.setFetch(async () => response(restored));
+    await h.click("abandon-change-review"); await h.confirm();
+    const sent = h.requests.find(item => item.path === "/api/change-requests/abandon")!;
+    assert.deepEqual(sent.body, { requestId: change.id, generation: initial.generation, expectedRevision: initial.revision,
+        restorePointDigest: change.restorePoint!.digest, confirm: true });
+    assert.equal(h.document.getElementById("abandon-change-review"), null);
+    assert.equal(h.store.getSnapshot().state.lifecycle.currentStage, "prototype");
+    await h.click("toggle-change-details");
+    assert.match(h.get("change-request-details").textContent!, /Changes abandoned/);
+    assert.equal(h.document.getElementById("abandon-change-dialog"), null);
+    assert.deepEqual(h.errors, []);
+});
+
+test("abandonment is disabled during owned work and refuses changed confirmation without posting", async t => {
+    const h = await reactHarness(t), initial = state("prototype");
+    const change = { ...request(), restorePoint: { requestId: "change", generation: initial.generation, digest: "b".repeat(64) } };
+    initial.changeRequests = [change];
+    initial.processing = { action: "assess-change", status: "running" };
+    h.render(initial); await h.flush();
+    assert.equal(h.get<HTMLButtonElement>("abandon-change-review").disabled, true);
+    const quiet = { ...initial, revision: initial.revision + 1, processing: null };
+    h.render(quiet); await h.flush();
+    await h.click("abandon-change-review");
+    h.render({ ...quiet, revision: quiet.revision + 1 }); await h.flush();
+    await h.confirm();
+    assert.equal(h.requests.filter(item => item.options.method === "POST").length, 0);
+    assert.match(h.get("stage-input-review").textContent!, /review changed while confirmation was open/i);
+    assert.deepEqual(h.errors, []);
+});
+
+test("abandonment failures leave the review open and committed history has no abandon action", async t => {
+    const h = await reactHarness(t), initial = state("prototype");
+    const change = { ...request(), restorePoint: { requestId: "change", generation: initial.generation, digest: "b".repeat(64) } };
+    initial.changeRequests = [change];
+    h.render(initial); await h.flush();
+    await h.click("toggle-change-details");
+    assert.equal(h.document.getElementById("cancel-change"), null, "The restore action is distinct from cancelling remaining work.");
+    h.setFetch(async () => response({ error: "The original prototype source files changed outside this review." }, 409));
+    await h.click("abandon-change-dialog"); await h.confirm();
+    assert.match(h.get("change-request-details").textContent!, /source files changed outside this review/);
+    assert.equal(h.store.getSnapshot().state.changeRequests![0].status, "proposed");
+    h.render({ ...initial, revision: initial.revision + 1, changeRequests: [
+        { ...change, status: "cancelled", replacedByRequestId: "replacement" },
+        { ...change, id: "replacement", clientRequestId: "replacement-client", replacesRequestId: change.id },
+    ] }); await h.flush();
+    assert.doesNotMatch(h.get("change-request-details").textContent!, /source files changed outside this review/);
+    await h.click("close-change-details");
+    h.render({ ...initial, revision: initial.revision + 2, changeRequests: [{ ...change, status: "completed",
+        committedAt: initial.updatedAt, completedAt: initial.updatedAt }] }); await h.flush();
+    assert.equal(h.document.getElementById("abandon-change-review"), null);
+    await h.click("toggle-change-details");
+    assert.equal(h.document.getElementById("abandon-change-dialog"), null);
+    assert.deepEqual(h.errors, []);
+});
+
+test("Abandon from a pinned draft targets the whole parent review and returns to restored work", async t => {
+    const h = await reactHarness(t), initial = state("prototype");
+    const change = { ...request(), restorePoint: { requestId: "change", generation: initial.generation, digest: "b".repeat(64) } };
+    initial.changeRequests = [change];
+    const reference: StageReviewReference = { version: 1, id: "review-22222222-2222-2222-2222-222222222222",
+        stage: "requirements", generation: initial.generation, createdAt: initial.updatedAt, appliedAt: null, discardedAt: null,
+        changeRequestId: change.id };
+    const draft = { ...createStageReview(initial, reference), revision: 1, provider: initial.provider,
+        stageReviewStatus: { conflict: "", blocker: null, changed: true, currentStage: "prototype",
+            appliedAt: null, discardedAt: null } };
+    const parent = { ...initial, revision: initial.revision + 1, stageReviews: [reference],
+        changeRequests: [{ ...change, status: "reviewing" as const, reviewId: reference.id, remainingStages: ["requirements", "prototype"] }] };
+    h.setFetch(async (path, options) => {
+        if (path === "/api/reviews/open") return response({ draft });
+        if (path.endsWith("/baseline")) return response({ state: initial, document: null });
+        if (path.startsWith(`/api/reviews/${reference.id}/`)) return response(draft);
+        if (path === "/api/change-requests/abandon") {
+            const body = JSON.parse(String(options.body));
+            assert.equal(body.expectedRevision, parent.revision);
+            assert.equal(body.requestId, change.id);
+            return response({ ...initial, revision: parent.revision + 1,
+                stageReviews: [{ ...reference, discardedAt: initial.updatedAt }],
+                changeRequests: [{ ...change, status: "cancelled", abandonment: {
+                    abandonedAt: initial.updatedAt, snapshotPath: ".tandem\\retained-review.json",
+                } }] });
+        }
+        assert.equal(path, "/api/state");
+        return response(parent);
+    });
+    h.render(initial); await h.flush();
+    await h.click("toggle-change-details"); await h.click("approve-change");
+    assert.ok(h.get("stage-input-review").contains(h.get("abandon-change-review")));
+    await h.click("abandon-change-review"); await h.confirm();
+    assert.equal(h.requests.filter(item => item.path === "/api/change-requests/abandon").length, 1);
+    assert.equal(h.document.querySelector(".stage-review-workspace"), null);
+    assert.equal(h.store.getSnapshot().state.lifecycle.currentStage, "prototype");
+    assert.equal(h.get("live-preview-workspace-tab").getAttribute("aria-selected"), "true");
+    assert.deepEqual(h.errors, []);
+});
+
 test("review titles share a compact stage path while the impact dialog retains detailed reasons", async t => {
     const h = await reactHarness(t), initial = state("prototype");
     const change: ChangeRequest = { ...request(), status: "reviewing", remainingStages: ["prototype"],
@@ -550,6 +662,7 @@ test("change details open in a bounded dialog without moving stage navigation or
         await browser.waitFor('!document.querySelector("#change-request-details") && document.activeElement.id === "continue-pending-review"');
     }
     const cleanReview: ChangeRequest = { ...change, status: "reviewing", message: "Create a page of about us.",
+        restorePoint: { requestId: change.id, generation: initial.generation, digest: "b".repeat(64) },
         remainingStages: ["requirements", "sketch", "prototype"], assessment: { ...change.assessment!,
             summary: "Add an About Us page with navigation from the menu and a way back.",
             startStage: "requirements", stages: [
@@ -576,11 +689,15 @@ test("change details open in a bounded dialog without moving stage navigation or
             const footer = document.querySelector(".review-dialog-footer").getBoundingClientRect();
             const primary = document.querySelector("#continue-change-review");
             const rect = primary.getBoundingClientRect(), hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+            const abandon = document.querySelector("#abandon-change-dialog"), abandonRect = abandon.getBoundingClientRect();
+            const abandonHit = document.elementFromPoint(abandonRect.left + abandonRect.width / 2, abandonRect.top + abandonRect.height / 2);
             return { fits: dialog.left >= 0 && dialog.right <= innerWidth && dialog.top >= 0 && dialog.bottom <= innerHeight,
                 footerInside: footer.top >= dialog.top && footer.bottom <= dialog.bottom + 1,
-                actionable: !primary.disabled && (hit === primary || primary.contains(hit)) };
+                actionable: !primary.disabled && (hit === primary || primary.contains(hit)),
+                abandonActionable: !abandon.disabled && abandonRect.left >= 0 && abandonRect.right <= innerWidth
+                    && (abandonHit === abandon || abandon.contains(abandonHit)) };
         })()`);
-        assert.deepEqual(footer, { fits: true, footerInside: true, actionable: true });
+        assert.deepEqual(footer, { fits: true, footerInside: true, actionable: true, abandonActionable: true });
         if (process.env.TANDEM_UI_EVIDENCE) await writeFile(
             join(process.env.TANDEM_UI_EVIDENCE, `single-review-${width}-${mode}.png`), await browser.screenshot());
         await browser.evaluate('document.querySelector("#close-change-details").click()');

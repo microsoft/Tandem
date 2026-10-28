@@ -38,6 +38,14 @@ export function currentChangeReview(state: Pick<TandemState, "changeRequests" | 
     return undefined;
 }
 
+export function changeReviewToAbandon(state: TandemState): ChangeRequest | undefined {
+    if (state.stageReview || state.lifecycle.currentStage === "development" || state.lifecycle.completedStages.includes("prototype")) return undefined;
+    const request = currentChangeReview(state) ?? state.changeRequests?.findLast(item => isDiscoveryChangeRequest(item)
+        && !item.abandonment && !item.replacedByRequestId && item.status !== "deferred");
+    return request?.restorePoint?.generation === state.generation && !request.abandonment && !request.committedAt && !request.developmentAdmission
+        ? request : undefined;
+}
+
 export function changeReviewWaitsForPrototype(state: TandemState): boolean {
     return currentChangeReview(state)?.status === "queued" && state.lifecycle.currentStage === "prototype"
         && Boolean(state.prototypeFlow?.activeCheckpointId || state.prototypeFlow?.pendingCheckpointId || state.prototypeReview.question

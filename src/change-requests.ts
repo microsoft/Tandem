@@ -65,6 +65,9 @@ export interface ChangeRequest {
     workStarted: LifecycleStageId[];
     affectedDecisionIds: string[];
     snapshotPath: string | null;
+    restorePoint?: { requestId: string; generation: string; digest: string } | null;
+    abandonment?: { abandonedAt: string; snapshotPath: string } | null;
+    committedAt?: string | null;
     completedAt: string | null;
     developmentAdmission: "sending" | "admitted" | "uncertain" | null;
     developmentRequest: { id: string; message: string; receivedAt: string } | null;
@@ -112,6 +115,9 @@ const changeRequestSchema = object({
     error: text(2000, 0), clarifications: array(object({ question: text(2000), answer: text() }), 20),
     remainingStages: array(stageSchema, 5), workStarted: array(stageSchema, 5), affectedDecisionIds: strings(200, 120),
     snapshotPath: nullable(text(2000)), completedAt: nullable(text(100)),
+    restorePoint: nullable(object({ requestId: text(120), generation: text(200), digest: text(64) })),
+    abandonment: nullable(object({ abandonedAt: text(100), snapshotPath: text(2000) })),
+    committedAt: nullable(text(100)),
     developmentAdmission: nullable({ type: "string", enum: ["sending", "admitted", "uncertain"] }),
     developmentRequest: nullable(object({ id: text(120), message: text(4 * 1024 * 1024), receivedAt: text(100) })),
 });
@@ -120,7 +126,7 @@ export function readChangeRequests(value: unknown): ChangeRequest[] {
     if (Array.isArray(value)) value = value.map(item => item && typeof item === "object" && !Array.isArray(item)
         ? { reviewId: null, sketchContext: null, ...item } : item);
     validateRequirementsValue(Array.isArray(value) ? value.map(item => ({
-        replacesRequestId: null, replacedByRequestId: null, ...item,
+        replacesRequestId: null, replacedByRequestId: null, restorePoint: null, abandonment: null, committedAt: null, ...item,
     })) : value, array(changeRequestSchema, 200), "change requests");
     const requests = value as ChangeRequest[];
     if (new Set(requests.map(request => request.id)).size !== requests.length ||
@@ -150,6 +156,20 @@ export function readChangeRequests(value: unknown): ChangeRequest[] {
         }
         if (request.replacedByRequestId && !requests.some(item => item.id === request.replacedByRequestId && item.replacesRequestId === request.id)) {
             throw new Error("The replaced review has no matching feedback request.");
+        }
+        if (request.restorePoint) {
+            const root = requests.find(item => item.id === request.restorePoint!.requestId);
+            if (!root || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/.test(root.id) || !/^[a-f0-9]{64}$/.test(request.restorePoint.digest)
+                || root.restorePoint?.requestId !== root.id || root.restorePoint.digest !== request.restorePoint.digest
+                || root.restorePoint.generation !== request.restorePoint.generation
+                || root !== request && !previousChangeReviews({ changeRequests: requests }, request).includes(root)) {
+                throw new Error("The saved change restore point does not match its original request.");
+            }
+        }
+        if (request.abandonment && (!request.restorePoint || request.status !== "cancelled" || request.committedAt
+            || !Number.isFinite(Date.parse(request.abandonment.abandonedAt)))
+            || request.committedAt && (!request.restorePoint || !Number.isFinite(Date.parse(request.committedAt)))) {
+            throw new Error("The saved change review outcome is invalid. Its history was preserved.");
         }
         if (request.visualSelection) readVisualSelection(request.visualSelection);
         if (Boolean(request.developmentAdmission) !== Boolean(request.developmentRequest) ||
@@ -257,14 +277,73 @@ export function prototypeNeedsChangeUpdate(state: TandemState): boolean {
     if (pendingPrototypeChange(state)) return true;
     const displayed = state.prototypeFlow?.checkpoints.find(item => item.id === state.prototypeFlow?.displayedCheckpointId);
     const reviewedInputs = Boolean(state.lifecycle.reviewId || state.changeRequests?.some(request => request.snapshotPath && request.assessment?.requirements
-        && !request.reviewId && ["active", "completed", "cancelled"].includes(request.status))
-        || state.stageReviews?.some(review => review.appliedAt && ["prepare", "requirements", "sketch"].includes(review.stage)));
+        && !request.reviewId && !request.abandonment && ["active", "completed", "cancelled"].includes(request.status))
+        || state.stageReviews?.some(review => review.appliedAt && ["prepare", "requirements", "sketch"].includes(review.stage)
+            && !state.changeRequests?.some(request => request.id === review.changeRequestId && request.abandonment)));
     if (!displayed) return Boolean(state.previewUrl && reviewedInputs);
     const requirementsChanged = displayed.requirementsDigest
         ? displayed.requirementsDigest !== requirementsInputDigest(state) : reviewedInputs;
     const sketchesChanged = !state.lifecycle.skippedStages.some(item => item.stageId === "sketch")
         && (displayed.sketchRevisionId ?? null) !== (state.sketch.current?.id ?? null);
     return requirementsChanged || sketchesChanged;
+}
+
+export function restoreChangeReview(state: TandemState, baseline: TandemState, request: ChangeRequest,
+    abandonment: NonNullable<ChangeRequest["abandonment"]>): TandemState {
+    const rootId = request.restorePoint?.requestId;
+    if (!rootId || baseline.prototypeId !== state.prototypeId || baseline.generation !== state.generation || baseline.stageReview) {
+        throw new Error("The pre-request restore point belongs to another effort.");
+    }
+    const requests = state.changeRequests ?? [];
+    const related = new Set(requests.filter(item => item.restorePoint?.requestId === rootId).map(item => item.id));
+    const rootIndex = requests.findIndex(item => item.id === rootId);
+    if (rootIndex < 0 || requests.slice(rootIndex).some(item => !related.has(item.id) && !item.abandonment)) {
+        throw new Error("A later independent request exists. Abandon its review first; no work was changed.");
+    }
+    if (requests.some(item => related.has(item.id) && (item.committedAt || item.developmentAdmission))) {
+        throw new Error("This review was already committed or sent to Development and cannot be abandoned.");
+    }
+    if (state.stageReviews?.some(review => review.appliedAt && !related.has(review.changeRequestId ?? "")
+        && !requests.some(item => item.id === review.changeRequestId && item.abandonment)
+        && !baseline.stageReviews?.some(previous => previous.id === review.id && previous.appliedAt === review.appliedAt))) {
+        throw new Error("An independent draft was applied after this request. Restoring it would overwrite unrelated work.");
+    }
+    if (baseline.prototypeFlow?.pendingCheckpointId
+        && baseline.prototypeFlow.pendingCheckpointId !== state.prototypeFlow?.pendingCheckpointId
+        || baseline.prototypeReview.revisions?.some((previous: { id: string; status: string }) =>
+            !["applied", "dismissed"].includes(previous.status) && state.prototypeReview.revisions.some(
+                (item: { id: string; status: string }) => item.id === previous.id && item.status !== previous.status))) {
+        throw new Error("Earlier prototype work changed after this request. Restoring it would overwrite unrelated work.");
+    }
+    const retainedOutputs = [...state.lifecycle.history, ...state.lifecycle.outputs]
+        .filter(output => !baseline.lifecycle.outputs.some(original => original.path === output.path));
+    const history = [...baseline.lifecycle.history, ...retainedOutputs]
+        .filter((output, index, entries) => entries.findIndex(item => item.path === output.path) === index);
+    const baselineRevisions: Array<{ id: string }> = baseline.prototypeReview.revisions ?? [];
+    const revisions: Array<{ id: string }> = state.prototypeReview.revisions ?? [];
+    return {
+        ...state,
+        stage: baseline.stage, phase: baseline.phase, lifecycle: { ...structuredClone(baseline.lifecycle), history },
+        goal: baseline.goal, preparation: structuredClone(baseline.preparation),
+        prototypeApproach: structuredClone(baseline.prototypeApproach),
+        requirements: structuredClone(baseline.requirements), decisionGraph: structuredClone(baseline.decisionGraph),
+        question: structuredClone(baseline.question), confirmed: [...baseline.confirmed],
+        assumed: [...baseline.assumed], deferred: [...baseline.deferred], artifacts: structuredClone(baseline.artifacts),
+        sketch: structuredClone(baseline.sketch), prototypeFlow: structuredClone(baseline.prototypeFlow),
+        previewUrl: baseline.previewUrl, previewStatus: baseline.previewStatus,
+        prototypeReview: { ...structuredClone(baseline.prototypeReview), revisions: [
+            ...structuredClone(baselineRevisions),
+            ...revisions.filter(item => !baselineRevisions.some(previous => previous.id === item.id))
+                .map(item => ({ ...structuredClone(item), status: "dismissed", completedAt: abandonment.abandonedAt })),
+        ] },
+        processing: structuredClone(baseline.processing), suggestionProcessing: structuredClone(baseline.suggestionProcessing),
+        stageReviews: state.stageReviews?.map(review => related.has(review.changeRequestId ?? "")
+            && !review.appliedAt && !review.discardedAt ? { ...review, discardedAt: abandonment.abandonedAt } : review),
+        changeRequests: requests.map(item => related.has(item.id)
+            ? { ...item, status: "cancelled", remainingStages: [], error: "", completedAt: abandonment.abandonedAt, abandonment } : item),
+        status: "Changes abandoned. The work from before the original request is restored. Review history and saved files are retained.",
+        updatedAt: abandonment.abandonedAt,
+    };
 }
 
 export function changeBaselineDigest(state: TandemState, development: unknown = null): string {

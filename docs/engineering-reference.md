@@ -397,6 +397,26 @@ baseline snapshot before applying a sparse Requirements patch and marking only
 the affected stage outputs for review. Stable decision IDs, independent answers,
 unaffected screens, source checkpoints and receipt history remain intact.
 
+New discovery requests persist an immutable, digest-bound `before-request.json`
+under their operational change directory before admission. Re-evaluation shares
+the original request's restore point. The user-only `changes.abandon` operation
+binds the effort generation, current revision, request and restore-point digest.
+It restores the original accepted content, lifecycle and preview, including
+intermediate applied drafts, until final Prototype completion records
+`committedAt`. Applying an individual draft or showing a prototype version does
+not commit the whole review.
+
+Abandonment uses the existing Development admission fence and effort transaction,
+requires quiet parent and draft workers, and verifies the retained snapshot,
+design source and original prototype fingerprint. A busy original baseline,
+subsequently applied independent draft, later independent request or changed
+original source is not safe to roll back. Missing legacy restore points are not
+reconstructed from approval-time snapshots. Before the atomic state update, the
+complete abandoned state is archived and linked from the request's abandonment
+receipt. Request, draft, lifecycle-output and worker history remain retained;
+abandoned reviews no longer contribute freshness gates. No Git operation,
+source overwrite, worker cancellation or automatic replay is part of restoration.
+
 Scoped lifecycle records add `changeRequestId` to the existing version-3 format
 so completed stages need not be a contiguous prefix. Earlier version-3 records
 retain their original normalization. Updated prototype checkpoints also bind the

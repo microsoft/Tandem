@@ -3,7 +3,7 @@ import {
     objectSchema, revisionSchema, stringSchema,
     type ApplicationActor, type ApplicationBlocker, type ApplicationInput, type ApplicationOperation, type ApplicationSchema,
 } from "../development/tandem/runtime-src/application-interface.js";
-import { changeReviewBlocksEditing } from "./change-request-policy.js";
+import { changeReviewBlocksEditing, changeReviewToAbandon } from "./change-request-policy.js";
 import { sketchChangeContextSchema } from "./change-requests.js";
 import { sketchDocumentSchema } from "./sketch.js";
 import { visualSelectionSchema } from "./visual-directions.js";
@@ -96,6 +96,10 @@ export const upstreamOperations: readonly UpstreamOperation[] = [
         objectSchema({ requestId: idSchema, decision: enumSchema("approve", "cancel", "retry", "clarify", "refine"),
             analysisId: idSchema, baselineDigest: hash, answer: stringSchema(4000, 0) }, ["requestId", "decision"]),
         { draft: true, humanActions: ["approve", "clarify", "refine"], retry: "identity" }),
+    operation("changes.abandon", "POST", "/api/change-requests/abandon", "Restore the whole review to its original pre-request state before Finish Prototype, retaining history.",
+        objectSchema({ ...expected, requestId: idSchema, restorePointDigest: hash, confirm: { const: true } },
+            ["generation", "expectedRevision", "requestId", "restorePointDigest", "confirm"]),
+        { authority: "user", retry: "identity" }),
     operation("changes.continue-development", "POST", "/api/change-requests/development", "Send an explicitly approved completed discovery change to its native owner.",
         objectSchema({ requestId: idSchema }, ["requestId"]), { retry: "identity", bindsState: false }),
     operation("reviews.open", "POST", "/api/reviews/open", "Create or resume a separate earlier-stage draft without applying its changes.",
@@ -197,7 +201,11 @@ export function upstreamAvailability(operation: UpstreamOperation, state: Applic
             if (review.blocker) block("review_not_ready", review.blocker);
             if (!review.changed) block("review_unchanged", "No saved changes to apply.");
         }
-        if (["designs.edit", "prototype.start", "stages.complete", "reviews.apply", "reviews.discard"].includes(operation.id) && hasActiveWork(state)) {
+        if (operation.id === "changes.abandon" && (!changeReviewToAbandon(state)
+            || input?.requestId !== undefined && changeReviewToAbandon(state)?.id !== input.requestId)) {
+            block("change_restore_unavailable", "Only the latest review with a saved pre-request restore point can be abandoned before Finish Prototype.");
+        }
+        if (["designs.edit", "prototype.start", "stages.complete", "reviews.apply", "reviews.discard", "changes.abandon"].includes(operation.id) && hasActiveWork(state)) {
             block("processing_in_progress", "Wait for owned work to finish before changing this work.");
         }
     }

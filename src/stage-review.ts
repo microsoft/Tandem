@@ -92,6 +92,9 @@ export function stageReviewConflict(parent: TandemState, draft: TandemState): st
     if (!review || review.parentId !== parent.prototypeId) return "This draft belongs to another project.";
     const reference = parent.stageReviews?.find(item => item.id === draft.prototypeId && item.stage === review.stage);
     if (!reference) return "This draft is no longer linked to the current effort.";
+    if (parent.changeRequests?.some(request => request.id === reference.changeRequestId && request.abandonment)) {
+        return "This review's changes were abandoned. The pre-request work is restored; this draft is retained as history.";
+    }
     if (reference.appliedAt) return "These draft changes have already been applied.";
     if (reference.discardedAt) return "This draft has been discarded.";
     if (parent.effortReset || parent.generation !== draft.generation || reference.generation !== parent.generation) {
