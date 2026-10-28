@@ -13,6 +13,8 @@ test("original brief belongs to Preparation, not duplicated global sidebar prose
     assert.doesNotMatch(h.get("requirements-pane").textContent!, /Project overview|Brief and project details/);
     await browse(h, "prepare");
     assert.equal(h.get("goal").textContent, value.goal);
+    assert.equal(h.get("goal").closest("section")!.getAttribute("aria-labelledby"), "preparation-brief-title");
+    assert.ok(h.get("goal").closest(".preparation-brief"));
     assert.equal(h.document.querySelector("#start-goal"), null);
     assert.equal(h.requests.length, 0);
 });
@@ -31,7 +33,7 @@ test("root branding embeds the existing Tandem bicycle artwork with accessible n
 test("compact workflow exposes progress and labeled stage icons without changing navigation", async (t) => {
     const value = state("prototype");
     value.lifecycle.completedStages = value.lifecycle.completedStages.filter((id: string) => id !== "sketch");
-    value.lifecycle.skippedStages = [{ stageId: "sketch", reason: "Existing drawings were supplied." }];
+    value.lifecycle.skippedStages = [{ stageId: "sketch", reason: "Existing designs were supplied." }];
     const h = await setup(t, value);
     assert.equal(h.get("project-contents").querySelectorAll("[data-stage-id]").length, 5);
     assert.equal(h.document.querySelectorAll('[data-stage-id="design"], [data-stage-id="plan"], [data-stage-id="implement"], [data-stage-id="test"]').length, 0);
@@ -41,7 +43,7 @@ test("compact workflow exposes progress and labeled stage icons without changing
     }
     const skipped = h.document.querySelector<HTMLButtonElement>('[data-stage-id="sketch"]')!;
     assert.equal(skipped.disabled, true);
-    assert.match(skipped.getAttribute("aria-label")!, /not applicable.*Existing drawings/);
+    assert.match(skipped.getAttribute("aria-label")!, /not applicable.*Existing designs/);
     await browse(h, "requirements");
     assert.equal(hidden(h, "design-tree-panel"), false);
     assert.equal(current(h).lifecycle.currentStage, "prototype");
@@ -113,18 +115,23 @@ test("header omits maintenance while supported reload belongs to advanced Projec
         reloadReceipt: { status: "success", message: "Reloaded latest extension." } };
     const h = await setup(t, value);
     assert.equal(h.document.querySelector(".topbar #reload-extension, .topbar #reset-effort"), null);
-    assert.ok(h.get("preparation-panel").contains(h.get("reset-effort")));
+    await browse(h, "prepare");
+    assert.ok(h.document.querySelector(".previewbar #reset-effort"));
+    assert.equal(h.get("preparation-panel").contains(h.get("reset-effort")), false);
+    assert.doesNotMatch(text(h, "preparation-panel"), /Advanced Preparation actions/);
     assert.equal(text(h, "reset-effort"), "Restart Preparation...");
-    await h.click("project-settings");
-    assert.equal(text(h, "reload-status"), "");
-    assert.equal(text(h, "reload-extension"), "Reload Tandem extension");
-    assert.equal(disabled(h, "reload-extension"), false);
-    assert.ok(h.get("root-maintenance").contains(h.get("reload-extension")));
+    const settings = await h.projectSettings();
+    assert.equal(settings.reload().message, "");
+    assert.equal(settings.reload().label, "Reload Tandem extension");
+    assert.equal(settings.reload().disabled, false);
     const actions = h.document.querySelector(".topbar-actions")!;
     assert.equal(actions.lastElementChild!.className, "build-version");
     h.render({ ...value, revision: 2, reloadReceipt: { status: "error", message: "Could not reload extension." } });
-    assert.equal(text(h, "reload-status"), "Could not reload extension.");
-    assert.equal(h.get("reload-status").dataset.status, "error");
+    await h.flush();
+    assert.equal(settings.reload().message, "Could not reload extension.");
+    assert.equal(settings.reload().error, true);
+    await browse(h, "requirements");
+    assert.equal(h.document.querySelector(".previewbar #reset-effort"), null, "Restart belongs only to the Preparation tab header.");
 });
 
 test("React panels have unique IDs and Radix navigation includes direct Development", async (t) => {
@@ -134,7 +141,9 @@ test("React panels have unique IDs and Radix navigation includes direct Developm
     for (const tab of h.document.querySelectorAll('[role="tab"]')) {
         const panel = h.document.getElementById(tab.getAttribute("aria-controls")!);
         assert.ok(panel, "Each tab controls an existing panel");
-        assert.equal(panel!.getAttribute("aria-labelledby"), tab.id);
+        const label = h.document.getElementById(panel!.getAttribute("aria-labelledby")!);
+        assert.equal(label?.getAttribute("role"), "tab");
+        assert.equal(label?.getAttribute("aria-controls"), panel!.id, "Each panel is labelled by one of its navigation tabs");
     }
     h.get("live-preview-tab").focus();
     await h.fire(h.get("live-preview-tab"), "keydown", { key: "ArrowRight" });
@@ -156,6 +165,99 @@ test("React panels have unique IDs and Radix navigation includes direct Developm
     assert.deepEqual(h.requests, [], "Navigation does not activate Development or submit work.");
 });
 
+test("horizontal stage tabs retain drafts and current-stage identity without submitting work", async t => {
+    const value = state(), h = await setup(t, value);
+    const tabs = h.get("stage-workspace-tabs");
+    assert.deepEqual(Array.from(tabs.querySelectorAll('[role="tab"]'), tab => tab.textContent),
+        ["Preparation", "Requirements", "Designs", "Prototype"]);
+    assert.equal(tabs.getAttribute("aria-label"), "Pre-development stages");
+    assert.equal(h.document.querySelector("#development-workspace-tab"), null);
+    assert.equal(disabled(h, "sketch-workspace-tab"), true);
+    assert.equal(disabled(h, "live-preview-workspace-tab"), true);
+    assert.equal(h.get("design-tree-workspace-tab").getAttribute("aria-selected"), "true");
+    const panel = h.get("design-tree-panel"), input = field(h, "usage-input");
+    await h.input("usage-input", "Keep this unsent usage while I browse.");
+    await h.fire(h.get("preparation-workspace-tab"), "mousedown", { button: 0 });
+    assert.equal(hidden(h, "preparation-panel"), false);
+    assert.equal(h.get("preparation-tab").getAttribute("aria-selected"), "true");
+    assert.equal(h.get("design-tree-tab").getAttribute("aria-current"), "step");
+    assert.match(text(h, "stage-browsing"), /read only/);
+    h.render({ ...value, revision: 2 }); await h.flush();
+    await h.fire(h.get("design-tree-workspace-tab"), "mousedown", { button: 0 });
+    assert.equal(h.get("design-tree-panel"), panel);
+    assert.equal(field(h, "usage-input"), input);
+    assert.equal(input.value, "Keep this unsent usage while I browse.");
+    assert.equal(panel.getAttribute("aria-labelledby"), "design-tree-workspace-tab");
+    assert.deepEqual(current(h).lifecycle, value.lifecycle);
+    assert.deepEqual(h.requests, []);
+});
+
+test("workflow actions stay beside the stage tabs outside every tab content view", async t => {
+    const h = await setup(t, state("prototype"));
+    for (const [stage, label] of [["prepare", "Preparation"], ["requirements", "Requirements"], ["sketch", "Designs"], ["prototype", "Prototype"]]) {
+        await browse(h, stage);
+        const tabs = h.get("stage-workspace-tabs");
+        const actions = h.get("stage-workflow-actions");
+        assert.ok(actions);
+        assert.equal(tabs.parentElement!.contains(actions), true, "Stage completion and reopening belong beside the tabs.");
+        assert.equal(tabs.contains(actions), false, "Actions stay outside the tablist's keyboard navigation.");
+        assert.equal(h.get("stage-input-review").contains(h.get("complete-stage")), false);
+        assert.ok(tabs.compareDocumentPosition(actions) & h.window.Node.DOCUMENT_POSITION_FOLLOWING);
+        assert.equal(actions.getAttribute("aria-label"), `${label} actions`);
+        assert.ok(actions.contains(h.get("complete-stage")));
+        assert.ok(actions.contains(h.get("reopen-stage")));
+        assert.equal(h.get("complete-stage").hidden, stage !== "prototype");
+        assert.equal(h.get("reopen-stage").hidden, stage === "prototype");
+        assert.equal(text(h, "reopen-stage"), `Reopen ${label}`);
+        assert.equal(h.document.querySelectorAll("#complete-stage, #reopen-stage").length, 2);
+        assert.equal(h.document.querySelector('[role="tabpanel"] .phase-actions'), null);
+    }
+    await browse(h, "development");
+    assert.equal(h.document.querySelector(".phase-actions"), null);
+    assert.deepEqual(h.requests, []);
+});
+
+test("horizontal keyboard navigation skips unavailable stages and stays separate from Development", async t => {
+    const value = state("prototype");
+    value.lifecycle.skippedStages = [{ stageId: "sketch", reason: "Existing designs were supplied." }];
+    const h = await setup(t, value);
+    assert.equal(disabled(h, "sketch-workspace-tab"), true);
+    assert.match(h.get("sketch-workspace-tab").getAttribute("aria-label")!, /not applicable.*Existing designs/);
+    h.get("preparation-workspace-tab").focus();
+    await h.fire(h.document.activeElement!, "keydown", { key: "End" });
+    assert.equal(h.document.activeElement?.id, "live-preview-workspace-tab");
+    await h.fire(h.document.activeElement!, "keydown", { key: "ArrowLeft" });
+    assert.equal(h.document.activeElement?.id, "design-tree-workspace-tab");
+    await h.fire(h.document.activeElement!, "keydown", { key: "Home" });
+    assert.equal(h.document.activeElement?.id, "preparation-workspace-tab");
+    await h.fire(h.document.activeElement!, "keydown", { key: "ArrowLeft" });
+    assert.equal(h.document.activeElement?.id, "live-preview-workspace-tab");
+    assert.equal(hidden(h, "live-preview-panel"), false);
+    assert.equal(h.get("live-preview-tab").getAttribute("aria-selected"), "true");
+    await browse(h, "development");
+    assert.equal(h.document.querySelector("#stage-workspace-tabs"), null);
+    assert.equal(h.get("preview-pane").dataset.stageTabs, "false");
+    assert.equal(h.get("development-panel").getAttribute("aria-labelledby"), "development-tab");
+    await browse(h, "requirements");
+    assert.equal(h.get("design-tree-workspace-tab").getAttribute("aria-selected"), "true");
+    assert.equal(current(h).lifecycle.currentStage, "prototype");
+    assert.deepEqual(h.requests, []);
+});
+
+test("horizontal stage tabs do not change goal entry or the saved artifact library", async t => {
+    const h = await setup(t, blankEffort());
+    assert.equal(h.document.querySelector("#stage-workspace-tabs"), null);
+    h.render(state("requirements", 2)); await h.flush();
+    assert.ok(h.get("stage-workspace-tabs"));
+    await h.fire(h.get("content-tab"), "mousedown", { button: 0 });
+    assert.equal(h.document.querySelector("#stage-workspace-tabs"), null);
+    assert.equal(hidden(h, "content-panel"), false);
+    assert.equal(h.get("content-panel").getAttribute("aria-labelledby"), "content-tab");
+    await browse(h, "requirements");
+    assert.equal(h.get("preview-pane").dataset.stageTabs, "true");
+    assert.deepEqual(h.requests, []);
+});
+
 test("Radix confirmation has a safe initial focus and restores its invoker on Escape", async (t) => {
     const h = await setup(t);
     h.get("reset-effort").focus();
@@ -174,7 +276,9 @@ test("standalone read-only guidance returns to its owning session", async (t) =>
     assert.match(text(h, "usage-message"), /Tandem session that owns this effort/);
     await h.click("project-settings");
     assert.equal(h.document.querySelector("#reload-extension"), null, "Unsupported reload is not a dead primary control.");
-    assert.deepEqual(h.requests.map(request => request.path), ["/api/settings/project-effort"], "Only a settings read is attempted.");
+    assert.equal(h.document.querySelector("#project-settings-frame"), null);
+    assert.match(h.document.querySelector('[role="dialog"]')!.textContent!, /session that owns this project/);
+    assert.deepEqual(h.requests, [], "Read-only settings do not open the writable native provider.");
 });
 
 test("goal entry waits for an explicit valid start and retains drafts, focus and caret", async (t) => {
@@ -236,16 +340,8 @@ test("reset during active work confirms first and only clears local drafts after
     const value = state("prototype"); value.processing = { status: "running" };
     const h = await setup(t, { ...value, preparationRuntime: { liveAgentCount: 2 } });
     assert.equal(disabled(h, "reset-effort"), false);
-    await h.openProcess();
-    await h.input("process-reference", "Previous reference");
-    await h.input("process-repository", "owner/old");
-    await h.click("close-acceptance-delivery");
     await h.click("reset-effort"); await h.confirm(false);
     assert.equal(h.requests.length, 0);
-    await h.openProcess();
-    assert.equal(field(h, "process-reference").value, "Previous reference");
-    assert.equal(field(h, "process-repository").value, "owner/old");
-    await h.click("close-acceptance-delivery");
     let release!: (r: Response) => void;
     h.setFetch(() => new Promise((resolve) => { release = resolve; }));
     await h.click("reset-effort"); await h.confirm();
@@ -262,25 +358,16 @@ test("reset during active work confirms first and only clears local drafts after
     assert.equal(h.document.activeElement, h.get("start-goal"));
     assert.equal(h.render({ ...value, revision: 2 }), false);
     h.render({ ...state("requirements", 5), generation: "reset-generation" }); await h.flush();
-    await h.openProcess();
-    assert.equal(field(h, "process-reference").value, "");
-    assert.equal(field(h, "process-repository").value, "");
     assert.equal(field(h, "usage-input").value, "");
 });
 
 test("reset cancellation failures persist without clearing the effort or its drafts", async (t) => {
     const value = state("prepare"); value.preparation.status = "running";
     const h = await setup(t, value);
-    await h.openProcess();
-    await h.input("process-reference", "Keep this draft");
-    await h.click("close-acceptance-delivery");
     h.setFetch(async () => response({ error: "Worker termination could not be confirmed. Retry Reset." }, 409));
     await h.click("reset-effort"); await h.confirm();
     h.render({ ...value, revision: 2 });
     assert.equal(hidden(h, "start-panel"), true);
-    await h.openProcess();
-    assert.equal(field(h, "process-reference").value, "Keep this draft");
-    await h.click("close-acceptance-delivery");
     assert.equal(disabled(h, "reset-effort"), false);
     assert.match(text(h, "effort-message"), /termination could not be confirmed/);
     assert.equal(h.get("effort-message").dataset.status, "error");
@@ -299,7 +386,8 @@ test("persisted reset barriers block ordinary actions while leaving Reset retry 
     const h = await setup(t, value);
     assert.equal(h.get("studio-workspace").hasAttribute("inert"), false, "The pending recovery control must remain reachable.");
     assert.equal(h.get("preparation-panel").hidden, false);
-    assert.equal((h.get("preparation-maintenance") as HTMLDetailsElement).open, true);
+    assert.ok(h.document.querySelector(".previewbar #reset-effort"));
+    assert.equal(h.document.getElementById("preparation-maintenance"), null);
     assert.equal(disabled(h, "reset-effort"), false);
     assert.equal(hidden(h, "next-action-bar"), false, "Reset does not remove the status/help surface.");
     assert.equal(hidden(h, "show-next-action"), true);
@@ -323,10 +411,10 @@ test("supported diagnostic reload remains a recovery option without clearing a r
     const h = await setup(t, value);
     h.setFetch(async path => path === "/api/reload" ? response({ accepted: true })
         : response({ error: "Effort readback unavailable during recovery." }, 503));
-    await h.click("project-settings");
-    assert.equal(disabled(h, "reload-extension"), false);
-    await h.click("reload-extension");
-    assert.equal(disabled(h, "reload-extension"), true);
+    const settings = await h.projectSettings();
+    assert.equal(settings.reload().disabled, false);
+    await settings.send({ type: "project-reload", id: "recovery-reload", scope: settings.reload().scope });
+    assert.equal(settings.reload().disabled, true);
     assert.deepEqual(h.requests.filter(request => request.path === "/api/reload").map(request => request.body), [{}]);
     assert.equal(current(h).effortReset?.requestId, "pending-reset");
     assert.equal(current(h).goal, value.goal);
@@ -342,8 +430,8 @@ test("snapshots reject older revisions and late equal-revision provider/runtime 
     h.render({ ...newer, provider: { ...newer.provider, canReload: false }, preparationRuntime: { liveAgentCount: 1 } }, 19);
     assert.equal(current(h).provider.canReload, true);
     assert.equal(current(h).preparationRuntime.liveAgentCount, 2);
-    await h.click("project-settings");
-    assert.equal(disabled(h, "reload-extension"), false, "The accepted provider capability is retained; stale runtime counts are not a running-work signal.");
+    const settings = await h.projectSettings();
+    assert.equal(settings.reload().disabled, false, "The accepted provider capability is retained; stale runtime counts are not a running-work signal.");
     const next = { ...newer, revision: 4 }; delete next.provider;
     h.render(next, 21);
     assert.equal(current(h).preparationRuntime.liveAgentCount, 2);
@@ -402,17 +490,14 @@ test("compact context retains drafts and closes on navigation or Escape without 
     const value = state(), h = await setup(t, value); h.setNarrowViewport(true);
     assert.equal(h.get("context-toggle").getAttribute("aria-expanded"), "false");
     assert.equal(text(h, "context-stage"), "Requirements");
-    await h.click("context-toggle"); await h.openProcess();
-    await h.input("process-reference", "Design reference");
-    await h.click("close-acceptance-delivery");
+    await h.input("usage-input", "Retained usage draft");
+    await h.click("context-toggle");
     h.render({ ...value, revision: 2 });
     assert.equal(h.get("context-toggle").getAttribute("aria-expanded"), "true");
     await h.fire(h.get("requirements-pane"), "keydown", { key: "Escape" });
     assert.equal(h.get("studio-workspace").dataset.contextOpen, "false");
     assert.equal(h.document.activeElement, h.get("context-toggle"));
-    await h.openProcess();
-    assert.equal(field(h, "process-reference").value, "Design reference");
-    await h.click("close-acceptance-delivery");
+    assert.equal(field(h, "usage-input").value, "Retained usage draft");
     await h.click("context-toggle"); await browse(h, "prepare");
     assert.equal(h.get("studio-workspace").dataset.contextOpen, "false");
     assert.equal(hidden(h, "preparation-panel"), false);
@@ -439,14 +524,11 @@ test("next-step guidance navigates and focuses without executing its mutation", 
     assert.equal(h.requests.length, 0);
 });
 
-test("owning phase toolbar completes the active stage without expanding context or losing drafts", async (t) => {
+test("tab-bar controls complete the active stage without expanding context or losing drafts", async (t) => {
     const value = state();
     value.requirements.substage = "dag";
     value.decisionGraph.nodes = [decision("accepted", "answered")];
     const h = await setup(t, value);
-    await h.openProcess();
-    await h.input("process-reference", "Design reference");
-    await h.click("close-acceptance-delivery");
     await h.click("toggle-context-pane");
     const button = h.get<HTMLButtonElement>("complete-stage");
     assert.equal(button.hidden, false);
@@ -454,7 +536,8 @@ test("owning phase toolbar completes the active stage without expanding context 
     assert.equal(button.getAttribute("aria-label"), "Next stage: Finish requirements");
     assert.equal(button.title, button.getAttribute("aria-label"));
     assert.ok(button.querySelector('svg.lucide-check[aria-hidden="true"]'));
-    assert.equal(button.closest('[role="tabpanel"]')?.id, "design-tree-panel");
+    assert.equal(button.closest('[role="tabpanel"]'), null);
+    assert.equal(button.closest(".phase-actions")?.parentElement, h.get("stage-workspace-tabs").parentElement);
     assert.equal(h.get("requirements-pane").contains(button), false);
     assert.doesNotMatch(h.get("requirements-pane").textContent || "", /Discovery actions/);
     button.focus();
@@ -477,10 +560,8 @@ test("owning phase toolbar completes the active stage without expanding context 
     assert.equal(h.get("toggle-context-pane").getAttribute("aria-expanded"), "false");
     assert.equal(button.disabled, true, "The new stage still requires its own completion evidence");
     await h.click("toggle-context-pane");
-    assert.equal(text(h, "complete-stage"), "Finish Drawings and continue");
+    assert.equal(text(h, "complete-stage"), "Finish Designs and continue");
     assert.ok(button.querySelector('svg.lucide-check[aria-hidden="true"]'));
-    await h.openProcess();
-    assert.equal(field(h, "process-reference").value, "Design reference");
 });
 
 test("collapsed completion retains readiness, provider, busy, and historical-view guards", async (t) => {
@@ -549,7 +630,7 @@ test("legacy optional history fields and archived Preparation remain browsable",
     h.render({ ...value, revision: 2, lifecycle: { ...value.lifecycle, completedStages: [],
         history: [{ stageId: "prepare", path: "history\\preparation.md", completedAt: value.updatedAt }] } });
     const button = h.get("project-contents").querySelector<HTMLButtonElement>('[data-stage-id="prepare"]')!;
-    assert.equal(button.disabled, false); assert.equal(button.title, "history\\preparation.md");
+    assert.equal(button.disabled, false); assert.equal(button.title, "history\\preparation.md. Needs review");
     await h.fire(button, "mousedown", { button: 0 });
     assert.equal(hidden(h, "preparation-panel"), false);
     assert.equal(h.requests.length, 0);

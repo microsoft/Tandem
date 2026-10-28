@@ -33,6 +33,7 @@ From the repository root:
 
 ```powershell
 npm ci
+npm --prefix development\tandem ci
 npm run check
 npm test
 npm run build
@@ -43,7 +44,8 @@ Copilot-backed use requires a Copilot account and model access; ordinary checks
 and deterministic tests do not require live model calls. Do not run live
 evaluations without explicit model and execution limits.
 
-Edit maintainable source in `src` and `development\tandem`, not generated payloads
+Both dependency trees use committed lockfiles. Edit maintainable source in
+`src` and `development\tandem`, not generated payloads
 under `.github\extensions\tandem`. Follow existing TypeScript types, naming and
 formatting, add focused regression tests for behavior changes, and update related
 documentation. Changes within `development` must also follow its

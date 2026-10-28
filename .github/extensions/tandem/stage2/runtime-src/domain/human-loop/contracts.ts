@@ -1,4 +1,5 @@
 import { isAbsolute } from 'node:path';
+import { parseRoleMention, type RoleHint } from '../../../public/role-hint.js';
 import { parseRequestAttachments, type RequestAttachment } from '../workflow/image-attachment.ts';
 import { policyHash } from '../workflow/policy.ts';
 import { choice, integer, list, object, requireCondition, strings, text, unique } from '../workflow/validation.ts';
@@ -34,6 +35,7 @@ export interface QuestionDraft {
   options: QuestionOption[];
   allowFreeform: boolean;
   designRefs?: string[];
+  unanswered?: { action: 'keep-current-design'; explanation: string };
 }
 export interface QuestionSource {
   role: 'designer' | 'reviewer' | 'planner' | 'implementer';
@@ -57,6 +59,7 @@ export interface AnswerBatch { schemaVersion: 'human-question-answers/v1'; answe
 export interface HumanRequest {
   id: string; message: string; receivedAt: string; answers: AnswerBatch | null;
   attachments?: RequestAttachment[];
+  roleHint?: RoleHint;
 }
 export interface TaskBinding {
   id: string; dispatchId: string; sessionId: string; requestId: string; cycleId: string | null;
@@ -115,6 +118,8 @@ export interface ReviewFinding {
   designBasis?: string; questionId?: string;
 }
 export type RoleOutcome =
+  | { kind: 'discovery-change'; summary: string; reason: string; prototypeId: string;
+      sourceDigest: string; stage: 'prepare' | 'requirements' | 'sketch' | 'prototype' }
   | { kind: 'execution-failure'; summary: string; reason: string; evidenceRefs: string[] }
   | { kind: 'review-incomplete'; summary: string; reason: string; evidenceRefs: string[] }
   | { kind: 'stopped-partial'; summary: string; evidenceRefs: string[]; stopId: string }
@@ -194,7 +199,8 @@ export function parseInternalPlan(value: unknown): InternalPlan {
 }
 export function parseQuestions(value: unknown): QuestionDraft[] {
   const questions = list(value, (value): QuestionDraft => {
-    const data = referencedObject(value, ['id', 'context', 'question', 'whyItMatters', 'importance', 'options', 'allowFreeform']);
+    const data = referencedObject(value, ['id', 'context', 'question', 'whyItMatters', 'importance', 'options', 'allowFreeform',
+      ...(Object.hasOwn(value ?? {}, 'unanswered') ? ['unanswered'] : [])]);
     requireCondition(typeof data.allowFreeform === 'boolean', 'Question free-text support must be explicit.');
     const options = list(data.options, (value) => {
       const option = object(value, ['id', 'label', 'implication',
@@ -206,12 +212,31 @@ export function parseQuestions(value: unknown): QuestionDraft[] {
     });
     unique(options.map(({ id }) => id));
     requireCondition(options.length >= 2 || data.allowFreeform, 'A question needs choices or free-text input.');
+    let unanswered: QuestionDraft['unanswered'];
+    if (Object.hasOwn(data, 'unanswered')) {
+      const continuation = object(data.unanswered, ['action', 'explanation']);
+      requireCondition(data.importance === 'advisory', 'Blocking questions cannot declare an unanswered continuation.');
+      requireCondition(continuation.action === 'keep-current-design',
+        'An advisory continuation must keep the current Design; choices requiring a change or authorization must be blocking.');
+      unanswered = { action: 'keep-current-design', explanation: text(continuation.explanation) };
+      requireCondition(unanswered.explanation.length <= 2000, 'Explain the unanswered continuation in at most 2000 characters.');
+    }
     return { id: text(data.id), context: text(data.context), question: text(data.question),
       whyItMatters: text(data.whyItMatters), importance: choice(data.importance, ['blocking', 'advisory']),
-      options, allowFreeform: data.allowFreeform, ...designRefs(data) };
+      options, allowFreeform: data.allowFreeform, ...designRefs(data), ...(unanswered ? { unanswered } : {}) };
   });
   unique(questions.map(({ id }) => id));
   return questions;
+}
+export function requireDeclaredAdvisoryContinuations(questions: readonly QuestionDraft[]): void {
+  requireCondition(questions.every(q => q.importance !== 'advisory' || q.unanswered?.action === 'keep-current-design'),
+    'Every new advisory question must declare unanswered: { action: "keep-current-design", explanation: "..." }. State the safe continuation, or classify the question as blocking. Recommended option text is not a default.');
+}
+
+export function advisoryContinuationIssue(question: QuestionRecord, currentDesign: DesignBinding): 'missing' | 'stale' | null {
+  if (question.importance !== 'advisory') return null;
+  if (!question.unanswered || question.unanswered.action !== 'keep-current-design' || !question.unanswered.explanation?.trim()) return 'missing';
+  return question.source.design.revisionId !== currentDesign.revisionId || question.source.design.digest !== currentDesign.digest ? 'stale' : null;
 }
 function parseSelectedOption(value: unknown): Omit<QuestionOption, 'id'> {
   const data = object(value, ['label', 'implication',
@@ -244,13 +269,25 @@ export function parseAnswerBatch(value: unknown): AnswerBatch {
 }
 export function parseRequest(value: unknown): HumanRequest {
   const data = object(value, ['id', 'message', 'receivedAt', 'answers',
+    ...(Object.hasOwn(value ?? {}, 'roleHint') ? ['roleHint'] : []),
     ...(Object.hasOwn(value ?? {}, 'attachments') ? ['attachments'] : [])]);
   const receivedAt = text(data.receivedAt);
   requireCondition(Number.isFinite(Date.parse(receivedAt)), 'Invalid request timestamp.');
   const attachments = data.attachments === undefined ? undefined : parseRequestAttachments(data.attachments);
   requireCondition(typeof data.message === 'string' && (data.message.trim().length > 0 || attachments?.length === 1), 'A request needs text or an image.');
+  let roleHint: RoleHint | undefined;
+  if (Object.hasOwn(data, 'roleHint')) {
+    requireCondition(data.answers === null, 'Question answers cannot carry composer role hints.');
+    const hint = object(data.roleHint, ['schemaVersion', 'role']);
+    requireCondition(hint.schemaVersion === 'human-role-hint/v1', 'Incompatible role-hint schema.');
+    roleHint = { schemaVersion: hint.schemaVersion, role: choice(hint.role, ['designer', 'agent'] as const) };
+    const parsed = parseRoleMention(data.message);
+    requireCondition(!parsed.error, parsed.error ?? 'Invalid role hint.');
+    requireCondition(parsed.roleHint?.role === roleHint.role, 'Role hint does not match the original leading mention.');
+  }
   return { id: text(data.id), message: data.message, receivedAt,
     answers: data.answers === null ? null : parseAnswerBatch(data.answers),
+    ...(roleHint ? { roleHint } : {}),
     ...(attachments !== undefined ? { attachments } : {}) };
 }
 export function bindQuestionOptions(request: HumanRequest, questions: readonly QuestionRecord[]): HumanRequest {
@@ -302,6 +339,14 @@ export function parseRoleResult(role: HumanRole, value: unknown): RoleResult {
   const kind = data.outcome.kind;
   let outcome: RoleOutcome;
   switch (kind) {
+    // Historical ledgers retain this outcome; live Router tools no longer accept it.
+    case 'discovery-change': {
+      requireCondition(role === 'router', 'Only Router may propose an upstream discovery change.');
+      const v = object(data.outcome, ['kind', 'summary', 'reason', 'prototypeId', 'sourceDigest', 'stage']);
+      outcome = { kind, summary: text(v.summary), reason: text(v.reason), prototypeId: text(v.prototypeId),
+        sourceDigest: digest(v.sourceDigest), stage: choice(v.stage, ['prepare', 'requirements', 'sketch', 'prototype']) };
+      break;
+    }
     case 'stopped-partial': {
       const v = object(data.outcome, ['kind', 'summary', 'evidenceRefs', 'stopId']);
       outcome = { kind, summary: text(v.summary), evidenceRefs: strings(v.evidenceRefs), stopId: text(v.stopId) };

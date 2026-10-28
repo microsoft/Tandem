@@ -78,7 +78,7 @@ export class HumanLoopRuntime {
   #withRequestAdmission;
 
   constructor({ configuration, client, workflowBootstrap, verifyOwnership, verifyAdmission, permissionHandler, onHandoff, onProgress,
-    readDesign, designer, reviewEffects, now, contextProvider, withRequestAdmission = operation => operation(), createPrivateSession,
+    readDesign, designer, reviewEffects, now, contextProvider, withRequestAdmission = operation => operation(), createPrivateSession, preparePrivateSession,
     beforeNativeCreate, afterNativeCreate, projectEffortControl = false }) {
     requireCondition(configuration?.schemaVersion === "human-loop-runtime/v1" && typeof onHandoff === "function",
       "The new runtime needs versioned one-copy configuration and a real handoff presenter.");
@@ -105,7 +105,7 @@ export class HumanLoopRuntime {
     }));
     this.#transport = new HumanLoopTransport({
       owner: this.#owner, client, workflowBootstrap, workspace: this.#workspace, store: this.#store, tools, nativeFiles: true, nativeShells: this.#commands,
-      createPrivateSession, beforeNativeCreate, afterNativeCreate,
+      createPrivateSession, preparePrivateSession, beforeNativeCreate, afterNativeCreate,
       verifyOwnership, authorizeTool: (packet) => this.#authorizeTool(packet), permissionHandler, now,
       onProgress: (event) => { this.#notify(event); if (event.kind === "native-shell") this.#kick(); },
       validateResult: async (packet, result) => {
@@ -307,6 +307,10 @@ export class HumanLoopRuntime {
     this.#admission = work.then(() => undefined, () => undefined);
     await work;
     this.#notify({ kind: "permissions-reset" });
+  }
+  async currentModelSelection() {
+    const value = await this.#transport.currentModelSelection();
+    return { modelId: value.model ?? undefined, reasoningEffort: value.reasoningEffort };
   }
   async modelSettings() {
     const preferences = await this.#preferences.read();
@@ -979,6 +983,9 @@ export class HumanLoopRuntime {
       const cycle = state.cycles.find(({ id }) => id === handoff.cycleId);
       const changes = await this.#workspace.changes(cycle.baseline, cycle.current);
       content += `\n\n${outcome.reason}\n\n${changes.length} changed path(s) are retained in the project. This work cycle is unfinished; no whole-plan Review or automatic Designer was started.`;
+    } else if (outcome.kind === "discovery-change") {
+      // Keep historical handoff bytes stable; no upstream callback is registered.
+      content += `\n\n${outcome.reason}\n\nReview the affected discovery stages in Project changes. Existing Design and code are unchanged; implementation has not been authorized.`;
     } else if (outcome.kind === "stopped-partial") {
       content = `Stopped with partial work retained. This role did not complete its requested outcome; no completion or Review is inferred.\n\n${content}`;
     } else if (["execution-failure", "review-incomplete"].includes(outcome.kind)) content += `\n\n${outcome.reason}`;

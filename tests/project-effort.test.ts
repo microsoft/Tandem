@@ -37,7 +37,7 @@ test("one project endpoint applies both independent interfaces without starting 
         assert.equal(failure.settings.stage1.actual, "low");
         assert.equal(failure.settings.stage2.status, "error");
     } finally {
-        clearInterval(entry.heartbeat); entry.live.close();
+        clearInterval(entry.heartbeat);
         await new Promise<void>((resolve, reject) => entry.server.close(error => error ? reject(error) : resolve()));
         await h.close();
     }
@@ -56,10 +56,11 @@ test("Settings effort bridge uses the existing public endpoint and preserves par
             stage1: { ...stage, desired: "low", actual: "low", status: "applied" },
             stage2: { ...stage, desired: "low", status: "error", error: "Private setting failed" } } }, 409);
     });
+
     h.render(value); await h.flush();
     assert.equal(h.requests.length, 0);
     assert.equal(h.document.querySelector("#project-effort-settings"), null, "There is no second navigation disclosure.");
-    const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
+    const { frame } = await h.projectSettings();
     const replies: Array<{ type: string; id: string; error?: string; settings?: typeof settings }> = [];
     frame.contentWindow!.postMessage = message => { replies.push(JSON.parse(JSON.stringify(message))); };
     const send = async (data: object, origin = "http://127.0.0.1:8765") => {
@@ -69,6 +70,13 @@ test("Settings effort bridge uses the existing public endpoint and preserves par
     };
     await send({ type: "project-effort-apply", id: "foreign", effort: "low" }, "http://127.0.0.1:9999");
     assert.equal(h.requests.length, 0);
+    const status = h.get("project-current-work").getAttribute("aria-label");
+    await send({ type: "status", status: "working", active: true });
+    await send({ type: "discovery-send", id: "not-a-settings-action", key: "unrelated", text: "Do not dispatch" });
+    await send({ type: "process-open" });
+    assert.equal(h.get("project-current-work").getAttribute("aria-label"), status);
+    assert.equal(h.document.querySelector(".process-dialog"), null);
+    assert.equal(h.requests.length, 0);
     await send({ type: "project-effort-read", id: "read" });
     assert.equal(replies.find(reply => reply.id === "read")?.settings?.stage1.status, "unset");
     await send({ type: "project-effort-apply", id: "apply", effort: "low" });
@@ -77,4 +85,126 @@ test("Settings effort bridge uses the existing public endpoint and preserves par
     assert.equal(result.settings?.stage2.status, "error");
     assert.match(result.error!, /Private setting failed/);
     assert.equal(h.requests.some(request => /development\/open|effort\/start/.test(request.path)), false);
+});
+
+test("Open Development reaches normal startup without a compulsory model chooser or second start action", async t => {
+    const h = await reactHarness(t);
+    h.render(state("requirements")); await h.flush();
+    h.setModelSelectionFetch(async () => { throw new Error("Obsolete model gate must not be queried."); });
+    h.setFetch(async path => { assert.equal(path, "/api/development/open"); return response({}); });
+    await h.fire(h.get("development-tab"), "mousedown", { button: 0 });
+    await h.click("enter-development");
+    assert.equal(h.document.querySelector(".project-settings-dialog[open]"), null);
+    assert.equal(h.document.querySelector("#start-development-after-model"), null);
+    assert.equal(h.requests.length, 1);
+    assert.ok(h.get("project-conversation-frame"));
+});
+
+test("direct Development entry preserves its one chosen entry without mandatory model configuration", async t => {
+    const h = await reactHarness(t, undefined, null);
+    h.render(state("prepare")); await h.flush();
+    h.setModelSelectionFetch(async () => { throw new Error("No model chooser is required."); });
+    await h.click("entry-development");
+    assert.equal(h.entryRequests.some(request => request.endsWith(":POST")), true);
+    assert.equal(h.entryRequests.filter(request => request === "/api/project-entry/open").length, 1);
+    assert.equal(h.document.querySelector("#start-development-after-model"), null);
+    await h.projectSettings();
+    await h.click("close-project-settings");
+    assert.equal(h.entryRequests.filter(request => request === "/api/project-entry/open").length, 1);
+    assert.equal(h.requests.length, 0);
+});
+
+test("restoring saved Development entry reuses that path without writing a model or rewriting its choice", async t => {
+    const h = await reactHarness(t, undefined, "development", true);
+    h.render(state("prepare")); await h.flush();
+    assert.equal(h.document.querySelector("#start-development-after-model"), null);
+    assert.equal(h.entryRequests.filter(request => request === "/api/project-entry/open").length, 1);
+    assert.equal(h.entryRequests.some(request => request.endsWith(":POST")), false, "Continuing a saved entry does not rewrite its original starting choice.");
+    assert.ok(h.get("project-conversation-frame"));
+});
+
+test("unavailable native model inheritance stays a startup error without fallback or a forced chooser", async t => {
+    const h = await reactHarness(t);
+    h.render(state("requirements")); await h.flush();
+    h.setFetch(async path => {
+        assert.equal(path, "/api/development/open");
+        return response({ error: "Main model could not be read; no private fallback was created." }, 503);
+    });
+    await h.fire(h.get("development-tab"), "mousedown", { button: 0 });
+    await h.click("enter-development");
+    assert.match(h.document.querySelector(".development-error")!.textContent!, /Main model could not be read/);
+    assert.equal(h.document.querySelector(".project-settings-dialog[open]"), null);
+    assert.equal(h.requests.length, 1);
+    await h.flush();
+    assert.equal(h.requests.length, 1, "A failure must not implicitly retry startup.");
+});
+
+test("the root model preflight reads the original controller without creating private work", async () => {
+    const h = await extensionHarness();
+    await h.api.persistState(h.api.createState("model-preflight"));
+    const entry = await h.api.startServer("model-preflight", "model-preflight", "project:tandem", true);
+    try {
+        h.setDevelopmentModelRequired(true);
+        const result = await fetch(new URL("api/development/model-selection", entry.url));
+        assert.equal(result.status, 200);
+        assert.deepEqual(await result.json(), { required: true });
+        assert.equal(h.developmentOpens.length, 0);
+        assert.equal(h.developmentRequests.length, 0);
+    } finally {
+        clearInterval(entry.heartbeat);
+        await new Promise<void>((resolve, reject) => entry.server.close(error => error ? reject(error) : resolve()));
+        await h.close();
+    }
+});
+
+test("existing private runtime errors leave model recovery optional without replacing its session", async t => {
+    const h = await reactHarness(t, undefined, "development");
+    h.render(state("prepare")); await h.flush();
+    const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
+    h.setModelSelectionFetch(async () => response({ required: true }));
+    h.window.dispatchEvent(new h.window.MessageEvent("message", { source: frame.contentWindow, origin: "http://127.0.0.1:8765",
+        data: { protocol: "tandem-project/v1", channel: "fixture-project", type: "status", status: "waiting-runtime", active: true } }));
+    await h.flush();
+    assert.equal(h.document.querySelector("#start-development-after-model"), null);
+    assert.equal(h.document.querySelector(".project-settings-dialog[open]"), null);
+    const settings = await h.projectSettings();
+    await settings.send({ type: "model-selection-readiness", scope: settings.scope(), ready: true });
+    await h.click("close-project-settings");
+    assert.equal(h.get("project-conversation-frame"), frame);
+    assert.equal(h.requests.length, 0);
+});
+
+test("foreign, malformed and prior-opening settings readiness cannot authorize startup", async t => {
+    const h = await reactHarness(t);
+    h.render(state("requirements")); await h.flush();
+    h.setModelSelectionFetch(async () => response({ required: true }));
+    const settings = await h.projectSettings(), oldScope = settings.scope();
+    for (const data of [{ scope: "old", ready: true }, { scope: oldScope, ready: "true" },
+        { scope: oldScope, ready: true, channel: "foreign" }]) {
+        await settings.send({ type: "model-selection-readiness", ...data });
+        assert.equal(h.document.querySelector("#start-development-after-model"), null);
+    }
+    await settings.send({ type: "model-selection-readiness", scope: oldScope, ready: true });
+    assert.equal(h.requests.length, 0);
+    await settings.send({ type: "model-selection-readiness", scope: oldScope, ready: false });
+    assert.equal(h.document.querySelector("#model-continuation-help"), null);
+    await h.click("close-project-settings");
+    await h.click("project-settings");
+    assert.notEqual(settings.scope(), oldScope);
+    await settings.send({ type: "model-selection-readiness", scope: oldScope, ready: true });
+    assert.equal(h.document.querySelector("#start-development-after-model"), null);
+    assert.equal(h.requests.length, 0);
+});
+
+test("closing optional settings cannot start Development even when a late saved-model notification arrives", async t => {
+    const h = await reactHarness(t);
+    h.render(state("requirements")); await h.flush();
+    h.setModelSelectionFetch(async () => response({ required: true }));
+    const settings = await h.projectSettings();
+    await settings.send({ type: "model-selection-readiness", scope: settings.scope(), ready: true });
+    await h.click("close-project-settings");
+    await settings.send({ type: "model-selection-readiness", scope: settings.scope(), ready: true }); await h.flush();
+    assert.equal(h.get("project-settings-title").closest("dialog")!.open, false);
+    assert.equal(h.document.querySelector("#project-conversation-frame"), null);
+    assert.equal(h.requests.length, 0);
 });

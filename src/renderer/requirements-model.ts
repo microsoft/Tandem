@@ -14,6 +14,15 @@ export function requirementNodes(state: Pick<TandemState, "requirements" | "deci
     }] : [];
 }
 
+export function requirementChange(before: DecisionNode | undefined, after: DecisionNode | undefined): "added" | "changed" | "removed" | null {
+    if (!before) return after ? "added" : null;
+    if (!after) return "removed";
+    const content = (node: DecisionNode) => ({
+        title: node.title, question: node.question, answer: node.answer, dependencies: node.dependencies,
+    });
+    return JSON.stringify(content(before)) === JSON.stringify(content(after)) ? null : "changed";
+}
+
 export function selectedRequirement(nodes: DecisionNode[], selectedId: string | null, followActive: boolean): DecisionNode | null {
     const selected = nodes.find((node) => node.id === selectedId);
     const active = nodes.find((node) => node.status === "active");
@@ -53,15 +62,19 @@ export function wholeGraphDefaults(
     }
     const unanswered = (state.decisionGraph?.nodes || []).filter((node) => !node.answer);
     if (!unanswered.length) throw new Error("No unanswered decisions are waiting for whole-graph defaults.");
-    const defaults = unanswered.map((node) => {
+    const defaults = unanswered.flatMap((node) => {
         const answer = curatedDefault(node.question);
-        if (!answer) throw new Error(`"${node.title}" has no curated recommended choice. Answer it explicitly first.`);
-        return { nodeId: node.id, answer };
+        return answer ? [{ nodeId: node.id, answer }] : [];
     });
+    if (!defaults.length) throw new Error("No recommended answers are available. Answer the remaining questions explicitly.");
+    const explicit = unanswered.filter((node) => !curatedDefault(node.question));
     return {
         body: { ...body, defaults },
-        confirmation: `Use whole-graph defaults for ALL ${unanswered.length} unanswered decisions?\n\n`
-            + unanswered.map((node, index) => `${node.title}: ${defaults[index].answer}`).join("\n")
+        confirmation: `Use whole-graph defaults for ALL ${defaults.length} unanswered decisions with recommendations?\n\n`
+            + defaults.map((item) => `${unanswered.find((node) => node.id === item.nodeId)!.title}: ${item.answer}`).join("\n")
+            + (explicit.length ? `\n\n${explicit.length} ${explicit.length === 1 ? "question needs" : "questions need"} an explicit answer and will remain unanswered:\n`
+                + explicit.map((node) => node.title).join("\n")
+                + "\nAfter reconciliation, continue with the next blocking question." : "")
             + "\n\nOne semantic review checks compatibility. Changed decisions require review; new recommendations are not automatically selected.",
     };
 }

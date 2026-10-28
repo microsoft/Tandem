@@ -21,7 +21,7 @@ async function until(predicate: () => boolean, timeout = 3000): Promise<void> {
     }
 }
 
-async function fixture(t: TestContext, startupTimeoutMs?: number, modelSelection?: BrowserHostOptions["modelSelection"]) {
+async function fixture(t: TestContext, startupTimeoutMs?: number, modelSelection?: BrowserHostOptions["modelSelection"], sourcePreview = false) {
     const root = await mkdtemp(join(tmpdir(), "tandem-browser-host-"));
     const workspace = join(root, "workspace");
     const other = join(root, "other");
@@ -32,6 +32,7 @@ async function fixture(t: TestContext, startupTimeoutMs?: number, modelSelection
         workspace, preferencesPath: join(root, "preferences"), page: "<html>Tandem fixture</html>", scriptHash: "sha256-fixture",
         startupTimeoutMs,
         ...(modelSelection ? { modelSelection } : {}),
+        ...(sourcePreview ? { sourcePreview: true } : {}),
         backendFactory: async (options) => {
             const record: typeof backends[number] = { options, commands: [], stops: 0, failStop: false };
             backends.push(record);
@@ -84,6 +85,20 @@ test("browser host preserves explicit main model selection across workspace swit
 test("browser host leaves native model defaults untouched when no selection was supplied", async (t) => {
     const f = await fixture(t);
     assert.equal(Object.hasOwn(f.backends[0].options, "modelSelection"), false);
+    assert.equal(Object.hasOwn(f.backends[0].options, "sourcePreview"), false);
+});
+
+test("source-preview isolation remains explicit across retry and workspace changes", async (t) => {
+    const f = await fixture(t, undefined, undefined, true);
+    assert.equal(f.backends[0].options.sourcePreview, true);
+    assert.equal((await f.command({ type: "retry" })).status, 202);
+    await until(() => f.backends.length === 2);
+    assert.equal(f.backends[1].options.sourcePreview, true);
+    assert.equal((await f.command({ type: "open-workspace", workspace: f.other })).status, 202);
+    await until(() => f.backends.length === 3);
+    assert.equal(f.backends[2].options.sourcePreview, true);
+    assert.equal(f.host.snapshot().permissionMode, "ask");
+    assert.deepEqual(f.backends.flatMap(backend => backend.commands), []);
 });
 
 test("browser host API requires a launch capability, same origin and bounded JSON", async (t) => {
@@ -208,7 +223,7 @@ test("invalid folder selection preserves the current workspace and directory err
     assert.equal((await f.request("host/directories?path=relative")).status, 400);
 });
 
-test("native speech notifications dismiss only their occurrence, retaining diagnostics and all runtime state", async (t) => {
+test("native notifications dismiss only their occurrence, retaining diagnostics and all runtime state", async (t) => {
     const f = await fixture(t);
     f.ready();
     f.event(permission());
@@ -217,13 +232,13 @@ test("native speech notifications dismiss only their occurrence, retaining diagn
     const protocol = new DesktopProtocol(input, output, () => { shutdowns++; });
     t.after(() => protocol.close());
     output.on("data", (data: Buffer) => f.event(parseBackendEvent(JSON.parse(data.toString()))));
-    const message = "Tandem request failed: Configure TANDEM_Speech__ResourceId and TANDEM_Speech__Region for an Azure Speech resource, then restart Tandem. Subscription keys are not used.";
+    const message = "Tandem request failed: The saved prototype preview is unavailable. Existing designs, decisions, and draft text are unchanged.";
     const report = (id: string) => protocol.reportSessionError({ id, data: { errorType: "notification", message } });
-    report("speech-one");
+    report("notice-one");
     const before = f.host.snapshot();
     assert.equal(before.error, null);
-    assert.deepEqual(before.notice, { id: "speech-one", message });
-    assert.equal((await f.command({ type: "dismiss-notice", id: "speech-one" })).status, 202);
+    assert.deepEqual(before.notice, { id: "notice-one", message });
+    assert.equal((await f.command({ type: "dismiss-notice", id: "notice-one" })).status, 202);
     assert.deepEqual(f.host.snapshot(), { ...before, revision: before.revision + 1, notice: null });
     assert.deepEqual(f.backends[0].commands, []);
     assert.equal(f.backends[0].stops, 0);
@@ -231,17 +246,17 @@ test("native speech notifications dismiss only their occurrence, retaining diagn
     const diagnostics = await f.request("host/diagnostics").then(response => response.json());
     assert.ok(diagnostics.text.includes(message));
     f.event({ type: "status", message: "Still preparing" });
-    report("speech-one");
+    report("notice-one");
     assert.equal(f.host.snapshot().notice, null, "polling and replaying the acknowledged event cannot resurrect it");
-    report("speech-two");
-    assert.deepEqual(f.host.snapshot().notice, { id: "speech-two", message }, "identical text with a new native ID is a new failure");
-    assert.equal((await f.command({ type: "dismiss-notice", id: "speech-one" })).status, 202);
-    assert.equal(f.host.snapshot().notice!.id, "speech-two");
-    report("speech-three");
-    await f.command({ type: "dismiss-notice", id: "speech-two" });
-    assert.equal(f.host.snapshot().notice!.id, "speech-three", "a newer error wins the acknowledgment race");
-    await f.command({ type: "dismiss-notice", id: "speech-three" });
-    report("speech-one");
+    report("notice-two");
+    assert.deepEqual(f.host.snapshot().notice, { id: "notice-two", message }, "identical text with a new native ID is a new failure");
+    assert.equal((await f.command({ type: "dismiss-notice", id: "notice-one" })).status, 202);
+    assert.equal(f.host.snapshot().notice!.id, "notice-two");
+    report("notice-three");
+    await f.command({ type: "dismiss-notice", id: "notice-two" });
+    assert.equal(f.host.snapshot().notice!.id, "notice-three", "a newer error wins the acknowledgment race");
+    await f.command({ type: "dismiss-notice", id: "notice-three" });
+    report("notice-one");
     assert.equal(f.host.snapshot().notice, null, "earlier acknowledgments survive later ones");
     await f.host.close();
     assert.ok((await readFile(join(f.workspace, ".tandem", "desktop", "browser.log"), "utf8")).includes(message));

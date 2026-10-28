@@ -1,5 +1,5 @@
 import { humanLoopPrompts } from "../public/prompts/human-loop.js";
-import { HumanLoopPreferences } from "./human-loop-preferences.mjs";
+import { HumanLoopPreferences, normalizeModelCatalog } from "./human-loop-preferences.mjs";
 import { parseHumanLoopOwner, requireHumanRequestRunning } from "../runtime-src/domain/human-loop/model.ts";
 import { parseRoleResult } from "../runtime-src/domain/human-loop/contracts.ts";
 import { humanLoopResultTools, humanLoopProgressTool, humanLoopStopTool } from "../runtime-src/domain/human-loop/tool-contracts.ts";
@@ -79,15 +79,17 @@ export class HumanLoopTransport {
   #retiredWorkflowRuns = new Set();
   #compaction = new HumanLoopCompaction((event) => this.#notify(event));
   #createPrivateSession;
+  #preparePrivateSession;
   #beforeNativeCreate;
   #afterNativeCreate;
 
-  constructor({ owner, client, workflowBootstrap, workspace, store, tools = [], nativeFiles = false, nativeShells = null, verifyOwnership, authorizeTool, permissionHandler, now, onProgress, validateResult, validateAttachment, createPrivateSession, beforeNativeCreate, afterNativeCreate }) {
+  constructor({ owner, client, workflowBootstrap, workspace, store, tools = [], nativeFiles = false, nativeShells = null, verifyOwnership, authorizeTool, permissionHandler, now, onProgress, validateResult, validateAttachment, createPrivateSession, preparePrivateSession, beforeNativeCreate, afterNativeCreate }) {
     this.#owner = parseHumanLoopOwner(owner);
     requireCondition(typeof verifyOwnership === "function" && typeof authorizeTool === "function",
       "One-copy transport requires explicit ownership and tool-authority verifiers.");
     this.#client = client; this.#workspace = workspace; this.#store = store;
     this.#createPrivateSession = createPrivateSession ?? (configuration => client.createSession(configuration));
+    this.#preparePrivateSession = preparePrivateSession;
     this.#beforeNativeCreate = beforeNativeCreate;
     this.#afterNativeCreate = afterNativeCreate;
     this.#workflowBootstrap = workflowBootstrap;
@@ -219,18 +221,7 @@ export class HumanLoopTransport {
     requireCondition(typeof this.#client.start === "function" && typeof this.#client.listModels === "function",
       "Installed SDK cannot list authenticated private-session models.");
     await this.#client.start();
-    const models = await this.#client.listModels();
-    requireCondition(Array.isArray(models) && models.length > 0 && models.length <= 1000
-      && models.every((model) => typeof model.id === "string" && model.id.trim() && model.id.length <= 200),
-    "The SDK model list is unavailable or invalid.");
-    return models.map(({ id, name, supportedReasoningEfforts = [] }) => {
-      requireCondition(Array.isArray(supportedReasoningEfforts) && supportedReasoningEfforts.length <= 40
-        && supportedReasoningEfforts.every(effort => typeof effort === "string" && effort.trim() === effort
-          && effort.length > 0 && effort.length <= 40)
-        && new Set(supportedReasoningEfforts).size === supportedReasoningEfforts.length,
-      "SDK supported reasoning efforts are invalid.");
-      return { id, name: typeof name === "string" ? name.slice(0, 200) : id, supportedReasoningEfforts };
-    });
+    return normalizeModelCatalog(await this.#client.listModels());
   }
   async currentModelSelection() {
     requireCondition(typeof this.#session?.rpc?.model?.getCurrent === "function", "SDK cannot verify the actual private-session model.");
@@ -288,6 +279,7 @@ export class HumanLoopTransport {
 
   async create() { return this.#openSession(null); }
   async #createOwnedSession(configuration) {
+    if (this.#preparePrivateSession) configuration = await this.#preparePrivateSession(configuration);
     if (this.#beforeNativeCreate) {
       requireCondition(typeof this.#client.start === "function", "Native creation requires a started private client.");
       await this.#client.start();

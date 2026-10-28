@@ -5,8 +5,8 @@ import { webcrypto } from "node:crypto";
 import { TextEncoder, TextDecoder } from "node:util";
 import type { TestContext } from "node:test";
 import type { UiState } from "../../src/renderer/ui-context.js";
-import type { SpeechSessionFactory } from "../../src/renderer/speech-recognizer.js";
 import { createProcessState } from "../../src/process-state.js";
+import { isPrototypePreviewTarget, prototypePreviewCheckpointId, type PrototypePreviewTarget } from "../../src/prototype-flow.js";
 
 let compiled: Promise<string> | undefined;
 async function compile() {
@@ -32,12 +32,9 @@ async function compile() {
     plugins: [{
       name: "renderer-test-services",
       setup(api) {
-        api.onResolve({ filter: /speech-recognizer\.js$/ }, () => ({ path: "speech", namespace: "test-services" }));
         api.onResolve({ filter: /^https:.*mermaid/ }, () => ({ path: "mermaid", namespace: "test-services" }));
-        api.onLoad({ filter: /.*/, namespace: "test-services" }, (args) => ({
-          contents: args.path === "speech"
-            ? "export const createAzureSpeechSession = (...args) => globalThis.__speechFactory(...args);"
-            : "export default { initialize(){}, render: (...args) => globalThis.__renderMermaid(...args) };",
+        api.onLoad({ filter: /.*/, namespace: "test-services" }, () => ({
+          contents: "export default { initialize(){}, render: (...args) => globalThis.__renderMermaid(...args) };",
         }));
       },
     }],
@@ -45,26 +42,34 @@ async function compile() {
   return result.outputFiles[0].text;
 }
 
+export function rendererFixtureScript(): Promise<string> {
+  return compiled ??= compile();
+}
+
 export interface Request { path: string; body: any; options: RequestInit }
 export function response(body: unknown, status = 200): Response {
   return { ok: status < 400, status, json: async () => body } as Response;
 }
 
-export async function reactHarness(t?: TestContext, headerHost?: { origin: string; channel: string }, startingPath: "preparation" | "development" | null = "preparation") {
+export async function reactHarness(t?: TestContext, headerHost?: { origin: string; channel: string }, startingPath: "preparation" | "development" | null = "preparation", modelSelectionRequired = false, retainedDevelopment = false) {
   const hash = headerHost ? "#" + new URLSearchParams({ "tandem-host": headerHost.origin, "header-channel": headerHost.channel }) : "";
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
     url: "http://127.0.0.1:4567/" + hash, runScripts: "outside-only", pretendToBeVisual: true,
   });
   const window = dom.window;
   const document = window.document;
+  window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
+  window.HTMLDialogElement.prototype.close = function () { this.open = false; };
   const requests: Request[] = [];
   const presentationRequests: string[] = [];
   const entryRequests: string[] = [];
   const previewRequests: RequestInit[] = [];
-  let previewFetcher: (() => Promise<Response>) | null = null;
+  const previewPaths: string[] = [];
+  const previewFetchers = new Map<PrototypePreviewTarget, () => Promise<Response>>();
   let entryOpened = false;
-  let processSettingsFixture = false;
+  let entryGate: ((path: string, options: RequestInit) => Promise<void>) | null = null;
   let gitFetcher: (() => Promise<Response>) | null = null;
+  let modelSelectionFetcher = async () => response({ required: modelSelectionRequired });
   const errors: string[] = [];
   const pngExports: { width: number; height: number; source: string }[] = [];
   const headerMessages: Record<string, any>[] = [];
@@ -75,7 +80,6 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
   if (headerHost) Object.defineProperty(window, "parent", { value: parent, configurable: true });
   let narrow = false;
   let fetcher: (path: string, options: RequestInit) => Promise<Response> = async () => { throw new Error("Network disabled in renderer tests"); };
-  let speechFactory: SpeechSessionFactory = async () => { throw new Error("Speech is not configured in this test"); };
   let mermaid: (id: string, source: string) => Promise<{ svg: string }> = async () => { throw new Error("Mermaid unavailable in this test"); };
   window.console.error = (...args: unknown[]) => { errors.push(args.map(String).join(" ")); };
   Object.defineProperty(window, "crypto", { value: webcrypto });
@@ -86,17 +90,14 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
     PointerEvent: window.MouseEvent,
     fetch: async (input: string | URL | Request, options: RequestInit = {}) => {
       const path = String(input);
-      if (processSettingsFixture && path === "/api/settings/project-effort") {
-        return response({ desired: null, changing: false,
-          stage1: { desired: null, actual: null, model: null, supported: [], status: "pending", error: null },
-          stage2: { desired: null, actual: null, model: null, supported: [], status: "pending", error: null } });
-      }
+      if (path === "/api/development/model-selection") return modelSelectionFetcher();
       if (path === "/api/development/preflight") {
         return gitFetcher ? gitFetcher() : response({ status: "ready", projectPath: "C:\\fixture-project",
           initialize: false, message: "Fixture Git working copy is ready." });
       }
       if (path === "/api/project-entry") {
         entryRequests.push(path + ":" + (options.method || "GET"));
+        if (entryGate) await entryGate(path, options);
         if (options.method === "POST") {
           const choice = JSON.parse(String(options.body)).startingPath;
           if (startingPath && choice !== startingPath) return response({ error: "Starting path already chosen." }, 409);
@@ -106,9 +107,10 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
       }
       if (path === "/api/project-entry/open") {
         entryRequests.push(path);
-        const developmentStarted = !entryOpened && startingPath === "development";
+        if (entryGate) await entryGate(path, options);
+        const developmentStarted = !entryOpened && !retainedDevelopment && startingPath === "development";
         entryOpened = true;
-        return response({ developmentStarted, developmentContext: startingPath === "development" });
+        return response({ developmentStarted, developmentContext: retainedDevelopment || startingPath === "development" });
       }
       if (path === "/api/development/view") {
         presentationRequests.push(path);
@@ -116,11 +118,14 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
       }
       if (path.startsWith("/api/prototype/preview-status")) {
         previewRequests.push(options);
-        const target = path.includes("target=pending") ? "pending" : "current";
-        if (previewFetcher && target === "current") return previewFetcher();
+        previewPaths.push(path);
+        const target = new URL(path, window.location.href).searchParams.get("target") ?? "current";
+        if (!isPrototypePreviewTarget(target)) return response({ error: "Unknown preview target" }, 400);
+        const previewFetcher = previewFetchers.get(target);
+        if (previewFetcher) return previewFetcher();
         const current = mounted.store.getSnapshot().state;
         const checkpoint = current.prototypeFlow?.checkpoints.find((item: { id: string }) =>
-          item.id === (target === "current" ? current.prototypeFlow.displayedCheckpointId : current.prototypeFlow.pendingCheckpointId));
+          item.id === prototypePreviewCheckpointId(current.prototypeFlow, target));
         return response({ generation: current.generation, checkpointId: checkpoint?.id ?? null,
           pendingCheckpointId: current.prototypeFlow?.pendingCheckpointId ?? null,
           url: checkpoint?.previewUrl || current.previewUrl, available: true, reason: "" });
@@ -128,7 +133,6 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
       requests.push({ path, body: options.body ? JSON.parse(String(options.body)) : null, options });
       return fetcher(path, options);
     },
-    __speechFactory: (...args: Parameters<SpeechSessionFactory>) => speechFactory(...args),
     __renderMermaid: (id: string, source: string) => mermaid(id, source),
   });
   Object.assign(window.HTMLElement.prototype, {
@@ -138,7 +142,7 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
   window.Node.prototype[Symbol.for("nodejs.util.inspect.custom")] = function() {
     return this.nodeType === 1 ? `<${this.nodeName.toLowerCase()}${this.id ? "#" + this.id : ""}>` : this.nodeName;
   };
-  window.eval(await (compiled ??= compile()));
+  window.eval(await rendererFixtureScript());
   const mounted = window.TandemTest.mount();
   const flush = async () => {
     for (let count = 0; count < 4; count++) {
@@ -172,20 +176,24 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
   };
   const dispose = () => { mounted.dispose(); window.close(); };
   t?.after(dispose);
-  return { presentationRequests, entryRequests, previewRequests,
+  return { presentationRequests, entryRequests, previewRequests, previewPaths,
     window, document, requests, errors, pngExports, store: mounted.store, get, click, input, fire, flush, dispose,
-    async openProcess() {
-      processSettingsFixture = true;
-      try {
-        await click("project-settings");
-        if (document.getElementById("acceptance-delivery")) await click("acceptance-delivery");
-        else {
-          const frame = get<HTMLIFrameElement>("project-conversation-frame");
+    async projectSettings(open = true) {
+      if (open) await click("project-settings");
+      const frame = get<HTMLIFrameElement>("project-settings-frame");
+      const messages: Record<string, any>[] = [];
+      frame.contentWindow!.postMessage = message => { messages.push(JSON.parse(JSON.stringify(message))); };
+      await fire(frame, "load");
+      return {
+        frame, messages,
+        scope: () => messages.findLast(message => message.type === "context")!.settingsScope,
+        reload: () => messages.findLast(message => message.type === "context")!.providerReload,
+        async send(data: object) {
           window.dispatchEvent(new window.MessageEvent("message", { origin: "http://127.0.0.1:8765", source: frame.contentWindow,
-            data: { protocol: "tandem-project/v1", channel: "fixture-project", type: "process-open" } }));
+            data: { protocol: "tandem-project/v1", channel: "fixture-project", ...data } }));
           await flush();
-        }
-      } finally { processSettingsFixture = false; }
+        },
+      };
     },
     render(value: UiState, sequence?: number) {
       let changed = false;
@@ -201,8 +209,10 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
       await click(button);
     },
     setFetch(handler: typeof fetcher) { fetcher = handler; },
+    setEntryGate(handler: typeof entryGate) { entryGate = handler; },
     setGitPreflight(handler: () => Promise<Response>) { gitFetcher = handler; },
-    setPreviewFetch(handler: () => Promise<Response>) { previewFetcher = handler; },
+    setModelSelectionFetch(handler: () => Promise<Response>) { modelSelectionFetcher = handler; },
+    setPreviewFetch(handler: () => Promise<Response>, target: PrototypePreviewTarget = "current") { previewFetchers.set(target, handler); },
     headerMessages,
     async sendHeaderMessage(data: Record<string, unknown>, origin = headerHost?.origin || "http://127.0.0.1:9000", source: unknown = parent) {
       const event = new window.MessageEvent("message", { data: { channel: headerHost?.channel, ...data }, origin });
@@ -210,7 +220,6 @@ export async function reactHarness(t?: TestContext, headerHost?: { origin: strin
       mounted.flushSync(() => window.dispatchEvent(event));
       await flush();
     },
-    setSpeechFactory(handler: SpeechSessionFactory) { speechFactory = handler; },
     setMermaid(handler: typeof mermaid) { mermaid = handler; },
     setNarrowViewport(value: boolean) { narrow = value; window.dispatchEvent(new window.Event("resize")); },
     enablePngExport(data = "iVBORw0KGgo=") {

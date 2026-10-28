@@ -3,6 +3,7 @@ import type { HistoricalStageId, LifecycleStageId, TandemState } from "../types.
 import type { SketchPreview } from "../sketch-stream.js";
 import type { WorkflowActivitySnapshot } from "../workflow-activity.js";
 import { isPendingFactoryRun } from "../agent-runner.js";
+import { lifecycleStages } from "../workflow.js";
 
 export interface RuntimeAgent {
   id?: string;
@@ -23,8 +24,11 @@ export interface RuntimeSnapshot {
 }
 
 export interface UiState extends TandemState {
+  mainModelSelection?: import("../../development/tandem/public/model-selection.js").ModelSelection | null;
   projectPath?: string;
   developmentBlocker?: string | null;
+  prototypeNeedsUpdate?: boolean;
+  requirementsDigest?: string;
   provider?: {
     canSubmitAnswers?: boolean;
     canReload?: boolean;
@@ -35,6 +39,10 @@ export interface UiState extends TandemState {
   preparationRuntime?: RuntimeSnapshot | null;
   sketchPreview?: SketchPreview | null;
   workflowRuntime?: WorkflowActivitySnapshot | null;
+  stageReviewStatus?: {
+    conflict: string; blocker: string | null; changed: boolean; currentStage: LifecycleStageId;
+    appliedAt: string | null; discardedAt: string | null;
+  };
 }
 
 export interface UiContextValue {
@@ -48,6 +56,10 @@ export interface UiContextValue {
   browseStage: (stage: LifecycleStageId) => void;
   selectArtifact: (id: string) => void;
   setBusy: (key: string, busy: boolean) => void;
+  apiUrl?: (endpoint: string) => string;
+  setReviewDirty?: (key: string, dirty: boolean) => void;
+  reviewStage?: (stage: LifecycleStageId, request?: import("../change-requests.js").ChangeRequest) => Promise<void>;
+  changeRequestDialog?: ReturnType<typeof useChangeRequestDialog>;
 }
 
 export const UiContext = createContext<UiContextValue | null>(null);
@@ -56,6 +68,26 @@ export function useUi(): UiContextValue {
   const context = useContext(UiContext);
   if (!context) throw new Error("Tandem UI components require a UiContext provider.");
   return context;
+}
+
+export function useChangeRequestDialog() {
+  const [requestId, setRequestId] = useState<string | null>(null);
+  const opener = useRef<HTMLElement | null>(null);
+  return {
+    requestId,
+    open(id: string, source: Element | null = document.activeElement) {
+      if (requestId === null) opener.current = source instanceof HTMLElement && source !== document.body ? source : null;
+      setRequestId(id);
+    },
+    close() { setRequestId(null); },
+    restoreFocus() {
+      const target = opener.current;
+      opener.current = null;
+      if (!target?.isConnected || target.closest("[hidden], [inert]")) return false;
+      target.focus({ preventScroll: true });
+      return true;
+    },
+  };
 }
 
 function statusHelp(target: Element | null): string {
@@ -127,6 +159,8 @@ export function skippedStage(state: UiState, stage: HistoricalStageId) {
 
 export function hasStageData(state: UiState, stage: LifecycleStageId): boolean {
   return state.lifecycle.currentStage === stage
+    || Boolean(state.lifecycle.reviewId && lifecycleStages.findIndex(item => item.id === stage)
+      < lifecycleStages.findIndex(item => item.id === state.lifecycle.currentStage))
     || (state.lifecycle.completedStages || []).includes(stage)
     || (state.lifecycle.history || []).some((entry) => entry.stageId === stage)
     || (state.artifacts || []).some((artifact) => artifact.stage === stage)

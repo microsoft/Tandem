@@ -1,14 +1,20 @@
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, readFile, realpath, readdir } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { lstat, readFile } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { createServer } from "node:net";
 import { fingerprintPrototypeWorkspace, PROTOTYPE_FINGERPRINT_PREFIX } from "./prototype-runtime.js";
 import { fingerprintWorkspace } from "./execution.js";
 import { readJsonFile, writeJsonAtomically } from "./project-store.js";
 import { ensureMaterializedDirectories, readRetainedFile } from "./accepted-artifacts.js";
 import type { TandemState } from "./types.js";
+import { isPrototypePreviewTarget, prototypePreviewCheckpointId, type PrototypePreviewTarget } from "./prototype-flow.js";
+import {
+    discoverPreviewStarts, insidePreviewPath, materialized, samePreviewPath, verifyPreviewStart,
+    type PreviewStartChoice,
+} from "./preview-start.js";
+export { materialized } from "./preview-start.js";
 
-export type PreviewTarget = "current" | "pending";
+export type PreviewTarget = PrototypePreviewTarget;
 export interface PreviewLaunchBinding {
     prototypeId: string;
     generation: string;
@@ -24,31 +30,25 @@ export interface PreviewLaunchRecipe extends PreviewLaunchBinding {
     executable: string;
     executableHash: string;
     args: string[];
+    workingDirectory?: string;
 }
 export const launchDigest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const missing = (error: unknown) => error instanceof Error && "code" in error && error.code === "ENOENT";
-const samePath = (a: string, b: string) => process.platform === "win32" ? resolve(a).toLowerCase() === resolve(b).toLowerCase() : resolve(a) === resolve(b);
-const contained = (root: string, path: string) => {
-    const part = relative(root, path);
-    return part !== "" && !isAbsolute(part) && part !== ".." && !part.startsWith(`..${sep}`);
-};
-export async function materialized(path: string, kind: "file" | "directory"): Promise<void> {
-    const stat = await lstat(path);
-    if (stat.isSymbolicLink() || !(kind === "file" ? stat.isFile() && stat.nlink === 1 : stat.isDirectory())
-        || !samePath(await realpath(path), path)) throw new Error(`Preview launch ${kind} is missing, aliased or unsafe: ${path}`);
-}
 export async function verifyLaunchRecipe(recipe: PreviewLaunchRecipe): Promise<void> {
     if (!recipe || ["prototypeId", "generation", "checkpointId", "mainSessionId", "url", "cwd", "sourceFingerprint", "executable", "executableHash"]
         .some(key => typeof Reflect.get(recipe, key) !== "string" || !Reflect.get(recipe, key))
         || Buffer.byteLength(JSON.stringify(recipe), "utf8") > 32768
         || recipe.version !== 1 || !isAbsolute(recipe.cwd) || !isAbsolute(recipe.executable) || !/^node(?:\.exe)?$/i.test(basename(recipe.executable)) || !Array.isArray(recipe.args)
         || recipe.args.length < 1 || recipe.args.length > 32 || recipe.args.some(arg => typeof arg !== "string" || arg.length > 4000 || arg.includes("\0"))
-        || !contained(recipe.cwd, recipe.args[0]!) || !/\.(?:mjs|cjs|js)$/i.test(recipe.args[0]!)) {
+        || !isAbsolute(recipe.args[0]!) || !insidePreviewPath(recipe.cwd, recipe.args[0]!) || !/\.(?:mjs|cjs|js)$/i.test(recipe.args[0]!)
+        || recipe.workingDirectory !== undefined && (typeof recipe.workingDirectory !== "string" || !isAbsolute(recipe.workingDirectory) ||
+            !samePreviewPath(recipe.cwd, recipe.workingDirectory) && !insidePreviewPath(recipe.cwd, recipe.workingDirectory))) {
         throw new Error("A reviewed Node entrypoint and explicit argument list inside this checkpoint are required.");
     }
     await materialized(recipe.cwd, "directory");
     await materialized(recipe.executable, "file");
     await materialized(recipe.args[0]!, "file");
+    if (recipe.workingDirectory) await materialized(recipe.workingDirectory, "directory");
     if (createHash("sha256").update(await readFile(recipe.executable)).digest("hex") !== recipe.executableHash) {
         throw new Error("The reviewed executable changed. Review a new launch recipe before restarting.");
     }
@@ -86,14 +86,14 @@ export class PreviewLaunches {
         guard(): Promise<void>;
     }) {}
     async binding(state: TandemState, target: PreviewTarget): Promise<PreviewLaunchBinding> {
-        if (!["current", "pending"].includes(target)) throw new Error("Choose the current or pending saved version.");
+        if (!isPrototypePreviewTarget(target)) throw new Error("Choose a saved prototype preview.");
         const flow = state.prototypeFlow;
-        const id = target === "current" ? flow?.displayedCheckpointId : flow?.pendingCheckpointId;
+        const id = prototypePreviewCheckpointId(flow, target);
         const checkpoint = flow?.checkpoints.find(item => item.id === id);
         if (!checkpoint || checkpoint.status !== "ready" || !checkpoint.previewUrl || !checkpoint.sourceFingerprint
             || checkpoint.generation !== state.generation) throw new Error("This saved version lacks a verified checkpoint/source identity. It cannot be restarted.");
-        const expected = join(this.options.storageRoot, "efforts", state.prototypeId, "previews", checkpoint.requestId);
-        if (!samePath(expected, checkpoint.workspacePath)) throw new Error("The checkpoint is not in its exact project-owned saved workspace.");
+        const expected = join(this.options.storageRoot, "efforts", state.stageReview?.parentId ?? state.prototypeId, "previews", checkpoint.id);
+        if (!samePreviewPath(expected, checkpoint.workspacePath)) throw new Error("The checkpoint is not in its exact project-owned saved workspace.");
         await materialized(checkpoint.workspacePath, "directory");
         return { prototypeId: state.prototypeId, generation: state.generation, checkpointId: checkpoint.id,
             target, url: checkpoint.previewUrl, cwd: checkpoint.workspacePath, sourceFingerprint: checkpoint.sourceFingerprint,
@@ -110,12 +110,11 @@ export class PreviewLaunches {
         catch (error) { if (missing(error)) return undefined; throw error; }
     }
     private async assertBinding(binding: PreviewLaunchBinding): Promise<void> {
-        await this.options.guard();
         if (this.closed || launchDigest(await this.binding(await this.options.readState(binding.prototypeId), binding.target)) !== launchDigest(binding)) {
             throw new Error("Preview selection or ownership changed. Review the selected saved version again.");
         }
     }
-    async inspect(state: TandemState, target: PreviewTarget, entrypoint?: string, args: string[] = []) {
+    async inspect(state: TandemState, target: PreviewTarget, entrypoint?: string, args: string[] = [], workingDirectory = ".", choiceId?: string) {
         await this.options.guard();
         if (!/^node(?:\.exe)?$/i.test(basename(this.options.executable))) {
             throw new Error("Saved preview restart requires the verified Node host executable. Open this project with the supported Node browser/desktop host; no executable is guessed.");
@@ -127,13 +126,30 @@ export class PreviewLaunches {
             throw new Error("The retained launch record has invalid or different ownership. It was not replaced.");
         }
         let recipe: PreviewLaunchRecipe;
+        let description = "Use the server file and options you selected.";
+        let selected: PreviewStartChoice | undefined;
+        if (choiceId !== undefined) {
+            if (entrypoint !== undefined) throw new Error("Choose a detected start option or manual setup, not both.");
+            const discovery = await discoverPreviewStarts(binding.cwd);
+            selected = discovery.choices.find(choice => launchDigest([binding, choice]) === choiceId);
+            if (!selected) throw new Error("That start option changed. Review the available choices again.");
+            entrypoint = selected.entrypoint; args = selected.args; workingDirectory = selected.workingDirectory;
+        }
+        const checkpoint = state.prototypeFlow!.checkpoints.find(item => item.id === binding.checkpointId)!;
+        if (entrypoint === undefined && !saved && checkpoint.previewStart) {
+            const start = await verifyPreviewStart(binding.cwd, checkpoint.previewStart);
+            entrypoint = start.entrypoint; args = start.args; workingDirectory = start.workingDirectory;
+            description = "Start instructions were saved with this prototype. You do not need to choose a file.";
+        }
         if (entrypoint !== undefined) {
-            if (!entrypoint.trim() || isAbsolute(entrypoint) || entrypoint.startsWith("-")) throw new Error("Enter an existing relative Node entrypoint, not a shell command.");
+            const start = await verifyPreviewStart(binding.cwd, { entrypoint, args, workingDirectory });
             const executable = resolve(this.options.executable);
             await materialized(executable, "file");
             recipe = { version: 1, ...binding, executable, executableHash: createHash("sha256").update(await readFile(executable)).digest("hex"),
-                args: [resolve(binding.cwd, entrypoint), ...args] };
+                args: [resolve(binding.cwd, start.entrypoint), ...start.args], workingDirectory: resolve(binding.cwd, start.workingDirectory) };
+            if (selected) description = selected.detail;
         } else if (saved) {
+            description = "Use the start instructions you previously reviewed.";
             if (typeof saved !== "object" || !("recipe" in saved) || !saved.recipe || typeof saved.recipe !== "object") {
                 throw new Error("The recorded preview launch is invalid. It was preserved.");
             }
@@ -143,15 +159,21 @@ export class PreviewLaunches {
             savedBinding.target = target;
             if (launchDigest(savedBinding) !== launchDigest(binding)) throw new Error("The recorded launch belongs to different source or ownership. Review an explicit launch again.");
             recipe = { ...recipe, target };
-        } else return { needsRecipe: true, ...binding, executable: this.options.executable,
-            entrypoints: (await readdir(binding.cwd, { withFileTypes: true })).filter(entry =>
-                entry.isFile() && !entry.isSymbolicLink() && /\.(?:mjs|cjs|js)$/i.test(entry.name)).map(entry => entry.name).sort().slice(0, 50),
-            message: "No launch command was recorded for this saved version. Review an existing Node entrypoint and its arguments. No script is guessed, generated or run until you confirm and grant native permission." };
+        } else {
+            const discovery = await discoverPreviewStarts(binding.cwd);
+            return { needsRecipe: true, ...binding, executable: this.options.executable, entrypoints: discovery.entrypoints,
+                choices: discovery.choices.map(choice => ({ ...choice, id: launchDigest([binding, choice]) })),
+                notices: discovery.notices,
+                message: discovery.choices.length ? "Choose how to start this saved preview. Your prototype and feedback will stay unchanged."
+                    : "This older preview has no saved start instructions, and no supported start option was found. Nothing has been changed." };
+        }
         await verifyLaunchRecipe(recipe);
         const confirmationId = randomUUID();
         this.proposals.set(confirmationId, { recipe, expiresAt: Date.now() + 300_000 });
         return { needsRecipe: false, confirmationId, ...binding, executable: recipe.executable, args: recipe.args,
-            message: "Restart only this saved version using the reviewed command. Native permission is still required. No generation, feedback, promotion or Development request will run." };
+            workingDirectory: recipe.workingDirectory ?? recipe.cwd,
+            environment: { PORT: new URL(recipe.url).port },
+            message: description + " This starts only the selected saved preview; it does not rebuild or apply changes." };
     }
     async decide(confirmationId: string, approve: boolean): Promise<unknown> {
         if (!approve) {
@@ -182,6 +204,10 @@ export class PreviewLaunches {
         }
         await requireFreePreviewPort(recipe.url);
         await materialized(this.options.launcher, "file");
+        // Native completion notifications can make the session busy after this launch.
+        // Admission is checked before dispatch; readiness uses this launch's own evidence.
+        await this.options.guard();
+        await this.assertBinding(binding);
         const launchId = randomUUID(), shellId = `tandem-preview-${launchId}`;
         const manifest = { version: 1, launchId, confirmationId, recipe, requestedAt: new Date().toISOString() };
         const directory = join(dirname(this.path(binding)), "attempts", launchId);
@@ -221,7 +247,11 @@ export class PreviewLaunches {
             }
             throw new Error("The saved preview did not become identity-verified. Its owned launch was stopped; no other server was adopted.");
         } catch (error) {
-            await this.stop(shellId);
+            try { await this.stop(shellId); }
+            catch (cleanupError) {
+                throw new AggregateError([error, cleanupError],
+                    `${error instanceof Error ? error.message : String(error)} Owned preview shutdown also failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+            }
             throw error;
         }
     }

@@ -118,6 +118,8 @@ export interface ReviewFinding {
   designBasis?: string; questionId?: string;
 }
 export type RoleOutcome =
+  | { kind: 'discovery-change'; summary: string; reason: string; prototypeId: string;
+      sourceDigest: string; stage: 'prepare' | 'requirements' | 'sketch' | 'prototype' }
   | { kind: 'execution-failure'; summary: string; reason: string; evidenceRefs: string[] }
   | { kind: 'review-incomplete'; summary: string; reason: string; evidenceRefs: string[] }
   | { kind: 'stopped-partial'; summary: string; evidenceRefs: string[]; stopId: string }
@@ -337,6 +339,14 @@ export function parseRoleResult(role: HumanRole, value: unknown): RoleResult {
   const kind = data.outcome.kind;
   let outcome: RoleOutcome;
   switch (kind) {
+    // Historical ledgers retain this outcome; live Router tools no longer accept it.
+    case 'discovery-change': {
+      requireCondition(role === 'router', 'Only Router may propose an upstream discovery change.');
+      const v = object(data.outcome, ['kind', 'summary', 'reason', 'prototypeId', 'sourceDigest', 'stage']);
+      outcome = { kind, summary: text(v.summary), reason: text(v.reason), prototypeId: text(v.prototypeId),
+        sourceDigest: digest(v.sourceDigest), stage: choice(v.stage, ['prepare', 'requirements', 'sketch', 'prototype']) };
+      break;
+    }
     case 'stopped-partial': {
       const v = object(data.outcome, ['kind', 'summary', 'evidenceRefs', 'stopId']);
       outcome = { kind, summary: text(v.summary), evidenceRefs: strings(v.evidenceRefs), stopId: text(v.stopId) };

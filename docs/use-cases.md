@@ -5,17 +5,42 @@
 For a first idea or existing app, use the [two-path quick start](quick-start.md).
 The recipes below cover the next tasks.
 
-## Revise requirements or drawings
+<a id="revise-requirements-or-drawings"></a>
+
+## Revise requirements or designs
 
 **Use when:** a behavior or screen needs to change.
 
+1. Before Development, describe the change in Prototype Feedback, the design
+   revision input, or Requirements. Tandem assesses the affected stages against
+   retained decisions and work before changing earlier stages.
+2. Review **Project changes**: where the change starts, what needs an update,
+   and what stays unchanged. Clarify or refine the request if necessary.
+3. Approve the impact proposal. Answer only new or affected Requirements
+   questions, then review the affected designs and prototype update.
+4. Use **Apply update** for the prepared prototype. If Development is affected,
+   use **Continue change in Development**; implementation still needs its own
+   confirmation.
+
+**Result:** the new request proceeds from the earliest affected stage without
+repeating completed decisions or replacing the previous working prototype.
+Prior answers remain visible when a decision needs review. A changed project
+requires **Check impact again** before approving an older proposal.
+
+In Development, use its conversation to [refine Design](#point-to-a-design-change)
+or request implementation changes. This stays in Development's own workflow;
+it does not automatically start an upstream impact review.
+
+For direct edits rather than a chat request:
+
 1. Open the owning phase. If completed/read-only, use **Reopen** and review its
-   warning; settle/close Development first if required.
+   broader warning; settle/close Development first if required.
 2. In Requirements, choose the answered question and **Update answer and
    dependents**. Review affected decisions.
-3. In Drawings, edit and **Save drawings**, or send a precise change. Inspect
+3. In Designs, edit and **Save designs**, or type a precise change and use
+   **Send** (**Ctrl+Enter** or **Command+Enter**). Inspect
    **Revision history** if a request failed; retry the recorded request deliberately.
-4. Approve the new drawings before using them for Prototype.
+4. Approve the new designs before using them for Prototype.
 
 **Result:** revised evidence with history retained. Reopening marks affected
 outputs stale, so old approvals may no longer apply. For a normal Development
@@ -25,11 +50,11 @@ change, [refine Design](#point-to-a-design-change) instead.
 
 **Use when:** a version is ready but the current preview has not changed.
 
-1. Read its label: Interaction can be an automatic milestone, not your feedback.
-2. Choose the displayed **Show Interaction prototype**, **Show requested revision**
+1. Read its label: Prototype can be an automatic result, not your feedback.
+2. Choose the displayed **Show Prototype**, **Show requested revision**
    or **Show saved version** action.
 3. Try it inline or use **Open current preview**. If you want a change, describe
-   it in Feedback and **Send revision** or **Queue revision**.
+   it in Feedback and **Send change** or **Queue change**.
 4. Inspect clarifications/outcomes, then explicitly show the resulting version.
 
 **Result:** you control which version you evaluate. Viewing is not Finish or
@@ -45,12 +70,12 @@ the revision; the agent should not infer a requirement solely from what you trie
 
 **Use when:** finished discovery should inform Development's Design.
 
-1. Select **Continue to Development** from the saved Prototype, or **Review
-   Prototype handoff** in Development.
-2. Review the exact saved specification, decisions, assumptions, deferred work
-   and target folder. Confirm **Create Design from Prototype** or **Refine Design
-   from Prototype**. **Cancel** creates no handoff and starts no work.
-3. Follow the handoff status. Designer can take several minutes; answer any
+1. Select **Finish Prototype** for the current accepted version. Saving its
+   specification/evidence and continuing to Development are one action.
+   Older save-only outputs offer **Continue to Development**.
+2. Follow status while the exact handoff is retained and Designer starts.
+   There is no additional handoff-review or model-selection popup.
+3. Designer can take several minutes; answer any
    permission request in the owning session. When Design is ready, inspect it
    and answer blocking/advisory questions in Development.
 
@@ -150,60 +175,17 @@ If evidence is partial, ask what remains unverified instead of treating it as a
 pass. Recovery checks do not settle purge rules or an unconfirmed interface.
 You may leave those decisions open and retain an explicitly limited outcome.
 
-## Locate and export saved outputs
+## Locate saved outputs
 
-**Use when:** you want a reviewed snapshot to share.
+**Use when:** you want to inspect the project's saved work and evidence.
 
 1. Expand the relevant **Artifacts** group and inspect the original output.
-2. Open **Project settings → Advanced handoffs & history**. Choose a saved
-   discovery snapshot, or use **Capture Development outcome for review** in
-   Development. Inspect the captured and original outcomes, including any
-   failed/partial/unverified areas.
-3. Select the completed stage/captured outcome, enter **Accepted by**, and review
-   **Accept handoff**.
-4. Once that snapshot is accepted, **Export accepted handoff** appears. Export,
-   then inspect the local `tandem-records` bundle before sharing.
+2. In Development, inspect Design, Plan, Implementation and Review outputs and
+   their original Conversation entries. Keep failed, partial and unavailable
+   coverage distinct from passing evidence.
+3. Use the saved files as evidence when sharing or requesting follow-up work.
+   Publication remains a separate action outside Project settings.
 
-**Result:** an exported accepted snapshot, not a Git commit or publication.
-Acceptance records attribution, not authenticated identity, implementation approval or a test pass.
-If source/Design changed, capture and review again.
-
-<details>
-<summary>Optional delivery and linked follow-up work</summary>
-
-**Prepare delivery draft** is separate from export. **Process settings** selects
-Local/GitHub independently for delivery, status and intake; **Save process
-settings** applies the selection. Existing references/history remain, and errors
-never switch adapters.
-
-GitHub needs authenticated `gh` and suitable access. **Publish reviewed handoff**
-posts to an existing PR with GitHub or writes a local bundle with Local, only
-after confirmation. Nothing is merged or deployed.
-**Import linked effort** creates a follow-up without resetting the current one
-or starting agents; **Open linked effort and start Preparation** is the separate
-action that starts discovery.
-
-</details>
-
-## Use optional voice input
-
-**Use when:** you prefer dictating a discovery goal, answer or revision.
-Text and Copilot use do not require Azure voice sign-in.
-
-1. Select **Mic** at the intended input. If an Azure credential error requires it,
-   choose the offered **Sign in for voice input** and complete browser sign-in.
-2. Select **Mic** again and allow microphone access. Successful login never
-   starts recording.
-3. **Stop** the recording, edit the transcript, then use the form's send/answer
-   action yourself. **Cancel** or Escape restores the original draft.
-
-**Result:** editable text, not an automatically sent request. Audio goes to Azure;
-Tandem does not retain a recording. **Cancel sign-in**, or hiding/navigating away
-from its input, cancels pending login. Configuration/microphone errors are not
-fixed by sign-in; type normally if voice is unavailable.
-
-Drawings' **Voice settings** separately offers **GPT-live conversation**.
-With an authorized deployment, **Talk with GPT-live** can discuss and submit
-drawing revisions; you still approve drawings. **End voice** does not cancel
-an already-submitted revision. Its authentication differs from Azure dictation.
-See [speech configuration](engineering-reference.md#speech-input) for prerequisites.
+**Result:** inspected original outputs, not a new acceptance or export.
+The former acceptance, delivery and linked-intake workflow has been removed.
+Previously saved snapshots, receipts and `tandem-records` exports remain intact.

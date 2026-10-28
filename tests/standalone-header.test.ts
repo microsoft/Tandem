@@ -25,6 +25,7 @@ test("regular canvas retains its own logo, title and controls without standalone
     assert.match(artwork.src, /^data:image\/png;base64,/);
     assert.equal(artwork.alt, "");
     assert.equal(artwork.getAttribute("aria-hidden"), "true", "The heading names Tandem without duplicating decorative artwork.");
+    assert.equal(h.get("next-action-bar").hidden, false);
     await h.sendHeaderMessage({ type: "tandem:header:connect", channel: host.channel });
     assert.equal(h.document.querySelector<HTMLDivElement>(".topbar")!.hidden, false);
     assert.equal(h.headerMessages.length, 0);
@@ -51,12 +52,47 @@ test("standalone handshake requires its exact parent, origin and channel before 
     assert.match(value.lifecycle, /Requirements/);
     assert.equal(value.controls.reload, null);
     assert.equal(value.controls.reset, null);
+    assert.equal(h.get("next-action-bar").hidden, false, "A header-only host cannot take ownership of workspace status.");
     await h.sendHeaderMessage({ type: "tandem:header:disconnect" });
     assert.equal(h.document.querySelector<HTMLDivElement>(".topbar")!.hidden, false);
     assert.equal(h.document.querySelector<HTMLElement>(".project-folder")!.hidden, false);
     assert.equal(h.document.querySelector<HTMLElement>(".project-folder")!.title, "C:\\fixture-project");
     assert.equal(h.document.querySelector<HTMLElement>(".context-pane-heading")!.dataset.hosted, undefined);
     assert.equal(h.requests.length, 0);
+});
+
+test("standalone status handoff preserves live help and scoped navigation, with an independent fallback", async (t) => {
+    const h = await reactHarness(t, host);
+    const initial = state();
+    h.render(initial);
+    await h.flush();
+    await h.sendHeaderMessage({ type: "tandem:header:connect", statusBar: true }, "https://untrusted.example");
+    assert.equal(h.get("next-action-bar").hidden, false);
+    await h.sendHeaderMessage({ type: "tandem:header:connect", statusBar: true });
+    assert.equal(h.get("next-action-bar").hidden, true);
+    const value = header(h.headerMessages);
+    assert.equal(value.status?.text, `${h.get("next-action-guide").textContent} | ${h.get("session-model-effort").textContent}`);
+    assert.equal(value.status?.error, false);
+    assert.equal(value.status?.action, "Add the first usage");
+    const focus = h.document.activeElement;
+    await h.sendHeaderMessage({ type: "tandem:status:action", scope: "old-effort" });
+    assert.equal(h.document.activeElement, focus);
+    assert.equal(h.headerMessages.at(-2)?.type, "tandem:header:error");
+    await h.sendHeaderMessage({ type: "tandem:status:action", scope: value.scope });
+    await new Promise<void>((resolve) => h.window.requestAnimationFrame(() => resolve()));
+    await h.flush();
+    assert.equal(h.document.activeElement?.id, "add-usage");
+    assert.equal(h.requests.length, 0, "The merged arrow navigates without submitting work.");
+    h.render({ ...initial, revision: 2, status: ".tandem\\efforts\\active\\stages\\requirements-r53.json",
+        provider: { ...initial.provider, canSubmitAnswers: false } });
+    await h.flush();
+    assert.equal(header(h.headerMessages).status?.action, null);
+    await h.sendHeaderMessage({ type: "tandem:status:action", scope: value.scope });
+    assert.equal(h.requests.length, 0);
+    await h.sendHeaderMessage({ type: "tandem:header:disconnect" });
+    assert.equal(h.get("next-action-bar").hidden, false);
+    assert.equal(h.document.querySelector<HTMLDivElement>(".topbar")!.hidden, false);
+    assert.deepEqual(h.errors, []);
 });
 
 test("saved Prototype does not project a legacy building phase into Development", async (t) => {
@@ -79,7 +115,7 @@ test("saved Prototype does not project a legacy building phase into Development"
 });
 
 test("permission ownership follows the private session, not the viewed discovery tab or viewport", async (t) => {
-    const h = await reactHarness(t, host, "development");
+    const h = await reactHarness(t, host, "preparation", false, true);
     h.render(state("development"));
     await h.flush();
     await h.sendHeaderMessage({ type: "tandem:header:connect" });
@@ -90,6 +126,7 @@ test("permission ownership follows the private session, not the viewed discovery
     }, "http://127.0.0.1:8765", frame.contentWindow);
     await status(true, "ready");
     assert.equal(header(h.headerMessages).permissionScope, "development");
+    assert.equal(h.get<HTMLButtonElement>("preparation-tab").disabled, false);
     await h.fire(h.get("preparation-tab"), "mousedown", { button: 0, ctrlKey: false });
     assert.equal(h.get("preparation-panel").hidden, false);
     assert.equal(header(h.headerMessages).permissionScope, "development");
@@ -140,45 +177,32 @@ test("hosted reload cannot bypass the relocated Project settings control", async
     await h.sendHeaderMessage({ type: "tandem:header:connect" });
     await h.sendHeaderMessage({ type: "tandem:header:action", scope: header(h.headerMessages).scope, action: "reload" });
     assert.equal(h.requests.length, 0);
-    await h.click("project-settings");
-    await h.click("reload-extension");
+    const settings = await h.projectSettings();
+    await settings.send({ type: "project-reload", id: "hosted-reload", scope: settings.reload().scope });
     assert.equal(h.requests.at(-1)!.path, "/api/reload");
-    assert.equal(h.get("reload-status").textContent, "Provider reload failed.");
+    assert.equal(settings.reload().message, "Provider reload failed.");
     assert.ok(header(h.headerMessages).messages.some(message => message.id === "maintenance" && message.error));
-    await h.click(h.document.querySelector('[role="alertdialog"] button')!);
+    await h.click("close-project-settings");
     assert.match(h.get("next-action-guide").textContent!, /Provider reload failed/);
     assert.equal(h.document.querySelector(".topbar #reload-extension"), null);
 });
 
-test("hosted speech login stays at its requesting input and cannot be invoked from chrome", async (t) => {
+test("hosted header rejects retired input actions without submitting or changing typed drafts", async (t) => {
     const h = await reactHarness(t, host);
     h.render(state());
-    let aborted = false;
-    h.setSpeechFactory(async () => { throw Object.assign(new h.window.Error("Voice sign-in required."), { speechSignInRequired: true }); });
-    h.setFetch(async (path, options) => {
-        assert.equal(path, "/api/speech/login");
-        return new Promise((_resolve, reject) => {
-            options.signal?.addEventListener("abort", () => { aborted = true; reject(new Error("Cancelled")); }, { once: true });
-        });
-    });
     await h.flush();
+    const input = h.get<HTMLTextAreaElement>("usage-input");
+    await h.input(input, "Keep my typed draft");
     await h.sendHeaderMessage({ type: "tandem:header:connect" });
     const scope = header(h.headerMessages).scope;
-    await h.sendHeaderMessage({ type: "tandem:header:action", scope, action: "signIn" });
+    assert.deepEqual(Object.keys(header(h.headerMessages).controls), ["reload", "reset"]);
+    for (const action of ["signIn", "cancelSignIn"]) {
+        await h.sendHeaderMessage({ type: "tandem:header:action", scope, action });
+        assert.equal(h.headerMessages.at(-2)?.type, "tandem:header:error");
+    }
     assert.equal(h.requests.length, 0);
-    const input = h.get<HTMLTextAreaElement>("usage-input");
-    const composer = input.closest(".voice-composer")!;
-    await h.click(composer.querySelector(".speech-toggle")!);
-    await h.click(composer.querySelector(".speech-sign-in")!);
-    assert.equal(h.requests.length, 1);
-    assert.equal(header(h.headerMessages).controls.signIn, null);
-    assert.equal(header(h.headerMessages).controls.cancelSignIn, null);
-    await h.sendHeaderMessage({ type: "tandem:header:action", scope, action: "cancelSignIn" });
-    assert.equal(aborted, false, "Hosted messages do not invoke a removed header control.");
-    await h.click(composer.querySelector(".speech-cancel")!);
-    assert.equal(aborted, true);
-    assert.equal(header(h.headerMessages).controls.cancelSignIn, null);
-    assert.match(composer.querySelector(".speech-status")!.textContent!, /sign-in cancelled/);
+    assert.equal(input.value, "Keep my typed draft");
+    assert.equal(input.disabled || input.readOnly, false);
 });
 
 test("standalone header configuration cannot target arbitrary websites or carry unbounded controls", () => {
@@ -187,4 +211,12 @@ test("standalone header configuration cannot target arbitrary websites or carry 
         assert.equal(standaloneHeaderHost("#" + new URLSearchParams({ "tandem-host": origin, "header-channel": host.channel })), null);
     }
     assert.equal(isApplicationHeader({ scope: "effort", version: "test", lifecycle: "", controls: null, messages: [] }), false);
+    const value: ApplicationHeader = { scope: "effort", version: "test", lifecycle: "",
+        controls: { reload: null, reset: null }, messages: [] };
+    assert.equal(isApplicationHeader(value), true, "Older application headers remain compatible.");
+    assert.equal(isApplicationHeader({ ...value, status: { text: "Ready", error: false, action: null } }), true);
+    for (const status of [null, {}, { text: 123, error: false, action: null }, { text: "Ready", error: "false", action: null },
+        { text: "x".repeat(8193), error: false, action: null }, { text: "Ready", error: false, action: "x".repeat(257) }]) {
+        assert.equal(isApplicationHeader({ ...value, status }), false);
+    }
 });

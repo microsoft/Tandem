@@ -23,7 +23,7 @@ not a second runnable web application or a standalone behavioral oracle.
 - Backbone schemas, artifact storage, implementation evidence and retained
   workflow contracts remain transitive shared dependencies. Retirement
   of the old server does not authorize deleting saved state or changing its reads.
-- `../skills` remains bundled authoring/review guidance, and `../test/shared` covers shared
+- `../skills` remains bundled Design authoring guidance, and `../test/shared` covers shared
   domain, persistence, permission and compatibility behavior.
 
 This is not an unchanged copy of the old application. `domain/human-loop`
@@ -49,5 +49,4 @@ npm test
 From `tandem`, `npm run test:shared` runs this shared suite and
 `npm test` runs the shared suite followed by canvas tests. These tests
 do not launch an old web host or establish real native/model end-to-end behavior.
-Historical design documents and research remain historical context, not startup
-instructions for another supported product.
+Retained compatibility schemas are not startup instructions for another product.

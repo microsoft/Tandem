@@ -7,8 +7,8 @@ import { inflateSync } from "node:zlib";
 import type { ArtifactAsset } from "./artifact-assets.js";
 import { normalizeProjectId, ProjectStoreError } from "./project-store.js";
 import {
-    readSketchState, renderSketchSvg, validateSketchDocument,
-    type SketchApproval, type SketchDocument, type SketchRevision, type SketchScreen,
+    isDslScreen, readSketchState, renderSketchSvg, validateSketchDocument,
+    type SketchApproval, type SketchDocument, type SketchRevision, type DrawingScreen,
 } from "./sketch.js";
 
 const MAX_DOCUMENT_BYTES = 256 * 1024;
@@ -47,6 +47,12 @@ function hash(bytes: Buffer): string {
 
 function json(value: unknown): Buffer {
     return Buffer.from(JSON.stringify(value), "utf8");
+}
+
+function screenSource(screen: DrawingScreen) {
+    return isDslScreen(screen)
+        ? { name: `${screen.id}.ui.json`, content: json(screen.ui), limit: MAX_DOCUMENT_BYTES, mediaType: "application/json" as const }
+        : { name: `${screen.id}.svg`, content: Buffer.from(renderSketchSvg(screen), "utf8"), limit: MAX_SVG_BYTES, mediaType: "image/svg+xml" as const };
 }
 
 function decode(bytes: Buffer): unknown {
@@ -183,7 +189,7 @@ function paeth(a: number, b: number, c: number): number {
     return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
 }
 
-function validatePng(content: Buffer, screen: SketchScreen): void {
+function validatePng(content: Buffer, screen: DrawingScreen): void {
     if (content.length > MAX_PNG_BYTES || !content.subarray(0, 8).equals(PNG_SIGNATURE)) {
         return failure("png_invalid", "Preview must be a PNG of at most 1 MiB.");
     }
@@ -343,7 +349,8 @@ export class SketchStore {
             }
             await writeImmutable(join(directory, "document.json"), content);
             for (const screen of validated.screens) {
-                await writeImmutable(join(directory, `${screen.id}.svg`), Buffer.from(renderSketchSvg(screen), "utf8"));
+                const source = screenSource(screen);
+                await writeImmutable(join(directory, source.name), source.content);
             }
             // The final metadata file commits the revision only after all scene assets are durable.
             await writeImmutable(join(directory, "revision.json"), json(revision));
@@ -363,8 +370,12 @@ export class SketchStore {
             const document = validateSketchDocument(decode(content));
             if (!content.equals(json(document))) return failure("integrity", "Saved sketch document bytes are not canonical.");
             for (const screen of document.screens) {
-                const svg = await bytes(join(directory, `${screen.id}.svg`), MAX_SVG_BYTES);
-                if (!svg.equals(Buffer.from(renderSketchSvg(screen), "utf8"))) return failure("integrity", "Saved SVG no longer matches its sketch scene.");
+                const source = screenSource(screen);
+                if (!(await bytes(join(directory, source.name), source.limit)).equals(source.content)) {
+                    return failure("integrity", isDslScreen(screen)
+                        ? "Saved UI DSL source bytes no longer match the design document."
+                        : "Saved SVG no longer matches its sketch scene.");
+                }
             }
             return document;
         });
@@ -377,17 +388,19 @@ export class SketchStore {
             hash: hash(await bytes(join(directory, "document.json"), MAX_DOCUMENT_BYTES)), mediaType: "application/json",
         }];
         for (const screen of document.screens) {
-            for (const extension of ["svg", "png"] as const) {
+            const source = screenSource(screen);
+            for (const extension of [isDslScreen(screen) ? "ui.json" : "svg", "png"] as const) {
                 const name = `${screen.id}.${extension}`;
-                const content = await bytes(join(directory, name), extension === "svg" ? MAX_SVG_BYTES : MAX_PNG_BYTES);
+                const content = await bytes(join(directory, name), extension === "png" ? MAX_PNG_BYTES : source.limit);
                 if (extension === "png") validatePng(content, screen);
-                else if (!content.equals(Buffer.from(renderSketchSvg(screen), "utf8"))) return failure("integrity", "SVG bytes do not match the sketch scene.");
+                else if (!content.equals(source.content)) return failure("integrity", "Screen source bytes do not match the design document.");
                 assets.push({
-                    id: `${screen.id}-${extension}`, path: `${relative}/${name}`, hash: hash(content),
-                    mediaType: extension === "svg" ? "image/svg+xml" : "image/png",
+                    id: `${screen.id}-${extension === "ui.json" ? "ui" : extension}`, path: `${relative}/${name}`, hash: hash(content),
+                    mediaType: extension === "png" ? "image/png" : source.mediaType,
                 });
             }
         }
+
         if (assets[0].hash !== revision.documentHash) return failure("integrity", "Sketch document changed while its assets were being read.");
         return assets;
     }

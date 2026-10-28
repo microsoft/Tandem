@@ -1,6 +1,15 @@
 /** Presentation only; native workflow state remains the authority. */
+export function developmentStartup(snapshot) {
+  return ["starting", "verifying"].includes(snapshot?.startup) ? snapshot.startup
+    : snapshot?.installation?.status === "attaching" ? "starting" : null;
+}
+
 export function developmentStatus(snapshot, acknowledgement = null) {
   const workflow = snapshot?.workflow, installation = snapshot?.installation;
+  const startup = developmentStartup(snapshot);
+  if (startup) return snapshot?.accessRequests?.length
+    ? { kind: "attention", text: "Permission response needed", requestId: null }
+    : { kind: "active", text: startup === "verifying" ? "Verifying Development model..." : "Starting Development...", requestId: null };
   if (!snapshot || snapshot.conversationStatus !== "verified") return {
     kind: installation?.reason ? "attention" : "active", text: installation?.reason ? "Development setup needs attention"
       : (installation?.status === "new" ? "Development not activated" : "Connecting to Development..."), requestId: null,

@@ -8,7 +8,7 @@ import { test } from "node:test";
 import type { PermissionRequest } from "@github/copilot-sdk";
 import { DesktopProtocol, validateDesktopUrl } from "../src/desktop/protocol.js";
 import { desktopRuntimeEnvironment } from "../src/desktop/environment.js";
-import { desktopSessionConfig, parseDesktopModelSelection } from "../src/desktop/runtime.js";
+import { assertSourcePreviewProviders, desktopSessionConfig, parseDesktopModelSelection } from "../src/desktop/runtime.js";
 import { claimDesktopWorkspace } from "../src/desktop/workspace.js";
 import { isPreferredTandemProvider, preferredTandemProvider } from "../src/provider-identity.js";
 import { canvasRequestAllowed } from "../src/canvas-transport.js";
@@ -25,7 +25,7 @@ test("desktop accepts only root loopback application URLs", () => {
 
 test("independent runtimes do not inherit another host's session or tool trampoline", () => {
     const source = { SESSION_ID: "parent", COPILOT_TRAMPOLINE_PORT: "1234", COPILOT_TRAMPOLINE_TOKEN: "parent-only",
-        COPILOT_SDK_PATH: "parent-sdk", COPILOT_HOME: "user-home", PATH: "tools", TANDEM_Speech__Region: "eastus" };
+        COPILOT_SDK_PATH: "parent-sdk", COPILOT_HOME: "user-home", PATH: "tools", TANDEM_TEST_SETTING: "retained" };
     const environment = desktopRuntimeEnvironment(source);
     assert.equal(environment.SESSION_ID, undefined);
     assert.equal(environment.COPILOT_TRAMPOLINE_PORT, undefined);
@@ -33,7 +33,7 @@ test("independent runtimes do not inherit another host's session or tool trampol
     assert.equal(environment.COPILOT_SDK_PATH, undefined);
     assert.equal(environment.COPILOT_HOME, "user-home");
     assert.equal(environment.PATH, "tools");
-    assert.equal(environment.TANDEM_Speech__Region, "eastus");
+    assert.equal(environment.TANDEM_TEST_SETTING, "retained");
     assert.equal(source.SESSION_ID, "parent");
 });
 
@@ -51,6 +51,46 @@ test("desktop provider is session-bound and preserves installed provider precede
     assert.equal(isPreferredTandemProvider("session:tandem", [session, user], "current"), false);
 });
 
+test("explicit source preview disables discovered configuration without moving auth or session state", async () => {
+    const f = protocolFixture();
+    try {
+        const ordinary = desktopSessionConfig("workspace", "runtime", f.protocol);
+        const isolated = desktopSessionConfig("workspace", "runtime", f.protocol, undefined, true);
+        assert.equal(ordinary.enableConfigDiscovery, true);
+        assert.equal(Object.hasOwn(ordinary, "enableSkills"), false);
+        assert.equal(isolated.enableConfigDiscovery, false);
+        assert.equal(isolated.requestExtensions, true, "the staged extension still uses native loading and consent");
+        assert.equal(isolated.enableSkills, true);
+        assert.deepEqual(isolated.skillDirectories, [join("runtime", "skills")]);
+        assert.equal(isolated.configDirectory, undefined, "do not move session state or copy authentication profiles");
+        assert.equal(isolated.gitHubToken, undefined);
+        assert.equal(isolated.continuePendingWork, false);
+        assert.equal(f.protocol.permissionMode, "ask");
+        assert.equal(Object.hasOwn(isolated, "model"), false);
+        assert.equal(Object.hasOwn(isolated, "reasoningEffort"), false);
+        const permission = isolated.onPermissionRequest!(desktopPermissionRequests.read, permissionInvocation);
+        assert.equal(f.events[0].type, "permission");
+        f.reply({ type: "permission-response", id: f.events[0].id, approved: false });
+        assert.deepEqual(await permission, { kind: "reject" });
+    } finally { f.protocol.close(); }
+});
+
+test("source preview refuses foreign active providers instead of overriding execution ownership", () => {
+    const session = { id: "session:current:tandem", status: "running" };
+    assert.doesNotThrow(() => assertSourcePreviewProviders([session], "current"));
+    assert.equal(isPreferredTandemProvider("session:tandem", [session], "current"), true);
+    for (const id of ["user:tandem", "project:tandem", "session:another:tandem", "plugin:example:tandem"]) {
+        for (const status of ["starting", "running"]) {
+            assert.throws(() => assertSourcePreviewProviders([session, { id, status }], "current"),
+                /Source preview isolation was not honored.*No provider was substituted/);
+        }
+    }
+    assert.throws(() => assertSourcePreviewProviders([session], "other"), /isolation was not honored/);
+    assert.doesNotThrow(() => assertSourcePreviewProviders([session,
+        { id: "user:tandem", status: "disabled" }, { id: "project:tandem", status: "failed" }], "current"));
+    assert.doesNotThrow(() => assertSourcePreviewProviders([session, { id: "user:unrelated", status: "running" }], "current"));
+});
+
 test("canvas transport rejects cross-origin API requests and rebinding hosts but permits embedding", () => {
     const origin = "http://127.0.0.1:1234";
     const request = { method: "POST", url: "/api/answer", headers: { host: "127.0.0.1:1234", origin } };
@@ -63,6 +103,26 @@ test("canvas transport rejects cross-origin API requests and rebinding hosts but
     assert.equal(canvasRequestAllowed({
         method: "GET", url: "/", headers: { host: "127.0.0.1:1234", "sec-fetch-site": "cross-site" },
     }, origin), true);
+});
+
+test("canvas rejects retired audio endpoints and has no WebSocket upgrade handler", async () => {
+    const h = await extensionHarness();
+    const entry = await h.api.startServer("retired-endpoints", "sample", "project:tandem", true);
+    try {
+        assert.equal(entry.server.listenerCount("upgrade"), 0);
+        for (const path of ["/api/speech/token", "/api/speech/login", "/api/speech/sign-in", "/api/sketch/live/session"]) {
+            const response = await fetch(new URL(path, entry.url), {
+                method: "POST", headers: { origin: new URL(entry.url).origin, "Content-Type": "application/json" }, body: "{}",
+            });
+            assert.equal(response.status, 404, path);
+            assert.deepEqual(await response.json(), { error: "Not found." });
+        }
+        assert.deepEqual(h.requests, []);
+    } finally {
+        clearInterval(entry.heartbeat);
+        await new Promise<void>(resolve => entry.server.close(() => resolve()));
+        await h.close();
+    }
 });
 
 function protocolFixture() {
@@ -79,7 +139,7 @@ function protocolFixture() {
 test("native session errors retain notification identity without reclassifying runtime blockers by text", () => {
     const f = protocolFixture();
     try {
-        const message = "Configure TANDEM_Speech__ResourceId and TANDEM_Speech__Region";
+        const message = "The saved prototype preview is unavailable.";
         f.protocol.reportSessionError({ id: "one", data: { errorType: "notification", message } });
         f.protocol.reportSessionError({ id: "two", data: { errorType: "notification", message } });
         for (const errorType of ["authentication", "query", "unknown"]) {
@@ -117,7 +177,7 @@ test("desktop sessions disable untracked question tools without changing tool pe
     const f = protocolFixture();
     try {
         const config = desktopSessionConfig("workspace", "runtime", f.protocol);
-        assert.equal(config.streaming, true, "drawing workers inherit streaming from the desktop session");
+        assert.equal(config.streaming, true, "design workers inherit streaming from the desktop session");
         assert.equal(config.includeSubAgentStreamingEvents, true);
         assert.equal(config.extensionSdkPath, dirname(fileURLToPath(import.meta.resolve("@github/copilot-sdk"))),
             "Composed extensions must receive the host SDK that preserves terminal declarations.");

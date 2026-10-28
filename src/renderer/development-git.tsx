@@ -1,5 +1,6 @@
+import { AlertDialog, Button } from "./ui/index.js";
 import { useEffect, useRef, useState } from "react";
-import { AlertDialog } from "radix-ui";
+
 import type { DevelopmentGitPreflight } from "../development-git.js";
 
 async function check(): Promise<DevelopmentGitPreflight> {
@@ -68,12 +69,12 @@ export function useDevelopmentGit() {
             {view?.error && <p role="alert">{view.error}</p>}
             {view?.busy && <p role="status">Checking and preparing this folder...</p>}
             <div className="dialog-actions">
-                <button id="cancel-git-setup" type="button" className="plan-button secondary" disabled={view?.busy}
-                    onClick={() => finish(false)}>Cancel</button>
-                {view?.result?.status === "setup" && <button id="confirm-git-setup" type="button" className="plan-button" disabled={view.busy}
-                    onClick={() => void act(true)}>Set up this folder and continue</button>}
-                {view?.result?.status !== "setup" && <button id="retry-git-preflight" type="button" className="plan-button" disabled={view?.busy}
-                    onClick={() => void act(false)}>Check again</button>}
+                <Button variant="secondary" id="cancel-git-setup" type="button" className="plan-button secondary" disabled={view?.busy}
+                    onClick={() => finish(false)}>Cancel</Button>
+                {view?.result?.status === "setup" && <Button variant="primary" id="confirm-git-setup" type="button" className="plan-button" disabled={view.busy}
+                    onClick={() => void act(true)}>Set up this folder and continue</Button>}
+                {view?.result?.status !== "setup" && <Button variant="primary" id="retry-git-preflight" type="button" className="plan-button" disabled={view?.busy}
+                    onClick={() => void act(false)}>Check again</Button>}
             </div>
         </AlertDialog.Content></AlertDialog.Portal>
     </AlertDialog.Root>;

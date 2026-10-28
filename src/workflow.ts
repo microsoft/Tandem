@@ -3,7 +3,7 @@ import type { HistoricalStageId, LifecycleStageId, TandemArtifact } from "./type
 export const lifecycleStages: { id: LifecycleStageId; label: string }[] = [
     { id: "prepare", label: "Preparation" },
     { id: "requirements", label: "Requirements" },
-    { id: "sketch", label: "Sketch" },
+    { id: "sketch", label: "Designs" },
     { id: "prototype", label: "Prototype" },
     { id: "development", label: "Development" },
 ];
@@ -101,11 +101,21 @@ export interface DecisionNode {
 
 export interface DecisionGraph { nodes: DecisionNode[] }
 
+export function decisionIsReady(node: DecisionNode, nodes: readonly DecisionNode[]): boolean {
+    return Boolean(node.question) && !node.answer && node.dependencies.every(
+        id => nodes.some(candidate => candidate.id === id && Boolean(candidate.answer)),
+    );
+}
+
 export function curatedDefault(question: DecisionQuestion | null): string | null {
     if (!question || question.choices.length < 3 || question.choices.length > 5 ||
         new Set(question.choices.map((choice) => choice.toLowerCase())).size !== question.choices.length ||
         !question.recommended || !question.choices.includes(question.recommended)) return null;
     return question.recommended;
+}
+
+export function requiresExplicitAnswer(node: DecisionNode): boolean {
+    return !node.answer && !curatedDefault(node.question);
 }
 
 export function normalizeDecisionId(value: unknown): string {

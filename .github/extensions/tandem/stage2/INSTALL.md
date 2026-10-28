@@ -1,8 +1,13 @@
-# Tandem quick start
+# Standalone Development extension
 
 Tandem is a Copilot extension for designing, building and reviewing a project
 together, in a new or existing repository. This is a **developer preview**;
 try it on a test repository or a copy of your existing project first.
+
+This guide packages only the native Development extension. For the composed
+Preparation-to-Development browser app, use the
+[source quick start](https://github.com/microsoft/Tandem/blob/main/docs/quick-start.md).
+Do not install this standalone package over a composed Tandem installation.
 
 ## Before you start
 
@@ -17,7 +22,7 @@ portable package from this repository. From the repository root, run:
 
 ```powershell
 New-Item -ItemType Directory -Path C:\staging -Force | Out-Null
-npm --prefix tandem run package:extension -- C:\staging\tandem
+npm --prefix development\tandem run package:extension -- C:\staging\tandem
 ```
 
 `C:\staging\tandem` must not already exist. After the command succeeds,
@@ -63,7 +68,11 @@ To pin Tandem for one repository, copy the complete package into an empty
 creating worktrees from that commit; untracked files in the original checkout
 do not appear in new worktrees. User-wide installation avoids this requirement.
 
-A project-local `tandem` overrides the user-wide `tandem` in that working copy.
+Do not rely on a project-local copy to override a user-wide installation.
+The composed Tandem host prefers the running user provider and rejects an
+incompatible preferred package rather than falling back. Keep one intended
+installation active; use the source quick start's explicit `--source-preview`
+option when testing the composed checkout alongside an installed package.
 To switch a test project to the user-wide copy, close its Tandem runtime and
 Copilot session before removing the redundant local package. Keep this source
 repository's development shim when working on Tandem itself. Do not load an old
@@ -117,6 +126,25 @@ This establishes a baseline; it does not rewrite the application.
 
 Review the proposed Design and answer any questions in Tandem. When satisfied,
 send a separate request to implement it. Review permission requests as they appear.
+
+**Project settings > Models** has optional **Main session model** and **Development
+model** selectors. First private creation uses an explicit Development override,
+or inherits the current main model when none is saved. Same-ID resume keeps the
+private session's model; later main changes do not synchronize it.
+Main changes use supported native session APIs with idle/readback checks; an
+unsupported host reports the limitation rather than replacing its session.
+The status area shows current model and effort for the owning stage, with
+not-started/unavailable and native-default/not-reported states kept explicit.
+The optional **Reasoning effort** list contains only levels advertised for that
+model. **No explicit override** preserves native model-selection behavior; Tandem
+does not impose an effort default. Apply is available only while the private
+runtime is idle. The status shows authoritative model and effort readback before
+an explicit choice is saved. A failed or mismatched update retains pending intent
+and blocks new work until you retry or **Accept actual model**.
+
+Saved explicit effort is checked again on same-session reopen, without replaying
+work or silently changing retained native settings. Main-chat effort is not
+evidence of private workflow or Review-worker effort.
 
 ## 4. Close safely
 

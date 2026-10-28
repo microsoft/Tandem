@@ -19,7 +19,7 @@ test("real browser dismissal preserves the embedded workspace, accessible contro
         t.after(async () => { await closeHost(); await rm(root, { recursive: true, force: true }); });
         const value = state();
         value.goal = "I hope to build a markdown viewer";
-        const failure = "Tandem request failed: Configure TANDEM_Speech__ResourceId and TANDEM_Speech__Region for an Azure Speech resource, then restart Tandem. Subscription keys are not used.";
+        const failure = "Tandem request failed: The saved prototype preview is unavailable. Restart the saved preview from its workspace controls, then retry the operation. Existing designs, decisions, and draft text are unchanged.";
         const source = fileURLToPath(new URL("../src/", import.meta.url));
         const [hostCss, appCss, hostBundle, appBundle] = await Promise.all([
             build({ entryPoints: [join(source, "browser", "styles.css")], bundle: true, write: false, logLevel: "silent" }),
@@ -44,18 +44,10 @@ test("real browser dismissal preserves the embedded workspace, accessible contro
                 `, resolveDir: source, loader: "tsx" },
                 bundle: true, write: false, platform: "browser", format: "esm", loader: { ".png": "dataurl" },
                 define: { "process.env.NODE_ENV": '"production"' }, logLevel: "silent",
-                plugins: [{ name: "no-azure-boundary", setup(api) {
-                    api.onResolve({ filter: /speech-recognizer\.js$/ }, () => ({ path: "speech", namespace: "fixture" }));
-                    api.onLoad({ filter: /.*/, namespace: "fixture" }, () => ({ contents: `
-                        export async function createAzureSpeechSession() {
-                            const response=await fetch("/api/speech/token",{method:"POST"});
-                            throw new Error((await response.json()).error);
-                        }` }));
-                } }],
             }),
         ]);
         let backend!: BackendOptions;
-        let backendCommands = 0, stops = 0, speechRequests = 0;
+        let backendCommands = 0, stops = 0;
         const writes: string[] = [];
         const application = createServer((request, response) => {
             if (request.url === "/") {
@@ -68,11 +60,6 @@ test("real browser dismissal preserves the embedded workspace, accessible contro
                 response.setHeader("Content-Type", "text/javascript"); response.end(appBundle.outputFiles[0].text); return;
             }
             response.setHeader("Content-Type", "application/json");
-            if (request.url === "/api/speech/token") {
-                speechRequests++;
-                backend.event({ type: "error", message: failure, notificationId: `voice-${speechRequests}` });
-                response.writeHead(503); response.end(JSON.stringify({ error: failure })); return;
-            }
             if (request.method === "POST") writes.push(request.url || "");
             if (request.url === "/api/state") response.end(JSON.stringify(value));
             else if (request.url === "/api/project-entry" || request.url === "/api/project-entry/open") {
@@ -120,8 +107,8 @@ test("real browser dismissal preserves the embedded workspace, accessible contro
             const input=document.querySelector("#usage-input");
             Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,"value").set.call(input,"Keep my typed draft");
             input.dispatchEvent(new Event("input",{bubbles:true}));
-            input.closest(".voice-composer").querySelector(".speech-toggle").click();
         })()`);
+        backend.event({ type: "error", message: failure, notificationId: "notice-one" });
         await browser.waitFor('Boolean(document.querySelector(".host-notification button"))');
         await inFrame('document.querySelector("#preparation-tab").dispatchEvent(new MouseEvent("mousedown",{bubbles:true,button:0}))');
         const before = host.snapshot();
@@ -140,7 +127,7 @@ test("real browser dismissal preserves the embedded workspace, accessible contro
                         textFits:message.scrollWidth<=message.clientWidth,fg:s.color,bg:s.backgroundColor};
                 })()`);
                 assert.ok(geometry.left >= 0 && geometry.right <= width && geometry.width > 40 && geometry.hit, JSON.stringify(geometry));
-                assert.equal(geometry.textFits, true, "long resource identifiers wrap without displacing Dismiss");
+                assert.equal(geometry.textFits, true, "long failure messages wrap without displacing Dismiss");
                 assert.notEqual(geometry.fg, geometry.bg);
             }
         }
@@ -161,19 +148,18 @@ test("real browser dismissal preserves the embedded workspace, accessible contro
         assert.equal(await inFrame('document.querySelector("#usage-input").value'), "Keep my typed draft");
         assert.equal(await inFrame('document.querySelector("#usage-input").readOnly || document.querySelector("#usage-input").disabled'), false);
         assert.deepEqual(writes, initialWrites);
-        assert.equal(speechRequests, 1);
         assert.equal(backendCommands, 0);
         assert.equal(stops, 0);
-        backend.event({ type: "error", notificationId: "voice-new", message: failure });
+        backend.event({ type: "error", notificationId: "notice-new", message: failure });
         await browser.waitFor('Boolean(document.querySelector(".host-notification button"))');
         const point = await browser.evaluate(`(()=>{const r=document.querySelector(${JSON.stringify(dismiss)}).getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
         const stopTop = await browser.evaluate('document.querySelector("button[aria-label=Stop]").getBoundingClientRect().top');
         await browser.evaluate(`void (window.pressedDismiss=document.querySelector(${JSON.stringify(dismiss)}))`);
         await browser.call("Input.dispatchMouseEvent", { type: "mousePressed", ...point, button: "left", clickCount: 1 });
-        backend.event({ type: "error", notificationId: "voice-newer", message: failure });
+        backend.event({ type: "error", notificationId: "notice-newer", message: failure });
         await browser.waitFor('window.pressedDismiss!==document.querySelector(".host-notification button")');
         await browser.call("Input.dispatchMouseEvent", { type: "mouseReleased", ...point, button: "left", clickCount: 1 });
-        assert.equal(host.snapshot().notice?.id, "voice-newer", "pointer release cannot acknowledge a replaced notification");
+        assert.equal(host.snapshot().notice?.id, "notice-newer", "pointer release cannot acknowledge a replaced notification");
         assert.equal(await browser.evaluate('document.querySelector("button[aria-label=Stop]").getBoundingClientRect().top'), stopTop);
         assert.equal(stops, 0);
         await browser.evaluate(`void (window.retryDismiss=document.querySelector(${JSON.stringify(dismiss)}))`);
@@ -188,6 +174,6 @@ test("real browser dismissal preserves the embedded workspace, accessible contro
         await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
         await browser.waitFor('document.querySelectorAll(".host-notification").length===2 && !window.retryDismiss.disabled');
         assert.equal(await browser.evaluate('document.activeElement===window.retryDismiss'), true, "a failed acknowledgment restores keyboard focus to its retryable Dismiss control");
-        assert.equal(host.snapshot().notice?.id, "voice-newer");
+        assert.equal(host.snapshot().notice?.id, "notice-newer");
         assert.deepEqual(browser.exceptions, []);
     });

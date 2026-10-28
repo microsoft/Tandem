@@ -1,21 +1,24 @@
 import { projectOutputs } from "./project-outputs.js";
 import { validHandoffDesign } from "./handoff-presentation.js";
+import { developmentStartup } from "./development-status.js";
+
+export function isModelSelectionReady(model, selected, effort) {
+  if (!model || !selected || model.error || model.pending || !model.models?.some(item => item.id === selected)) return false;
+  const desiredEffort = model.effortManaged ? model.projectReasoningEffort ?? model.desiredReasoningEffort ?? null : effort || null;
+  if (!model.effortManaged && desiredEffort !== (model.desiredReasoningEffort ?? null)) return false;
+  return model.deferred
+    ? selected === model.desired && desiredEffort === (model.desiredReasoningEffort ?? null)
+    : selected === model.actual && (desiredEffort == null || desiredEffort === model.actualReasoningEffort);
+}
 
 // Presentation messages never become native conversation input or runtime authority.
-export function installProjectPresentation({ document, window, changed, settings, currentWork, effortChanged, layoutChanged, openOutput, outputSelection, statusPresentation, scopeChanged, hasAttachments = () => false }) {
+export function installProjectPresentation({ document, window, changed, settings, currentWork, effortChanged, layoutChanged, openOutput, outputSelection, statusPresentation, scopeChanged, modelSelectionReady = () => false, hasAttachments = () => false }) {
   const { projectPanel: panel, projectOrigin: origin, projectChannel: channel } = document.body.dataset;
   if (!panel) return null;
   let context = null, draftContext = null, pending = null, nativePending = false;
-  let currentSnapshot = null;
+  let currentSnapshot = null, settingsRead = false, modelSelectionRequested = false;
   const send = value => window.parent.postMessage({ protocol: "tandem-project/v1", channel, ...value }, origin);
-  const processPanel = document.querySelector("#project-process-settings");
-  if (processPanel) {
-    processPanel.hidden = false;
-    document.querySelector("#acceptance-delivery").onclick = () => {
-      document.querySelector("#canvas-settings").open = false;
-      send({ type: "process-open" });
-    };
-  }
+  if (panel === "settings") document.querySelector("#canvas-settings").open = true;
   const effortPanel = document.querySelector("#project-effort-settings");
   const effort = document.querySelector("#project-effort"), effortApply = document.querySelector("#apply-project-effort");
   const effortRefresh = document.querySelector("#refresh-project-effort"), effortStatus = document.querySelector("#project-effort-status");
@@ -47,7 +50,12 @@ export function installProjectPresentation({ document, window, changed, settings
     reloadPending = crypto.randomUUID(); reloadError = ""; renderReload();
     send({ type: "project-reload", id: reloadPending, scope: view.scope });
   };
-  let effortPending = null;
+  let effortPending = null, savedEffort = "";
+  function publishModelSelection() {
+    if (panel !== "settings" || typeof context?.settingsScope !== "string" || !context.settingsScope || context.settingsScope.length > 100) return;
+    send({ type: "model-selection-readiness", scope: context.settingsScope,
+      ready: !effortPending && (!effortPanel || effort.value === savedEffort) && modelSelectionReady() === true });
+  }
   if (effortPanel) {
     effortPanel.hidden = false;
     document.querySelector("#private-effort-setting").hidden = true;
@@ -61,6 +69,7 @@ export function installProjectPresentation({ document, window, changed, settings
     effortApply.disabled = blocked || !effort.value;
     effortRefresh.disabled = Boolean(effortPending);
     effortPanel.setAttribute("aria-busy", String(Boolean(effortPending)));
+    publishModelSelection();
   }
   function requestEffort(apply = false) {
     if (!effortPanel || effortPending || apply && (context?.canChangeEffort !== true || !effort.value)) return;
@@ -133,12 +142,22 @@ export function installProjectPresentation({ document, window, changed, settings
       && typeof message.discovery.enabled === "boolean") {
       captureDraft();
       if (context?.statusScope !== message.statusScope) scopeChanged?.();
+      const newSettingsScope = context?.settingsScope !== message.settingsScope;
       context = message;
       document.body.dataset.rootStatusOwner = String(message.statusBarOwner === true);
       document.body.dataset.projectDesign = String(message.designVisible === true);
       document.body.dataset.projectWorking = message.developmentEntered === true ? "development" : "discovery";
+      if (panel === "settings") {
+        if (newSettingsScope && message.settingsScope || message.modelSelectionRequested === true && !modelSelectionRequested) settings(message.modelSelectionRequested === true);
+        modelSelectionRequested = message.modelSelectionRequested === true;
+      }
       renderEffort();
       renderReload();
+      publishModelSelection();
+      if (panel === "settings" && !settingsRead) {
+        settingsRead = true;
+        requestEffort();
+      }
       update(); changed();
     } else if (message.type === "layout" && typeof message.stacked === "boolean"
       && (message.conversationWidth === null
@@ -154,8 +173,13 @@ export function installProjectPresentation({ document, window, changed, settings
         send({ type: "output-opened", id: item.id, binding: item.binding });
       } catch (error) { send({ type: "output-opened", id: message.id, error: error.message }); }
     } else if (message.type === "command") {
-      if (message.command === "settings") { settings(); requestEffort(); }
+      if (message.command === "settings") send({ type: "settings-open" });
+      if (message.command === "settings-refresh" && panel === "settings") { settings(); requestEffort(); }
       if (message.command === "current-work") currentWork();
+    } else if (message.type === "appearance" && ["system", "light", "dark"].includes(message.theme)
+      && ["normal", "larger", "largest"].includes(message.fontSize)) {
+      document.body.dataset.theme = message.theme;
+      document.body.dataset.fontSize = message.fontSize;
     } else if (message.type === "project-reload-result" && reloadPending === message.id) {
       reloadPending = null;
       reloadError = typeof message.error === "string" ? message.error
@@ -178,6 +202,7 @@ export function installProjectPresentation({ document, window, changed, settings
             option.textContent = level || "No shared choice; native defaults unchanged"; option.disabled = !level; effort.append(option);
           }
           effort.value = value.desired ?? "";
+          savedEffort = value.desired ?? "";
           effortStatus.replaceChildren(...[value.stage1, value.stage2].map((stage, index) => {
             const row = document.createElement("p");
             row.textContent = `Stage ${index + 1}: ${stage.status}. Actual: ${stage.actual || "not yet available"}.`
@@ -187,8 +212,8 @@ export function installProjectPresentation({ document, window, changed, settings
         }
       } else if (!error) error = "Project effort readback is unavailable.";
       effortError.textContent = error; effortError.hidden = !error;
-      renderEffort(); changed();
       effortChanged?.();
+      renderEffort(); changed();
     } else if (message.type === "discovery-result" && pending?.id === message.id) {
       const work = pending; pending = null; update();
       if (message.ok === true) work.resolve();
@@ -201,8 +226,10 @@ export function installProjectPresentation({ document, window, changed, settings
   send({ type: "ready", panel });
   return {
     panel,
+    modelSettingsChanged: publishModelSelection,
     activate: retry => send({ type: "activate", retry: retry === true }),
     showDesign: () => send({ type: "show-design" }),
+    openSettings: () => send({ type: "settings-open" }),
     settingsClosed: () => send({ type: "settings-closed" }),
     unavailable(reason, reconnecting = false) {
       currentSnapshot = null;
@@ -224,7 +251,7 @@ export function installProjectPresentation({ document, window, changed, settings
       && /^handoff-[a-f0-9]{64}$/.test(context.handoffStatusOwner) ? context.handoffStatusOwner : null,
     placeholder: () => conflicted() ? `Draft for ${draftContext.label}`
       : current()?.stage === "development" ? "Ask about the Design, or describe the work you want."
-        : ({ goal: "Describe your project goal.", usage: "Describe a requirement usage.", sketch: "Describe a drawing revision.", prototype: "Describe prototype feedback." }[context?.discovery?.action] ?? "Use this phase's controls to continue."),
+        : ({ goal: "Describe your project goal.", usage: "Describe a requirement usage.", sketch: "Describe a design revision.", prototype: "Describe prototype feedback." }[context?.discovery?.action] ?? "Use this phase's controls to continue."),
     canSend: () => !pending && !conflicted() && (current()?.stage === "development" || context?.discovery?.enabled === true),
     entries: () => [],
     submit(text) {
@@ -237,20 +264,24 @@ export function installProjectPresentation({ document, window, changed, settings
     },
     publish(snapshot) {
       currentSnapshot = snapshot;
+      const starting = Boolean(developmentStartup(snapshot));
       const catalog = projectOutputs(snapshot);
       const selection = outputSelection?.();
       send({ type: "outputs", status: catalog.status, reason: catalog.reason,
         items: catalog.items.map(({ target, ...item }) => item),
         selected: catalog.items.find(item => item.id === selection?.id && item.binding === selection?.binding)?.id ?? null });
-      send({ type: "status", status: snapshot.workflow?.status ?? snapshot.installation?.status ?? "unavailable",
+      send({ type: "status", status: starting ? "starting" : snapshot.workflow?.status ?? snapshot.installation?.status ?? "unavailable",
+        modelSelection: snapshot.modelSelection ?? null,
         presentation: statusPresentation?.() ?? null, statusScope: context?.statusScope ?? null,
         installationStatus: snapshot.installation?.status,
-        canRetry: snapshot.installation?.canRetry === true, canReopen: snapshot.installation?.canReopen === true,
-        active: snapshot.installation?.status === "ready",
+        starting, canRetry: !starting && snapshot.installation?.canRetry === true, canReopen: !starting && snapshot.installation?.canReopen === true,
+        canInspectInitialRecovery: !starting && snapshot.installation?.canInspectInitialRecovery === true,
+        canInspectEmptyRepair: !starting && snapshot.installation?.canInspectEmptyRepair === true,
+        active: !starting && snapshot.installation?.status === "ready",
         activeRequestId: snapshot.workflow?.activeRequestId ?? null,
         compacting: snapshot.workflow?.compaction?.active === true || snapshot.workflow?.compaction?.requested === true,
         handoffActivity: snapshot.workflow?.handoffActivity ?? null,
-        role: snapshot.workflow?.activeRole ?? null, reason: snapshot.workflow?.reason ?? snapshot.installation?.reason ?? null,
+        role: snapshot.workflow?.activeRole ?? null, reason: starting ? null : snapshot.workflow?.reason ?? snapshot.installation?.reason ?? null,
         designRevision: snapshot.design?.binding?.revisionId ?? null,
         designBinding: snapshot.conversationStatus === "verified" && ["ready", "closed"].includes(snapshot.installation?.status)
           && snapshot.design?.content && validHandoffDesign(snapshot.design.binding) ? snapshot.design.binding : null,

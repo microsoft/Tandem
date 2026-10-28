@@ -1,5 +1,5 @@
 import { decisionSections, technicalFindings, reviewCoverageText, emptyReviewSection } from '../review-decisions.js';
-import { renderQuestionMeaning, questionStatus } from '../question-presentation.js';
+import { renderQuestionMeaning, questionMeaning, questionStatus } from '../question-presentation.js';
 
 const instances = new WeakMap();
 let questionTitleSequence = 0;
@@ -32,7 +32,7 @@ function questionKey(question) {
   return JSON.stringify([question.id, question.context, question.question, question.whyItMatters,
     question.importance, question.options.map(({ id, label, implication, resolutionTarget }) => [id, label, implication, resolutionTarget]),
     question.allowFreeform, binding(question.source), question.source.resultId,
-    question.source.requestIds, question.source.planDigest, question.designRefs ?? []]);
+    question.source.requestIds, question.source.planDigest, question.designRefs ?? [], question.unanswered ?? null]);
 }
 
 function appendDesignReferences(state, node, references, design) {
@@ -67,11 +67,11 @@ function validSource(interaction) {
   });
 }
 
-function currentQuestions(interaction) {
+function currentQuestions(interaction, includeHistory = false) {
   if (!interaction || !validSource(interaction)) return interaction;
   // Retain open blockers regardless of the active role/request. Only an exact,
   // validated source binding and explicit invalidation make a question historical.
-  const questions = interaction.questions.filter(question => question.state !== 'invalidated');
+  const questions = interaction.questions.filter(question => includeHistory || question.state !== 'invalidated');
   return questions.length ? { ...interaction, questions } : null;
 }
 
@@ -102,26 +102,32 @@ function canAnswer(state, form) {
     && typeof state.actions.submitAnswers === 'function';
 }
 
+function recordedAnswerText(state, question, resultId) {
+  const submitted = state.answerDetails.findLast(answer => answer.questionId === question.id
+    && answer.sourceResultId === resultId
+    && (!question.answerRequestId || answer.answerRequestId === question.answerRequestId));
+  if (submitted) return `Submitted answer: ${submitted.answer}${question.invalidation?.reason ? `\n${question.invalidation.reason}` : ''}`;
+  return question.state === 'answered'
+    ? 'Answered. The submitted answer is retained in Conversation.'
+    : question.invalidation?.reason ?? `This question is ${question.state}; no answer is inferred.`;
+}
+
 function updateForm(state) {
   const form = state.form;
   if (!form) return;
   const enabled = canAnswer(state, form);
   form.rows.forEach((row, index) => {
     const question = state.view.questionInteraction.questions[index];
-    row.fieldset.disabled = !enabled || question.state !== 'open';
+    row.fieldset.disabled = !state.workspace && (!enabled || question.state !== 'open');
+    row.select.disabled = row.textarea.disabled = !enabled || question.state !== 'open';
     row.fieldset.dataset.questionState = question.state;
     renderQuestionMeaning(row.meaning, question);
     row.status.textContent = questionStatus(question);
     const closed = question.state !== 'open';
     row.controls.hidden = closed;
     row.answer.hidden = !closed;
-    const submitted = state.answerDetails.findLast(answer => answer.questionId === question.id
-      && answer.sourceResultId === state.view.questionInteraction.resultId
-      && (!question.answerRequestId || answer.answerRequestId === question.answerRequestId));
-    row.answer.textContent = question.state === 'answered'
-      ? submitted ? `Submitted answer: ${submitted.answer}` : 'Answered. The submitted answer is retained in Conversation.'
-      : question.invalidation?.reason ?? `This question is ${question.state}; no answer is inferred.`;
-    if (row.closed !== closed) row.context.open = !closed;
+    row.answer.textContent = recordedAnswerText(state, question, state.view.questionInteraction.resultId);
+    if (row.closed !== closed && (!state.workspace || row.closed === undefined)) row.context.open = !closed;
     row.closed = closed;
   });
   const completed = state.view.questionInteraction.questions.every(question => question.state !== 'open');
@@ -136,6 +142,7 @@ function updateForm(state) {
   form.sourceError.hidden = validSource(state.view.questionInteraction);
   form.errorNode.hidden = !form.error;
   form.errorNode.textContent = form.error ?? '';
+  state.refreshWorkspace?.();
 }
 
 function retireForm(form) {
@@ -190,7 +197,7 @@ function createForm(state, interaction, previous) {
       make('p', question.context, 'human-loop-question-help'),
       make('p', `Why it matters: ${question.whyItMatters}`, 'human-loop-question-help'));
     appendDesignReferences(state, context, question.designRefs, question.source.design);
-    fieldset.append(title, meaning, status, answer, controls, context);
+    fieldset.append(title, meaning, status, answer, ...(state.workspace ? [context, controls] : [controls, context]));
     const selectLabel = make('label', 'Answer choice');
     const select = make('select');
     select.setAttribute('aria-label', `Answer choice: ${question.question}`);
@@ -228,7 +235,7 @@ function createForm(state, interaction, previous) {
       select.value = prior.select.value;
       textarea.value = prior.textarea.value;
     }
-    const row = { key, fieldset, meaning, status, select, textarea, controls, context, answer };
+    const row = { key, fieldset, meaning, status, select, textarea, controls, context, answer, title };
     form.rows.push(row);
     select.addEventListener('change', () => {
       if (state.form === form) updateForm(state);
@@ -246,7 +253,10 @@ function createForm(state, interaction, previous) {
   form.submit.dataset.humanLoopAction = 'submitAnswers';
   form.errorNode = make('p', '', 'human-loop-error');
   form.errorNode.setAttribute('role', 'alert');
-  form.node.append(form.errorNode, form.submit);
+  form.batch = make('section', undefined, 'question-batch');
+  form.batch.hidden = true;
+  if (state.workspace) form.node.append(form.help);
+  form.node.append(form.errorNode, form.batch, form.submit);
   form.node.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (!canAnswer(state, form)) return;
@@ -285,6 +295,10 @@ function updateError(state) {
   state.errorNode.textContent = error ? String(error) : '';
 }
 
+export function renderCycleProgress(container, cycle, inspectReference) {
+  renderCycle({ document: container.ownerDocument, cycle: container, actions: { inspectReference } }, cycle);
+}
+
 function renderCycle(state, cycle) {
   const make = (tag, text, css) => element(state.document, tag, text, css);
   state.cycle.hidden = !cycle;
@@ -313,6 +327,16 @@ function renderCycle(state, cycle) {
   const progress = make('ul');
   for (const task of cycle.tasks) progress.append(make('li', `${task.title} · ${task.status}`));
   details.append(progress);
+  if (cycle.implementation) {
+    const receipt = make('section');
+    receipt.dataset.implementationResult = cycle.implementation.resultId;
+    receipt.tabIndex = -1;
+    receipt.append(make('h4', 'Implementation result'), make('p', cycle.implementation.summary),
+      make('p', `Result: ${cycle.implementation.resultId}`));
+    const references = make('ul');
+    for (const reference of cycle.implementation.evidenceRefs) references.append(make('li', reference));
+    receipt.append(references); details.append(receipt);
+  }
   state.cycle.replaceChildren(make('h3', 'Internal task progress'),
     make('p', `${cycle.completed} / ${cycle.total} internal tasks completed`),
     make('p', 'Task progress is not per-item formal Review or whole-plan completion. Whole Review is reported separately.', 'human-loop-muted'),
@@ -445,7 +469,7 @@ function renderQuestions(state, interactions) {
   const nodes = [];
   const retained = new Set();
   for (const raw of interactions) {
-    const interaction = currentQuestions(raw);
+    const interaction = currentQuestions(raw, state.questionWorkspace);
     if (!interaction) continue;
     retained.add(interaction.resultId);
     let group = state.forms.get(interaction.resultId);
@@ -454,7 +478,7 @@ function renderQuestions(state, interactions) {
       state.forms.set(interaction.resultId, group);
     }
     Object.assign(group, { view: { ...state.view, questionInteraction: interaction }, actions: state.actions,
-      busy: state.busy, answerDetails: state.answerDetails });
+      busy: state.busy, answerDetails: state.answerDetails, workspace: state.questionWorkspace });
     const key = interactionKey(interaction);
     if (group.form?.key !== key) {
       const previous = group.form;
@@ -467,6 +491,12 @@ function renderQuestions(state, interactions) {
   for (const [id, group] of state.forms) if (!retained.has(id)) {
     retireForm(group.form); group.form = null; group.view = null; state.forms.delete(id);
   }
+  if (state.questionWorkspace) {
+    if (!state.navigation) state.navigation = createQuestionNavigation(state);
+    nodes.unshift(state.navigation.node);
+    for (const group of state.forms.values()) group.refreshWorkspace = () => updateQuestionNavigation(state);
+    updateQuestionNavigation(state);
+  }
   const current = [...state.questions.children];
   if (current.length !== nodes.length || current.some((node, index) => node !== nodes[index])) {
     const focused = state.document.activeElement;
@@ -477,9 +507,129 @@ function renderQuestions(state, interactions) {
   state.questions.hidden = nodes.length === 0;
 }
 
+function createQuestionNavigation(state) {
+  const make = (tag, text, css) => element(state.document, tag, text, css);
+  const node = make('nav', undefined, 'question-navigation');
+  node.setAttribute('aria-label', 'Choose a question');
+  const openSection = make('section', undefined, 'question-open');
+  const openList = make('ul', undefined, 'question-list question-open-list');
+  openSection.setAttribute('aria-label', 'Open questions');
+  openSection.append(make('h3', 'Open questions'), openList);
+  const history = make('details', undefined, 'question-history');
+  const summary = make('summary', 'Answered history');
+  const historyList = make('ul', undefined, 'question-list question-history-list');
+  history.append(summary, historyList);
+  const empty = make('p', 'Select a question to read its context and options.', 'human-loop-muted');
+  node.append(openSection, history, empty);
+  const select = key => {
+    state.selectedQuestion = key;
+    updateQuestionNavigation(state);
+    const selected = [...state.forms.values()].flatMap(group => group.form.rows).find(row => !row.fieldset.hidden);
+    if (selected) {
+      selected.title.tabIndex = -1;
+      selected.title.focus({ preventScroll: true });
+      selected.fieldset.scrollIntoView({ block: 'start' });
+    }
+  };
+  return { node, openSection, openList, openRows: new Map(), history, historyList, historyRows: new Map(), summary, empty, select };
+}
+
+function updateQuestionList(state, list, rows, entries, selected, history) {
+  const nodes = entries.map(entry => {
+    let item = rows.get(entry.key);
+    if (!item) {
+      const make = (tag, text, css) => element(state.document, tag, text, css);
+      const node = make('li');
+      const button = make('button');
+      button.type = 'button';
+      button.dataset[history ? 'questionHistoryKey' : 'questionOpenKey'] = entry.key;
+      const title = make('strong', '', history ? 'question-history-title' : 'question-open-title');
+      const status = make('span', '', 'question-list-source human-loop-muted');
+      const answer = make('span', '', history ? 'question-history-answer' : 'question-open-status');
+      const action = make('span', '', 'question-list-inspect');
+      button.append(title, status, answer, action);
+      button.addEventListener('click', () => state.navigation.select(entry.key));
+      node.append(button);
+      item = { node, button, title, status, answer, action };
+      rows.set(entry.key, item);
+    }
+    const draft = selectedAnswer(entry.row, entry.question, entry.group.form.resultId);
+    for (const [node, text] of [[item.title, entry.question.question],
+      [item.status, `${entry.provenance}${history ? ` · ${questionStatus(entry.question)}` : ''}`],
+      [item.answer, history ? recordedAnswerText(state, entry.question, entry.group.form.resultId)
+        : questionMeaning(entry.question).label + (draft ? entry.group.form.pending ? ' · Sending answer' : ' · Draft answer selected' : '')],
+      [item.action, `${entry === selected ? 'Selected · ' : ''}Inspect full context`]]) {
+      if (node.textContent !== text) node.textContent = text;
+    }
+    item.button.setAttribute('aria-label', `Inspect full context: ${entry.question.question} (${entry.provenance})${history ? '' : `. ${item.answer.textContent}`}`);
+    item.button.setAttribute('aria-current', String(entry === selected));
+    return item.node;
+  });
+  const keys = new Set(entries.map(entry => entry.key));
+  for (const key of rows.keys()) if (!keys.has(key)) rows.delete(key);
+  const previousNodes = [...list.children];
+  if (previousNodes.length !== nodes.length || previousNodes.some((node, index) => node !== nodes[index])) {
+    const focused = state.document.activeElement;
+    const restore = nodes.some(node => node.contains?.(focused));
+    list.replaceChildren(...nodes);
+    if (restore) focused.focus({ preventScroll: true });
+  }
+}
+
+function updateQuestionNavigation(state) {
+  if (!state.navigation) return;
+  const nav = state.navigation;
+  const entries = [...state.forms.values()].flatMap((group, sourceIndex) => group.form.rows.map((row, index) => {
+    const interaction = group.view.questionInteraction, question = interaction.questions[index];
+    return { group, row, question, key: JSON.stringify([interaction.resultId, question.id]),
+      provenance: `${interaction.source.role} (source ${sourceIndex + 1}) / question ${index + 1}` };
+  }));
+  if (state.selectedQuestion === undefined && entries.length) {
+    state.selectedQuestion = entries.find(entry => entry.question.state === 'open')?.key ?? '';
+  }
+  const selected = entries.find(entry => entry.key === state.selectedQuestion);
+  const open = entries.filter(entry => entry.question.state === 'open');
+  const history = entries.filter(entry => entry.question.state !== 'open');
+  nav.openSection.hidden = !open.length;
+  nav.history.hidden = !history.length;
+  updateQuestionList(state, nav.openList, nav.openRows, open, selected, false);
+  updateQuestionList(state, nav.historyList, nav.historyRows, history, selected, true);
+  nav.summary.textContent = `${history.every(entry => entry.question.state === 'answered') ? 'Answered' : 'Question'} history (${history.length})`;
+  nav.empty.hidden = Boolean(selected) || (!state.selectedQuestion && !open.length && history.length > 0);
+  nav.empty.textContent = !entries.length ? 'No saved questions are available in this view.'
+    : state.selectedQuestion ? 'The selected question is no longer available at its original source. Choose another question.'
+      : 'Choose a question to read its context and options.';
+  for (const group of state.forms.values()) {
+    const form = group.form;
+    form.groupNode.hidden = selected?.group !== group;
+    form.groupNode.open = true;
+    form.groupSummary.hidden = true;
+    for (const row of form.rows) row.fieldset.hidden = selected?.row !== row;
+    const answers = answersFor(group, form);
+    const signature = JSON.stringify(answers);
+    if (form.batchSignature !== signature) {
+      form.batchSignature = signature;
+      const make = (tag, text) => element(state.document, tag, text);
+      const list = make('ul');
+      for (const answer of answers) {
+        const entry = entries.find(entry => entry.group === group && entry.question.id === answer.questionId);
+        const item = make('li');
+        const edit = make('button', entry.question.question);
+        edit.type = 'button';
+        edit.addEventListener('click', () => nav.select(entry.key));
+        const value = answer.kind === 'option' ? entry.question.options.find(option => option.id === answer.value).label : answer.value;
+        item.append(edit, make('p', value)); list.append(item);
+      }
+      form.batch.replaceChildren(make('h4', `Selected answers from this source (${answers.length})`), list,
+        make('p', 'Send selected answers sends this entire list as one batch. Drafts from other sources are not sent.'));
+    }
+    form.batch.hidden = !answers.length;
+  }
+}
+
 /** Renders projected state only; an optional stable questionsContainer separates question provenance without recreating forms. */
 export function renderHumanLoop(container, { view, busy = false, error = null, questionsContainer = null, cycleContainer = null,
-  summaryInConversation = false, answerDetails = [], showQueue = true }, actions) {
+  questionWorkspace = false, summaryInConversation = false, answerDetails = [], showQueue = true }, actions) {
   let state = instances.get(container);
   if (!state) {
     state = createState(container);
@@ -495,6 +645,7 @@ export function renderHumanLoop(container, { view, busy = false, error = null, q
   state.actions = actions ?? {};
   state.summaryInConversation = summaryInConversation;
   state.answerDetails = answerDetails;
+  state.questionWorkspace = questionWorkspace;
   container.hidden = !view;
   if (!view) {
     renderQuestions(state, []);

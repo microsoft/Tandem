@@ -214,7 +214,7 @@ for (const startingPath of ["preparation", "development"]) test(`public ${starti
     t.after(() => h.close());
     const value = h.api.createState("git-entry"); await h.api.persistState(value);
     const server = await h.api.startServer("git-entry", "git-entry", "project:tandem", true);
-    t.after(async () => { clearInterval(server.heartbeat); server.live.close(); await new Promise<void>(done => server.server.close(() => done())); });
+    t.after(async () => { clearInterval(server.heartbeat); await new Promise<void>(done => server.server.close(() => done())); });
     const post = (path: string, body: unknown = {}) => fetch(new URL(path, server.url), {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     });
@@ -256,6 +256,69 @@ for (const startingPath of ["preparation", "development"]) test(`initial ${start
     assert.equal(h.entryRequests.filter(path => path === "/api/project-entry/open").length, 1);
     assert.equal(h.document.querySelector("#activate-development"), null);
     if (startingPath === "preparation") assert.equal(h.presentationRequests.length, 0, "Project setup cannot open private Development.");
+});
+
+for (const startingPath of ["preparation", "development"] as const) test(`successful ${startingPath} folder setup stays in progress until entry is ready without returning to the chooser`, async t => {
+    const h = await reactHarness(t, undefined, null);
+    const value = state("prepare");
+    let ready = false;
+    const chosen = Promise.withResolvers<void>(), opened = Promise.withResolvers<void>();
+    h.setGitPreflight(async () => response({ status: ready ? "ready" : "setup", initialize: true,
+        projectPath: "C:\\fixture-project", message: "Set up this folder.", token: "setup-consent" }));
+    h.setFetch(async path => {
+        assert.equal(path, "/api/development/setup");
+        ready = true;
+        return response({ status: "ready" });
+    });
+    h.setEntryGate(async (path, options) => {
+        if (path === "/api/project-entry" && options.method === "POST") await chosen.promise;
+        if (path === "/api/project-entry/open") await opened.promise;
+    });
+    h.render(value); await h.flush();
+    await h.click(`entry-${startingPath}`);
+    assert.ok(h.get("confirm-git-setup"));
+    assert.equal(h.document.querySelector("#project-entry-progress"), null, "Only the setup dialog owns attention while consent is pending.");
+    await h.click("confirm-git-setup");
+    const assertProgress = () => {
+        assert.equal(h.document.querySelector("#entry-preparation, #entry-development, #resume-project-entry, #confirm-git-setup"), null);
+        assert.equal(h.get("project-entry-progress").textContent, "Opening your selected project...");
+        assert.equal(h.get("project-entry-progress").getAttribute("role"), "status");
+        assert.equal(h.get("studio-workspace").hasAttribute("inert"), true);
+        assert.equal(h.get("studio-workspace").getAttribute("aria-busy"), "true");
+    };
+    assertProgress();
+    assert.equal(h.entryRequests.filter(path => path === "/api/project-entry/open").length, 0);
+    chosen.resolve(); await h.flush();
+    assertProgress();
+    h.render({ ...value, revision: value.revision + 1 }); await h.flush();
+    assertProgress();
+    opened.resolve(); await h.flush();
+    assert.equal(h.document.querySelector("#project-entry-progress, #entry-preparation, #entry-development"), null);
+    assert.equal(h.get("studio-workspace").hasAttribute("inert"), false);
+    assert.equal(h.entryRequests.filter(path => path.endsWith(":POST")).length, 1);
+    assert.equal(h.entryRequests.filter(path => path === "/api/project-entry/open").length, 1);
+    assert.equal(h.presentationRequests.length, startingPath === "development" ? 1 : 0);
+});
+
+test("an entry failure after successful folder setup stops progress and retries the saved choice without repeating setup", async t => {
+    const h = await reactHarness(t, undefined, null);
+    let ready = false, setups = 0;
+    h.setGitPreflight(async () => response({ status: ready ? "ready" : "setup", initialize: true,
+        projectPath: "C:\\fixture-project", message: "Set up this folder.", token: "setup-consent" }));
+    h.setFetch(async path => { assert.equal(path, "/api/development/setup"); ready = true; setups++; return response({ status: "ready" }); });
+    h.setEntryGate(async path => { if (path === "/api/project-entry/open") throw new h.window.Error("Project entry could not finish."); });
+    h.render(state("prepare")); await h.flush();
+    await h.click("entry-development"); await h.click("confirm-git-setup");
+    assert.equal(h.document.querySelector("#project-entry-progress, #entry-development, #entry-preparation"), null);
+    assert.match(h.document.querySelector('[role="alertdialog"] [role="alert"]')!.textContent!, /Project entry could not finish/);
+    assert.equal(h.presentationRequests.length, 0);
+    h.setEntryGate(null);
+    const retry = Array.from(h.document.querySelectorAll("button")).find(button => button.textContent === "Retry project entry")!;
+    await h.click(retry);
+    assert.equal(setups, 1);
+    assert.equal(h.entryRequests.filter(path => path.endsWith(":POST")).length, 1);
+    assert.ok(h.get("project-conversation-frame"));
+    assert.equal(h.get("studio-workspace").hasAttribute("inert"), false);
 });
 
 test("Preparation stays independent; later Development cancel and partial-failure retry retain the original action", async t => {

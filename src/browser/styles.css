@@ -1,5 +1,6 @@
 @import "../renderer/styles.css";
 
+@layer tandem-legacy {
 html, body, #root { height: 100%; margin: 0; padding: 0; overflow: hidden; }
 .host-shell { height: 100%; display: flex; flex-direction: column; min-width: 0; }
 .host-header { display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 5px 12px; background: var(--studio-header); color: #f1f5fb; }
@@ -8,9 +9,9 @@ html, body, #root { height: 100%; margin: 0; padding: 0; overflow: hidden; }
 .host-version { font-size: 11px; color: #c8d4e6; }
 .host-lifecycle { font-size: 11px; color: #c8d4e6; white-space: nowrap; }
 .host-header-actions { display: flex; min-width: 0; align-items: center; gap: var(--studio-control-gap); margin-inline-start: auto; overflow-x: auto; scrollbar-width: thin; padding: 3px; }
-.host-shell button, .host-dialog button { display: inline-flex; align-items: center; justify-content: center; gap: var(--studio-control-gap); border: 1px solid var(--studio-border); border-radius: 5px; padding: var(--studio-control-padding); background: var(--studio-surface); color: var(--studio-text); cursor: pointer; }
-.host-shell button:disabled, .host-dialog button:disabled { opacity: .5; cursor: default; }
-.host-shell button:not(:disabled):hover, .host-dialog button:not(:disabled):hover { border-color: var(--studio-accent); background: var(--studio-accent-soft); }
+.host-shell button:not(.tandem-button), .host-dialog button:not(.tandem-button) { display: inline-flex; align-items: center; justify-content: center; gap: var(--studio-control-gap); border: 1px solid var(--studio-border); border-radius: 5px; padding: var(--studio-control-padding); background: var(--studio-surface); color: var(--studio-text); cursor: pointer; }
+.host-shell button:not(.tandem-button):disabled, .host-dialog button:not(.tandem-button):disabled { opacity: .5; cursor: default; }
+.host-shell button:not(.tandem-button):not(:disabled):hover, .host-dialog button:not(.tandem-button):not(:disabled):hover { border-color: var(--studio-accent); background: var(--studio-accent-soft); }
 .host-shell .host-primary, .host-dialog .host-primary { background: var(--studio-action-bg); border-color: var(--studio-action-bg); color: #fff; }
 .host-shell .host-primary:not(:disabled):hover, .host-dialog .host-primary:not(:disabled):hover { background: #29499f; color: #fff; }
 .host-header .host-icon-button, .host-permissions {
@@ -28,14 +29,19 @@ html, body, #root { height: 100%; margin: 0; padding: 0; overflow: hidden; }
 .host-permissions[data-disabled="true"] { opacity: .5; }
 .host-permissions select:disabled { cursor: default; }
 .host-main { display: flex; flex: 1; min-height: 0; min-width: 0; overflow: auto; }
-.host-main > iframe { width: 100%; min-width: 900px; flex-shrink: 0; height: 100%; border: 0; }
+.host-main > iframe { width: 100%; min-width: 0; flex: 1; height: 100%; border: 0; }
 .host-notice { width: min(640px, 100%); padding: 40px 24px; margin: auto; text-align: center; overflow: auto; max-height: 100%; }
 .host-notice h1 { font-size: 22px; margin: 12px 0; }
 .host-notice p { overflow-wrap: anywhere; }
 .host-muted { color: var(--studio-muted); }
 .host-notice-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
-.host-status { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 16px; padding: 4px 10px; border-top: 1px solid var(--studio-border); background: var(--studio-panel); font-size: 11px; color: var(--studio-muted); }
-.host-status > span { overflow-wrap: anywhere; }
+.host-status { display: flex; flex: none; align-items: center; gap: 12px; height: 28px; min-height: 28px; padding: 2px 10px; border-top: 1px solid var(--studio-border); background: var(--studio-panel); font-size: 11px; color: var(--studio-muted); }
+.host-status-state { flex: none; max-width: 35%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.host-application-status { display: flex; flex: 1; align-items: center; gap: 6px; min-width: 0; }
+.host-application-status > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.host-application-status[data-status="error"] > span { color: var(--studio-danger); }
+.host-shell .host-status-action { flex: none; width: 24px; height: 24px; min-height: 24px; padding: 0; border: 0; border-radius: 3px; background: transparent; }
+.host-status-hint { flex: none; margin-inline-start: auto; white-space: nowrap; }
 .host-banner { padding: 8px 12px; border-bottom: 1px solid var(--studio-border); max-height: 20vh; overflow: auto; overflow-wrap: anywhere; white-space: pre-wrap; }
 .host-error { color: var(--studio-danger); white-space: pre-wrap; overflow-wrap: anywhere; }
 .host-banner.host-error { background: var(--studio-danger-soft); }
@@ -50,12 +56,12 @@ html, body, #root { height: 100%; margin: 0; padding: 0; overflow: hidden; }
 .host-dialog h2 { padding-inline-end: 30px; }
 .host-dialog .host-dialog-close { position: absolute; top: 12px; right: 12px; width: 30px; padding: 0; }
 .host-dialog label { display: flex; flex-direction: column; gap: 4px; }
-.host-dialog input, .host-dialog textarea, .host-dialog select { min-width: 0; padding: 4px 8px; color: var(--studio-text); background: var(--studio-surface); border: 1px solid var(--studio-border); border-radius: 5px; }
+.host-dialog :is(input, textarea, select):not(.tandem-input) { min-width: 0; padding: 4px 8px; color: var(--studio-text); background: var(--studio-surface); border: 1px solid var(--studio-border); border-radius: 5px; }
 .host-dialog textarea { min-height: 90px; resize: vertical; }
 .host-permission-details, .host-log { font: 12px/1.5 var(--font-mono, ui-monospace, monospace); white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; border: 1px solid var(--studio-border); border-radius: 5px; background: var(--studio-panel); overflow: auto; max-height: 44vh; }
 .host-log { min-height: 180px; }
 .host-permission-actions, .host-dialog .dialog-actions { flex-wrap: wrap; }
-.host-folder-path > div { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.host-folder-path .tandem-field > div { display: flex; align-items: center; gap: var(--studio-control-gap); }
 .host-folder-path input { flex: 1; }
 .host-recent { margin-top: 12px; }
 .host-folder-heading { display: flex; align-items: center; justify-content: space-between; margin: 12px 0 6px; }
@@ -70,12 +76,14 @@ html, body, #root { height: 100%; margin: 0; padding: 0; overflow: hidden; }
   .host-header { gap: 8px; padding-inline: 8px; }
   .host-workspace, .host-version, .host-lifecycle { display: none; }
   .host-header-actions { gap: 4px; }
-  .host-status > span:last-child { display: none; }
+  .host-status-hint { display: none; }
   .host-notice { padding: 24px 16px; }
 }
 @media (pointer: coarse) {
   .host-shell button, .host-shell select, .host-dialog button, .host-dialog input, .host-dialog select { min-height: 44px; }
   .host-header .host-icon-button, .host-permissions { width: 44px; height: 44px; }
+  .host-status { height: auto; min-height: 48px; }
+  .host-shell .host-status-action { width: 44px; height: 44px; }
   .host-dialog .host-dialog-close { width: 44px; }
 }
 @media (max-width: 380px) { .host-brand .brand-artwork { width: 120px; } }
@@ -84,4 +92,21 @@ html, body, #root { height: 100%; margin: 0; padding: 0; overflow: hidden; }
   .host-header { border-bottom: 1px solid CanvasText; }
   .host-shell button, .host-dialog button, .host-permissions { border-color: ButtonText; }
   .host-header .host-icon-button:focus-visible, .host-permissions:has(select:focus-visible) { outline-color: Highlight; }
+}
+}
+@layer tandem-layout {
+  .host-header .tandem-icon-button {
+    color: inherit; background: transparent; border-color: transparent;
+  }
+  .host-header .tandem-icon-button:hover:not(:disabled) { border-color: rgb(255 255 255 / 24%); background: rgb(255 255 255 / 10%); }
+  .host-header .tandem-icon-button:focus-visible { outline-color: #b6cbff; }
+  .host-permissions select.tandem-input { position: absolute; inset: -1px; width: calc(100% + 2px); height: calc(100% + 2px); min-height: 0; opacity: 0; cursor: pointer; }
+  .dialog-content.host-dialog-wide { width: min(760px, calc(100vw - 32px)); }
+  .host-dialog .tandem-icon-button.host-dialog-close { position: absolute; top: var(--studio-space-3); right: var(--studio-space-3); }
+  .host-folder-list > .tandem-button { justify-content: flex-start; text-align: start; flex-shrink: 0; }
+  .host-folder-path input.tandem-input { flex: 1; }
+  .host-status .tandem-icon-button { min-height: 24px; width: 24px; height: 24px; }
+  @media (pointer: coarse) {
+    .host-status .tandem-icon-button { min-height: var(--studio-touch-target); width: var(--studio-touch-target); height: var(--studio-touch-target); }
+  }
 }

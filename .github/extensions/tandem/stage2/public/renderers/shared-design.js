@@ -203,10 +203,24 @@ export function createSharedDesignView({ tabs, mount, onChange = () => {}, onAnn
     if (primaryArtifact(artifact).category === 'experience') {
       section.append(make('p', 'This retained artifact has no separate User story or UI category. Its original content is unchanged.', 'artifact-category-notice'));
     }
-    if (artifact.description) section.append(make('p', artifact.description, 'artifact-description'));
+    if (artifact.description) {
+      const description = make('p', artifact.description, 'artifact-description');
+      if (document.body.dataset.projectPanel) {
+        const about = make('details', undefined, 'artifact-about');
+        about.append(make('summary', 'About this artifact'), description); section.append(about);
+      } else section.append(description);
+    }
     figure = (['artifact/v1', 'artifact/v2'].includes(artifact.schemaVersion) ? renderArtifact : renderSketch)(document, artifact, { onSelect: (item) =>
       showElement(resolveDesignReference(design.content, `${artifact.id}#${item.id}`)) });
     figure.dataset.artifactId = artifact.id;
+    const caption = figure.querySelector(':scope > figcaption');
+    if (caption) {
+      caption.classList.add('artifact-heading');
+      const title = make('span', caption.textContent, 'artifact-heading-title');
+      caption.replaceChildren(title, toolbar);
+      const about = section.querySelector(':scope > .artifact-about');
+      if (about) caption.append(about);
+    }
     detail = make('details', undefined, 'artifact-element-details'); detail.hidden = true;
     section.append(figure, detail); mount.replaceChildren(section);
     if (figure.ready) {

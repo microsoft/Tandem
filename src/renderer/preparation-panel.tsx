@@ -1,3 +1,4 @@
+import { Button } from "./ui/index.js";
 import { ExternalLink, RotateCcw } from "lucide-react";
 import type { PreparationState } from "../types.js";
 import { hasActiveJobs, useAction, useUi, type RuntimeSnapshot } from "./ui-context.js";
@@ -54,7 +55,8 @@ export function PreparationPanel() {
     || (preparation.status === "needs-attention"
       ? "Preparation completed with blockers. Requirements suggestions are still available."
       : preparation.status === "ready"
-        ? "Preparation completed and its suggestions were passed to Requirements."
+        ? state.stageReview ? "Draft analysis is ready. Apply changes explicitly to update accepted Preparation."
+          : "Preparation completed and its suggestions were passed to Requirements."
         : "");
 
   function retry() {
@@ -63,8 +65,8 @@ export function PreparationPanel() {
   }
 
   return <div>
-    {state.goal && <section className="preparation-stage-card" aria-label="Original project brief">
-      <h3>Original project brief</h3><p id="goal" className="goal">{state.goal}</p>
+    {state.goal && !state.stageReview && <section className="preparation-stage-card preparation-brief" aria-labelledby="preparation-brief-title">
+      <h3 id="preparation-brief-title">Original project brief</h3><p id="goal" className="goal">{state.goal}</p>
     </section>}
     <section className="preparation-stage-card">
       <div className="preparation-stage-heading" aria-describedby="preparation-stage-progress">
@@ -106,7 +108,7 @@ export function PreparationPanel() {
             </p>
             <div id="preparation-result-suggestions" className="preparation-result-suggestions">
               {!!preparation.suggestedUsages?.length && <>
-                <strong>Passed to Requirements</strong>
+                <strong>{state.stageReview ? "Draft usage suggestions" : "Passed to Requirements"}</strong>
                 <ul>{preparation.suggestedUsages.map((usage, index) => <li key={index}>{usage}</li>)}</ul>
               </>}
             </div>
@@ -144,17 +146,17 @@ export function PreparationPanel() {
               </div>)}
               {!messages.length && <p className="muted">No activity yet.</p>}
             </div>
-            <button
+            <Button variant="primary"
               id="retry-preparation"
               className="retry-preparation"
               type="button"
               aria-describedby="preparation-stage-message"
-              hidden={preparation.status !== "failed" || currentStage !== "prepare"}
+              hidden={Boolean(state.stageReview) || preparation.status !== "failed" || currentStage !== "prepare"}
               disabled={retryDisabled}
               onClick={retry}
             >
               <RotateCcw size={16} aria-hidden="true" /> {action.busy ? "Retrying..." : "Retry preparation"}
-            </button>
+            </Button>
             <p id="preparation-stage-message" className={action.error || preparation.error || runtime?.error || ["failed", "needs-attention"].includes(preparation.status) ? "implementation-status" : "visually-hidden"} role="status" aria-live="polite"
               data-status={action.error || preparation.status === "failed" || runtime?.error ? "error" : "idle"}>
               {message}

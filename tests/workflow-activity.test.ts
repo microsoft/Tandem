@@ -224,7 +224,7 @@ test("workflow activity endpoint reads the exact native run and surfaces unavail
         assert.equal(h.developmentRequests.length, 0);
     } finally {
         if (entry) {
-            clearInterval(entry.heartbeat); entry.live.close();
+            clearInterval(entry.heartbeat);
             await new Promise<void>((resolve, reject) => entry.server.close(error => error ? reject(error) : resolve()));
         }
         await h.close();

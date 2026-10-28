@@ -2,7 +2,7 @@ import { ProjectStoreError } from "./project-store.js";
 import type { LifecycleOutput, LifecycleStageId, LifecycleState, TandemState } from "./types.js";
 import { hasActiveWork, hasUnconfirmedExecution, isRetiredStage, lifecycleStages, parseHistoricalStageId } from "./workflow.js";
 
-export const LEGACY_SKETCH_REASON = "This effort entered Prototype before Sketch was introduced. Reopen Requirements to add approved drawings.";
+export const LEGACY_SKETCH_REASON = "This effort entered Prototype before Designs was introduced. Reopen Requirements to add approved designs.";
 const record = (value: unknown): value is Record<string, any> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
 /** Historical records never pass through the active-stage filter. */
@@ -18,9 +18,19 @@ export function migrateLifecycle(value: unknown): LifecycleState {
     const migratedSketch = value.version === undefined && completed.has("requirements") && !completed.has("sketch");
     if (migratedSketch) completed.add("sketch");
     const completedStages: LifecycleStageId[] = [];
+    if (value.changeRequestId !== undefined && (value.version !== 3 || typeof value.changeRequestId !== "string" ||
+        !/^[A-Za-z0-9._-]{1,120}$/.test(value.changeRequestId))) {
+        throw new ProjectStoreError("lifecycle_invalid", "The scoped lifecycle change identity is invalid.", 422);
+    }
+    if (value.reviewId !== undefined && (value.version !== 3 || typeof value.reviewId !== "string"
+        || !/^review-[a-f0-9-]{36}$/.test(value.reviewId) || !lifecycleStages.some(stage => stage.id === value.currentStage))) {
+        throw new ProjectStoreError("lifecycle_invalid", "The pinned stage review identity is invalid.", 422);
+    }
     for (const stage of lifecycleStages) {
-        if (stage.id === "development" || !completed.has(stage.id)) break;
-        completedStages.push(stage.id);
+        if (stage.id === "development") break;
+        if (!completed.has(stage.id)) {
+            if (!value.changeRequestId && !value.reviewId) break;
+        } else completedStages.push(stage.id);
     }
     const outputs = (input: unknown): LifecycleOutput[] => {
         if (input === undefined) return [];
@@ -52,7 +62,10 @@ export function migrateLifecycle(value: unknown): LifecycleState {
         throw new ProjectStoreError("lifecycle_invalid", "Saved lifecycle migration is invalid.", 422);
     }
     return {
-        version: 3, currentStage: lifecycleStages[Math.min(completedStages.length, 4)].id,
+        version: 3, currentStage: value.reviewId ? value.currentStage
+            : lifecycleStages.find(stage => !completedStages.includes(stage.id))?.id ?? "development",
+        ...(value.changeRequestId ? { changeRequestId: value.changeRequestId } : {}),
+        ...(value.reviewId ? { reviewId: value.reviewId } : {}),
         completedStages, outputs: originalOutputs.filter((entry) => !isRetiredStage(entry.stageId)),
         history, skippedStages,
         ...(value.version !== 3 ? { migration: { version: 1, original: structuredClone(value) } }

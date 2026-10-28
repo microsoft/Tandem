@@ -51,26 +51,54 @@ saved state before submitting again.
 A saved Prototype and its preview server are different. A stopped server does
 not erase saved source or feedback.
 
-1. Use **Check again** for the current preview or **Check pending preview** for
-   the waiting version. Checks start no server/model work.
-2. Choose **Restart preview** or **Restart pending preview** for that exact version.
-3. Review the executable, folder, URL and version. Older output may ask for an
-   existing **Saved Node entrypoint** and **Additional arguments** (a JSON array
-   of strings); select **Review launch**.
-4. Confirm **Restart this saved version**, answer any owning-host permission,
+1. Use **Check again** for the current preview, **Check pending preview** for
+   the waiting version, or **Check visual preview** for design alternatives.
+   Checks start no server/model work.
+2. Choose **Restart preview**, **Restart pending preview**, or **Restart visual
+   exploration** for that exact saved version.
+3. When start instructions were saved with the prototype, review the summary.
+   Older previews show detected **Start options** from existing server files or
+   supported package scripts. Choose one and select **Review restart**.
+   Raw paths and command arguments are available under **Advanced setup**, not
+   required for a saved launch.
+4. Confirm **Restart preview**, answer any owning-host permission,
    and wait for verification.
 
 **Result:** the saved server is running, not regenerated or promoted.
 Restarting pending output does not display it; use its Show action separately.
 An already-verified live server is reused.
+Restart supplies the saved URL's port as `PORT` for Node servers that read it;
+it does not choose a different port or replace an unrelated listener.
+Restarting visual exploration retains its per-direction settings and does not
+apply any alternative. If a running preview cannot confirm visual controls,
+check it again and inspect the error; do not substitute another checkpoint or
+claim that an adjustment was applied.
 
-This adapter supports Windows Node entrypoints only. It does not guess npm
-scripts, install dependencies or substitute another server. Changed source/owner,
+If no start option is found, **Advanced setup** lists existing JavaScript files
+inside the saved preview. Select the script that starts the server (for example,
+`app\server.mjs`), not `index.html`, `src\main.tsx` or a browser component. Set
+**Start in folder** to its working folder (`.` means the saved preview root),
+and enter each argument on a separate line. No JSON or shell quoting is needed.
+Use the original launch instructions rather than trying arbitrary files.
+
+This adapter supports Windows Node server scripts only. Detection reads direct
+`node` commands in `package.json`; it does not execute npm lifecycle hooks,
+shell commands, Vite CLI, or another stack. Unsupported start options are
+explained. It does not install dependencies or substitute another server. Changed source/owner,
 unsupported stacks, denied consent or foreign port listeners block it.
 Obtain the correct launch instructions rather than killing listeners or editing
 saved metadata. Inspect uncertain attempts before launching again.
 
+A foreground-busy message applies before starting a new server, not while
+checking one Tandem just launched. If startup fails, inspect the reported process
+error rather than clearing session state or retrying an unrelated task.
+
 ## Startup and connection problems
+
+Requirements adapts to the available workspace width. In narrower windows, the
+selected question appears above the scrollable decision graph and list. Scroll
+the Requirements workspace to reach answer controls; the standalone page does
+not require horizontal scrolling to reach the workspace.
 
 | Symptom | Next step |
 | --- | --- |
@@ -81,12 +109,14 @@ saved metadata. Inspect uncertain attempts before launching again.
 | Application state must be ignored by Git | Review the offered setup to add `.tandem/`, or use the [manual alternative](quick-start.md). Check `git status` before committing. |
 | Git tracks `.tandem/` state | An ignore rule does not untrack existing files. Deliberately untrack that state yourself after reviewing it, without deleting local session data. Tandem never automatically untracks or deletes files. |
 | Older installation conflicts | Review its version and arrange an explicit stopped-host update with the complete package. Building source does not update it. |
+| Source preview reports a provider payload/version mismatch | The browser host and preferred installed provider can be different builds, even when their versions match. Inspect the reported provider and expected/observed digests. To test source without changing the installation, stop this host and explicitly relaunch the same folder with `npm run browser -- --source-preview --workspace <folder>`; see [source isolation](quick-start.md#test-source-alongside-an-installed-tandem). This disables main-session configuration discovery, not native consent. No automatic provider substitution occurs. |
+| Design generation reports an unknown Lucide icon | Updated source runtimes provide valid bundled icon names and accept known older aliases. Restart the current source browser/dev launcher to load backend changes, then use **Generate designs** to retry. A page reload or **Dismiss** alone does not restart generation. Saved designs and history are retained. |
 | Composer disabled / no Ready | Inspect setup, model and permission status. Unverified history is not empty state. |
 | Model/effort pending, busy or unavailable | Read both stage results in Settings, wait for idle and explicitly apply/reconcile a supported selection. |
 | Contextual **Retry runtime** / **Retry Development** | Inspect the failure and retry there; this does not authorize replacement history or replay. |
 | Wrong owner, live writer or corrupt state | Return to the original project/session and retain the error. Do not bypass ownership. |
 | Quiet work | Inspect activity, last-update age and permissions; silence is not proof of failure or success. |
-| Microphone failed | Continue with text. **Dismiss** clears the standalone host's failed-operation notification only; it does not configure Azure, sign in, retry or restart work. Details remain in host **Diagnostics** and `.tandem/desktop/browser.log`. A new failure appears again. Use voice sign-in only for its identified credential error. |
+| Dismissible failed-operation notification | **Dismiss** clears the standalone host's notification only; it does not retry or restart work. Details remain in host **Diagnostics** and `.tandem/desktop/browser.log`. A new failure appears again. |
 
 For a report, include version, phase, action and visible error. Remove private
 URLs, credentials, personal paths and sensitive project content first.
@@ -135,9 +165,9 @@ session's other extension connections and lose unsent text, but does not
 archive/reset saved data, download updates or refresh the app preview.
 Failures remain in the root status bar/hosted error banners after Settings closes.
 
-**Restart Preparation...** lives in **Preparation > Advanced Preparation actions**,
+**Restart Preparation...** lives in the **Preparation** tab header,
 not empty goal entry or direct Development without discovery. After confirmation,
-it stops discovery, archives Preparation/Requirements/Drawings/Prototype state and
+it stops discovery, archives Preparation/Requirements/Designs/Prototype state and
 files, and returns to goal entry. Unconfirmed stopping leaves recovery visible.
 
 Close Development first. Its Design, Conversation, app files, handoffs and the

@@ -149,11 +149,22 @@ test("PR triggers include every source, test, and workflow while live stays manu
     const workflow = await readFile(resolve(".github", "workflows", "agent-evals.yml"), "utf8");
     const pullRequest = workflow.split("  workflow_dispatch:")[0];
     for (const path of [
-        "src/**", "development/**", "tests/**", "scripts/evaluate.ts", "skills/**", ".github/workflows/**",
+        "src/**", "development/**", "tests/**", "scripts/**", "skills/**", ".github/workflows/**",
         ".github/copilot-instructions.md", "package.json", "package-lock.json", "tsconfig*.json",
     ]) assert.ok(pullRequest.includes(`- "${path}"`));
-    assert.deepEqual([...workflow.matchAll(/node-version:\s*"([^"]+)"/g)].map(match => match[1]), ["24", "24"],
-        "Deterministic and protected live jobs use the application's supported Node runtime.");
+    assert.deepEqual([...workflow.matchAll(/node-version:\s*"([^"]+)"/g)].map(match => match[1]), ["24", "24", "24"],
+        "Public install, deterministic and protected live jobs use the application's supported Node runtime.");
+    const publicInstall = workflow.split("  public-install:")[1].split("  deterministic:")[0];
+    assert.match(publicInstall, /runs-on: windows-latest/);
+    assert.match(publicInstall, /persist-credentials: false/);
+    assert.doesNotMatch(publicInstall, /cache: npm|secrets\.|NODE_TLS_REJECT_UNAUTHORIZED|strict-ssl=false/);
+    assert.match(publicInstall, /NPM_CONFIG_REGISTRY = 'https:\/\/registry\.npmjs\.org\/'/);
+    assert.match(publicInstall, /NPM_CONFIG_USERCONFIG/);
+    assert.match(publicInstall, /NPM_CONFIG_GLOBALCONFIG/);
+    assert.match(publicInstall, /NPM_CONFIG_CACHE/);
+    assert.match(publicInstall, /Path = '\.'/);
+    assert.match(publicInstall, /Path = 'development\\tandem'/);
+    assert.match(publicInstall, /ci --foreground-scripts --ignore-scripts=false/);
     assert.match(workflow, /if: github\.event_name == 'workflow_dispatch' && github\.ref == format/);
     assert.match(workflow, /environment: copilot-evals/);
     assert.match(workflow, /secrets\.COPILOT_EVAL_TOKEN/);
@@ -162,6 +173,10 @@ test("PR triggers include every source, test, and workflow while live stays manu
     assert.match(workflow, /in-flight costs can exceed it/);
     assert.doesNotMatch(workflow, /max_tokens|max-tokens/);
     assert.doesNotMatch(workflow, /^\s*(pull_request_target|schedule):/m);
+    assert.doesNotMatch(workflow, /npm install --global.*@github\/copilot/);
+    assert.match(workflow, /npm --prefix development\/tandem ci/);
+    assert.match(workflow, /npm run pack && node --import tsx --test tests\/payload\.test\.ts/);
+    assert.match(workflow, /TANDEM_PACKAGED_ZIP: dist\/tandem-extension\.zip/);
 });
 
 test("fake runner reports model, prompt fingerprints, actual usage, and a successful exit code", async () => {

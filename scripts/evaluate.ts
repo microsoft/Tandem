@@ -66,7 +66,7 @@ export function evaluationInventory(maxCases = evalCases.length) {
     };
 }
 
-/** SDK 1.0.11 rejects bare '*'; its documented source-qualified exclusions deny all tools. */
+/** Source-qualified exclusions deny all tools, including tools discovered outside the allowlist. */
 export function evaluationSessionConfig(
     context: Pick<EvalAgentContext, "model">, workingDirectory: string, configDirectory: string,
 ): SessionConfig {

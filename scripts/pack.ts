@@ -23,6 +23,7 @@ const completed = new Promise<void>((resolveArchive, rejectArchive) => {
     output.on("close", resolveArchive);
     output.on("error", rejectArchive);
     archive.on("error", rejectArchive);
+    archive.on("warning", rejectArchive);
 });
 
 archive.pipe(output);
@@ -31,6 +32,9 @@ archive.file(join(extensionRoot, "copilot-extension.json"), {
 });
 archive.file(join(extensionRoot, "extension.mjs"), {
     name: "extensions/tandem/extension.mjs",
+});
+archive.file(join(extensionRoot, "preview-launcher.mjs"), {
+    name: "extensions/tandem/preview-launcher.mjs",
 });
 archive.file(join(extensionRoot, "payload.json"), { name: "extensions/tandem/payload.json" });
 archive.directory(join(extensionRoot, "stage2"), "extensions/tandem/stage2");

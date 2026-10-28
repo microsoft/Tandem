@@ -29,7 +29,7 @@ whether it chose the behavior you expected.
 
 Tandem's vision is the shared whiteboard: a person and Copilot discussing a
 journey, pointing to an unclear step, and deciding what should happen before
-committing to implementation. Drawings and interactive previews make the
+committing to implementation. Designs and interactive previews make the
 discussion concrete; a visible Design keeps the agreement available afterward.
 
 ## What a short request leaves unsaid
@@ -56,7 +56,7 @@ Imagine an empty project for an account-management app. You choose Preparation
 because the outcome matters more than a detailed specification you do not yet have.
 
 "I want to recover an accidental deletion" becomes a usage. Questions clarify
-when access stops, how recovery works and what remains undecided. Drawings give
+when access stops, how recovery works and what remains undecided. Designs give
 the journey a shape. A prototype lets you try it and notice that "within 30 days"
 still leaves the exact deadline ambiguous.
 
@@ -132,7 +132,7 @@ queue or completed Review is not permission to continue coding.
 
 ## Independent stages, deliberate decisions
 
-Discovery keeps its goal, question, drawing and prototype controls. Development
+Discovery keeps its goal, question, design and prototype controls. Development
 keeps its own Design and Conversation. You can use either starting path without
 being forced through the other, and shared artifact navigation does not merge
 their histories or retarget your draft.
@@ -156,30 +156,9 @@ A speed advantage has not been established. Adaptive views for different project
 types and a broader AI-native IDE remain directions to explore, not promises of
 complete current functionality.
 
-## Optional background and historical illustrations
+## Further reading
 
-The [six-slide overview](../development/docs/tandem-opening-slides-v2.html#1) and
-[extended background deck](../development/docs/tandem-opening-slides-light.html#1)
-are optional illustrations of this story. The extended deck adds the unknowns
-framework, observation/confirmation example, scoped-evidence workspace, captured
-tank-game walkthrough, Q&A and related-work discussion. Open the checked-out HTML
-locally; use arrow controls, **Script / N** for notes, and numbered image controls
-in the walkthrough. The overview supports `#1` through `#6`; the extended deck
-supports `#1` through `#15`.
-
-| Historical material | Current distinction |
-| --- | --- |
-| The Model Y screenshot has a **Design** tab. | Discovery uses Preparation, Requirements, Drawings and Prototype. Formal Design belongs to Development. |
-| The slides mention direct entry with an agreed spec. | Development also accepts existing files or a rough idea and can establish the agreement there. |
-| The extended tank-game captures use **Teleos Living Canvas**, **Attention** and older implementation/review controls. | They illustrate a historical workflow, not today's UI or validation results. Use Questions and the separate **Plan and implement** confirmation described in the manual. Reviewer reports Design conformance and over-engineering; it does not edit code or approve another cycle. |
-| The older [workflow diagram](../development/docs/workflow-redesign.html?view=ownership) has no human technical-plan approval or Apply-to-project step. | **Plan and implement** is still required before planning/code changes. You do not approve each internal task. Prototype's Show/Apply control is a different action. |
-| The diagram includes observed main-chat history. | Development shows its own messages and attributable events, not copied parent/discovery chat. |
-
-None of these illustrations establishes release availability, test coverage,
-or a measured speed advantage. The [quick start](quick-start.md) and
-[manual](user-manual.md) describe current operation without requiring the decks.
-
-The background's references are Thariq Shihipar's
+Related references include Thariq Shihipar's
 [Finding your unknowns](https://claude.com/blog/a-field-guide-to-claude-fable-finding-your-unknowns)
 and Anthropic's [AI-native SDLC playbook](https://claude.com/blog/the-ai-native-sdlc-playbook).
 The shared direction is durable agreements and human judgment across agent work;

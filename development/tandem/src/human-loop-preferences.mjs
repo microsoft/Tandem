@@ -4,6 +4,21 @@ import { getHostStateWal } from "../runtime-src/domain/host-state-wal.ts";
 
 const defaults = () => ({ schemaVersion: "human-loop-preferences/v1", theme: "system", fontSize: "normal", model: null, pendingModel: null,
   reasoningEffort: null, pendingReasoningEffort: null, projectReasoningEffort: null });
+export function normalizeModelCatalog(models) {
+  if (!Array.isArray(models) || !models.length || models.length > 1000
+    || !models.every(model => model && typeof model.id === "string" && model.id.trim() === model.id
+      && model.id.length > 0 && model.id.length <= 200)
+    || new Set(models.map(model => model.id)).size !== models.length) throw new Error("The SDK model list is unavailable or invalid.");
+  return models.filter(model => model.policy?.state !== "disabled").map(({ id, name, supportedReasoningEfforts = [] }) => {
+    if (!Array.isArray(supportedReasoningEfforts) || supportedReasoningEfforts.length > 40
+      || !supportedReasoningEfforts.every(effort => typeof effort === "string" && effort.trim() === effort
+        && effort.length > 0 && effort.length <= 40)
+      || new Set(supportedReasoningEfforts).size !== supportedReasoningEfforts.length) {
+      throw new Error("SDK supported reasoning efforts are invalid.");
+    }
+    return { id, name: typeof name === "string" ? name.slice(0, 200) : id, supportedReasoningEfforts };
+  });
+}
 export function validateProjectReasoningEffort(value) {
   if (!["none", "minimal", "low", "medium", "high", "xhigh", "max"].includes(value)) throw new Error("Invalid Development reasoning effort.");
   return value;

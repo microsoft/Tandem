@@ -1,12 +1,17 @@
-import { createCanvas, joinSession } from "@github/copilot-sdk/extension";
+import { createCanvas, defineWorkflow, joinSession } from "@github/copilot-sdk/extension";
 import { createHumanLoopController } from "./human-loop-controller.mjs";
 import { openBrowserCanvas } from "./browser-navigation.mjs";
 import { createBrowserEntry } from "./human-loop-browser-entry.mjs";
+import { privateReviewRegistration } from "./native-evidence-workflow.mjs";
 
+let session;
+const privateRegistration = privateReviewRegistration(defineWorkflow, () => session);
+if (privateRegistration) {
+  session = await joinSession(privateRegistration);
+} else {
 const controller = createHumanLoopController({
   workspacePath: process.cwd(), sdkModulePath: import.meta.resolve("@github/copilot-sdk"),
 });
-let session;
 const browserEntry = createBrowserEntry({
   getSession: () => session, start: controller.start,
   createProvider: () => controller.openView("browser", { surface: "browser" }),
@@ -39,3 +44,4 @@ session = await joinSession({
   onEvent: controller.observe,
 });
 await controller.attach(session);
+}

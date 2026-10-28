@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { setup, state, decision, response, text, field, disabled, hidden, submit, browse, type Harness } from "./renderer-fixtures.test.js";
+import { requirementsResearchInput } from "../src/requirements-research.js";
 
 function dag(...nodes: ReturnType<typeof decision>[]) {
     const value = state(); value.requirements.substage = "dag"; value.decisionGraph.nodes = nodes;
@@ -18,8 +19,16 @@ function batch() {
 }
 
 test("requirements remain answerable and selectable without Mermaid", async (t) => {
-    const h = await setup(t, dag(decision("active"), decision("previous", "answered"), decision("future", "toAnswer")));
+    const h = await setup(t, dag(decision("active"), decision("previous", "answered"),
+        { ...decision("future", "toAnswer"), dependencies: ["active"] }));
     assert.ok(detail(h));
+    assert.doesNotMatch(text(h, "design-tree-card"), /You are here/);
+    assert.match(text(h, "design-tree-current"), /Active/);
+    assert.ok(h.get("design-tree-current").classList.contains("eyebrow"));
+    assert.ok(h.get("design-tree-current").querySelector('svg[aria-hidden="true"]'));
+    assert.equal(h.document.querySelector(".design-tree-host .diagram-header .design-tree-legend")?.textContent, "AnsweredActiveTo answerExplicit answer");
+    assert.equal(h.document.querySelectorAll(".design-tree-host .diagram-toolbar button").length, 1);
+    assert.equal(h.get("design-tree-host-source-trigger").textContent, "Mermaid source");
     const buttons = h.get("decision-list").querySelectorAll<HTMLButtonElement>("button");
     assert.equal(buttons.length, 3);
     await h.click(buttons[2]);
@@ -30,11 +39,49 @@ test("requirements remain answerable and selectable without Mermaid", async (t) 
     assert.equal(hidden(h, "decision-list"), false);
 });
 
+test("Requirements keeps Mermaid source in a popup without replacing the diagram or decision drafts", async t => {
+    const h = await setup(t, dag(decision("active"), decision("previous", "answered")));
+    const diagram = h.document.querySelector(".design-tree-host .diagram-scroll-area")!;
+    const list = h.document.querySelector(".decision-list-pane")!;
+    const question = h.document.querySelector<HTMLElement>(".design-tree-inspector")!;
+    const sourceButton = h.get("design-tree-host-source-trigger");
+    assert.equal(h.document.querySelector(".diagram-source-dialog"), null);
+    await h.click(sourceButton);
+    const source = h.get("design-tree-host-source-dialog");
+    assert.ok(diagram.contains(h.get("design-tree-host")));
+    assert.equal(diagram.contains(source), false);
+    assert.equal(diagram.contains(list), false);
+    assert.ok(list.contains(h.get("decision-list")));
+    assert.ok(question.contains(host(h)));
+    assert.equal(question.tabIndex, 0);
+    assert.equal(source.getAttribute("role"), "dialog");
+    assert.equal(source.getAttribute("aria-modal"), "true");
+    assert.match(text(h, "design-tree-host-source-label"), /Mermaid source/);
+    const code = source.querySelector("pre")!;
+    assert.equal(code.tabIndex, 0);
+    assert.equal(code.getAttribute("role"), "region");
+    assert.equal(code.getAttribute("aria-labelledby"), source.querySelector("h2")!.id);
+    const before = code;
+    await h.click(source.querySelector('[aria-label="Close Mermaid source"]')!);
+    assert.equal(h.document.activeElement, sourceButton);
+    await h.input(detail(h), "Keep the selected answer draft.");
+    await h.fire(h.get("usage-substage"), "mousedown", { button: 0 });
+    await h.fire(h.get("dag-substage"), "mousedown", { button: 0 });
+    await h.click(sourceButton);
+    assert.equal(h.get("design-tree-host-source-dialog").querySelector("pre")!.textContent, before.textContent);
+    await h.fire(h.get("design-tree-host-source-dialog"), "keydown", { key: "Escape" });
+    assert.equal(h.document.querySelector(".diagram-source-dialog"), null);
+    assert.equal(h.document.activeElement, sourceButton);
+    assert.equal(detail(h).value, "Keep the selected answer draft.");
+    assert.deepEqual(h.requests, []);
+});
+
 test("rejected DAGs retain usages, stop generating, and expose explicit retry", async (t) => {
     const value = state(); value.requirements.usageItems = ["I want to explore a model."];
     value.processing = { action: "generate-dag", requestId: "dag-request", status: "running" };
     const h = await setup(t, value);
     assert.equal(text(h, "generate-dag"), "Generating DAG...");
+    assert.equal(h.get("dag-substage").querySelector(".substage-status")!.getAttribute("aria-label"), "Generating requirements DAG");
     assert.equal(disabled(h, "generate-dag"), true);
     const failed = { ...value, revision: 2, processing: { ...value.processing, status: "error",
         message: "New requirements must be answered by the user, not by the worker." } };
@@ -43,6 +90,7 @@ test("rejected DAGs retain usages, stop generating, and expose explicit retry", 
     assert.equal(disabled(h, "generate-dag"), false);
     assert.equal(hidden(h, "usage-intake"), false);
     assert.equal(h.get("dag-substage").dataset.status, "locked");
+    assert.equal(h.get("dag-substage").querySelector(".substage-status")!.getAttribute("aria-label"), "Generation failed - retry available");
     assert.equal(hidden(h, "design-tree-card"), true);
     assert.match(text(h, "usage-items"), /explore a model/);
     assert.match(text(h, "usage-message"), /answered by the user/);
@@ -55,6 +103,107 @@ test("rejected DAGs retain usages, stop generating, and expose explicit retry", 
     assert.equal(h.requests[0].path, "/api/answer");
     assert.equal(h.requests[0].body.action, "generate-dag");
     assert.equal(text(h, "generate-dag"), "Generating DAG...");
+});
+
+test("Requirements shows research progress and retained sources without adding a stage or accepting decisions", async (t) => {
+    const value = state();
+    value.requirements.usageItems = ["I want to recover from a declined payment."];
+    value.status = "Researching missing facts for your accepted usages...";
+    value.processing = { action: "generate-dag", requestId: "research-request", status: "running" };
+    const h = await setup(t, value);
+    assert.match(text(h, "usage-message"), /Researching missing facts/);
+    assert.equal(h.document.querySelectorAll(".requirements-substage").length, 2);
+    assert.equal(h.document.getElementById("requirements-research"), null);
+    const researched = { ...value, revision: 2, requirements: { ...value.requirements, research: {
+        generation: value.generation, requestId: "research-request", runId: "research-run",
+        input: requirementsResearchInput(value), completedAt: new Date().toISOString(),
+        summary: "Declines may need another payment method.",
+        checks: [{ label: "Live payment", status: "deferred" as const, detail: "Use mocks." }],
+        sources: [{ title: "Declines reference", url: "https://docs.stripe.com/declines", purpose: "Recovery options" }],
+    } }, processing: { ...value.processing, status: "error", message: "Question generation failed." } };
+    h.render(researched);
+    assert.equal(h.get<HTMLDetailsElement>("requirements-research").open, true);
+    assert.match(text(h, "requirements-research"), /Declines may need another payment method/);
+    assert.match(text(h, "requirements-research"), /Live payment.*deferred/);
+    const link = h.get("requirements-research").querySelector("a")!;
+    assert.equal(link.href, "https://docs.stripe.com/declines");
+    assert.equal(link.rel, "noreferrer");
+    assert.equal(text(h, "generate-dag"), "Retry requirements DAG");
+    assert.match(text(h, "usage-message"), /Question generation failed/);
+    assert.equal(hidden(h, "usage-intake"), false);
+    h.render({ ...researched, revision: 3, requirements: { ...researched.requirements, usageItems: ["I want to save a payment method."] } });
+    assert.match(text(h, "requirements-research"), /Earlier research and sources/);
+    assert.match(text(h, "requirements-research"), /belong to earlier inputs/);
+    assert.equal(h.requests.length, 0);
+});
+
+test("Requirements substage tabs retain usages, research and decision drafts without reopening saved work", async t => {
+    const value = dag(decision("first"), decision("second", "toAnswer"));
+    value.requirements.usageItems = ["Review saved work."];
+    value.requirements.research = {
+        generation: value.generation, requestId: "research", runId: "research",
+        input: requirementsResearchInput(value), completedAt: value.updatedAt, summary: "Retained research.",
+        checks: [], sources: [{ title: "Reference", url: "https://example.com/reference", purpose: "Background" }],
+    };
+    const h = await setup(t, value);
+    assert.equal(text(h, "design-tree-phase"), "Requirements decisions");
+    assert.equal(h.get("dag-substage").getAttribute("role"), "tab");
+    assert.equal(h.get("dag-substage").getAttribute("aria-label"), "Decision DAG, Decisions to answer");
+    assert.equal(h.get("usage-substage").getAttribute("aria-label"), "Usage list, Usage list complete");
+    assert.ok(h.get("dag-substage").classList.contains("substage-tab"));
+    assert.equal(h.get("dag-substage").querySelector(".substage-index")!.textContent, "2");
+    assert.equal(h.get("dag-substage").getAttribute("aria-selected"), "true");
+    assert.equal(h.get("requirements-dag-panel").getAttribute("aria-labelledby"), "dag-substage");
+    await h.input(detail(h), "Keep this answer draft.");
+    const question = host(h), input = detail(h), graph = h.get("design-tree-host");
+    await h.fire(h.get("usage-substage"), "mousedown", { button: 0 });
+    assert.equal(h.get("requirements-usage-panel").hidden, false);
+    assert.equal(h.get("requirements-dag-panel").hidden, true);
+    assert.ok(h.get("requirements-usage-panel").contains(h.get("requirements-substage-section")));
+    assert.ok(h.get("requirements-usage-panel").contains(h.get("requirements-research")));
+    assert.match(h.get("requirements-usage-panel").textContent!, /Review saved work.*Retained research/s);
+    assert.equal(h.get<HTMLDetailsElement>("requirements-research").open, true);
+    h.get<HTMLDetailsElement>("requirements-research").open = false;
+    h.render({ ...value, revision: 2, status: "Unrelated update" }); await h.flush();
+    assert.equal(h.get("usage-substage").getAttribute("aria-selected"), "true");
+    await h.fire(h.get("usage-substage"), "keydown", { key: "ArrowRight" });
+    assert.equal(h.get("dag-substage").getAttribute("aria-selected"), "true");
+    assert.equal(host(h), question);
+    assert.equal(detail(h), input);
+    assert.equal(detail(h).value, "Keep this answer draft.");
+    assert.equal(h.get("design-tree-host"), graph);
+    assert.equal(h.get<HTMLDetailsElement>("requirements-research").open, false, "An explicit collapse is preserved across updates and tabs.");
+    const later = { ...value, revision: 3, lifecycle: { ...value.lifecycle,
+        currentStage: "prototype", completedStages: ["prepare", "requirements", "sketch"] } };
+    h.render(later); await browse(h, "requirements");
+    assert.equal(h.document.getElementById("design-tree-phase"), null, "Completed Requirements does not show a redundant saved badge.");
+    await h.fire(h.get("usage-substage"), "mousedown", { button: 0 });
+    assert.equal(h.get("usage-substage").getAttribute("aria-selected"), "true");
+    await h.fire(h.get("dag-substage"), "mousedown", { button: 0 });
+    assert.equal(disabled(h, "decision-submit"), true);
+    assert.deepEqual(h.requests, []);
+    assert.equal(h.store.getSnapshot().state!.lifecycle.currentStage, "prototype");
+});
+
+test("Requirements disables the empty DAG tab and switches to its result only after generation settles", async t => {
+    const value = state(), h = await setup(t, value);
+    assert.equal(disabled(h, "dag-substage"), true);
+    assert.equal(h.get("usage-substage").getAttribute("aria-selected"), "true");
+    const lockedStatus = h.get("dag-substage").querySelector(".substage-status")!;
+    assert.equal(lockedStatus.getAttribute("role"), "img");
+    assert.equal(lockedStatus.getAttribute("title"), lockedStatus.getAttribute("aria-label"));
+    assert.equal(lockedStatus.getAttribute("data-status"), "locked");
+    assert.ok(lockedStatus.querySelector('svg[aria-hidden="true"]'));
+    assert.equal(text(h, "dag-substage"), "2Decision DAG");
+    assert.equal(h.get("dag-substage").getAttribute("aria-label"), "Decision DAG, Complete the usage list to unlock the decision DAG");
+    const ready = { ...dag(decision("first")), revision: 2 };
+    h.render(ready); await h.flush();
+    assert.equal(disabled(h, "dag-substage"), false);
+    assert.equal(h.get("dag-substage").getAttribute("aria-selected"), "true");
+    await h.fire(h.get("usage-substage"), "mousedown", { button: 0 });
+    h.render({ ...ready, revision: 3 }); await h.flush();
+    assert.equal(h.get("usage-substage").getAttribute("aria-selected"), "true");
+    assert.deepEqual(h.requests, []);
 });
 
 test("accepted DAG opens Requirements and focuses exactly once without Mermaid", async (t) => {
@@ -137,12 +286,15 @@ test("whole-graph defaults freeze all choices in one confirmed request without c
         defaults: [{ nodeId: "first", answer: "A" }, { nodeId: "second", answer: "A" }] });
 });
 
-test("whole-graph defaults require curated downstream recommendations and confirmation", async (t) => {
+test("whole-graph defaults skip non-curated downstream questions and still require confirmation", async (t) => {
     const value = batch(); value.decisionGraph.nodes[1].question.choices.pop();
     const h = await setup(t, value);
     await h.click(defaults(h));
     assert.equal(h.requests.length, 0);
-    assert.match(text(h, "design-tree-status"), /second.*no curated recommended/);
+    assert.match(h.document.querySelector('[role="alertdialog"]')!.textContent!, /ALL 1 unanswered/);
+    assert.match(h.document.querySelector('[role="alertdialog"]')!.textContent!, /explicit answer.*second/s);
+    assert.match(h.document.querySelector('[data-decision-id="second"]')!.textContent!, /Explicit answer/);
+    await h.confirm(false);
     h.render({ ...batch(), revision: 2 });
     await h.click(defaults(h));
     assert.match(h.document.querySelector('[role="alertdialog"]')!.textContent!, /ALL 2 unanswered/);

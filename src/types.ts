@@ -87,6 +87,8 @@ export interface SkippedLifecycleStage {
 
 export interface LifecycleState {
     version?: 3;
+    changeRequestId?: string;
+    reviewId?: string;
     currentStage: LifecycleStageId;
     completedStages: LifecycleStageId[];
     outputs: LifecycleOutput[];
@@ -134,6 +136,7 @@ export interface TandemState {
         substage: "usage" | "dag";
         usageItems: string[];
         suggestions: string[];
+        research?: import("./requirements-research.js").RequirementsResearch | null;
     };
     question: DecisionQuestion | null;
     decisionGraph: DecisionGraph;
@@ -157,5 +160,12 @@ export interface TandemState {
     suggestionProcessing: any;
     reloadReceipt: any;
     development?: { handoffId: string; requestId: string; snapshotPath: string } | null;
+    developmentIntent?: {
+        generation: string; requestId: string; snapshotPath: string | null;
+        status: "preparing" | "starting" | "failed" | "admitted"; error: string;
+    } | null;
+    changeRequests?: import("./change-requests.js").ChangeRequest[];
+    stageReviews?: import("./stage-review.js").StageReviewReference[];
+    stageReview?: import("./stage-review.js").StageReviewDraft;
     updatedAt: string;
 }

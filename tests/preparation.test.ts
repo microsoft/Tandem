@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { extensionHarness } from "./helpers/extension-harness.js";
 import type { PreparationToken } from "../src/agent-runner.js";
 import type { TandemState } from "../src/types.js";
 import { inspectEmptyPreparationWorkspace } from "../src/preparation.js";
-import { buildGoalOnlyPreparationPrompt } from "../src/planning-prompts.js";
+import { buildPreparationIntentPrompt } from "../src/planning-prompts.js";
 
 function tokenFor(state: TandemState, runId: string | null): PreparationToken {
     assert.ok(state.preparation.processing?.requestId);
@@ -28,7 +28,7 @@ function goalOnlyHandoff() {
         suggestedUsages: ["I want to browse the coffee shop menu.", "I want to find opening hours and the shop location."],
         prototypeApproach: { mode: "build", reason: "The new website needs graphical validation." },
         assumed: ["The website is a new application."],
-        deferred: ["Select the stack and verify runtime, dependencies, and credentials after Requirements."],
+        deferred: ["Research accepted usages in Requirements; select the stack and verify execution prerequisites in Development."],
     };
 }
 
@@ -61,22 +61,25 @@ for (const effort of [undefined, "low"]) test(`automatic Preparation binds its r
             Object.hasOwn(fixture.api.preparationFactory.meta.argsSchema.properties, key)));
         const results = [
             { summary: "Workspace inspected", checks: [{ label: "Node", status: "ready", detail: "Available" }] },
-            { summary: "Sources inspected", checks: [], sources: [{ title: "Reference", url: "https://example.com/docs", purpose: "Contract" }] },
-            { status: "ready", summary: "Ready for Requirements", suggestedUsages: ["I want to inspect my tasks."],
-                prototypeApproach: { mode: "build", reason: "A new GUI is needed." }, assumed: [], deferred: [] },
+            { requiresSourceResearch: false, handoff: {
+                ...goalOnlyHandoff(), summary: "Ready for Requirements", suggestedUsages: ["I want to inspect my tasks."],
+            } },
         ];
         const keys: string[] = [];
+        const labels: string[] = [];
         const result = await fixture.api.preparationFactory.run({
             args: request.args, runId: "prepare-run", phase() {}, log() {},
             step: async (key: string, work: () => Promise<unknown>) => { keys.push(key); return work(); },
             agent: async (_prompt: string, options: { label: string; agent?: string; reasoningEffort: string }) => {
+                labels.push(options.label);
                 assert.equal((await fixture.api.loadState("sample")).preparation.processing?.runId, "prepare-run");
-                assert.equal(options.agent, options.label === "prepare:requirements" ? fixture.api.textWorkerAgent.name : undefined);
-                assert.equal(options.reasoningEffort, effort ?? (options.label === "prepare:workspace" ? "low" : "medium"));
+                assert.equal(options.agent, options.label === "prepare:context" ? fixture.api.textWorkerAgent.name : undefined);
+                assert.equal(options.reasoningEffort, effort ?? "low");
                 return results.shift();
             },
         });
-        assert.equal(keys.length, 3);
+        assert.deepEqual(labels, ["prepare:workspace", "prepare:context"]);
+        assert.equal(keys.length, 4);
         assert.ok(keys.every((key) => key.startsWith(pending.preparation.processing!.requestId!)));
         fixture.api.setSession({ ...fixture.session, workflow: {
             waitForRun: async () => ({ runId: "prepare-run", status: "completed", result }),
@@ -86,6 +89,7 @@ for (const effort of [undefined, "low"]) test(`automatic Preparation binds its r
         const ready = await fixture.api.loadState("sample");
         assert.equal(ready.lifecycle.currentStage, "requirements");
         assert.equal(ready.preparation.status, "ready");
+        assert.equal(ready.preparation.sources.length, 0);
         assert.equal(ready.requirements.suggestions[0], "I want to inspect my tasks.");
         assert.equal(ready.jobOwner, null);
         const output = ready.lifecycle.outputs[0];
@@ -95,11 +99,56 @@ for (const effort of [undefined, "low"]) test(`automatic Preparation binds its r
     } finally { await fixture.close(); }
 });
 
+test("missing workspace prerequisites override a ready worker label without blocking Requirements", async () => {
+    const fixture = await extensionHarness();
+    try {
+        await writeFile(join(fixture.root, "package.json"), '{"name":"synthetic-checkout"}');
+        const state = fixture.api.createState("missing-prerequisites", "Plan a mock checkout without live payments.");
+        const { pending, args } = await requestPreparation(fixture, state);
+        const checks = [
+            { label: "Payment credentials", status: "missing", detail: "No credentials configured; use mocks." },
+            { label: "Browser runtime", status: "missing", detail: "No browser installed; defer execution." },
+        ];
+        const deferred = ["Supply payment credentials before real charges.", "Install a browser before browser execution."];
+        const labels: string[] = [];
+        const result = await fixture.api.preparationFactory.run({
+            args, runId: "missing-prerequisites-run", phase() {}, log() {},
+            step: async (_key: string, work: () => Promise<unknown>) => work(),
+            agent: async (_prompt: string, options: { label: string }) => {
+                labels.push(options.label);
+                if (options.label === "prepare:workspace") return { summary: "Execution prerequisites are missing.", checks };
+                assert.equal(options.label, "prepare:context");
+                return { requiresSourceResearch: false, handoff: {
+                    ...goalOnlyHandoff(), summary: "Ready to discuss mock checkout requirements.",
+                    suggestedUsages: ["I want to try mock payment approval and rejection."], deferred,
+                } };
+            },
+        });
+        assert.deepEqual(labels, ["prepare:workspace", "prepare:context"]);
+        fixture.api.setSession({ ...fixture.session, workflow: {
+            waitForRun: async () => ({ runId: "missing-prerequisites-run", status: "completed", result }),
+        } });
+        await fixture.api.waitForEffortRun(state.prototypeId, "missing-prerequisites-run");
+        await fixture.api.settlePreparationRun(state.prototypeId,
+            { runId: "missing-prerequisites-run", status: "completed", result },
+            tokenFor(pending, "missing-prerequisites-run"));
+        const current = await fixture.api.loadState(state.prototypeId);
+        assert.equal(current.preparation.status, "needs-attention");
+        assert.deepEqual(JSON.parse(JSON.stringify(current.preparation.checks)), checks);
+        assert.deepEqual(Array.from(current.deferred), deferred);
+        assert.equal(current.lifecycle.currentStage, "requirements");
+        assert.equal(current.generation, pending.generation);
+        assert.equal(current.preparation.processing?.requestId, pending.preparation.processing?.requestId);
+        assert.equal(current.preparation.processing?.runId, "missing-prerequisites-run");
+        assert.equal(fixture.developmentRequests.length, 0);
+    } finally { await fixture.close(); }
+});
+
 test("empty and metadata-only projects use one goal-only worker and persist a replayable handoff", async (t) => {
-    for (const gitMetadata of [false, true]) await t.test(gitMetadata ? "Git metadata" : "no Git metadata", async () => {
-        const fixture = await extensionHarness();
+    for (const metadata of ["none", "Git", "guided Git setup"]) await t.test(metadata, async () => {
+        const fixture = await extensionHarness({}, undefined, "", undefined, false, metadata === "guided Git setup");
         try {
-            if (gitMetadata) await mkdir(join(fixture.root, ".git"));
+            if (metadata === "Git") await mkdir(join(fixture.root, ".git"));
             const state = fixture.api.createState("sample", "Build a coffee shop website");
             const { pending, args } = await requestPreparation(fixture, state);
             const workspace = await inspectEmptyPreparationWorkspace(fixture.root);
@@ -116,7 +165,7 @@ test("empty and metadata-only projects use one goal-only worker and persist a re
                     labels.push(options.label);
                     assert.equal(options.agent, fixture.api.textWorkerAgent.name);
                     assert.equal(fixture.api.textWorkerAgent.tools.length, 0);
-                    assert.equal(prompt, buildGoalOnlyPreparationPrompt({ goal: state.goal }, workspace));
+                    assert.equal(prompt, buildPreparationIntentPrompt({ goal: state.goal }, workspace));
                     assert.equal((await fixture.api.loadState("sample")).preparation.processing?.runId, context.runId);
                     return { requiresSourceResearch: false, handoff: goalOnlyHandoff() };
                 },
@@ -156,33 +205,34 @@ test("empty and metadata-only projects use one goal-only worker and persist a re
     });
 });
 
-test("goal-only preparation retains authoritative research when the goal needs it", async () => {
+test("Preparation permits only a small lookup needed to understand an unfamiliar reference", async () => {
     const fixture = await extensionHarness();
     try {
-        const { args } = await requestPreparation(fixture, fixture.api.createState("sample", "Build a checkout integrated with Stripe"));
+        const { args } = await requestPreparation(fixture, fixture.api.createState("sample", "Explore the unfamiliar coordinate convention in the supplied reference"));
         const labels: string[] = [];
-        const source = { title: "Stripe documentation", url: "https://docs.stripe.com", purpose: "Checkout integration" };
+        const source = { title: "Primary reference", url: "https://example.com/reference", purpose: "Meaning of the named convention" };
         const result = await fixture.api.preparationFactory.run({
             args, runId: "sources-run", phase() {}, log() {},
             step: async (_key: string, work: () => Promise<unknown>) => work(),
-            agent: async (_prompt: string, options: { label: string }) => {
+            agent: async (prompt: string, options: { label: string }) => {
                 labels.push(options.label);
                 if (options.label === "prepare:goal-only") return { requiresSourceResearch: true, handoff: null };
-                if (options.label === "prepare:sources") return {
-                    summary: "Reviewed the integration contract.", sources: [source],
-                    checks: [{ label: "Payment credentials", status: "missing", detail: "Defer live charges." }],
-                };
+                if (options.label === "prepare:sources") {
+                    assert.match(prompt, /at most one source call total, then stop/);
+                    assert.match(prompt, /Defer substantive research to Requirements/);
+                    return { summary: "Identified the meaning of the reference.", sources: [source], checks: [] };
+                }
                 return goalOnlyHandoff();
             },
         });
         assert.deepEqual(labels, ["prepare:goal-only", "prepare:sources", "prepare:requirements"]);
         assert.ok(result && typeof result === "object" && "status" in result && "sources" in result);
-        assert.equal(result.status, "needs-attention");
+        assert.equal(result.status, "ready");
         assert.deepEqual(JSON.parse(JSON.stringify(result.sources)), [source]);
     } finally { await fixture.close(); }
 });
 
-test("an imported source record keeps full preparation even without project files", async () => {
+test("an imported source record receives local inspection but does not force substantive research", async () => {
     const fixture = await extensionHarness();
     try {
         const state = fixture.api.createState("sample", "Build the requested app");
@@ -199,13 +249,69 @@ test("an imported source record keeps full preparation even without project file
                     assert.match(prompt, /A source-specific request/);
                     return { summary: "Imported workspace inspected", checks: [], emptyWorkspace: true };
                 }
-                if (options.label === "prepare:sources") return { summary: "Imported sources analyzed", sources: [], checks: [] };
-                return goalOnlyHandoff();
+                assert.equal(options.label, "prepare:context");
+                assert.match(prompt, /A source-specific request/);
+                return { requiresSourceResearch: false, handoff: goalOnlyHandoff() };
             },
         });
-        assert.deepEqual(labels, ["prepare:workspace", "prepare:sources", "prepare:requirements"],
+        assert.deepEqual(labels, ["prepare:workspace", "prepare:context"],
             "worker-supplied emptyWorkspace flags are not local filesystem evidence");
     } finally { await fixture.close(); }
+});
+
+test("named integrations defer substantive research in both empty and existing workspaces", async (t) => {
+    for (const existing of [false, true]) await t.test(existing ? "existing" : "empty", async () => {
+        const fixture = await extensionHarness();
+        try {
+            if (existing) await writeFile(join(fixture.root, "package.json"), '{"name":"checkout"}');
+            const { args } = await requestPreparation(fixture, fixture.api.createState("sample", "Research Stripe checkout for my store"));
+            const labels: string[] = [];
+            await fixture.api.preparationFactory.run({
+                args, runId: "deferred-sources", phase() {}, log() {},
+                step: (_key: string, work: () => Promise<unknown>) => work(),
+                agent: async (prompt: string, options: { label: string; agent?: string }) => {
+                    labels.push(options.label);
+                    if (options.label === "prepare:workspace") return { summary: "Checkout project", checks: [] };
+                    assert.equal(options.agent, fixture.api.textWorkerAgent.name);
+                    assert.match(prompt, /does not by itself require early research/);
+                    assert.match(prompt, /Defer substantive domain\/product research until the user has accepted/);
+                    return { requiresSourceResearch: false, handoff: goalOnlyHandoff() };
+                },
+            });
+            assert.deepEqual(labels, existing ? ["prepare:workspace", "prepare:context"] : ["prepare:goal-only"]);
+        } finally { await fixture.close(); }
+    });
+});
+
+test("only the small setup-only ignore file is excluded from empty-workspace inspection", async (t) => {
+    for (const content of [".tandem/", ".tandem/\n", ".tandem/\r\n", "\n.tandem/\n\n"]) {
+        await t.test(JSON.stringify(content), async () => {
+            const fixture = await extensionHarness();
+            try {
+                await writeFile(join(fixture.root, ".gitignore"), content);
+                assert.ok(await inspectEmptyPreparationWorkspace(fixture.root));
+            } finally { await fixture.close(); }
+        });
+    }
+    for (const content of [".tandem/\nnode_modules/\n", "# Existing project guidance\n.tandem/\n", "!.tandem/\n",
+        ".tandem/*\n", ".tandem/\n" + " ".repeat(1024)]) {
+        await t.test(`retains ${JSON.stringify(content.slice(0, 50))}`, async () => {
+            const fixture = await extensionHarness();
+            try {
+                await writeFile(join(fixture.root, ".gitignore"), content);
+                assert.equal(await inspectEmptyPreparationWorkspace(fixture.root), null);
+            } finally { await fixture.close(); }
+        });
+    }
+    await t.test("hardlinked ignore file", async () => {
+        const fixture = await extensionHarness();
+        try {
+            const target = join(fixture.root, ".tandem", "shared-ignore");
+            await writeFile(target, ".tandem/\n");
+            await link(target, join(fixture.root, ".gitignore"));
+            assert.equal(await inspectEmptyPreparationWorkspace(fixture.root), null);
+        } finally { await fixture.close(); }
+    });
 });
 
 test("empty-workspace inspection preserves guidance, hidden files, subdirectories, and linked metadata", async (t) => {

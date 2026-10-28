@@ -25,6 +25,9 @@ import { HumanLoopStore } from "../development/tandem/src/human-loop-store.mjs";
 import { createDurablePrivateSession } from "../development/tandem/src/human-loop-controller.mjs";
 import { createHumanTask, humanTaskPrompt } from "../development/tandem/src/human-loop-task.mjs";
 import { waitFor } from "../development/tandem/test/helpers/native-session-fixture.mjs";
+import { visualManifest } from "./helpers/visual-fixture.js";
+import { visualManifestName } from "../src/visual-directions.js";
+import { sketchDocument } from "./helpers/sketch-lifecycle-fixture.js";
 
 async function fixture(mode: "build" | "validate-existing" | "not-applicable") {
     const root = await mkdtemp(join(tmpdir(), "tandem-handoff-"));
@@ -44,6 +47,13 @@ async function fixture(mode: "build" | "validate-existing" | "not-applicable") {
     await mkdir(join(shared, ".tandem", "efforts", "fixture", "sketches", sketchId), { recursive: true });
     await writeFile(join(shared, ...assetPath.split("/")), png);
     const asset = { id: "home", path: assetPath, hash: createHash("sha256").update(png).digest("hex"), mediaType: "image/png" };
+    const drawing = sketchDocument();
+    drawing.screens[0].decisionIds = ["choice"];
+    const documentBytes = Buffer.from(JSON.stringify(drawing));
+    const documentHash = createHash("sha256").update(documentBytes).digest("hex");
+    const documentPath = `.tandem/efforts/fixture/sketches/${sketchId}/document.json`;
+    await writeFile(join(shared, ...documentPath.split("/")), documentBytes);
+    const documentAsset = { id: "document", path: documentPath, hash: documentHash, mediaType: "application/json" };
     const checkpoint = { id: requestId, requestId, workspacePath: source,
         status: "ready", sketchRevisionId: sketchId, sourceFingerprint: await fingerprintPrototypeWorkspace(source) };
     const result = {
@@ -53,8 +63,8 @@ async function fixture(mode: "build" | "validate-existing" | "not-applicable") {
         prototypeReview: { evidence: [{ type: "shortcut", content: "In-memory state; no backend." }] },
         prototypeFlow: mode === "not-applicable" ? null : { displayedCheckpointId: requestId, checkpoints: [checkpoint] },
         sketch: mode === "not-applicable" ? { current: null, approved: null } : {
-            current: { id: sketchId, requirementsDigest: "requirements", documentHash: "drawing" },
-            approved: { revisionId: sketchId, requirementsDigest: "requirements", documentHash: "drawing", assets: [asset] },
+            current: { id: sketchId, requirementsDigest: "requirements", documentHash },
+            approved: { revisionId: sketchId, requirementsDigest: "requirements", documentHash, assets: [documentAsset, asset] },
         },
         artifacts: [{ id: "draft-feature-spec", stage: "prototype", content: "Exact feature specification", reviewStatus: "current" }],
     };
@@ -87,6 +97,28 @@ async function retainedFiles(root: string): Promise<Record<string, Buffer>> {
     await visit(root);
     return result;
 }
+
+test("handoff retains the chosen visual defaults and alternative source without running the prototype", async t => {
+    const f = await fixture("build");
+    t.after(f.cleanup);
+    const manifest = visualManifest();
+    manifest.defaultSelection = { directionId: "canvas", settings: { ...manifest.directions[1].defaults, textSize: "large" } };
+    const bytes = JSON.stringify(manifest);
+    await writeFile(join(f.source, visualManifestName), bytes);
+    const checkpoint = { ...f.result.prototypeFlow!.checkpoints[0], sourceFingerprint: await fingerprintPrototypeWorkspace(f.source),
+        visual: { operation: "choose", explorationCheckpointId: "retained-alternatives",
+            selection: manifest.defaultSelection, manifest } };
+    const result = { ...f.result, prototypeFlow: { ...f.result.prototypeFlow, checkpoints: [checkpoint] } };
+    await writeJsonAtomically(f.path, { version: 1, prototypeId: "fixture", stageId: "prototype", revision: 4,
+        completedAt: f.state.lifecycle.outputs[0].completedAt, result });
+    const receipt = await f.store.prepare(f.state);
+    assert.equal(receipt.prototype.sourceFingerprint, checkpoint.sourceFingerprint);
+    assert.equal(await readFile(join(f.store.root, receipt.id, "source", visualManifestName), "utf8"), bytes);
+    const retained = JSON.parse(await readFile(join(f.store.root, receipt.id, "snapshot.json"), "utf8"));
+    assert.deepEqual(retained.result.prototypeFlow.checkpoints[0].visual.selection, manifest.defaultSelection);
+    assert.equal(retained.result.prototypeFlow.checkpoints[0].visual.manifest.directions.length, 3);
+    assert.match(await readFile(join(f.store.root, receipt.id, "source", "package.json"), "utf8"), /DO NOT RUN/);
+});
 
 test("handoff status inspection is exact, read-only and never admits work", async t => {
     const f = await fixture("build");
@@ -141,11 +173,11 @@ test("review reads the exact completed snapshot without preparing anything and b
     assert.equal((await f.store.read(receipt.id)).source.snapshotHash, review.snapshotHash);
 });
 
-test("HTTP review/cancel starts nothing; bound confirmation submits once and preserves starting choice", async t => {
+test("HTTP summary inspection starts nothing; direct bound continuation submits once and preserves starting choice", async t => {
     const h = await extensionHarness({}, undefined, "", undefined, false, true);
     let server: Awaited<ReturnType<typeof h.api.startServer>> | undefined;
     t.after(async () => {
-        if (server) { clearInterval(server.heartbeat); server.live.close(); await new Promise<void>(done => server!.server.close(() => done())); }
+        if (server) { clearInterval(server.heartbeat); await new Promise<void>(done => server!.server.close(() => done())); }
         await h.close();
     });
     const state = h.api.createState("review-http", "Synthetic CLI");
@@ -171,10 +203,10 @@ test("HTTP review/cancel starts nothing; bound confirmation submits once and pre
     await assert.rejects(access(join(h.root, ".tandem", "living-canvas", "handoffs")), { code: "ENOENT" });
     const input = { generation: review.generation, snapshotPath: review.snapshotPath,
         expectedRevision: (await h.api.loadState(state.prototypeId)).revision, reviewBinding: review.binding };
-    assert.equal((await post({ ...input, reviewBinding: undefined })).status, 409);
+    assert.equal((await post({ ...input, generation: undefined })).status, 409);
     assert.equal((await post({ ...input, reviewBinding: "0".repeat(64) })).status, 409);
     assert.equal(starts, 0); assert.equal(h.developmentRequests.length, 0);
-    const responses = await Promise.all([post(input), post(input)]);
+    const responses = await Promise.all([post({ ...input, reviewBinding: undefined }), post(input)]);
     for (const result of responses) assert.equal(result.status, 200, await result.text());
     assert.equal(h.developmentRequests.length, 1);
     assert.deepEqual(await get("api/project-entry"), entryBefore);
@@ -854,6 +886,14 @@ for (const mode of ["build", "validate-existing", "not-applicable"] as const) {
             assert.equal(receipt.files.some(file => file.path === "source/src/app.tsx"), mode !== "not-applicable");
             assert.equal(receipt.files.some(file => /node_modules|browser-profile|vite-checkpoint|\.env/.test(file.path)), false);
             assert.equal(receipt.files.some(file => file.path.startsWith("assets/")), mode !== "not-applicable");
+            if (mode !== "not-applicable") {
+                const approved = f.result.sketch.approved!;
+                const path = join(directory, "assets", `${approved.documentHash}.json`);
+                assert.ok(receipt.request.message.includes(path), "Designer receives the bound DSL source path, not only screenshots");
+                assert.match(receipt.request.message, /UI DSL.*exact hash/);
+                assert.match(receipt.request.message, /component hierarchy, typed props, design tokens/);
+                assert.equal(JSON.parse(await readFile(path, "utf8")).version, 2);
+            }
             const duplicate = await Promise.all([f.store.prepare(f.state), f.store.prepare(f.state)]);
             assert.deepEqual(duplicate.map(value => value.request), [receipt.request, receipt.request]);
             await rm(join(f.shared, ".tandem", "efforts", "fixture"), { recursive: true });
@@ -1042,7 +1082,7 @@ test("synthetic fresh provider opens Development from finished Stage1 files with
         assert.deepEqual(await retainedFiles(join(root, ".tandem", "efforts")), files);
     } finally {
         if (entry) {
-            clearInterval(entry.heartbeat); entry.live.close();
+            clearInterval(entry.heartbeat);
             await new Promise<void>((resolve, reject) => entry.server.close(error => error ? reject(error) : resolve()));
         }
         await first.close(); await fresh?.close();

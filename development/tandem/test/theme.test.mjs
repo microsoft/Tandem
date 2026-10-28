@@ -122,7 +122,14 @@ async function openBrowser(t) {
   };
   await send("Emulation.setDeviceMetricsOverride", { width: 1100, height: 950, deviceScaleFactor: 1, mobile: false });
   const css = await readFile(process.env.CANVAS_THEME_STYLESHEET ?? new URL("../public/styles.css", import.meta.url), "utf8");
-  await evaluate(`document.write(${JSON.stringify(`<!doctype html><html><head><style>${css}</style></head><body>${fixture}</body></html>`)}); document.close();`);
+  await send("Page.enable");
+  await send("Page.navigate", { url: "data:text/html;charset=utf-8," + encodeURIComponent(
+    `<!doctype html><html data-theme-fixture="ready"><head><style>${css}</style></head><body>${fixture}</body></html>`) });
+  const loaded = Date.now() + 15000;
+  while (!await evaluate('document.documentElement?.dataset.themeFixture === "ready" && document.readyState === "complete"')) {
+    assert.ok(Date.now() < loaded, "The owned theme fixture did not finish loading.");
+    await delay(50);
+  }
   return { evaluate, send };
 }
 

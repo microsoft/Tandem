@@ -5,11 +5,14 @@
   "type": "module",
   "engines": { "node": ">=24.0.0" },
   "scripts": {
-    "test": "tsx --test tests/index.test.ts tests/execution-panels-react.test.tsx tests/requirements-panel.test.ts tests/review-process-panels.test.tsx tests/sketch-panel.test.tsx tests/speech-react.test.ts tests/browser-ui.test.ts",
+    "test": "tsx scripts/test.ts",
+    "storybook": "storybook dev -p 6006 --exact-port --host 127.0.0.1 --no-open --ci --disable-telemetry",
+    "build:storybook": "storybook build --output-dir dist/storybook --disable-telemetry",
     "eval": "tsx scripts/evaluate.ts",
     "build": "tsx scripts/build.ts",
     "build:browser": "tsx scripts/build.ts --browser",
     "browser": "npm run build:browser && tsx scripts/browser.ts run",
+    "login:browser": "npm run browser -- login",
     "pack:browser": "npm run check && npm run build:browser && tsx scripts/browser.ts pack",
     "test:browser": "npm run build:browser && tsx scripts/browser-smoke.ts",
     "build:desktop:runtime": "tsx scripts/build.ts --desktop",
@@ -18,34 +21,37 @@
     "pack:desktop": "npm run pack && npm run build:desktop && tsx scripts/desktop.ts publish",
     "test:desktop": "tsx scripts/desktop.ts check && tsx scripts/desktop-smoke.ts",
     "dev": "tsx scripts/build.ts --watch",
+    "dev:browser": "tsx scripts/browser-dev.ts",
     "check": "tsc --project development/tandem/tsconfig.types.json && tsc --noEmit && tsc --project tsconfig.core.json",
     "pack": "npm run check && npm run build && tsx scripts/pack.ts"
   },
   "devDependencies": {
+    "@storybook/addon-a11y": "10.6.2",
+    "@storybook/addon-docs": "10.6.2",
+    "@storybook/addon-themes": "10.6.2",
+    "@storybook/react-vite": "10.6.2",
     "@types/archiver": "8.0.0",
     "@types/node": "26.3.0",
     "@types/proper-lockfile": "4.1.4",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@types/jsdom": "30.0.0",
-    "@types/ws": "8.18.1",
     "archiver": "8.0.0",
     "esbuild": "0.28.2",
     "jsdom": "30.0.1",
+    "storybook": "10.6.2",
     "tsx": "4.23.12",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "vite": "8.3.4"
   },
   "dependencies": {
     "@github/copilot": "1.0.94",
     "@github/copilot-sdk": "1.0.18",
     "koffi": "3.1.6",
-    "@azure/identity": "4.13.2",
-    "microsoft-cognitiveservices-speech-sdk": "1.51.0",
     "proper-lockfile": "4.1.2",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "radix-ui": "1.6.7",
-    "lucide-react": "1.45.0",
-    "ws": "8.21.3"
+    "lucide-react": "1.45.0"
   }
 }

@@ -17,14 +17,14 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
-    "tsx": "^4.23.12",
-    "typescript": "5.9.3",
-    "jpeg-js": "0.4.4",
-    "ajv": "8.17.1",
-    "marked": "15.0.12",
+    "ajv": "8.18.0",
     "css-tree": "3.1.0",
     "esbuild": "0.28.2",
-    "mermaid": "12.2.0",
-    "parse5": "7.3.0"
+    "jpeg-js": "0.4.4",
+    "marked": "15.0.12",
+    "mermaid": "12.1.0",
+    "parse5": "7.3.0",
+    "tsx": "^4.23.12",
+    "typescript": "5.9.3"
   }
 }

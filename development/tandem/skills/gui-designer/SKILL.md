@@ -19,7 +19,7 @@ Produce one to three low-fidelity screen sketches in `guiSketches`. Each sketch 
   `list-item`, `card`, or `status`.
 
 Describe semantics and coarse placement only. Do not generate HTML, SVG, coordinates, dimensions,
-colors, themes, or framework components. The frontend owns the deterministic wireframe drawing.
+colors, themes, or framework components. The frontend owns the deterministic wireframe rendering.
 Also produce one concise `gui` aspect summary linked to the same Use case names.
 
 Use the words an end user would expect to see on the screen. Region and element labels must remain

@@ -68,6 +68,23 @@ for (const startingPath of ["preparation", "development"]) test(`packaged guided
                     const before = await readdir(workspace);
                     await browser.call("Page.navigate", { url: server.url });
                     await browser.waitFor('Boolean(document.querySelector("#entry-development"))');
+                    await browser.evaluate(`(() => {
+                        const original = window.fetch.bind(window);
+                        window.entryResponseStage = null;
+                        window.fetch = async (input, options) => {
+                            const response = await original(input, options);
+                            const path = new URL(String(input), location.href).pathname;
+                            const stage = path === "/api/project-entry" && options?.method === "POST" ? "choice"
+                                : path === "/api/project-entry/open" ? "open" : null;
+                            if (stage) {
+                                window.entryResponseStage = stage;
+                                await new Promise(resolve => { window.releaseEntryResponse = resolve; });
+                                window.entryResponseStage = null;
+                            }
+                            return response;
+                        };
+                        return true;
+                    })()`);
                     await browser.evaluate(`document.querySelector("#entry-${startingPath}").click()`);
                     const needsSetup = !["ready", "worktree"].includes(scenario);
                     if (needsSetup) {
@@ -99,6 +116,14 @@ for (const startingPath of ["preparation", "development"]) test(`packaged guided
                             await browser.evaluate('document.querySelector("#confirm-git-setup").click()');
                         }
                     }
+                    for (const stage of ["choice", "open"]) {
+                        await browser.waitFor(`window.entryResponseStage === "${stage}"`);
+                        assert.equal(await browser.evaluate('document.querySelector("#entry-preparation, #entry-development, #resume-project-entry, #confirm-git-setup") === null'), true);
+                        assert.equal(await browser.evaluate('document.querySelector("#project-entry-progress")?.textContent'), "Opening your selected project...");
+                        assert.equal(await browser.evaluate('document.querySelector("#project-entry-progress").checkVisibility()'), true);
+                        assert.equal(await browser.evaluate('document.querySelector("#studio-workspace").hasAttribute("inert")'), true);
+                        await browser.evaluate("window.releaseEntryResponse(); true");
+                    }
                     await waitForEntry();
                     assert.equal(starts, startingPath === "development" ? 1 : 0);
                     assert.equal(h.requests.length, 0); assert.equal(h.developmentRequests.length, 0);
@@ -115,7 +140,6 @@ for (const startingPath of ["preparation", "development"]) test(`packaged guided
                 } finally {
                     await browser.call("Page.navigate", { url: "about:blank" });
                     clearInterval(server.heartbeat);
-                    server.live.close();
                     server.server.closeAllConnections();
                     await new Promise<void>(done => server.server.close(() => done()));
                     await h.close();
@@ -126,7 +150,7 @@ for (const startingPath of ["preparation", "development"]) test(`packaged guided
         }
     });
 
-test("packaged handoff review cancels without startup and confirms the exact real saved input once",
+test("packaged saved-input continuation submits once without a handoff review or second startup control",
     { skip: !browserAvailable || !process.env.TANDEM_PACKAGED_EXTENSION, timeout: 90_000 }, async t => {
         const h = await extensionHarness({}, undefined, await packagedHtml(), undefined, false, true);
         const state = h.api.createState("packaged-handoff", "Synthetic command-line counter");
@@ -150,16 +174,11 @@ test("packaged handoff review cancels without startup and confirms the exact rea
             await browser.evaluate('document.querySelector("#development-tab").dispatchEvent(new MouseEvent("mousedown", {bubbles:true,button:0})); document.querySelector("#development-tab").click()');
             await browser.waitFor('Boolean(document.querySelector("#continue-design"))');
             assert.equal(starts, 0);
-            await browser.evaluate('document.querySelector("#continue-design").focus(); document.querySelector("#continue-design").click()');
-            await browser.waitFor('Boolean(document.querySelector("#confirm-design-handoff"))');
-            assert.match(await browser.evaluate('document.querySelector(".handoff-review-dialog").textContent'), /In-memory count.*Synchronization/s);
-            await browser.evaluate('document.querySelector("#cancel-design-handoff").click()');
-            await browser.waitFor('!document.querySelector(".handoff-review-dialog")');
-            assert.equal(starts, 0); assert.equal(h.developmentRequests.length, 0);
+            assert.equal(h.developmentRequests.length, 0);
             await assert.rejects(lstat(join(h.root, ".tandem", "living-canvas", "handoffs")), { code: "ENOENT" });
-            await browser.evaluate('document.querySelector("#continue-design").click()');
-            await browser.waitFor('document.querySelector("#confirm-design-handoff")?.disabled === false');
-            await browser.evaluate('document.querySelector("#confirm-design-handoff").click(); document.querySelector("#confirm-design-handoff")?.click()');
+            await browser.evaluate('document.querySelector("#continue-design").focus(); document.querySelector("#continue-design").click()');
+            assert.equal(await browser.evaluate('document.querySelector("#confirm-design-handoff")'), null);
+            await browser.evaluate('document.querySelector("#continue-design")?.click()');
             await browser.waitFor('document.querySelector("#next-action-guide").textContent==="Opening Development..."');
             await started.promise;
             assert.equal(starts, 1); assert.equal(h.developmentRequests.length, 0);
@@ -175,7 +194,7 @@ test("packaged handoff review cancels without startup and confirms the exact rea
         } finally {
             gate.resolve();
             await browser.call("Page.navigate", { url: "about:blank" });
-            clearInterval(server.heartbeat); server.live.close(); server.server.closeAllConnections();
+            clearInterval(server.heartbeat); server.server.closeAllConnections();
             await new Promise<void>(done => server.server.close(() => done()));
             await h.close();
         }

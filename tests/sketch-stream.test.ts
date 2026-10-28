@@ -1,655 +1,468 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-    MAX_SKETCH_STREAM_OPERATIONS,
-    MAX_SKETCH_STREAM_RECORD_BYTES,
-    MAX_SKETCH_STREAM_RESPONSE_BYTES,
-    SketchOperationStream,
-    type SketchPreview,
+    MAX_SKETCH_STREAM_OPERATIONS, MAX_SKETCH_STREAM_RECORD_BYTES,
+    MAX_SKETCH_STREAM_RESPONSE_BYTES, SketchEditValidationError, SketchOperationStream, readSketchRecovery,
+    type SketchScreenStatus,
 } from "../src/sketch-stream.js";
-import {
-    validateSketchDocument,
-    type SketchDocument,
-    type SketchScreen,
-    type SketchShape,
-    type SketchTransition,
-} from "../src/sketch.js";
+import { validateSketchDocument, type DslSketchDocument, type SketchDocument } from "../src/sketch.js";
+import { sketchDocument } from "./helpers/sketch-lifecycle-fixture.js";
+import { addUi, createDocument, applyOperations } from "./helpers/ui-dsl-fixture.js";
 
-const decisions = ["entry-point", "details-view"];
-const done = JSON.stringify({ op: "done" });
+const decisions = ["usage"];
+const done = '{"op":"done"}';
+const line = (value: unknown) => JSON.stringify(value) + "\n";
+const metadata = (id = "main") => {
+    const { ui: _ui, ...screen } = sketchDocument().screens[0];
+    return { ...screen, id };
+};
+const edit = (value: unknown, screenId = "main") => ({ op: "ui", screenId, edit: value });
+const update = (label = "Updated") => edit({ op: "update", id: "primary-action", props: { label } });
+const add = (id = "primary-action", label = "Continue") =>
+    edit({ op: "add", parent: "screen", component: { id, type: "Button", props: { label } } });
+const generation = () => line({ op: "upsert-screen", screen: metadata() }) + line(add("primary-action", "首頁 👩‍💻")) + done;
 
-function shape(overrides: Partial<SketchShape> = {}): SketchShape {
-    return {
-        id: "heading", kind: "text", x: 10, y: 10, width: 200, height: 40,
-        text: "Welcome", points: [], stroke: "none", fill: "#123abc", fontSize: 20, ...overrides,
-    };
+test("host-selected wireframe fidelity is available with the first outline and survives content, revision and recovery", () => {
+    const outline = new SketchOperationStream(null, decisions, undefined, "outline", undefined, false, "wireframe");
+    outline.append(line({ op: "upsert-screen", screen: metadata() }) + done);
+    const pages = outline.complete() as DslSketchDocument;
+    assert.equal(pages.fidelity, "wireframe");
+    assert.equal(pages.screens[0].ui.tokens["color.primary"], "#333333");
+    const content = new SketchOperationStream(pages, decisions, undefined, "content");
+    content.append(line(add()) + done);
+    const design = content.complete() as DslSketchDocument;
+    const revision = new SketchOperationStream(design, decisions);
+    revision.append(line(update("Save task")) + done);
+    const changed = revision.complete() as DslSketchDocument;
+    assert.equal(changed.fidelity, "wireframe");
+    assert.deepEqual(changed.screens[0].ui.tokens, pages.screens[0].ui.tokens);
+    const legacy = sketchDocument(), preserved = new SketchOperationStream(legacy, decisions, undefined, "revision", undefined, false, "wireframe");
+    preserved.append(line(update()) + done);
+    const old = preserved.complete() as DslSketchDocument;
+    assert.equal(Object.hasOwn(old, "fidelity"), false, "A new default cannot migrate an existing design.");
+    assert.deepEqual(old.screens[0].ui.tokens, legacy.screens[0].ui.tokens);
+});
+
+function poisoned(stream: SketchOperationStream, pattern: RegExp) {
+    assert.throws(() => stream.append(done), pattern);
+    assert.throws(() => stream.complete(), pattern);
 }
 
-function screen(overrides: Partial<SketchScreen> = {}): SketchScreen {
-    return {
-        id: "home", title: "Home", purpose: "Start an accepted workflow", decisionIds: ["entry-point"],
-        width: 320, height: 240, shapes: [shape()], notes: "Keep this annotation", ...overrides,
-    };
-}
-
-function metadata(overrides: Partial<Omit<SketchScreen, "shapes">> = {}): Omit<SketchScreen, "shapes"> {
-    const { shapes: _shapes, ...value } = screen();
-    return { ...value, ...overrides };
-}
-
-function transition(overrides: Partial<SketchTransition> = {}): SketchTransition {
-    return { id: "open-details", fromScreenId: "home", toScreenId: "details", trigger: "Select details", description: "Keep this flow", ...overrides };
-}
-
-function document(): SketchDocument {
-    return {
-        version: 1,
-        screens: [
-            screen({
-                shapes: [shape(), shape({
-                    id: "annotation", kind: "path", text: "Handwritten note", stroke: "#222222", fill: "none",
-                    points: [{ x: 10, y: 10 }, { x: 20, y: 15 }, { x: 40, y: 40 }],
-                })],
-            }),
-            screen({ id: "details", title: "Details", decisionIds: ["details-view"], notes: "Do not replace this screen" }),
-        ],
-        transitions: [transition(), transition({ id: "return-home", fromScreenId: "details", toScreenId: "home", trigger: "Back" })],
-    };
-}
-
-function line(value: unknown): string {
-    return `${JSON.stringify(value)}\n`;
-}
-
-function generation(): string {
-    return line({ op: "upsert-screen", screen: metadata({ title: "首頁 👋", notes: "Draw 漢字 and emoji 🖊️" }) })
-        + line({ op: "upsert-shape", screenId: "home", shape: shape({ text: "Hello 👩‍💻" }) })
-        + done;
-}
-
-function expectPoisoned(stream: SketchOperationStream, error: RegExp): void {
-    assert.throws(() => stream.append(`${done}\n`), error);
-    assert.throws(() => stream.append(""), error);
-    assert.throws(() => stream.complete(), error);
-}
-
-test("sketch stream generates a screen and shapes, publishing the first preview before completion", () => {
-    const snapshots: Array<{ document: SketchDocument; sequence: number }> = [];
-    const stream = new SketchOperationStream(null, decisions, (document, sequence) => snapshots.push({ document, sequence }));
-    assert.equal(stream.document, null);
-    assert.equal(stream.sequence, 0);
+test("DSL generation publishes validated components before completion without saving a whole-document result", () => {
+    const previews: Array<{ document: SketchDocument; sequence: number }> = [];
+    const stream = new SketchOperationStream(null, decisions, (document, sequence) => previews.push({ document, sequence }));
     const first = line({ op: "upsert-screen", screen: metadata() });
     stream.append(first.slice(0, -1));
-    assert.equal(snapshots.length, 0);
+    assert.equal(previews.length, 0);
     stream.append("\n");
-    assert.equal(snapshots.length, 1);
-    assert.deepEqual(snapshots[0], {
-        document: { version: 1, screens: [screen({ shapes: [] })], transitions: [] },
-        sequence: 1,
-    });
-    stream.append(line({ op: "upsert-shape", screenId: "home", shape: shape() }));
-    assert.equal(snapshots.length, 2);
-    assert.equal(stream.sequence, 2);
-    assert.deepEqual(snapshots[0].document.screens[0].shapes, []);
+    assert.equal(previews.length, 1);
+    assert.equal(previews[0].document.version, 2);
+    stream.append(line(add()));
+    assert.equal(previews.length, 2);
+    assert.deepEqual(previews.map(item => item.sequence), [1, 2]);
+    assert.deepEqual(previews[0].document.screens[0].ui.nodes.screen.children, []);
+    assert.deepEqual(previews[1].document.screens[0].ui.nodes.screen.children, ["primary-action"]);
     stream.append(done);
-    assert.equal(snapshots.length, 2);
-    assert.deepEqual(stream.complete(), { version: 1, screens: [screen()], transitions: [] });
-    assert.equal(stream.sequence, 2);
-    const preview: SketchPreview = {
-        prototypeId: "prototype", generation: "generation", requestId: "request", runId: "run",
-        baseRevisionId: null, requirementsDigest: "a".repeat(64), sequence: stream.sequence, document: stream.complete(),
-    };
-    assert.equal(preview.document.screens[0].id, "home");
+    assert.deepEqual(stream.complete(), previews[1].document);
 });
 
-test("sketch stream accepts every character split, including surrogate-pair and CRLF boundaries", () => {
-    const input = `\r\n \t\r\n${generation().replaceAll("\n", "\r\n")}`;
+test("DSL stream accepts every UTF-16 split, split UTF-8 and CRLF boundaries", () => {
+    const source = "\r\n" + generation().replaceAll("\n", "\r\n");
     const whole = new SketchOperationStream(null, decisions);
-    whole.append(input);
+    whole.append(source);
     const expected = whole.complete();
-    for (let split = 0; split <= input.length; split++) {
+    for (let split = 0; split <= source.length; split++) {
         const stream = new SketchOperationStream(null, decisions);
-        stream.append(input.slice(0, split));
+        stream.append(source.slice(0, split));
         stream.append("");
-        stream.append(input.slice(split));
-        assert.deepEqual(stream.complete(), expected, `split at code unit ${split}`);
+        stream.append(source.slice(split));
+        assert.deepEqual(stream.complete(), expected, `split ${split}`);
     }
-    const singleCharacters = new SketchOperationStream(null, decisions);
-    for (const character of input.split("")) singleCharacters.append(character);
-    assert.deepEqual(singleCharacters.complete(), expected);
-    const singleBytes = new SketchOperationStream(null, decisions);
-    const decoder = new TextDecoder();
-    for (const byte of new TextEncoder().encode(input)) {
-        singleBytes.append(decoder.decode(Uint8Array.of(byte), { stream: true }));
+    const stream = new SketchOperationStream(null, decisions), decoder = new TextDecoder();
+    for (const byte of new TextEncoder().encode(source)) stream.append(decoder.decode(Uint8Array.of(byte), { stream: true }));
+    stream.append(decoder.decode());
+    assert.deepEqual(stream.complete(), expected);
+});
+
+test("formatted JSON records stream atomically across line breaks and arbitrary chunk boundaries", () => {
+    const outline = JSON.stringify({ op: "upsert-screen", screen: {
+        ...metadata(), title: 'Menu {today} "specials"', notes: "First line\nSecond line",
+    } }, null, 2);
+    const ui = JSON.stringify(add(), null, 2);
+    const source = outline + "\r\n" + ui + "\r\n" + done;
+    const whole = new SketchOperationStream(null, decisions);
+    whole.append(source);
+    const expected = whole.complete();
+    for (let split = 0; split <= source.length; split++) {
+        const stream = new SketchOperationStream(null, decisions);
+        stream.append(source.slice(0, split));
+        stream.append(source.slice(split));
+        assert.deepEqual(stream.complete(), expected, `split ${split}`);
     }
-    singleBytes.append(decoder.decode());
-    assert.deepEqual(singleBytes.complete(), expected);
-});
-
-test("sketch stream revises one shape without losing screens, annotations, transitions, or shape order", () => {
-    const base = document();
-    const before = structuredClone(base);
-    const snapshots: SketchDocument[] = [];
-    const stream = new SketchOperationStream(base, decisions, (snapshot) => snapshots.push(snapshot));
-    const replacement = shape({ text: "Updated heading", width: 180 });
-    stream.append(line({ op: "upsert-shape", screenId: "home", shape: replacement }));
-    stream.append(done);
-    const expected = structuredClone(before);
-    expected.screens[0].shapes[0] = replacement;
+    const previews: SketchDocument[] = [];
+    const stream = new SketchOperationStream(null, decisions, document => previews.push(document));
+    stream.append(outline.slice(0, -1));
+    assert.equal(previews.length, 0, "Incomplete formatted JSON is not an error or a preview.");
+    stream.append("}\n");
+    assert.equal(previews.length, 1);
+    assert.deepEqual(previews[0].screens[0].ui.nodes.screen.children, []);
+    stream.append(ui + "\n" + done);
     assert.deepEqual(stream.complete(), expected);
-    assert.deepEqual(base, before);
-    assert.deepEqual(snapshots, [expected]);
 });
 
-test("sketch streams preserve curve metadata through previews and complete-segment replacements", () => {
-    const base = document();
-    const snapshots: SketchDocument[] = [];
-    const stream = new SketchOperationStream(base, decisions, (snapshot) => snapshots.push(snapshot));
-    const points = [{ x: 10, y: 20 }, { x: 30, y: 40 }, { x: 50, y: 20 }, { x: 70, y: 40 }];
-    const cubic = shape({ id: "bezier", kind: "path", points, curve: "cubic", closed: true });
-    const spline = shape({ id: "spline", kind: "path", points, curve: "catmull-rom", closed: false, tension: 0.4 });
-    const quadratic = shape({ id: "quadratic", kind: "path", points: points.slice(0, 3), curve: "quadratic" });
-    for (const value of [cubic, spline, quadratic]) stream.append(line({ op: "upsert-shape", screenId: "home", shape: value }));
-    const appended = { ...cubic, points: [...points, ...points.slice(1)] };
-    stream.append(line({ op: "upsert-shape", screenId: "home", shape: appended }));
-    stream.append(done);
-    assert.deepEqual(stream.complete().screens[0].shapes.slice(2), [appended, spline, quadratic]);
-    assert.deepEqual(snapshots[0].screens[0].shapes.at(-1), cubic);
-    assert.deepEqual(base, document());
-    const invalid = new SketchOperationStream(stream.complete(), decisions);
-    const before = invalid.document;
-    assert.throws(() => invalid.append(line({
-        op: "upsert-shape", screenId: "home", shape: { ...appended, points: [...appended.points, points[0]] },
-    })), /cubic/);
-    assert.deepEqual(invalid.document, before);
-    assert.equal(invalid.sequence, 0);
+test("title-first pages report waiting, processing and ready without persisting progress in the document", () => {
+    const previews: Array<{ document: SketchDocument; statuses: Record<string, SketchScreenStatus> }> = [];
+    const stream = new SketchOperationStream(null, decisions, (document, _sequence, statuses) => {
+        previews.push({ document, statuses });
+    });
+    stream.append(line({ op: "upsert-screen", screen: metadata() })
+        + line({ op: "upsert-screen", screen: { ...metadata("details"), title: "Details" } }));
+    assert.deepEqual(previews.at(-1)!.statuses, { main: "waiting", details: "waiting" });
+    assert.deepEqual(previews.at(-1)!.document.screens.map(screen => screen.title), ["Main", "Details"]);
+    assert.ok(previews.at(-1)!.document.screens.every(screen => screen.ui.nodes.screen.children.length === 0));
+    stream.append(line({ op: "screen-status", screenId: "main", status: "processing" }));
+    assert.deepEqual(previews.at(-1)!.statuses, { main: "processing", details: "waiting" });
+    stream.append(line(add()) + line({ op: "screen-status", screenId: "main", status: "ready" }));
+    assert.deepEqual(previews.at(-1)!.statuses, { main: "ready", details: "waiting" });
+    previews.at(-1)!.statuses.details = "ready";
+    stream.append(line(update()));
+    assert.deepEqual(previews.at(-1)!.statuses, { main: "processing", details: "waiting" }, "Later edits reset ready; callback mutations do not.");
+    stream.append(line({ op: "remove-screen", screenId: "details" }) + done);
+    assert.deepEqual(previews.at(-1)!.statuses, { main: "processing" });
+    assert.deepEqual(Object.keys(stream.complete()), ["version", "screens", "transitions"]);
 });
 
-test("sketch stream upserts screen metadata without replacing shapes or changing screen order", () => {
-    const base = document();
+test("screen progress cannot reference missing pages, mark empty pages ready or introduce arbitrary states", () => {
+    for (const operation of [
+        { op: "screen-status", screenId: "missing", status: "processing" },
+        { op: "screen-status", screenId: "main", status: "ready" },
+        { op: "screen-status", screenId: "main", status: "approved" },
+        { op: "screen-status", screenId: "main", status: "waiting" },
+        { op: "screen-status", screenId: "main", status: "processing", extra: true },
+    ]) {
+        const stream = new SketchOperationStream(null, decisions);
+        stream.append(line({ op: "upsert-screen", screen: metadata() }));
+        assert.throws(() => stream.append(line(operation)));
+        assert.equal(stream.sequence, 1);
+        assert.throws(() => stream.complete());
+    }
+    const stream = new SketchOperationStream(sketchDocument(), decisions);
+    stream.append(line({ op: "screen-status", screenId: "main", status: "processing" })
+        + line({ op: "screen-status", screenId: "main", status: "ready" }) + done);
+    assert.throws(() => stream.complete(), /at least one document-changing operation/, "Progress alone is not a design revision.");
+});
+
+test("outline and content phases enforce structure before content instead of trusting worker ordering", () => {
+    const outline = new SketchOperationStream(null, decisions, undefined, "outline");
+    outline.append(line({ op: "upsert-screen", screen: metadata() })
+        + line({ op: "upsert-screen", screen: metadata("details") })
+        + line({ op: "upsert-transition", transition: {
+            id: "next", fromScreenId: "main", toScreenId: "details", trigger: "Continue", description: "",
+        } }) + done);
+    const base = outline.complete();
+    assert.ok(base.screens.every(screen => screen.ui.nodes.screen.children.length === 0));
+    for (const operation of [add(), { op: "screen-status", screenId: "main", status: "processing" }]) {
+        const invalid = new SketchOperationStream(null, decisions, undefined, "outline");
+        invalid.append(line({ op: "upsert-screen", screen: metadata() }));
+        assert.throws(() => invalid.append(line(operation)), /only page metadata and navigation/);
+        assert.equal(invalid.sequence, 1);
+    }
+    for (const operation of [
+        { op: "upsert-screen", screen: metadata("late-page") },
+        { op: "remove-screen", screenId: "details" },
+        { op: "remove-transition", transitionId: "next" },
+    ]) {
+        const invalid = new SketchOperationStream(base, decisions, undefined, "content");
+        assert.throws(() => invalid.append(line(operation)), /cannot change the published page outline/);
+        assert.deepEqual(invalid.document, base);
+    }
+    const incomplete = new SketchOperationStream(base, decisions, undefined, "content");
+    incomplete.append(line(add()) + done);
+    assert.throws(() => incomplete.complete(), /fill every outlined page/);
+    const content = new SketchOperationStream(base, decisions, undefined, "content");
+    content.append(line(add()) + line(edit({
+        op: "add", parent: "screen", component: { id: "title", type: "Heading", props: { text: "Details" } },
+    }, "details")) + done);
+    assert.deepEqual(content.complete().transitions, base.transitions);
+});
+
+test("List.size produces actionable correction data without applying invalid props or losing valid content", () => {
+    const stream = new SketchOperationStream(sketchDocument(), decisions);
+    stream.append(line(update("Kept")));
+    const invalid = edit({ op: "add", parent: "screen",
+        component: { id: "items", type: "List", props: { items: ["One"], size: "font.size.body" } } });
+    assert.throws(() => stream.append(line(invalid)), (error: unknown) => {
+        assert.ok(error instanceof SketchEditValidationError);
+        assert.match(error.repair.message, /'size' is not a prop of List/);
+        assert.deepEqual(error.repair.operation, invalid);
+        return true;
+    });
+    assert.equal(stream.document!.screens[0].ui.nodes["primary-action"].props.label, "Kept");
+    assert.equal(stream.document!.screens[0].ui.nodes.items, undefined);
+    assert.throws(() => stream.complete(), /not a prop of List/);
+});
+
+test("explicit recovery can finish already-complete retained content without redrawing it", () => {
+    const base = sketchDocument();
+    const resumed = new SketchOperationStream(base, decisions, undefined, "content", { main: "ready" }, true);
+    resumed.append(done);
+    assert.deepEqual(resumed.complete(), base);
+    const empty = structuredClone(base);
+    empty.screens[0].ui = createDocument();
+    const incomplete = new SketchOperationStream(empty, decisions, undefined, "content", { main: "waiting" }, true);
+    incomplete.append(done);
+    assert.throws(() => incomplete.complete(), /fill every outlined page/);
+});
+
+test("durable recovery validates identity, page status and its complete UI DSL document", () => {
+    const checkpoint = {
+        phase: "content", preview: {
+            prototypeId: "sample", generation: "generation", requestId: "request", runId: "run",
+            baseRevisionId: null, requirementsDigest: "requirements", sequence: 2,
+            document: sketchDocument(), screenStatuses: { main: "processing" },
+        },
+    };
+    assert.deepEqual(readSketchRecovery(checkpoint), checkpoint);
+    for (const invalid of [
+        { ...checkpoint, phase: "unknown" },
+        { ...checkpoint, preview: { ...checkpoint.preview, baseRevisionId: "" } },
+        { ...checkpoint, preview: { ...checkpoint.preview, screenStatuses: { main: "approved" } } },
+        { ...checkpoint, preview: { ...checkpoint.preview, document: {} } },
+        { ...checkpoint, repair: { message: "bad", operation: null } },
+    ]) assert.throws(() => readSketchRecovery(invalid));
+});
+
+test("all five library operations preserve unrelated nodes and metadata while revisions use the current DSL base", () => {
+    const base = sketchDocument();
     const stream = new SketchOperationStream(base, decisions);
-    const replacement = metadata({ title: "Revised home", notes: "Revised notes", width: 1, height: 1 });
-    stream.append(line({ op: "upsert-screen", screen: replacement }));
-    stream.append(line({ op: "upsert-screen", screen: metadata({ id: "summary", title: "Summary" }) }));
-    stream.append(done);
-    const expected = structuredClone(base);
-    expected.screens[0] = { ...replacement, shapes: expected.screens[0].shapes };
-    expected.screens.push({ ...metadata({ id: "summary", title: "Summary" }), shapes: [] });
-    assert.deepEqual(stream.complete(), expected);
-    assert.deepEqual(stream.complete().screens.map((item) => item.id), ["home", "details", "summary"]);
-});
-
-test("sketch stream upserts transitions and shapes in place and appends new identities", () => {
-    const base = document();
-    const stream = new SketchOperationStream(base, decisions);
-    const editedTransition = transition({ trigger: "Tap heading", description: "Updated flow" });
-    const addedTransition = transition({ id: "refresh", toScreenId: "home", trigger: "Refresh" });
-    stream.append(line({ op: "upsert-transition", transition: editedTransition }));
-    stream.append(line({ op: "upsert-transition", transition: addedTransition }));
-    stream.append(line({ op: "upsert-shape", screenId: "details", shape: shape({ id: "new-shape" }) }));
-    stream.append(line({ op: "upsert-shape", screenId: "details", shape: shape({ text: "Updated details heading" }) }));
-    stream.append(done);
+    stream.append(line(edit({ op: "add", parent: "screen", component: { id: "card", type: "Card", props: {} } })));
+    stream.append(line(edit({ op: "add", parent: "card", component: { id: "hint", type: "Text", props: { text: "Keep me" } } })));
+    stream.append(line(update("Start")));
+    stream.append(line(edit({ op: "move", id: "primary-action", parent: "card", after: null })));
+    stream.append(line(edit({ op: "setToken", key: "color.primary", value: "#166534" })));
+    stream.append(line(edit({ op: "remove", id: "hint" })) + done);
     const result = stream.complete();
-    assert.deepEqual(result.transitions, [editedTransition, base.transitions[1], addedTransition]);
-    assert.deepEqual(result.screens[1].shapes.map((item) => item.id), ["heading", "new-shape"]);
-    assert.equal(result.screens[1].shapes[0].text, "Updated details heading");
-    assert.equal(stream.sequence, 4);
+    assert.equal(result.version, 2);
+    const ui = result.screens[0].ui;
+    assert.deepEqual(ui.nodes.card.children, ["primary-action"]);
+    assert.equal(ui.nodes["primary-action"].props.label, "Start");
+    assert.equal(ui.tokens["color.primary"], "#166534");
+    assert.equal(ui.nodes.hint, undefined);
+    assert.equal(result.screens[0].notes, base.screens[0].notes);
+    assert.equal(base.screens[0].ui.nodes["primary-action"].props.label, "Continue");
 });
 
-test("sketch stream removes shapes and transitions and only removes transitions incident to a removed screen", () => {
-    const base = document();
-    base.screens.push(screen({ id: "summary" }));
-    const unaffected = transition({ id: "details-summary", fromScreenId: "details", toScreenId: "summary" });
-    base.transitions.push(unaffected);
+test("official legacy Lucide aliases become canonical names for Icon, Button and Link edits", () => {
+    const aliases = {
+        "trash-2": "trash", filter: "funnel", "more-horizontal": "ellipsis", "more-vertical": "ellipsis-vertical",
+        home: "house", edit: "square-pen", "edit-2": "pen", "edit-3": "pen-line",
+        "help-circle": "circle-question-mark", "alert-circle": "circle-alert", "alert-triangle": "triangle-alert",
+        "check-circle": "circle-check-big", "check-circle-2": "circle-check", "x-circle": "circle-x",
+        "user-circle": "circle-user", "user-circle-2": "circle-user-round",
+    };
+    for (const [alias, canonical] of Object.entries(aliases)) {
+        for (const type of ["Icon", "Button", "Link"]) {
+            const base = sketchDocument(), stream = new SketchOperationStream(base, decisions);
+            const field = type === "Icon" ? "name" : "icon";
+            stream.append(line(edit({ op: "add", parent: "screen",
+                component: { id: "icon-action", type, props: { label: "Action", [field]: alias } } })));
+            assert.equal(stream.document!.screens[0].ui.nodes["icon-action"].props[field], canonical, `${type}: ${alias}`);
+            stream.append(line(edit({ op: "update", id: "icon-action", props: { [field]: alias } })) + done);
+            const result = stream.complete();
+            assert.equal(result.screens[0].ui.nodes["icon-action"].props[field], canonical);
+            assert.deepEqual(result.screens[0].ui.nodes["primary-action"], base.screens[0].ui.nodes["primary-action"]);
+            assert.deepEqual(validateSketchDocument(result, decisions), result, "Only canonical names reach previews and saved documents.");
+        }
+    }
+});
+
+test("screen metadata and transitions retain UI documents, order, accepted decisions and incident-edge semantics", () => {
+    const base = sketchDocument();
     const stream = new SketchOperationStream(base, decisions);
-    stream.append(line({ op: "remove-shape", screenId: "home", shapeId: "heading" }));
-    assert.deepEqual(stream.document!.screens[0].shapes.map((item) => item.id), ["annotation"]);
-    stream.append(line({ op: "remove-transition", transitionId: "open-details" }));
-    assert.deepEqual(stream.document!.transitions.map((item) => item.id), ["return-home", "details-summary"]);
-    stream.append(line({ op: "remove-screen", screenId: "home" }));
-    stream.append(done);
-    assert.deepEqual(stream.complete(), { version: 1, screens: base.screens.slice(1), transitions: [unaffected] });
-    assert.equal(stream.sequence, 3);
+    stream.append(line({ op: "upsert-screen", screen: { ...metadata(), title: "Renamed", width: 375, height: 812 } }));
+    stream.append(line({ op: "upsert-screen", screen: metadata("details") }));
+    stream.append(line({ op: "upsert-transition", transition: {
+        id: "next", fromScreenId: "main", toScreenId: "details", trigger: "Continue", description: "",
+    } }));
+    assert.deepEqual(stream.document!.screens.map(item => item.id), ["main", "details"]);
+    assert.deepEqual(stream.document!.screens[0].ui, base.screens[0].ui);
+    stream.append(line({ op: "remove-screen", screenId: "details" }) + done);
+    assert.deepEqual(stream.complete().transitions, []);
+    const last = new SketchOperationStream(base, decisions);
+    assert.throws(() => last.append(line({ op: "remove-screen", screenId: "main" })), /last screen/);
+    poisoned(last, /last screen/);
 });
 
-test("sketch stream forbids removing the last screen but allows adding its replacement first", () => {
-    const base: SketchDocument = { version: 1, screens: [screen()], transitions: [] };
-    const stream = new SketchOperationStream(base, decisions);
-    assert.throws(() => stream.append(line({ op: "remove-screen", screenId: "home" })), /last screen.*replacement first/);
-    assert.deepEqual(stream.document, base);
-    assert.equal(stream.sequence, 0);
-    expectPoisoned(stream, /last screen/);
-    const replacement = new SketchOperationStream(base, decisions);
-    replacement.append(line({ op: "upsert-screen", screen: metadata({ id: "replacement" }) }));
-    replacement.append(line({ op: "remove-screen", screenId: "home" }));
-    replacement.append(done);
-    assert.deepEqual(replacement.complete().screens.map((item) => item.id), ["replacement"]);
-});
-
-test("sketch stream rejects unknown references and removals atomically", () => {
-    const cases = [
-        { op: "remove-screen", screenId: "missing" },
-        { op: "upsert-shape", screenId: "missing", shape: shape() },
-        { op: "remove-shape", screenId: "missing", shapeId: "heading" },
-        { op: "remove-shape", screenId: "home", shapeId: "missing" },
-        { op: "remove-transition", transitionId: "missing" },
-        { op: "upsert-transition", transition: transition({ fromScreenId: "missing" }) },
-        { op: "upsert-transition", transition: transition({ toScreenId: "missing" }) },
-    ];
-    for (const operation of cases) {
-        const base = document();
-        const stream = new SketchOperationStream(base, decisions, () => assert.fail("Invalid operations must not publish a preview"));
-        assert.throws(() => stream.append(line(operation)), /unknown/, JSON.stringify(operation));
+test("invalid DSL edits and unknown references fail atomically and cannot be rescued by a valid tail", () => {
+    for (const operation of [
+        update(""),
+        edit({ op: "update", id: "missing", props: { label: "No" } }),
+        edit({ op: "add", parent: "missing", component: { id: "new", type: "Text", props: { text: "No" } } }),
+        edit({ op: "add", parent: "screen", component: { id: "primary-action", type: "Text", props: { text: "Duplicate" } } }),
+        edit({ op: "update", id: "primary-action", props: { onclick: "alert(1)" } }),
+        edit({ op: "update", id: "primary-action", props: { icon: "trash-2", onclick: "alert(1)" } }),
+        edit({ op: "update", id: "primary-action", props: { icon: "not-a-bundled-icon" } }),
+        edit({ op: "remove", id: "screen" }),
+        edit({ op: "move", id: "screen", parent: "primary-action" }),
+        edit({ op: "setToken", key: "color.primary", value: "url(https://example.test)" }),
+        edit({ op: "setToken", key: "space.1", value: 129 }),
+        edit({ op: "setToken", key: "arbitrary", value: 1 }),
+    ]) {
+        const base = sketchDocument(), stream = new SketchOperationStream(base, decisions);
+        assert.throws(() => stream.append(line(operation)));
         assert.deepEqual(stream.document, base);
         assert.equal(stream.sequence, 0);
-        expectPoisoned(stream, /unknown/);
+        assert.throws(() => stream.complete());
     }
-    const empty = new SketchOperationStream(null, decisions);
-    assert.throws(() => empty.append(line({ op: "upsert-shape", screenId: "home", shape: shape() })), /unknown screen/);
-    assert.equal(empty.document, null);
+    for (const input of [
+        '{"op":"ui","screenId":"main","edit":{"op":"update","id":"primary-action","props":{"__proto__":{}}}}\n',
+        line(edit({ op: "update", id: "constructor", props: { label: "No" } })),
+        line({ op: "ui", screenId: "absent", edit: { op: "remove", id: "primary-action" } }),
+    ]) assert.throws(() => new SketchOperationStream(sketchDocument(), decisions).append(input));
 });
 
-test("sketch stream validates and clones its base and accepted decisions", () => {
-    const base = document();
-    const before = structuredClone(base);
-    const accepted = [...decisions];
-    const stream = new SketchOperationStream(base, accepted);
-    assert.deepEqual(stream.document, before);
-    assert.equal(stream.sequence, 0);
-    base.screens[0].shapes[1].points[0].x = 999;
-    base.screens[0].decisionIds[0] = "not-accepted";
-    base.transitions[0].trigger = "Changed caller input";
-    accepted.splice(0, accepted.length, "not-accepted");
-    stream.append(line({ op: "upsert-shape", screenId: "home", shape: shape({ text: "New label" }) }));
-    stream.append(done);
-    const expected = structuredClone(before);
-    expected.screens[0].shapes[0].text = "New label";
-    assert.deepEqual(stream.complete(), expected);
-    assert.throws(() => new SketchOperationStream(base, decisions), /accepted requirements DAG/);
-    assert.throws(() => new SketchOperationStream({ ...before, screens: [] }, decisions), /screens/);
-    for (const value of [null, "entry-point", [1]]) {
-        assert.throws(() => new SketchOperationStream(null, value as unknown as string[]), /accepted decision IDs/);
+test("geometry streams and legacy bases are explicitly rejected rather than silently migrated", () => {
+    assert.throws(() => new SketchOperationStream({
+        version: 1, screens: [{ ...metadata(), shapes: [] }], transitions: [],
+    }, decisions), /legacy geometry.*regenerate/);
+    for (const op of ["upsert-shape", "remove-shape"]) {
+        assert.throws(() => new SketchOperationStream(sketchDocument(), decisions).append(line({ op })), /unknown operation/);
     }
 });
 
-test("sketch stream snapshots, getters, and completed documents cannot mutate internal state or each other", () => {
-    const snapshots: SketchDocument[] = [];
-    const stream = new SketchOperationStream(document(), decisions, (snapshot) => snapshots.push(snapshot));
-    stream.append(line({ op: "upsert-shape", screenId: "home", shape: shape({ text: "First" }) }));
-    const first = structuredClone(snapshots[0]);
-    const exposed = stream.document!;
-    exposed.screens[0].shapes[1].points[0].x = 999;
-    exposed.screens[0].decisionIds.push("outside-dag");
-    exposed.transitions.length = 0;
-    stream.append(line({ op: "upsert-shape", screenId: "home", shape: shape({ text: "Second" }) }));
-    assert.deepEqual(snapshots[0], first);
-    snapshots[0].screens[0].shapes[1].points[0].x = 888;
-    snapshots[1].screens[0].decisionIds.length = 0;
-    snapshots[1].transitions[0].trigger = "Corrupt callback snapshot";
-    stream.append(done);
-    const result = stream.complete();
-    const expected = document();
-    expected.screens[0].shapes[0].text = "Second";
-    assert.deepEqual(result, expected);
-    result.screens[0].shapes[1].points[0].x = 777;
-    result.transitions.length = 0;
-    assert.deepEqual(stream.document, expected);
-    assert.deepEqual(stream.complete(), expected);
-});
-
-test("sketch stream isolates immediate callback mutation and latches callback errors", () => {
-    const stream = new SketchOperationStream(null, decisions, (snapshot) => {
-        snapshot.screens[0].decisionIds.length = 0;
-        snapshot.screens.length = 0;
-    });
-    stream.append(line({ op: "upsert-screen", screen: metadata() }));
-    stream.append(line({ op: "upsert-shape", screenId: "home", shape: shape() }));
-    stream.append(done);
-    assert.deepEqual(stream.complete().screens, [screen()]);
-    const failed = new SketchOperationStream(null, decisions, () => { throw new Error("Preview delivery failed"); });
-    assert.throws(() => failed.append(line({ op: "upsert-screen", screen: metadata() })), /Preview delivery failed/);
-    expectPoisoned(failed, /Preview delivery failed/);
-});
-
-test("sketch stream cannot complete after a preview ownership callback fails partway through a response", () => {
-    const ownershipFailure = new Error("Preview ownership lost");
-    const sequences: number[] = [];
-    const stream = new SketchOperationStream(null, decisions, (_document, sequence) => {
-        sequences.push(sequence);
-        if (sequence === 2) throw ownershipFailure;
-    });
-    assert.throws(() => stream.append(`${generation()}\n`), (error) => error === ownershipFailure);
-    assert.deepEqual(sequences, [1, 2]);
-    assert.throws(() => stream.append(""), (error) => error === ownershipFailure);
-    assert.throws(() => stream.complete(), (error) => error === ownershipFailure);
-    assert.throws(() => stream.append(done), (error) => error === ownershipFailure);
-    assert.throws(() => stream.complete(), (error) => error === ownershipFailure);
-    assert.deepEqual(sequences, [1, 2]);
-});
-
-test("sketch stream enforces exact operation, metadata, shape, and transition fields", () => {
-    const valid = [
-        { op: "upsert-screen", screen: metadata() },
-        { op: "remove-screen", screenId: "home" },
-        { op: "upsert-shape", screenId: "home", shape: shape() },
-        { op: "remove-shape", screenId: "home", shapeId: "heading" },
-        { op: "upsert-transition", transition: transition() },
-        { op: "remove-transition", transitionId: "open-details" },
-        { op: "done" },
-    ];
-    const cases: unknown[] = valid.flatMap((operation) => [
-        { ...operation, unexpected: true },
-        ...Object.keys(operation).map((key) => Object.fromEntries(Object.entries(operation).filter(([name]) => name !== key))),
-    ]);
-    cases.push(
-        { op: "upsert-screen", screen: screen() },
-        { op: "upsert-screen", screen: { ...metadata(), html: "<script/>" } },
-        { op: "upsert-screen", screen: { ...metadata(), notes: undefined } },
-        { op: "upsert-shape", screenId: "home", shape: { ...shape(), onload: "alert(1)" } },
-        { op: "upsert-shape", screenId: "home", shape: { ...shape(), text: undefined } },
-        { op: "upsert-transition", transition: { ...transition(), url: "javascript:alert(1)" } },
-        { op: "upsert-transition", transition: { ...transition(), trigger: undefined } },
-    );
-    for (const operation of cases) {
-        const stream = new SketchOperationStream(document(), decisions);
-        assert.throws(() => stream.append(line(operation)), /unexpected or missing fields|unknown operation/, JSON.stringify(operation));
-        assert.equal(stream.sequence, 0);
-        assert.deepEqual(stream.document, document());
-    }
-});
-
-test("sketch stream rejects invalid operation and field types", () => {
-    const cases: unknown[] = [null, [], 1, true, "prose", {}, { op: "replace-document", document: document() }];
-    for (const value of [null, [], 123, true, "text"]) {
-        cases.push(
-            { op: "upsert-screen", screen: value },
-            { op: "upsert-shape", screenId: "home", shape: value },
-            { op: "upsert-transition", transition: value },
-        );
-        if (typeof value !== "string") {
-            cases.push(
-                { op: "remove-screen", screenId: value },
-                { op: "remove-shape", screenId: "home", shapeId: value },
-                { op: "remove-transition", transitionId: value },
-            );
-        }
-    }
-    for (const operation of cases) {
-        const stream = new SketchOperationStream(document(), decisions);
-        assert.throws(() => stream.append(line(operation)), /Invalid sketch operation stream/, JSON.stringify(operation));
-        expectPoisoned(stream, /Invalid sketch operation stream/);
-    }
-    const invalidFragment = new SketchOperationStream(null, decisions);
-    assert.throws(() => invalidFragment.append(null as unknown as string), /string fragment/);
-    expectPoisoned(invalidFragment, /string fragment/);
-});
-
-test("sketch stream rejects prototype injection without using identities as dynamic object keys", () => {
-    const attacks = [
-        '{"op":"done","__proto__":{"polluted":true}}',
-        '{"op":"done","constructor":{"prototype":{"polluted":true}}}',
-        JSON.stringify({ op: "upsert-screen", screen: metadata() }).replace('"notes":', '"__proto__":{"polluted":true},"notes":'),
-        JSON.stringify({ op: "upsert-shape", screenId: "home", shape: shape() }).replace('"kind":', '"__proto__":{"polluted":true},"kind":'),
-        JSON.stringify({ op: "upsert-shape", screenId: "home", shape: shape({ kind: "line", points: [{ x: 0, y: 0 }, { x: 1, y: 1 }] }) })
-            .replace('"x":0', '"x":0,"constructor":{"prototype":{"polluted":true}}'),
-        JSON.stringify({ op: "upsert-transition", transition: transition() }).replace('"trigger":', '"prototype":{"polluted":true},"trigger":'),
-    ];
-    for (const attack of attacks) {
-        const stream = new SketchOperationStream(document(), decisions);
-        assert.throws(() => stream.append(`${attack}\n`), /unexpected or missing fields/);
-        assert.equal(({} as Record<string, unknown>).polluted, undefined);
-        assert.deepEqual(stream.document, document());
-    }
-    const stream = new SketchOperationStream(null, decisions);
-    stream.append(line({ op: "upsert-screen", screen: metadata({ id: "constructor" }) }));
-    stream.append(line({ op: "upsert-shape", screenId: "constructor", shape: shape({ id: "constructor" }) }));
-    stream.append(line({ op: "upsert-shape", screenId: "constructor", shape: shape({ id: "constructor", text: "Safe replacement" }) }));
-    stream.append(done);
-    assert.equal(stream.complete().screens[0].shapes.length, 1);
-    assert.equal(stream.complete().screens[0].shapes[0].text, "Safe replacement");
-});
-
-test("sketch stream reuses document validation for dimensions, colors, kinds, text, IDs, and accepted decisions", () => {
-    const screenChanges = [
-        { id: "../escape" }, { id: "__proto__" }, { id: "con" }, { width: 0 }, { height: 10001 }, { width: 2.5 },
-        { title: "" }, { purpose: "x".repeat(501) }, { notes: "n".repeat(4001) }, { decisionIds: ["outside-dag"] },
-        { decisionIds: [] }, { decisionIds: ["entry-point", "entry-point"] }, { decisionIds: "entry-point" },
-    ];
-    const shapeChanges = [
-        { kind: "image" }, { stroke: "red" }, { fill: 'url("https://example.test")' }, { id: "../escape" },
-        { width: 0 }, { x: -1 }, { y: 10001 }, { x: 9999, width: 2 }, { fontSize: 0 }, { fontSize: 501 },
-        { text: "\ud800" }, { text: "\0" }, { text: "x".repeat(501) }, { width: "200" },
-        { kind: "line", points: [] }, { kind: "arrow", points: [{ x: 0, y: 0 }] },
-        { kind: "path", points: Array.from({ length: 513 }, () => ({ x: 0, y: 0 })) },
-    ];
+test("transport records enforce exact fields and accepted requirements after every operation", () => {
     for (const operation of [
-        ...screenChanges.map((change) => ({ op: "upsert-screen", screen: { ...metadata(), ...change } })),
-        ...shapeChanges.map((change) => ({ op: "upsert-shape", screenId: "home", shape: { ...shape(), ...change } })),
+        { ...update(), extra: true }, { op: "ui", screenId: "main" },
+        { op: "done", extra: true }, { op: "upsert-screen", screen: { ...metadata(), ui: createDocument() } },
+        { op: "upsert-screen", screen: { ...metadata(), width: 0 } },
+        { op: "upsert-screen", screen: { ...metadata(), height: 10001 } },
+        { op: "upsert-screen", screen: { ...metadata(), decisionIds: ["unaccepted"] } },
+        { op: "upsert-screen", screen: { ...metadata(), id: "../unsafe" } },
+        { op: "upsert-transition", transition: { id: "next", fromScreenId: "main", toScreenId: "missing", trigger: "Go", description: "" } },
+        { op: "remove-transition", transitionId: "missing" },
     ]) {
-        const stream = new SketchOperationStream(document(), decisions);
-        assert.throws(() => stream.append(line(operation)), /Invalid sketch:/, JSON.stringify(operation));
-        assert.deepEqual(stream.document, document());
+        const stream = new SketchOperationStream(sketchDocument(), decisions);
+        assert.throws(() => stream.append(line(operation)));
         assert.equal(stream.sequence, 0);
     }
+    const stream = new SketchOperationStream(sketchDocument(), decisions);
+    for (let i = 1; i < 8; i++) stream.append(line({ op: "upsert-screen", screen: metadata(`screen-${i}`) }));
+    assert.throws(() => stream.append(line({ op: "upsert-screen", screen: metadata("ninth") })), /screens/);
+    assert.equal(stream.document!.screens.length, 8);
 });
 
-test("sketch stream validates per-document and per-screen collection limits after each operation", () => {
-    const cases: Array<{ base: SketchDocument; replacement: unknown; addition: unknown; error: RegExp }> = [
-        {
-            base: { version: 1, screens: Array.from({ length: 8 }, (_, index) => screen({ id: `screen-${index}` })), transitions: [] },
-            replacement: { op: "upsert-screen", screen: metadata({ id: "screen-0", title: "Updated" }) },
-            addition: { op: "upsert-screen", screen: metadata({ id: "ninth-screen" }) }, error: /screens must contain/,
-        },
-        {
-            base: { version: 1, screens: [screen({ shapes: Array.from({ length: 100 }, (_, index) => shape({ id: `shape-${index}` })) })], transitions: [] },
-            replacement: { op: "upsert-shape", screenId: "home", shape: shape({ id: "shape-0", text: "Updated" }) },
-            addition: { op: "upsert-shape", screenId: "home", shape: shape({ id: "extra-shape" }) }, error: /screen shapes must contain/,
-        },
-        {
-            base: { ...document(), transitions: Array.from({ length: 40 }, (_, index) => transition({ id: `transition-${index}` })) },
-            replacement: { op: "upsert-transition", transition: transition({ id: "transition-0", trigger: "Updated" }) },
-            addition: { op: "upsert-transition", transition: transition({ id: "extra-transition" }) }, error: /transitions must contain/,
-        },
-    ];
-    for (const { base, replacement, addition, error } of cases) {
-        const stream = new SketchOperationStream(base, decisions);
-        stream.append(line(replacement));
-        const lastGood = stream.document;
-        assert.throws(() => stream.append(line(addition)), error);
-        assert.deepEqual(stream.document, lastGood);
-        assert.equal(stream.sequence, 1);
-        expectPoisoned(stream, error);
+test("caller and callback mutation cannot alter the stream, and callback failures stay latched", () => {
+    const base = structuredClone(sketchDocument());
+    const stream = new SketchOperationStream(base, decisions, value => { value.screens[0].title = "External"; });
+    base.screens[0].title = "Other";
+    stream.append(line(update()));
+    stream.document!.screens[0].title = "Mutated getter";
+    stream.append(done);
+    assert.equal(stream.complete().screens[0].title, "Main");
+    const failed = new SketchOperationStream(sketchDocument(), decisions, () => { throw new Error("Ownership lost"); });
+    assert.throws(() => failed.append(line(update()) + line(update("Later"))), /Ownership lost/);
+    assert.equal(failed.sequence, 1);
+    poisoned(failed, /Ownership lost/);
+});
+
+test("prose, markdown, malformed records, missing done, and content after done are rejected", () => {
+    for (const text of ["```json", "Here is the view", '{"op":"done",}', '{"op":"bad\nstring"}']) {
+        const stream = new SketchOperationStream(sketchDocument(), decisions);
+        assert.throws(() => stream.append(text + "\n"), /not valid JSON/);
+        poisoned(stream, /not valid JSON/);
     }
-});
-
-test("sketch stream rejects markdown, prose, malformed records, and malformed unterminated tails", () => {
-    for (const malformed of [
-        "```json", "Here is the sketch:", "{", '{"op":', '{"op":"done",}', '{"op":"done"} {"op":"done"}',
-        '{"op":"done"} // finished', '{"op":\n"done"}',
-    ]) {
-        const terminated = new SketchOperationStream(document(), decisions);
-        assert.throws(() => terminated.append(`${malformed}\n`), /not valid JSON/, malformed);
-        expectPoisoned(terminated, /not valid JSON/);
-        const tail = new SketchOperationStream(document(), decisions);
-        tail.append(line({ op: "upsert-shape", screenId: "home", shape: shape() }));
-        assert.throws(() => { tail.append(malformed); tail.complete(); }, /not valid JSON/, malformed);
-        expectPoisoned(tail, /not valid JSON/);
+    for (const text of ["{", '{\n"op":', '{\n"op":"done",\n}']) {
+        const stream = new SketchOperationStream(sketchDocument(), decisions);
+        stream.append(text);
+        assert.throws(() => stream.complete(), /not valid JSON/);
+        poisoned(stream, /not valid JSON/);
     }
-});
-
-test("sketch stream requires done and at least one edit even when revising a valid base", () => {
-    for (const base of [null, document()]) {
-        for (const input of ["", "\r\n \t\r\n"]) {
-            const stream = new SketchOperationStream(base, decisions);
-            stream.append(input);
-            assert.throws(() => stream.complete(), /missing done/);
-            expectPoisoned(stream, /missing done/);
-        }
+    for (const base of [null, sketchDocument()]) {
+        const empty = new SketchOperationStream(base, decisions);
+        assert.throws(() => empty.complete(), /missing done/);
         const noEdits = new SketchOperationStream(base, decisions);
         noEdits.append(done);
-        assert.throws(() => noEdits.complete(), /at least one document-changing operation/);
-        expectPoisoned(noEdits, /at least one document-changing operation/);
-        const unfinished = new SketchOperationStream(base, decisions);
-        unfinished.append(JSON.stringify({ op: "upsert-screen", screen: metadata() }));
-        assert.throws(() => unfinished.complete(), /missing done/);
-        assert.equal(unfinished.sequence, 1);
-        expectPoisoned(unfinished, /missing done/);
+        assert.throws(() => noEdits.complete(), /at least one/);
+    }
+    for (const tail of [done, "{", "prose", line(update())]) {
+        const stream = new SketchOperationStream(null, decisions);
+        assert.throws(() => stream.append(generation() + "\n" + tail), /after done/);
+        poisoned(stream, /after done/);
     }
 });
 
-test("sketch stream rejects duplicate done and any non-whitespace content after done, including unterminated fragments", () => {
-    for (const suffix of [done, `${done}\n`, "x", "{", "```", line({ op: "remove-screen", screenId: "home" })]) {
-        for (const together of [true, false]) {
-            const stream = new SketchOperationStream(null, decisions);
-            const prefix = `${generation()}\n`;
-            assert.throws(() => {
-                if (together) stream.append(prefix + suffix);
-                else { stream.append(prefix); stream.append(suffix); }
-            }, /after done/, suffix);
-            assert.equal(stream.sequence, 2);
-            expectPoisoned(stream, /after done/);
-        }
-    }
-    const whitespace = new SketchOperationStream(null, decisions);
-    whitespace.append(`${generation()}\r\n \t\r\n`);
-    const expected = whitespace.complete();
-    whitespace.append(" \t\r\n");
-    assert.deepEqual(whitespace.complete(), expected);
-    assert.throws(() => whitespace.append(done), /after done/);
-    expectPoisoned(whitespace, /after done/);
+test("1024 DSL operations are accepted and the next operation cannot mutate the last valid preview", () => {
+    const operation = line(update());
+    const stream = new SketchOperationStream(sketchDocument(), decisions);
+    stream.append(operation.repeat(MAX_SKETCH_STREAM_OPERATIONS));
+    const last = stream.document;
+    assert.throws(() => stream.append(operation), /1024 operations/);
+    assert.deepEqual(stream.document, last);
+    const complete = new SketchOperationStream(sketchDocument(), decisions);
+    complete.append(operation.repeat(MAX_SKETCH_STREAM_OPERATIONS) + done);
+    assert.equal(complete.complete().screens[0].ui.nodes["primary-action"].props.label, "Updated");
 });
 
-test("sketch stream accepts empty de-duplicated full-message and done fragments without publishing additional previews", () => {
-    for (const ending of ["", "\n", "\r\n"]) {
-        const sequences: number[] = [];
-        const stream = new SketchOperationStream(null, decisions, (_document, sequence) => sequences.push(sequence));
-        stream.append(generation() + ending);
-        const before = stream.document;
-        stream.append("");
-        stream.append("");
-        assert.equal(stream.sequence, 2);
-        assert.deepEqual(stream.document, before);
-        assert.deepEqual(stream.complete(), before);
-        stream.append("");
-        assert.equal(stream.sequence, 2);
-        assert.deepEqual(sequences, [1, 2]);
-    }
-});
-
-test("sketch stream accepts all 1024 edit operations and rejects the next without changing the last valid snapshot", () => {
-    assert.equal(MAX_SKETCH_STREAM_OPERATIONS, 1024);
-    const edit = line({ op: "upsert-shape", screenId: "home", shape: shape() });
-    const complete = new SketchOperationStream(document(), decisions);
-    complete.append(edit.repeat(MAX_SKETCH_STREAM_OPERATIONS));
-    complete.append(done);
-    assert.deepEqual(complete.complete(), document());
-    assert.equal(complete.sequence, MAX_SKETCH_STREAM_OPERATIONS);
-    const overflow = new SketchOperationStream(document(), decisions);
-    overflow.append(edit.repeat(MAX_SKETCH_STREAM_OPERATIONS));
-    assert.throws(() => overflow.append(edit), /1024 document-changing operations/);
-    assert.equal(overflow.sequence, MAX_SKETCH_STREAM_OPERATIONS);
-    assert.deepEqual(overflow.document, document());
-    expectPoisoned(overflow, /1024 document-changing operations/);
-});
-
-test("sketch stream accepts a 256 KiB path record and rejects a record one byte larger even without a newline", () => {
-    assert.equal(MAX_SKETCH_STREAM_RECORD_BYTES, 256 * 1024);
-    const path = shape({
-        kind: "path", text: "Ink 🖊", points: Array.from({ length: 512 }, (_, index) => ({ x: index / 3, y: index / 7 })),
-    });
-    const operation = JSON.stringify({ op: "upsert-shape", screenId: "home", shape: path });
+test("record limits count exact UTF-8 bytes even with split surrogate pairs", () => {
+    const operation = JSON.stringify(update("Ink 🖊"));
     const record = operation + " ".repeat(MAX_SKETCH_STREAM_RECORD_BYTES - Buffer.byteLength(operation));
-    assert.equal(Buffer.byteLength(record), MAX_SKETCH_STREAM_RECORD_BYTES);
-    const stream = new SketchOperationStream(document(), decisions);
+    const stream = new SketchOperationStream(sketchDocument(), decisions);
     const split = record.indexOf("🖊") + 1;
-    stream.append(record.slice(0, split));
-    stream.append("");
-    stream.append(record.slice(split));
-    assert.equal(stream.sequence, 0);
-    stream.append(`\n${done}`);
-    assert.deepEqual(stream.complete().screens[0].shapes[0], path);
-    for (const newline of ["", "\n"]) {
-        const overflow = new SketchOperationStream(document(), decisions);
-        assert.throws(() => overflow.append(`${record} ${newline}`), /record exceeds 256 KiB/);
+    stream.append(record.slice(0, split)); stream.append(record.slice(split)); stream.append("\n" + done);
+    assert.equal(stream.complete().screens[0].ui.nodes["primary-action"].props.label, "Ink 🖊");
+    for (const ending of ["", "\n"]) {
+        const overflow = new SketchOperationStream(sketchDocument(), decisions);
+        assert.throws(() => overflow.append(record + " " + ending), /record exceeds 256 KiB/);
         assert.equal(overflow.sequence, 0);
-        expectPoisoned(overflow, /record exceeds 256 KiB/);
     }
-    const fragmented = new SketchOperationStream(document(), decisions);
-    fragmented.append(record);
-    assert.throws(() => fragmented.append(" "), /record exceeds 256 KiB/);
-    expectPoisoned(fragmented, /record exceeds 256 KiB/);
 });
 
-function whitespaceBytes(bytes: number): string {
-    const records: string[] = [];
-    while (bytes > 0) {
-        const spaces = Math.min(bytes - 1, MAX_SKETCH_STREAM_RECORD_BYTES - 1);
-        records.push(`${" ".repeat(spaces)}\n`);
-        bytes -= spaces + 1;
-    }
-    return records.join("");
-}
-
-test("sketch stream measures the actual 512 KiB UTF-8 response limit across surrogate splits and blank records", () => {
-    assert.equal(MAX_SKETCH_STREAM_RESPONSE_BYTES, 512 * 1024);
-    const input = `${generation()}\n`;
-    const padding = whitespaceBytes(MAX_SKETCH_STREAM_RESPONSE_BYTES - Buffer.byteLength(input));
-    assert.equal(Buffer.byteLength(input + padding), MAX_SKETCH_STREAM_RESPONSE_BYTES);
-    const whole = new SketchOperationStream(null, decisions);
-    whole.append(input + padding);
-    const expected = whole.complete();
-    const fragmented = new SketchOperationStream(null, decisions);
-    for (const character of input.split("")) {
-        fragmented.append(character);
-        fragmented.append("");
-    }
-    fragmented.append(padding);
-    fragmented.append("");
-    assert.deepEqual(fragmented.complete(), expected);
-    fragmented.append("");
-    assert.throws(() => fragmented.append(" "), /response exceeds 512 KiB/);
-    expectPoisoned(fragmented, /response exceeds 512 KiB/);
-    const overflow = new SketchOperationStream(null, decisions);
-    assert.throws(() => overflow.append(`${input}${padding} `), /response exceeds 512 KiB/);
-    expectPoisoned(overflow, /response exceeds 512 KiB/);
-    const oversizedFragment = new SketchOperationStream(null, decisions);
-    assert.throws(() => oversizedFragment.append(" ".repeat(MAX_SKETCH_STREAM_RESPONSE_BYTES + 1)), /response exceeds 512 KiB/);
+test("formatted records count internal line breaks against the same bounded record size", () => {
+    const operation = JSON.stringify(update(), null, 2);
+    const padding = MAX_SKETCH_STREAM_RECORD_BYTES - Buffer.byteLength(operation);
+    const source = operation.slice(0, -1) + "\n".repeat(padding) + "}";
+    const stream = new SketchOperationStream(sketchDocument(), decisions);
+    stream.append(source + "\n" + done);
+    assert.equal(stream.complete().screens[0].ui.nodes["primary-action"].props.label, "Updated");
+    const overflow = new SketchOperationStream(sketchDocument(), decisions);
+    assert.throws(() => overflow.append(source.slice(0, -1) + "\n}\n"), /record exceeds 256 KiB/);
+    assert.equal(overflow.sequence, 0);
 });
 
-function documentWithBytes(bytes: number): SketchDocument {
-    const value: SketchDocument = {
-        version: 1,
-        screens: Array.from({ length: 2 }, (_, index) => screen({
-            id: `screen-${index}`,
-            shapes: Array.from({ length: 100 }, (_, index) => shape({ id: `shape-${index}`, text: "" })),
-        })),
-        transitions: [],
-    };
-    let remaining = bytes - Buffer.byteLength(JSON.stringify(value));
-    for (const item of value.screens.flatMap((screen) => screen.shapes)) {
-        const budget = Math.min(1500, remaining);
-        item.text = "界".repeat(Math.floor(budget / 3)) + (budget % 3 === 2 ? "é" : budget % 3 === 1 ? "x" : "");
-        remaining -= budget;
+test("response limits count exactly 512 KiB across whitespace records and fragmented Unicode", () => {
+    const input = generation() + "\n";
+    let remaining = MAX_SKETCH_STREAM_RESPONSE_BYTES - Buffer.byteLength(input);
+    let padding = "";
+    while (remaining > 0) {
+        const size = Math.min(remaining, MAX_SKETCH_STREAM_RECORD_BYTES);
+        padding += " ".repeat(size - 1) + "\n"; remaining -= size;
+    }
+    const stream = new SketchOperationStream(null, decisions);
+    for (const character of input.split("")) stream.append(character);
+    stream.append(padding);
+    assert.equal(stream.complete().version, 2);
+    assert.throws(() => stream.append(" "), /response exceeds 512 KiB/);
+});
+
+test("the full DSL design retains the actual 256 KiB UTF-8 document limit on every edit", () => {
+    const base = sketchDocument();
+    base.screens[0].ui = createDocument();
+    for (let i = 0; i < 150; i++) addUi(base.screens[0], `label-${i}`, "Text", { text: "" });
+    const value = structuredClone(base);
+    let remaining = 256 * 1024 - 1 - Buffer.byteLength(JSON.stringify(value));
+    for (const node of Object.values(value.screens[0].ui.nodes)) {
+        if (node.type !== "Text") continue;
+        const length = Math.min(2000, remaining);
+        node.props.text = "x".repeat(length);
+        remaining -= length;
     }
     assert.equal(remaining, 0);
-    assert.equal(Buffer.byteLength(JSON.stringify(value)), bytes);
-    return validateSketchDocument(value, decisions);
-}
-
-test("sketch stream enforces the document validator's actual 256 KiB UTF-8 boundary on each edit", () => {
-    const base = documentWithBytes(256 * 1024 - 1);
-    assert.equal(base.screens[1].shapes[99].text, "");
-    const stream = new SketchOperationStream(base, decisions);
-    const finalShape = { ...base.screens[1].shapes[99], text: "x" };
-    stream.append(line({ op: "upsert-shape", screenId: "screen-1", shape: finalShape }));
-    stream.append(done);
-    const boundary = stream.complete();
-    assert.equal(Buffer.byteLength(JSON.stringify(boundary)), 256 * 1024);
-    const overflow = new SketchOperationStream(boundary, decisions);
-    assert.throws(() => overflow.append(line({
-        op: "upsert-shape", screenId: "screen-1", shape: { ...finalShape, text: "xx" },
-    })), /document exceeds 256 KiB/);
-    assert.deepEqual(overflow.document, boundary);
+    assert.equal(value.screens[0].ui.nodes["label-149"].props.text, "");
+    validateSketchDocument(value);
+    const stream = new SketchOperationStream(value, decisions);
+    stream.append(line(edit({ op: "update", id: "label-149", props: { text: "x" } })) + done);
+    assert.equal(Buffer.byteLength(JSON.stringify(stream.complete())), 256 * 1024);
+    const overflow = new SketchOperationStream(stream.complete(), decisions);
+    assert.throws(() => overflow.append(line(edit({ op: "update", id: "label-149", props: { text: "xx" } }))), /document exceeds 256 KiB/);
     assert.equal(overflow.sequence, 0);
-    expectPoisoned(overflow, /document exceeds 256 KiB/);
 });

@@ -3,7 +3,7 @@ import { test } from "node:test";
 import {
     newPrototypeFlow, nextPrototypeMilestone, readPrototypeFlow, reservePrototypeCheckpoint,
     settlePrototypeCheckpoint, promotePrototypeCheckpoint, prototypeFlowCompletionError,
-    prototypeRetrySource, type PrototypeCheckpoint,
+    prototypeRetrySource, prototypeSketchEvidenceCheckpoint, prototypeMilestoneReady, type PrototypeCheckpoint,
 } from "../src/prototype-flow.js";
 
 function pending(id: string, milestone: PrototypeCheckpoint["milestone"], baseCheckpointId: string | null = null) {
@@ -17,8 +17,8 @@ function pending(id: string, milestone: PrototypeCheckpoint["milestone"], baseCh
 
 test("prototype checkpoints publish the first slice and require explicit later promotion", () => {
     let flow = newPrototypeFlow();
-    assert.equal(nextPrototypeMilestone(flow), "structure");
-    flow = reservePrototypeCheckpoint(flow, pending("first", "structure"));
+    assert.equal(nextPrototypeMilestone(flow), "prototype");
+    flow = reservePrototypeCheckpoint(flow, pending("first", "prototype"));
     assert.equal(flow.budget.usedSeconds, 0);
     assert.equal(flow.checkpoints[0].timeoutSeconds, null);
     assert.equal(flow.budget.limitSeconds, null);
@@ -27,8 +27,8 @@ test("prototype checkpoints publish the first slice and require explicit later p
     }, "2026-09-09T00:00:20Z");
     assert.equal(flow.displayedCheckpointId, "first");
     assert.equal(flow.budget.usedSeconds, 20);
-    assert.equal(nextPrototypeMilestone(flow), "interaction");
-    flow = reservePrototypeCheckpoint(flow, pending("second", "interaction", "first"));
+    assert.equal(nextPrototypeMilestone(flow), null, "One combined checkpoint completes the functional sub-stage.");
+    flow = reservePrototypeCheckpoint(flow, pending("second", "prototype", "first"));
     flow = settlePrototypeCheckpoint(flow, "second", {
         status: "ready", previewUrl: "http://localhost:2", summary: "Interaction", focus: "Try selection",
     }, "2026-09-09T00:00:30Z");
@@ -53,7 +53,7 @@ test("failure preserves the working checkpoint and records elapsed time without 
     }, "2026-09-09T01:00:00Z");
     assert.equal(flow.displayedCheckpointId, "first");
     assert.equal(flow.budget.usedSeconds, 3610);
-    assert.equal(nextPrototypeMilestone(flow), "interaction");
+    assert.equal(nextPrototypeMilestone(flow), "prototype");
     assert.throws(() => settlePrototypeCheckpoint(flow, "failed", {
         status: "ready", previewUrl: "http://localhost:3", summary: "", focus: "",
     }, "2026-09-09T01:00:00Z"), /no longer owns/);
@@ -86,6 +86,35 @@ test("legacy states remain readable and corrupted checkpoint references fail vis
     assert.throws(() => readPrototypeFlow({ ...newPrototypeFlow(), budget: { limitSeconds: 900, usedSeconds: NaN } }), /invalid/);
 });
 
+test("legacy Interaction satisfies unified readiness without rewriting history, while Structure alone remains partial", () => {
+    let flow = reservePrototypeCheckpoint(newPrototypeFlow(), pending("old-structure", "structure"));
+    flow = settlePrototypeCheckpoint(flow, "old-structure", {
+        status: "ready", previewUrl: "http://localhost:1/", summary: "Original Structure", focus: "",
+    }, "2026-09-09T00:00:10Z");
+    assert.equal(prototypeMilestoneReady(flow, "prototype"), false);
+    assert.equal(nextPrototypeMilestone(flow), "prototype");
+    flow = reservePrototypeCheckpoint(flow, pending("old-interaction", "interaction", "old-structure"));
+    flow = settlePrototypeCheckpoint(flow, "old-interaction", {
+        status: "ready", previewUrl: "http://localhost:2/", summary: "Original Interaction", focus: "",
+    }, "2026-09-09T00:00:20Z");
+    assert.equal(prototypeMilestoneReady(flow, "prototype"), true);
+    assert.match(prototypeFlowCompletionError(flow)!, /Apply/);
+    flow = promotePrototypeCheckpoint(flow, "old-interaction");
+    assert.equal(prototypeFlowCompletionError(flow), null);
+    assert.deepEqual(readPrototypeFlow(flow), flow);
+    assert.deepEqual(flow.checkpoints.map(item => item.milestone), ["structure", "interaction"]);
+});
+
+test("checkpoint start instructions survive reload without reusing another checkpoint's command", () => {
+    const flow = reservePrototypeCheckpoint(newPrototypeFlow(), {
+        ...pending("server", "structure"),
+        previewStart: { entrypoint: "app\\server.mjs", workingDirectory: "app", args: ["--port", "4321"] },
+    });
+    assert.deepEqual(readPrototypeFlow(JSON.parse(JSON.stringify(flow))), flow);
+    const previous = { ...flow.checkpoints[0], previewStart: { entrypoint: "../other.mjs", workingDirectory: ".", args: [] } };
+    assert.throws(() => readPrototypeFlow({ ...flow, checkpoints: [previous] }), /saved preview/);
+});
+
 test("checkpoint sketch bindings and delivered-image receipts survive reload without partial identities", () => {
     const flow = reservePrototypeCheckpoint(newPrototypeFlow(), {
         ...pending("drawn", "structure"), sketchRevisionId: "approved-revision",
@@ -99,6 +128,27 @@ test("checkpoint sketch bindings and delivered-image receipts survive reload wit
         assert.throws(() => readPrototypeFlow({
             ...flow, checkpoints: [{ ...flow.checkpoints[0], ...patch }],
         }), /invalid/);
+    }
+});
+
+test("progressive image evidence retains its source identity and cannot cross requests or approvals", () => {
+    const source: PrototypeCheckpoint = { ...pending("structure", "structure"),
+        continuation: "interaction", timeoutSeconds: null, status: "ready", previewUrl: "http://localhost:12346/",
+        completedAt: "2026-09-09T00:01:00Z", sketchRevisionId: "approved", sketchInputHash: "a".repeat(64), sketchImagesRead: ["main"] };
+    const next: PrototypeCheckpoint = { ...pending("interaction", "interaction", source.id),
+        requestId: source.requestId, timeoutSeconds: null, sketchRevisionId: source.sketchRevisionId, sketchInputHash: source.sketchInputHash };
+    const flow = { ...newPrototypeFlow(), displayedCheckpointId: source.id, activeCheckpointId: next.id, checkpoints: [source, next] };
+    assert.deepEqual(readPrototypeFlow(flow), flow);
+    assert.equal(prototypeSketchEvidenceCheckpoint(flow, next), source);
+    for (const change of [
+        { requestId: "new-worker" }, { generation: "new-generation" }, { sketchRevisionId: "other" },
+        { sketchInputHash: "b".repeat(64) }, { sourceCheckpointId: null },
+    ]) {
+        const isolated = { ...next, ...change };
+        assert.equal(prototypeSketchEvidenceCheckpoint(flow, isolated), isolated);
+    }
+    for (const continuation of [true, "visual", "structure"]) {
+        assert.throws(() => readPrototypeFlow({ ...flow, checkpoints: [{ ...source, continuation }, next] }), /invalid/);
     }
 });
 

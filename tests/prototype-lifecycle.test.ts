@@ -72,16 +72,58 @@ test("prototype results cannot rewrite requirements and must publish a verified 
         await fixture.api.beginPrototypeBuild("sample", "project:tandem");
         await fixture.waitForRequests();
         await fixture.api.waitForAnswer("sample");
-        await fixture.waitForRequests(2);
-        await fixture.api.waitForAnswer("sample");
         const ready = await fixture.api.loadState("sample");
         assert.equal(ready.previewStatus, "ready", JSON.stringify({ status: ready.status, logs: fixture.logs }));
         assert.equal(ready.goal, "User goal");
         assert.deepEqual(Array.from(ready.confirmed), ["User decision"]);
         assert.equal(ready.jobOwner, null);
-        assert.equal(ready.prototypeFlow!.checkpoints.length, 2);
+        assert.equal(ready.prototypeFlow!.checkpoints.length, 1);
+        assert.equal(ready.prototypeFlow!.checkpoints[0].milestone, "prototype");
         assert.equal(ready.previewUrl, "http://127.0.0.1:12346/");
-        assert.equal(ready.prototypeFlow!.pendingCheckpointId, ready.prototypeFlow!.checkpoints[1].id);
+        assert.equal(ready.prototypeFlow!.pendingCheckpointId, null);
+    } finally { await fixture.close(); }
+});
+
+test("ready checkpoints retain their own validated server start instructions for future restart", async () => {
+    const fixture = await extensionHarness();
+    try {
+        const state = fixture.api.createLegacyState("sample", "Keep restart simple");
+        state.stage = state.lifecycle.currentStage = "prototype";
+        state.lifecycle.completedStages = ["prepare", "requirements"];
+        state.prototypeApproach = { mode: "build", reason: "New GUI" };
+        await fixture.api.persistState(state);
+        fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, workflow: {
+            run: async (request: { args: { state: typeof state } }) => {
+                fixture.requests.push(request);
+                const checkpoint = request.args.state.prototypeFlow!.checkpoints.at(-1)!;
+                await mkdir(join(checkpoint.workspacePath, "app"), { recursive: true });
+                await writeFile(join(checkpoint.workspacePath, "app", "server.mjs"), "// Fixture startup source");
+                const port = String(12500 + fixture.requests.length);
+                fixture.setPreviewHtml(`<meta name="tandem-prototype-id" content="sample"><meta name="tandem-prototype-checkpoint" content="${checkpoint.id}">`);
+                return { status: "completed", runId: `start-instructions-${fixture.requests.length}`, result: {
+                    summary: "Saved mock preview", focus: "Inspect the primary action.",
+                    previewUrl: `http://127.0.0.1:${port}/`, question: null, artifactChanges: { upsert: [], remove: [] }, evidence: [],
+                    previewStart: { entrypoint: join("app", "server.mjs"), workingDirectory: "app", args: ["--port", port] },
+                } };
+            },
+        } } });
+        await fixture.api.beginPrototypeBuild("sample", "project:tandem");
+        await fixture.waitForRequests(); await fixture.api.waitForAnswer("sample");
+        const first = await fixture.api.loadState("sample");
+        await fixture.api.queuePrototypeRevision("sample", "project:tandem", {
+            suggestion: "Clarify the task result.", clientRequestId: "server-revision",
+            baseCheckpointId: first.prototypeFlow!.displayedCheckpointId,
+        });
+        await fixture.api.prototypeAction("sample", "project:tandem", { action: "retry" });
+        await fixture.waitForRequests(2); await fixture.api.waitForAnswer("sample");
+        const saved = await fixture.api.loadState("sample");
+        for (const [index, checkpoint] of saved.prototypeFlow!.checkpoints.entries()) {
+            assert.equal(checkpoint.status, "ready", saved.processing.message);
+            assert.deepEqual(JSON.parse(JSON.stringify(checkpoint.previewStart)), {
+                entrypoint: join("app", "server.mjs"), workingDirectory: "app", args: ["--port", String(12501 + index)],
+            });
+        }
+        assert.notDeepEqual(saved.prototypeFlow!.checkpoints[0].previewStart, saved.prototypeFlow!.checkpoints[1].previewStart);
     } finally { await fixture.close(); }
 });
 
@@ -149,7 +191,7 @@ test("feedback stays durable and idempotent while the first build or a clarifica
     } finally { await fixture.close(); }
 });
 
-test("later timeout retains the first preview and retry only rebuilds the failed milestone", async () => {
+test("later timeout retains the first preview and retry only rebuilds the failed Prototype revision", async () => {
     const fixture = await extensionHarness();
     try {
         const state = fixture.api.createLegacyState("sample", "Sample app");
@@ -176,6 +218,12 @@ test("later timeout retains the first preview and retry only rebuilds the failed
         await fixture.api.beginPrototypeBuild("sample", "project:tandem");
         await fixture.waitForRequests();
         await fixture.api.waitForAnswer("sample");
+        const first = await fixture.api.loadState("sample");
+        await fixture.api.queuePrototypeRevision("sample", "project:tandem", {
+            suggestion: "Show the task outcome.", clientRequestId: "timed-update",
+            baseCheckpointId: first.prototypeFlow!.displayedCheckpointId,
+        });
+        await fixture.api.prototypeAction("sample", "project:tandem", { action: "retry" });
         await fixture.waitForRequests(2);
         await fixture.api.waitForAnswer("sample");
         const paused = await fixture.api.loadState("sample");
@@ -189,7 +237,7 @@ test("later timeout retains the first preview and retry only rebuilds the failed
         await fixture.waitForRequests(3);
         await fixture.api.waitForAnswer("sample");
         const prepared = await fixture.api.loadState("sample");
-        assert.equal(prepared.prototypeFlow!.checkpoints[2].milestone, "interaction");
+        assert.equal(prepared.prototypeFlow!.checkpoints[2].milestone, "prototype");
         assert.equal(prepared.prototypeFlow!.checkpoints[2].sourceCheckpointId, paused.prototypeFlow!.checkpoints[1].id);
         assert.equal(prepared.previewUrl, paused.previewUrl);
         assert.match(fixture.api.stageCompletionError(prepared, "prototype", { requirePrototypeSpec: false })!, /Apply/);
@@ -319,7 +367,9 @@ test("legacy previews can queue feedback through an open clarification without l
         assert.equal(queued.prototypeReview.activeRevisionId, "older");
         assert.equal(queued.prototypeReview.revisions[1].status, "queued");
         assert.equal(queued.previewUrl, state.previewUrl);
-        assert.equal(queued.prototypeFlow!.checkpoints[1].milestone, "interaction");
+        assert.equal(queued.prototypeFlow!.checkpoints.length, 1);
+        assert.equal(queued.prototypeFlow!.checkpoints[0].milestone, "prototype");
+        assert.equal(queued.prototypeFlow!.displayedCheckpointId, `legacy-interaction-${state.generation}`);
         assert.equal(queued.prototypeReview.revisions[1].baseCheckpointId, queued.prototypeFlow!.displayedCheckpointId);
         assert.equal(fixture.requests.length, 0);
     } finally { await fixture.close(); }

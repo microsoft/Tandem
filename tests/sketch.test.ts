@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import {
-    emptySketchState, readSketchState, renderSketchSvg, sketchDocumentSchema, validateSketchDocument,
+    emptySketchState, readSketchState, renderSketchSvg, legacySketchDocumentSchema as sketchDocumentSchema, validateSketchDocument,
     type SketchApproval, type SketchDocument, type SketchRevision, type SketchShape,
 } from "../src/sketch.js";
 

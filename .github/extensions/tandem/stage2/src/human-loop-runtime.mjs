@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { HumanLoopPreferences } from "./human-loop-preferences.mjs";
+import { HumanLoopPreferences, validateProjectReasoningEffort } from "./human-loop-preferences.mjs";
 import { humanLoopPrompts } from "../public/prompts/human-loop.js";
-import { parseRequest } from "../runtime-src/domain/human-loop/contracts.ts";
+import { parseRequest, advisoryContinuationIssue } from "../runtime-src/domain/human-loop/contracts.ts";
 import { bindSelectedOptions } from "./human-loop-answers.mjs";
 import { decisionReportText } from "../public/review-decisions.js";
 import { nextHumanRequest, isStaleAnswer, humanExecutionQueue, hasQuestionBlockers, isPriorityAnswer, requireHumanRequestRunning, allowsHumanRoleSettlement,
-  currentImplementationConfirmation, requestsImplementationAfterDesign } from "../runtime-src/domain/human-loop/model.ts";
+  currentImplementationConfirmation, requestsImplementationAfterDesign, questionBlocksNewWork } from "../runtime-src/domain/human-loop/model.ts";
 import { policyHash } from "../runtime-src/domain/workflow/policy.ts";
 import { requireCondition } from "../runtime-src/domain/workflow/validation.ts";
 import { HumanLoopStore } from "./human-loop-store.mjs";
@@ -29,6 +29,7 @@ const string = { type: "string", minLength: 1 };
 export async function readHumanDesign(root) {
   const current = await new HumanLoopDesignStore(root).inspectCurrent();
   return { binding: sharedDesignBinding(current), content: current?.input ?? null,
+    publication: current ? { requestId: current.requestId, previous: current.previous } : null,
     references: current ? designReferenceCatalog(current.input) : [] };
 }
 
@@ -67,20 +68,23 @@ export class HumanLoopRuntime {
   #admission = Promise.resolve();
   #confirmationWork = null;
   #preferences;
+  #projectEffortControl;
   #modelChanging = false;
   #modelError = null;
+  #repairModelReadback = false;
   #compactionBusy = false;
   #compactionApproval = null;
   #contextProvider;
   #withRequestAdmission;
 
-  constructor({ configuration, client, verifyOwnership, verifyAdmission, permissionHandler, onHandoff, onProgress,
-    readDesign, designer, reviewEffects, now, contextProvider, withRequestAdmission = operation => operation(), createPrivateSession,
-    beforeNativeCreate, afterNativeCreate }) {
+  constructor({ configuration, client, workflowBootstrap, verifyOwnership, verifyAdmission, permissionHandler, onHandoff, onProgress,
+    readDesign, designer, reviewEffects, now, contextProvider, withRequestAdmission = operation => operation(), createPrivateSession, preparePrivateSession,
+    beforeNativeCreate, afterNativeCreate, projectEffortControl = false }) {
     requireCondition(configuration?.schemaVersion === "human-loop-runtime/v1" && typeof onHandoff === "function",
       "The new runtime needs versioned one-copy configuration and a real handoff presenter.");
     this.#configuration = configuration; this.#owner = configuration.owner;
     this.#preferences = new HumanLoopPreferences(this.#owner.workspacePath);
+    this.#projectEffortControl = projectEffortControl;
     this.#verify = verifyOwnership; this.#verifyAdmission = verifyAdmission ?? verifyOwnership;
     this.#onHandoff = onHandoff; this.#onProgress = onProgress;
     this.#contextProvider = contextProvider;
@@ -100,8 +104,8 @@ export class HumanLoopRuntime {
       ...tool, execute: (args, context) => this.#executeTool(tool, args, context),
     }));
     this.#transport = new HumanLoopTransport({
-      owner: this.#owner, client, workspace: this.#workspace, store: this.#store, tools, nativeFiles: true, nativeShells: this.#commands,
-      createPrivateSession, beforeNativeCreate, afterNativeCreate,
+      owner: this.#owner, client, workflowBootstrap, workspace: this.#workspace, store: this.#store, tools, nativeFiles: true, nativeShells: this.#commands,
+      createPrivateSession, preparePrivateSession, beforeNativeCreate, afterNativeCreate,
       verifyOwnership, authorizeTool: (packet) => this.#authorizeTool(packet), permissionHandler, now,
       onProgress: (event) => { this.#notify(event); if (event.kind === "native-shell") this.#kick(); },
       validateResult: async (packet, result) => {
@@ -183,7 +187,16 @@ export class HumanLoopRuntime {
       "Initial setup recovery cannot replace an existing canonical Design.");
     if (!initial.initialized) await this.#store.initialize(design.binding);
   }
-  async recover(recoveryId, cleanNativeProof = null, allowMissingInitialSession = false) {
+  async validateEmptyCreatedSetup(closeIds) {
+    requireCondition(!this.#opened && !this.#closed && !this.#closing, "An active runtime cannot be reinitialized.");
+    await this.#verify();
+    await this.#store.inspectEmptyCreatedSetup(closeIds);
+    const design = await this.#readDesign();
+    requireCondition(design.binding.revisionId === null && design.binding.digest === null && design.content === null,
+      "Empty-setup repair cannot replace a canonical Design.");
+  }
+  async recover(recoveryId, cleanNativeProof = null, allowMissingInitialSession = false, repairId = null) {
+    this.#repairModelReadback = Boolean(repairId);
     const state = await this.validateRecovery();
     let diagnostic = 0;
     const diagnose = async (source, reason) => {
@@ -211,7 +224,12 @@ export class HumanLoopRuntime {
       recoveryId, recoveredAt: new Date().toISOString(), evidenceRef: evidence.digest, nativeUsers: evidence.users, design: design.binding,
     });
     this.#opened = true;
-    this.#notify({ kind: "recovery", summary: currentImplementationConfirmation(this.#state)?.status === "pending"
+    if (repairId) await this.#store.recordMessage({ id: `empty-setup-reinitialized:${repairId}`,
+      requestId: null, role: "host", kind: "status", timestamp: new Date().toISOString(),
+      content: "Empty Development setup reinitialized with the same reserved session ID. No native history was restored and no project request was submitted. Continue Design separately when ready." });
+    this.#notify({ kind: "recovery", summary: repairId
+      ? "Development setup repaired with the same reserved ID. The retained handoff has not been submitted."
+      : currentImplementationConfirmation(this.#state)?.status === "pending"
       ? "Pending implementation confirmation retained. No planning or code changes will start without your decision; other interrupted work is retired."
       : "Ready for new instructions. Conversation and Design retained; previous work is retired, not resumed or certified." });
   }
@@ -233,10 +251,32 @@ export class HumanLoopRuntime {
     try {
       const preferences = await this.#preferences.read();
       requireCondition(!preferences.pendingModel, "A model change is unconfirmed. Retry the selection or explicitly accept the actual model in Settings.");
+      if (this.#repairModelReadback) {
+        const selection = await this.#transport.currentModelSelection();
+        requireCondition(selection.model, "Repair needs a verified private model. Select it in Settings before continuing.");
+      }
+      if (this.#projectEffortControl && preferences.projectReasoningEffort !== null) {
+        const actual = await this.#transport.currentModelSelection();
+        if (verifyAvailability) {
+          const selected = (await this.#transport.listModels()).find(item => item.id === actual.model);
+          requireCondition(selected?.supportedReasoningEfforts.includes(preferences.projectReasoningEffort),
+            "The selected private model does not support the saved project reasoning effort.");
+        }
+        requireCondition(actual.model && actual.reasoningEffort === preferences.projectReasoningEffort,
+          "The project reasoning effort is pending or differs from the private session. Select a compatible private model or apply the project effort again.");
+      }
       if (preferences.model) {
-        if (verifyAvailability) requireCondition((await this.#transport.listModels()).some(({ id }) => id === preferences.model), "Saved model is unavailable in the authenticated model list.");
-        requireCondition(await this.#transport.currentModel() === preferences.model,
+        if (verifyAvailability) {
+          const selected = (await this.#transport.listModels()).find(({ id }) => id === preferences.model);
+          requireCondition(selected, "Saved model is unavailable in the authenticated model list.");
+          requireCondition(preferences.reasoningEffort === null || selected.supportedReasoningEfforts.includes(preferences.reasoningEffort),
+            "Saved reasoning effort is unavailable for the selected model.");
+        }
+        const actual = await this.#transport.currentModelSelection();
+        requireCondition(actual.model === preferences.model,
           "The actual private-session model differs from the saved preference. Reconcile it in Settings; the session was not replaced.");
+        requireCondition(preferences.reasoningEffort === null || actual.reasoningEffort === preferences.reasoningEffort,
+          "The actual private-session reasoning effort differs from the saved preference. Reconcile it in Settings; the session was not replaced.");
       }
       this.#modelError = null;
     } catch (error) { this.#modelError = error.message; }
@@ -268,12 +308,22 @@ export class HumanLoopRuntime {
     await work;
     this.#notify({ kind: "permissions-reset" });
   }
+  async currentModelSelection() {
+    const value = await this.#transport.currentModelSelection();
+    return { modelId: value.model ?? undefined, reasoningEffort: value.reasoningEffort };
+  }
   async modelSettings() {
     const preferences = await this.#preferences.read();
     if (!this.#opened || this.#closed || this.#closing) return { models: [], actual: null, desired: preferences.model,
-      pending: preferences.pendingModel, error: this.#modelError, reason: "Private runtime is not open and Ready.", canChange: false, capabilities: null };
-    let models = [], actual = null, reason = null, capability = null, canChange = false;
-    try { actual = await this.#transport.currentModel(); }
+      pending: preferences.pendingModel, actualReasoningEffort: null, desiredReasoningEffort: preferences.reasoningEffort,
+      pendingReasoningEffort: preferences.pendingReasoningEffort, canSetReasoningEffort: false,
+      error: this.#modelError, reason: "Private runtime is not open and Ready.", canChange: false, capabilities: null,
+      effortManaged: this.#projectEffortControl, projectReasoningEffort: preferences.projectReasoningEffort };
+    let models = [], actual = null, actualReasoningEffort = null, reason = null, capability = null, canChange = false;
+    try {
+      const selection = await this.#transport.currentModelSelection();
+      actual = selection.model; actualReasoningEffort = selection.reasoningEffort;
+    }
     catch (error) { reason = error.message; }
     try {
       models = await this.#transport.listModels();
@@ -285,38 +335,103 @@ export class HumanLoopRuntime {
       canChange = true;
     } catch (error) { reason = [reason, error.message].filter(Boolean).join(" "); }
     if (!actual && canChange) reason += " Select a listed model in Settings; authoritative readback is required before image delivery.";
-    const error = this.#modelError ?? (preferences.pendingModel ? "Unconfirmed model intent requires explicit reconciliation."
-      : preferences.model && actual && preferences.model !== actual ? "Actual and saved model differ. Reconcile before sending." : null);
+    const error = this.#modelError ?? (this.#projectEffortControl && preferences.projectReasoningEffort !== null && !actual
+      ? reason : preferences.pendingModel ? "Unconfirmed model intent requires explicit reconciliation."
+      : preferences.model && actual && (preferences.model !== actual
+        || preferences.reasoningEffort !== null && preferences.reasoningEffort !== actualReasoningEffort)
+        ? "Actual and saved model or reasoning effort differ. Reconcile before sending." : null);
     return { models, actual, desired: preferences.model, pending: preferences.pendingModel, error, reason,
+      actualReasoningEffort, desiredReasoningEffort: preferences.reasoningEffort, pendingReasoningEffort: preferences.pendingReasoningEffort,
+      canSetReasoningEffort: this.#transport.canSetReasoningEffort,
+      effortManaged: this.#projectEffortControl, projectReasoningEffort: preferences.projectReasoningEffort,
       canChange, capabilities: capability };
   }
-  async changeModel({ model, acceptActual = false }) {
+  async validateProjectEffort(effort) {
+    validateProjectReasoningEffort(effort);
+    const preferences = await this.#preferences.read();
+    requireCondition(!preferences.pendingModel, "Reconcile the pending private model before changing project effort.");
+    const settings = await this.modelSettings();
+    requireCondition(settings.canChange, settings.reason ?? "Private native work is busy.");
+    if (settings.actual) requireCondition(settings.models.find(item => item.id === settings.actual)?.supportedReasoningEfforts.includes(effort),
+      "The private model does not advertise this reasoning effort.");
+  }
+  async applyProjectEffort() {
+    const preferences = await this.#preferences.read();
+    if (!this.#projectEffortControl || preferences.projectReasoningEffort === null) return;
+    if (preferences.pendingModel) { await this.#checkModel(false); return; }
+    let current;
+    try { current = await this.#transport.currentModelSelection(); }
+    catch (error) {
+      this.#modelError = `Saved project effort is pending a verified private model. ${error.message}`;
+      return;
+    }
+    if (preferences.model && current.model !== preferences.model) {
+      this.#modelError = "Actual private model differs from the saved selection. Reconcile it in Settings before applying project effort.";
+      return;
+    }
+    if (current.reasoningEffort === preferences.projectReasoningEffort) return this.#checkModel();
+    return this.changeModel({ model: current.model, reasoningEffort: preferences.projectReasoningEffort, projectEffort: true });
+  }
+  async selectProjectEffort(effort) {
+    await this.validateProjectEffort(effort);
+    return this.changeModel({ model: null, reasoningEffort: effort, projectEffort: true });
+  }
+  async changeModel({ model, reasoningEffort = null, acceptActual = false, projectEffort = false }) {
     requireCondition(!this.#compactionBusy && !this.#transport.compaction.active, "Wait for context compaction before changing models.");
     requireCondition(!this.#modelChanging && !this.#closing && !this.#stopWork, "Another model change, close or Stop is in progress.");
     requireCondition(!this.#pump && !this.#state?.activeRequestId && !this.#state?.activeTask && !this.#state?.stop,
       "Model changes require Ready now; they are not queued behind active work.");
     this.#modelChanging = true;
     const work = this.#admission.then(async () => {
-      let attempted = false, intent = false, previousPending = null;
+      let attempted = false, intent = false, previousPending = null, previousPendingEffort = null;
       try {
         await this.#modelQuiet();
         const models = await this.#transport.listModels();
         requireCondition(this.#transport.canSwitchModel, "Installed SDK cannot switch and verify the private model.");
-        const target = acceptActual ? await this.#transport.currentModel() : model;
-        requireCondition(models.some(({ id }) => id === target), "Selected model is not in the authenticated SDK model list.");
-        previousPending = (await this.#preferences.read()).pendingModel;
-        await this.#preferences.update({ pendingModel: target }); intent = true;
+        const previous = await this.#preferences.read();
+        requireCondition(projectEffort || !this.#projectEffortControl || previous.projectReasoningEffort === null
+          || reasoningEffort === null || reasoningEffort === previous.projectReasoningEffort,
+        "Change reasoning effort through the single project control.");
+        if (projectEffort) {
+          requireCondition(this.#projectEffortControl && !previous.pendingModel, "Project effort cannot replace an unconfirmed private model.");
+          validateProjectReasoningEffort(reasoningEffort);
+        }
+        let selection;
+        if (projectEffort) {
+          try { selection = await this.#transport.currentModelSelection(); }
+          catch (error) {
+            await this.#preferences.update({ projectReasoningEffort: reasoningEffort });
+            this.#modelError = `Project effort is saved but private model readback is unavailable. Select a compatible model in Settings. ${error.message}`;
+            return;
+          }
+        } else selection = acceptActual ? await this.#transport.currentModelSelection() : { model, reasoningEffort };
+        const target = selection.model;
+        const effort = projectEffort ? reasoningEffort : this.#projectEffortControl && previous.projectReasoningEffort !== null
+          ? previous.projectReasoningEffort : selection.reasoningEffort;
+        requireCondition(!acceptActual || !this.#projectEffortControl || previous.projectReasoningEffort === null
+          || selection.reasoningEffort === previous.projectReasoningEffort,
+        "Actual private effort differs from the project choice; use the project effort control.");
+        const selected = models.find(({ id }) => id === target);
+        requireCondition(selected, "Selected model is not in the authenticated SDK model list.");
+        requireCondition(effort === null || selected.supportedReasoningEfforts.includes(effort),
+          "Selected reasoning effort is not advertised for this model.");
+        requireCondition(acceptActual || effort === null || this.#transport.canSetReasoningEffort,
+          "Installed SDK cannot set reasoning effort.");
+        if (projectEffort) await this.#preferences.update({ projectReasoningEffort: effort });
+        previousPending = previous.pendingModel; previousPendingEffort = previous.pendingReasoningEffort;
+        await this.#preferences.update({ pendingModel: target, pendingReasoningEffort: effort }); intent = true;
         await this.#modelQuiet();
-        if (!acceptActual) { attempted = true; await this.#transport.setModel(target); }
-        const actual = await this.#transport.currentModel();
-        requireCondition(actual === target, "SDK model readback did not match the selection; reconcile the actual model explicitly.");
+        if (!acceptActual) { attempted = true; await this.#transport.setModel(target, effort); }
+        const actual = await this.#transport.currentModelSelection();
+        requireCondition(actual.model === target && (effort === null || actual.reasoningEffort === effort),
+          "SDK model or reasoning effort readback did not match the selection; reconcile the actual model explicitly.");
         await this.#modelQuiet();
-        await this.#preferences.update({ model: actual, pendingModel: null });
+        await this.#preferences.update({ model: actual.model, reasoningEffort: effort, pendingModel: null, pendingReasoningEffort: null });
         this.#modelError = null;
       } catch (error) {
         this.#modelError = error.message;
         if (intent && !attempted && !acceptActual) {
-          try { await this.#preferences.update({ pendingModel: previousPending }); }
+          try { await this.#preferences.update({ pendingModel: previousPending, pendingReasoningEffort: previousPendingEffort }); }
           catch (failure) { this.#modelError += ` Pending intent could not be cleared: ${failure.message}`; }
         }
         throw new Error(this.#modelError);
@@ -369,7 +484,7 @@ export class HumanLoopRuntime {
     const state = this.#state ?? await this.#store.load();
     const confirmation = currentImplementationConfirmation(state);
     const awaitingAnswer = hasQuestionBlockers(state);
-    const openPrerequisite = state.questions.some(q => q.state === "open" && q.blockingActive);
+    const openPrerequisite = state.questions.some(q => questionBlocksNewWork(state, q));
     return {
       schemaVersion: "human-loop-runtime-view/v1",
       status: this.#closed ? "closed" : state.uncertainty || this.#queueFailure ? "execution-unknown"
@@ -759,7 +874,12 @@ export class HumanLoopRuntime {
       design: { ...design, references: design.content ? designReferenceCatalog(design.content) : [] },
       ...(role === "designer" ? { designGeneration: this.#designer.generation?.() ?? designGenerationContract } : {}),
       code: { baseline: cycle?.baseline ?? before, current: before }, cycle, boundCycles,
-      questions, questionAnswers, pendingQuestionAnswers, lastOutcome: state.handoffs.at(-1)?.result ?? null,
+      questions,
+      questionContinuations: questions.filter(q => q.importance === "advisory").map(q => ({
+        questionId: q.id, sourceResultId: q.source.resultId, declaration: q.unanswered ?? null,
+        issue: advisoryContinuationIssue(q, state.design),
+        attribution: q.unanswered ? "Declared by the source role; not a user answer or approval." : "No continuation was recorded; do not invent one." })),
+      questionAnswers, pendingQuestionAnswers, lastOutcome: state.handoffs.at(-1)?.result ?? null,
       recordedQuestionAnswers: state.requests.filter(source => source.id === request.id
         || ["completed", "cancelled"].includes(source.status)).flatMap(source => (source.answers?.answers ?? []).map(answer => ({
         requestId: source.id, requestStatus: source.status, answer,
@@ -863,6 +983,9 @@ export class HumanLoopRuntime {
       const cycle = state.cycles.find(({ id }) => id === handoff.cycleId);
       const changes = await this.#workspace.changes(cycle.baseline, cycle.current);
       content += `\n\n${outcome.reason}\n\n${changes.length} changed path(s) are retained in the project. This work cycle is unfinished; no whole-plan Review or automatic Designer was started.`;
+    } else if (outcome.kind === "discovery-change") {
+      // Keep historical handoff bytes stable; no upstream callback is registered.
+      content += `\n\n${outcome.reason}\n\nReview the affected discovery stages in Project changes. Existing Design and code are unchanged; implementation has not been authorized.`;
     } else if (outcome.kind === "stopped-partial") {
       content = `Stopped with partial work retained. This role did not complete its requested outcome; no completion or Review is inferred.\n\n${content}`;
     } else if (["execution-failure", "review-incomplete"].includes(outcome.kind)) content += `\n\n${outcome.reason}`;
@@ -877,7 +1000,7 @@ export class HumanLoopRuntime {
     this.#requireRunning(state, request.id, taskId);
     const confirmAfterDesign = !state.stop && ["designer-changed", "designer-unchanged"].includes(outcome.kind)
       && requestsImplementationAfterDesign(state, state.requests.find(r => r.id === request.id))
-      && !state.questions.some(q => q.state === "open" && q.blockingActive);
+      && !state.questions.some(q => questionBlocksNewWork(state, q));
     await this.#store.dispatch("host", `present:${handoff.id}`, "present-handoff", { handoffId: handoff.id,
       ...(confirmAfterDesign ? { implementationConfirmation: {
         id: `confirmation-after-design:${handoff.result.resultId}`, createdAt: previous?.timestamp ?? new Date().toISOString(),

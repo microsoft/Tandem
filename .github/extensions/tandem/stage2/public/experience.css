@@ -345,6 +345,7 @@ main.workspace-shell {
     width: 8px; height: 8px; border: 0; border-radius: 1px; background: var(--orange);
   }
 }
+.question-continuation { display: block; margin-top: 6px; font-weight: normal; white-space: normal; overflow-wrap: anywhere; }
 .question-meaning {
   display: inline-block;
   padding: 0.25rem 0.5rem;

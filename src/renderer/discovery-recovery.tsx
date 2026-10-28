@@ -1,3 +1,4 @@
+import { Button } from "./ui/index.js";
 import { useRef } from "react";
 import { isPendingFactoryRun } from "../agent-runner.js";
 import { hasActiveJobs, useAction, useUi } from "./ui-context.js";
@@ -12,7 +13,7 @@ export function DiscoveryRecovery() {
     return <section className="section discovery-recovery" aria-label="Discovery recovery">
         {unknown.map(receipt => <div key={receipt.requestId}>
             <p>Unconfirmed launch: <code>{receipt.requestId}</code>. Its outcome is unknown.</p>
-            <button type="button" data-recovery-request-id={receipt.requestId}
+            <Button variant="secondary" type="button" data-recovery-request-id={receipt.requestId}
                 disabled={pending || hasActiveJobs(state) || !state.jobOwner || state.provider?.canSubmitAnswers === false}
                 onClick={() => void action.run(async () => {
                     const key = `${state.generation}:${receipt.requestId}`;
@@ -24,7 +25,7 @@ export function DiscoveryRecovery() {
                     }
                     await post("/api/effort/recover", { ...decision, generation: state.generation,
                         requestId: receipt.requestId, owner: state.jobOwner, confirm: true });
-                })}>Recover interrupted discovery</button>
+                })}>Recover interrupted discovery</Button>
         </div>)}
         {recovered.map(receipt => <p key={receipt.requestId}>Request <code>{receipt.requestId}</code>: abandoned with
             uncertain outcome at {receipt.recovery!.recordedAt}. No automatic replay.</p>)}

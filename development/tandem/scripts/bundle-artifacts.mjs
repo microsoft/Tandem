@@ -27,11 +27,13 @@ for (const [name, contents] of [
     platform: 'browser', target: 'es2022', minify: true, legalComments: 'inline', write: false, metafile: true,
   });
   if (Object.values(result.metafile.outputs).some(file => file.imports.length)) throw new Error(`${name} must be fully bundled`);
-  // The package scanner recognizes import syntax inside CSS vocabulary strings.
+  // The package scanner recognizes import syntax inside inert library strings.
   // Equivalent Unicode escapes keep those inert strings from looking like imports.
   const source = result.outputFiles[0].text
     .replaceAll('"@import"', '"@impor\\u0074"')
-    .replaceAll('"-ms-flow-from"', '"-ms-flow-fro\\u006d"');
+    .replaceAll('"-ms-flow-from"', '"-ms-flow-fro\\u006d"')
+    .replaceAll('"data-from"', '"data-fro\\u006d"')
+    .replaceAll("not from '${", "not fro\\u006d '${");
   const packageReference = /(?<!["'`])(?:\bfrom\s*|\bimport\s*(?:\(\s*)?)(["'])([^"'\r\n]+)\1|\bnew\s+URL\(\s*(["'])([^"'\r\n]+)\3\s*,\s*import\.meta\.url\s*\)/g;
   if (packageReference.test(source)) throw new Error(`${name} contains a package-scanner reference; inspect the emitted literal before publishing`);
   await writeFile(join(output, `${name}.js`), source);

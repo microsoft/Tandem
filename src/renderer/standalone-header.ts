@@ -1,12 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-export const headerActions = ["reload", "reset", "signIn", "cancelSignIn"] as const;
+export const headerActions = ["reload", "reset"] as const;
 export type HeaderAction = typeof headerActions[number];
 export interface HeaderControl {
   label: string;
   title: string;
   disabled: boolean;
   busy: boolean;
+}
+export interface ApplicationStatus {
+  text: string;
+  error: boolean;
+  action: string | null;
+}
+export interface StandaloneHosting {
+  header: boolean;
+  status: boolean;
 }
 export interface ApplicationHeader {
   scope: string;
@@ -15,6 +24,7 @@ export interface ApplicationHeader {
   permissionScope?: "main" | "development";
   controls: Record<HeaderAction, HeaderControl | null>;
   messages: Array<{ id: string; text: string; error: boolean }>;
+  status?: ApplicationStatus;
 }
 interface HeaderHost { origin: string; channel: string }
 
@@ -26,6 +36,8 @@ export function isApplicationHeader(value: unknown): value is ApplicationHeader 
   if (!record(value) || !text(value.scope, 1024) || !value.scope || !text(value.version, 100)
     || (value.permissionScope !== undefined && !["main", "development"].includes(String(value.permissionScope)))
     || !text(value.lifecycle, 256) || !record(value.controls) || !Array.isArray(value.messages) || value.messages.length > 8) return false;
+  if (value.status !== undefined && (!record(value.status) || !text(value.status.text, 8192)
+    || typeof value.status.error !== "boolean" || (value.status.action !== null && !text(value.status.action, 256)))) return false;
   const controls = value.controls;
   return headerActions.every((action) => {
     const control = controls[action];
@@ -54,11 +66,12 @@ export function isHeaderMessage(value: unknown, channel: string): value is Recor
 export function useStandaloneHeader(
   state: ApplicationHeader,
   actions: Record<HeaderAction, () => void | Promise<void>>,
-): boolean {
+  showNextAction: () => void,
+): StandaloneHosting {
   const host = useMemo(() => window.parent !== window ? standaloneHeaderHost(window.location.hash) : null, []);
-  const [hosted, setHosted] = useState(false);
-  const current = useRef({ state, actions, hosted });
-  current.current = { state, actions, hosted };
+  const [hosted, setHosted] = useState<StandaloneHosting>({ header: false, status: false });
+  const current = useRef({ state, actions, showNextAction, hosted });
+  current.current = { state, actions, showNextAction, hosted };
   const serialized = JSON.stringify(state);
   useEffect(() => {
     if (!host) return;
@@ -67,26 +80,33 @@ export function useStandaloneHeader(
     const receive = (event: MessageEvent<unknown>) => {
       if (event.source !== window.parent || event.origin !== host.origin || !isHeaderMessage(event.data, host.channel)) return;
       if (event.data.type === "tandem:header:connect") {
-        current.current.hosted = true;
-        setHosted(true);
+        const hosting = { header: true, status: event.data.statusBar === true && Boolean(current.current.state.status) };
+        current.current.hosted = hosting;
+        setHosted(hosting);
         publish();
         return;
       }
       if (event.data.type === "tandem:header:disconnect") {
-        current.current.hosted = false;
-        setHosted(false);
+        const hosting = { header: false, status: false };
+        current.current.hosted = hosting;
+        setHosted(hosting);
         return;
       }
-      if (event.data.type !== "tandem:header:action" || !current.current.hosted) return;
+      const statusAction = event.data.type === "tandem:status:action";
+      if ((!statusAction && event.data.type !== "tandem:header:action") || !current.current.hosted.header) return;
       const requestedAction = event.data.action;
       const action = headerActions.find((action) => action === requestedAction);
-      if (!action || event.data.scope !== current.current.state.scope || !current.current.state.controls[action]
-        || current.current.state.controls[action]?.disabled) {
+      const available = statusAction ? current.current.hosted.status && Boolean(current.current.state.status?.action)
+        : action && current.current.state.controls[action] && !current.current.state.controls[action]?.disabled;
+      if (event.data.scope !== current.current.state.scope || !available) {
         post({ type: "tandem:header:error", message: "This action is no longer available. Review the current workspace before retrying." });
         publish();
         return;
       }
-      const invoke = async () => current.current.actions[action]();
+      const invoke = async () => {
+        if (statusAction) current.current.showNextAction();
+        else if (action) await current.current.actions[action]();
+      };
       void invoke().catch((error: unknown) => {
         const message = error instanceof Error ? error.message : "The application header action failed.";
         console.error("Standalone header action failed.", error);
@@ -101,7 +121,7 @@ export function useStandaloneHeader(
     };
   }, [host]);
   useEffect(() => {
-    if (host && hosted) window.parent.postMessage({ type: "tandem:header:state", channel: host.channel, header: JSON.parse(serialized) }, host.origin);
+    if (host && hosted.header) window.parent.postMessage({ type: "tandem:header:state", channel: host.channel, header: JSON.parse(serialized) }, host.origin);
   }, [host, hosted, serialized]);
   return hosted;
 }
