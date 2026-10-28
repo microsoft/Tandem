@@ -45,7 +45,7 @@ export interface UiState extends TandemState {
   workflowRuntime?: WorkflowActivitySnapshot | null;
   stageReviewStatus?: {
     conflict: string; blocker: string | null; changed: boolean; currentStage: LifecycleStageId;
-    appliedAt: string | null; discardedAt: string | null;
+    appliedAt: string | null; discardedAt: string | null; abandonedAt?: string | null;
   };
 }
 

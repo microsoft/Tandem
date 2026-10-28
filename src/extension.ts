@@ -32,10 +32,10 @@ import {
 } from "./requirements-research.js";
 import {
     activateChange, activeChange, cancelPrototypeChange, changeAssessmentSchema, changeBaselineDigest, completeSavedChange, isLocalChange, nextChangeWork, pendingChange,
-    pendingPrototypeChange, preserveUnchangedScreens, previousChangeReviews, prototypeNeedsChangeUpdate, readChangeAssessment, readChangeRequests, readSketchChangeContext, sketchChangeContextSchema,
+    pendingPrototypeChange, preserveUnchangedScreens, previousChangeReviews, prototypeNeedsChangeUpdate, readChangeAssessment, readChangeRequests, readSketchChangeContext, restoreChangeReview, sketchChangeContextSchema,
     type ChangeRequest,
 } from "./change-requests.js";
-import { changeReviewBlocksEditing, changeReviewWaitsForPrototype, currentChangeReview, hasPendingReviewFeedback, isDiscoveryChangeRequest, pendingUpstreamReviewStage } from "./change-request-policy.js";
+import { changeReviewBlocksEditing, changeReviewToAbandon, changeReviewWaitsForPrototype, currentChangeReview, hasPendingReviewFeedback, isDiscoveryChangeRequest, pendingUpstreamReviewStage } from "./change-request-policy.js";
 import {
     createStageReview, isReviewStage, mergeStageReview, readStageReviewDraft, readStageReviews,
     stageReviewConflict, stageReviewDigest, stageReviewHasChanges, type StageReviewReference,
@@ -58,7 +58,7 @@ import {
     type ApplicationInput, type ApplicationRequest, type ApplicationRespond,
 } from "../development/tandem/runtime-src/application-interface.js";
 import { projectApplicationCapabilities, reviewReadPaths, reviewWritePaths, upstreamAvailability, upstreamOperations, type ApplicationState } from "./application-interface.js";
-import { ensureMaterializedDirectories } from "./accepted-artifacts.js";
+import { ensureMaterializedDirectories, readRetainedFile } from "./accepted-artifacts.js";
 import {
     createProcessState, normalizeProcessState,
     processEvent, processMetrics,
@@ -2070,6 +2070,7 @@ async function publicReviewState(entry, reviewId: unknown) {
             conflict: stageReviewConflict(parent, draft), blocker: reviewParentWorkError(parent) || reviewCompletionError(draft),
             changed: stageReviewHasChanges(parent, draft),
             appliedAt: reference.appliedAt, discardedAt: reference.discardedAt,
+            abandonedAt: parent.changeRequests?.find(request => request.id === reference.changeRequestId)?.abandonment?.abandonedAt ?? null,
             currentStage: parent.lifecycle.currentStage,
         },
     };
@@ -3779,9 +3780,13 @@ async function completeLifecycleStage(prototypeId, requestedStageId, extensionId
                 ? { ...state.developmentIntent, status: "starting", snapshotPath: outputEntries.find(output => output.stageId === "prototype")!.path }
                 : state.developmentIntent,
             changeRequests: state.changeRequests?.map(request => {
-                if (!isDiscoveryChangeRequest(request) || !["active", "reviewing"].includes(request.status)) return request;
+                if (!isDiscoveryChangeRequest(request)) return request;
+                const committed = !reviewDraft && !state.stageReview && completedStageIds.includes("prototype")
+                    && request.restorePoint && !request.abandonment && !request.committedAt
+                    ? { committedAt: completedAt } : {};
+                if (!["active", "reviewing"].includes(request.status)) return { ...request, ...committed };
                 const remainingStages = request.remainingStages.filter(stage => !completedStageIds.includes(stage));
-                return { ...request, remainingStages, status: remainingStages.length ? request.status : "completed",
+                return { ...request, ...committed, remainingStages, status: remainingStages.length ? request.status : "completed",
                     completedAt: remainingStages.length ? null : completedAt };
             }),
         };
@@ -3926,6 +3931,25 @@ async function submitChangeRequest(prototypeId: string, extensionId: string, inp
             developmentAdmission: null, developmentRequest: null,
             ...(typeof replacesRequestId === "string" ? { replacesRequestId } : {}),
         };
+        if (!state.stageReview) {
+            const previous = state.changeRequests?.find(item => item.id === replacesRequestId);
+            if (previous?.restorePoint?.generation === state.generation && !previous.abandonment && !previous.committedAt) {
+                request.restorePoint = { ...previous.restorePoint };
+            } else {
+                const checkpoint = state.prototypeFlow
+                    ? prototypeCheckpoint(state.prototypeFlow, state.prototypeFlow.displayedCheckpointId) : null;
+                const workspacePath = checkpoint?.workspacePath ?? (state.previewUrl ? WORKSPACE_ROOT : null);
+                const snapshot = {
+                    version: 1, prototypeId, generation: state.generation, requestId: request.id, capturedAt: now,
+                    baseline: state,
+                    previewSource: workspacePath ? { workspacePath, fingerprint: await fingerprintPrototypeWorkspace(workspacePath) } : null,
+                };
+                const path = join(STATE_DIRECTORY, "efforts", prototypeId, "changes", request.id, "before-request.json");
+                await ensureMaterializedDirectories(dirname(path), true);
+                await writeJsonAtomically(path, snapshot);
+                request.restorePoint = { requestId: request.id, generation: state.generation, digest: executionDigest(snapshot) };
+            }
+        }
         await persistState({ ...state, changeRequests: readChangeRequests([...state.changeRequests ?? [], request]),
             status: replacesRequestId
                 ? "Feedback saved for re-evaluation. Active work will finish first; applied changes and earlier drafts are retained."
@@ -3936,6 +3960,64 @@ async function submitChangeRequest(prototypeId: string, extensionId: string, inp
     await continueChangeWork(prototypeId);
     await continuePrototypeWork(prototypeId);
     return result;
+}
+
+async function abandonChangeRequest(prototypeId: string, extensionId: string, input: Record<string, unknown>) {
+    if (!await isPreferredAnswerProvider(extensionId)) throw new CanvasError("read_only_provider", "Use the owning writable provider to abandon changes.");
+    if (input.confirm !== true) throw new CanvasError("change_confirmation_required", "Confirm that the whole review should return to its pre-request state.");
+    return developmentTransition.run(() => withAnswerClaim(prototypeId, async () => {
+        const state = await loadState(prototypeId);
+        const request = state.changeRequests?.find(item => item.id === input.requestId);
+        if (!request) throw new CanvasError("change_request_missing", "The saved change request was not found.");
+        assertDiscoveryChangeRequest(request);
+        if (state.stageReview || input.generation !== state.generation || input.restorePointDigest !== request.restorePoint?.digest) {
+            throw new CanvasError("change_restore_stale", "The effort or original restore point changed. Review the current request before abandoning it.");
+        }
+        if (request.abandonment) return state;
+        if (input.expectedRevision !== state.revision) {
+            throw new CanvasError("change_restore_stale", "The review changed while confirmation was open. Review it again before abandoning changes.");
+        }
+        if (!request.restorePoint) throw new CanvasError("change_restore_unavailable", "This older request has no saved pre-request restore point. No work was changed.");
+        if (changeReviewToAbandon(state)?.id !== request.id) {
+            throw new CanvasError("change_restore_unavailable", "Only the latest uncommitted review can be abandoned, before Finish Prototype or Development admission.");
+        }
+        if (hasActiveWork(state) || activeAnswerRuns.has(prototypeId) || state.prototypeFlow?.activeCheckpointId) {
+            throw new CanvasError("processing_in_progress", "Wait for active work to finish before abandoning changes. No worker was stopped.");
+        }
+        await assertStageReviewsQuiet(state);
+        await development.assertQuiet();
+        const directory = join(STATE_DIRECTORY, "efforts", prototypeId, "changes", request.restorePoint.requestId);
+        const snapshot = JSON.parse((await readRetainedFile(join(directory, "before-request.json"), 64 * 1024 * 1024)).toString("utf8"));
+        if (!isObject(snapshot) || snapshot.version !== 1 || snapshot.prototypeId !== prototypeId
+            || snapshot.generation !== state.generation || snapshot.requestId !== request.restorePoint.requestId
+            || snapshot.baseline?.prototypeId !== prototypeId || snapshot.baseline?.generation !== state.generation
+            || executionDigest(snapshot) !== request.restorePoint.digest) {
+            throw new CanvasError("change_restore_invalid", "The saved pre-request snapshot could not be verified. No work was changed.");
+        }
+        const baseline = normalizeStoredState(snapshot.baseline, prototypeId);
+        if (baseline.prototypeId !== state.prototypeId || baseline.generation !== state.generation || baseline.revision >= state.revision
+            || baseline.changeRequests?.some(item => item.id === request.restorePoint.requestId)) {
+            throw new CanvasError("change_restore_invalid", "The saved snapshot is not the original pre-request state. No work was changed.");
+        }
+        if (hasActiveWork(baseline) || baseline.prototypeFlow?.activeCheckpointId) {
+            throw new CanvasError("change_restore_busy_baseline", "Earlier work was still running when this request was sent. Its pre-request state cannot be restored safely; no work was changed.");
+        }
+        if (baseline.sketch.current) await sketchStore.read(prototypeId, baseline.sketch.current);
+        if (snapshot.previewSource && await fingerprintPrototypeWorkspace(snapshot.previewSource.workspacePath) !== snapshot.previewSource.fingerprint) {
+            throw new CanvasError("change_restore_sources_changed", "The original prototype source files changed outside this review. Restore those files before abandoning; no files were overwritten.");
+        }
+        const abandonedAt = new Date().toISOString();
+        const archivePath = join(directory, `abandoned-r${state.revision}.json`);
+        const next = restoreChangeReview(state, baseline, request, {
+            abandonedAt, snapshotPath: relative(SHARED_PROJECT_ROOT, archivePath),
+        });
+        await ensureMaterializedDirectories(directory);
+        await writeJsonAtomically(archivePath, { version: 1, requestId: request.id,
+            restorePoint: request.restorePoint, abandonedAt, state });
+        await persistState(next);
+        publishState(prototypeId);
+        return next;
+    }));
 }
 
 async function continueChangeWork(prototypeId: string): Promise<void> {
@@ -7940,11 +8022,13 @@ async function dispatchUpstreamRequest(entry, request: ApplicationRequest, respo
     if (request.method === "POST" && /^\/api\/(?:effort\/start|answer|sketch(?:\/|$)|prototype\/|revision|change-requests|stage\/|development\/(?:open|continue))/.test(requestUrl.pathname)) {
         if (!(await readProjectEntry(WORKSPACE_ROOT)).startingPath) throw new CanvasError("project_entry_required", "Choose a starting path for this project folder first.");
     }
-    if (request.method === "POST" && ["/api/change-requests", "/api/change-requests/decision", "/api/change-requests/development"].includes(requestUrl.pathname)) {
+    if (request.method === "POST" && ["/api/change-requests", "/api/change-requests/decision", "/api/change-requests/abandon", "/api/change-requests/development"].includes(requestUrl.pathname)) {
         if (!entry.canSubmitAnswers) throw new CanvasError("read_only_provider", "Use the owning writable provider.");
         const input = request.input;
         if (!isObject(input)) throw new CanvasError("change_request_invalid", "Supply a change request object.");
-        if (requestUrl.pathname.endsWith("/development")) {
+        if (requestUrl.pathname.endsWith("/abandon")) {
+            respond(200, publicState(entry, await abandonChangeRequest(entry.prototypeId, entry.extensionId, input)));
+        } else if (requestUrl.pathname.endsWith("/development")) {
             respond(200, publicState(entry, await sendChangeToDevelopment(entry.prototypeId, entry.extensionId, input.requestId)));
         } else if (requestUrl.pathname.endsWith("/decision")) {
             respond(200, publicState(entry, await decideChangeRequest(entry.prototypeId, entry.extensionId, input)));

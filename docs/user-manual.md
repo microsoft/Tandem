@@ -65,6 +65,7 @@ does not switch the pinned tab.
 | Save or edit a draft | Changes only the draft, not accepted inputs or current work. |
 | **Build draft preview** | Copies the saved prototype into a new candidate workspace and runs the requested update. Merely opening review does neither. |
 | **Apply changes** | Updates accepted content after checking the draft's baseline and waiting for active work to settle. The current stage stays in place; affected downstream outputs need review. |
+| **Abandon changes** | After confirmation, restores the entire change review to the state before its original request, including intermediate Requirements, Designs and Prototype updates already applied. Available until **Finish Prototype**; history and saved files are retained. |
 | **Close review** | Leaves the editor. Saved edits remain available through **Resume draft review**. |
 | **Reopen** | Makes the earlier stage current again and marks dependent outputs stale. Use it only when you intend to restart that part of the workflow. |
 
@@ -228,6 +229,23 @@ resizing the editor and returns focus to Review. You may still inspect screens,
 zoom and history, but closing does not resolve the review or enable new changes.
 **Cancel request** leaves unapproved work unchanged; a saved draft is never
 silently applied.
+New requests also save a pre-request restore point. **Abandon changes** in the
+bottom review pane or impact dialog restores that point, even after applying
+intermediate drafts or showing an updated prototype. Feedback that re-evaluates
+the same review keeps its original restore point, rather than starting from a
+partially applied change. Confirmation explains that the entire review and its
+unsaved edits will be abandoned.
+
+Abandon waits for active work to finish and never stops another worker. It
+retains request history, saved draft files, execution receipts and an archive
+of the abandoned state; it does not reset Git, delete source files or change
+Development work. **Finish Prototype** commits the review and removes this
+option. Earlier reviews without a saved pre-request restore point keep the
+existing cancellation controls; cancelling remaining work does not undo
+already-applied changes. If the original snapshot cannot be verified, earlier
+work overlapped the request, or independent work has changed since, restoration
+is refused with an explanation instead of overwriting it.
+
 Clear edits within the current Designs or Prototype stage prepare a draft without
 an extra impact-approval step. Saving a design revision releases the request so
 you can keep editing; approving designs or applying a prototype update remains

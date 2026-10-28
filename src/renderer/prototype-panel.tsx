@@ -629,12 +629,12 @@ export function PrototypePanel({ active: visible, connected, renderStageActions,
           ? `${revisions.filter(item => item.status === "queued").length} queued · ${unresolved.length} unresolved / 50` : ""}</p>
         <ul id="revision-history" className="revision-history feedback-request-history">{history.map(({ id, request, revision }) =>
           <li key={id} data-change-request-id={request?.id} data-revision-id={revision?.id}
-            data-status={revision?.status ?? (request && changeRequestHistoryStatus(request))}>
+            data-status={request?.abandonment ? "dismissed" : revision?.status ?? (request && changeRequestHistoryStatus(request))}>
             <strong title={request ? changeRequestResponse(request) : revision?.summary}>
               {request?.message ?? (revision?.suggestion || revision?.summary)}
             </strong>
             <span>{request?.visualSelection || revision?.visualSelection ? "Visual direction · " : ""}
-              {revision ? revisionStatusLabels[revision.status] || revision.status : request && changeRequestStatus(request)}
+              {request?.abandonment ? changeRequestStatus(request) : revision ? revisionStatusLabels[revision.status] || revision.status : request && changeRequestStatus(request)}
             </span></li>)}</ul>
         {!history.length && <p className="muted">No prototype requests yet.</p>}
       </FeedbackHistory>
