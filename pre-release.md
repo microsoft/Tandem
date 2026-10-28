@@ -700,3 +700,27 @@ artifacts. Logs include `qualification-patched-tooling.log`,
 `qualification-anonymous-package-integrity.log`, `qualification-public-registry.log`
 and `qualification-standalone-package.log`. Final candidate/archive identities
 are retained in the cumulative `qualification-ledger.json`.
+
+### Authorized PR and isolated public-install CI
+
+The user explicitly authorized opening a PR and running a clean-install check
+in CI. This supersedes the earlier no-publication status only for this branch's
+review PR and its CI; merge, release/version bump, visibility/history changes,
+deployment and global installation remain unauthorized.
+
+The new **Clean public install (Windows)** job uses a fresh GitHub-hosted Windows
+runner and Node 24, no restored npm cache, an initially absent per-job cache,
+empty npm user/global configuration and no supplied registry/model credentials.
+It configures the public npm registry while preserving legitimate lockfile
+resolved URLs. Both root and `development\tandem` run ordinary `npm ci` with
+normal lifecycle scripts and TLS verification enabled. The job retains only
+ordinary install output and a candidate/version/exit-code receipt, not
+configuration dumps or raw credential/debug artifacts.
+
+This job runs no native sessions, model evaluations or application workers.
+Protected live evaluations remain manually gated and are not requested.
+Its result is pending until the exact published head's CI reports; local
+mirrored installation and metadata access are not substituted for that result.
+All previously recorded tests/packages are reused unchanged-content evidence,
+except the focused workflow contract check. User-accepted unused-session and
+Zod/KaTeX risks remain unfixed and are not current release blockers.
