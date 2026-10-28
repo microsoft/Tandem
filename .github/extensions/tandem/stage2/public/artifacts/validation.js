@@ -15,8 +15,8 @@ const baseArtifactRules = Object.freeze([
   'Put HTML CSS in attribute-free style elements or inline style attributes. CSS may use ordinary layout, typography, borders, colors, gradients, Grid, Flex, and responsive @media rules. No other at-rules, URLs, external fonts, custom properties/var(), escapes, !important, animations, transitions, generated pseudo-elements/content, or unknown CSS syntax. Each stylesheet or inline style is limited to 30000 characters; markup is limited to 2500 nodes and depth 40.',
   'Source artifacts are static snapshots. Source overflow, overflow-x, and overflow-y may use only visible or clip. Use clip instead of hidden: hidden still scrolls on focus and is forbidden along with auto/scroll. Source position may use only static, relative, or absolute. Dynamic hover/focus selectors, fixed/sticky positioning, animations and transitions are forbidden. Scrolling and zoom belong to the host artifact viewport, not the authored content.',
   'SVG source must be exactly one complete svg element, optionally with xmlns="http://www.w3.org/2000/svg". Allowed SVG elements: svg g rect circle ellipse line polyline polygon path text tspan defs linearGradient radialGradient stop clipPath mask pattern marker title desc. No style elements, foreignObject, image, use, a, animation, scripts, or external resources. Use SVG presentation attributes for fills, strokes, geometry, text, transforms, gradients, clipping, masks, and markers. Local paint references must be url(#lowercase-id), refer to an existing source id, and occur only in fill, stroke, clip-path, mask, marker-start, marker-mid, or marker-end attributes.',
-  'Mermaid source must start with flowchart or graph TB|TD|BT|RL|LR, sequenceDiagram, stateDiagram-v2, erDiagram, or classDiagram, followed by a newline or semicolon. Use passive nodes/edges and subgraphs, participants/messages, states/transitions, ER fields with PK/FK/UK and cardinalities, or class members, interfaces, inheritance, composition and aggregation. Limit Mermaid to 20000 characters, 250 lines, 300 edges, and tokens of at most 500 characters. Mermaid grammar is checked during rendering; malformed diagrams fail visibly.',
-  'Mermaid forbids directives, frontmatter, @{...} extended node configuration, HTML, entities, Markdown backticks, escapes, resources, URLs and interaction. Whole-line %% plain comments are allowed, never %%{...} directives. Flowchart/graph/classDiagram alone allow classDef and style on separate lines with only fill/stroke/color hexadecimal #RGB or #RRGGBB and stroke-width 1..12px; no other authored CSS, linkStyle or theme configuration. Reserved words click, href, link, links, callback, call, init, config, accTitle, accDescr, linkStyle, img, image and icon are rejected even in labels. Class stereotypes are limited to <<interface>>, <<abstract>>, <<service>>, <<enumeration>>. Generated HTML labels are disabled; Mermaid references remain artifact-level.',
+  'Mermaid source must start with flowchart or graph TB|TD|BT|RL|LR, sequenceDiagram, stateDiagram-v2, erDiagram, or classDiagram, followed by a newline or semicolon. Use passive nodes/edges and subgraphs, participants/messages, states/transitions, ER fields with PK/FK/UK and cardinalities, or class members, interfaces, inheritance, composition and aggregation. Limit Mermaid to 20000 characters, 250 lines, 300 edges, and tokens of at most 500 characters. New or changed sequenceDiagram sources are grammar-checked during Designer staging; all diagrams are checked during rendering and malformed diagrams fail visibly. In sequence message and Note text, encode a literal semicolon as #59; (for example: CLI-->>User: stdout MM:SS#59; exit 0). Raw semicolons separate statements; do not replace statement separators.',
+  'Mermaid forbids directives, frontmatter, @{...} extended node configuration, HTML, HTML entities, Markdown backticks, backslash escapes, resources, URLs and interaction. Whole-line %% plain comments are allowed, never %%{...} directives. Flowchart/graph/classDiagram alone allow classDef and style on separate lines with only fill/stroke/color hexadecimal #RGB or #RRGGBB and stroke-width 1..12px; no other authored CSS, linkStyle or theme configuration. Reserved words click, href, link, links, callback, call, init, config, accTitle, accDescr, linkStyle, img, image and icon are rejected even in labels. Class stereotypes are limited to <<interface>>, <<abstract>>, <<service>>, <<enumeration>>. Generated HTML labels are disabled; Mermaid references remain artifact-level.',
 ]);
 function freeze(value) {
   for (const child of Object.values(value)) if (child && typeof child === 'object') freeze(child);
@@ -225,6 +225,22 @@ export function validateArtifact(input) {
   else if (input.format === 'mermaid') validateMermaid(input.source);
   else parseMarkup(input.source, input.format);
   return Object.fromEntries(Object.keys(schema.properties).filter(key => Object.hasOwn(input, key)).map(key => [key, input[key]]));
+}
+
+export async function validateArtifactForAuthoring(input, { previous = null } = {}) {
+  const artifact = validateArtifact(input);
+  if (artifact.format !== 'mermaid' || !/^\s*sequenceDiagram\b/.test(artifact.source)) return artifact;
+  // Retained source stays readable, including when another artifact is revised.
+  if (previous?.schemaVersion === artifact.schemaVersion && previous.format === artifact.format
+    && previous.id === artifact.id && previous.source === artifact.source) return artifact;
+  // The shipped sequence parser runs without a browser; other families still
+  // need DOM-backed rendering and retain their existing validation boundary.
+  const { default: mermaid } = await import('./vendor/mermaid.js');
+  try { await mermaid.parse(artifact.source); }
+  catch (error) {
+    fail(`Mermaid sequence "${artifact.id}" could not be parsed: ${error.message}\nIf a semicolon is literal message or Note text, write #59; instead. Keep semicolons that separate statements unchanged.`);
+  }
+  return artifact;
 }
 
 export const artifactNoteTarget = artifact => artifact.noteForArtifactId ?? artifact.visualCompanionId ?? null;

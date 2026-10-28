@@ -4,8 +4,8 @@
   "files": [
     {
       "path": "extension.mjs",
-      "bytes": 3059825,
-      "sha256": "01a2cab28a2bcd89ce79be3b1aa344dec5a676c97d998a7c6ee507da2163732c"
+      "bytes": 3062201,
+      "sha256": "ac05770fba209bf76a1310ac8db6ad130ff3a8a0a23e116da6dd54edcf43ba98"
     },
     {
       "path": "preview-launcher.mjs",
@@ -30,7 +30,7 @@
     {
       "path": "stage2/manifest.json",
       "bytes": 25987,
-      "sha256": "30a7b6453ca628fcc9a81c97fef01572ec6ba832e58d8f2379aac71831e8336b"
+      "sha256": "12f1ff916017c8e63100528467fc9fc334e9f5bbc1eeffd0c8a108d18580d1d6"
     },
     {
       "path": "stage2/package.json",
@@ -59,8 +59,8 @@
     },
     {
       "path": "stage2/public/artifacts/contract.js",
-      "bytes": 190,
-      "sha256": "e7c0ebef88577ea5b8fe3a3252f0173c6f3d13321aa7555232bfc31ebf63d364"
+      "bytes": 220,
+      "sha256": "c0fd54763988a3d7f3b646201872956663d06fcffa9938d229f8ed66ef16ca92"
     },
     {
       "path": "stage2/public/artifacts/document-views.js",
@@ -84,8 +84,8 @@
     },
     {
       "path": "stage2/public/artifacts/validation.js",
-      "bytes": 26855,
-      "sha256": "63d776a9ff79992709edbed51cdf919b920cf8d35ac3551f937efc5f90669f5c"
+      "bytes": 28192,
+      "sha256": "42822a56a668eb6006f47de37d0684393bee92afd648fc3485a79bbf61669859"
     },
     {
       "path": "stage2/public/artifacts/vendor/LICENSES.json",
@@ -674,8 +674,8 @@
     },
     {
       "path": "stage2/src/human-loop-design.mjs",
-      "bytes": 13714,
-      "sha256": "7abceceb60d68bdcb54b68f140323088b6f229ca08ec38ce639e7cd8553c5269"
+      "bytes": 14117,
+      "sha256": "2986d2a339e3e2fcf88691627655c59e57ad90b0912f8f831742c4f837b45bd6"
     },
     {
       "path": "stage2/src/human-loop-installation.mjs",
@@ -798,5 +798,5 @@
       "sha256": "92b92e76eb4ac3bee96c6bbdde06ed1f7d9c0088576a51db1276c567dbb207f8"
     }
   ],
-  "digest": "7eb91385e7330bd969aad4c63bedb7db92331c9c292c5e5a2ccfd6ccee0670ce"
+  "digest": "ba99571f765a3bf4a21ac92bc9bf7d7b150e0745a32c604be1df2af58e4bda71"
 }
