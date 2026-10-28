@@ -127,6 +127,9 @@ specificity. `src\renderer\ui\layout.css` preserves intentional layout differenc
 such as navigation rows, compact graph toolbars, composer expansion, selected
 tree items, dialog sizes and context-dependent visibility. Keep such exceptions
 explicit and avoid new blanket overrides or `!important`.
+The native composer wrapper keeps a complete border and rounded corners in this
+layout layer: the compact, bottom-aligned Send button no longer supplies the
+wrapper's right edge. Its textarea retains the shared control's own focus border.
 
 Development retains its renderer, readable question cards, native dialogs and
 independent workflow. Generated UI DSL views, user-authored artifact contents,

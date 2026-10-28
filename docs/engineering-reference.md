@@ -442,6 +442,11 @@ session. `discovery-change` remains readable in historical native ledgers but is
 not an accepted Router tool outcome. Saved Development-origin change requests
 remain inspectable without blocking discovery, resuming assessments or exposing
 impact-decision controls.
+The root discovery review pane is hidden while Development is selected, including
+startup. Its impact dialog and attention-driven opening are suspended in that
+view, not merely its Review trigger. Returning to discovery or saved artifacts
+restores the existing review context, including unsent refinements, errors and
+dismissed-dialog state; native Development Review controls are unchanged.
 
 Explicit continuation of a pre-Development change still persists an immutable
 outbound request before sending; duplicate delivery reconciles that identity,

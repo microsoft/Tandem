@@ -78,8 +78,8 @@ export function ChangeReviewPath({ request, reviewingStage, detailed = false }: 
     </ol>;
 }
 
-export function ChangeRequestsPanel({ compact = false, showTrigger = true }: {
-    compact?: boolean; showTrigger?: boolean;
+export function ChangeRequestsPanel({ compact = false, showTrigger = true, active = true }: {
+    compact?: boolean; showTrigger?: boolean; active?: boolean;
 }) {
     const { state, post, pending, browseStage, reviewStage, changeRequestDialog } = useUi();
     const project = useProjectView();
@@ -101,7 +101,7 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: {
     dialogRef.current = dialog;
     const working = hasActiveJobs(state);
     useEffect(() => {
-        if (!current || !reviewKey || seenReviews.current.has(reviewKey)) return;
+        if (!active || !current || !reviewKey || seenReviews.current.has(reviewKey)) return;
         if (dialog.requestId !== null) { seenReviews.current.add(reviewKey); return; }
         if (pending || working) return;
         const timer = window.setTimeout(() => {
@@ -111,7 +111,7 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: {
             dialogRef.current.open(current.id, opener);
         }, 0);
         return () => window.clearTimeout(timer);
-    }, [current?.id, reviewKey, pending, working, dialog.requestId, showTrigger]);
+    }, [active, current?.id, reviewKey, pending, working, dialog.requestId, showTrigger]);
     if (!current) return null;
     const historical = !isDiscoveryChangeRequest(current);
     const settled = historical || ["completed", "cancelled"].includes(current.status);
@@ -194,7 +194,7 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: {
         : state.stageReview ? "Update this draft" : plan?.startStage === "development" ? "Review in Development" : "Apply change";
     const nextStage = current.remainingStages[0];
     const continueLabel = nextStage ? `Review ${label(nextStage)}${earlier(nextStage) ? " draft" : " update"}` : "Continue review";
-    return <Dialog.Root open={dialog.requestId !== null} onOpenChange={open => open ? dialog.open(current.id) : dialog.close()}>
+    return <Dialog.Root open={active && dialog.requestId !== null} onOpenChange={open => open ? dialog.open(current.id) : dialog.close()}>
         <section className="change-requests" aria-label="Project changes"
             hidden={!showTrigger && (!error || historical)} data-compact={compact || undefined}>
             <div className="change-summary" hidden={!showTrigger}>

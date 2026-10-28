@@ -4,8 +4,8 @@
   "files": [
     {
       "path": "extension.mjs",
-      "bytes": 3060042,
-      "sha256": "6d20ef0471e63f53280eb44e1c72509d681c75b7514add191482936b64f4fd06"
+      "bytes": 3060109,
+      "sha256": "e77f80c6f924b5bdcf5520ad13b65f99e91749ac1098efda2595b527e0cdb0b1"
     },
     {
       "path": "preview-launcher.mjs",
@@ -30,7 +30,7 @@
     {
       "path": "stage2/manifest.json",
       "bytes": 25987,
-      "sha256": "8ae1b0e37b030502da78b265b5f17a25b6ce23c3f7e17f1466f0b9f32224d5c5"
+      "sha256": "c445956bfd414922f1e1ff654bb486108e74fdd3039a28bcfd65a3b8d1646562"
     },
     {
       "path": "stage2/package.json",
@@ -394,8 +394,8 @@
     },
     {
       "path": "stage2/public/ui-native.css",
-      "bytes": 7598,
-      "sha256": "e7b97a121f506120a36f9f40c77a982c80e72a35428945643a9de54e08ce6243"
+      "bytes": 7753,
+      "sha256": "68ba7193bf2b4b5f472eea8669bf8305594d7101d1796ed7d35d6b2665833858"
     },
     {
       "path": "stage2/public/ui-system.css",
@@ -798,5 +798,5 @@
       "sha256": "92b92e76eb4ac3bee96c6bbdde06ed1f7d9c0088576a51db1276c567dbb207f8"
     }
   ],
-  "digest": "450673f335e84ea017627eb66b40ede9e98e179f53d40d2f680b23038ac8da70"
+  "digest": "8fa6a2862830b80c0daab3682f3c4e79ff34541c59147b67c4e81fc43120b766"
 }
