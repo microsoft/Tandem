@@ -74,6 +74,11 @@ test("exploration, scoped refinement and explicit source-backed choice preserve 
     assert.ok(state.prototypeFlow!.visualExploration, JSON.stringify({ status: state.status, logs: h.logs }));
     assert.equal(state.prototypeFlow!.pendingCheckpointId, null);
     assert.match(h.api.stageCompletionError(state, "prototype", { requirePrototypeSpec: false })!, /Choose and apply/);
+    const inspection = await h.api.inspectApplication({ target: { prototypeId: "sample" } });
+    assert.equal(inspection.state.application.canFinishPrototypeWithCurrentVisual, true);
+    assert.equal(inspection.state.application.operations["stages.complete"].status, "blocked",
+        "Keeping the current visual is a separate explicit step, not a bypass of primitive completion.");
+    assert.equal(inspection.operations.find(operation => operation.id === "stages.complete").availability.status, "human-required");
     const originalId = state.prototypeFlow!.visualExploration!.checkpointId;
     const original = state.prototypeFlow!.checkpoints.find(item => item.id === originalId)!;
     const originalSource = await readFile(join(original.workspacePath, visualManifestName), "utf8");
@@ -98,6 +103,8 @@ test("exploration, scoped refinement and explicit source-backed choice preserve 
     }), /another suggestion or visual target/);
     await h.api.prototypeAction("sample", provider, { action: "retry" });
     state = await h.settle(2);
+    assert.equal((await h.api.inspectApplication({ target: { prototypeId: "sample" } })).state.application.canFinishPrototypeWithCurrentVisual, false,
+        "Queued behavior changes still block Finish while comparing visual alternatives.");
     const refinedId = state.prototypeFlow!.visualExploration!.checkpointId;
     assert.notEqual(refinedId, originalId);
     assert.equal(state.prototypeReview.revisions.find(item => item.id === general.revisionId).status, "queued");

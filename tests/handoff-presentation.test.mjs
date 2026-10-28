@@ -75,6 +75,46 @@ test("startup and model verification are progress, while consent and settled fai
   assert.equal(developmentStatus({ installation: { status: "attaching", reason: "Attaching the current main session." } }).kind, "active");
 });
 
+test("Development terminal, disconnected and incomplete-result states never become successful acknowledgments", () => {
+  const ready = () => ({ conversationStatus: "verified", installation: { status: "ready" }, accessRequests: [],
+    workflow: { status: "ready", activeRequestId: null, activeRole: null, activeCondition: null } });
+  const acknowledgement = { text: "Request received.", requestId: "submitted" };
+  const cases = [
+    ["no snapshot", () => null, "active", "Connecting to Development...", null],
+    ["not activated", () => ({ installation: { status: "new" } }), "active", "Development not activated", null],
+    ["setup error", () => ({ installation: { status: "unknown", reason: "Startup failed." } }), "attention", "Development setup needs attention", null],
+    ["closed work", snapshot => ({ ...snapshot, installation: { status: "closed" },
+      workflow: { ...snapshot.workflow, activeRequestId: "unfinished" } }), "attention", "Development closed with unfinished work", "unfinished"],
+    ["idle questions", snapshot => ({ ...snapshot, workflow: { ...snapshot.workflow, questionCounts: { unanswered: 1, blockers: 0 } } }),
+      "attention", "Questions need your answer", null],
+    ["compaction failure", snapshot => ({ ...snapshot, workflow: { ...snapshot.workflow, compaction: { error: "Compaction failed." } } }),
+      "attention", "Context compaction failed; see details", null],
+    ["missing role", snapshot => ({ ...snapshot, workflow: { status: "working", activeRequestId: "owned", activeCondition: "running" } }),
+      "active", "Request awaiting role dispatch", "owned"],
+    ["ended without result", snapshot => ({ ...snapshot, workflow: { status: "working", activeRequestId: "owned", activeCondition: "ended" } }),
+      "active", "Awaiting verified result", "owned"],
+    ["unconfirmed execution", snapshot => ({ ...snapshot, workflow: { status: "execution-unknown", activeRequestId: "owned", activeCondition: "unknown" } }),
+      "attention", "Current request needs attention", "owned"],
+    ["unavailable workflow", snapshot => ({ ...snapshot, workflow: { status: "waiting-runtime" } }),
+      "attention", "Development needs attention", null],
+  ];
+  for (const [name, mutate, kind, text, requestId] of cases) {
+    const snapshot = mutate(ready()), before = structuredClone(snapshot);
+    const expected = { kind, text, requestId };
+    assert.deepEqual(developmentStatus(snapshot, acknowledgement), expected, name);
+    assert.deepEqual(developmentStatus(snapshot), expected, name);
+    assert.equal(validDevelopmentStatus(expected), true);
+    assert.deepEqual(snapshot, before, `${name}: projection is read-only`);
+  }
+  const closed = ready(); closed.installation.status = closed.workflow.status = "closed";
+  assert.deepEqual(developmentStatus(closed), { kind: "idle", text: "Development closed", requestId: null });
+  for (const role of ["router", "designer", "planner", "implementer", "reviewer", "agent"]) {
+    const snapshot = ready();
+    snapshot.workflow = { status: "working", activeRequestId: "owned", activeRole: role, activeCondition: "running" };
+    assert.deepEqual(developmentStatus(snapshot), { kind: "active", text: `${role[0].toUpperCase()}${role.slice(1)} working...`, requestId: "owned" });
+  }
+});
+
 export function handoffFixture(kind = "designer-changed") {
   const state = createHumanLoop({ schemaVersion: "human-loop-owner/v1", id: "owner", mainSessionId: "main",
     privateSessionId: "private", workspacePath: process.cwd(), policy: DEFAULT_POLICY }, binding);

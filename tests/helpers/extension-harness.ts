@@ -12,6 +12,7 @@ import { chooseProjectEntry } from "../../src/project-entry.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { ApplicationOperation } from "../../development/tandem/runtime-src/application-interface.js";
+import type { projectApplicationCapabilities } from "../../src/application-interface.js";
 
 interface CanvasContext {
     instanceId: string;
@@ -21,7 +22,8 @@ interface CanvasContext {
 
 interface HarnessApi {
     inspectApplication(value?: unknown): Promise<{
-        protocol: string; owner: string; state: TandemState; binding: { generation: string; revision: number };
+        protocol: string; owner: string; state: TandemState & { application: ReturnType<typeof projectApplicationCapabilities> };
+        binding: { generation: string; revision: number };
         operations: Array<{ id: string; availability: { status: string; blockers: Array<{ code: string; message: string }> }; inputSchema?: unknown }>;
     }>;
     executeApplication(value: unknown): Promise<{ protocol: string; operation: string; outcome: string; data: unknown }>;
@@ -46,7 +48,7 @@ interface HarnessApi {
     publishPrototypeStructure(input: unknown): Promise<{ resultType: string; textResultForLlm: string }>;
     prototypeAction(id: string, provider: string, input: Record<string, unknown>): Promise<TandemState>;
     queuePrototypeRevision(id: string, provider: string, input: Record<string, unknown>): Promise<{ revisionId: string }>;
-    stageCompletionError(state: TandemState, stage: string, options?: { requirePrototypeSpec: boolean }): string | null;
+    stageCompletionError(state: TandemState, stage: string, options?: { requirePrototypeSpec?: boolean; keepCurrentVisual?: boolean }): string | null;
     applyFactoryResult(id: string, request: string, result: unknown): Promise<void>;
     updateTandem(ctx: CanvasContext): Promise<TandemState>;
     readRequestBody(chunks: AsyncIterable<Buffer>): Promise<unknown>;
