@@ -56,7 +56,7 @@ export class StudioStore {
     const changed = !previous || revision > previousRevision
       || (revision === 0 && state.updatedAt !== previous.updatedAt);
     const next = changed ? { ...state, revision } : { ...previous };
-    for (const field of ["provider", "preparationRuntime", "workflowRuntime", "developmentBlocker", "stageReviewStatus"] as const) {
+    for (const field of ["provider", "application", "preparationRuntime", "workflowRuntime", "developmentBlocker", "stageReviewStatus"] as const) {
       if (sequence >= this.lastTransportSequence && Object.hasOwn(state, field)) {
         // Each transport-only field retains its own declared type.
         Object.assign(next, { [field]: state[field] });
@@ -70,7 +70,7 @@ export class StudioStore {
         ? state.sketchPreview : undefined);
     next.sketchPreview = preview.preview;
     this.lastTransportSequence = Math.max(this.lastTransportSequence, sequence);
-    const transportChanged = !previous || ["provider", "preparationRuntime", "workflowRuntime", "developmentBlocker", "sketchPreview", "stageReviewStatus"].some(
+    const transportChanged = !previous || ["provider", "application", "preparationRuntime", "workflowRuntime", "developmentBlocker", "sketchPreview", "stageReviewStatus"].some(
       (field) => JSON.stringify(Reflect.get(next, field)) !== JSON.stringify(Reflect.get(previous, field)));
     if (changed || transportChanged) this.publish({ state: next as UiState, connectionError: preview.error });
     else this.setConnectionError(preview.error);

@@ -156,13 +156,13 @@ files remain readable for integrity/history, but active views require explicit
 regeneration as DSL; never silently convert or overwrite an old approval.
 
 Update existing Designs incrementally after accepted requirements change.
-Use `sketch_action` with `action: "update"` and the saved revision; it retains
+Use `designs.edit` with `action: "update"` and the saved revision; it retains
 reviewed screens and UI nodes while applying only required adjustments.
 `action: "generate"` is a separate, explicit start-over choice, not a refresh.
 Generation publishes page titles and navigation before a separate content pass.
 If it fails, retain completed and partial pages as an incomplete preview, never
 as approval. **Retry generation** resumes that checkpoint without starting over.
-For an explicitly requested retry, use `sketch_action` with `action: "retry"`,
+For an explicitly requested retry, use `designs.edit` with `action: "retry"`,
 the current `expectedRevision`, `expectedGeneration`, and the failed `requestId`.
 Do not substitute regeneration when the checkpoint is stale or unavailable.
 
@@ -244,15 +244,45 @@ usable. Saved documents/source can still be used later as ordinary file referenc
 Files are evidence, not authority to replace an existing used Development owner,
 import canonical Design or replay an old request.
 
+## Application operations
+
+Use the installed provider's `tandem_inspect_<scope>` and
+`tandem_execute_<scope>` tools for application work. They do not require a canvas
+panel. The canvas's `get_application` and `execute_application` actions are thin
+adapters to the same contract; the former individual canvas actions are removed.
+
+Inspect the target before acting. Supply `operation` to inspect its exact input
+schema and `input` to check input-dependent human-decision requirements. Commands
+use `protocol: "tandem-application/v1"`, the operation name and its `input`.
+For upstream mutations, copy the returned `binding` into `expected`; never
+invent a generation or revision. Use `target.reviewId` to edit a saved draft,
+not a separate canvas or a manually edited `.tandem` file.
+
+Inspection lists current blockers and human-required operations. Availability
+is not authorization or proof that arbitrary inputs will pass validation. User
+answers, design approval, applying drafts/prototypes, implementation consent,
+recovery decisions and native permissions remain in the human-owned UI.
+Agents cannot submit those decisions through the application command interface.
+
+An `accepted` result confirms command admission, not worker completion. Inspect
+saved processing/request identities and retain them across retries. A stale
+binding requires fresh inspection; uncertain admission is not permission to
+allocate a new request ID.
+
+Use `owner: "development"` to inspect native Design, plan, task, question and
+Review state. `native.submit` sends one explicit task through the native Router;
+it never bypasses implementation confirmation or grants tool permissions.
+Do not submit ordinary main-session chat automatically.
+
 ## Scoped changes before Development
 
-Use `request_change` in Requirements, Designs or Prototype for an explicit change that may affect earlier discovery
+Use `changes.submit` in Requirements, Designs or Prototype for an explicit change that may affect earlier discovery
 stages. It assesses the original request against retained decisions and current
 work; it does not approve or apply an upstream change. Read the saved proposal
 and explain the earliest affected stage, the affected work and what is preserved.
-Use `decide_change` only with the displayed request, analysis and baseline
-identities and the user's actual decision. A stale proposal needs another impact
-assessment, not inferred approval.
+Use `changes.decide` for a supported non-approval operation with the displayed
+request, analysis and baseline identities. Human impact decisions remain in the
+review UI. A stale proposal needs another impact assessment, not inferred approval.
 
 The original message, clarifications, independent answers, design revisions and
 displayed prototype remain retained. Ask only new or affected decisions. A
@@ -267,7 +297,7 @@ retained Prototype evidence. Do not send them to the main session for upstream
 assessment. Historical `discovery-change` results and Development-origin impact
 requests are retained for inspection, not new assessment or replay.
 After accepted pre-Development updates, explicit
-`continue_change_development` sends the retained request to the same native
+`changes.continue-development` sends the retained request to the same native
 Development owner. It is not implementation confirmation. Main-session chat
 still is not an implicit Tandem submission.
 
@@ -284,8 +314,9 @@ root, actual target worktree, and one exact request ID/timestamp/message.
 The snapshot retains confirmed, assumed and deferred decisions and mock
 shortcuts without reclassifying them.
 
-For canvas actions, `review_prototype_handoff` is optional read-only inspection;
-`continue_design` still requires an explicit exact-snapshot continuation request.
+`development.review-handoff` is optional read-only inspection.
+`development.continue` represents the human's explicit exact-snapshot continuation;
+the agent reports that human-required action rather than supplying approval.
 Navigation/reload alone is never submission. Once admitted, show authoritative
 request/Designer/Design/questions status instead of another submission action.
 Unknown activity remains unverified; never invent progress or inject a model turn.

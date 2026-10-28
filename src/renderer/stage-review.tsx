@@ -207,11 +207,14 @@ function ReviewEditor({ parent, active, actionsContainer, headerActionsContainer
   const unsaved = dirty;
   const needsDesignApproval = stage === "sketch" && !isSketchRevisionApproved(state.sketch);
   const canApproveDesign = needsDesignApproval && draftDesignApproval?.ready === true;
+  const applicationBlockers = state.application?.operations["reviews.apply"]?.blockers.filter(blocker =>
+    !(canApproveDesign && blocker.code === "review_not_ready"));
   const latest = useRef({ dirty, state }); latest.current = { dirty, state };
   const error = action.error || connectionError;
   const applyDisabled = blocked || parent.pending || hasActiveJobs(parent.state) || !status || settled
     || Boolean(status.conflict || status.blocker && !canApproveDesign) || !status.changed || unsaved
-    || stage === "sketch" && draftDesignApproval?.ready !== true || stage === "requirements" && !comparisonReady;
+    || stage === "sketch" && draftDesignApproval?.ready !== true || stage === "requirements" && !comparisonReady
+    || Boolean(applicationBlockers?.length);
   const prototypeReady = stage === "prototype" && !prototypeCompletionBlocked(state);
   const queuedPreview = state.prototypeReview.revisions.some((item: { status: string }) => ["queued", "failed"].includes(item.status));
   const requestedChange = state.changeRequests?.find(item => item.id === state.stageReview?.changeRequestId);

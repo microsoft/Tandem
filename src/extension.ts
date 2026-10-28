@@ -51,6 +51,13 @@ import {
     executionDigest, fingerprintWorkspace,
 } from "./execution.js";
 import { canvasRequestAllowed, readJsonRequest, sendJsonResponse } from "./canvas-transport.js";
+import {
+    APPLICATION_PROTOCOL, ApplicationError, applicationFailure, applicationRequest, assertApplicationAvailable, collectApplicationReply,
+    describeApplicationOperation, findApplicationOperation, isApplicationInput,
+    objectSchema, idSchema, revisionSchema as applicationRevisionSchema, stringSchema, enumSchema, validateApplicationInput,
+    type ApplicationInput, type ApplicationRequest, type ApplicationRespond,
+} from "../development/tandem/runtime-src/application-interface.js";
+import { projectApplicationCapabilities, reviewReadPaths, reviewWritePaths, upstreamAvailability, upstreamOperations, type ApplicationState } from "./application-interface.js";
 import { ensureMaterializedDirectories } from "./accepted-artifacts.js";
 import {
     createProcessState, normalizeProcessState,
@@ -1891,8 +1898,9 @@ async function projectEntryView() {
 function publicState(entry, state) {
     const source = String(entry.extensionId || "").split(":", 1)[0] || "unknown";
     const legacyContinuation = state.lifecycle.currentStage === "development" && state.lifecycle.migration && !state.development && !pendingChange(state);
-    return {
+    const projected = {
         ...state,
+        stageCompletionBlocker: stageCompletionError(state, state.lifecycle.currentStage, { requirePrototypeSpec: false }),
         mainModelSelection,
         prototypeNeedsUpdate: prototypeNeedsChangeUpdate(state),
         requirementsDigest: requirementsInputDigest(state),
@@ -1911,6 +1919,7 @@ function publicState(entry, state) {
         },
         developmentBlocker: legacyCutoverError(state),
     };
+    return { ...projected, application: projectApplicationCapabilities(projected) };
 }
 
 const sketchPrototypeId = (state: TandemState) => state.stageReview?.parentId ?? state.prototypeId;
@@ -2055,7 +2064,7 @@ function reviewParentWorkError(parent: TandemState): string | null {
 async function publicReviewState(entry, reviewId: unknown) {
     const { parent, reference, draft } = await readReviewState(entry.prototypeId, reviewId);
     const editable = !reference.appliedAt && !reference.discardedAt && !parent.effortReset && parent.generation === draft.generation;
-    return {
+    const projected = {
         ...publicState({ ...entry, canSubmitAnswers: entry.canSubmitAnswers && editable }, draft),
         stageReviewStatus: {
             conflict: stageReviewConflict(parent, draft), blocker: reviewParentWorkError(parent) || reviewCompletionError(draft),
@@ -2064,6 +2073,7 @@ async function publicReviewState(entry, reviewId: unknown) {
             currentStage: parent.lifecycle.currentStage,
         },
     };
+    return { ...projected, application: projectApplicationCapabilities(projected) };
 }
 
 async function applyStageReview(prototypeId: string, extensionId: string, input: Record<string, unknown>) {
@@ -6767,7 +6777,7 @@ function isValidFactoryArtifact(value) {
 }
 
 
-async function submitUsage(entry, answer, res) {
+async function submitUsage(entry, answer, respond) {
     let accepted;
     try {
         accepted = await withAnswerClaim(entry.prototypeId, async () => {
@@ -6835,13 +6845,13 @@ async function submitUsage(entry, answer, res) {
         }, true);
     } catch (error) {
         if (error instanceof AnswerRequestError) {
-            sendJson(res, error.statusCode, { error: error.message });
+            respond(error.statusCode, { error: error.message });
             return;
         }
         throw error;
     }
 
-    sendJson(res, 202, { accepted: true, usageItems: accepted.usageItems });
+    respond(202, { accepted: true, requestId: accepted.requestId, usageItems: accepted.usageItems });
     startSuggestionFactory(
         entry.prototypeId,
         accepted.requestId,
@@ -6850,23 +6860,14 @@ async function submitUsage(entry, answer, res) {
     );
 }
 
-async function submitPrototypeRevision(entry, req, res) {
-    let body;
-    try {
-        body = await readRequestBody(req);
-    } catch (error) {
-        sendJson(res, 400, {
-            error: error instanceof Error ? error.message : "Invalid request.",
-        });
-        return;
-    }
+async function submitPrototypeRevision(entry, body, respond) {
     const suggestion = String(body.suggestion || "").trim();
     if (!suggestion) {
-        sendJson(res, 400, { error: "Enter a prototype revision suggestion." });
+        respond(400, { error: "Enter a prototype revision suggestion." });
         return;
     }
     if (!(await isPreferredAnswerProvider(entry.extensionId))) {
-        sendJson(res, 409, {
+        respond(409, {
             error:
                 "Submit revisions from the installed user-scoped Tandem.",
         });
@@ -6878,7 +6879,7 @@ async function submitPrototypeRevision(entry, req, res) {
             throw new CanvasError("review_scope_changed", "Re-evaluate the parent review from its Prototype feedback, not from inside a pinned draft.");
         }
         const queued = await queuePrototypeRevision(entry.prototypeId, entry.extensionId, body);
-        sendJson(res, 202, { accepted: true, requestId: queued.revisionId, status: "draft" });
+        respond(202, { accepted: true, requestId: queued.revisionId, status: "draft" });
         return;
     }
     const queued = await submitChangeRequest(entry.prototypeId, entry.extensionId, {
@@ -6886,7 +6887,7 @@ async function submitPrototypeRevision(entry, req, res) {
         ...(body.replacesRequestId !== undefined ? { replacesRequestId: body.replacesRequestId } : {}),
         ...(body.visualSelection !== undefined ? { visualSelection: body.visualSelection } : {}),
     });
-    sendJson(res, 202, { accepted: true, requestId: queued.requestId, status: "queued" });
+    respond(202, { accepted: true, requestId: queued.requestId, status: "queued" });
 }
 
 async function queuePrototypeRevision(prototypeId: string, extensionId: string, input: Record<string, any>) {
@@ -6956,14 +6957,14 @@ async function submitRevisionClarification(
     entry,
     questionId,
     answer,
-    res,
+    respond,
 ) {
     const snapshot = await loadState(entry.prototypeId);
     if (snapshot.prototypeFlow && snapshot.prototypeReview.question?.id === questionId) {
         await dispatchPrototypeCheckpoint(entry.prototypeId, entry.extensionId, {
             clarification: { question: snapshot.prototypeReview.question, answer },
         });
-        sendJson(res, 202, { accepted: true });
+        respond(202, { accepted: true });
         return;
     }
     let accepted;
@@ -7023,13 +7024,13 @@ async function submitRevisionClarification(
         }, true);
     } catch (error) {
         if (error instanceof AnswerRequestError) {
-            sendJson(res, error.statusCode, { error: error.message });
+            respond(error.statusCode, { error: error.message });
             return;
         }
         throw error;
     }
 
-    sendJson(res, 202, { accepted: true });
+    respond(202, { accepted: true });
     startAnswerFactory(
         entry.prototypeId,
         accepted.requestId,
@@ -7040,7 +7041,7 @@ async function submitRevisionClarification(
     );
 }
 
-async function beginPrototypeCompletion(entry, res, continueToDevelopment = false) {
+async function beginPrototypeCompletion(entry, respond, continueToDevelopment = false) {
     if (!(await isPreferredAnswerProvider(entry.extensionId))) {
         throw new CanvasError(
             "read_only_provider",
@@ -7116,7 +7117,7 @@ async function beginPrototypeCompletion(entry, res, continueToDevelopment = fals
         return { pending, question, requestId };
     }, true);
 
-    sendJson(res, 202, { accepted: true });
+    respond(202, { accepted: true, ...(accepted ? { requestId: accepted.requestId } : {}) });
     if (!accepted) return;
     startAnswerFactory(
         entry.prototypeId,
@@ -7128,46 +7129,38 @@ async function beginPrototypeCompletion(entry, res, continueToDevelopment = fals
     );
 }
 
-async function submitAnswer(entry, req, res) {
-    let body;
-    try {
-        body = await readRequestBody(req, 256 * 1024);
-    } catch (error) {
-        sendJson(res, 400, {
-            error: error instanceof Error ? error.message : "Invalid request.",
-        });
-        return;
-    }
-
-    const questionId = String(body.questionId || "").trim();
-    const answer = String(body.answer || "").trim().slice(0, 4000);
+async function submitAnswer(entry, body, respond) {
     const requestedAction = String(body.action || "").trim();
+    const questionId = body.questionId === undefined && requestedAction === "generate-dag"
+        ? USAGE_QUESTION_ID : String(body.questionId || "").trim();
+    const answer = body.answer === undefined && requestedAction === "generate-dag"
+        ? "Generate the requirements DAG from the complete usage list." : String(body.answer || "").trim().slice(0, 4000);
 
     if (!answer && requestedAction !== "apply-defaults") {
-        sendJson(res, 400, { error: "Choose or enter an answer." });
+        respond(400, { error: "Choose or enter an answer." });
         return;
     }
     if (requestedAction && !ANSWER_ACTIONS.has(requestedAction)) {
-        sendJson(res, 400, { error: "This requirements action is not supported." });
+        respond(400, { error: "This requirements action is not supported." });
         return;
     }
     if (!(await isPreferredAnswerProvider(entry.extensionId))) {
-        sendJson(res, 409, {
+        respond(409, {
             error:
                 "Submit this answer from the installed user-scoped Tandem.",
         });
         return;
     }
     if (requestedAction === "apply-defaults") {
-        await submitDefaultBatch(entry, body, res);
+        await submitDefaultBatch(entry, body, respond);
         return;
     }
     if (requestedAction === "add-usage") {
-        await submitUsage(entry, answer, res);
+        await submitUsage(entry, answer, respond);
         return;
     }
 
-    async function submitDefaultBatch(entry, body, res) {
+    async function submitDefaultBatch(entry, body, respond) {
         let accepted;
         try {
             const allowed = ["action", "expectedRevision", "generation", "defaults", "retryRequestId"];
@@ -7262,18 +7255,18 @@ async function submitAnswer(entry, req, res) {
             }, true);
         } catch (error) {
             if (error instanceof AnswerRequestError) {
-                sendJson(res, error.statusCode, { error: error.message });
+                respond(error.statusCode, { error: error.message });
                 return;
             }
             throw error;
         }
-        sendJson(res, 202, { accepted: true, requestId: accepted.requestId });
+        respond(202, { accepted: true, requestId: accepted.requestId });
         if (accepted.recovered) return;
         startAnswerFactory(entry.prototypeId, accepted.requestId, accepted.question,
             accepted.pending.processing.answer, "apply-defaults", accepted.pending);
     }
     if (requestedAction === "clarify-revision") {
-        await submitRevisionClarification(entry, questionId, answer, res);
+        await submitRevisionClarification(entry, questionId, answer, respond);
         return;
     }
 
@@ -7390,13 +7383,13 @@ async function submitAnswer(entry, req, res) {
         }, true);
     } catch (error) {
         if (error instanceof AnswerRequestError) {
-            sendJson(res, error.statusCode, { error: error.message });
+            respond(error.statusCode, { error: error.message });
             return;
         }
         throw error;
     }
 
-    sendJson(res, 202, { accepted: true });
+    respond(202, { accepted: true, requestId: accepted.requestId });
     startAnswerFactory(
         entry.prototypeId,
         accepted.requestId,
@@ -7457,9 +7450,9 @@ async function recordReloadError(prototypeId, error) {
     await logSafely(`Tandem extension reload failed: ${message}`);
 }
 
-async function submitReload(entry, res) {
+async function submitReload(entry, respond) {
     if (entry.extensionId !== USER_EXTENSION_ID) {
-        sendJson(res, 409, {
+        respond(409, {
             error:
                 "Reload is available only from the installed user-scoped Tandem.",
         });
@@ -7470,7 +7463,7 @@ async function submitReload(entry, res) {
     try {
         extensionList = await session.rpc.extensions.list();
     } catch (error) {
-        sendJson(res, 500, {
+        respond(500, {
             error: `Could not check the installed extension: ${
                 error instanceof Error ? error.message : String(error)
             }`,
@@ -7482,7 +7475,7 @@ async function submitReload(entry, res) {
         (extension) => extension.id === USER_EXTENSION_ID,
     );
     if (!installed || installed.status !== "running") {
-        sendJson(res, 409, {
+        respond(409, {
             error: installed
                 ? `The installed user extension is ${installed.status}.`
                 : "The installed user extension is not available in this session.",
@@ -7507,7 +7500,7 @@ async function submitReload(entry, res) {
         await persistState(reloading);
         publishState(entry.prototypeId);
     }, false, true);
-    sendJson(res, 202, { accepted: true, requestedAt });
+    respond(202, { accepted: true, requestedAt });
 
     setTimeout(() => {
         session.rpc.extensions.reload().catch((error) => {
@@ -7524,13 +7517,11 @@ async function submitReload(entry, res) {
     }, 150);
 }
 
-async function submitStageCompletion(entry, req, res) {
-    let body;
+async function submitStageCompletion(entry, body, respond) {
     try {
-        body = await readRequestBody(req);
         const stageId = String(body.stageId || "");
         if (stageId === "prototype") {
-            await beginPrototypeCompletion(entry, res, body.continueDevelopment === true);
+            await beginPrototypeCompletion(entry, respond, body.continueDevelopment === true);
             return;
         }
         const state = await completeLifecycleStage(
@@ -7538,10 +7529,10 @@ async function submitStageCompletion(entry, req, res) {
             stageId,
             entry.extensionId,
         );
-        sendJson(res, 200, publicState(entry, state));
+        respond(200, publicState(entry, state));
     } catch (error) {
         if (error instanceof CanvasError) {
-            sendJson(res, 409, { error: error.message, code: error.code });
+            respond(409, { error: error.message, code: error.code });
             return;
         }
         throw error;
@@ -7624,9 +7615,9 @@ async function workflowRuntimeState(entry) {
     }
 }
 
-async function submitPreparationRetry(entry, res) {
+async function submitPreparationRetry(entry, respond) {
     if (!(await isPreferredAnswerProvider(entry.extensionId))) {
-        sendJson(res, 409, {
+        respond(409, {
             error: "Use the installed user-scoped Tandem to retry preparation.",
         });
         return;
@@ -7662,32 +7653,195 @@ async function submitPreparationRetry(entry, res) {
         return next;
     }).catch((error) => {
         if (error instanceof AnswerRequestError) {
-            sendJson(res, error.statusCode, { error: error.message });
+            respond(error.statusCode, { error: error.message });
             return null;
         }
         throw error;
     });
     if (!state) return;
-    sendJson(res, 202, { accepted: true });
+    respond(202, { accepted: true });
     await ensurePreparationStarted(state, true);
+}
+
+const applicationTargetSchema = objectSchema({ prototypeId: idSchema, reviewId: idSchema });
+const applicationInspectSchema = objectSchema({
+    target: applicationTargetSchema, owner: enumSchema("upstream", "development"),
+    operation: stringSchema(120), input: { type: "object" },
+});
+const applicationExecuteSchema = objectSchema({
+    protocol: { const: APPLICATION_PROTOCOL }, target: applicationTargetSchema,
+    operation: stringSchema(120), input: { type: "object" },
+    expected: objectSchema({ generation: idSchema, revision: applicationRevisionSchema }, ["generation", "revision"]),
+}, ["protocol", "operation", "input"]);
+const applicationStarts = new Map<string, ReturnType<typeof startServer>>();
+
+async function applicationEntry(target: ApplicationInput, suppliedEntry?) {
+    if (suppliedEntry && (target.prototypeId === undefined || target.prototypeId === suppliedEntry.prototypeId)) return suppliedEntry;
+    const prototypeId = await resolvePrototypeId("application", target.prototypeId);
+    const key = `application-${prototypeId}`;
+    if (servers.has(key)) return servers.get(key);
+    if (!applicationStarts.has(key)) applicationStarts.set(key, (async () => {
+        const entry = await startServer(key, prototypeId, PROVIDER_EXTENSION_ID, await isPreferredAnswerProvider(PROVIDER_EXTENSION_ID));
+        servers.set(key, entry);
+        return entry;
+    })().finally(() => applicationStarts.delete(key)));
+    return applicationStarts.get(key);
+}
+
+async function applicationState(entry, target: ApplicationInput): Promise<ApplicationState> {
+    await refreshEntryAnswerCapability(entry);
+    return target.reviewId === undefined
+        ? publicState(entry, await loadState(entry.prototypeId))
+        : publicReviewState(entry, target.reviewId);
+}
+
+async function nativeApplication(entry) {
+    if (!await isPreferredAnswerProvider(entry.extensionId)) throw new ApplicationError("read_only_provider", "Use the owning provider for native Development.");
+    const provider = await development.openView("application-api", { surface: "browser" });
+    if (!provider.application || typeof provider.application.inspect !== "function" || typeof provider.application.execute !== "function") {
+        throw new ApplicationError("application_unavailable", "The native Development provider does not expose the matching application interface.");
+    }
+    return provider.application;
+}
+
+async function inspectApplication(value: unknown = {}, suppliedEntry?) {
+    validateApplicationInput(value, applicationInspectSchema);
+    if (!isApplicationInput(value)) throw new ApplicationError("invalid_input", "Supply an inspection object.", 400);
+    const target = isApplicationInput(value.target) ? value.target : {};
+    const entry = await applicationEntry(target, suppliedEntry);
+    if (value.owner === "development" || typeof value.operation === "string" && value.operation.startsWith("native.")) {
+        if (target.reviewId !== undefined) throw new ApplicationError("review_action_unavailable", "A pinned draft cannot target native Development.");
+        return (await nativeApplication(entry)).inspect({
+            ...(value.operation !== undefined ? { operation: value.operation } : {}),
+            ...(value.input !== undefined ? { input: value.input } : {}),
+        });
+    }
+    const state = await applicationState(entry, target);
+    const operations = value.operation === undefined ? upstreamOperations
+        : [findApplicationOperation(upstreamOperations, String(value.operation))];
+    return { protocol: APPLICATION_PROTOCOL, owner: "upstream", owners: ["upstream", "development"],
+        target: { prototypeId: entry.prototypeId, ...(target.reviewId ? { reviewId: target.reviewId } : {}) },
+        binding: { generation: state.generation, revision: state.revision }, state,
+        operations: operations.map(operation => describeApplicationOperation(operation,
+            upstreamAvailability(operation, state, "agent", isApplicationInput(value.input) ? value.input : undefined), value.operation !== undefined)) };
+}
+
+async function executeApplication(value: unknown, suppliedEntry?) {
+    validateApplicationInput(value, applicationExecuteSchema);
+    if (!isApplicationInput(value) || !isApplicationInput(value.input) || typeof value.operation !== "string") {
+        throw new ApplicationError("invalid_command", "Supply a named operation and input object.", 400);
+    }
+    const target = isApplicationInput(value.target) ? value.target : {};
+    const entry = await applicationEntry(target, suppliedEntry);
+    if (value.operation.startsWith("native.")) {
+        if (target.reviewId !== undefined) throw new ApplicationError("review_action_unavailable", "A pinned draft cannot submit native Development work.");
+        if (value.expected !== undefined) {
+            throw new ApplicationError("invalid_binding", "Native operations use their own request, Design and confirmation identities, not an upstream state binding.", 400);
+        }
+        const application = await nativeApplication(entry);
+        const operation = findApplicationOperation(application.operations, value.operation);
+        if (operation.method === "POST" && !(await readProjectEntry(WORKSPACE_ROOT)).startingPath) {
+            throw new ApplicationError("project_entry_required", "Choose this project's starting path before executing native Development operations.");
+        }
+        return application.execute({ protocol: APPLICATION_PROTOCOL, operation: value.operation, input: value.input });
+    }
+    const operation = findApplicationOperation(upstreamOperations, value.operation);
+    const input = value.input;
+    const request = applicationRequest(operation, input);
+    if (target.reviewId !== undefined && !request.path.startsWith("/api/reviews/")) {
+        request.path = `/api/reviews/${encodeURIComponent(String(target.reviewId))}${request.path.slice(4)}`;
+    }
+    const run = async () => {
+        const state = await applicationState(entry, target);
+        assertApplicationAvailable(upstreamAvailability(operation, state, "agent", input));
+        if (operation.bindsState) {
+            if (!isApplicationInput(value.expected) || value.expected.generation !== state.generation || value.expected.revision !== state.revision) {
+                throw new ApplicationError("state_stale", "Inspect this target and supply its exact generation and revision before executing.");
+            }
+        }
+        const reply = await collectApplicationReply(respond => dispatchUpstreamRequest(entry, request, respond));
+        if (reply.status >= 400) {
+            const detail = isApplicationInput(reply.body) ? reply.body : {};
+            throw new ApplicationError(typeof detail.code === "string" ? detail.code : "operation_failed",
+                typeof detail.error === "string" ? detail.error : "The operation failed.", reply.status, detail);
+        }
+        return { protocol: APPLICATION_PROTOCOL, operation: operation.id,
+            outcome: operation.method === "GET" ? "read" : "accepted", data: reply.body };
+    };
+    if (!operation.bindsState) return run();
+    return developmentTransition.run(() => projectStore.transaction(entry.prototypeId, async () => {
+        if (target.reviewId === undefined) return run();
+        const { reference } = await readReviewState(entry.prototypeId, target.reviewId);
+        return projectStore.transaction(reference.id, run);
+    }));
+}
+
+async function applicationTool(kind: "inspect" | "execute", input: unknown) {
+    try {
+        const result = await (kind === "inspect" ? inspectApplication(input) : executeApplication(input));
+        if (isApplicationInput(result) && result.operation === "native.attachment.read" && isApplicationInput(result.data)
+            && typeof result.data.data === "string" && ["image/png", "image/jpeg"].includes(String(result.data.mimeType))) {
+            return { resultType: "success" as const,
+                textResultForLlm: JSON.stringify({ ...result, data: { id: result.data.id, mimeType: result.data.mimeType } }),
+                binaryResultsForLlm: [{ type: "image" as const, mimeType: String(result.data.mimeType), data: result.data.data }] };
+        }
+        return { resultType: "success" as const, textResultForLlm: JSON.stringify(result) };
+    } catch (error) {
+        const failure = applicationFailure(error);
+        await logSafely(`Application ${kind} failed: ${failure.message}`, "warning");
+        return { resultType: "failure" as const, textResultForLlm: JSON.stringify({
+            protocol: APPLICATION_PROTOCOL, error: failure,
+            next: "Inspect the current target. Retain admitted request identities; do not retry an uncertain mutation blindly.",
+        }) };
+    }
 }
 
 async function handleRequest(entry, req, res) {
     if (!canvasRequestAllowed(req, entry.url)) {
-        sendJson(res, 403, { error: "This request did not originate from the Tandem application." });
-        return;
+        sendJson(res, 403, { error: "This request did not originate from the Tandem application." }); return;
     }
-    const requestUrl = new URL(req.url || "/", "http://127.0.0.1");
-    if (req.method === "POST" && ["/api/reviews/open", "/api/reviews/apply", "/api/reviews/discard"].includes(requestUrl.pathname)) {
+    const path = new URL(req.url || "/", entry.url).pathname;
+    if (req.method === "GET" && path === "/") {
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+        res.end(renderTandemHtml(__TANDEM_VERSION__)); return;
+    }
+    if (req.method === "GET" && path === "/events") {
+        await refreshEntryAnswerCapability(entry);
+        res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-store", Connection: "keep-alive" });
+        entry.clients.add(res);
+        res.write(`data: ${JSON.stringify(publicState(entry, await loadState(entry.prototypeId)))}\n\n`);
+        req.on("close", () => entry.clients.delete(res)); return;
+    }
+    let input: ApplicationInput = {};
+    if (req.method === "POST") {
+        try {
+            input = await readRequestBody(req, path.includes("application/") || path.endsWith("/sketch") ? 16 * 1024 * 1024
+                : path.endsWith("/answer") ? 256 * 1024 : MAX_REQUEST_BYTES);
+        } catch (error) {
+            throw new ApplicationError("invalid_json", error instanceof Error ? error.message : "Invalid JSON request.", 400);
+        }
+    }
+    if (req.method === "POST" && path === "/api/application/inspect") {
+        sendJson(res, 200, await inspectApplication(input, entry)); return;
+    }
+    if (req.method === "POST" && path === "/api/application/execute") {
+        sendJson(res, 200, await executeApplication(input, entry)); return;
+    }
+    await dispatchUpstreamRequest(entry, { method: req.method, path: req.url || "/", input }, (status, body) => sendJson(res, status, body));
+}
+
+async function dispatchUpstreamRequest(entry, request: ApplicationRequest, respond: ApplicationRespond) {
+    const requestUrl = new URL(request.path, "http://127.0.0.1");
+    if (request.method === "POST" && ["/api/reviews/open", "/api/reviews/apply", "/api/reviews/discard"].includes(requestUrl.pathname)) {
         if (!entry.canSubmitAnswers) throw new CanvasError("read_only_provider", "Use the owning writable provider for stage reviews.");
-        const input = await readRequestBody(req);
+        const input = request.input;
         if (!isObject(input)) throw new CanvasError("review_input_invalid", "Supply the displayed stage review identity.");
         if (requestUrl.pathname.endsWith("/open")) {
             const draft = await openStageReview(entry.prototypeId, entry.extensionId, input);
-            sendJson(res, 200, { draft: await publicReviewState(entry, draft.prototypeId) });
+            respond(200, { draft: await publicReviewState(entry, draft.prototypeId) });
         } else {
             const action = requestUrl.pathname.endsWith("/apply") ? applyStageReview : discardStageReview;
-            sendJson(res, 200, publicState(entry, await action(entry.prototypeId, entry.extensionId, input)));
+            respond(200, publicState(entry, await action(entry.prototypeId, entry.extensionId, input)));
         }
         return;
     }
@@ -7695,25 +7849,17 @@ async function handleRequest(entry, req, res) {
     if (reviewRoute) {
         const { parent, reference, draft } = await readReviewState(entry.prototypeId, reviewRoute[1]);
         const suffix = reviewRoute[2];
-        const reads = new Set(["/state", "/baseline", "/sketch", "/preparation/status", "/workflow/status", "/prototype/preview-status"]);
-        const writes = {
-            prepare: ["/goal", "/preparation/retry"],
-            requirements: ["/answer", "/change-requests", "/change-requests/decision"],
-            sketch: ["/sketch"],
-            prototype: ["/revision", "/answer", "/prototype/start", "/prototype/action", "/stage/complete",
-                "/prototype/preview-restart/inspect", "/prototype/preview-restart/decision"],
-        };
-        if (!(req.method === "GET" ? reads.has(suffix) : req.method === "POST" && (writes[reference.stage].includes(suffix) || suffix === "/effort/recover"))) {
+        if (!(request.method === "GET" ? reviewReadPaths.has(suffix) : request.method === "POST" && (reviewWritePaths[reference.stage].includes(suffix) || suffix === "/effort/recover"))) {
             throw new CanvasError("review_action_unavailable", "This action does not belong to the pinned draft. Current-stage controls remain separate.");
         }
-        if (req.method === "POST" && (reference.appliedAt || reference.discardedAt || parent.effortReset
+        if (request.method === "POST" && (reference.appliedAt || reference.discardedAt || parent.effortReset
             || parent.generation !== draft.generation || !entry.canSubmitAnswers)) {
             throw new CanvasError("review_not_editable", "This saved draft is no longer editable.");
         }
-        if (req.method === "GET" && suffix === "/state") {
-            sendJson(res, 200, await publicReviewState(entry, draft.prototypeId)); return;
+        if (request.method === "GET" && suffix === "/state") {
+            respond(200, await publicReviewState(entry, draft.prototypeId)); return;
         }
-        if (req.method === "GET" && suffix === "/baseline") {
+        if (request.method === "GET" && suffix === "/baseline") {
             const saved = await readJsonFile(join(STATE_DIRECTORY, "efforts", draft.prototypeId, "review-baseline.json"));
             if (!isObject(saved) || saved.prototypeId !== parent.prototypeId || saved.revision !== draft.stageReview.baselineRevision) {
                 throw new CanvasError("review_baseline_invalid", "The saved review baseline has a different source identity.");
@@ -7722,15 +7868,15 @@ async function handleRequest(entry, req, res) {
             if (baseline.generation !== draft.generation || stageReviewDigest(baseline, reference.stage) !== draft.stageReview.baselineDigest) {
                 throw new CanvasError("review_baseline_invalid", "The saved review baseline no longer matches its original identity.");
             }
-            sendJson(res, 200, {
+            respond(200, {
                 state: publicState({ ...entry, canSubmitAnswers: false }, baseline),
                 document: reference.stage === "sketch" && baseline.sketch.current
                     ? await sketchStore.read(parent.prototypeId, baseline.sketch.current) : null,
             });
             return;
         }
-        if (req.method === "POST" && suffix === "/goal") {
-            const input = await readRequestBody(req);
+        if (request.method === "POST" && suffix === "/goal") {
+            const input = request.input;
             const saved = await withAnswerClaim(draft.prototypeId, async () => {
                 const current = await loadState(draft.prototypeId);
                 if (!await isPreferredAnswerProvider(entry.extensionId) || hasActiveWork(current) || input.expectedRevision !== current.revision) {
@@ -7745,29 +7891,28 @@ async function handleRequest(entry, req, res) {
                 await persistState(next);
                 return next;
             });
-            sendJson(res, 200, publicState(entry, saved)); return;
+            respond(200, publicState(entry, saved)); return;
         }
         const draftEntry = { ...entry, prototypeId: draft.prototypeId, canSubmitAnswers: entry.canSubmitAnswers
             && !reference.appliedAt && !reference.discardedAt && parent.generation === draft.generation && !parent.effortReset };
-        if (req.method === "GET" && ["/preparation/status", "/workflow/status"].includes(suffix)) {
+        if (request.method === "GET" && ["/preparation/status", "/workflow/status"].includes(suffix)) {
             if (suffix === "/preparation/status") await preparationRuntimeState(draftEntry);
             else await workflowRuntimeState(draftEntry);
-            sendJson(res, 200, await publicReviewState(entry, draft.prototypeId)); return;
+            respond(200, await publicReviewState(entry, draft.prototypeId)); return;
         }
-        req.url = `/api${suffix}${requestUrl.search}`;
-        return handleRequest(draftEntry, req, res);
+        return dispatchUpstreamRequest(draftEntry, { ...request, path: `/api${suffix}${requestUrl.search}` }, respond);
     }
-    if (requestUrl.pathname === "/api/project-entry" && req.method === "GET") {
-        sendJson(res, 200, await projectEntryView()); return;
+    if (requestUrl.pathname === "/api/project-entry" && request.method === "GET") {
+        respond(200, await projectEntryView()); return;
     }
-    if (requestUrl.pathname === "/api/project-entry" && req.method === "POST") {
+    if (requestUrl.pathname === "/api/project-entry" && request.method === "POST") {
         if (!entry.canSubmitAnswers || !await isPreferredAnswerProvider(entry.extensionId)) throw new CanvasError("read_only_provider", "Use the owning writable provider to choose the starting path.");
-        const input = await readRequestBody(req);
+        const input = request.input;
         if (!isObject(input) || Object.keys(input).some(key => key !== "startingPath")) throw new Error("Supply only the starting path.");
         await developmentGit.requireReady();
-        sendJson(res, 200, await chooseProjectEntry(WORKSPACE_ROOT, input.startingPath)); return;
+        respond(200, await chooseProjectEntry(WORKSPACE_ROOT, input.startingPath)); return;
     }
-    if (requestUrl.pathname === "/api/project-entry/open" && req.method === "POST") {
+    if (requestUrl.pathname === "/api/project-entry/open" && request.method === "POST") {
         const metadata = await readProjectEntry(WORKSPACE_ROOT);
         if (!metadata.startingPath) throw new CanvasError("project_entry_required", "Choose a starting path for this project folder first.");
         if (!entry.canSubmitAnswers || !await isPreferredAnswerProvider(entry.extensionId)) throw new CanvasError("read_only_provider", "Use the owning writable provider to open this project.");
@@ -7790,78 +7935,78 @@ async function handleRequest(entry, req, res) {
             })().finally(() => { entry.projectEntryOpening = null; });
             await entry.projectEntryOpening;
         }
-        sendJson(res, 200, { ...metadata, developmentContext: entry.developmentContext === true, developmentStarted: prepareDevelopment && firstOpen }); return;
+        respond(200, { ...metadata, developmentContext: entry.developmentContext === true, developmentStarted: prepareDevelopment && firstOpen }); return;
     }
-    if (req.method === "POST" && /^\/api\/(?:effort\/start|answer|sketch(?:\/|$)|prototype\/|revision|change-requests|stage\/|development\/(?:open|continue))/.test(requestUrl.pathname)) {
+    if (request.method === "POST" && /^\/api\/(?:effort\/start|answer|sketch(?:\/|$)|prototype\/|revision|change-requests|stage\/|development\/(?:open|continue))/.test(requestUrl.pathname)) {
         if (!(await readProjectEntry(WORKSPACE_ROOT)).startingPath) throw new CanvasError("project_entry_required", "Choose a starting path for this project folder first.");
     }
-    if (req.method === "POST" && ["/api/change-requests", "/api/change-requests/decision", "/api/change-requests/development"].includes(requestUrl.pathname)) {
+    if (request.method === "POST" && ["/api/change-requests", "/api/change-requests/decision", "/api/change-requests/development"].includes(requestUrl.pathname)) {
         if (!entry.canSubmitAnswers) throw new CanvasError("read_only_provider", "Use the owning writable provider.");
-        const input = await readRequestBody(req);
+        const input = request.input;
         if (!isObject(input)) throw new CanvasError("change_request_invalid", "Supply a change request object.");
         if (requestUrl.pathname.endsWith("/development")) {
-            sendJson(res, 200, publicState(entry, await sendChangeToDevelopment(entry.prototypeId, entry.extensionId, input.requestId)));
+            respond(200, publicState(entry, await sendChangeToDevelopment(entry.prototypeId, entry.extensionId, input.requestId)));
         } else if (requestUrl.pathname.endsWith("/decision")) {
-            sendJson(res, 200, publicState(entry, await decideChangeRequest(entry.prototypeId, entry.extensionId, input)));
+            respond(200, publicState(entry, await decideChangeRequest(entry.prototypeId, entry.extensionId, input)));
         } else {
-            sendJson(res, 202, { accepted: true, ...await submitChangeRequest(entry.prototypeId, entry.extensionId, input) });
+            respond(202, { accepted: true, ...await submitChangeRequest(entry.prototypeId, entry.extensionId, input) });
         }
         return;
     }
     if (requestUrl.pathname === "/api/settings/project-effort") {
         if (!(await isPreferredAnswerProvider(entry.extensionId))) throw new CanvasError("read_only_provider", "Use the writable provider for project settings.");
-        if (req.method === "GET") { sendJson(res, 200, await projectEffortStatus()); return; }
-        if (req.method === "POST") {
-            const input = await readRequestBody(req);
+        if (request.method === "GET") { respond(200, await projectEffortStatus()); return; }
+        if (request.method === "POST") {
+            const input = request.input;
             if (!isObject(input) || Object.keys(input).some(key => key !== "effort")) throw new Error("Supply only the selected effort.");
-            try { await changeProjectEffort(input.effort); sendJson(res, 200, await projectEffortStatus()); }
-            catch (error) { sendJson(res, 409, { error: error instanceof Error ? error.message : "Effort update failed.", settings: await projectEffortStatus() }); }
+            try { await changeProjectEffort(input.effort); respond(200, await projectEffortStatus()); }
+            catch (error) { respond(409, { error: error instanceof Error ? error.message : "Effort update failed.", settings: await projectEffortStatus() }); }
             return;
         }
     }
     if (/^\/api\/(?:design-review|plan|implementation|test)(?:\/|$)/.test(requestUrl.pathname)) {
-        sendJson(res, 410, { code: "stage_retired", error: "The Design/Plan/Implement/Test pipeline is retired. Use Development's native requests and confirmations." });
+        respond(410, { code: "stage_retired", error: "The Design/Plan/Implement/Test pipeline is retired. Use Development's native requests and confirmations." });
         return;
     }
     if (requestUrl.pathname.startsWith("/api/development/")) {
         if (!(await isPreferredAnswerProvider(entry.extensionId))) throw new CanvasError("read_only_provider", "Open the writable provider for Development.");
-        if (req.method === "GET" && requestUrl.pathname === "/api/development/model-selection") {
-            sendJson(res, 200, { required: await development.requiresModelSelection() }); return;
+        if (request.method === "GET" && requestUrl.pathname === "/api/development/model-selection") {
+            respond(200, { required: await development.requiresModelSelection() }); return;
         }
-        if (req.method === "GET" && requestUrl.pathname === "/api/development/preflight") {
-            sendJson(res, 200, await developmentGit.preflight()); return;
+        if (request.method === "GET" && requestUrl.pathname === "/api/development/preflight") {
+            respond(200, await developmentGit.preflight()); return;
         }
-        if (req.method === "POST" && requestUrl.pathname === "/api/development/setup") {
+        if (request.method === "POST" && requestUrl.pathname === "/api/development/setup") {
             if (!entry.canSubmitAnswers) throw new CanvasError("read_only_provider", "Use the owning writable provider to set up this folder.");
-            const input = await readRequestBody(req);
+            const input = request.input;
             if (!isObject(input) || Object.keys(input).some(key => key !== "token")) throw new Error("Supply only the displayed Git setup consent.");
             await assertDevelopmentAvailable();
-            sendJson(res, 200, await developmentGit.setup(input.token)); return;
+            respond(200, await developmentGit.setup(input.token)); return;
         }
-        if (req.method === "GET" && requestUrl.pathname === "/api/development/handoff") {
+        if (request.method === "GET" && requestUrl.pathname === "/api/development/handoff") {
             const state = await loadState(entry.prototypeId);
-            sendJson(res, 200, { generation: state.generation,
+            respond(200, { generation: state.generation,
                 snapshotPath: state.lifecycle.outputs.find(output => output.stageId === "prototype")?.path ?? null,
                 handoffId: state.development?.handoffId ?? null, admission: await handoffs.admissionFor(state) });
             return;
         }
-        if (req.method === "GET" && requestUrl.pathname === "/api/development/handoff-review") {
-            sendJson(res, 200, await handoffs.review(await loadState(entry.prototypeId)));
+        if (request.method === "GET" && requestUrl.pathname === "/api/development/handoff-review") {
+            respond(200, await handoffs.review(await loadState(entry.prototypeId)));
             return;
         }
-        if (req.method === "GET" && requestUrl.pathname === "/api/development/status") {
-            sendJson(res, 200, { ...await development.status(), mainSessionModel: await session.rpc.model.getCurrent() });
+        if (request.method === "GET" && requestUrl.pathname === "/api/development/status") {
+            respond(200, { ...await development.status(), mainSessionModel: await session.rpc.model.getCurrent() });
             return;
         }
-        if (req.method === "POST" && requestUrl.pathname === "/api/development/view") {
+        if (request.method === "POST" && requestUrl.pathname === "/api/development/view") {
             entry.projectViewChannel ??= randomUUID();
             const provider = await development.openView(`project-workspace:${entry.projectViewChannel}`, {
                 surface: "browser", projectHost: { origin: new URL(entry.url).origin, channel: entry.projectViewChannel },
             });
-            sendJson(res, 200, { url: provider.url, channel: entry.projectViewChannel });
+            respond(200, { url: provider.url, channel: entry.projectViewChannel });
             return;
         }
-        if (req.method === "POST" && requestUrl.pathname === "/api/development/open") {
+        if (request.method === "POST" && requestUrl.pathname === "/api/development/open") {
             await developmentGit.requireReady();
             const state = await loadState(entry.prototypeId);
             assertLegacyCutover(state);
@@ -7869,49 +8014,39 @@ async function handleRequest(entry, req, res) {
             await assertDevelopmentAvailable();
             entry.developmentContext = true;
             const provider = await development.openView("development-browser", { surface: "browser" });
-            const input = await readRequestBody(req);
+            const input = request.input;
             void development.start(input.retry === true ? { retry: true } : {}).catch(development.reportError);
-            sendJson(res, 200, { url: provider.url });
+            respond(200, { url: provider.url });
             return;
         }
-        if (req.method === "POST" && requestUrl.pathname === "/api/development/continue") {
-            const input = await readRequestBody(req);
+        if (request.method === "POST" && requestUrl.pathname === "/api/development/continue") {
+            const input = request.input;
             if (typeof input.generation !== "string" || typeof input.snapshotPath !== "string" || !Number.isSafeInteger(input.expectedRevision)
                 || input.reviewBinding !== undefined && (typeof input.reviewBinding !== "string" || !/^[a-f0-9]{64}$/.test(input.reviewBinding))) {
                 throw new CanvasError("handoff_identity_required", "Continue from the exact saved Prototype. Reload its status before retrying.");
             }
             const state = await continueDevelopment(entry.prototypeId, entry.extensionId, input);
             entry.developmentContext = true;
-            sendJson(res, 200, publicState(entry, state));
+            respond(200, publicState(entry, state));
             return;
         }
     }
 
-    if (req.method === "GET" && requestUrl.pathname === "/") {
-        res.writeHead(200, {
-            "Content-Type": "text/html; charset=utf-8",
-            "Cache-Control": "no-store",
-        });
-        res.end(renderTandemHtml(__TANDEM_VERSION__));
-        return;
-    }
-
-    if (req.method === "GET" && requestUrl.pathname === "/api/state") {
+    if (request.method === "GET" && requestUrl.pathname === "/api/state") {
         await refreshEntryAnswerCapability(entry);
-        sendJson(
-            res,
+        respond(
             200,
             publicState(entry, await loadState(entry.prototypeId)),
         );
         return;
     }
-    if (req.method === "GET" && requestUrl.pathname === "/api/sketch") {
+    if (request.method === "GET" && requestUrl.pathname === "/api/sketch") {
         const state = await loadState(entry.prototypeId);
         const document = state.sketch.current ? await sketchStore.read(sketchPrototypeId(state), state.sketch.current) : null;
-        sendJson(res, 200, { sketch: state.sketch, document });
+        respond(200, { sketch: state.sketch, document });
         return;
     }
-    if (req.method === "GET" && requestUrl.pathname === "/api/prototype/preview-status") {
+    if (request.method === "GET" && requestUrl.pathname === "/api/prototype/preview-status") {
         const state = await loadState(entry.prototypeId);
         const target = requestUrl.searchParams.get("target") ?? "current";
         if (!isPrototypePreviewTarget(target)) throw new Error("Choose a saved prototype preview.");
@@ -7920,19 +8055,19 @@ async function handleRequest(entry, req, res) {
         const url = checkpoint?.previewUrl || (target === "current" ? state.previewUrl : null);
         const binding = { generation: state.generation, url: url || null, checkpointId: checkpoint?.id ?? null,
             pendingCheckpointId: state.prototypeFlow?.pendingCheckpointId ?? null };
-        if (!url) { sendJson(res, 200, { ...binding, available: false, reason: "No saved preview URL is available." }); return; }
+        if (!url) { respond(200, { ...binding, available: false, reason: "No saved preview URL is available." }); return; }
         try {
             await verifyPreviewIdentity(url, previewPrototypeId(state), checkpoint?.id ?? null);
-            sendJson(res, 200, { ...binding, available: true, reason: "" });
+            respond(200, { ...binding, available: true, reason: "" });
         } catch (error) {
-            sendJson(res, 200, { ...binding, available: false,
+            respond(200, { ...binding, available: false,
                 reason: error instanceof Error ? error.message : "The saved preview could not be verified." });
         }
         return;
     }
-    if (req.method === "POST" && ["/api/prototype/preview-restart/inspect", "/api/prototype/preview-restart/decision"].includes(requestUrl.pathname)) {
+    if (request.method === "POST" && ["/api/prototype/preview-restart/inspect", "/api/prototype/preview-restart/decision"].includes(requestUrl.pathname)) {
         if (!(await isPreferredAnswerProvider(entry.extensionId))) throw new CanvasError("read_only_provider", "Restart previews through this project's owning writable provider.");
-        const input = await readRequestBody(req);
+        const input = request.input;
         const result = await withAnswerClaim(entry.prototypeId, async () => {
             const state = await loadState(entry.prototypeId);
             if (hasActiveWork(state)) throw new Error("Wait for current phase work before restarting a saved preview.");
@@ -7948,7 +8083,11 @@ async function handleRequest(entry, req, res) {
                     || input.args !== undefined && (!Array.isArray(input.args) || input.args.some(arg => typeof arg !== "string"))) {
                     throw new Error("Supply the explicit saved-version target and an optional reviewed Node entrypoint/argument list.");
                 }
-                return ownedPreviewLaunches().inspect(state, input.target, input.entrypoint, input.args, input.workingDirectory, input.choiceId);
+                return ownedPreviewLaunches().inspect(state, input.target,
+                    typeof input.entrypoint === "string" ? input.entrypoint : undefined,
+                    Array.isArray(input.args) ? input.args.map(arg => String(arg)) : undefined,
+                    typeof input.workingDirectory === "string" ? input.workingDirectory : undefined,
+                    typeof input.choiceId === "string" ? input.choiceId : undefined);
             }
             if (!isObject(input) || Object.keys(input).sort().join(",") !== "approve,confirmationId"
                 || typeof input.confirmationId !== "string" || typeof input.approve !== "boolean") {
@@ -7956,113 +8095,99 @@ async function handleRequest(entry, req, res) {
             }
             return ownedPreviewLaunches().decide(input.confirmationId, input.approve);
         });
-        sendJson(res, 200, result); return;
+        respond(200, result); return;
     }
-    if (req.method === "POST" && requestUrl.pathname === "/api/sketch") {
-        const input = await readRequestBody(req, MAX_SKETCH_REQUEST_BYTES);
+    if (request.method === "POST" && requestUrl.pathname === "/api/sketch") {
+        const input = request.input;
         const state = await requestSketchAction(entry.prototypeId, entry.extensionId, input);
-        sendJson(res, 200, publicState(entry, state));
+        respond(200, publicState(entry, state));
         return;
     }
 
-    if (req.method === "POST" && requestUrl.pathname === "/api/process") {
-        sendJson(res, 410, { code: "process_retired",
+    if (request.method === "POST" && requestUrl.pathname === "/api/process") {
+        respond(410, { code: "process_retired",
             error: "Acceptance, export, delivery and process actions are retired. Saved history is retained. Use Development for Design and implementation requests." });
         return;
     }
 
-    if (req.method === "POST" && requestUrl.pathname === "/api/effort/recover") {
-        const state = await abandonUncertainFactory(entry.prototypeId, entry.extensionId, await readRequestBody(req));
-        sendJson(res, 200, publicState(entry, state));
+    if (request.method === "POST" && requestUrl.pathname === "/api/effort/recover") {
+        const state = await abandonUncertainFactory(entry.prototypeId, entry.extensionId, request.input);
+        respond(200, publicState(entry, state));
         return;
     }
-    if (req.method === "POST" && ["/api/effort/reset", "/api/effort/start"].includes(requestUrl.pathname)) {
-        const input = await readRequestBody(req);
+    if (request.method === "POST" && ["/api/effort/reset", "/api/effort/start"].includes(requestUrl.pathname)) {
+        const input = request.input;
         const action = requestUrl.pathname.endsWith("/reset") ? resetEffort : startEffort;
         const state = await action(entry.prototypeId, entry.extensionId, input);
         entry.canSubmitAnswers = true;
-        sendJson(res, 200, publicState(entry, state));
+        respond(200, publicState(entry, state));
         return;
     }
 
     if (
-        req.method === "GET" &&
+        request.method === "GET" &&
         requestUrl.pathname === "/api/preparation/status"
     ) {
         await refreshEntryAnswerCapability(entry);
-        sendJson(res, 200, await preparationRuntimeState(entry));
+        respond(200, await preparationRuntimeState(entry));
         return;
     }
-    if (req.method === "GET" && requestUrl.pathname === "/api/workflow/status") {
+    if (request.method === "GET" && requestUrl.pathname === "/api/workflow/status") {
         await refreshEntryAnswerCapability(entry);
-        sendJson(res, 200, await workflowRuntimeState(entry));
+        respond(200, await workflowRuntimeState(entry));
         return;
     }
 
-    if (req.method === "GET" && requestUrl.pathname === "/events") {
-        await refreshEntryAnswerCapability(entry);
-        res.writeHead(200, {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-store",
-            Connection: "keep-alive",
-        });
-        entry.clients.add(res);
-        const state = await loadState(entry.prototypeId);
-        res.write(`data: ${JSON.stringify(publicState(entry, state))}\n\n`);
-        req.on("close", () => entry.clients.delete(res));
+    if (request.method === "POST" && requestUrl.pathname === "/api/answer") {
+        await submitAnswer(entry, request.input, respond);
         return;
     }
 
-    if (req.method === "POST" && requestUrl.pathname === "/api/answer") {
-        await submitAnswer(entry, req, res);
-        return;
-    }
-
-    if (req.method === "POST" && requestUrl.pathname === "/api/revision") {
-        await submitPrototypeRevision(entry, req, res);
+    if (request.method === "POST" && requestUrl.pathname === "/api/revision") {
+        await submitPrototypeRevision(entry, request.input, respond);
         return;
     }
 
     if (
-        req.method === "POST" &&
+        request.method === "POST" &&
         requestUrl.pathname === "/api/preparation/retry"
     ) {
-        await submitPreparationRetry(entry, res);
+        await submitPreparationRetry(entry, respond);
         return;
     }
 
-    if (req.method === "POST" && requestUrl.pathname === "/api/reload") {
-        await submitReload(entry, res);
+    if (request.method === "POST" && requestUrl.pathname === "/api/reload") {
+        await submitReload(entry, respond);
         return;
     }
 
-    if (req.method === "POST" && requestUrl.pathname === "/api/stage/complete") {
-        await submitStageCompletion(entry, req, res);
+    if (request.method === "POST" && requestUrl.pathname === "/api/stage/complete") {
+        await submitStageCompletion(entry, request.input, respond);
         return;
     }
 
-    if (req.method === "POST" && requestUrl.pathname === "/api/prototype/start") {
+    if (request.method === "POST" && requestUrl.pathname === "/api/prototype/start") {
         const state = await beginPrototypeBuild(entry.prototypeId, entry.extensionId);
-        sendJson(res, 202, publicState(entry, state));
+        respond(202, publicState(entry, state));
         return;
     }
-    if (req.method === "POST" && requestUrl.pathname === "/api/prototype/action") {
-        const state = await requestPrototypeAction(entry.prototypeId, entry.extensionId, await readRequestBody(req));
-        sendJson(res, 200, publicState(entry, state));
+    if (request.method === "POST" && requestUrl.pathname === "/api/prototype/action") {
+        const state = await requestPrototypeAction(entry.prototypeId, entry.extensionId, request.input);
+        respond(200, publicState(entry, state));
         return;
     }
-    if (req.method === "POST" && requestUrl.pathname === "/api/stage/reopen") {
-        const body = await readRequestBody(req);
+    if (request.method === "POST" && requestUrl.pathname === "/api/stage/reopen") {
+        const body = request.input;
         if (!isObject(body) || typeof body.stageId !== "string") {
-            sendJson(res, 400, { error: "Select the stage to reopen." });
+            respond(400, { error: "Select the stage to reopen." });
             return;
         }
         const state = await reopenLifecycleStage(entry.prototypeId, body.stageId, entry.extensionId);
-        sendJson(res, 200, publicState(entry, state));
+        respond(200, publicState(entry, state));
         return;
     }
 
-    sendJson(res, 404, { error: "Not found." });
+    respond(404, { error: "Not found." });
 }
 
 async function startServer(
@@ -8084,9 +8209,9 @@ async function startServer(
     const server = createServer((req, res) => {
         handleRequest(entry, req, res).catch(async (error) => {
             if (!res.headersSent) {
-                sendJson(res, error instanceof ProjectStoreError || error instanceof AnswerRequestError ? error.statusCode : error instanceof CanvasError ? 409 : 500, {
-                    error: error instanceof Error ? error.message : "Tandem request failed.",
-                });
+                const failure = applicationFailure(error, error instanceof CanvasError ? 409 : 500);
+                sendJson(res, failure.statusCode, { error: failure.message, code: failure.code,
+                    ...(failure.details !== undefined ? { details: failure.details } : {}) });
             } else {
                 res.end();
             }
@@ -9224,6 +9349,19 @@ session = await joinSession({
     includeSubAgentStreamingEvents: true,
     customAgents: [textWorkerAgent],
     tools: [{
+        name: `tandem_inspect_${PROVIDER_SCOPE}`,
+        description: "Inspect Tandem's application state, available operations and blockers without opening a canvas or starting work. Supply an operation to read its exact input schema, or owner development for native Design, plan, implementation and Review.",
+        defer: "never",
+        skipPermission: true,
+        parameters: { ...applicationInspectSchema },
+        handler: input => applicationTool("inspect", input),
+    }, {
+        name: `tandem_execute_${PROVIDER_SCOPE}`,
+        description: "Execute a declared Tandem application operation with its observed target and exact inputs. Inspect first. An accepted request is not completed work. User approvals, product answers, implementation consent and native permissions remain human-only.",
+        defer: "never",
+        parameters: { ...applicationExecuteSchema },
+        handler: input => applicationTool("execute", input),
+    }, {
         name: SKETCH_IMAGE_TOOL_NAME,
         description: "Read one approved app design as an image for the active Tandem prototype checkpoint. Use the exact identities from the checkpoint prompt.",
         defer: "never",
@@ -9321,7 +9459,7 @@ session = await joinSession({
                 {
                     name: "get_integration",
                     description: "Read the composed Development protocol/version without starting work.",
-                    handler: async () => ({ protocol: "development/v1", version: __TANDEM_VERSION__,
+                    handler: async () => ({ protocol: "development/v1", applicationProtocol: APPLICATION_PROTOCOL, version: __TANDEM_VERSION__,
                         payloadDigest: (await verifyPayload(dirname(fileURLToPath(import.meta.url)))).digest,
                         stages: LIFECYCLE_STAGES.map(stage => stage.id) }),
                 },
@@ -9336,226 +9474,16 @@ session = await joinSession({
                     },
                 },
                 {
-                    name: "review_prototype_handoff",
-                    description: "Read the exact saved Prototype handoff summary without creating a receipt or starting work. Present it for explicit confirmation.",
-                    handler: async ctx => handoffs.review(await loadState(await resolvePrototypeId(ctx.instanceId, undefined))),
+                    name: "get_application",
+                    description: "Inspect Tandem's versioned application state, operation catalog and blockers. Describe an operation to read its input schema.",
+                    inputSchema: jsonResult(applicationInspectSchema),
+                    handler: ctx => inspectApplication(ctx.input ?? {}, servers.get(ctx.instanceId)),
                 },
                 {
-                    name: "continue_design",
-                    description: "Explicitly continue an exact saved Prototype into Designer, not implementation. Finish Prototype carries this intent automatically; inspection is optional.",
-                    inputSchema: { type: "object", additionalProperties: false,
-                        properties: { generation: { type: "string" }, snapshotPath: { type: "string" }, expectedRevision: { type: "integer" },
-                            reviewBinding: { type: "string", pattern: "^[a-f0-9]{64}$" } },
-                        required: ["generation", "snapshotPath", "expectedRevision"] },
-                    handler: async ctx => {
-                        if (!isObject(ctx.input)) throw new CanvasError("invalid_handoff", "Supply the exact displayed snapshot identity.");
-                        return continueDevelopment(await resolvePrototypeId(ctx.instanceId, undefined), ctx.extensionId, {
-                            generation: ctx.input["generation"], snapshotPath: ctx.input["snapshotPath"],
-                            expectedRevision: ctx.input["expectedRevision"],
-                            reviewBinding: ctx.input["reviewBinding"],
-                        });
-                    },
-                },
-                {
-                    name: "update_tandem",
-                    description:
-                        "Update usage intake, the dynamic decision DAG, prototype review evidence, captured artifacts, workflow phase, or embedded preview.",
-                    inputSchema: {
-                        type: "object",
-                        additionalProperties: false,
-                        properties: {
-                            prototypeId: { type: "string", minLength: 1 },
-                            reset: { type: "boolean" },
-                            stage: { type: "string", minLength: 1 },
-                            goal: { type: "string" },
-                            phase: {
-                                type: "string",
-                                enum: ["discovery", "building", "iterating", "complete"],
-                            },
-                            status: { type: "string" },
-                            preparation: preparationSchema,
-                            prototypeApproach: prototypeApproachSchema,
-                            requirements: requirementsSchema,
-                            prototypeReview: prototypeReviewSchema,
-                            question: questionSchema,
-                            decisionGraph: decisionGraphSchema,
-                            confirmed: {
-                                type: "array",
-                                items: { type: "string" },
-                            },
-                            assumed: {
-                                type: "array",
-                                items: { type: "string" },
-                            },
-                            deferred: {
-                                type: "array",
-                                items: { type: "string" },
-                            },
-                            artifacts: {
-                                type: "array",
-                                maxItems: 30,
-                                items: artifactSchema,
-                            },
-                            previewUrl: {
-                                anyOf: [
-                                    { type: "string" },
-                                    { type: "null" },
-                                ],
-                            },
-                            previewStatus: {
-                                type: "string",
-                                enum: ["waiting", "starting", "ready", "error"],
-                            },
-                        },
-                    },
-                    handler: updateTandem,
-                },
-                {
-                    name: "complete_stage",
-                    description:
-                        "Persist the active stage result and unlock the next stage. Prototype must be finished in Tandem so its draft feature spec is generated first.",
-                    inputSchema: {
-                        type: "object",
-                        additionalProperties: false,
-                        properties: {
-                            prototypeId: { type: "string", minLength: 1 },
-                            stageId: { type: "string", description: "Upstream stage only. Legacy downstream stages are retired; Development has no completion gate." },
-                        },
-                    },
-                    handler: completeStage,
-                },
-                {
-                    name: "reopen_stage",
-                    description: "Explicitly reopen a completed stage, preserving snapshots and marking dependent outputs stale. Ask for user confirmation before invoking.",
-                    inputSchema: {
-                        type: "object", additionalProperties: false,
-                        properties: {
-                            prototypeId: { type: "string", minLength: 1 },
-                            stageId: { type: "string", description: "Reopen an upstream stage only; historical downstream stages are retired." },
-                        },
-                        required: ["stageId"],
-                    },
-                    handler: async (ctx) => {
-                        if (!isObject(ctx.input) || typeof ctx.input["stageId"] !== "string") {
-                            throw new CanvasError("invalid_stage", "Select a lifecycle stage.");
-                        }
-                        return reopenLifecycleStage(await resolvePrototypeId(ctx.instanceId, ctx.input["prototypeId"]), ctx.input["stageId"], ctx.extensionId);
-                    },
-                },
-                {
-                    name: "get_sketch",
-                    description: "Read the current editable design document and its revision/approval metadata.",
-                    inputSchema: { type: "object", additionalProperties: false,
-                        properties: { prototypeId: { type: "string" } } },
-                    handler: async (ctx) => {
-                        const prototypeId = await resolvePrototypeId(ctx.instanceId, ctx.input?.["prototypeId"]);
-                        const state = await loadState(prototypeId);
-                        return { sketch: state.sketch,
-                            document: state.sketch.current ? await sketchStore.read(sketchPrototypeId(state), state.sketch.current) : null };
-                    },
-                },
-                {
-                    name: "sketch_action",
-                    description: "Generate app designs, retry failed generation from retained content, update existing designs for requirements, revise or save them. Approval requires current rendered PNGs and explicit user review.",
-                    inputSchema: {
-                        type: "object", additionalProperties: false,
-                        properties: {
-                            action: { type: "string", enum: ["generate", "update", "revise", "retry", "save", "approve"] },
-                            expectedRevision: { type: ["string", "null"] },
-                            expectedGeneration: { type: "string" },
-                            requestId: { type: "string" },
-                            instruction: { type: "string", maxLength: 4000 },
-                            clientRequestId: { type: "string", pattern: "^[A-Za-z0-9._-]{1,120}$" },
-                            sketchContext: sketchChangeContextSchema,
-                            document: sketchDocumentSchema,
-                            previews: { type: "array", maxItems: 8, items: {
-                                type: "object", additionalProperties: false,
-                                properties: { screenId: { type: "string" }, data: { type: "string" } },
-                                required: ["screenId", "data"],
-                            } },
-                        },
-                        required: ["action", "expectedRevision"],
-                    },
-                    handler: async (ctx) => requestSketchAction(await resolvePrototypeId(ctx.instanceId, undefined),
-                        ctx.extensionId, isObject(ctx.input) ? ctx.input : {}),
-                },
-                {
-                    name: "prototype_action",
-                    description: "Explore visual alternatives, save comparison settings without applying them, prepare a chosen direction, explicitly accept the original prototype as Default, apply a saved checkpoint, keep the current prototype, or retry failed work.",
-                    inputSchema: {
-                        type: "object", additionalProperties: false,
-                        properties: {
-                            action: { type: "string", enum: ["apply-update", "retry", "visual", "visual-preview", "refine-visual", "choose-visual", "visual-original", "visual-back", "skip-visual", "extend-budget"] },
-                            checkpointId: { type: "string" },
-                            expectedRevision: { type: "integer" },
-                            selection: visualSelectionSchema,
-                            suggestion: { type: "string", minLength: 1, maxLength: 4000 },
-                            clientRequestId: { type: "string", pattern: "^[A-Za-z0-9._-]{1,120}$" },
-                        },
-                        required: ["action"],
-                    },
-                    handler: async (ctx) => requestPrototypeAction(await resolvePrototypeId(ctx.instanceId, undefined),
-                        ctx.extensionId, isObject(ctx.input) ? ctx.input : {}),
-                },
-                {
-                    name: "request_change",
-                    description: "Assess an explicit user change against retained work. For Prototype feedback revising an open review, pass its replacesRequestId; active workers finish first and applied changes are retained. Earlier-stage changes still require review.",
-                    inputSchema: {
-                        type: "object", additionalProperties: false,
-                        properties: { prototypeId: { type: "string" }, message: { type: "string", minLength: 1, maxLength: 4000 },
-                            clientRequestId: { type: "string", pattern: "^[A-Za-z0-9._-]{1,120}$" },
-                            replacesRequestId: { type: "string", pattern: "^[A-Za-z0-9._-]{1,120}$" },
-                            originStage: { type: "string", enum: ["requirements", "sketch", "prototype"] },
-                            sketchContext: sketchChangeContextSchema },
-                        required: ["message", "clientRequestId"],
-                    },
-                    handler: async ctx => submitChangeRequest(await resolvePrototypeId(ctx.instanceId, ctx.input?.["prototypeId"]),
-                        ctx.extensionId, readChangeInput(ctx.input)),
-                },
-                {
-                    name: "decide_change",
-                    description: "Decide a saved impact proposal using its exact analysis and baseline identities. Approve only after the user's explicit review; do not infer approval from the original request.",
-                    inputSchema: {
-                        type: "object", additionalProperties: false,
-                        properties: { prototypeId: { type: "string" }, requestId: { type: "string" },
-                            decision: { type: "string", enum: ["approve", "cancel", "retry", "clarify", "refine"] },
-                            analysisId: { type: "string" }, baselineDigest: { type: "string", pattern: "^[a-f0-9]{64}$" },
-                            answer: { type: "string", maxLength: 4000 } },
-                        required: ["requestId", "decision"],
-                    },
-                    handler: async ctx => decideChangeRequest(await resolvePrototypeId(ctx.instanceId, ctx.input?.["prototypeId"]),
-                        ctx.extensionId, readChangeInput(ctx.input)),
-                },
-                {
-                    name: "continue_change_development",
-                    description: "Explicitly send an approved, discovery-complete change to the existing Development runtime. Preserve the original request; implementation still requires native confirmation.",
-                    inputSchema: {
-                        type: "object", additionalProperties: false,
-                        properties: { prototypeId: { type: "string" }, requestId: { type: "string" } },
-                        required: ["requestId"],
-                    },
-                    handler: async ctx => sendChangeToDevelopment(await resolvePrototypeId(ctx.instanceId, ctx.input?.["prototypeId"]),
-                        ctx.extensionId, ctx.input?.["requestId"]),
-                },
-                {
-                    name: "get_tandem_state",
-                    description:
-                        "Read upstream lifecycle, sketch approval, Prototype handoff, historical artifacts and process receipts.",
-                    inputSchema: {
-                        type: "object",
-                        additionalProperties: false,
-                        properties: {
-                            prototypeId: { type: "string", minLength: 1 },
-                        },
-                    },
-                    handler: async (ctx) => {
-                        const input: any = isObject(ctx.input) ? ctx.input : {};
-                        const prototypeId = await resolvePrototypeId(
-                            ctx.instanceId,
-                            input.prototypeId,
-                        );
-                        return loadState(prototypeId);
-                    },
+                    name: "execute_application",
+                    description: "Execute a declared Tandem operation against its observed target. Human decisions and native permissions cannot be supplied by an agent.",
+                    inputSchema: jsonResult(applicationExecuteSchema),
+                    handler: ctx => executeApplication(ctx.input, servers.get(ctx.instanceId)),
                 },
             ],
             open: async (ctx) => {

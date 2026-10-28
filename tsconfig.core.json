@@ -11,6 +11,7 @@
     "src/stage-review.ts",
     "src/decision-diagram.ts",
     "src/agent-runner.ts",
+    "src/application-interface.ts",
     "src/desktop/**/*.ts",
     "src/browser/**/*.ts",
     "src/browser/**/*.tsx",

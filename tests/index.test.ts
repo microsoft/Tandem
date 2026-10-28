@@ -1,4 +1,5 @@
 import "./project-store.test.js";
+import "./application-interface.test.js";
 import "./workflow.test.js";
 import "./workflow-activity.test.js";
 import "./main-session-effort.test.js";
