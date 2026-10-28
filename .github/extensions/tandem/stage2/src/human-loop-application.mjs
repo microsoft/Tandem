@@ -77,6 +77,8 @@ export const developmentOperations = [
   operation("native.stop", "POST", "/api/stop", "Request native immediate or after-step Stop; inspect its actual outcome.",
     objectSchema({ stopId: id, mode: enumSchema("immediate", "after-step") }, ["stopId"]), { retry: "identity" }),
   operation("native.close", "POST", "/api/runtime/close", "Close the owned private runtime, reporting persistence and shutdown separately."),
+  operation("native.query.continue", "POST", "/api/runtime/continue-query", "Continue the same retained task after a model-query failure, only by explicit human choice.",
+    objectSchema({ taskId: id, errorId: id }, ["taskId", "errorId"]), { authority: "user", retry: "identity" }),
   operation("native.open-folder", "POST", "/api/project/open-folder", "Reveal the current project in the host file manager."),
   operation("native.compaction.inspect", "POST", "/api/context/compaction/request", "Request the native context-compaction confirmation."),
   operation("native.compaction.decide", "POST", "/api/context/compaction/decision", "Record the user's bound compaction decision.",

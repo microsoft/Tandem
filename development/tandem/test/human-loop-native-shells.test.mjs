@@ -11,6 +11,9 @@ import { HumanLoopNativeWriter } from "../src/human-loop-native-writer.mjs";
 const nativeOutcome = task => ({ resultType: "success", nativeTask: task, cancelled: false,
   status: task.status === "cancelled" ? "stopped" : task.status,
   endedAt: task.completedAt ?? new Date().toISOString() });
+const exitNotification = exitCode => ({ id: "native-exit", type: "system.notification",
+  timestamp: new Date().toISOString(), sessionId: null, agentId: null,
+  data: { kind: { type: "shell_completed", shellId: "owned", exitCode } } });
 
 async function fixture(t, policy = DEFAULT_POLICY) {
   const root = resolve(`.native-shells-${randomUUID()}`);
@@ -178,7 +181,7 @@ test("automatic output requires the exact live settled generation, not a reused 
   await f.shells.observe(notification);
   await f.shells.assertAutomaticOutput(notification);
   await assert.rejects(f.shells.settled(admission,
-    f.complete(true, [{ type: "shell_exit", shellId: "owned", exitCode: 1 }]), true), /recorded completion notification/);
+    f.complete(true, [{ type: "shell_exit", shellId: "owned", exitCode: 1 }]), true), /recorded exit evidence/);
   await f.shells.assertAutomaticOutput(notification);
   await f.shells.observe(structuredClone(notification));
   for (const patch of [{ id: "other-notification" }, { parentId: "changed" },
@@ -689,18 +692,112 @@ for (const status of ["completed", "failed"]) test(`interrupted reader retains e
   assert.equal((await new HumanLoopNativeShells(f.options).read()).nativeSessions[0].interruption.nativeStatus, status);
 });
 
-test("a later genuine exit fills unknown natural-completion metadata but cannot contradict it", async t => {
+for (const order of ["binding-first", "refresh-first", "exit-first"]) for (const registryStatus of ["completed", "failed"])
+  for (const exitCode of [0, 1]) test(`native exit ${exitCode} supersedes lifecycle ${registryStatus} (${order})`, async t => {
+    const f = await fixture(t);
+    const admission = await f.shells.admit("powershell", f.args, f.packet, "late-exit");
+    const task = f.start(admission), notification = exitNotification(exitCode);
+    if (order === "binding-first") {
+      task.status = registryStatus; task.completedAt = new Date().toISOString();
+    }
+    await f.shells.settled(admission, f.complete(), true);
+    if (order === "exit-first") {
+      await f.shells.observe(notification);
+      f.shells.setStopHandler(async () => assert.fail("Recorded exits cannot be cancelled."), () => true);
+      const [row] = (await f.shells.read()).nativeSessions;
+      assert.equal(row.status, exitCode === 0 ? "completed" : "failed");
+      assert.equal(row.endedAt, notification.timestamp);
+      assert.equal(row.canStop, false, "A stale running registry row cannot override the concrete exit.");
+    }
+    task.status = registryStatus; task.completedAt ??= new Date().toISOString();
+    await f.shells.refreshTasks("task");
+    if (order !== "exit-first") {
+      const [before] = await f.shells.evidenceForCycle(null);
+      assert.equal(before.status, registryStatus); assert.equal(before.exitCode, null);
+      await assert.rejects(f.shells.assertAutomaticOutput(notification), /settled shell/);
+      await f.shells.observe(notification);
+    }
+    await f.shells.observe(structuredClone(notification));
+    assert.equal(await f.shells.automaticOutputBinding(notification), admission.entryId);
+    const [saved] = await f.shells.evidenceForCycle(null);
+    assert.equal(saved.status, exitCode === 0 ? "completed" : "failed");
+    assert.equal(saved.exitCode, exitCode); assert.equal(saved.nativeStartedAt, task.startedAt);
+    const [display] = (await f.shells.read()).nativeSessions;
+    assert.equal(display.status, saved.status); assert.equal(display.canStop, false);
+    const [reloaded] = await new HumanLoopNativeShells(f.options).evidenceForCycle(null);
+    assert.deepEqual(reloaded, saved);
+    await assert.rejects(f.shells.observe({ ...notification, id: "different-event" }), /identity changed/);
+    await assert.rejects(f.shells.observe({ ...notification, sessionId: "foreign" }), /different private session/);
+    await f.shells.observe({ ...notification, data: { kind: { ...notification.data.kind, shellId: "foreign" } } });
+    assert.deepEqual(await f.shells.evidenceForCycle(null), [saved]);
+  });
+
+test("tool settlement cannot replace a bound shell generation or notification identity", async t => {
   const f = await fixture(t);
-  const admission = await f.shells.admit("powershell", { ...f.args, mode: "sync" }, f.packet, "late-exit");
-  await f.shells.settled(admission, f.complete(true));
-  const entry = (await f.shells.read()).nativeSessions[0];
-  await f.shells.interrupted(entry.id, nativeOutcome({ type: "shell", id: "owned", command: f.args.command, status: "completed",
-    attachmentMode: "attached", executionMode: "background", startedAt: entry.startedAt, completedAt: new Date().toISOString() }),
-  { stopId: "stop", endEventId: "real-idle", observedAt: new Date().toISOString() });
-  assert.equal((await f.shells.read()).nativeSessions[0].exitCode, null);
-  const event = exitCode => ({ type: "system.notification", timestamp: new Date().toISOString(),
-    data: { kind: { type: "shell_completed", shellId: "owned", exitCode } } });
-  await assert.rejects(f.shells.observe(event(1)), /conflicts/);
-  await f.shells.observe(event(0));
-  assert.equal((await f.shells.read()).nativeSessions[0].exitCode, 0);
+  const launch = await f.shells.admit("powershell", f.args, f.packet, "bound-launch");
+  f.start(launch);
+  await f.shells.settled(launch, f.complete(), true);
+  const read = await f.shells.admit("read_powershell", { shellId: "owned", delay: 0 }, f.packet, "bound-read");
+  for (const admission of [launch, read]) {
+    const before = await f.shells.evidenceForCycle(null);
+    await assert.rejects(f.shells.settled(admission,
+      f.complete(true, [{ type: "shell_exit", shellId: "foreign", exitCode: 1 }]), true), /binding|another shell/);
+    assert.deepEqual(await f.shells.evidenceForCycle(null), before);
+  }
+  await f.shells.observe(exitNotification(1));
+  const before = await f.shells.evidenceForCycle(null);
+  await assert.rejects(f.shells.settled(launch,
+    f.complete(true, [{ type: "shell_exit", shellId: "foreign", exitCode: 1 }]), true), /binding/);
+  assert.deepEqual(await new HumanLoopNativeShells(f.options).evidenceForCycle(null), before);
 });
+
+for (const source of ["notification", "tool"]) for (const order of ["interruption-first", "exit-first"])
+  for (const nativeStatus of ["completed", "failed", "cancelled"]) for (const exitCode of [0, 1])
+    test(`${source} exit ${exitCode} retains ${nativeStatus} interruption evidence (${order})`, async t => {
+      const f = await fixture(t);
+      const admission = await f.shells.admit("powershell", { ...f.args, mode: "sync" }, f.packet, "interrupted-exit");
+      const task = f.start(admission);
+      await f.shells.settled(admission, f.complete(), true);
+      const notification = exitNotification(exitCode);
+      const exit = () => source === "notification" ? f.shells.observe(notification)
+        : f.shells.settled(admission, f.complete(true, [{ type: "shell_exit", shellId: "owned", exitCode }]), true);
+      if (order === "exit-first") await exit();
+      task.status = nativeStatus; task.completedAt = new Date().toISOString();
+      const evidence = { stopId: "stop", endEventId: "real-idle", observedAt: new Date().toISOString() };
+      if (order === "exit-first" && nativeStatus === "cancelled") {
+        const before = await f.shells.evidenceForCycle(null);
+        await assert.rejects(f.shells.interrupted(admission.entryId, nativeOutcome(task), evidence), /live invocation/);
+        assert.deepEqual(await new HumanLoopNativeShells(f.options).evidenceForCycle(null), before);
+        return;
+      }
+      await f.shells.interrupted(admission.entryId, nativeOutcome(task), evidence);
+      await exit();
+      const [saved] = await f.shells.evidenceForCycle(null);
+      assert.equal(saved.status, nativeStatus === "cancelled" ? "stopped" : exitCode === 0 ? "completed" : "failed");
+      assert.equal(saved.exitCode, exitCode); assert.equal(saved.interruption.nativeStatus, nativeStatus);
+      assert.deepEqual(await new HumanLoopNativeShells(f.options).evidenceForCycle(null), [saved]);
+      assert.equal((await f.shells.read()).nativeSessions[0].status, saved.status);
+      if (source === "notification") await f.shells.assertAutomaticOutput(notification);
+    });
+
+for (const first of ["notification", "tool"]) for (const exitCode of [0, 1])
+  test(`concrete ${first} exit ${exitCode} rejects contradictory tool and notification exits`, async t => {
+    const f = await fixture(t);
+    const admission = await f.shells.admit("powershell", f.args, f.packet, "concrete-exit");
+    await f.shells.settled(admission, f.complete(), true);
+    // Legacy notifications without an event ID still carry concrete exit evidence.
+    const { id, ...notification } = exitNotification(exitCode);
+    const toolExit = code => f.complete(true, [{ type: "shell_exit", shellId: "owned", exitCode: code }]);
+    if (first === "notification") await f.shells.observe(notification);
+    else await f.shells.settled(admission, toolExit(exitCode), true);
+    const before = await f.shells.evidenceForCycle(null);
+    for (const contradictory of exitCode === 0 ? [1] : [0, 2]) {
+      await assert.rejects(f.shells.observe({ ...notification,
+        data: { kind: { ...notification.data.kind, exitCode: contradictory } } }), /conflicts/);
+      await assert.rejects(f.shells.settled(admission, toolExit(contradictory), true), /conflicts/);
+      assert.deepEqual(await f.shells.evidenceForCycle(null), before);
+    }
+    await f.shells.observe(notification);
+    await f.shells.settled(admission, toolExit(exitCode), true);
+    assert.equal((await new HumanLoopNativeShells(f.options).read()).nativeSessions[0].exitCode, exitCode);
+  });

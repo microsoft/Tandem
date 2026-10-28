@@ -235,6 +235,7 @@ test("agent commands cannot impersonate human implementation or permission decis
   f.runtime.decideImplementation = async () => { decisions++; };
   for (const [operation, input] of [
     ["native.implementation.decide", { confirmationId: "current", decision: "approved" }],
+    ["native.query.continue", { taskId: "current-task", errorId: "current-query-error" }],
     ["native.permissions.decide", { requestId: "access", decision: "all" }],
     ["native.empty-setup.decide", { confirmationId: "setup", approve: true }],
   ]) {
@@ -462,6 +463,17 @@ test("implementation confirmation has its own endpoint, never a tool-permission 
   response = await f.post(path, { decision: "approved" });
   assert.equal(response.status, 409);
   assert.equal(decisions.length, 1);
+});
+
+test("query continuation endpoint forwards only its exact task/error and never submits a fresh request", async t => {
+  const f = await fixture(t), continuations = [];
+  f.runtime.continueQuery = async input => { continuations.push(input); return input; };
+  const input = { taskId: "retained-task", errorId: "native-query-event" };
+  assert.equal((await f.post("/api/runtime/continue-query", input)).status, 200);
+  assert.deepEqual(continuations, [input]);
+  assert.deepEqual(f.received, []);
+  assert.equal((await f.post("/api/runtime/continue-query", { ...input, prompt: "Replace the task" })).status, 409);
+  assert.equal(continuations.length, 1);
 });
 
 test("unused-setup recovery requires its own exact confirmation and never submits a project request", async t => {

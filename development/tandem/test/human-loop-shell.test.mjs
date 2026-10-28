@@ -182,6 +182,98 @@ test("chat Enter uses the existing submit envelope and modified Enter preserves 
   assert.deepEqual(browser.exceptions, []);
 });
 
+test("inline Send supports pointer, keyboard and touch without bypassing disabled, empty or IME guards",
+  { skip: !browserAvailable, timeout: 60_000 }, async t => {
+    const f = await fixture(t), { browser } = f;
+    f.current.accessRequests = [];
+    f.current.workflow.questionInteraction = null;
+    await browser.call("Page.navigate", { url: f.url });
+    await browser.waitFor('!document.querySelector("#send").disabled');
+    const key = async (key, code, windowsVirtualKeyCode, text) => {
+      await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key, code, windowsVirtualKeyCode, ...(text ? { text } : {}) });
+      await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key, code, windowsVirtualKeyCode });
+    };
+    await click(browser, "#send");
+    assert.equal(f.posts.length, 0, "An empty draft is never submitted.");
+    for (const [index, method] of ["pointer", "Enter", "Space", "touch"].entries()) {
+      const message = `Exact ${method} draft.\nSecond line.`;
+      await browser.evaluate(`document.querySelector("#message").value=${JSON.stringify(message)};
+        document.querySelector("#message").dispatchEvent(new Event("input",{bubbles:true}));
+        document.querySelector("#message").focus()`);
+      await key("Tab", "Tab", 9);
+      assert.equal(await browser.evaluate('document.activeElement.id'), "send");
+      assert.notEqual(await browser.evaluate('getComputedStyle(document.querySelector("#send")).outlineStyle'), "none");
+      if (method === "pointer") await click(browser, "#send");
+      else if (method === "touch") {
+        await browser.call("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+        await browser.call("Emulation.setDeviceMetricsOverride", { width: 390, height: 700, deviceScaleFactor: 1, mobile: true });
+        await browser.evaluate('document.querySelector("#composer").scrollIntoView({block:"end"})');
+        const point = await browser.evaluate(`(() => {
+          const r=document.querySelector("#send").getBoundingClientRect();
+          return {x:r.left+r.width/2,y:r.top+r.height/2,width:r.width,height:r.height};
+        })()`);
+        assert.ok(point.width >= 44 && point.height >= 44, "Coarse pointers get a touch-sized target.");
+        await browser.call("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: point.x, y: point.y }] });
+        await browser.call("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+        await browser.call("Emulation.setTouchEmulationEnabled", { enabled: false });
+      } else await key(method === "Space" ? " " : "Enter", method, method === "Space" ? 32 : 13, method === "Space" ? " " : "\r");
+      await browser.waitFor('document.querySelector("#message").value === "" && !document.querySelector("#send").disabled');
+      assert.equal(f.posts.length, index + 1, method + " submits once");
+      assert.equal(f.posts[index].path, "/api/requests");
+      assert.equal(f.posts[index].data.message, message);
+      assert.ok(f.posts[index].data.id);
+    }
+    assert.equal(new Set(f.posts.map(post => post.data.id)).size, 4);
+    await browser.evaluate('document.querySelector("#message").value="Retained draft"; document.querySelector("#message").focus()');
+    f.current.workflow.canSend = false; f.update();
+    await browser.waitFor('document.querySelector("#send").disabled');
+    await key("Enter", "Enter", 13, "\r");
+    await browser.evaluate('document.querySelector("#send").click()');
+    assert.equal(f.posts.length, 4);
+    f.current.workflow.canSend = true; f.update();
+    await browser.waitFor('!document.querySelector("#send").disabled');
+    await browser.call("Input.imeSetComposition", { text: "composing", selectionStart: 9, selectionEnd: 9 });
+    await key("Enter", "Enter", 13, "\r");
+    assert.equal(f.posts.length, 4, "IME confirmation is not Send.");
+    await browser.call("Input.insertText", { text: "composed" });
+    assert.deepEqual(browser.exceptions, []);
+  });
+
+test("retained query Continue uses its exact endpoint alongside inline Send and empty Design guidance",
+  { skip: !browserAvailable, timeout: 60_000 }, async t => {
+    const held = Promise.withResolvers();
+    const f = await fixture(t, { onPost: async ({ path, data, current }) => {
+      assert.equal(path, "/api/runtime/continue-query");
+      assert.deepEqual(data, { taskId: "retained-task", errorId: "query-error" });
+      await held.promise;
+      current.workflow.queryFailure = null;
+      current.workflow.status = "working";
+      current.workflow.reason = null;
+    } }), { browser } = f;
+    t.after(() => held.resolve());
+    f.current.design = null;
+    f.current.accessRequests = [];
+    Object.assign(f.current.workflow, { status: "waiting-query", reason: "Synthetic model-query failure.",
+      activeRequestId: "request", activeRole: "reviewer", questionInteraction: null,
+      queryFailure: { id: "query-error", taskId: "retained-task", processing: false, canContinue: true, blocker: null } });
+    await browser.call("Page.navigate", { url: f.url });
+    await browser.waitFor('document.querySelector("[data-human-loop-action=continueQuery]")?.disabled === false');
+    await browser.evaluate('document.querySelector("#message").value="Keep this separate unsent draft"');
+    assert.equal(await browser.evaluate('document.querySelector("#send").closest(".composer-input-wrap") !== null'), true);
+    assert.equal(await browser.evaluate('document.querySelector("#send").textContent'), "\u21b5");
+    assert.equal(await browser.evaluate('document.querySelector("#backbone-state").hidden'), true);
+    assert.match(await browser.evaluate('document.querySelector("#assessment-card").textContent'), /No Design has been published/);
+    await click(browser, "[data-human-loop-action=continueQuery]");
+    await browser.waitFor('document.querySelector("[data-human-loop-action=continueQuery]").disabled');
+    await browser.evaluate('document.querySelector("[data-human-loop-action=continueQuery]").click()');
+    assert.equal(f.posts.length, 1);
+    held.resolve();
+    await browser.waitFor('document.querySelector("[data-human-loop-action=continueQuery]").hidden');
+    assert.equal(await browser.evaluate('document.querySelector("#message").value'), "Keep this separate unsent draft");
+    assert.deepEqual(f.posts, [{ path: "/api/runtime/continue-query", data: { taskId: "retained-task", errorId: "query-error" } }]);
+    assert.deepEqual(browser.exceptions, []);
+  });
+
 async function capture(browser, name, geometry) {
   if (!process.env.HUMAN_SHELL_EVIDENCE) return;
   await mkdir(process.env.HUMAN_SHELL_EVIDENCE, { recursive: true });
@@ -189,6 +281,83 @@ async function capture(browser, name, geometry) {
   await writeFile(join(process.env.HUMAN_SHELL_EVIDENCE, `${name}.png`), Buffer.from(image.data, "base64"));
   await writeFile(join(process.env.HUMAN_SHELL_EVIDENCE, `${name}.json`), JSON.stringify(geometry, null, 2));
 }
+
+test("empty Design keeps one guidance message without a header strip while retaining diagnostics and section naming",
+  { skip: !browserAvailable, timeout: 60_000 }, async t => {
+    const firstSnapshot = Promise.withResolvers();
+    const f = await fixture(t, { onSnapshot: () => firstSnapshot.promise }), { browser } = f;
+    t.after(() => firstSnapshot.resolve());
+    const design = f.current.design;
+    f.current.design = null;
+    f.current.workflow.questionInteraction.questions[0].designRefs = ["interaction#deliver"];
+    await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 900, deviceScaleFactor: 1, mobile: false });
+    await browser.call("Page.navigate", { url: f.url });
+    await browser.waitFor('document.querySelector("#assessment-card") && getComputedStyle(document.querySelector("#design-pane-title")).position === "absolute"');
+    const emptyHeader = async phase => {
+      for (const panel of ["standalone", "workspace"]) {
+        await browser.evaluate(panel === "workspace" ? 'document.body.dataset.projectPanel="workspace"; document.body.dataset.projectDesign="true"; document.body.dataset.projectStacked="false"'
+          : 'delete document.body.dataset.projectPanel');
+        const view = await browser.evaluate(`(() => {
+          const badge=document.querySelector("#backbone-state"), header=badge.closest(".panel-heading");
+          return {hidden:badge.hidden,text:badge.textContent,height:header.getBoundingClientRect().height,
+            guidance:document.querySelector("#assessment-card").textContent,
+            guidanceVisible:document.querySelector("#assessment-card").checkVisibility()};
+        })()`);
+        await capture(browser, `empty-design-${phase}-${panel}`, view);
+        assert.equal(view.hidden, true, `${phase} ${panel}: no duplicate badge`);
+        assert.equal(view.text, "");
+        assert.equal(view.height, 0, `${phase} ${panel}: no empty toolbar strip`);
+        assert.equal(view.guidanceVisible, true);
+        assert.match(view.guidance, /No Design has been published.*Discuss your idea/);
+        const { root } = await browser.call("DOM.getDocument");
+        const { nodeId } = await browser.call("DOM.querySelector", { nodeId: root.nodeId, selector: "#design-panel" });
+        const { nodes } = await browser.call("Accessibility.getPartialAXTree", { nodeId, fetchRelatives: false });
+        assert.ok(nodes.some(node => node.role?.value === "region" && node.name?.value === "Canvas" && !node.ignored),
+          "The collapsed header still names the Design section.");
+      }
+    };
+    await emptyHeader("initial");
+    firstSnapshot.resolve();
+    await browser.waitFor('document.querySelector("#show-questions").textContent.includes("1 blockers")');
+    await emptyHeader("verified");
+    for (const [startup, installation, expected] of [
+      ["starting", "attaching", "Loading Design..."], ["verifying", "ready", "Loading Design..."],
+      [null, "unknown", "Design unverified"], [null, "failed", "Design unverified"],
+    ]) {
+      f.current.startup = startup;
+      f.current.installation.status = installation;
+      f.update();
+      await browser.waitFor(`document.querySelector("#backbone-state").textContent === ${JSON.stringify(expected)}`);
+      assert.equal(await browser.evaluate('document.querySelector("#backbone-state").checkVisibility()'), true);
+      assert.ok(await browser.evaluate('document.querySelector("#design-panel > .panel-heading").getBoundingClientRect().height') > 0);
+    }
+    f.current.installation.status = "ready"; f.current.design = design; f.update();
+    await browser.waitFor('document.querySelector("#backbone-state").textContent === "Current Design"');
+    assert.equal(await browser.evaluate('document.querySelector("#backbone-state").checkVisibility()'), true);
+    assert.equal(await browser.evaluate('document.querySelector("#assessment-card").hidden'), true);
+    assert.equal(await browser.evaluate('document.querySelector("#design-summary").textContent'), design.content.summary);
+    f.current.conversationStatus = "unverified"; f.update();
+    await browser.waitFor('document.querySelector("#backbone-state").textContent === "Design unverified"');
+    assert.equal(await browser.evaluate('document.querySelector("#backbone-proposal").hidden'), false,
+      "Unverified readback retains the last verified Design with its warning.");
+    assert.equal(await browser.evaluate('document.querySelector("#backbone-state").checkVisibility()'), true);
+    f.current.conversationStatus = "verified"; f.update();
+    await browser.waitFor('document.querySelector("#backbone-state").textContent === "Current Design"');
+    await click(browser, "#show-questions");
+    await browser.evaluate("document.querySelector('fieldset:not([hidden]) .design-reference').closest('details').open=true");
+    await click(browser, "fieldset:not([hidden]) .design-reference");
+    f.current.design = null; f.update();
+    await browser.waitFor('!document.querySelector("#assessment-card").hidden');
+    assert.equal(await browser.evaluate('document.querySelector("#backbone-state").hidden'), true);
+    assert.equal(await browser.evaluate('document.querySelector("#return-to-questions").checkVisibility()'), true,
+      "An empty Design must not hide contextual Back to Questions navigation.");
+    await click(browser, "#return-to-questions");
+    assert.equal(await browser.evaluate('document.querySelector("#question-panel").hidden'), false);
+    await click(browser, "#questions-back");
+    await emptyHeader("cleared");
+    assert.deepEqual(f.posts, []);
+    assert.deepEqual(browser.exceptions, []);
+  });
 
 test("composer hides generic tutorials without losing contextual hints, errors or accessible editing",
   { skip: !browserAvailable, timeout: 60_000 }, async t => {
@@ -355,6 +524,7 @@ test("Questions workspace keeps one readable question, explicit navigation and s
     await browser.evaluate("document.querySelector('fieldset:not([hidden]) .design-reference').closest('details').open=true");
     await click(browser, "fieldset:not([hidden]) .design-reference");
     assert.equal(await browser.evaluate("document.querySelector('#question-panel').hidden"), true);
+    assert.equal(await browser.evaluate("document.querySelector('#return-to-questions').checkVisibility()"), true);
     await click(browser, "#return-to-questions");
     assert.equal(await browser.evaluate("document.querySelector('fieldset:not([hidden]) textarea').value"), "First exact draft");
     await choose("second-source", "other");
@@ -879,12 +1049,15 @@ for (const responseKind of ["accepted", "wrong-identity", "wrong-status"]) test(
     f.current.workflow.questionInteraction = null;
     f.current.workflow.status = "ready";
     try {
+      await browser.call("Emulation.setDeviceMetricsOverride", { width: 390, height: 700, deviceScaleFactor: 1, mobile: false });
       await browser.call("Page.navigate", { url: f.url });
       await browser.waitFor("document.querySelector('#send') && !document.querySelector('#send').disabled");
       await browser.evaluate("document.querySelector('#message').value='Exact delayed request.'");
       await click(browser, "#send");
       await postStarted.promise; f.update(); await snapshotStarted.promise;
       await browser.waitFor("document.querySelector('#send').disabled");
+      await browser.evaluate('document.querySelector("#send").click()');
+      assert.equal(f.posts.length, 1, "Busy Send cannot duplicate the request.");
       assert.equal(await browser.evaluate("document.querySelector('#quick-requests summary').getAttribute('aria-disabled')"), "true");
       assert.equal(await browser.evaluate("Array.from(document.querySelectorAll('[data-quick-request]')).every(button=>button.disabled)"), true);
       await browser.evaluate("document.querySelector('[data-quick-request]').dispatchEvent(new MouseEvent('click', {bubbles:true}))");
@@ -901,6 +1074,16 @@ for (const responseKind of ["accepted", "wrong-identity", "wrong-status"]) test(
       } else {
         assert.equal(await browser.evaluate("document.querySelector('#message').value"), "Exact delayed request.");
         assert.equal(await browser.evaluate("document.querySelector('#send').textContent"), "Retry exact request");
+        const retry = await browser.evaluate(`(() => {
+          const input=document.querySelector("#message"),button=document.querySelector("#send"),
+            r=input.getBoundingClientRect(),b=button.getBoundingClientRect(),style=getComputedStyle(input);
+          return {left:b.left,right:b.right,bottom:b.bottom,inputRight:r.right,inputBottom:r.bottom,
+            textRight:r.left+input.clientLeft+input.clientWidth-parseFloat(style.paddingRight),
+            label:button.getAttribute("aria-label"),clipped:button.scrollWidth>button.clientWidth};
+        })()`);
+        assert.ok(retry.textRight < retry.left && retry.right < retry.inputRight && retry.bottom < retry.inputBottom);
+        assert.equal(retry.label, "Retry exact request");
+        assert.equal(retry.clipped, false, "The inline retry label remains readable.");
         assert.equal(await browser.evaluate("document.querySelector('#quick-requests summary').getAttribute('aria-disabled')"), "true");
         await browser.evaluate("document.querySelector('[data-quick-request]').dispatchEvent(new MouseEvent('click', {bubbles:true}))");
         assert.equal(await browser.evaluate("document.querySelector('#message').value"), "Exact delayed request.");
@@ -2376,8 +2559,8 @@ test("Stop stays below the composer at its left edge while Send remains inside a
     })()`);
     assert.ok(Math.abs(geometry.stop.left - geometry.input.left) <= 1, JSON.stringify(geometry));
     assert.ok(geometry.stop.top >= Math.max(geometry.input.bottom, geometry.send.bottom) + 5, JSON.stringify(geometry));
-    assert.ok(Math.abs(geometry.send.left - geometry.input.right) <= 1, JSON.stringify(geometry));
-    assert.ok(Math.abs(geometry.send.bottom - geometry.input.bottom) <= 1, JSON.stringify(geometry));
+    assert.ok(geometry.send.left > geometry.input.left && geometry.send.right < geometry.input.right, JSON.stringify(geometry));
+    assert.ok(geometry.send.top > geometry.input.top && geometry.send.bottom < geometry.input.bottom, JSON.stringify(geometry));
     assert.ok(geometry.stop.right <= geometry.send.right && geometry.scrollWidth <= width, JSON.stringify(geometry));
     assert.equal(geometry.text, "Stop after this step");
     assert.equal(geometry.type, "button");

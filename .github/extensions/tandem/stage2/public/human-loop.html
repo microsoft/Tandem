@@ -92,7 +92,7 @@
 </dialog>
 <main class="workspace-shell human-layout">
   <section id="design-panel" class="panel canvas-panel human-design" aria-labelledby="design-pane-title">
-    <div class="panel-heading"><h2 id="design-pane-title" class="visually-hidden">Canvas</h2><button id="return-to-questions" type="button" hidden>Back to Questions</button><span id="backbone-state" class="empty-badge">No Design yet</span></div>
+    <div class="panel-heading"><h2 id="design-pane-title" class="visually-hidden">Canvas</h2><button id="return-to-questions" type="button" hidden>Back to Questions</button><span id="backbone-state" class="empty-badge" hidden></span></div>
     <div id="canvas-scroll" class="canvas-scroll">
       <p id="prototype-handoff-activity" role="status" hidden></p>
       <div id="assessment-card" class="empty-state design-assessment"><strong>No Design has been published</strong><p>Discuss your idea in the conversation. The current Design will appear here when it is ready.</p></div>
@@ -160,11 +160,13 @@
         <figure id="clipboard-preview" class="annotation-preview" hidden><img id="clipboard-image" alt="Unsent pasted image"><figcaption id="clipboard-caption" role="status"></figcaption><button type="button" id="clipboard-remove">Remove pasted image</button></figure>
         <figure id="annotation-preview" class="annotation-preview" hidden><img id="annotation-image" alt="Unsent diagram snapshot"><figcaption id="annotation-caption"></figcaption><button type="button" id="annotation-remove">Remove snapshot</button></figure>
         <div id="role-suggestions" class="role-suggestions" role="listbox" aria-label="Role suggestions" hidden></div>
-        <textarea id="message" rows="2" placeholder="Ask about the Design, or describe what you want to change..."
-          title="Enter to send; Ctrl+Enter for a new line." aria-keyshortcuts="Enter"></textarea>
+        <div class="composer-input-wrap">
+          <textarea id="message" rows="2" placeholder="Ask about the Design, or describe what you want to change..."
+            title="Enter to send; Ctrl+Enter for a new line." aria-keyshortcuts="Enter"></textarea>
+          <button id="send" class="tandem-button" data-variant="ghost" type="submit" aria-label="Send message" title="Send message (Enter)" disabled>&#8629;</button>
+        </div>
         <p id="role-hint-help" role="status" hidden></p>
       </div>
-      <button id="send" type="submit" aria-label="Send message" title="Send message (Enter)" disabled>↑</button>
       <div class="composer-actions">
         <span id="workflow-stop-control" class="workflow-stop-control" hidden>
           <button id="stop-current-flow" type="button" title="Stop after this step; keep completed work" hidden>Stop after this step</button>

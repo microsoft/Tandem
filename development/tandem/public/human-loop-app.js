@@ -411,10 +411,10 @@ function renderComposer() {
   summary.tabIndex = presetsBlocked ? -1 : 0;
   for (const button of $('quick-requests').querySelectorAll('button')) button.disabled = presetsBlocked;
   if (presetsBlocked) $('quick-requests').open = false;
-  $('send').textContent = pendingSubmitted && !sending ? 'Retry exact request' : '↑';
+  $('send').textContent = pendingSubmitted && !sending ? 'Retry exact request' : '\u21b5';
   $('send').dataset.retry = String(pendingSubmitted && !sending);
   $('send').setAttribute('aria-label', pendingSubmitted && !sending ? 'Retry exact request' : 'Send message');
-  $('send').title = pendingSubmitted && !sending ? 'Retry exact request' : 'Send message';
+  $('send').title = pendingSubmitted && !sending ? 'Retry exact request' : 'Send message (Enter)';
   renderRoleHint();
   roleSuggestions.refresh();
 }
@@ -501,6 +501,10 @@ function render() {
       }
     },
     stop: () => requestStopAfterStep(),
+    continueQuery: async input => {
+      try { await post('/api/runtime/continue-query', input); }
+      finally { await refresh(); }
+    },
     refresh: () => refresh(), discuss: () => $('message').focus(),
     inspectReference: (binding, reference) => {
       const fromQuestion = !$('question-panel').hidden;
@@ -582,7 +586,8 @@ function render() {
   document.body.dataset.designContent = hasDesign ? 'available' : 'empty';
   $('backbone-proposal').hidden = !hasDesign;
   $('assessment-card').hidden = hasDesign;
-  $('backbone-state').textContent = startup ? 'Loading Design...' : !designVerified ? 'Design unverified' : hasDesign ? 'Current Design' : 'No Design yet';
+  $('backbone-state').textContent = startup ? 'Loading Design...' : !designVerified ? 'Design unverified' : hasDesign ? 'Current Design' : '';
+  $('backbone-state').hidden = !startup && designVerified && !hasDesign;
   $('assessment-card').querySelector('strong').textContent = startup ? startupLabel : designVerified ? 'No Design has been published' : 'Design is not yet verified';
   $('assessment-card').querySelector('p').textContent = startup
     ? 'Please wait while the private runtime and saved settings are checked. No project request has been sent.'

@@ -71,10 +71,11 @@ export type NativeUserEvidence =
   | { schemaVersion: 'human-loop-native-user/v2'; id: string; messageId: string | null;
       turnId: string | null; interactionId: string | null; parentAgentTaskId?: string | null };
 export interface RoleInputEnvelope {
-  schemaVersion: 'human-role-input/v1'; kind: 'initial' | 'continuation';
+  schemaVersion: 'human-role-input/v1'; kind: 'initial' | 'continuation' | 'query-continuation';
   promptDigest: string; promptBytes: number; attachmentsDigest: string;
 }
 export interface RoleInput extends RoleInputEnvelope {
+  queryErrorId?: string;
   acknowledgementId: string | null;
   native: { user: NativeUserEvidence; turnId: string; startEventId: string } | null;
 }
@@ -98,7 +99,7 @@ export function parseNativeUserEvidence(value: unknown): NativeUserEvidence {
 export function parseRoleInputEnvelope(value: unknown): RoleInputEnvelope {
   const data = object(value, ['schemaVersion', 'kind', 'promptDigest', 'promptBytes', 'attachmentsDigest']);
   requireCondition(data.schemaVersion === 'human-role-input/v1', 'Incompatible sent-envelope evidence.');
-  return { schemaVersion: data.schemaVersion, kind: choice(data.kind, ['initial', 'continuation'] as const),
+  return { schemaVersion: data.schemaVersion, kind: choice(data.kind, ['initial', 'continuation', 'query-continuation'] as const),
     promptDigest: digest(data.promptDigest), promptBytes: integer(data.promptBytes, 1), attachmentsDigest: digest(data.attachmentsDigest) };
 }
 export interface OwnedEnd {

@@ -446,6 +446,11 @@ session. `discovery-change` remains readable in historical native ledgers but is
 not an accepted Router tool outcome. Saved Development-origin change requests
 remain inspectable without blocking discovery, resuming assessments or exposing
 impact-decision controls.
+The root discovery review pane is hidden while Development is selected, including
+startup. Its impact dialog and attention-driven opening are suspended in that
+view, not merely its Review trigger. Returning to discovery or saved artifacts
+restores the existing review context, including unsent refinements, errors and
+dismissed-dialog state; native Development Review controls are unchanged.
 
 Explicit continuation of a pre-Development change still persists an immutable
 outbound request before sending; duplicate delivery reconciles that identity,
@@ -945,6 +950,14 @@ saved, then attached with the exact original tools/hooks/permissions and
 used to make a session durable.
 
 ### Continue after an admitted role failed
+
+Native shell task-registry `completed`/`failed` values describe lifecycle, not a
+concrete process exit code. A later exact owned shell exit notification or tool
+result supplies that outcome, including nonzero command failure, without making
+the private workflow `execution-unknown`. Recorded concrete exit codes and exact
+notification identities still cannot be contradicted. Cancellation and
+interruption evidence remain distinct and retained; neither process completion
+nor exit 0 substitutes for the role's declared result or proves tests passed.
 
 An admitted request held as `execution-unknown` is **not unused setup**. Use
 Development **Close runtime** or the host's normal **Stop**, then reopen the updated

@@ -7,6 +7,7 @@ import { renderHumanLoop } from '../public/renderers/human-loop.js';
 import { renderConversationEntry } from '../public/renderers/conversation.js';
 import { projectHumanConversation } from '../src/human-loop-provider.mjs';
 import { projectHumanHistory } from '../public/renderers/human-loop-history.js';
+import { developmentStatus } from '../public/development-status.js';
 import { browserAvailable, openFixtureBrowser } from './helpers/browser-fixture.mjs';
 
 // Same small ownerDocument fixture pattern as conversation-renderer.test.mjs.
@@ -630,6 +631,7 @@ test('every workflow and runtime status has a truthful label and an explicit ans
     ['working', 'Working'],
     ['waiting-permission', 'Waiting for permission'],
     ['waiting-confirmation', 'Waiting for implementation confirmation'],
+    ['waiting-query', 'Model query failed; task retained'],
     ['execution-unknown', 'Execution state unknown'],
     ['presentation-pending', 'Result presentation pending'],
     ['stopping', 'Stopping after current step'], ['closed', 'Closed'],
@@ -650,6 +652,34 @@ test('every workflow and runtime status has a truthful label and an explicit ans
     assert.deepEqual(view, before);
     assert.deepEqual(ui.calls, { answers: [], stop: 0, refresh: 0, discuss: 0 });
   }
+});
+
+test('query failure Continue is explicit, exact and non-spinning once native processing stops', async () => {
+  const view = projection();
+  view.status = 'waiting-query';
+  view.reason = '<error>Provider request failed</error>';
+  view.queryFailure = { id: 'error-1', taskId: 'task-1', processing: false, canContinue: true, blocker: null };
+  const entered = Promise.withResolvers(), calls = [];
+  const ui = fixture(view, { continueQuery: async input => { calls.push(input); await entered.promise; } });
+  assert.match(ui.container.textContent, /Provider request failed/);
+  const first = ui.action('continueQuery').fire('click');
+  await ui.action('continueQuery').fire('click');
+  assert.deepEqual(calls, [{ taskId: 'task-1', errorId: 'error-1' }]);
+  ui.render(view);
+  assert.equal(ui.action('continueQuery').disabled, true);
+  entered.resolve(); await first;
+  const snapshot = { workflow: { ...view, activeCondition: 'running', questionCounts: {} },
+    conversationStatus: 'verified', installation: { status: 'ready' } };
+  assert.equal(developmentStatus(snapshot).kind, 'attention');
+  snapshot.workflow.status = 'working';
+  snapshot.workflow.queryFailure = { ...view.queryFailure, canContinue: false, processing: true,
+    blocker: 'Native retries are still running.' };
+  assert.equal(developmentStatus(snapshot).kind, 'active');
+  ui.render(snapshot.workflow);
+  assert.equal(ui.action('continueQuery').disabled, true);
+  assert.match(ui.container.textContent, /Native retries are still running/);
+  ui.render({ ...view, queryFailure: null });
+  assert.equal(ui.action('continueQuery').hidden, true);
 });
 
 test('all untrusted copy is literal text; unavailable and unsupported views retire form handlers', async () => {

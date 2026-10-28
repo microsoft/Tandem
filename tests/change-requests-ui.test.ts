@@ -25,6 +25,133 @@ function request(): ChangeRequest {
         } };
 }
 
+for (const startingPath of ["preparation", "development"] as const) {
+    test(`${startingPath} entry keeps saved discovery review out of Development startup and ready`, async t => {
+        const h = await reactHarness(t, undefined, startingPath, false, true), initial = state("development");
+        const change: ChangeRequest = { ...request(), status: "completed", completedAt: initial.updatedAt };
+        initial.changeRequests = [change];
+        initial.lifecycle.outputs = [{ stageId: "prototype", path: ".tandem\\prototype-r7.json", completedAt: initial.updatedAt }];
+        h.render(initial); await h.flush();
+        await h.fire(h.get("development-tab"), "mousedown", { button: 0 });
+        const frame = h.get<HTMLIFrameElement>("project-conversation-frame");
+        for (const status of ["starting", "ready"]) {
+            h.window.dispatchEvent(new h.window.MessageEvent("message", { origin: "http://127.0.0.1:8765", source: frame.contentWindow,
+                data: { protocol: "tandem-project/v1", channel: "fixture-project", type: "status",
+                    statusScope: JSON.stringify([initial.prototypeId, initial.generation]), status,
+                    starting: status === "starting", active: status === "ready",
+                    presentation: { kind: status === "starting" ? "active" : "idle",
+                        text: status === "starting" ? "Opening Development with the saved Prototype..." : "Ready", requestId: null } } }));
+            await h.flush();
+            assert.equal(h.get("development-panel").hidden, false);
+            assert.equal(h.get("stage-input-review").hidden, true);
+            assert.ok(h.get("toggle-change-details").closest("[hidden]"), "Discovery Review is not a Development control.");
+            assert.equal(h.document.querySelector("#change-request-details"), null);
+            assert.equal(h.get("project-conversation-frame"), frame);
+        }
+        for (const tab of ["design-tree-tab", "live-preview-tab"]) {
+            await h.fire(h.get(tab), "mousedown", { button: 0 });
+            assert.equal(h.get("stage-input-review").hidden, false);
+        }
+        await h.fire(h.get("content-tab"), "mousedown", { button: 0 });
+        assert.equal(h.get("toggle-change-details").closest("[hidden]"), null);
+        await h.click("toggle-change-details");
+        assert.match(h.get("change-request-details").textContent!, /Change review complete/);
+        await h.click("close-change-details");
+        assert.equal(JSON.stringify(h.store.getSnapshot().state.changeRequests), JSON.stringify([change]));
+        assert.equal(h.requests.filter(item => item.options.method === "POST").length, 0);
+        assert.deepEqual(h.errors, []);
+    });
+}
+
+test("discovery attention waits for return from Development and retains pending review guards", async t => {
+    const h = await reactHarness(t, undefined, "preparation", false, true), initial = state("development");
+    initial.changeRequests = [{ ...request(), status: "analyzing", assessment: null }];
+    h.render(initial); await h.flush();
+    const updated = { ...initial, revision: 2, changeRequests: [{ ...request(), error: "Discovery impact needs another check." }] };
+    h.render(updated); await h.flush();
+    assert.equal(h.get("development-panel").hidden, false);
+    assert.equal(h.document.querySelector("#change-request-details"), null, "Attention cannot open a discovery portal over Development.");
+    assert.ok(h.get("change-action-status").closest("[hidden]"));
+    await h.fire(h.get("live-preview-tab"), "mousedown", { button: 0 });
+    assert.equal(h.get("change-request-details").getAttribute("role"), "dialog");
+    assert.match(h.get("change-dialog-error").textContent!, /Discovery impact needs another check/);
+    await h.click("close-change-details");
+    assert.equal(h.get("change-action-status").closest("[hidden]"), null);
+    assert.equal(h.get("live-preview-panel").hasAttribute("inert"), true, "The pending earlier-stage review still blocks Prototype editing.");
+    assert.ok(h.get("continue-pending-review"));
+    await h.fire(h.get("development-tab"), "mousedown", { button: 0 });
+    await h.fire(h.get("live-preview-tab"), "mousedown", { button: 0 });
+    assert.equal(h.document.querySelector("#change-request-details"), null, "Returning must not reopen a dismissed review.");
+    assert.equal(h.requests.filter(item => item.options.method === "POST").length, 0);
+    assert.deepEqual(h.errors, []);
+});
+
+test("Development suspends an open discovery dialog without losing refinement or action errors", async t => {
+    const h = await reactHarness(t, undefined, "preparation", false, true), initial = state("development");
+    initial.changeRequests = [request()];
+    h.render(initial); await h.flush();
+    await h.fire(h.get("live-preview-tab"), "mousedown", { button: 0 });
+    await h.click("toggle-change-details");
+    const refine = [...h.get("change-request-details").querySelectorAll("button")].find(button => button.textContent === "Edit request")!;
+    await h.click(refine);
+    await h.input("change-detail", "Keep this unsent refinement.");
+    h.setFetch(async () => response({ error: "The discovery baseline changed; recheck this proposal." }, 409));
+    await h.fire(h.get("change-detail").closest("form")!, "submit");
+    assert.match(h.get("change-dialog-error").textContent!, /discovery baseline changed/);
+    await h.fire(h.get("development-tab"), "mousedown", { button: 0 });
+    assert.equal(h.get("development-panel").hidden, false);
+    assert.equal(h.document.querySelector("#change-request-details"), null);
+    assert.ok(h.get("change-action-status").closest("[hidden]"));
+    await h.fire(h.get("live-preview-tab"), "mousedown", { button: 0 });
+    assert.equal(h.get<HTMLTextAreaElement>("change-detail").value, "Keep this unsent refinement.");
+    assert.match(h.get("change-dialog-error").textContent!, /discovery baseline changed/);
+    await h.click("close-change-details");
+    assert.equal(h.get("change-action-status").closest("[hidden]"), null);
+    assert.equal(JSON.stringify(h.store.getSnapshot().state.changeRequests), JSON.stringify(initial.changeRequests));
+    assert.equal(h.requests.filter(item => item.options.method === "POST").length, 1, "Navigation cannot submit or discard a review.");
+    assert.deepEqual(h.errors, []);
+});
+
+test("a pinned discovery draft keeps unsaved edits and Apply guards across Development browsing", async t => {
+    const h = await reactHarness(t), initial = state("prototype");
+    initial.requirements.substage = "dag";
+    initial.decisionGraph.nodes = [decision("save", "answered")];
+    initial.changeRequests = [request()];
+    const reference: StageReviewReference = { version: 1, id: "review-22222222-2222-2222-2222-222222222222",
+        stage: "requirements", generation: initial.generation, createdAt: initial.updatedAt, appliedAt: null, discardedAt: null,
+        changeRequestId: "change" };
+    const draft = { ...createStageReview(initial, reference), revision: 1, provider: initial.provider,
+        stageReviewStatus: { conflict: "", blocker: null, changed: true, currentStage: "prototype",
+            appliedAt: null, discardedAt: null } };
+    const parent = { ...initial, revision: 2, stageReviews: [reference],
+        changeRequests: [{ ...request(), status: "reviewing" as const, reviewId: reference.id, remainingStages: ["requirements", "prototype"] }] };
+    h.setFetch(async path => {
+        if (path === "/api/reviews/open") return response({ draft });
+        if (path.endsWith("/baseline")) return response({ state: initial, document: null });
+        if (path.startsWith(`/api/reviews/${reference.id}/`)) return response(draft);
+        assert.equal(path, "/api/state");
+        return response(parent);
+    });
+    h.render(initial); await h.flush();
+    await h.click("toggle-change-details"); await h.click("approve-change");
+    const editor = h.get<HTMLTextAreaElement>("review-requirement-request");
+    await h.input(editor, "Preserve this unsent draft request.");
+    assert.equal(h.get<HTMLButtonElement>("apply-stage-review").disabled, true);
+    await h.fire(h.get("development-tab"), "mousedown", { button: 0 });
+    assert.equal(h.get("development-panel").hidden, false);
+    assert.equal(h.get("stage-input-review").hidden, true);
+    assert.equal(h.document.querySelector("#change-request-details, #apply-stage-review"), null);
+    assert.equal(h.get("review-requirement-request"), editor, "The pinned editor must remain mounted.");
+    await h.fire(h.get("design-tree-tab"), "mousedown", { button: 0 });
+    assert.equal(h.get("review-requirement-request"), editor);
+    assert.equal(editor.value, "Preserve this unsent draft request.");
+    assert.equal(h.get<HTMLButtonElement>("apply-stage-review").disabled, true);
+    assert.match(h.get("design-tree-workspace-tab").getAttribute("aria-label")!, /pinned draft review/);
+    assert.equal(h.requests.filter(item => item.options.method === "POST").length, 1, "Only opening the draft may post.");
+    assert.equal(h.store.getSnapshot().state.lifecycle.currentStage, "prototype");
+    assert.deepEqual(h.errors, []);
+});
+
 test("completed reviews hide the review pane and retain explicit abandonment in request history", async t => {
     const h = await reactHarness(t), initial = state("prototype");
     const change: ChangeRequest = { ...request(), status: "completed", completedAt: initial.updatedAt,

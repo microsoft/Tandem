@@ -711,8 +711,8 @@ function Workspace(props: WorkspaceProps) {
           </Tabs.Content>)}
           <Tabs.Content value="content" forceMount hidden={activeTab !== "content"} id="content-panel" className="content-panel" aria-labelledby="content-tab" tabIndex={0}><ArtifactsPanel selectedArtifactId={selectedArtifact} /></Tabs.Content>
           {contentBlockedByReview && <div className="stage-content-overlay" aria-hidden="true" />}
-          <div id="stage-input-review" className="stage-input-review" aria-label="Review and approval">
-            {!reviewing && <ChangeRequestsPanel compact showTrigger={!["preparation", "design-tree", "preview", "sketch"].includes(activeTab)} />}
+          <div id="stage-input-review" className="stage-input-review" aria-label="Review and approval" hidden={developmentView}>
+            {!reviewing && <ChangeRequestsPanel compact active={!developmentView} showTrigger={!["preparation", "design-tree", "preview", "sketch"].includes(activeTab)} />}
             {showStageTabs && !reviewing && <PendingReviewPane viewedStage={reviewTarget ?? current} pinnedReview={review}
               onActionsContainer={setReviewControlsContainer} />}
             {showStageTabs && <section id="stage-review-actions" ref={setStageActionsContainer} className="phase-actions"

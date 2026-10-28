@@ -791,6 +791,13 @@ test("real React Development keeps handoff controls in view across long-status h
         value.lifecycle.outputs = [{ stageId: "prototype", path: snapshotPath, completedAt: value.updatedAt }];
         value.development = { handoffId: `handoff-${"a".repeat(64)}`, requestId: `handoff-${"a".repeat(64)}`, snapshotPath };
         value.status = "Tandem Development";
+        value.changeRequests = [{ version: 1, id: "saved-change", clientRequestId: "saved-client",
+            originStage: "prototype", message: "Retained discovery update.", submittedAt: value.updatedAt,
+            baseCheckpointId: null, baseSketchRevisionId: null, visualSelection: null, sourceResultId: null,
+            sourceRequests: [], baselineDigest: "b".repeat(64), analysisId: "saved-analysis", status: "completed",
+            error: "", clarifications: [], remainingStages: [], workStarted: [], affectedDecisionIds: [],
+            snapshotPath: null, completedAt: value.updatedAt, developmentAdmission: null, developmentRequest: null,
+            assessment: null }];
         const longStatus = "Design continuation needs attention. The exact handoff was retained: "
             + "Workflow: The saved local private session is unavailable; no replacement session was created. "
             + "Reserved private session be95789c-4bcf-4f23-833e-4b825697b4da; "
@@ -802,7 +809,8 @@ test("real React Development keeps handoff controls in view across long-status h
         const frameUrl = await serve(t, (_request, response) => {
             frameLoads++;
             response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-            response.end('<!doctype html><html><body><label>Unsent Development draft<textarea id="draft"></textarea></label></body></html>');
+            response.end('<!doctype html><html><body><label>Unsent Development draft<textarea id="draft"></textarea></label>'
+                + '<button id="native-review" onclick="this.dataset.opened = \'true\'">Review</button></body></html>');
         });
         const [styles, hostStyles, bundle] = await Promise.all([
             build({ entryPoints: [fileURLToPath(new URL("../src/renderer/styles.css", import.meta.url))],
@@ -938,6 +946,9 @@ test("real React Development keeps handoff controls in view across long-status h
                     button: bounds("#continue-design"),
                     guide: guide.textContent, guideTitle: guide.title, guideClipped: guide.scrollWidth > guide.clientWidth,
                     active: document.activeElement.id || document.activeElement.tagName,
+                    discoveryReviewVisible: document.querySelector("#toggle-change-details").getClientRects().length > 0,
+                    discoveryPaneVisible: document.querySelector("#stage-input-review").getClientRects().length > 0,
+                    discoveryDialogOpen: Boolean(document.querySelector("#change-request-details")),
                     frameRetained: window.originalDevelopmentFrame === document.querySelector("#project-conversation-frame") };
             })()`);
             t.diagnostic(JSON.stringify({ step, ...geometry }));
@@ -953,6 +964,9 @@ test("real React Development keeps handoff controls in view across long-status h
                     `${part} is not visible and hit-testable: ${JSON.stringify(geometry)}`);
             }
             assert.equal(geometry.frameRetained, true);
+            assert.equal(geometry.discoveryReviewVisible, false);
+            assert.equal(geometry.discoveryPaneVisible, false);
+            assert.equal(geometry.discoveryDialogOpen, false);
         };
         await move("#project-conversation-frame", true);
         snapshot = { ...snapshot, revision: snapshot.revision + 1, status: longStatus };
@@ -982,6 +996,9 @@ test("real React Development keeps handoff controls in view across long-status h
         };
         await inFrame('document.querySelector("#draft").focus()');
         await browser.call("Input.insertText", { text: "Unsent private draft survives hover and navigation." });
+        assert.equal(await inFrame('document.querySelector("#native-review").getClientRects().length > 0'), true);
+        await inFrame('document.querySelector("#native-review").click()');
+        assert.equal(await inFrame('document.querySelector("#native-review").dataset.opened'), "true");
         for (const width of [1280, 900, 640]) {
             await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: false });
             if (width === 640) {
@@ -1007,6 +1024,11 @@ test("real React Development keeps handoff controls in view across long-status h
         await settle();
         await browser.evaluate('document.querySelector("#content-tab").scrollIntoView({block:"nearest"})');
         await click("#content-tab");
+        assert.equal(await browser.evaluate('document.querySelector("#toggle-change-details").getClientRects().length > 0'), true);
+        await click("#toggle-change-details");
+        await browser.waitFor('Boolean(document.querySelector("#change-request-details"))');
+        assert.match(await browser.evaluate('document.querySelector("#change-request-details").textContent'), /Retained discovery update/);
+        await click("#close-change-details");
         assert.equal(await inFrame('document.querySelector("#draft").value'), "Unsent private draft survives hover and navigation.");
         await browser.evaluate('document.querySelector("#preparation-tab").scrollIntoView({block:"nearest"})');
         await click("#preparation-tab");

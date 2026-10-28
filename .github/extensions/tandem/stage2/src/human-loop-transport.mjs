@@ -1,4 +1,5 @@
 import { humanLoopPrompts } from "../public/prompts/human-loop.js";
+import { randomUUID } from "node:crypto";
 import { HumanLoopPreferences, normalizeModelCatalog } from "./human-loop-preferences.mjs";
 import { parseHumanLoopOwner, requireHumanRequestRunning } from "../runtime-src/domain/human-loop/model.ts";
 import { parseRoleResult } from "../runtime-src/domain/human-loop/contracts.ts";
@@ -26,6 +27,10 @@ const reviewScopeTools = ["view", "grep", "glob"];
 const reviewReadTools = new Set([...reviewScopeTools, "rg"]);
 const reviewNativeTools = new Set([...reviewScopeTools, "rg", reviewCollectorToolName, "read_powershell", "list_powershell"]);
 const workflowSettled = new Set(["completed", "error", "halted", "paused", "cancelled"]);
+const queryErrorReason = (message, limit) => text(message)
+  .replace(/(authorization["']?\s*[:=]\s*["']?(?:(?:bearer|basic|token)\s+)?|bearer\s+|(?:access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|client[_-]?secret|secret|password|token)\s*["']?\s*[:=]\s*["']?)[^\s"',]+/gi, "$1[redacted]")
+  .replace(/\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b/g, "[redacted]")
+  .replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, limit);
 
 /** New one-copy protocol; shares cancellation, permission brokerage and active budgets with the preserved legacy adapter. */
 export class HumanLoopTransport {
@@ -42,6 +47,7 @@ export class HumanLoopTransport {
   #active = null;
   #failure = null;
   #failureWrite = null;
+  #queryContinuation = null;
   #tail = Promise.resolve();
   #seen = new Map();
   #users = new Map();
@@ -499,7 +505,7 @@ export class HumanLoopTransport {
     const active = { packet, envelope: humanInputEnvelope(prompt, attachments), bound: false,
       messageId: null, user: null, starts: [], acknowledged: false, started: false,
       result: null, resultSubmitted: false, submitting: false, resultCallId: null,
-      continuation: null, missingResultIdle: null,
+      continuation: null, followups: [], queryError: null, missingResultIdle: null,
       stopId: null, stopAcknowledged: false,
       controller: new AbortController(), budget: new PrivateTaskBudget(this.#now), tools: new Set(), grants: new Map(), admittedTools: new Map(), nativeCalls: new Map(), nativeRequests: new Map(),
       sent: false, notSent: false, reviewBatches: [], resultReady: Promise.withResolvers() };
@@ -560,15 +566,129 @@ export class HumanLoopTransport {
     return active.resultReady.promise;
   }
 
+  #inputs(active) { return [active, ...active.followups]; }
+  #input(active) { return active.followups.findLast(input => input.sent) ?? active; }
+
+  async queryFailureStatus() {
+    const active = this.#active, error = active?.queryError;
+    if (!error) return null;
+    const input = this.#input(active);
+    let processing = null, blocker = null;
+    try {
+      this.#healthy();
+      requireCondition(this.#session && !this.#closing && !this.#released, "The original private connection is unavailable.");
+      await this.#verify();
+      const [mode, native, queue] = await Promise.all([this.#session.rpc.mode.get(),
+        this.#session.rpc.metadata.isProcessing(), this.#session.rpc.queue.pendingItems()]);
+      requireCondition(mode === "interactive" && typeof native?.processing === "boolean",
+        "The native foreground activity or Interactive mode cannot be verified.");
+      processing = native.processing;
+      if (processing) blocker = "The native agent is still processing or retrying. Wait for it to stop before Continue.";
+      requireCondition(Array.isArray(queue.steeringMessages), "Native queue status is unavailable.");
+      if (parseOwnedQueue(queue).length || queue.steeringMessages.length || queue.inFlightSteeringCount > 0) {
+        blocker ??= "The native runtime still owns pending input. No competing continuation will be sent.";
+      }
+      const state = await this.#store.load();
+      if (active.result || active.resultSubmitted || active.submitting) blocker ??= "The role result is already saved; it cannot be continued.";
+      if (active.stopId || active.controller.signal.aborted || state.stop) blocker ??= "Stop owns this task; it cannot be continued.";
+      if (!error.recorded || !input.bound || !input.acknowledged || error.inputId !== input.user?.id) {
+        blocker ??= "The query error and its current native input have not been fully confirmed.";
+      }
+    } catch (failure) { blocker ??= safeReason(failure, 2000); }
+    return { id: error.id, taskId: active.packet.binding.id, requestId: active.packet.binding.requestId,
+      reason: error.reason, processing, canContinue: !blocker, blocker };
+  }
+
+  async continueQuery({ taskId, errorId }) {
+    this.#healthy();
+    if (this.#queryContinuation) {
+      requireCondition(this.#queryContinuation.taskId === taskId && this.#queryContinuation.errorId === errorId,
+        "Another query continuation is already being submitted.");
+      return this.#queryContinuation.promise;
+    }
+    const active = this.#requireActive();
+    requireCondition(active.packet.binding.id === taskId, "Continue belongs to another task.");
+    const previous = active.followups.find(input => input.queryErrorId === errorId);
+    if (previous) {
+      requireCondition(previous.acknowledged, "Continuation acceptance is unconfirmed; it will not be resent.");
+      return { taskId, errorId, messageId: previous.messageId };
+    }
+    const work = this.#continueQuery(active, errorId);
+    this.#queryContinuation = { taskId, errorId, promise: work };
+    try { return await work; }
+    finally { this.#queryContinuation = null; this.#notify({ kind: "state" }); }
+  }
+
+  async #continueQuery(active, errorId) {
+    const status = await this.queryFailureStatus(), binding = active.packet.binding;
+    requireCondition(status?.id === errorId && status.canContinue, status?.blocker ?? "The query error is no longer current.");
+    const current = () => {
+      this.#healthy();
+      requireCondition(this.#active === active && !active.result && !active.submitting && !active.stopId
+        && !active.controller.signal.aborted && !this.#closing && !this.#released && active.queryError?.id === errorId,
+      "The task or query error changed before continuation.");
+    };
+    current();
+    const prompt = `Continue the same ${binding.role} task from the retained private conversation after the model-query error. Continue from the broken point; do not replay completed tool effects, repeat approvals, restart the task or replace its Design or baseline. Submit the existing role's required result when ready.\n`
+      + JSON.stringify({ taskId: binding.id, requestId: binding.requestId, inputDigest: binding.inputDigest, errorId });
+    const input = { envelope: humanInputEnvelope(prompt, [], "query-continuation"), queryErrorId: errorId, bound: false,
+      messageId: null, user: null, acknowledged: false, sent: false };
+    const attempt = randomUUID();
+    let prepared = false;
+    try {
+      await this.#store.dispatch("user", `continue-query:${attempt}`, "continue-role-query",
+        { taskId: binding.id, errorId, envelope: input.envelope });
+      prepared = true;
+      await this.#verify();
+      const [mode, foreground, queue, state] = await Promise.all([this.#session.rpc.mode.get(),
+        this.#session.rpc.metadata.isProcessing(), this.#session.rpc.queue.pendingItems(), this.#store.load()]);
+      requireCondition(mode === "interactive" && foreground?.processing === false && parseOwnedQueue(queue).length === 0
+        && Array.isArray(queue.steeringMessages) && !queue.steeringMessages.length
+        && !(queue.inFlightSteeringCount > 0), "Native work resumed; no competing continuation was sent.");
+      requireHumanRequestRunning(state, binding.requestId, binding.id);
+      requireCondition(!state.stop, "Stop owns this task; it cannot be continued.");
+      current();
+      active.followups.push(input);
+      active.missingResultIdle = null;
+      input.sent = true;
+      const messageId = text(await this.#session.send({ mode: "immediate", agentMode: "interactive", prompt }));
+      input.messageId = messageId;
+      if (this.#active !== active || active.stopId || active.resultSubmitted || this.#closing || this.#released) {
+        this.#retiredMessages.add(messageId);
+        return { taskId: binding.id, errorId, messageId };
+      }
+      requireCondition(!input.user?.messageId || input.user.messageId === messageId,
+        "Native query continuation acknowledgement differs from its delivered input.");
+      await this.#store.dispatch("runtime", `ack-query:${attempt}`, "continuation-acknowledged",
+        { taskId: binding.id, dispatchId: binding.dispatchId, messageId, queryErrorId: errorId });
+      input.acknowledged = true;
+      if (active.queryError?.id === errorId) active.queryError = null;
+      this.#pump();
+      return { taskId: binding.id, errorId, messageId };
+    } catch (error) {
+      if (input.sent) {
+        if (active.resultSubmitted || active.stopId || this.#closing || this.#released) this.#notify({ kind: "dispatch-diagnostic", summary: error.message });
+        else await this.#fail("Query continuation acknowledgement is uncertain; do not resend.", error);
+      } else if (prepared && this.#active === active) {
+        await this.#store.dispatch("host", `cancel-query:${attempt}`, "cancel-query-continuation", { taskId: binding.id, errorId });
+      }
+      throw error;
+    }
+  }
+
   async #continueMissingResult(active) {
+    active.missingResultAttempts = (active.missingResultAttempts ?? 0) + 1;
+    const suffix = active.missingResultAttempts === 1 ? "" : `:after-query:${active.missingResultAttempts}`;
     const prompt = humanTaskPrompt(active.packet, "continuation");
     const continuation = { envelope: humanInputEnvelope(prompt, [], "continuation"), bound: false,
       messageId: null, user: null, acknowledged: false, sent: false };
     active.continuation = continuation;
+    active.followups.push(continuation);
+    let prepared = false;
     const current = () => this.#active === active && !active.result
-      && !active.stopId && !active.controller.signal.aborted && !this.#closing && !this.#released;
+      && !active.queryError && !active.stopId && !active.controller.signal.aborted && !this.#closing && !this.#released;
     try {
-      await this.#store.recordMessage({ id: `continuation:${active.packet.binding.id}`,
+      await this.#store.recordMessage({ id: `continuation:${active.packet.binding.id}${suffix}`,
         requestId: active.packet.binding.requestId, role: "host", kind: "status", timestamp: new Date().toISOString(),
         content: "The agent ended without reporting its required result. One continuation is allowed for this task; completed work is retained." });
       if (!current() || active.submitting) return;
@@ -577,8 +697,9 @@ export class HumanLoopTransport {
       const state = await this.#store.load();
       if (!current() || active.submitting || state.stop) return;
       const binding = active.packet.binding;
-      await this.#store.dispatch("host", `input:${binding.dispatchId}:continuation`, "role-input-prepared",
+      await this.#store.dispatch("host", `input:${binding.dispatchId}:continuation${suffix}`, "role-input-prepared",
         { taskId: binding.id, dispatchId: binding.dispatchId, inputDigest: binding.inputDigest, envelope: continuation.envelope });
+      prepared = true;
       if (!current() || active.submitting || (await this.#store.load()).stop) return;
       continuation.sent = true;
       const messageId = text(await this.#session.send({
@@ -592,7 +713,7 @@ export class HumanLoopTransport {
       }
       requireCondition(!continuation.user?.messageId || continuation.user.messageId === messageId,
         "Native continuation acknowledgement differs from its delivered input.");
-      await this.#store.dispatch("runtime", `ack:${binding.dispatchId}:continuation`, "continuation-acknowledged",
+      await this.#store.dispatch("runtime", `ack:${binding.dispatchId}:continuation${suffix}`, "continuation-acknowledged",
         { taskId: binding.id, dispatchId: binding.dispatchId, messageId });
       continuation.acknowledged = true;
       this.#notify({ kind: "role-continuation", requestId: active.packet.binding.requestId,
@@ -601,6 +722,15 @@ export class HumanLoopTransport {
     } catch (error) {
       if (!current()) this.#notify({ kind: "dispatch-diagnostic", summary: error.message });
       else await this.#fail("The required-result continuation could not be prepared or sent; no automatic resend.", error);
+    } finally {
+      if (!continuation.sent && active.queryError && this.#active === active) {
+        try {
+          if (prepared) await this.#store.dispatch("host", `cancel-missing-query:${active.queryError.id}`, "cancel-query-continuation",
+            { taskId: active.packet.binding.id, errorId: null });
+          active.continuation = null;
+          active.followups = active.followups.filter(input => input !== continuation);
+        } catch (error) { await this.#fail("Unsent continuation cancellation could not be saved.", error); }
+      }
     }
   }
 
@@ -627,7 +757,7 @@ export class HumanLoopTransport {
     const active = this.#active;
     requireCondition(active?.packet.binding.id === taskId && (active.resultSubmitted || active.stopAcknowledged || active.notSent || !active.sent),
       "Cannot release another role or an unreported operation.");
-    for (const input of [active, active.continuation].filter(Boolean)) {
+    for (const input of this.#inputs(active)) {
       if (input.user) this.#retiredInteractions.add(input.user.interactionId);
       if (input.messageId) this.#retiredMessages.add(input.messageId);
       if (input.sent) this.#retiredEnvelopes.set(input.envelope.promptDigest, {
@@ -1140,11 +1270,17 @@ export class HumanLoopTransport {
       }
       if (["session.error", "session.shutdown"].includes(event.type)) {
         const active = this.#active;
-        if (event.type === "session.error" && event.data?.errorType === "query"
-          && active?.packet.binding.role === "reviewer" && active.started && !active.result && !active.stopId) {
-          active.reviewError = { id: text(event.id), message: text(event.data.message) };
-          // A failed Reviewer attempt is advisory, never approval.
-          this.#pump(); return;
+        if (event.type === "session.error" && event.data?.errorType === "query") {
+          const inputId = this.#observedEvents.get(event.id), user = this.#users.get(inputId);
+          if (user && this.#retiredInteractions.has(user.interactionId)) return;
+          if (active && this.#inputs(active).some(input => input.user?.id === inputId)) {
+            const input = this.#input(active);
+            if (input.user?.id !== inputId || active.resultSubmitted || active.result || active.stopId) return;
+            active.queryError = { id: text(event.id), inputId, recorded: false,
+              reason: queryErrorReason(event.data.message, this.#owner.policy.values.resources.reviewReasonCharacters) };
+            active.missingResultIdle = null;
+            this.#pump(); return;
+          }
         }
         if (this.compaction.active) this.#compaction.failed(new Error("Native session interrupted; compaction outcome is unconfirmed."));
         void this.#fail("The private runtime reported interruption.", new Error(event.type)); return;
@@ -1176,7 +1312,7 @@ export class HumanLoopTransport {
         if (!active.resultSubmitted && !active.stopId && Array.isArray(data.toolRequests) && data.toolRequests.length
           && typeof data.interactionId === "string" && (data.turnId === undefined || typeof data.turnId === "string")) {
           requireCondition(!data.parentToolCallId
-            && [active.user, active.continuation?.user].some(user => user?.interactionId === data.interactionId)
+            && this.#inputs(active).some(input => input.user?.interactionId === data.interactionId)
             && active.starts.some(start => (data.turnId === undefined || start.turnId === data.turnId)
               && start.interactionId === data.interactionId),
           "Native tool requests have no exact owned assistant turn.");
@@ -1202,9 +1338,13 @@ export class HumanLoopTransport {
         return;
       }
       if (active?.resultSubmitted || active?.stopId) return;
+      if (event.type === "assistant.idle" && active?.queryError) {
+        this.#notify({ kind: "state" });
+        return;
+      }
       if (event.type === "session.idle") {
         requireCondition(data.aborted !== true, "The private runtime reported an unrequested cancellation.");
-        const input = active.continuation?.user ?? active.user;
+        const input = this.#input(active).user ?? active.user;
         if (this.#observedEvents.get(event.id) !== input.id) return;
         active.missingResultIdle = { id: text(event.id), inputId: input.id };
         this.#pump();
@@ -1215,7 +1355,7 @@ export class HumanLoopTransport {
       requireCondition(!event.agentId, "Unowned subagent events are not private task evidence.");
       requireCondition(active, "Unowned input/execution appeared in the private session.");
       if (event.type === "tool.execution_start") {
-        const input = active.continuation?.user ?? active.user;
+        const input = this.#input(active).user ?? active.user;
         const callId = text(data.toolCallId), request = active.nativeRequests.get(callId);
         const interactionId = data.interactionId === undefined ? request?.interactionId : data.interactionId;
         const turnId = data.turnId === undefined ? request?.turnId : data.turnId;
@@ -1232,13 +1372,13 @@ export class HumanLoopTransport {
           interactionId: input.interactionId, claimed: false, admission: null });
         active.tools.add(callId);
       } else if (event.type === "user.message") {
-        const continuation = active.user ? active.continuation : null;
+        const latest = this.#input(active), continuation = latest === active ? null : latest;
         const input = continuation ?? active;
         requireCondition(input.sent && !input.user, "Foreign or repeated private input has no issued Host dispatch.");
         const identity = this.#matchInput(event, input);
         requireCondition(![...this.#users.values()].some(user => user.interactionId === identity.interactionId),
           "Native input reused an existing interaction.");
-        requireCondition(active.starts.filter(start => start.interactionId !== active.user?.interactionId)
+        requireCondition(active.starts.filter(start => !this.#inputs(active).some(input => input.user?.interactionId === start.interactionId))
           .every(start => start.interactionId === identity.interactionId
             && (!identity.turnId || start.turnId === identity.turnId)),
         "Private input conflicts with its already observed native start.");
@@ -1248,10 +1388,10 @@ export class HumanLoopTransport {
         } else active.user = identity;
         this.#users.set(identity.id, identity);
       } else if (event.type === "assistant.turn_start") {
-        const input = active.continuation?.user ?? active.user;
+        const latest = this.#input(active), input = latest.user ?? active.user;
         requireCondition(!active.starts.some(start => start.turnId === data.turnId && start.interactionId === data.interactionId),
           "Native continuation reused a previous turn identity.");
-        const pending = active.continuation?.sent && !active.continuation.user;
+        const pending = latest !== active && latest.sent && !latest.user;
         requireCondition(typeof data.turnId === "string" && data.turnId.length > 0
           && typeof data.interactionId === "string" && data.interactionId.length > 0
           && (!input || input.interactionId === data.interactionId || pending), "Native start has no matching interaction.");
@@ -1305,7 +1445,7 @@ export class HumanLoopTransport {
       if (!active || this.#active !== active || active.resultSubmitted || active.submitting || active.stopId) return;
       const binding = active.packet.binding;
       if (!active.user) return;
-      for (const input of [active, active.continuation].filter(Boolean)) {
+      for (const input of this.#inputs(active)) {
         if (!input.user || input.bound) continue;
         const start = active.starts.find(start => start.interactionId === input.user.interactionId);
         if (!start) continue;
@@ -1314,6 +1454,7 @@ export class HumanLoopTransport {
         "Delivered input differs from its native turn or acknowledgement.");
         await this.#store.dispatch("runtime", `input-bound:${input.user.id}`, "role-input-bound", {
           taskId: binding.id, dispatchId: binding.dispatchId, kind: input.envelope.kind,
+          ...(input.queryErrorId ? { queryErrorId: input.queryErrorId } : {}),
           user: input.user, turnId: start.turnId, startEventId: start.id,
         });
         input.bound = true;
@@ -1326,18 +1467,29 @@ export class HumanLoopTransport {
           { taskId: binding.id, messageId: active.messageId, interactionId: start.interactionId });
         active.started = true;
       }
-      if (!active.result && active.missingResultIdle && !active.reviewError) {
+      if (active.queryError) {
+        const error = active.queryError, state = await this.#store.load();
+        if (!error.recorded && !active.result && !active.submitting && !active.stopId && !state.stop) {
+          await this.#store.dispatch("runtime", `query-error:${error.id}`, "role-query-failed",
+            { taskId: binding.id, errorId: error.id, inputId: error.inputId, reason: error.reason });
+          error.recorded = true;
+          this.#notify({ kind: "state" });
+        }
+        return;
+      }
+      const latest = this.#input(active);
+      if (!active.result && active.missingResultIdle) {
         const state = await this.#store.load();
         if (this.#active !== active || active.result || active.submitting || active.stopId || state.stop || this.#closing) return;
         if (!active.continuation) {
           void this.#continueMissingResult(active);
           return;
         }
-        if (!active.continuation.acknowledged || !active.continuation.bound || !active.continuation.user
-          || active.missingResultIdle.inputId !== active.continuation.user.id) return;
+        if (!latest.acknowledged || !latest.bound || !latest.user
+          || active.missingResultIdle.inputId !== latest.user.id) return;
       }
-      const failure = active.reviewError ?? (active.missingResultIdle && active.continuation?.acknowledged
-        && active.continuation.user?.id === active.missingResultIdle.inputId
+      const failure = (active.missingResultIdle && active.continuation?.acknowledged
+        && latest.user?.id === active.missingResultIdle.inputId
         ? { id: active.missingResultIdle.id, message: "The role did not submit its required result after one same-role continuation." } : null);
       if (!active.result && !active.submitting && failure) {
         const state = await this.#store.dispatch("host", `native-failure:${binding.id}`, "execution-failed", {

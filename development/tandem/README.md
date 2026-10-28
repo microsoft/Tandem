@@ -125,6 +125,18 @@ same-role continuation to submit the required result while retaining completed
 work. `assistant.idle` does not trigger recovery. A second omission reports
 failure; result, Stop and Close suppress further continuation.
 
+An owned native `session.error` with `errorType: query` is different from a
+missing result: it retains the current role, request, Design, approvals and
+completed work, including during Review. The actual model error is saved and
+shown with credential-like values redacted. Native retries and tools remain
+usable. When foreground processing has stopped, **Continue** sends a short
+same-task nudge into the retained private conversation; it does not replay the
+task packet, repeat approvals or capture a new baseline. Continue is human-only,
+bound to the current task/error, and cannot race pending native input or revive
+stopped/completed work. This is not a general recovery mechanism: other errors,
+uncertain acknowledgements, shutdown, ownership/storage failures and the
+existing full-restart retirement contract retain their previous behavior.
+
 Both normal dispatch and the one-shot missing-result continuation explicitly use
 immediate native delivery. Native enqueue can strand successor work while an
 attached background app remains running. Immediate delivery does not change

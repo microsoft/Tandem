@@ -1019,6 +1019,7 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await browser.waitFor('document.querySelector("#preview-frame").contentDocument?.querySelector("#preview-button")');
       for (const [width, height] of [[1360, 1000], [390, 1000], [1360, 580], [390, 600]]) {
         await browser.call("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+        await browser.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
         await browser.evaluate('document.querySelector("#preview-frame").scrollIntoView({block:"center"})');
         const rect = await browser.evaluate('(() => {const e=document.querySelector("#preview-frame"),r=e.getBoundingClientRect();return {hidden:e.hidden,display:getComputedStyle(e).display,width:r.width,height:r.height};})()');
         assert.ok(!rect.hidden && rect.display !== "none" && rect.width > 100 && rect.height >= 180, JSON.stringify(rect));
@@ -1616,12 +1617,15 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
         await inside(`document.body.dataset.theme=${JSON.stringify(theme)};
           document.querySelector("#message").value=${JSON.stringify(longDraft)};
           document.querySelector("#message").dispatchEvent(new Event("input",{bubbles:true}))`);
+        const unfocusedBorder = await inside('document.querySelector("#message").blur(); getComputedStyle(document.querySelector("#message")).borderColor');
         await click("#message", true);
         await inside('document.querySelector("#message").setSelectionRange(3,9);document.querySelector("#message").scrollTop=0');
         const focus = await inside(`(() => {
           const input=document.querySelector("#message"),r=input.getBoundingClientRect(),send=document.querySelector("#send").getBoundingClientRect(),
             style=getComputedStyle(input),outline=parseFloat(style.outlineWidth),offset=parseFloat(style.outlineOffset);
-          return {outline,offset,color:style.outlineColor,right:r.right+outline+offset,sendLeft:send.left,
+          return {outline,offset,border:style.borderColor,right:r.right,sendLeft:send.left,sendRight:send.right,
+            textRight:r.left+input.clientLeft+input.clientWidth-parseFloat(style.paddingRight),
+            inputTop:r.top,inputBottom:r.bottom,sendTop:send.top,sendBottom:send.bottom,
             padding:parseFloat(style.paddingLeft),horizontalOverflow:input.scrollWidth>input.clientWidth+1,
             idleContextHeight:document.querySelector("#project-message-context p").getBoundingClientRect().height,
             contextHeight:document.querySelector("#project-message-context").getBoundingClientRect().height,
@@ -1629,8 +1633,10 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
             describedBy:input.getAttribute("aria-describedby"),
             start:input.selectionStart,end:input.selectionEnd,text:input.value,focused:document.activeElement===input};
         })()`);
-        assert.ok(focus.outline >= 2 && focus.offset <= -focus.outline && focus.padding >= 4, JSON.stringify({ width, height, theme, ...focus }));
-        assert.ok(focus.right <= focus.sendLeft + 1 && !focus.horizontalOverflow, JSON.stringify({ width, height, theme, ...focus }));
+        assert.notEqual(focus.border, unfocusedBorder, "The composed textarea keeps a visible focus treatment.");
+        assert.ok(focus.padding >= 4 && focus.textRight < focus.sendLeft && focus.sendRight < focus.right
+          && focus.sendTop >= focus.inputTop && focus.sendBottom < focus.inputBottom && !focus.horizontalOverflow,
+          JSON.stringify({ width, height, theme, ...focus }));
         assert.deepEqual([focus.start, focus.end, focus.text, focus.focused], [3, 9, longDraft, true]);
         assert.deepEqual([focus.contextHeight, focus.idleContextHeight, focus.roleHelpHeight, focus.describedBy], [0, 0, 0, null]);
         if (process.env.TANDEM_UI_EVIDENCE) {

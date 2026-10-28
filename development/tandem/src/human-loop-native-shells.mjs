@@ -15,6 +15,10 @@ const nativeStart = entry => entry.nativeStartedAt ?? entry.taskBinding?.started
 const sameTask = (task, entry) => task.type === "shell" && task.id === entry.shellId
   && (!nativeStart(entry) || task.startedAt === nativeStart(entry));
 const taskStatus = task => task.status === "cancelled" ? "stopped" : task.status;
+const naturalEnd = status => status === "completed" || status === "failed";
+// Registry lifecycle completion is not process-exit proof. Cancellation remains a distinct outcome.
+const statusWithExit = (status, exitCode) => status === "stopped" || exitCode === null ? status
+  : exitCode === 0 ? "completed" : "failed";
 const taskViewId = task => `native-task:${encodeURIComponent(task.id)}:${encodeURIComponent(task.startedAt)}`;
 
 /** Cancellation is authoritative; a second terminal registry row is not required. */
@@ -70,7 +74,8 @@ function validEntry(e, sessionId, maximumTasks) {
     && (e.interruption === undefined || e.interruption && typeof e.interruption === "object" && e.mode === "sync"
       && (e.interruption.nativeStatus === undefined && e.status === "stopped"
         || ["cancelled", "completed", "failed"].includes(e.interruption.nativeStatus)
-          && e.status === (e.interruption.nativeStatus === "cancelled" ? "stopped" : e.interruption.nativeStatus))
+          && (e.status === (e.interruption.nativeStatus === "cancelled" ? "stopped" : e.interruption.nativeStatus)
+            || naturalEnd(e.interruption.nativeStatus) && e.status === statusWithExit(e.interruption.nativeStatus, e.exitCode)))
       && ["endEventId,nativeStatus,observedAt,stopId", "endEventId,nativeCompletedAt,nativeStartedAt,observedAt,stopId",
         "endEventId,nativeCompletedAt,nativeStartedAt,nativeStatus,observedAt,stopId"].includes(Object.keys(e.interruption).sort().join(","))
       && nonempty(e.interruption.stopId) && nonempty(e.interruption.endEventId)
@@ -276,20 +281,20 @@ export class HumanLoopNativeShells {
         "Native completion contains ambiguous shell exit identities.");
       const exit = nativeExits[0]
         ?? contents.find(c => c.type === "terminal" && Number.isInteger(c.exitCode));
+      check(!exit || Number.isInteger(exit.exitCode)
+        && (entry.exitCode === null || entry.exitCode === exit.exitCode),
+      "Native tool exit conflicts with its recorded exit evidence or completion notification.");
       if (admission.name === "powershell") {
-        entry.launchCompletedAt = event.timestamp;
         if (nativeExits.length) {
-          check(!entry.taskBinding || nativeExits[0].shellId === entry.shellId,
+          check(!nativeStart(entry) && entry.exitCode === null || nativeExits[0].shellId === entry.shellId,
             "Native launch exit differs from its exact registry binding.");
           entry.shellId = nativeExits[0].shellId;
           entry.controlUnbound = false;
         }
+        entry.launchCompletedAt = event.timestamp;
       } else if (nativeExits.length) check(nativeExits[0].shellId === entry.shellId,
         "Native read/stop completion names another shell.");
-      check(!exit || Number.isInteger(exit.exitCode)
-        && (!entry.completionNotification || entry.exitCode === exit.exitCode),
-      "Native tool exit conflicts with its recorded completion notification.");
-      if (exit) { entry.exitCode = exit.exitCode; entry.status = exit.exitCode === 0 ? "completed" : "failed"; }
+      if (exit) { entry.exitCode = exit.exitCode; entry.status = statusWithExit(entry.status, exit.exitCode); }
       else if (admission.name === "stop_powershell" && event.data.success === true && !ended.has(entry.status)) {
         const content = event.data.result?.content ?? event.data.result?.textResultForLlm;
         if (content === `<command with id: ${admission.args.shellId} stopped>`) {
@@ -366,10 +371,10 @@ export class HumanLoopNativeShells {
       "Native completion notification identity changed.");
       if (ended.has(entry.status)) {
         if (kind.exitCode === undefined) return;
-        check((entry.status === "stopped" || entry.status === (kind.exitCode === 0 ? "completed" : "failed"))
-          && (entry.exitCode === null || entry.exitCode === kind.exitCode),
+        check(entry.exitCode === null || entry.exitCode === kind.exitCode,
         "Native exit notification conflicts with the exact terminal task evidence.");
         entry.exitCode = kind.exitCode;
+        entry.status = statusWithExit(entry.status, kind.exitCode);
         if (receipt) entry.completionNotification = receipt;
         return;
       }
@@ -453,16 +458,17 @@ export class HumanLoopNativeShells {
     await this.#load(); await this.#tail;
     const entry = this.#record.entries.find(e => e.id === entryId);
     const task = outcome?.nativeTask;
-    check(entry && this.#live.has(entryId) && entry.mode === "sync"
-      && (!ended.has(entry.status) || entry.status === outcome.status)
-      && task && sameTask(task, entry) && task.attachmentMode === "attached"
-      && outcome.resultType === "success" && ended.has(outcome.status) && timestamp(outcome.endedAt)
-      && (outcome.cancelled === true && outcome.status === "stopped"
-        || ended.has(taskStatus(task)) && outcome.status === taskStatus(task))
-      && nonempty(evidence?.stopId) && nonempty(evidence?.endEventId) && timestamp(evidence?.observedAt),
-    "Native cancellation lacks its live invocation and native operation outcome.");
     await this.#write(() => {
-      entry.status = outcome.status; entry.endedAt = outcome.endedAt;
+      check(entry && this.#live.has(entryId) && entry.mode === "sync"
+        && (!ended.has(entry.status) || entry.status === outcome?.status
+          || naturalEnd(entry.status) && naturalEnd(outcome?.status))
+        && task && sameTask(task, entry) && task.attachmentMode === "attached"
+        && outcome.resultType === "success" && ended.has(outcome.status) && timestamp(outcome.endedAt)
+        && (outcome.cancelled === true && outcome.status === "stopped"
+          || ended.has(taskStatus(task)) && outcome.status === taskStatus(task))
+        && nonempty(evidence?.stopId) && nonempty(evidence?.endEventId) && timestamp(evidence?.observedAt),
+      "Native cancellation lacks its live invocation and native operation outcome.");
+      entry.status = statusWithExit(outcome.status, entry.exitCode); entry.endedAt = outcome.endedAt;
       entry.reason = outcome.status === "stopped"
         ? "Foreground invocation interrupted by Stop now; no successful tool completion is claimed."
         : "Native finite task ended naturally while its reader was interrupted; its recorded exit code is retained, not inferred.";
@@ -502,13 +508,14 @@ export class HumanLoopNativeShells {
       if (this.#registry.tasks === null && entry && ended.has(entry.status)) return this.#view(entry);
       return { ...entry, id, sessionId: this.#owner.privateSessionId, shellId: task.id,
         nativeStartedAt: task.startedAt, command: task.command,
-        status: this.#registry.tasks === null ? "held" : taskStatus(task),
-        startedAt: task.startedAt, endedAt: task.completedAt, exitCode: entry?.exitCode ?? null,
+        status: entry && ended.has(entry.status) ? entry.status : this.#registry.tasks === null ? "held" : taskStatus(task),
+        startedAt: task.startedAt, endedAt: entry?.endedAt ?? task.completedAt, exitCode: entry?.exitCode ?? null,
         mode: entry?.mode ?? (task.executionMode === "background" ? "async" : "sync"),
         backgroundOrigin: entry?.backgroundOrigin ?? (task.executionMode === "background" ? "native-task" : null),
         taskId: entry?.taskId ?? null, requestId: entry?.requestId ?? null,
         cycleId: entry?.cycleId ?? null, toolCallId: entry?.toolCallId ?? null,
         canStop: this.#registry.tasks !== null && task.status === "running" && task.attachmentMode === "attached"
+          && !ended.has(entry?.status)
           && timestamp(task.startedAt) && !this.#stopping.has(taskViewId(task)) && Boolean(this.#stop) && Boolean(this.#canStop()),
         reason: this.#registry.pending ? "Refreshing native task status; displaying the last native observation."
           : this.#registry.reason ?? (entry?.reason?.startsWith("Native stop failed:") ? entry.reason : null) };
