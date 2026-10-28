@@ -435,6 +435,28 @@ direct Development entry, retained Preparation-first history, and recovery CTA.
 No full suite, release build, packaging, native/manual preview or paid model test
 was rerun. The correction still requires its own PR CI result.
 
+### Current-main integration for PR #62
+
+The fixture-correction head `522853c` could not start fresh PR CI because current
+main conflicted in generated `extension.mjs` and `payload.json`. The authorized
+normal merge integrates `72a42fa87a6ecc78a7da33f20914f0f4e9241a1b` without rebasing
+or force-pushing. Maintainable source merged without conflicts; main's review
+behavior and the two UI fixes remain. Unmerged API refactor `00f0284` is excluded.
+
+`npm run check` and `npm run build` passed. The build regenerated both conflicted
+files from merged source rather than selecting either stale payload. Root version
+remains **1.1.15** and the Development package version remains **0.1.0**.
+Production payload verification and nested-manifest checks verified all 156
+composed and 152 Stage 2 file identities, the digest and changed native asset copies.
+
+One targeted run passed five cases: persisted direct-entry navigation,
+Preparation-first history, upstream-review feedback in the bottom pane, pinned
+earlier-stage review navigation, and actual generated-payload relocation. The
+unchanged permission-ownership and recovery-CTA cases reuse the preceding
+four-case pass. PR-relative whitespace checks passed; inherited main-only source
+was preserved. No full local suite, release ZIP, native/manual preview, deployment
+or paid model test was run. Fresh PR CI must report against the integrated head.
+
 ## Public-release history (unexecuted; separately gated)
 
 - [ ] Decide between a new public snapshot and a controlled rewrite of the existing

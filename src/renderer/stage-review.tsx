@@ -1,5 +1,5 @@
 import { Button, DialogParts as Dialog, Disclosure, IconButton, Textarea } from "./ui/index.js";
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 import { ArrowRight, Check, ChevronRight, ListChecks, Pin, Play, Send, ShieldCheck, X } from "lucide-react";
@@ -12,11 +12,12 @@ import { StudioStore } from "./state-store.js";
 import { canBrowseStage, DraftProvider, hasActiveJobs, UiContext, useAction, useChangeRequestDialog, useDraft, useUi, type UiContextValue, type UiState } from "./ui-context.js";
 import { PreparationPanel } from "./preparation-panel.js";
 import { RequirementsPanel } from "./requirements-panel.js";
+import { requirementChange } from "./requirements-model.js";
 import { isSketchRevisionApproved, SketchPanel, type DraftDesignApproval } from "./sketch-panel.js";
 import { PrototypePanel, prototypeCompletionBlocked } from "./prototype-panel.js";
 import { ChangeRequestsPanel, ChangeReviewPath } from "./change-requests-panel.js";
 import { DiscoveryRecovery } from "./discovery-recovery.js";
-import { changeReviewBlocksEditing, currentChangeReview } from "../change-request-policy.js";
+import { changeReviewBlocksEditing, changeReviewWaitsForPrototype, currentChangeReview, pendingUpstreamReviewStage } from "../change-request-policy.js";
 import { changeRequestHistoryStatus, changeRequestResponse, changeRequestReviewStage } from "./change-request-feedback.js";
 import { FeedbackHistory, FeedbackHistoryButton } from "./feedback-history.js";
 
@@ -34,14 +35,15 @@ export function PendingReviewPane({ viewedStage, pinnedReview, onActionsContaine
     && (!request || item.changeRequestId === request.id));
   const prototypePending = Boolean(state.prototypeNeedsUpdate || state.prototypeFlow?.pendingCheckpointId || state.prototypeReview?.question
     || state.prototypeReview?.revisions?.some((item: { status: string }) => ["queued", "processing", "clarifying", "ready", "failed"].includes(item.status)));
-  const target = request ? changeRequestReviewStage(request)
-    : reference?.stage ?? (prototypePending ? "prototype" : undefined);
+  const waitingForPrototype = changeReviewWaitsForPrototype(state);
+  const target = waitingForPrototype ? "prototype" : request ? changeRequestReviewStage(request)
+    : pendingUpstreamReviewStage(state) ?? reference?.stage ?? (prototypePending ? "prototype" : undefined);
   if (!request && !target) return null;
-  const waiting = request && ["queued", "analyzing"].includes(request.status);
+  const waiting = request && !waitingForPrototype && ["queued", "analyzing"].includes(request.status);
   const earlier = target !== undefined && lifecycleStages.findIndex(item => item.id === target)
     < lifecycleStages.findIndex(item => item.id === state.lifecycle.currentStage);
   const inThisTab = target === viewedStage;
-  const needsDialog = Boolean(request && (request.assessment?.question || request.error || !target || target === "development"
+  const needsDialog = Boolean(request && !waitingForPrototype && (request.assessment?.question || request.error || !target || target === "development"
     || !["proposed", "reviewing", "active"].includes(request.status)
     || request.status === "proposed" && !earlier || request.status === "active" && earlier));
   const targetLabel = target ? reviewStageLabel(target) : "";
@@ -52,10 +54,14 @@ export function PendingReviewPane({ viewedStage, pinnedReview, onActionsContaine
     prototype: state.prototypeFlow?.pendingCheckpointId ? "Inspect the prepared prototype above, then show the updated version before finishing."
       : state.prototypeReview?.question ? "Answer the prototype clarification above to continue the review."
         : state.prototypeNeedsUpdate ? "Update the prototype for the reviewed inputs, then inspect its prepared version."
-          : "Review the prototype feedback and revision history above before finishing.",
+          : "Review the prototype above. Send feedback to re-evaluate this change, or finish when you are satisfied.",
     development: "Review the change in Development before authorizing further work.",
   };
-  const guidance = waiting ? "Checking which stages this change affects. Your saved work is retained."
+  const guidance = request?.replacesRequestId && request.status === "queued" && (hasActiveJobs(state)
+    || state.changeRequests?.some(item => item.id === request.replacesRequestId && !["completed", "cancelled"].includes(item.status)))
+    ? "Your feedback is saved for re-evaluation after active work finishes. Applied changes and earlier drafts are retained."
+    : waitingForPrototype ? "Resolve the existing prototype update or clarification first. Your new change is queued and will be checked afterwards."
+    : waiting ? "Checking which stages this change affects. Your saved work is retained."
     : needsDialog && request ? changeRequestResponse(request)
       : inThisTab && target ? earlier ? `Open the ${targetLabel} draft to review it in this tab. Accepted work stays unchanged until you apply.`
         : instructions[target]
@@ -169,7 +175,10 @@ export function StageReviewWorkspace(props: Props) {
     canEdit: stage => stage === state.stageReview?.stage && state.lifecycle.currentStage === stage
       && !changeReviewBlocksEditing(state)
       && state.provider?.canSubmitAnswers !== false && !props.parent.state.effortReset,
-    guidance: () => "This review draft is read-only. Accepted work has not been changed.",
+    guidance: () => state.stageReviewStatus?.appliedAt
+      ? "This applied review is read-only. Its saved changes are now part of accepted work."
+      : state.stageReviewStatus?.discardedAt ? "This discarded review is read-only. Its draft changes were not applied."
+        : "This review draft is read-only. Accepted work has not been changed.",
     browseStage: stage => {
       if (stage !== state.stageReview?.stage) throw new Error("Use the project tabs to leave this pinned review.");
       if (props.active) props.parent.browseStage(stage);
@@ -188,8 +197,10 @@ function ReviewEditor({ parent, active, actionsContainer, headerActionsContainer
   const stage = state.stageReview!.stage;
   const label = reviewStageLabel(stage);
   const action = useAction("review");
+  const [comparisonReady, setComparisonReady] = useState(false);
   const [draftDesignApproval, setDraftDesignApproval] = useState<DraftDesignApproval | null>(null);
   const [reviewControlsContainer, setReviewControlsContainer] = useState<HTMLElement | null>(null);
+  const [reviewSummaryContainer, setReviewSummaryContainer] = useState<HTMLElement | null>(null);
   const status = state.stageReviewStatus;
   const settled = Boolean(status?.appliedAt || status?.discardedAt);
   const blocked = pending || hasActiveJobs(state) || state.provider?.canSubmitAnswers === false;
@@ -200,13 +211,15 @@ function ReviewEditor({ parent, active, actionsContainer, headerActionsContainer
   const error = action.error || connectionError;
   const applyDisabled = blocked || parent.pending || hasActiveJobs(parent.state) || !status || settled
     || Boolean(status.conflict || status.blocker && !canApproveDesign) || !status.changed || unsaved
-    || stage === "sketch" && draftDesignApproval?.ready !== true;
-  const prototypeReady = stage === "prototype" && !prototypeCompletionBlocked(state) && !state.prototypeNeedsUpdate;
+    || stage === "sketch" && draftDesignApproval?.ready !== true || stage === "requirements" && !comparisonReady;
+  const prototypeReady = stage === "prototype" && !prototypeCompletionBlocked(state);
   const queuedPreview = state.prototypeReview.revisions.some((item: { status: string }) => ["queued", "failed"].includes(item.status));
   const requestedChange = state.changeRequests?.find(item => item.id === state.stageReview?.changeRequestId);
   const parentRequest = parent.state.changeRequests?.find(item => item.id === state.stageReview?.changeRequestId);
   const reviewRequest = parentRequest ?? requestedChange;
-  const nextStage = status?.appliedAt ? parentRequest?.remainingStages[0] : undefined;
+  const continuingRequest = parentRequest?.status === "reviewing" ? parentRequest : undefined;
+  const nextStage = status?.appliedAt ? pendingUpstreamReviewStage(parent.state) ?? continuingRequest?.remainingStages[0]
+    ?? (parent.state.prototypeNeedsUpdate ? "prototype" : undefined) : undefined;
   const nextIsEarlier = nextStage !== undefined && lifecycleStages.findIndex(item => item.id === nextStage)
     < lifecycleStages.findIndex(item => item.id === parent.state.lifecycle.currentStage);
   const canContinue = nextStage !== undefined && Boolean(nextIsEarlier && parent.reviewStage || nextStage === workingStage);
@@ -252,12 +265,15 @@ function ReviewEditor({ parent, active, actionsContainer, headerActionsContainer
     {canContinue && nextStage && <Button variant="primary" id="continue-stage-review" className="complete-stage" type="button"
       disabled={pending || parent.pending || hasActiveJobs(parent.state)}
       onClick={() => void action.run(async () => {
-        if (nextIsEarlier && parent.reviewStage && parentRequest) await parent.reviewStage(nextStage, parentRequest);
+        if (nextIsEarlier && parent.reviewStage) await parent.reviewStage(nextStage,
+          continuingRequest?.remainingStages[0] === nextStage ? continuingRequest : undefined);
         else { onExit(); onReturn(); }
       })}><ArrowRight size={15} aria-hidden="true" />Review {reviewStageLabel(nextStage)}{nextIsEarlier ? " draft" : " update"}</Button>}
     {!settled && <Button variant="primary" id="apply-stage-review" className="complete-stage" type="button" disabled={applyDisabled}
       title={unsaved ? "Save or finish draft edits before applying." : status?.conflict
-        || (canApproveDesign ? "Approve and apply the saved design draft." : status?.blocker) || "Apply the saved draft without moving the current stage."}
+        || (canApproveDesign ? "Approve and apply the saved design draft." : status?.blocker)
+        || (stage === "requirements" && !comparisonReady ? "Wait for the saved requirements review to load before applying." : "")
+        || "Apply the saved draft without moving the current stage."}
       onClick={() => void apply()}><Check size={15} aria-hidden="true" />Apply changes</Button>}
     {stage === "prototype" && !settled && <>
       <Button variant="primary" id="build-review-preview" className="complete-stage" type="button"
@@ -305,8 +321,9 @@ function ReviewEditor({ parent, active, actionsContainer, headerActionsContainer
       {hasActiveJobs(state) && <p role="status">{state.status}</p>}
     </section>;
   const reviewActions = <section className="pinned-review-actions" aria-label={`${label} review and approval`}>
-    {mergedReview && <>{reviewHeading}
-      {reviewRequest && <ChangeReviewPath request={reviewRequest} reviewingStage={status?.appliedAt ? undefined : stage} />}</>}
+    {mergedReview ? <>{reviewHeading}
+      {reviewRequest && <ChangeReviewPath request={reviewRequest} reviewingStage={status?.appliedAt ? undefined : stage} />}</> : reviewBanner}
+    {stage === "requirements" && <div className="pinned-review-summary" ref={setReviewSummaryContainer} />}
     <ChangeRequestsPanel compact showTrigger={false} />
     <div className="pinned-review-buttons">
       {!settled && <span className="review-stage-actions" ref={setReviewControlsContainer} aria-label="Draft review actions" />}
@@ -316,19 +333,23 @@ function ReviewEditor({ parent, active, actionsContainer, headerActionsContainer
     </div>
     {error && <p id="stage-review-error" role="alert">{error}</p>}
     {!settled && status?.conflict && <p className="error" role="alert">{status.conflict}</p>}
-    {!settled && status?.blocker && !canApproveDesign && <p className="muted" role="status">{status.blocker}</p>}
+    {!settled && !status?.conflict && status?.blocker && !canApproveDesign && <p className="muted" role="status">{status.blocker}</p>}
+    {!settled && status && !status.changed && <p role="status">No saved changes to apply. Edit this draft or discard it to keep accepted work.</p>}
   </section>;
   return <div className="stage-review-workspace" data-review-stage={stage}>
     {active && actionsContainer && createPortal(reviewActions, actionsContainer)}
-    {!mergedReview && reviewBanner}
     <DiscoveryRecovery />
     {stage === "prepare" ? <><PreparationPanel /><DraftBrief /></>
-      : stage === "requirements" ? <><RequirementsPanel /><DraftRequirementRequest /></>
+      : stage === "requirements" ? <><BaselineComparison onReadyChange={setComparisonReady}
+          renderSummary={summary => active && reviewSummaryContainer ? createPortal(summary, reviewSummaryContainer) : null}>
+          {baseline => <RequirementsPanel reviewBaseline={baseline} />}
+        </BaselineComparison><DraftRequirementRequest /></>
         : stage === "sketch" ? <SketchPanel onDraftApprovalChange={setDraftDesignApproval}
             renderReviewActions={active && reviewControlsContainer ? actions => createPortal(actions, reviewControlsContainer) : undefined} />
           : <PrototypePanel active={active} connected={!connectionError}
               renderReviewActions={active && reviewControlsContainer ? actions => createPortal(actions, reviewControlsContainer) : undefined}
               renderStageActions={active && headerActionsContainer ? actions => createPortal(actions, headerActionsContainer) : undefined} />}
+    {active && !actionsContainer && reviewActions}
   </div>;
 }
 
@@ -446,7 +467,11 @@ function ReviewDetailsDialog({ request }: { request?: ChangeRequest }) {
   </Dialog.Root>;
 }
 
-function BaselineComparison() {
+function BaselineComparison({ onReadyChange, renderSummary, children }: {
+  onReadyChange?: (ready: boolean) => void;
+  renderSummary?: (summary: ReactNode) => ReactNode;
+  children?: (baseline: UiState) => ReactNode;
+} = {}) {
   const { state, apiUrl } = useUi();
   const [baseline, setBaseline] = useState<{ state: UiState; document: SketchDocument | null } | null>(null);
   const [error, setError] = useState(""), [loading, setLoading] = useState(false);
@@ -458,24 +483,30 @@ function BaselineComparison() {
     try {
       const response = await fetch(apiUrl!("/api/baseline"), { cache: "no-store", signal: AbortSignal.timeout(15000) });
       const result = await response.json();
-      if (!response.ok || !result.state?.lifecycle) throw new Error(result.error || "The accepted baseline is unavailable.");
+      if (!response.ok || !result.state?.lifecycle || result.state.prototypeId !== state.stageReview!.parentId
+        || result.state.generation !== state.generation || result.state.revision !== state.stageReview!.baselineRevision
+        || !Array.isArray(result.state.decisionGraph?.nodes)) {
+        throw new Error(result.error || "The accepted baseline is unavailable or no longer matches this draft.");
+      }
       setBaseline(result);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "The accepted baseline is unavailable."); }
     finally { request.current = false; setLoading(false); }
-  }, [apiUrl, baseline]);
+  }, [apiUrl, baseline, state.stageReview, state.generation]);
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => { onReadyChange?.(Boolean(baseline)); }, [baseline, onReadyChange]);
   const oldNodes = baseline?.state.decisionGraph.nodes ?? [];
-  const content = (node: DecisionNode | undefined) => node && ({
-    title: node.title, question: node.question, answer: node.answer, dependencies: node.dependencies,
-  });
   const description = (node: DecisionNode | undefined) => node ? [
-    node.question?.text, `Answer: ${node.answer || "Unanswered"}`,
+    `Title: ${node.title}`, node.question?.text, `Answer: ${node.answer || "Unanswered"}`,
+    node.question?.rationale ? `Reason: ${node.question.rationale}` : "",
     node.question?.choices.length ? `Choices: ${node.question.choices.join(" / ")}` : "",
+    node.question?.recommended ? `Recommended: ${node.question.recommended}` : "",
+    node.question ? `Free-text answers: ${node.question.allowFreeText === false ? "Not allowed" : "Allowed"}` : "",
+    node.question?.answerPlaceholder ? `Answer guidance: ${node.question.answerPlaceholder}` : "",
     node.dependencies.length ? `Depends on: ${node.dependencies.join(", ")}` : "",
   ].filter(Boolean).join("\n") : "Not present";
   const changed = [...new Set([...oldNodes.map(node => node.id), ...state.decisionGraph.nodes.map(node => node.id)])]
     .map(id => ({ before: oldNodes.find(node => node.id === id), after: state.decisionGraph.nodes.find(node => node.id === id) }))
-    .filter(({ before, after }) => JSON.stringify(content(before)) !== JSON.stringify(content(after)))
+    .filter(({ before, after }) => requirementChange(before, after))
     .map(({ before, after }) => ({ id: `decision:${before?.id ?? after!.id}`, title: after?.title ?? before!.title,
       before: description(before), after: description(after) }));
   if (baseline) {
@@ -487,15 +518,33 @@ function BaselineComparison() {
         `${state.prototypeApproach.mode}: ${state.prototypeApproach.reason}`],
     ]) if (before !== after) changed.push({ id, title, before: before || "None", after: after || "None" });
   }
-  return <section className="stage-review-comparison" aria-label="Accepted baseline comparison">
-    <h3>Compare with the accepted baseline</h3>
+  const unanswered = state.decisionGraph.nodes.filter(node => !node.answer).length;
+  const applied = Boolean(state.stageReviewStatus?.appliedAt);
+  const discarded = Boolean(state.stageReviewStatus?.discardedAt);
+  const removedQuestions = oldNodes.filter(node => !state.decisionGraph.nodes.some(candidate => candidate.id === node.id));
+  const otherChanges = [
+    ...(removedQuestions.length ? [`${removedQuestions.length} question${removedQuestions.length === 1 ? "" : "s"} removed`] : []),
+    ...changed.filter(row => ["assumed", "deferred", "approach"].includes(row.id)).map(row => row.title),
+  ];
+  const comparison = <section className="stage-review-comparison" aria-label={children ? "Requirements review summary" : "Accepted baseline comparison"}
+    data-unanswered={stage === "requirements" ? unanswered : undefined}>
+    <h3 className={renderSummary ? "visually-hidden" : undefined}>{stage === "requirements" ? applied ? "Applied requirement changes"
+      : discarded ? "Discarded requirement draft" : "Review saved requirement changes" : "Compare with the accepted baseline"}</h3>
     {loading && <p role="status">Reading the saved baseline...</p>}
     {error && <p role="alert">{error} <Button variant="secondary" type="button" onClick={() => void load()}>Retry</Button></p>}
     {baseline && <>
-      <p className="muted">Accepted revision {state.stageReview!.baselineRevision}; draft revision {state.revision}.</p>
-      {stage === "requirements" ? changed.length ? <table><thead><tr><th>Requirement</th><th>Accepted</th><th>Draft</th></tr></thead>
-        <tbody>{changed.map(row => <tr key={row.id}><th>{row.title}</th><td>{row.before}</td><td>{row.after}</td></tr>)}</tbody>
-      </table> : <p>No requirement changes saved in this draft.</p>
+      <p className={stage === "requirements" ? "visually-hidden" : "muted"}>Accepted revision {state.stageReview!.baselineRevision}; draft revision {state.revision}.</p>
+      {stage === "requirements" && <p role="status">{applied ? "These saved changes have been applied. Independent answers were retained."
+        : discarded ? "These draft changes were not applied. The comparison is retained for reference."
+        : unanswered
+        ? `${unanswered} requirement question${unanswered === 1 ? "" : "s"} still need${unanswered === 1 ? "s" : ""} an answer before Apply. Independent answers are retained.`
+        : "No new questions need answers. Review the saved changes before applying."}</p>}
+      {stage === "requirements" ? changed.length ? children
+        ? otherChanges.length > 0 && <p className="muted">Also changed: {otherChanges.join("; ")}. See Details for the comparison.</p>
+        : <table><thead><tr><th scope="col">Requirement</th><th scope="col">Accepted</th><th scope="col">Draft</th></tr></thead>
+        <tbody>{changed.map(row => <tr key={row.id}><th scope="row">{row.title}</th><td>{row.before}</td><td>{row.after}</td></tr>)}</tbody>
+      </table> : <p>No requirement values differ from the accepted baseline.{state.stageReviewStatus?.changed
+        ? " This stage still needs confirmation against the reviewed upstream inputs." : " There are no requirement changes to apply."}</p>
         : stage === "sketch" ? baseline.document?.version === 1
           ? <p>The accepted baseline uses retired geometry. Its files and approval remain in history; regenerate UI DSL views in the draft.</p>
           : baseline.document?.screens.map(screen => <figure key={screen.id} style={{ overflow: "auto" }}>
@@ -506,4 +555,5 @@ function BaselineComparison() {
               {baseline.state.previewUrl && <a href={baseline.state.previewUrl} target="_blank" rel="noreferrer">Open accepted preview</a>}</>}
     </>}
   </section>;
+  return <>{renderSummary ? renderSummary(comparison) : comparison}{baseline && children?.(baseline.state)}</>;
 }
