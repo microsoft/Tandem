@@ -10,6 +10,7 @@ import { buildPrototypeCheckpointPrompt, buildSketchPrompt } from "../src/planni
 import { newPrototypeFlow } from "../src/prototype-flow.js";
 import { fingerprintPrototypeWorkspace } from "../src/prototype-runtime.js";
 import { completeSavedChange, type ChangeAssessment } from "../src/change-requests.js";
+import { requirementsInputDigest } from "../src/requirements-reconciliation.js";
 import { addUi, applyOperations, createDocument } from "./helpers/ui-dsl-fixture.js";
 import { searchIcons } from "../src/vendor/ui-dsl/index.js";
 
@@ -254,6 +255,95 @@ test("Requirements generates designs once and cannot start Prototype before expl
         const request = fixture.requests[1] as { args: { sketchInput: { document: unknown } } };
         assert.deepEqual(JSON.parse(JSON.stringify(request.args.sketchInput.document)), sketchDocument());
     } finally { await fixture.close(); }
+});
+
+test("a Requirements review returns to Designs with its exact pending change until refresh and approval", async t => {
+    const fixture = await extensionHarness();
+    t.after(() => fixture.close());
+    await readyRequirements(fixture);
+    generateDrawings(fixture);
+    await fixture.api.completeLifecycleStage("sample", "requirements", "project:tandem");
+    await fixture.api.waitForAnswer("sample");
+    const original = await approveDrawings(fixture);
+    const originalUsage = original.requirements.usageItems[0]!;
+    const instruction = "Show pickup confirmation after completing the task.";
+    const plan: ChangeAssessment = {
+        version: 1, summary: instruction, reason: "Update the accepted task outcome.",
+        startStage: "requirements", stages: [
+            { stage: "requirements", reason: "Record the pickup confirmation behavior." },
+            { stage: "sketch", reason: "Update the confirmation screen." },
+        ], preserved: ["Other accepted decisions"], affectedScreenIds: ["main"], question: null,
+        requirements: {
+            usages: { add: ["I want to complete a task and see pickup confirmation."], remove: [originalUsage] },
+            upsert: [], remove: [], assumptions: { add: [], remove: [] },
+            deferred: { add: [], remove: [] }, prototypeApproach: null,
+        },
+    };
+    let failUpdate = true;
+    const revised = sketchDocument();
+    addUi(revised.screens[0], "pickup-confirmation", "Text", { text: "Pickup confirmed" });
+    fixture.api.setSession({ ...fixture.session, rpc: { ...fixture.session.rpc, workflow: {
+        run: async request => {
+            fixture.requests.push(request);
+            const args = request.args;
+            const runId = `change-review-${fixture.requests.length}`;
+            if (args.action === "assess-change") return { status: "completed", runId, result: plan };
+            assert.equal(args.action, "revise-sketch");
+            assert.equal(args.state.changeRequest.message, instruction, "The current-stage review must retain its request context.");
+            assert.equal(args.answer, instruction);
+            assert.ok(args.state.requirements.usageItems.includes(plan.requirements!.usages.add[0]));
+            assert.ok(!args.state.requirements.usageItems.includes(originalUsage), "Do not reapply the removed usage.");
+            assert.match(fixture.api.answerFactoryPrompt(args), /SCOPED CHANGE/);
+            return failUpdate ? { status: "failed", runId, error: "Synthetic design update failure" }
+                : { status: "completed", runId, result: revised };
+        },
+    } } });
+    const submitted = await fixture.api.submitChangeRequest("sample", "project:tandem", {
+        message: instruction, originStage: "sketch", clientRequestId: "pickup-change",
+    });
+    await fixture.api.waitForAnswer("sample");
+    const assessed = await fixture.api.loadState("sample");
+    const request = assessed.changeRequests!.find(item => item.id === submitted.requestId)!;
+    const reviewing = await fixture.api.decideChangeRequest("sample", "project:tandem", {
+        requestId: request.id, analysisId: request.analysisId, baselineDigest: request.baselineDigest, decision: "approve",
+    });
+    const draft = await fixture.api.loadState(reviewing.changeRequests![0].reviewId!);
+    const returned = await fixture.api.applyStageReview("sample", "project:tandem", {
+        reviewId: draft.prototypeId, expectedRevision: draft.revision,
+    });
+    assert.equal(returned.lifecycle.currentStage, "sketch");
+    assert.equal(returned.sketch.current!.id, original.sketch.current!.id);
+    assert.equal(returned.sketch.status, "stale");
+    assert.deepEqual(Array.from(returned.changeRequests![0].remainingStages), ["sketch"]);
+    assert.match(fixture.api.stageCompletionError(returned, "sketch")!, /requirements/);
+    await assert.rejects(approveDrawings(fixture), /requirements|reviewed changes/i);
+    await fixture.api.sketchAction("sample", "project:tandem", { action: "update", expectedRevision: returned.sketch.current!.id });
+    await fixture.api.waitForAnswer("sample");
+    const failed = await fixture.api.loadState("sample");
+    assert.equal(failed.processing.status, "error");
+    assert.equal(failed.processing.changeRequestId, request.id);
+    assert.match(failed.processing.message, /Synthetic design update failure/);
+    await assert.rejects(approveDrawings(fixture), /failed design change|reviewed changes/i);
+    assert.equal(failed.prototypeFlow, null, "A failed refresh must not launch a prototype questionnaire.");
+    failUpdate = false;
+    await fixture.api.sketchAction("sample", "project:tandem", { action: "update", expectedRevision: failed.sketch.current!.id });
+    await fixture.api.waitForAnswer("sample");
+    const updated = await fixture.api.loadState("sample");
+    assert.equal(updated.processing.status, "success", updated.processing.message);
+    assert.equal(updated.processing.changeRequestId, request.id);
+    assert.ok(updated.changeRequests![0].workStarted.includes("sketch"));
+    assert.equal(updated.changeRequests![0].status, "reviewing", "Saving does not approve a cross-stage review.");
+    assert.equal(updated.sketch.current!.requirementsDigest, requirementsInputDigest(updated));
+    assert.notEqual(updated.sketch.current!.id, original.sketch.current!.id);
+    assert.equal(updated.sketch.approved, null);
+    assert.match(fixture.api.stageCompletionError(updated, "sketch")!, /Approve/);
+    const approved = await approveDrawings(fixture);
+    fixture.api.setSession(fixture.session);
+    const finished = await fixture.api.completeLifecycleStage("sample", "sketch", "project:tandem");
+    assert.equal(finished.changeRequests![0].status, "completed");
+    assert.equal(finished.lifecycle.currentStage, "prototype");
+    assert.equal(finished.prototypeFlow!.checkpoints[0].sketchRevisionId, approved.sketch.current!.id);
+    assert.deepEqual(await new SketchStore(fixture.root).read("sample", original.sketch.current!), sketchDocument());
 });
 
 async function readyGraphicalPrototype(fixture: Awaited<ReturnType<typeof extensionHarness>>) {

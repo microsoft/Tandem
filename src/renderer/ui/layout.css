@@ -53,7 +53,10 @@ form:not(.feedback-composer) textarea.tandem-input.composer-input[data-composer-
 .dialog-content.review-details-dialog { width: min(820px, calc(100vw - 32px)); max-height: min(860px, calc(100dvh - 32px)); }
 .dialog-content.handoff-review-dialog { width: min(640px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); }
 .dialog-content.diagram-source-dialog { width: min(900px, calc(100vw - 32px)); }
-.dialog-content.project-settings-dialog { display: flex; flex-direction: column; width: min(760px, calc(100vw - 24px)); height: min(820px, calc(100dvh - 24px)); padding: var(--studio-space-3); }
+.dialog-content.project-settings-dialog { display: flex; flex-direction: column; gap: var(--studio-space-3); width: min(760px, calc(100vw - 24px)); height: min(820px, calc(100dvh - 24px)); padding: var(--studio-space-3); overflow-y: auto; }
+.project-settings-dialog .root-settings-heading, .project-settings-dialog > p { flex: none; }
+.project-settings-dialog .root-settings-heading h2, .project-settings-dialog > p { margin: 0; }
+#project-settings-frame { min-height: var(--studio-touch-target); }
 .dialog-content.project-entry { width: min(640px, calc(100vw - 32px)); }
 .tandem-native-dialog.preview-restart-dialog { width: min(600px, calc(100vw - 32px)); }
 dialog.dialog-content { inset: 0; margin: auto; transform: none; }

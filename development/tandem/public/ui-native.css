@@ -88,6 +88,11 @@
 .human-app .source-artifact [data-artifact-zoom] { min-width: var(--studio-control-height); padding-inline: var(--studio-space-2); }
 .human-app .annotation-editor-toolbar { gap: var(--studio-control-gap); }
 .human-app :is(.access-card, .implementation-confirmation, .question-batch, .background-panel) { border-radius: var(--studio-radius); }
+.human-app[data-project-panel="settings"] .human-header { height: auto; }
+.human-app[data-project-panel="settings"] .canvas-settings[open] {
+  max-height: 100dvh; overflow-y: auto; scrollbar-gutter: stable; overscroll-behavior: contain; padding: 0;
+}
+.human-app[data-project-panel="settings"] .settings-section:first-of-type { margin-top: 0; padding-top: 0; }
 .human-app[data-project-panel="settings"] #close-settings,
 .human-app[data-project-working="discovery"] #initialize { display: none; }
 @media (pointer: coarse) {

@@ -8,7 +8,7 @@ import { build } from "esbuild";
 import { browserAvailable, openFixtureBrowser } from "../development/tandem/test/helpers/browser-fixture.mjs";
 import { isPrototypePreviewTarget, prototypePreviewCheckpointId } from "../src/prototype-flow.js";
 import type { UiState } from "../src/renderer/ui-context.js";
-import { decision, rendererFixtureScript } from "./helpers/react-harness.js";
+import { decision, rendererFixtureScript, state } from "./helpers/react-harness.js";
 import { readyPrototype } from "./renderer-fixtures.test.js";
 
 test("active React surfaces use the shared controls rather than local native controls", async () => {
@@ -222,6 +222,116 @@ test("React, browser, Storybook and native Development share control styles acro
   await browser.call("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
   await browser.waitFor('matchMedia("(pointer: coarse)").matches');
   assert.equal(await browser.evaluate('[...document.querySelectorAll("[role=tab]")].every(tab => tab.getBoundingClientRect().height >= 44)'), true);
+  assert.deepEqual(browser.exceptions, []);
+});
+
+test("Project settings scrolls to the last control in short windows without hiding the dialog header", { skip: !browserAvailable, timeout: 60_000 }, async t => {
+  const initial = state("requirements");
+  const [script, styles, nativeStyles, nativeHtml] = await Promise.all([
+    rendererFixtureScript(),
+    build({ entryPoints: [fileURLToPath(new URL("../src/renderer/styles.css", import.meta.url))],
+      bundle: true, write: false, logLevel: "silent" }),
+    build({ entryPoints: [fileURLToPath(new URL("../development/tandem/public/application.css", import.meta.url))],
+      bundle: true, write: false, logLevel: "silent" }),
+    readFile(new URL("../development/tandem/public/human-loop.html", import.meta.url), "utf8"),
+  ]);
+  const nativeServer = createServer((request, response) => {
+    const path = new URL(request.url || "/", "http://127.0.0.1").pathname;
+    if (path === "/") {
+      response.writeHead(200, { "Content-Type": "text/html" });
+      response.end(nativeHtml.replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, "")
+        .replace('<body class="human-app"', '<body data-project-panel="settings" class="human-app"')
+        .replace("</body>", '<script>document.querySelector("#canvas-settings").open=true;'
+          + 'document.querySelector("#project-effort-settings").hidden=false;</script></body>'));
+    } else if (path === "/application.css") {
+      response.writeHead(200, { "Content-Type": "text/css" }); response.end(nativeStyles.outputFiles[0].text);
+    } else if (path === "/favicon.ico" || path.startsWith("/branding/")) { response.writeHead(204); response.end(); }
+    else { response.writeHead(404); response.end(); }
+  });
+  await new Promise<void>(resolve => nativeServer.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise<void>(resolve => { nativeServer.closeAllConnections(); nativeServer.close(() => resolve()); }));
+  const nativeAddress = nativeServer.address();
+  assert.ok(nativeAddress && typeof nativeAddress !== "string");
+  const nativeOrigin = `http://127.0.0.1:${nativeAddress.port}/`;
+  const server = createServer((request, response) => {
+    const path = new URL(request.url || "/", "http://127.0.0.1").pathname;
+    const send = (type: string, body: string) => {
+      response.writeHead(200, { "Content-Type": type, "Cache-Control": "no-store" });
+      response.end(body);
+    };
+    request.resume();
+    if (path === "/") send("text/html", '<!doctype html><html lang="en" data-project-theme="light"><head>'
+      + '<meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/styles.css"></head>'
+      + '<body><div id="root"></div><script src="/app.js"></script><script>'
+      + `window.settingsFixture = TandemTest.mount(); settingsFixture.flushSync(() => settingsFixture.store.accept(${JSON.stringify(initial)}));`
+      + '</script></body></html>');
+    else if (path === "/app.js") send("text/javascript", script);
+    else if (path === "/styles.css") send("text/css", styles.outputFiles[0].text);
+    else if (path === "/api/project-entry") send("application/json", JSON.stringify({ projectPath: "C:\\fixture-project", startingPath: "preparation" }));
+    else if (path === "/api/project-entry/open") send("application/json", JSON.stringify({ developmentStarted: false, developmentContext: false }));
+    else if (path === "/api/development/view") send("application/json", JSON.stringify({ url: nativeOrigin, channel: "fixture-project" }));
+    else if (path === "/api/development/model-selection") send("application/json", JSON.stringify({ required: false }));
+    else if (path === "/favicon.ico" || path.startsWith("/branding/")) { response.writeHead(204); response.end(); }
+    else { response.writeHead(404); response.end(); }
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise<void>(resolve => { server.closeAllConnections(); server.close(() => resolve()); }));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const origin = `http://127.0.0.1:${address.port}`;
+  const browser = await openFixtureBrowser(t);
+  await browser.call("Emulation.setDeviceMetricsOverride", { width: 800, height: 480, deviceScaleFactor: 1, mobile: false });
+  await browser.call("Page.navigate", { url: origin });
+  await browser.waitFor('Boolean(document.querySelector("#project-settings")) && !document.querySelector("#studio-workspace").inert');
+  await browser.evaluate('document.querySelector("#project-settings").click()');
+  await browser.waitFor('document.querySelector("#project-settings-frame")?.contentWindow && document.querySelector("#project-settings-frame").clientHeight>0');
+  const inside = async (expression: string) => {
+    const tree = await browser.call("Page.getFrameTree");
+    const frame = tree.frameTree.childFrames?.find((item: { frame: { url: string } }) => item.frame.url === nativeOrigin + "?panel=settings");
+    assert.ok(frame, "The real settings dialog loads its separate-origin native controls.");
+    const world = await browser.call("Page.createIsolatedWorld", { frameId: frame.frame.id, worldName: "settings-scroll-ui" });
+    const result = await browser.call("Runtime.evaluate", { contextId: world.executionContextId, expression, returnByValue: true });
+    assert.equal(result.exceptionDetails, undefined, JSON.stringify(result.exceptionDetails));
+    return result.result.value;
+  };
+  for (const [width, height] of [[800, 480], [390, 480], [390, 240]]) for (const theme of ["light", "dark"]) {
+    await browser.call("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+    await browser.evaluate(`document.documentElement.dataset.projectTheme=${JSON.stringify(theme)}`);
+    await inside(`document.body.dataset.theme=${JSON.stringify(theme)}`);
+    await browser.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+    await browser.evaluate('document.querySelector(".project-settings-dialog").scrollTop=0');
+    const body = await inside(`(() => {
+      const scroller = document.querySelector("#canvas-settings");
+      const first = document.querySelector("#setting-theme"), last = document.querySelector("#open-rendering-debugger");
+      first.focus(); scroller.scrollTop = 0;
+      const start = scroller.scrollTop;
+      last.focus();
+      const area = scroller.getBoundingClientRect(), control = last.getBoundingClientRect();
+      return { overflow:getComputedStyle(scroller).overflowY,
+        gutter:scroller.offsetWidth-scroller.clientWidth,
+        start, end:scroller.scrollTop, scrollable:scroller.scrollHeight>scroller.clientHeight,
+        bodyBounded:area.height<=innerHeight,
+        lastVisible:control.top>=area.top&&control.bottom<=area.bottom,
+        focused:document.activeElement===last, pageOverflow:document.documentElement.scrollWidth>innerWidth };
+    })()`);
+    const layout = { ...body, ...await browser.evaluate(`(() => {
+      const dialog = document.querySelector(".project-settings-dialog"), close = dialog.querySelector("#close-project-settings");
+      const button = close.getBoundingClientRect();
+      return {
+        headerVisible:document.elementFromPoint(button.x+button.width/2,button.y+button.height/2)===close,
+        outerScrollable:dialog.scrollHeight>dialog.clientHeight&&getComputedStyle(dialog).overflowY==="auto",
+        frameHeight:dialog.querySelector("iframe").clientHeight };
+    })()`) };
+    assert.equal(layout.overflow, "auto");
+    assert.ok(layout.gutter > 0 && layout.scrollable && layout.bodyBounded && !layout.pageOverflow,
+      `The settings body has a visible, bounded vertical scrollbar at ${width}x${height}/${theme}: ${JSON.stringify(layout)}`);
+    assert.ok(layout.start === 0 && layout.end > 0 && layout.lastVisible && layout.focused,
+      `Keyboard focus reaches the last setting at ${width}x${height}/${theme}: ${JSON.stringify(layout)}`);
+    assert.ok(layout.frameHeight >= 44, "Even very short windows retain a usable settings viewport.");
+    if (height >= 480) assert.ok(layout.headerVisible, "Scrolling settings leaves the dialog header and Close button visible.");
+    else assert.ok(layout.outerScrollable, "The outer dialog also scrolls when the header cannot fit.");
+    if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `settings-scroll-${width}x${height}-${theme}.png`), await browser.screenshot());
+  }
   assert.deepEqual(browser.exceptions, []);
 });
 

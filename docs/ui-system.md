@@ -105,6 +105,11 @@ replace native dialogs with custom permission/recovery behavior just to share
 markup. UI primitives do not own workflow state, request admission, evidence,
 authorization or native runtime lifecycles.
 
+Project settings keeps its heading and Close button outside a viewport-bounded
+controls pane with a native vertical scrollbar. Keyboard focus must scroll lower
+settings into view. The outer dialog also scrolls when a very short window cannot
+fit the heading, description and minimum controls viewport.
+
 ## Application-wide adoption
 
 All active React renderer panels and browser chrome use the shared button,

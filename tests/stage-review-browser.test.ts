@@ -175,7 +175,8 @@ test("a no-question Requirements review visibly leads a legacy preview through e
     assert.equal(await readFile(join(h.root, "index.html"), "utf8"), original);
     assert.equal(h.requests.length, 2);
     const reviewedRequest = applied.changeRequests![0];
-    assert.equal(reviewedRequest.status, "reviewing", "An applied cross-stage update can still be awaiting Finish Prototype.");
+    assert.equal(reviewedRequest.status, "completed", "Applying the final affected update finishes the review without finishing Prototype.");
+    await browser.waitFor('!document.querySelector("#stage-input-review").checkVisibility()');
     for (const width of [1280, 375]) {
         await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: false });
         await browser.evaluate('document.querySelector("#revision-input").scrollIntoView({block:"nearest"}); document.querySelector("#revision-input").focus()');
@@ -188,7 +189,7 @@ test("a no-question Requirements review visibly leads a legacy preview through e
                 finishEnabled:!document.querySelector("#complete-stage").disabled };
         })()`);
         assert.ok(feedback.enabled && feedback.visible && feedback.reachable && feedback.finishEnabled, JSON.stringify(feedback));
-        assert.equal(feedback.label, "Re-evaluate change");
+        assert.equal(feedback.label, "Send change");
         if (process.env.TANDEM_UI_EVIDENCE) await writeFile(
             join(process.env.TANDEM_UI_EVIDENCE, `prototype-review-feedback-${width}.png`), await browser.screenshot());
     }
@@ -202,7 +203,7 @@ test("a no-question Requirements review visibly leads a legacy preview through e
     const reevaluated = await h.api.loadState("sample");
     assert.equal(reevaluated.lifecycle.currentStage, "prototype");
     assert.equal(reevaluated.prototypeFlow!.displayedCheckpointId, applied.prototypeFlow!.displayedCheckpointId);
-    assert.equal(reevaluated.changeRequests!.at(-1)!.replacesRequestId, reviewedRequest.id);
+    assert.equal(reevaluated.changeRequests!.at(-1)!.replacesRequestId, undefined, "New feedback does not silently reopen a completed review.");
     assert.equal(reevaluated.changeRequests!.at(-1)!.status, "proposed");
     assert.deepEqual(reevaluated.requirements, applied.requirements, "Sending feedback does not apply the newly proposed requirements.");
     await browser.evaluate('document.querySelector("#close-change-details").click()');
