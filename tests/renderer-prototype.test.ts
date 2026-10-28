@@ -90,6 +90,72 @@ function prototypeReviewState() {
     return value;
 }
 
+test("Prototype history retains saved feedback before a build revision exists and after reopening", async t => {
+    const value = prototypeReviewState();
+    const sugar = { ...value.changeRequests[0], id: "sugar", message: "Add a sugar option.", status: "completed" as const };
+    const milk = { ...value.changeRequests[0], id: "milk", message: "Add a milk option.", status: "queued" as const,
+        submittedAt: "2026-10-28T05:00:00Z", assessment: null };
+    value.changeRequests = [sugar, milk];
+    value.prototypeReview.revisions = [{ id: "sugar-build", clientRequestId: "change-sugar",
+        suggestion: sugar.message, status: "applied" }];
+    const h = await setup(t, value);
+    await h.click("prototype-history-toggle");
+    const rows = [...h.get("revision-history").querySelectorAll("li")];
+    assert.equal(rows.length, 2);
+    assert.match(rows[0].textContent!, /Add a milk option.*Request queued/);
+    assert.equal(rows[0].dataset.changeRequestId, milk.id);
+    assert.equal(rows[0].dataset.status, "running");
+    assert.match(rows[1].textContent!, /Add a sugar option.*Applied/);
+    assert.equal(rows[1].dataset.revisionId, "sugar-build");
+    assert.doesNotMatch(text(h, "revision-history-details"), /No prototype requests yet/);
+    assert.equal(h.requests.length, 0, "Reading saved feedback never resubmits it.");
+});
+
+for (const status of ["analyzing", "proposed", "reviewing", "active", "completed", "cancelled", "deferred", "failed"] as const) {
+    test(`Prototype history includes ${status} change requests without requiring a build`, async t => {
+        const value = prototypeReviewState();
+        const milk = { ...value.changeRequests[0], message: "Add a milk option.", status,
+            error: status === "failed" ? "The assessment failed; saved work is retained." : "" };
+        value.changeRequests = [milk, { ...milk, id: "design-only", originStage: "sketch" }];
+        const h = await setup(t, value);
+        await h.click("prototype-history-toggle");
+        const rows = h.get("revision-history").querySelectorAll("li");
+        assert.equal(rows.length, 1, "Only requests submitted from Prototype belong in its history.");
+        assert.match(rows[0].textContent!, /Add a milk option/);
+        assert.notEqual(rows[0].textContent, milk.message, "A saved request includes its current status.");
+        if (status === "failed") {
+            assert.equal(rows[0].dataset.status, "error");
+            assert.match(rows[0].querySelector("strong")!.title, /assessment failed/);
+            assert.equal(h.get("prototype-history-toggle").dataset.status, "error");
+        }
+        assert.equal(h.requests.length, 0);
+    });
+}
+
+test("Prototype history merges linked build progress without duplicating or rewriting the original request", async t => {
+    const value = prototypeReviewState();
+    const milk = { ...value.changeRequests[0], message: "Add a milk option.", status: "active" as const };
+    value.changeRequests = [milk];
+    const h = await setup(t, value);
+    await h.click("prototype-history-toggle");
+    for (const [index, clientRequestId] of [`change-${milk.id}`, milk.clientRequestId].entries()) {
+        h.render({ ...value, revision: index + 2, prototypeReview: { ...value.prototypeReview, revisions: [
+            { id: "milk-build", clientRequestId, suggestion: "Expanded implementation instructions", status: "processing" },
+            { id: "legacy", suggestion: "Older feedback", status: "applied" },
+        ] } });
+        await h.flush();
+        const rows = h.get("revision-history").querySelectorAll("li");
+        assert.equal(rows.length, 2);
+        const row = h.get("revision-history").querySelector<HTMLLIElement>(`[data-change-request-id="${milk.id}"]`)!;
+        assert.equal(row.dataset.revisionId, "milk-build");
+        assert.equal(row.dataset.status, "processing");
+        assert.match(row.textContent!, /Add a milk option.*Building update/);
+        assert.doesNotMatch(row.textContent!, /Expanded implementation instructions/);
+        assert.match(text(h, "revision-history"), /Older feedback.*Applied/);
+    }
+    assert.equal(h.requests.length, 0);
+});
+
 test("Prototype feedback re-evaluates the current review without requiring Finish Prototype", async t => {
     const value = prototypeReviewState(), h = await setup(t, value);
     assert.equal(disabled(h, "complete-stage"), false);

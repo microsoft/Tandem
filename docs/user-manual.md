@@ -220,6 +220,9 @@ decision controls. A new required decision opens it automatically once; routine
 updates and loaded history do not reopen it.
 Design request history and Discovery history retain requests and their responses
 when you reopen the project.
+Prototype request history also includes saved feedback while it is queued,
+being assessed or awaiting review, before a build revision exists. A linked build
+updates the same entry's progress without duplicating your original request.
 **Close** or **Escape** dismisses it without discarding your clarification or
 resizing the editor and returns focus to Review. You may still inspect screens,
 zoom and history, but closing does not resolve the review or enable new changes.
