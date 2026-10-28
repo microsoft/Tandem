@@ -190,6 +190,83 @@ async function capture(browser, name, geometry) {
   await writeFile(join(process.env.HUMAN_SHELL_EVIDENCE, `${name}.json`), JSON.stringify(geometry, null, 2));
 }
 
+test("empty Design keeps one guidance message without a header strip while retaining diagnostics and section naming",
+  { skip: !browserAvailable, timeout: 60_000 }, async t => {
+    const firstSnapshot = Promise.withResolvers();
+    const f = await fixture(t, { onSnapshot: () => firstSnapshot.promise }), { browser } = f;
+    t.after(() => firstSnapshot.resolve());
+    const design = f.current.design;
+    f.current.design = null;
+    f.current.workflow.questionInteraction.questions[0].designRefs = ["interaction#deliver"];
+    await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 900, deviceScaleFactor: 1, mobile: false });
+    await browser.call("Page.navigate", { url: f.url });
+    await browser.waitFor('document.querySelector("#assessment-card") && getComputedStyle(document.querySelector("#design-pane-title")).position === "absolute"');
+    const emptyHeader = async phase => {
+      for (const panel of ["standalone", "workspace"]) {
+        await browser.evaluate(panel === "workspace" ? 'document.body.dataset.projectPanel="workspace"; document.body.dataset.projectDesign="true"; document.body.dataset.projectStacked="false"'
+          : 'delete document.body.dataset.projectPanel');
+        const view = await browser.evaluate(`(() => {
+          const badge=document.querySelector("#backbone-state"), header=badge.closest(".panel-heading");
+          return {hidden:badge.hidden,text:badge.textContent,height:header.getBoundingClientRect().height,
+            guidance:document.querySelector("#assessment-card").textContent,
+            guidanceVisible:document.querySelector("#assessment-card").checkVisibility()};
+        })()`);
+        await capture(browser, `empty-design-${phase}-${panel}`, view);
+        assert.equal(view.hidden, true, `${phase} ${panel}: no duplicate badge`);
+        assert.equal(view.text, "");
+        assert.equal(view.height, 0, `${phase} ${panel}: no empty toolbar strip`);
+        assert.equal(view.guidanceVisible, true);
+        assert.match(view.guidance, /No Design has been published.*Discuss your idea/);
+        const { root } = await browser.call("DOM.getDocument");
+        const { nodeId } = await browser.call("DOM.querySelector", { nodeId: root.nodeId, selector: "#design-panel" });
+        const { nodes } = await browser.call("Accessibility.getPartialAXTree", { nodeId, fetchRelatives: false });
+        assert.ok(nodes.some(node => node.role?.value === "region" && node.name?.value === "Canvas" && !node.ignored),
+          "The collapsed header still names the Design section.");
+      }
+    };
+    await emptyHeader("initial");
+    firstSnapshot.resolve();
+    await browser.waitFor('document.querySelector("#show-questions").textContent.includes("1 blockers")');
+    await emptyHeader("verified");
+    for (const [startup, installation, expected] of [
+      ["starting", "attaching", "Loading Design..."], ["verifying", "ready", "Loading Design..."],
+      [null, "unknown", "Design unverified"], [null, "failed", "Design unverified"],
+    ]) {
+      f.current.startup = startup;
+      f.current.installation.status = installation;
+      f.update();
+      await browser.waitFor(`document.querySelector("#backbone-state").textContent === ${JSON.stringify(expected)}`);
+      assert.equal(await browser.evaluate('document.querySelector("#backbone-state").checkVisibility()'), true);
+      assert.ok(await browser.evaluate('document.querySelector("#design-panel > .panel-heading").getBoundingClientRect().height') > 0);
+    }
+    f.current.installation.status = "ready"; f.current.design = design; f.update();
+    await browser.waitFor('document.querySelector("#backbone-state").textContent === "Current Design"');
+    assert.equal(await browser.evaluate('document.querySelector("#backbone-state").checkVisibility()'), true);
+    assert.equal(await browser.evaluate('document.querySelector("#assessment-card").hidden'), true);
+    assert.equal(await browser.evaluate('document.querySelector("#design-summary").textContent'), design.content.summary);
+    f.current.conversationStatus = "unverified"; f.update();
+    await browser.waitFor('document.querySelector("#backbone-state").textContent === "Design unverified"');
+    assert.equal(await browser.evaluate('document.querySelector("#backbone-proposal").hidden'), false,
+      "Unverified readback retains the last verified Design with its warning.");
+    assert.equal(await browser.evaluate('document.querySelector("#backbone-state").checkVisibility()'), true);
+    f.current.conversationStatus = "verified"; f.update();
+    await browser.waitFor('document.querySelector("#backbone-state").textContent === "Current Design"');
+    await click(browser, "#show-questions");
+    await browser.evaluate("document.querySelector('fieldset:not([hidden]) .design-reference').closest('details').open=true");
+    await click(browser, "fieldset:not([hidden]) .design-reference");
+    f.current.design = null; f.update();
+    await browser.waitFor('!document.querySelector("#assessment-card").hidden');
+    assert.equal(await browser.evaluate('document.querySelector("#backbone-state").hidden'), true);
+    assert.equal(await browser.evaluate('document.querySelector("#return-to-questions").checkVisibility()'), true,
+      "An empty Design must not hide contextual Back to Questions navigation.");
+    await click(browser, "#return-to-questions");
+    assert.equal(await browser.evaluate('document.querySelector("#question-panel").hidden'), false);
+    await click(browser, "#questions-back");
+    await emptyHeader("cleared");
+    assert.deepEqual(f.posts, []);
+    assert.deepEqual(browser.exceptions, []);
+  });
+
 test("composer hides generic tutorials without losing contextual hints, errors or accessible editing",
   { skip: !browserAvailable, timeout: 60_000 }, async t => {
     const f = await fixture(t), { browser } = f;
@@ -355,6 +432,7 @@ test("Questions workspace keeps one readable question, explicit navigation and s
     await browser.evaluate("document.querySelector('fieldset:not([hidden]) .design-reference').closest('details').open=true");
     await click(browser, "fieldset:not([hidden]) .design-reference");
     assert.equal(await browser.evaluate("document.querySelector('#question-panel').hidden"), true);
+    assert.equal(await browser.evaluate("document.querySelector('#return-to-questions').checkVisibility()"), true);
     await click(browser, "#return-to-questions");
     assert.equal(await browser.evaluate("document.querySelector('fieldset:not([hidden]) textarea').value"), "First exact draft");
     await choose("second-source", "other");

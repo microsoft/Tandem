@@ -134,6 +134,10 @@ wrapper's right edge. Its textarea retains the shared control's own focus border
 Development retains its renderer, readable question cards, native dialogs and
 independent workflow. Generated UI DSL views, user-authored artifact contents,
 prototype iframes and vendored renderers are not restyled.
+The empty Design view uses its central guidance only; its redundant header badge
+is hidden from the initial HTML onward. The existing empty-header rule removes
+unused space while retaining section naming, loading/unverified diagnostics,
+current Design metadata and contextual Back to Questions navigation.
 
 When adding or migrating a control:
 

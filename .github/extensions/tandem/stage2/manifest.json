@@ -178,8 +178,8 @@
     },
     {
       "path": "public/human-loop-app.js",
-      "bytes": 65424,
-      "sha256": "21ac3d87d06a20f47d78fe3b69529c0f9f55b79b20ed7a4f900ec982a1eada5e"
+      "bytes": 65485,
+      "sha256": "70e0be8a4ea5bdc75e57f413e8a8ad5d996107916f9d0ba8354271200dd6a542"
     },
     {
       "path": "public/human-loop-shell.css",
@@ -188,8 +188,8 @@
     },
     {
       "path": "public/human-loop.html",
-      "bytes": 17537,
-      "sha256": "feac69832e022152db9b66d867543fef36349165af2eb9b0ecbe9efda6fe5020"
+      "bytes": 17531,
+      "sha256": "d74b941fbfe55a228d7b7e9892489bb04a174d756b3a426455d0c9362cf0aca6"
     },
     {
       "path": "public/implementation-confirmation.js",
