@@ -488,7 +488,13 @@ earlier evidence to its UI changes. Its private creation/transport source and
 dependency manifests are unchanged from the tested candidate. The incoming application-interface change
 `00f0284` is also excluded.
 
-### Release blocker: unused native Development does not survive clean reopen
+### Known limitation: unused native Development does not survive clean reopen
+
+**Accepted for this release, not fixed.** During continued examination the user
+explicitly said **"this is a old known issue let's ignore"**. It is no longer
+a release blocker. Investigation, probes, fixes and upstream-report work on
+this issue stopped; existing evidence below remains historical failure evidence,
+not a pass. The acceptance does not apply to unrelated used-session data loss.
 
 - **Observed:** actual isolated source-preview startup in a fresh empty target
   verified the exact session provider and payload, activated/read back the native
@@ -499,8 +505,8 @@ dependency manifests are unchanged from the tested candidate. The incoming appli
   that identity and reported `unknown` / `execution-unknown`; it did not replace
   the session or submit work.
 - **Impact:** a user who opens Development, closes it before sending a request,
-  then returns can be stranded at recovery. This is a release blocker, not a
-  passing native journey.
+  then returns can be stranded at recovery. This was initially flagged as a
+  blocker and subsequently accepted by the user; it is not a passing native journey.
 - **Narrow diagnosis:** supported native metadata, in-use and storage APIs
   confirm the private ID is absent after close. A separate no-model probe found
   that create/name/readback succeed while `sessions.save` returns `{}` and
@@ -512,7 +518,7 @@ dependency manifests are unchanged from the tested candidate. The incoming appli
   with `ephemeral: false` returned an event ID and appeared once as `session.info`.
   Save still returned `{}`, and native metadata/storage remained absent both
   before and after clean shutdown. No further event variants were tried.
-- **Status:** unresolved. Original failure receipts and workspace WAL are
+- **Status:** known and accepted, unresolved. Original failure receipts and workspace WAL are
   preserved. The supported SDK/runtime persistence boundary requires a fix;
   no speculative production workaround was applied. No dummy prompt, replacement
   identity, automatic reset or direct native-storage write was used.
@@ -593,3 +599,104 @@ ZIP SHA-256 is
 `4A17EE97115A06C1C0DFE13DEC938CDD323D65145D0961899CDF4EE377B415DC`;
 standalone tarball SHA-256 is
 `B9EDDCDCF6F8547210E34CCDBD6379F943B004F15FBFD227745B082224EB5999`.
+
+### Continued examination on merged main
+
+The user requested continued release examination without resetting the budget.
+The prior report/regressions were preserved in local commit `bff0a00e`; an
+ordinary merge of main `32f2039306de9408f25cbca9598db44968e9afba` produced
+`6ea7ffb6f756d21ea5b41a05a02cf04569dffa67`, tree
+`85f4964d23a7ce7c2f8844bdc0b70ce74eaea153`. Production/UI source exactly matched
+merged PR #62 before the dependency/documentation corrections below. Its owner's
+unchanged focused seam results are reused; earlier `72a42fa` evidence is not
+silently relabeled. Nothing was merged into main, published or deployed.
+
+#### Dependency corrections and remaining decisions
+
+| Dependency | Proposed change | Scope and remaining qualification |
+| --- | --- | --- |
+| undici | 8.10.2 -> 8.12.3 | Compatible JSDOM development dependency patch; addresses alert entries 49/48/47 in the proposed lock range. It does not update Node's built-in fetch. |
+| brace-expansion | 5.0.9 -> 5.0.12 | Compatible packaging-tool dependency patch; addresses entries 3/2/1. |
+| ajv | 8.17.1 -> 8.18.0 | Compatible artifact compiler update; addresses entry 24. Production does not enable the advisory's `$data` mode. |
+| fast-uri | 3.1.8 -> 3.1.9 | Compatible AJV compiler dependency patch; addresses entries 45/44/43/42. No fast-uri code appears in the production documents bundle graph. |
+| zod | Remains 4.3.6; patched version 4.6.6 | Entries 46/41 remain, explicitly accepted/deferred for this release. SDK 1.0.18 pins it exactly. No automatic SDK upgrade or local override was applied. |
+| katex | Remains 0.16.47; patched version 0.18.2 | Entry 39 remains, explicitly accepted/deferred for this release. It is actually shipped inside Mermaid despite its development npm classification. No override was applied. |
+
+These changes address **11 alert entries in proposed lockfile ranges**, pending
+publication and re-audit, not 11 GitHub alerts already closed. The user explicitly
+said **"for 2nd point, let's ignore now and keep a eye on the dependent libs"**.
+The three remaining Zod/KaTeX entries are accepted known risks for this release,
+**not fixed and not current release blockers**. Dependabot remains enabled and
+the alerts were not dismissed. Installed dependency presence and
+advisory severity are not proof of a reachable exploit. KaTeX requires an
+additional pollution/options-influence condition; renderer gates do not make
+the dependency patched or establish universal safety.
+
+Dependency watchlist, last checked **2026-10-28** using configured-registry metadata:
+
+| Watch | Compatible patched-release condition | Last observation |
+| --- | --- | --- |
+| Copilot SDK -> Zod; `GHSA-mrhx-c7xc-m3w5`, alerts 46/41, locked 4.3.6 | A supported SDK declares/resolves Zod >=4.6.6; qualify SDK/native contracts before adopting it. | SDK 1.0.28 still pins 4.3.6 and declares CLI 1.0.105; upgrading it would not resolve the Zod alert. |
+| Mermaid -> KaTeX; `GHSA-238p-pmpm-9mq7`, alert 39, locked 0.16.47 | A compatible Mermaid release admits KaTeX >=0.18.2, with actual lock resolution and artifact/browser qualification. | Mermaid 12.2.0 declares ^0.18.0, so it is a compatible-parent candidate for later review. Not adopted under the user's deferral; the range alone is not a fixed lock or pass. |
+
+Recheck during remaining qualification or before release; no indefinite polling
+or automation was created. Material watchlist changes go to the coordinator.
+
+The actual bundle graph includes two AJV runtime helpers in the documents
+bundle and KaTeX in Mermaid. Regenerating artifacts with the patched compiler
+changed only two dependency-version headings in notices; all four JavaScript
+vendor bundles remain unchanged. Existing vendor line endings were preserved
+before regenerating the hash-bound payload, avoiding unrelated vendor churn.
+
+#### Install and documentation corrections
+
+- Fixed the standalone Development guide's command from nonexistent root
+  `--prefix tandem` to `--prefix development\tandem`. Executed the corrected
+  command into a new owned artifact folder: **152 files**, no installation.
+- Clarified that this standalone package is not the composed
+  Preparation-to-Development app and must not overwrite that installation.
+  Removed the false project-over-user precedence claim; the composed host
+  explicitly prefers the running user provider.
+- Corrected stale Mermaid/esbuild versions in the artifact-format guide.
+  The source quick-start link uses a public URL so it also works from the
+  distributed standalone guide.
+- Public-registry portability remains **unverified**, not proven broken.
+  The root lock contains 507 Microsoft public-feed URLs and one npmjs URL;
+  Development contains 112 public-feed and 79 npmjs URLs. Anonymous
+  TLS-verifying downloads of all four patched packages matched locked
+  integrity. These feeds were not shown to be internal-only.
+- Direct npmjs metadata failed TLS transport with Node, system curl, web fetch
+  and the supported process-local `--use-system-ca` option. No global registry/
+  certificate settings or TLS verification were changed. A clean external
+  public-registry installation and comparison to its advertised dist integrity
+  are still needed; local mirrored restore is not that evidence.
+
+#### Focused follow-up evidence
+
+After the dependency changes, the affected JSDOM/transport/evaluation-isolation
+and integrated permission group passed **54 tests**; document/schema and actual
+document-browser checks passed **10**. Root checks, artifact rebuild, integrated
+and browser builds, actual ZIP/tarball extraction and relocation passed.
+The eight payload checks had no skips. These are justified affected-surface
+checks, not a repeated full test campaign.
+
+The cumulative paid budget remains **4/6 cases and 4.08507/20 actual credits**;
+no model calls were made during this continuation. The first pass's raw
+readiness-label probe failure and unmetered-native-E2E coverage limit remain
+recorded. The accepted unused-session issue is not counted as a blocker or fix.
+
+Before the user waived that issue, version inspection established an important
+qualification: SDK package 1.0.18 and CLI package metadata 1.0.94 do not prove
+the executing binary was stock 1.0.94. A later inspection of the recorded npm
+loader reports `1.0.102-0.unstable.r40141230562.g130d689`. The original binary
+was not separately hashed/version-read during the failure, and default SDK
+probes use a different platform-runtime entrypoint. Those observations remain
+separate; no stock-runtime comparison was made. Existing sanitized report files
+are private, unposted and parked after the waiver.
+
+The detailed all-alert triage is `qualification-dependency-triage.md` in session
+artifacts. Logs include `qualification-patched-tooling.log`,
+`qualification-patched-artifacts.log`, `qualification-shipped-dependencies.log`,
+`qualification-anonymous-package-integrity.log`, `qualification-public-registry.log`
+and `qualification-standalone-package.log`. Final candidate/archive identities
+are retained in the cumulative `qualification-ledger.json`.
