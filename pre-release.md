@@ -391,3 +391,126 @@ Development**, and a fresh direct **Go to Development** with no launch overrides
   Do not absorb the separate unmerged release-root documents workstream.
 - [ ] Decide how to handle old branches/tags, PRs, cached references and collaborator
   cutover before any authorized publication or visibility change.
+
+## Unattended release qualification - 2026-10-28
+
+The user authorized one prioritized test/fix pass, not publication, deployment,
+history changes or a version bump. This pass fetched and verified clean main at
+`72a42fa87a6ecc78a7da33f20914f0f4e9241a1b`, tree
+`4a2be9a9d7947017d2f24192b8237c3f90296e36`, version **1.1.15**.
+This includes PR #61, whose deterministic CI was green at `a74f41a9`.
+PR #62 was separate, unmerged work when qualification began: its earlier permission-header failure was
+classified and corrected by its owner as a fixture/start-path mismatch, not a
+proven permission regression. Its head `b18493c8` subsequently passed deterministic
+CI and merged as `32f2039306de9408f25cbca9598db44968e9afba` (tree
+`36798cb52411276ddfecdf3ae7e5bf4fda501aff`). The final fetch records that newer
+main without merging it into this qualification worktree or transferring the
+earlier evidence to its UI changes. Its private creation/transport source and
+dependency manifests are unchanged from the tested candidate. The incoming application-interface change
+`00f0284` is also excluded.
+
+### Release blocker: unused native Development does not survive clean reopen
+
+- **Observed:** actual isolated source-preview startup in a fresh empty target
+  verified the exact session provider and payload, activated/read back the native
+  preferred main model, completed consented Git setup and reached private
+  Development **Ready** without a model turn. Orderly host close completed.
+  Reopening the same target retained the main identity and discovery generation,
+  but the original private identity became unavailable. The application preserved
+  that identity and reported `unknown` / `execution-unknown`; it did not replace
+  the session or submit work.
+- **Impact:** a user who opens Development, closes it before sending a request,
+  then returns can be stranded at recovery. This is a release blocker, not a
+  passing native journey.
+- **Narrow diagnosis:** supported native metadata, in-use and storage APIs
+  confirm the private ID is absent after close. A separate no-model probe found
+  that create/name/readback succeed while `sessions.save` returns `{}` and
+  metadata/storage remain absent even before shutdown. The documented
+  `workspaces.ensure` operation does not change that result. The SDK save
+  contract flushes an existing writer and explicitly permits a no-op when none
+  exists; RPC success is not durable journal evidence.
+- **Supported notification probe:** one truthful `session.rpc.log` notification
+  with `ephemeral: false` returned an event ID and appeared once as `session.info`.
+  Save still returned `{}`, and native metadata/storage remained absent both
+  before and after clean shutdown. No further event variants were tried.
+- **Status:** unresolved. Original failure receipts and workspace WAL are
+  preserved. The supported SDK/runtime persistence boundary requires a fix;
+  no speculative production workaround was applied. No dummy prompt, replacement
+  identity, automatic reset or direct native-storage write was used.
+
+The opt-in regression uses the production private-creation helper and real
+native create/name/save/stop APIs, then checks the exact identity through a cold
+client before attempting resume:
+
+```powershell
+$env:TANDEM_NATIVE_DURABILITY = '1'
+node --import tsx --test tests\native-durability.test.ts
+Remove-Item Env:\TANDEM_NATIVE_DURABILITY
+```
+
+It intentionally makes no model request and grants no permissions. The final
+run failed at the missing cold metadata assertion with clean client shutdown,
+not at a mock or a timeout. Its first diagnostic run hit the initial 60-second
+whole-test deadline while closing; that evidence is retained. The test now
+allows 180 seconds for both native client lifecycles and cleanup; production
+timeouts are unchanged. Without explicit opt-in this test is skipped, never
+counted as a pass. Existing test inventory expansion/concurrency is unchanged.
+
+### New evidence and limits
+
+| Distinct coverage | Result |
+| --- | --- |
+| Root metering, startup, model/effort, recovery, handoff and acceptance boundaries | 181 passed, no skips |
+| Native model/settings/recovery/permission fixtures | 80 passed, no skips |
+| Current PR #61 review, DSL, Design updates and Prototype/Finish flows | 128 passed, no skips |
+| Actual ZIP and standalone tarball extraction, controller relocation and packaged Git/handoff browsers | 27 passed, no skips, including both entry paths across eight Git scenarios each |
+| Actual artifact fit/overflow, narrow storyboard and source-bound document browsers | 10 passed, no skips |
+| Missing-prerequisite production-factory normalization regression | 1 passed |
+| Root check/pack, browser pack and Development build | Passed; no version change or generated-source drift |
+| Maintained Markdown file links and packaged CLI options | 101 links in 16 guides resolved; help/options checked |
+| Actual no-model source-preview/direct Development/clean reopen | Failed at private reopen; startup/main readback and first private Ready were observed |
+| Opt-in production-helper native durability regression | Failed at absent cold metadata; 0 skipped/cancelled in the final run |
+
+Browser fixtures use the actual packaged/source renderer with synthetic native
+adapters unless explicitly labeled actual native above. They do not establish
+model-driven implementation, Review or permission acceptance. The historical
+acceptance-lock race did not reproduce in this bounded core group; that is not
+proof its root cause is resolved. No broad suite was repeated merely to obtain
+another green count.
+
+Four serial **gpt-6.1-sol** prompt-only cases consumed **4.08507 actual AI
+credits** (`4,085,070,000 totalNanoAiu`) in the existing metered runner. New GUI,
+existing GUI and non-GUI probes passed. Missing-prerequisites failed only its raw
+readiness label; all explicit deferral/no-invention checks passed. Production's
+existing factory overrides a worker's `ready` label when upstream checks are
+`missing`; the added regression verifies that exact receipt-bound path still
+advances to Requirements with `needs-attention`. The raw probe failure remains
+recorded and is not represented as a native user-flow failure or rerun for green.
+
+The assignment has **two unused live cases and 15.91493 credits remaining**,
+with no overshoot or unknown usage. Each case had a 1,200-second limit including
+startup. Full native model-driven journeys remain unrun: the product surface
+does not expose supported aggregate main/private/factory credit accounting for
+this shared budget. No alternative evaluation framework or unmetered model
+fixture was created.
+
+Dependabot metadata shows **14 open alerts: 5 high, 6 medium, 3 low**, not
+exploitability findings. Runtime `zod@4.3.6` appears through the SDK in both
+lockfiles; other affected paths include `undici`, `brace-expansion`, `fast-uri`,
+`ajv` and `katex`. Dependency triage, final native qualification, review of the
+separate incoming changes, public-document/provenance review and explicit
+publication approval remain outstanding. This pass is not security certification
+or a declaration that the repository is bug-free.
+
+Detailed matrix, actual-usage ledger and receipts are retained in the release
+qualification session artifacts: `qualification-matrix.md`,
+`qualification-ledger.json`, `qualification-live-report.json`,
+`native-startup-receipt.json`, `native-owned-metadata.log` and
+`native-durability-probe.json`, plus `native-lifecycle-probe.json` and
+`qualification-native-regression-final.log`. Individual test logs preserve both failures and
+passes. The exact candidate payload digest is
+`92aa5919cb0654220cef56a2c37a3534765e598206a13743508704f4a994ae9e`;
+ZIP SHA-256 is
+`4A17EE97115A06C1C0DFE13DEC938CDD323D65145D0961899CDF4EE377B415DC`;
+standalone tarball SHA-256 is
+`B9EDDCDCF6F8547210E34CCDBD6379F943B004F15FBFD227745B082224EB5999`.
