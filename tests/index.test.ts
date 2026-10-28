@@ -1,5 +1,6 @@
 import "./project-store.test.js";
 import "./application-interface.test.js";
+import "./application-availability.test.js";
 import "./workflow.test.js";
 import "./workflow-activity.test.js";
 import "./main-session-effort.test.js";
@@ -41,6 +42,7 @@ import "./worker-interaction.test.js";
 import "./effort-lifecycle.test.js";
 import "./execution.test.js";
 import "./renderer.test.js";
+import "./renderer-workflow-states.test.js";
 import "./accepted-artifacts.test.js";
 import "./process-state.test.js";
 import "./worker-contracts.test.js";

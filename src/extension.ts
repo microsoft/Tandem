@@ -1919,7 +1919,11 @@ function publicState(entry, state) {
         },
         developmentBlocker: legacyCutoverError(state),
     };
-    return { ...projected, application: projectApplicationCapabilities(projected) };
+    return { ...projected, application: projectApplicationCapabilities(projected, {
+        canFinishPrototypeWithCurrentVisual: state.lifecycle.currentStage === "prototype"
+            && Boolean(state.prototypeFlow && awaitingVisualChoice(state.prototypeFlow)) && !hasActiveWork(state)
+            && !stageCompletionError(state, "prototype", { requirePrototypeSpec: false, keepCurrentVisual: true }),
+    }) };
 }
 
 const sketchPrototypeId = (state: TandemState) => state.stageReview?.parentId ?? state.prototypeId;
@@ -3413,7 +3417,7 @@ async function readSketchImage(input: unknown) {
 function stageCompletionError(
     state,
     stageId,
-    { requirePrototypeSpec = true, changeRequests = state.changeRequests } = {},
+    { requirePrototypeSpec = true, changeRequests = state.changeRequests, keepCurrentVisual = false } = {},
 ) {
     const change = currentChangeReview({ ...state, changeRequests });
     if (change && change.status !== "active" && !(change.status === "reviewing" && change.remainingStages[0] === stageId)) {
@@ -3476,7 +3480,7 @@ function stageCompletionError(
         if (prototypeNeedsChangeUpdate(state)) {
             return "Update and apply the prototype for the reviewed inputs and requested changes before finishing. Its saved version is still available.";
         }
-        const blocker = prototypeFlowCompletionError(state.prototypeFlow);
+        const blocker = prototypeFlowCompletionError(state.prototypeFlow, { keepCurrentVisual });
         if (blocker) return blocker;
         if (state.prototypeReview.revisions.some((revision) => ["queued", "processing", "ready", "failed"].includes(revision.status))) {
             return "Apply or retry outstanding prototype feedback before finishing.";

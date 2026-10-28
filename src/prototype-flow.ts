@@ -294,11 +294,11 @@ export function updateVisualSelection(flow: PrototypeFlow, checkpointId: string,
         selections: exploration.selections.map(item => item.directionId === selection.directionId ? selection : item) } };
 }
 
-export function prototypeFlowCompletionError(flow: PrototypeFlow | null): string | null {
+export function prototypeFlowCompletionError(flow: PrototypeFlow | null, { keepCurrentVisual = false } = {}): string | null {
     if (!flow) return null;
     if (flow.activeCheckpointId) return "Wait for the active prototype checkpoint to finish.";
     if (flow.pendingCheckpointId) return "Apply the prepared prototype update before finishing.";
-    if (awaitingVisualChoice(flow)) return "Choose and apply a visual direction, or keep the current prototype before finishing.";
+    if (!keepCurrentVisual && awaitingVisualChoice(flow)) return "Choose and apply a visual direction, or keep the current prototype before finishing.";
     const milestone = nextPrototypeMilestone(flow);
     if (milestone) return `Finish ${prototypeMilestoneLabels[milestone]} before finishing Prototype.`;
     return null;
