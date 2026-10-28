@@ -743,7 +743,11 @@ their scrolling rather than expanding the outer workspace, including narrow view
 Successful preview checks and verbose version summaries stay collapsed in Details;
 unavailable versions and their targeted Restart actions remain prominent. The
 normal current-plus-pending view preserves a useful preview and initially reachable
-Feedback at 920x620, including an expanded feedback draft.
+Feedback at 920x620, including long feedback drafts. Feedback inputs are not
+manually resizable and keep the same size when focused, highlighting their
+existing border and scrolling internally for long drafts. Request and answer
+composers send through their existing submission path on Enter; Ctrl/Command+Enter
+inserts a newline, without bypassing validation, disabled controls or IME composition.
 Designs, Prototype (including visual-direction refinement) and draft Requirements
 change requests use the same input/Send/History layout and shared history controls.
 History reads the owning stage's existing request records, preserves drafts and

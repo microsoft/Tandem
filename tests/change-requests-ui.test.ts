@@ -25,6 +25,38 @@ function request(): ChangeRequest {
         } };
 }
 
+test("review titles share a compact stage path while the impact dialog retains detailed reasons", async t => {
+    const h = await reactHarness(t), initial = state("prototype");
+    const change: ChangeRequest = { ...request(), status: "reviewing", remainingStages: ["prototype"],
+        assessment: { ...request().assessment!, stages: [
+            { stage: "requirements", reason: "Define saving." },
+            { stage: "sketch", reason: "Design the save control." },
+            { stage: "prototype", reason: "Add mock interaction." },
+        ] } };
+    initial.changeRequests = [change];
+    h.render(initial); await h.flush();
+    const title = h.get("pending-review-title");
+    assert.equal(title.textContent, "Prototype review");
+    const row = title.closest(".review-title-row")!;
+    const path = row.querySelector(".change-stage-path")!;
+    assert.equal(path.getAttribute("aria-label"), "Affected stages");
+    assert.equal(path.hasAttribute("data-detailed"), false);
+    assert.deepEqual([...path.querySelectorAll("li")].map(item => item.getAttribute("aria-label")),
+        ["Requirements: Saved", "Designs: Saved", "Prototype: Up next"]);
+    assert.equal(path.querySelector('[aria-current="step"] strong')!.textContent, "Prototype");
+    assert.equal(path.querySelectorAll('[data-status="saved"] .change-step-marker svg').length, 2);
+    assert.equal(path.querySelectorAll('.change-step-separator[aria-hidden="true"]').length, 2);
+    assert.equal(path.querySelector("p, button, a"), null, "Header badges remain read-only summaries.");
+    assert.equal(h.document.querySelector(".review-guidance-pane > .change-stage-path"), null);
+    await h.click("toggle-change-details");
+    const detailed = h.get("change-request-details").querySelector('.change-stage-path[data-detailed="true"]')!;
+    assert.equal(detailed.querySelectorAll("li").length, 3);
+    assert.match(detailed.textContent!, /Define saving.*Design the save control.*Add mock interaction/);
+    assert.equal(detailed.querySelector(".change-step-separator"), null);
+    assert.equal(h.requests.filter(item => item.options.method === "POST").length, 0);
+    assert.deepEqual(h.errors, []);
+});
+
 test("a legacy backlog exposes one unresolved review without letting another proposal replace it", async t => {
     const h = await reactHarness(t), initial = state("prototype");
     const older = { ...request(), message: "Replace the illustrative block.", assessment: {
@@ -518,13 +550,14 @@ test("change details open in a bounded dialog without moving stage navigation or
         await browser.waitFor('!document.querySelector("#change-request-details") && document.activeElement.id === "continue-pending-review"');
     }
     const cleanReview: ChangeRequest = { ...change, status: "reviewing", message: "Create a page of about us.",
-        remainingStages: ["requirements", "sketch"], assessment: { ...change.assessment!,
+        remainingStages: ["requirements", "sketch", "prototype"], assessment: { ...change.assessment!,
             summary: "Add an About Us page with navigation from the menu and a way back.",
             startStage: "requirements", stages: [
                 { stage: "requirements", reason: "Record the new informational page." },
                 { stage: "sketch", reason: "Design its page content and navigation." },
+                { stage: "prototype", reason: "Preview its navigation." },
             ] } };
-    for (const [width, mode] of [[1280, "light"], [375, "light"], [1280, "dark"]] as const) {
+    for (const [width, mode] of [[1280, "light"], [375, "light"], [1280, "dark"], [375, "dark"]] as const) {
         await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 800, deviceScaleFactor: 1, mobile: false });
         await browser.evaluate(`document.documentElement.dataset.projectFontSize = "standard"; document.documentElement.dataset.colorMode = "${mode}";
             workspaceFixture.flushSync(() => workspaceFixture.store.accept(${JSON.stringify({
@@ -552,6 +585,28 @@ test("change details open in a bounded dialog without moving stage navigation or
             join(process.env.TANDEM_UI_EVIDENCE, `single-review-${width}-${mode}.png`), await browser.screenshot());
         await browser.evaluate('document.querySelector("#close-change-details").click()');
         await browser.evaluate('document.querySelector("#sketch-history-toggle").click()');
+        await browser.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+        const header = await browser.evaluate(`(() => {
+            const title = document.querySelector("#pending-review-title");
+            const row = title.closest(".review-title-row"), path = row.querySelector(".change-stage-path");
+            const titleRect = title.getBoundingClientRect();
+            const badges = [...path.querySelectorAll(".change-step-content")].map(badge => badge.getBoundingClientRect());
+            const pane = document.querySelector(".review-guidance-pane").getBoundingClientRect();
+            return { count: badges.length, separators: path.querySelectorAll(".change-step-separator").length,
+                sameRow: badges.every(rect => Math.abs((rect.top + rect.bottom - titleRect.top - titleRect.bottom) / 2) <= 1),
+                compact: badges.every(rect => rect.width < 160 && rect.height <= 20),
+                fits: badges.every(rect => rect.left >= pane.left && rect.right <= pane.right + 1),
+                pageFits: document.documentElement.scrollWidth <= innerWidth + 1,
+                clip: { x: pane.x, y: pane.y, width: pane.width, height: pane.height, scale: 1 } };
+        })()`);
+        assert.equal(header.count, 3);
+        assert.equal(header.separators, 2);
+        assert.ok(header.compact && header.fits && header.pageFits, JSON.stringify(header));
+        if (width === 1280) assert.equal(header.sameRow, true, JSON.stringify(header));
+        if (process.env.TANDEM_UI_EVIDENCE) {
+            const image = await browser.call("Page.captureScreenshot", { format: "png", clip: header.clip, captureBeyondViewport: true });
+            await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `review-header-${width}-${mode}.png`), Buffer.from(image.data, "base64"));
+        }
     }
     await browser.evaluate('document.documentElement.dataset.colorMode = "light"');
     await browser.evaluate(`workspaceFixture.flushSync(() => workspaceFixture.store.accept(${JSON.stringify({
@@ -696,7 +751,13 @@ test("impact review stays beside the existing prototype and submits the exact di
         changeRequestId: "change", analysisId: "analysis", baselineDigest: "a".repeat(64) });
     assert.equal(h.store.getSnapshot().state.previewUrl, initial.previewUrl);
     assert.equal(h.store.getSnapshot().state.lifecycle.currentStage, "prototype");
-    assert.match(h.get("stage-input-review").textContent!, /Requirements reviewDraft only/);
+    const heading = h.get("stage-input-review").querySelector(".stage-review-heading")!;
+    assert.equal(heading.querySelector("h2")!.textContent, "Requirements review");
+    assert.equal(heading.querySelector(".stage-review-status")!.textContent, "Draft only");
+    const path = heading.querySelector(".review-title-row .change-stage-path")!;
+    assert.equal(path.querySelector('[aria-current="step"]')!.getAttribute("aria-label"), "Requirements: Reviewing draft");
+    assert.equal(path.querySelectorAll(".change-step-separator").length, 1);
+    assert.equal(h.get("stage-input-review").querySelectorAll(".change-stage-path").length, 1);
     assert.match(h.get("design-tree-workspace-tab").getAttribute("aria-label")!, /pinned draft review/);
     assert.equal(h.document.getElementById("change-request-details"), null, "The dialog must close to reveal the opened draft.");
     assert.equal(h.errors.length, 0, h.errors.join("\n"));

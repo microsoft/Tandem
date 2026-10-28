@@ -363,7 +363,7 @@ test("Prototype history stays available when empty and keyboard submission retai
     assert.deepEqual(h.requests, []);
     await h.input("revision-input", "Keep this keyboard feedback.");
     h.setFetch(async () => response({ ...value, revision: 2 }));
-    await h.fire(h.get("revision-input"), "keydown", { key: "Enter", ctrlKey: true });
+    await h.fire(h.get("revision-input"), "keydown", { key: "Enter" });
     assert.equal(h.requests[0].path, "/api/revision");
     assert.equal(h.requests[0].body.suggestion, "Keep this keyboard feedback.");
     assert.equal(h.requests[0].body.baseCheckpointId, "interaction");

@@ -28,6 +28,32 @@ export const TextArea: Story = {
   args: { label: "Review notes", description: "Describe the change you want to review.",
     children: control => <Textarea {...control} rows={3} placeholder="Keep the reviewed navigation unchanged." /> },
 };
+export const RequestComposer: Story = {
+  parameters: { controls: { disable: true } },
+  render: function RequestComposer() {
+    const [value, setValue] = useState("");
+    const [sent, setSent] = useState("");
+    return <form className="tandem-story-stack" onSubmit={event => {
+      event.preventDefault(); setSent(value); setValue("");
+    }}>
+      <FormField label="Request" description="Enter sends; Ctrl+Enter inserts a new line. This example stays local.">
+        {control => <Textarea {...control} submitOnEnter value={value} onChange={event => setValue(event.target.value)} />}
+      </FormField>
+      <Button type="submit" variant="primary" disabled={!value.trim()}>Send sample</Button>
+      {sent && <Status role="status">Sent locally: {sent}</Status>}
+    </form>;
+  },
+  play: async ({ canvas, userEvent }) => {
+    await userEvent.click(canvas.getByLabelText("Request"));
+    await userEvent.type(canvas.getByLabelText("Request"), "Keep the layout");
+    await userEvent.keyboard("{Control>}{Enter}{/Control}");
+    await expect(canvas.getByLabelText("Request")).toHaveValue("Keep the layout\n");
+    await userEvent.type(canvas.getByLabelText("Request"), "Change the label");
+    await userEvent.keyboard("{Enter}");
+    await expect(await canvas.findByRole("status")).toHaveTextContent("Sent locally:");
+    await expect(canvas.getByLabelText("Request")).toHaveValue("");
+  },
+};
 export const Select: Story = {
   args: { label: "Preview size", description: "This sample does not change the running app.",
     children: control => <SelectControl {...control} defaultValue="desktop"><option value="desktop">Desktop</option><option value="mobile">Mobile</option></SelectControl> },

@@ -104,11 +104,13 @@ export function PendingReviewPane({ viewedStage, pinnedReview, onActionsContaine
     <div className="stage-review-heading">
       <span className="review-panel-icon"><ListChecks size={20} aria-hidden="true" /></span>
       <div className="review-panel-title"><span className="review-eyebrow">{waiting ? "Preparing review" : "Review required"}</span>
-        <h2 id="pending-review-title">{target ? `${targetLabel} review` : "Change review"}</h2></div>
+        <div className="review-title-row">
+          <h2 id="pending-review-title">{target ? `${targetLabel} review` : "Change review"}</h2>
+          {request && <ChangeReviewPath request={request} />}
+        </div></div>
       {target && <span className="stage-review-status">{inThisTab ? "This tab" : "Up next"}</span>}
     </div>
     <p className="review-pane-guidance" role="status">{guidance}</p>
-    {request && <ChangeReviewPath request={request} />}
     <div className="review-pane-actions">
       {(!inThisTab || earlier || needsDialog || waiting) && <Button variant="primary" id="continue-pending-review" className="plan-button" type="button" disabled={disabled}
         onClick={event => void continueReview(event.currentTarget)}>
@@ -305,7 +307,10 @@ function ReviewEditor({ parent, active, actionsContainer, headerActionsContainer
     <span className="review-panel-icon"><ListChecks size={20} aria-hidden="true" /></span>
     <div className="review-panel-title">
       <span className="review-eyebrow">{settled ? "Review progress" : "Review in this tab"}{step >= 0 ? ` - Step ${step + 1} of ${reviewRequest!.assessment!.stages.length}` : ""}</span>
-      <h2>{label} review</h2>
+      <div className="review-title-row">
+        <h2>{label} review</h2>
+        {reviewRequest && <ChangeReviewPath request={reviewRequest} reviewingStage={status?.appliedAt ? undefined : stage} />}
+      </div>
     </div><span className="stage-review-status" data-status={status?.appliedAt ? "applied" : status?.discardedAt ? "discarded" : "draft"}>
       {status?.appliedAt ? <Check size={14} aria-hidden="true" /> : <Pin size={14} aria-hidden="true" />}
       {status?.appliedAt ? "Applied" : status?.discardedAt ? "Discarded" : "Draft only"}</span>
@@ -316,7 +321,6 @@ function ReviewEditor({ parent, active, actionsContainer, headerActionsContainer
         <ChevronRight size={12} aria-hidden="true" /><span>{label}</span></div>
       {reviewHeading}
       {reviewRequest && <p className="stage-review-request-copy">{reviewRequest.message}</p>}
-      {reviewRequest && <ChangeReviewPath request={reviewRequest} reviewingStage={status?.appliedAt ? undefined : stage} />}
       <p className="stage-review-safety"><ShieldCheck size={14} aria-hidden="true" />
         {status?.appliedAt ? `Changes applied. ${reviewStageLabel(workingStage)} is still your current stage.`
           : status?.discardedAt ? "Draft discarded. Accepted work is unchanged."
@@ -324,8 +328,7 @@ function ReviewEditor({ parent, active, actionsContainer, headerActionsContainer
       {hasActiveJobs(state) && <p role="status">{state.status}</p>}
     </section>;
   const reviewActions = <section className="pinned-review-actions" aria-label={`${label} review and approval`}>
-    {mergedReview ? <>{reviewHeading}
-      {reviewRequest && <ChangeReviewPath request={reviewRequest} reviewingStage={status?.appliedAt ? undefined : stage} />}</> : reviewBanner}
+    {mergedReview ? reviewHeading : reviewBanner}
     {stage === "requirements" && <div className="pinned-review-summary" ref={setReviewSummaryContainer} />}
     <ChangeRequestsPanel compact showTrigger={false} />
     <div className="pinned-review-buttons">
@@ -370,7 +373,7 @@ function DraftBrief() {
     void action.run(() => post("/api/goal", { goal, expectedRevision: state.revision }));
   }}>
     <label htmlFor="review-brief">Draft project brief</label>
-    <Textarea id="review-brief" value={goal} onChange={event => setGoal(event.target.value)} rows={3}
+    <Textarea submitOnEnter id="review-brief" value={goal} onChange={event => setGoal(event.target.value)} rows={3}
       maxLength={4000} disabled={blocked} />
     <Button variant="primary" className="plan-button" type="submit" disabled={blocked || !goal.trim() || goal === state.goal}>Save draft brief</Button>
     <Button variant="secondary" id="analyze-review-brief" className="plan-button secondary" type="button" disabled={blocked || goal !== state.goal}
@@ -410,15 +413,11 @@ function DraftRequirementRequest() {
       });
     }}>
       <label className="visually-hidden" htmlFor="review-requirement-request">Change only this draft</label>
-      <Textarea id="review-requirement-request" className="composer-input" rows={1} maxLength={4000} value={text} onChange={event => setText(event.target.value)}
-        placeholder="Describe a requirement change... (Ctrl+Enter)" onKeyDown={event => {
-          if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) {
-            event.preventDefault(); event.currentTarget.form?.requestSubmit();
-          }
-        }}
+      <Textarea submitOnEnter id="review-requirement-request" className="composer-input" rows={1} maxLength={4000} value={text} onChange={event => setText(event.target.value)}
+        placeholder="Describe a requirement change... (Enter to send)"
         disabled={pending || hasActiveJobs(state) || !ui.canEdit("requirements")} />
       <Button variant="primary" className="plan-button feedback-send" type="submit" aria-label="Prepare requirement changes"
-        title="Prepare requirement changes (Ctrl+Enter)" disabled={pending || hasActiveJobs(state) || !text.trim() || !ui.canEdit("requirements")}>
+        title="Prepare requirement changes (Enter)" disabled={pending || hasActiveJobs(state) || !text.trim() || !ui.canEdit("requirements")}>
         <Send size={15} aria-hidden="true" />Send</Button>
       <FeedbackHistoryButton id="requirements-history-toggle" target="requirements-request-history" open={historyOpen}
         error={Boolean(action.error || history.some(item => changeRequestHistoryStatus(item) === "error"))}

@@ -4,8 +4,8 @@
   "files": [
     {
       "path": "extension.mjs",
-      "bytes": 3037176,
-      "sha256": "ae8ca9b0e3fd46521ebbd2b899d9ef7ab6d61d5bdd83bf291ba8ada7f5fdfe93"
+      "bytes": 3039498,
+      "sha256": "66cabf5215584cca3ebb7a59e453003c3e4cfddeca7eba449137b897a188b68d"
     },
     {
       "path": "preview-launcher.mjs",
@@ -29,8 +29,8 @@
     },
     {
       "path": "stage2/manifest.json",
-      "bytes": 25826,
-      "sha256": "15428076c7e2fe25d2de99bfbb4ce75c03c3f2e96ac3289d91ea665837301cda"
+      "bytes": 25987,
+      "sha256": "d86f7160c7254450aba3435272e7fcb7464d1c39930f385aabd3bfe24b71b3c2"
     },
     {
       "path": "stage2/package.json",
@@ -158,9 +158,14 @@
       "sha256": "3add413098bb0971cd751b6d79dccc50469c2d39afda0a6371065c24184eab0c"
     },
     {
+      "path": "stage2/public/composer-enter.d.ts",
+      "bytes": 489,
+      "sha256": "c0c55a9817dbaa8d7d2547ee116da7e9ed2ccbe00b1c5090af94341bb030ec00"
+    },
+    {
       "path": "stage2/public/composer-enter.js",
-      "bytes": 796,
-      "sha256": "2644545e2d74c245aadc38cd21584952f64737ff3b73d13efc561a11cf9bd4e5"
+      "bytes": 1776,
+      "sha256": "0c3151e4b1a76ee4f655d2c83bf24cb316f88f3e684a386f81ccce0f5acbcf6a"
     },
     {
       "path": "stage2/public/composer-image.js",
@@ -204,8 +209,8 @@
     },
     {
       "path": "stage2/public/human-loop.html",
-      "bytes": 17442,
-      "sha256": "fcdd421db3fd7a429348bc9a8480c6a63faa79688d45999f3534ba4cc2166888"
+      "bytes": 17537,
+      "sha256": "feac69832e022152db9b66d867543fef36349165af2eb9b0ecbe9efda6fe5020"
     },
     {
       "path": "stage2/public/implementation-confirmation.js",
@@ -309,8 +314,8 @@
     },
     {
       "path": "stage2/public/renderers/human-loop.js",
-      "bytes": 36483,
-      "sha256": "c57163a6d7f399cb55533dc66c33d147085c9c908dfc2230d81e7838c9751e0c"
+      "bytes": 36779,
+      "sha256": "f293419027675f874d3792ef87b806b2e27d11aef9496fad5e213b97821f3962"
     },
     {
       "path": "stage2/public/renderers/shared-design.js",
@@ -389,13 +394,13 @@
     },
     {
       "path": "stage2/public/ui-native.css",
-      "bytes": 7691,
-      "sha256": "241f5e9b9534755c7ac4147efc8172c558e80b21abe9dce4c4dc7a5bd37e64e6"
+      "bytes": 7598,
+      "sha256": "e7b97a121f506120a36f9f40c77a982c80e72a35428945643a9de54e08ce6243"
     },
     {
       "path": "stage2/public/ui-system.css",
-      "bytes": 14227,
-      "sha256": "b0086f8d05ff66d3c30c8e1caa1c53caaff23c108d47bd59bc2bd54f54659d92"
+      "bytes": 14538,
+      "sha256": "3615f9df86d7c05ef4e7b84939ffc965e779304c2e6f9f7b953d53cb086bcc9a"
     },
     {
       "path": "stage2/public/workflow-stop-control.js",
@@ -793,5 +798,5 @@
       "sha256": "92b92e76eb4ac3bee96c6bbdde06ed1f7d9c0088576a51db1276c567dbb207f8"
     }
   ],
-  "digest": "777d168a9b3bf64cccdbf557565611b8ca7de6c2039c9fd80f9e9799f48cc5ad"
+  "digest": "5e6b074b18c6bf206b3294bf122616a5059fd4d8641bba51de29b1c45f6cd5d5"
 }

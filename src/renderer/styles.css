@@ -59,14 +59,24 @@
 .review-stage-badge { padding: 2px 8px; border: 1px solid var(--studio-border); border-radius: 4px; color: var(--studio-muted); font-size: 11px; background: var(--studio-panel); }
 .change-details-dialog .change-original { margin: 10px 0 0; color: var(--studio-text); font-weight: 500; line-height: 1.5; overflow-wrap: anywhere; }
 .change-impact p { margin-block: 8px; overflow-wrap: anywhere; }
-.change-stage-path { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; padding: 0; margin: 12px 0; }
-.change-stage-path li { display: flex; align-items: flex-start; gap: 8px; flex: 1 1 100px; min-width: 0; padding: 10px; border: 1px solid var(--studio-border); border-radius: 6px; background: var(--studio-surface); }
-.change-step-marker { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 21px; height: 21px; border: 1px solid var(--studio-border); border-radius: 50%; color: var(--studio-muted); font-size: 11px; font-weight: 600; }
+.change-stage-path { display: flex; flex-wrap: wrap; gap: var(--studio-space-1); min-width: 0; list-style: none; padding: 0; margin: 0; }
+.change-stage-path li { display: flex; align-items: center; gap: var(--studio-space-1); min-width: 0; }
+.change-step-content { display: flex; align-items: center; gap: var(--studio-space-1); min-width: 0; padding: 0 6px; border: 1px solid var(--studio-border); border-radius: var(--studio-radius-control); background: var(--studio-surface); color: var(--studio-muted); }
+.change-step-marker { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 14px; height: 14px; color: var(--studio-muted); font-size: 11px; font-weight: 600; }
 .change-step-copy { display: grid; gap: 2px; min-width: 0; }
 .change-step-copy strong { font-size: 12px; overflow-wrap: anywhere; }
-.change-stage-path li[data-status="current"] { border-color: var(--studio-accent); background: var(--studio-accent-soft); }
-.change-stage-path li[data-status="current"] .change-step-marker { border-color: var(--studio-accent); background: var(--studio-accent); color: var(--color-white, #fff); }
-.change-stage-path li[data-status="saved"] .change-step-marker { color: var(--studio-success); border-color: var(--studio-success); }
+.change-stage-path:not([data-detailed]) .change-step-copy strong { font-weight: 500; line-height: 16px; }
+.change-stage-path:not([data-detailed]) li[data-status="current"] .change-step-copy strong { font-weight: var(--studio-font-weight-semibold); }
+.change-stage-path li[data-status="current"] .change-step-content { border-color: var(--studio-accent); background: var(--studio-accent-soft); color: var(--studio-accent-strong); }
+.change-stage-path li[data-status="current"] .change-step-marker { color: var(--studio-accent-strong); }
+.change-stage-path li[data-status="saved"] .change-step-marker { color: var(--studio-success); }
+.change-step-separator { flex: none; color: var(--studio-muted); }
+.change-stage-path[data-detailed] { gap: var(--studio-space-2); margin: 12px 0; }
+.change-stage-path[data-detailed] li { flex: 1 1 100px; align-items: stretch; }
+.change-stage-path[data-detailed] .change-step-content { flex: 1; align-items: flex-start; gap: var(--studio-space-2); padding: 10px; color: var(--studio-text); }
+.change-stage-path[data-detailed] .change-step-marker { width: 21px; height: 21px; border: 1px solid var(--studio-border); border-radius: 50%; }
+.change-stage-path[data-detailed] li[data-status="current"] .change-step-marker { border-color: var(--studio-accent); background: var(--studio-action-bg); color: var(--studio-on-action); }
+.change-stage-path[data-detailed] li[data-status="saved"] .change-step-marker { border-color: var(--studio-success); }
 .change-step-copy p { margin: 5px 0 0; color: var(--studio-muted); font-size: 12px; line-height: 1.5; }
 .review-path-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 20px; }
 .change-details-dialog .review-path-heading h3 { margin: 0; }
@@ -460,10 +470,7 @@ form textarea.composer-input {
   background: var(--studio-surface);
 }
 
-form:not(.feedback-composer):focus-within textarea.composer-input,
-form.feedback-composer > textarea.composer-input:focus,
-#question-host[data-composer-expanded="true"] textarea.composer-input,
-#question-host:focus-within textarea.composer-input {
+form:not(.feedback-composer) textarea.composer-input[data-composer-expanded="true"] {
   min-height: var(--studio-composer-expanded-height);
 }
 
@@ -3571,7 +3578,6 @@ textarea {
 .stage-input-review > .phase-actions:has(.pinned-review-actions) { padding: 12px 14px; }
 .review-guidance-pane, .pinned-review-actions { display: grid; gap: 8px; width: 100%; min-width: 0; }
 .review-guidance-pane { padding: 12px 14px; }
-.review-guidance-pane .change-stage-path, .pinned-review-actions > .change-stage-path { margin: 0; }
 .review-pane-guidance, .pinned-review-actions > p { margin: 0; }
 .review-pane-guidance { color: var(--studio-text); line-height: 1.5; }
 .review-pane-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--studio-control-gap); }
@@ -3581,6 +3587,8 @@ textarea {
 .review-panel-icon { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 34px; height: 34px; border: 1px solid var(--studio-accent); border-radius: 7px; color: var(--studio-accent-strong); background: var(--studio-panel); }
 .review-panel-title { flex: 1; min-width: 0; }
 .review-panel-title .review-eyebrow { color: var(--studio-accent-strong); }
+.review-title-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--studio-space-1) var(--studio-space-2); min-width: 0; }
+.review-title-row h2 { overflow-wrap: anywhere; }
 .dialog-content.review-details-dialog { display: flex; flex-direction: column; width: min(820px, calc(100vw - 32px)); max-height: min(860px, calc(100dvh - 32px)); padding: 0; overflow: hidden; }
 .review-details-heading { display: flex; align-items: flex-start; gap: 16px; padding: 20px 24px 16px; border-bottom: 1px solid var(--studio-border); }
 .review-details-heading > div { flex: 1; min-width: 0; }

@@ -27,10 +27,8 @@
 .feedback-composer .tandem-icon-button, .diagram-toolbar .tandem-icon-button { flex: none; }
 .diagram-toolbar .tandem-button { white-space: nowrap; font-size: var(--studio-text-small); }
 .tandem-input.composer-input { min-height: var(--studio-composer-height); height: var(--studio-composer-height); }
-form:not(.feedback-composer):focus-within textarea.tandem-input.composer-input,
-form.feedback-composer > textarea.tandem-input.composer-input:focus,
-#question-host[data-composer-expanded="true"] textarea.tandem-input.composer-input,
-#question-host:focus-within textarea.tandem-input.composer-input { min-height: var(--studio-composer-expanded-height); }
+form.feedback-composer > textarea.tandem-input.composer-input { resize: none; }
+form:not(.feedback-composer) textarea.tandem-input.composer-input[data-composer-expanded="true"] { min-height: var(--studio-composer-expanded-height); }
 .start-form textarea.tandem-input.composer-input { min-height: 112px; height: auto; }
 .change-details-dialog textarea.tandem-input.composer-input { min-height: 96px; height: auto; }
 .sketch-transition :is(.tandem-input, .tandem-button) { min-width: 0; }

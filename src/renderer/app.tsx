@@ -183,7 +183,7 @@ function GoalEntry() {
         });
       }}>
         <label htmlFor="start-goal">Your project goal</label>
-        <Textarea className="composer-input" id="start-goal" ref={input} value={goal} onChange={(event) => { setGoal(event.currentTarget.value); action.setError(""); }}
+        <Textarea submitOnEnter className="composer-input" id="start-goal" ref={input} value={goal} onChange={(event) => { setGoal(event.currentTarget.value); action.setError(""); }}
           rows={5} maxLength={4000} required disabled={!writable || pending} aria-invalid={Boolean(action.error)}
           aria-describedby="start-help start-message" placeholder="Build an app that helps my team triage customer requests." />
         <p id="start-help" className="visually-hidden">Describe who it is for and what it should help them do. You can refine the details together.</p>

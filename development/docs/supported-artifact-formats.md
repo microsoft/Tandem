@@ -451,10 +451,11 @@ the user retries their selection or explicitly accepts the actual model in the
 same session. Appearance saves cannot overwrite that intent. Image capability
 checks use the actual selected model at upload and request admission.
 
-Only the chat textarea handles Enter as Send through the existing form submit
-path. Shift+Enter inserts a newline; IME composition and held/repeated Enter do
-not send duplicates. Attachment uploads, whitespace checks and exact-envelope
-retry semantics remain in the existing submission handler.
+Chat and freeform question textareas handle Enter as Send through their existing
+form submit paths. Ctrl/Command+Enter inserts a newline at the selection;
+Shift+Enter retains its native newline behavior. IME composition and held/repeated
+Enter do not send duplicates. Attachment uploads, whitespace checks and
+exact-envelope retry semantics remain in the existing submission handlers.
 
 ## Active role duration
 

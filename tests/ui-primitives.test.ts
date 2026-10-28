@@ -15,13 +15,14 @@ function compile() {
         import { createRoot } from "react-dom/client";
         import { flushSync } from "react-dom";
         import { History } from "lucide-react";
-        import { Button, Dialog, FormField, IconButton, Status } from "./index.js";
+        import { Button, Dialog, FormField, IconButton, Status, Textarea } from "./index.js";
         export function mount() {
           const root = createRoot(document.getElementById("root"));
           const buttonRef = createRef(), iconRef = createRef();
-          const counts = { clicks: 0, submits: 0, changes: 0 };
-          function Fixture({ loading = false, disabled = false, error = "" }) {
+          const counts = { clicks: 0, submits: 0, changes: 0, focuses: 0, blurs: 0, messages: [], submitters: [] };
+          function Fixture({ loading = false, disabled = false, readOnly = false, preventEnter = false, error = "" }) {
             const [open, setOpen] = useState(false);
+            const [message, setMessage] = useState("First second");
             return <>
               <form id="sample-form" className="revision-form" onSubmit={event => { event.preventDefault(); counts.submits++; }}>
                 <Button id="action" ref={buttonRef} variant="primary" loading={loading} disabled={disabled}
@@ -35,9 +36,19 @@ function compile() {
                 <FormField id="project-name" label="Project name" description="A recognizable name." error={error}>
                   {control => <input {...control} onChange={() => counts.changes++} />}
                 </FormField>
-                <FormField label="Notes">{control => <textarea {...control} />}</FormField>
+                <FormField label="Notes">{control => <Textarea {...control} />}</FormField>
                 <FormField label="Preview size">{control => <select {...control}><option>Desktop</option></select>}</FormField>
               </form>
+              <form id="composer-form" onSubmit={event => {
+                event.preventDefault(); counts.messages.push(message); counts.submitters.push(event.nativeEvent.submitter.id);
+              }}>
+                <Textarea id="composer-input" className="composer-input" submitOnEnter value={message} maxLength={12}
+                  disabled={disabled} readOnly={readOnly} aria-label="Request"
+                  onChange={event => setMessage(event.target.value)}
+                  onFocus={() => counts.focuses++} onBlur={() => counts.blurs++}
+                  onKeyDown={event => { if (preventEnter) event.preventDefault(); }} />
+              </form>
+              <Button id="composer-send" form="composer-form" type="submit" disabled={disabled || loading}>Send request</Button>
               <Dialog open={open} onOpenChange={setOpen} className="host-dialog" title="Review sample" description="No project will be changed."
                 trigger={<Button id="open-dialog">Open review</Button>}
                 footer={<Button id="close-dialog" onClick={() => setOpen(false)}>Close review</Button>}>
@@ -87,9 +98,15 @@ async function fixture(t: TestContext) {
     counts: mounted.counts, buttonRef: mounted.buttonRef, iconRef: mounted.iconRef,
     async render(props: object) { mounted.render(props); await flush(); },
     async click(selector: string) { element(selector).click(); await flush(); },
-    async key(key: string) {
-      dom.window.document.activeElement!.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key, bubbles: true }));
+    async focus(selector: string) { element(selector).focus(); await flush(); },
+    async key(key: string, properties: KeyboardEventInit = {}) {
+      const target = dom.window.document.activeElement!;
+      const event = new dom.window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...properties });
+      target.dispatchEvent(event);
       await flush();
+      target.dispatchEvent(new dom.window.KeyboardEvent("keyup", { key, bubbles: true, ...properties }));
+      await flush();
+      return event;
     },
   };
 }
@@ -117,6 +134,77 @@ test("shared buttons preserve native form semantics, refs and explicit loading s
   await h.render({ disabled: true });
   assert.equal(h.element<HTMLButtonElement>("#action").disabled, true);
   assert.notEqual(h.element("#action").getAttribute("aria-busy"), "true");
+  assert.deepEqual(h.errors, []);
+});
+
+test("request textareas send on Enter and preserve controlled newlines, selections and external submitters", async t => {
+  for (const modifier of ["ctrlKey", "metaKey"]) {
+    const h = await fixture(t);
+    const input = h.element<HTMLTextAreaElement>("#composer-input");
+    input.focus();
+    input.setSelectionRange(5, 6);
+    assert.equal((await h.key("Enter", { [modifier]: true })).defaultPrevented, true);
+    assert.equal(input.value, "First\nsecond");
+    assert.deepEqual([input.selectionStart, input.selectionEnd], [6, 6]);
+    assert.deepEqual([...h.counts.messages], []);
+    await h.render({});
+    assert.equal(input.value, "First\nsecond", "A controlled rerender retains the newline");
+    assert.equal(input.getAttribute("aria-keyshortcuts"), "Enter");
+    assert.match(input.title, /Ctrl\+Enter for a new line/);
+    assert.equal((await h.key("Enter")).defaultPrevented, true);
+    assert.deepEqual([...h.counts.messages], ["First\nsecond"]);
+    assert.deepEqual([...h.counts.submitters], ["composer-send"]);
+    assert.deepEqual(h.errors, []);
+  }
+});
+
+test("compact composers expand only when editing and retain expansion when focus moves to an action", async t => {
+  const h = await fixture(t);
+  const input = h.element<HTMLTextAreaElement>("#composer-input");
+  assert.equal(input.dataset.composerExpanded, undefined);
+  await h.focus("#composer-send");
+  assert.equal(input.dataset.composerExpanded, undefined, "Focusing an action must not expand the editor.");
+  await h.focus("#composer-input");
+  assert.equal(input.dataset.composerExpanded, "true");
+  assert.equal(h.counts.focuses, 1, "The native focus handler is preserved.");
+  await h.focus("#composer-send");
+  assert.equal(h.counts.blurs, 1, "The native blur handler is preserved.");
+  assert.equal(input.dataset.composerExpanded, "true", "Leaving the editor must not move the clicked action.");
+  await h.render({});
+  assert.equal(h.element("#composer-input"), input);
+  assert.equal(input.dataset.composerExpanded, "true", "Unrelated rerenders preserve the expanded editor.");
+  assert.deepEqual(h.errors, []);
+});
+
+test("request textareas preserve composition, disabled submission, readonly, maxlength and custom key guards", async t => {
+  const h = await fixture(t);
+  const input = h.element<HTMLTextAreaElement>("#composer-input");
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+  await h.key("Enter", { ctrlKey: true });
+  assert.equal(input.value, "First second", "Newlines respect the existing maxlength");
+  input.dispatchEvent(new h.window.CompositionEvent("compositionstart", { bubbles: true }));
+  await h.key("Enter");
+  input.dispatchEvent(new h.window.CompositionEvent("compositionend", { bubbles: true }));
+  await h.key("Enter", { isComposing: true });
+  await h.key("Enter", { keyCode: 229 });
+  await h.key("Enter", { repeat: true });
+  assert.deepEqual([...h.counts.messages], []);
+  for (const props of [{ loading: true }, { disabled: true }, { readOnly: true }, { preventEnter: true }]) {
+    await h.render(props);
+    input.focus();
+    input.dispatchEvent(new h.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    input.dispatchEvent(new h.window.KeyboardEvent("keyup", { key: "Enter", bubbles: true }));
+    assert.deepEqual([...h.counts.messages], [], `${JSON.stringify(props)} must not submit`);
+  }
+  await h.render({});
+  const notes = h.element<HTMLTextAreaElement>(".tandem-field textarea");
+  notes.focus();
+  assert.equal((await h.key("Enter")).defaultPrevented, false, "Non-request editors retain ordinary Enter behavior");
+  assert.equal(h.counts.submits, 0);
+  input.focus();
+  await h.key("Enter");
+  assert.deepEqual([...h.counts.messages], ["First second"]);
   assert.deepEqual(h.errors, []);
 });
 

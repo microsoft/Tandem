@@ -32,7 +32,11 @@ function documentFixture() {
         addEventListener(name, listener) { this.listeners[name] = listener; },
         querySelector(tag) { return descendants(this).find((node) => node.tagName === tag) ?? null; },
         focus() { document.activeElement = this; },
-        fire(name) { return this.listeners[name]?.({ preventDefault() {} }); },
+        fire(name, properties = {}) {
+          const event = { defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, ...properties };
+          return this.listeners[name]?.(event);
+        },
+        requestSubmit() { return this.fire('submit'); },
       };
     },
   };
@@ -248,6 +252,22 @@ test('all roles share option/freeform controls and exact independent partial ans
       { questionId: 'three', sourceResultId: 'result-1', kind: 'option', value: 'a' },
     ]);
   }
+});
+
+test('freeform question Enter submits the same bound answer batch without bypassing composition or pending guards', async () => {
+  const ui = fixture(), input = ui.all('textarea')[0];
+  input.value = 'Keep the original Design choice.';
+  input.fire('input');
+  input.fire('keydown', { key: 'Enter', isComposing: true });
+  assert.deepEqual(ui.calls.answers, []);
+  input.fire('keydown', { key: 'Enter' });
+  input.fire('keydown', { key: 'Enter', repeat: true });
+  assert.deepEqual(ui.calls.answers, [{
+    schemaVersion: 'human-question-answers/v1',
+    answers: [{ questionId: 'one', sourceResultId: 'result-1', kind: 'freeform', value: 'Keep the original Design choice.' }],
+  }]);
+  await Promise.resolve();
+  assert.equal(input.value, '');
 });
 
 test('saved Stop questions do not follow later requests or same-role work in Active request', () => {

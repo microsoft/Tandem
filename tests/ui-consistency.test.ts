@@ -129,6 +129,23 @@ test("React, browser, Storybook and native Development share control styles acro
         })`);
         if (surface === "react") expected = appearance;
         else assert.deepEqual(appearance, expected, `${surface} differs from React at ${width}px / ${theme}`);
+        const focus = await browser.evaluate(`["name", "choice", "notes"].map(id => {
+          const input = document.getElementById(id);
+          const size = () => {
+            const {width, height} = input.getBoundingClientRect();
+            return {width, height, borderWidth:getComputedStyle(input).borderWidth};
+          };
+          input.blur();
+          const unfocused = size(), border = getComputedStyle(input).borderColor;
+          input.focus();
+          const css = getComputedStyle(input);
+          return {id, unfocused, focused:size(), border, focusedBorder:css.borderColor, outline:css.outlineStyle};
+        })`);
+        for (const input of focus) {
+          assert.deepEqual(input.focused, input.unfocused, `${surface} ${input.id} changes geometry on focus`);
+          assert.notEqual(input.focusedBorder, input.border, `${surface} ${input.id} must highlight its existing border`);
+          assert.equal(input.outline, "none", `${surface} ${input.id} must not gain an extra focus outline`);
+        }
         if (surface !== "native") {
           const tabs = await browser.evaluate(`["catalogue", "stages", "requirements", "prototype"].map(example => {
             const root = document.querySelector("[data-example=" + example + "]");
@@ -136,7 +153,7 @@ test("React, browser, Storybook and native Development share control styles acro
               const css = getComputedStyle(element, pseudo);
               return { font:css.font, color:css.color, background:css.backgroundColor, border:css.border,
                 radius:css.borderRadius, padding:css.padding, margin:css.margin, gap:css.gap, height:css.minHeight,
-                opacity:css.opacity, content:css.content, position:css.position, bottom:css.bottom };
+                opacity:css.opacity, content:css.content, position:css.position, bottom:css.bottom, shadow:css.boxShadow };
             };
             return { list:style(root.querySelector("[role=tablist]")),
               tabs:[...root.querySelectorAll("[role=tab]")].map(tab => ({
@@ -146,6 +163,8 @@ test("React, browser, Storybook and native Development share control styles acro
           for (let index = 1; index < tabs.length; index++) {
             assert.deepEqual(tabs[index], tabs[0], `${surface} ${["catalogue", "stages", "requirements", "prototype"][index]} tabs differ from the catalogue at ${width}px / ${theme}`);
           }
+          assert.match(tabs[0].tabs[0].control.shadow, /0px -3px 0px(?: 0px)? inset$/, "Selected tabs use a bottom-edge accent");
+          assert.equal(tabs[0].tabs[0].after.content, "none", "Selected tabs do not retain a bottom underline");
           assert.equal(await browser.evaluate(`(() => {
             const list = document.querySelector("[data-example=long] [role=tablist]");
             return list.scrollWidth > list.clientWidth && list.getBoundingClientRect().width <= 240;
@@ -206,7 +225,7 @@ test("React, browser, Storybook and native Development share control styles acro
   assert.deepEqual(browser.exceptions, []);
 });
 
-test("Requirements and Prototype share sub-tab bars in the real application", { skip: !browserAvailable, timeout: 60_000 }, async t => {
+test("Requirements and Prototype preserve shared navigation and feedback layout in the real application", { skip: !browserAvailable, timeout: 60_000 }, async t => {
   const initial: UiState = readyPrototype();
   initial.requirements = { substage: "dag", usageItems: ["Inspect saved decisions and previews."], suggestions: [] };
   initial.decisionGraph.nodes = [decision("Interface validation approach", "answered")];
@@ -302,6 +321,7 @@ test("Requirements and Prototype share sub-tab bars in the real application", { 
             progress:${JSON.stringify(stage)} === "prototype" ? style(document.querySelector("#prototype-progress")) : null };
         })()`);
         assert.equal(snapshot.shared, true, `${stage} must use the shared tab list`);
+        assert.match(snapshot.appearance.bar.borderBottom, /^1px solid /, "The tab bar keeps its bottom border");
         assert.equal(snapshot.fits, true, `${stage} navigation overflows at ${width}px / ${theme}`);
         assert.equal(snapshot.actionsOutsideList, true, "Preview actions stay outside tab keyboard navigation");
         assert.equal(snapshot.bar.height >= snapshot.tabs[0].height, true);
@@ -316,6 +336,32 @@ test("Requirements and Prototype share sub-tab bars in the real application", { 
           assert.equal(snapshot.progress.radius, "0px");
         }
         snapshots.push(snapshot);
+        if (stage === "prototype") {
+          const feedback = await browser.evaluate(`(() => {
+            const input = document.querySelector("#revision-input");
+            const size = () => {
+              const {width, height} = input.getBoundingClientRect();
+              return {width, height};
+            };
+            input.blur();
+            const unfocused = size();
+            const border = getComputedStyle(input).borderColor;
+            input.focus();
+            const css = getComputedStyle(input);
+            return {unfocused, focused:size(), resize:css.resize, outline:css.outlineStyle, border, focusedBorder:css.borderColor};
+          })()`);
+          assert.ok(feedback.unfocused.width > 0 && feedback.unfocused.height > 0, "Feedback stays visible");
+          assert.deepEqual(feedback.focused, feedback.unfocused, `Focusing feedback must not resize it at ${width}px / ${theme}`);
+          assert.equal(feedback.resize, "none", "Feedback must not allow manual resizing");
+          assert.equal(feedback.outline, "none", "Feedback does not gain an extra focus outline");
+          assert.notEqual(feedback.focusedBorder, feedback.border, "Feedback highlights its own border on focus");
+          await browser.call("Input.insertText", { text: "First feedback line\nSecond feedback line\nThird feedback line\n" });
+          assert.deepEqual(await browser.evaluate(`(() => {
+            const input = document.querySelector("#revision-input"), {width, height} = input.getBoundingClientRect();
+            return {width, height, scrolls:input.scrollHeight > input.clientHeight};
+          })()`), { ...feedback.unfocused, scrolls: true }, "Long feedback scrolls inside the fixed-size input");
+          await browser.evaluate('document.querySelector("#revision-input").blur()');
+        }
         if (process.env.TANDEM_UI_EVIDENCE) await writeFile(
           join(process.env.TANDEM_UI_EVIDENCE, `subtabs-${stage}-${theme}-${width}.png`), await browser.screenshot());
       }

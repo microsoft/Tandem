@@ -675,10 +675,12 @@ test("React sketch composer keeps only text, Send and history, with explicit key
       await h.sse({ ...h.server, revision: 2 });
       assert.equal(h.element("instruction"), input);
       assert.equal(input.value, "Move the primary action\nbelow the heading.");
-      await h.event(input, "keydown", { key: "Enter" });
+      input.setSelectionRange(input.value.length, input.value.length);
+      await h.event(input, "keydown", { key: "Enter", [modifier]: true });
+      assert.equal(input.value, "Move the primary action\nbelow the heading.\n");
       await h.event(input, "keydown", { key: "Enter", [modifier]: true, isComposing: true });
       assert.equal(h.requests.filter(request => request.body).length, 0);
-      await h.event(input, "keydown", { key: "Enter", [modifier]: true });
+      await h.event(input, "keydown", { key: "Enter" });
       const writes = h.requests.filter(request => request.body);
       assert.match(writes[0].body!.clientRequestId, /^[a-f0-9-]{36}$/);
       assert.deepEqual(writes.map(request => request.body), [{

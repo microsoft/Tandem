@@ -111,9 +111,14 @@ test("a no-question Requirements review visibly leads a legacy preview through e
             const row = usages.querySelector('[data-change="added"]').getBoundingClientRect();
             const panel = document.querySelector("#requirements-usage-panel").getBoundingClientRect();
             const review = document.querySelector("#stage-input-review").getBoundingClientRect();
+            const title = document.querySelector("#stage-input-review .stage-review-heading h2");
+            const path = title.parentElement.querySelector(".change-stage-path");
+            const titleRect = title.getBoundingClientRect(), pathRect = path.getBoundingClientRect();
             return { width:innerWidth, height:rect.height, bottom:rect.bottom, rowBottom:row.bottom,
                 text:comparison.textContent, usages:usages.textContent, inDialog:Boolean(comparison.closest("[role=dialog]")),
                 inReviewPane:Boolean(comparison.closest("#stage-input-review")) && rect.top >= review.top && rect.bottom <= review.bottom,
+                stagePathInTitle:Boolean(path), stagePathFits:pathRect.left >= review.left && pathRect.right <= review.right + 1,
+                stagePathSameRow:Math.abs((pathRect.top + pathRect.bottom - titleRect.top - titleRect.bottom) / 2) <= 1,
                 aboveEditor:Boolean(document.querySelector(".stage-review-workspace > .stage-review-comparison, .stage-review-workspace > .stage-review-banner")),
                 table:Boolean(document.querySelector(".stage-review-workspace table")),
                 visible:comparison.checkVisibility() && rect.height > 0, fits:rect.left >= 0 && rect.right <= innerWidth + 1,
@@ -129,6 +134,8 @@ test("a no-question Requirements review visibly leads a legacy preview through e
         assert.equal(layout.table, false);
         assert.equal(layout.inDialog, false);
         assert.equal(layout.inReviewPane, true);
+        assert.ok(layout.stagePathInTitle && layout.stagePathFits, JSON.stringify(layout));
+        if (width === 1280) assert.equal(layout.stagePathSameRow, true, JSON.stringify(layout));
         assert.equal(layout.aboveEditor, false);
         assert.equal(layout.visible && layout.fits && layout.changesVisible && layout.pageFits && layout.applyEnabled, true, JSON.stringify(layout));
         assert.equal(layout.currentStage, "prototype");
