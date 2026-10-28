@@ -44,8 +44,9 @@ if (operation === "build") {
     const npmCli = process.env.npm_execpath;
     if (!npmCli) throw new Error("Run packaging through 'npm run pack:desktop' so the npm CLI can be located.");
     await run(process.execPath, [npmCli, "ci", "--omit=dev", "--no-audit", "--no-fund"], runtime);
-    await copyFile(join(root, "README.md"), join(distribution, "README.md"));
-    await copyFile(join(root, "LICENSE"), join(distribution, "LICENSE"));
+    for (const file of ["README.md", "LICENSE.txt", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "SECURITY.md", "SUPPORT.md"]) {
+        await copyFile(join(root, file), join(distribution, file));
+    }
     const path = `${distribution}.zip`;
     const stream = createWriteStream(path);
     const archive = new ZipArchive({ zlib: { level: 9 } });

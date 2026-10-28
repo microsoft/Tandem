@@ -25,7 +25,11 @@ test("extension ZIP extracts to a complete verified payload, including the previ
         assert.ok(manifest.files.some(file => file.path === "preview-launcher.mjs"));
         assert.deepEqual(await readFile(join(root, "skills", "tandem", "SKILL.md")),
             await readFile(join(directory, "skills", "tandem", "SKILL.md")));
-        assert.deepEqual(await readFile(join(root, "LICENSE")), await readFile(new URL("../LICENSE", import.meta.url)));
+        for (const name of ["LICENSE.txt", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "SECURITY.md", "SUPPORT.md"]) {
+            for (const prefix of ["", "source", join("extensions", "tandem")]) {
+                assert.deepEqual(await readFile(join(root, prefix, name)), await readFile(new URL(`../${name}`, import.meta.url)));
+            }
+        }
         await rm(join(directory, "preview-launcher.mjs"));
         await assert.rejects(verifyPayload(directory), /ENOENT/);
     } finally { await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
@@ -42,6 +46,9 @@ test("standalone archive contains every manifest file with matching hashes",
         assert.equal(metadata.version, manifest.version);
         assert.ok(manifest.files.some(file => file.path === "preview-launcher.mjs"));
         for (const name of ["cli.mjs", "host.mjs", "source-preview-extension.mjs"]) assert.ok((await stat(join(directory, name))).isFile());
+        for (const name of ["LICENSE.txt", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "SECURITY.md", "SUPPORT.md"]) {
+            assert.deepEqual(await readFile(join(directory, name)), await readFile(new URL(`../${name}`, import.meta.url)));
+        }
     } finally { await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 });
 
