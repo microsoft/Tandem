@@ -239,6 +239,41 @@ test("inline Send supports pointer, keyboard and touch without bypassing disable
     assert.deepEqual(browser.exceptions, []);
   });
 
+test("retained query Continue uses its exact endpoint alongside inline Send and empty Design guidance",
+  { skip: !browserAvailable, timeout: 60_000 }, async t => {
+    const held = Promise.withResolvers();
+    const f = await fixture(t, { onPost: async ({ path, data, current }) => {
+      assert.equal(path, "/api/runtime/continue-query");
+      assert.deepEqual(data, { taskId: "retained-task", errorId: "query-error" });
+      await held.promise;
+      current.workflow.queryFailure = null;
+      current.workflow.status = "working";
+      current.workflow.reason = null;
+    } }), { browser } = f;
+    t.after(() => held.resolve());
+    f.current.design = null;
+    f.current.accessRequests = [];
+    Object.assign(f.current.workflow, { status: "waiting-query", reason: "Synthetic model-query failure.",
+      activeRequestId: "request", activeRole: "reviewer", questionInteraction: null,
+      queryFailure: { id: "query-error", taskId: "retained-task", processing: false, canContinue: true, blocker: null } });
+    await browser.call("Page.navigate", { url: f.url });
+    await browser.waitFor('document.querySelector("[data-human-loop-action=continueQuery]")?.disabled === false');
+    await browser.evaluate('document.querySelector("#message").value="Keep this separate unsent draft"');
+    assert.equal(await browser.evaluate('document.querySelector("#send").closest(".composer-input-wrap") !== null'), true);
+    assert.equal(await browser.evaluate('document.querySelector("#send").textContent'), "\u21b5");
+    assert.equal(await browser.evaluate('document.querySelector("#backbone-state").hidden'), true);
+    assert.match(await browser.evaluate('document.querySelector("#assessment-card").textContent'), /No Design has been published/);
+    await click(browser, "[data-human-loop-action=continueQuery]");
+    await browser.waitFor('document.querySelector("[data-human-loop-action=continueQuery]").disabled');
+    await browser.evaluate('document.querySelector("[data-human-loop-action=continueQuery]").click()');
+    assert.equal(f.posts.length, 1);
+    held.resolve();
+    await browser.waitFor('document.querySelector("[data-human-loop-action=continueQuery]").hidden');
+    assert.equal(await browser.evaluate('document.querySelector("#message").value'), "Keep this separate unsent draft");
+    assert.deepEqual(f.posts, [{ path: "/api/runtime/continue-query", data: { taskId: "retained-task", errorId: "query-error" } }]);
+    assert.deepEqual(browser.exceptions, []);
+  });
+
 async function capture(browser, name, geometry) {
   if (!process.env.HUMAN_SHELL_EVIDENCE) return;
   await mkdir(process.env.HUMAN_SHELL_EVIDENCE, { recursive: true });

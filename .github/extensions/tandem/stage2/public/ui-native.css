@@ -73,6 +73,8 @@
 .human-app .human-loop-questions :is(select, textarea) { width: 100%; font-weight: 400; }
 .human-app .human-loop-questions select { min-height: var(--studio-control-height); }
 .human-app .human-loop-questions button[type="submit"] { min-height: var(--studio-control-height); }
+.human-app .human-loop > .human-loop-actions:has(> [data-human-loop-action="continueQuery"]:not([hidden])) { display: flex; }
+.human-app .human-loop > .human-loop-actions > :not([data-human-loop-action="continueQuery"]) { display: none; }
 .human-app .activity-panel > .command-bar { grid-template-columns: minmax(0, 1fr); }
 .human-app .command-composer { border-right: 1px solid var(--studio-border); border-radius: var(--studio-radius); padding-right: var(--studio-space-3); }
 .human-app .composer-input-wrap { position: relative; --composer-send-width: var(--studio-control-height); }

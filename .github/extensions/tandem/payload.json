@@ -30,7 +30,7 @@
     {
       "path": "stage2/manifest.json",
       "bytes": 25987,
-      "sha256": "a3c5357810fe90d17af52bc2c4a634c70ede37655f060b93d60fa43374a3bc64"
+      "sha256": "4a7163bcba7dfc09e8ae8c4a61cae8f0e2a814524cd98d06a960ec0953bd66ee"
     },
     {
       "path": "stage2/package.json",
@@ -394,8 +394,8 @@
     },
     {
       "path": "stage2/public/ui-native.css",
-      "bytes": 8700,
-      "sha256": "845b16fcd94a764332b3f4eae62b355a82e40a38f287b5d54facbe98d3c5707c"
+      "bytes": 8941,
+      "sha256": "1b081abdf69d03a3ecbb0d56a9522039655a387fd3150434044a81a834f71d42"
     },
     {
       "path": "stage2/public/ui-system.css",
@@ -798,5 +798,5 @@
       "sha256": "92b92e76eb4ac3bee96c6bbdde06ed1f7d9c0088576a51db1276c567dbb207f8"
     }
   ],
-  "digest": "791f95a882d8e050092c05a739f6cc27b873dd1865add89bf5f17cd3828127bd"
+  "digest": "20d85151a917c5cda46e0cb7b81dc85e7f92f57a8e4d2c5a39f9519beaea95d2"
 }
