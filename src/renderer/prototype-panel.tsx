@@ -16,6 +16,7 @@ import { HandoffControls } from "./handoff-review.js";
 import { currentChangeReview, pendingUpstreamReviewStage } from "../change-request-policy.js";
 import { SubstageStatusIcon, type SubstageStatus } from "./substage-status.js";
 import { FeedbackHistory, FeedbackHistoryButton } from "./feedback-history.js";
+import { changeRequestHistoryStatus, changeRequestResponse, changeRequestStatus } from "./change-request-feedback.js";
 
 const milestones = [
   { id: "prototype", label: "Prototype" }, { id: "visual", label: "Visual exploration" },
@@ -25,7 +26,14 @@ const milestonePlaceholders = {
   visual: "Describe one focused change to the accepted prototype.",
 } satisfies Record<PrototypeSubstage, string>;
 const unresolvedStatuses = ["queued", "processing", "clarifying", "ready", "failed"];
-interface Revision { id: string; status: string; suggestion?: string; summary?: string; visualSelection?: unknown }
+interface Revision {
+  id: string; status: string; suggestion?: string; summary?: string; visualSelection?: unknown;
+  clientRequestId?: string | null; submittedAt?: string;
+}
+const revisionStatusLabels: Record<string, string> = {
+  queued: "Queued", processing: "Building update", clarifying: "Needs clarification", ready: "Update ready - not applied",
+  applied: "Applied", dismissed: "Put aside - current kept", failed: "Failed - retry needed",
+};
 interface Submission { suggestion: string; baseCheckpointId?: string | null; visualSelection?: VisualSelection; clientRequestId: string; replacesRequestId?: string }
 function PendingPreviewAvailability({ active, connected }: { active: boolean; connected: boolean }) {
   const { state, apiUrl } = useUi();
@@ -457,6 +465,18 @@ export function PrototypePanel({ active: visible, connected, renderStageActions,
     : candidate ? candidateLabel + ". Switching the displayed version is separate from optional feedback."
     : "Try the prototype, then describe any revision you want.");
   const recentApplied = new Set(revisions.filter((item) => item.status === "applied").slice(-5).map((item) => item.id));
+  const savedRequests = (state.changeRequests ?? []).filter(item => item.originStage === "prototype");
+  const requestHistory = savedRequests.map(request => ({
+    id: `change:${request.id}`, at: request.submittedAt, request,
+    revision: revisions.find(item => item.clientRequestId === `change-${request.id}` || item.clientRequestId === request.clientRequestId),
+  }));
+  const linkedRevisions = new Set(requestHistory.map(item => item.revision?.id));
+  const history = [
+    ...revisions.filter(item => !linkedRevisions.has(item.id) && (item.status !== "applied" || recentApplied.has(item.id)))
+      .map(revision => ({ id: `revision:${revision.id}`, at: revision.submittedAt, revision, request: undefined })),
+    ...requestHistory,
+  ].reverse().sort((left, right) => (Date.parse(right.at ?? "") || 0) - (Date.parse(left.at ?? "") || 0));
+  const failedRequest = savedRequests.some(item => changeRequestHistoryStatus(item) === "error");
   const importantProgress = Boolean(candidate || failed || failedRevision || question || state.prototypeNeedsUpdate);
   const previewActions = <div ref={setPreviewActionsContainer} className="prototype-preview-actions">
     {viewingPrimary && !(viewingVisual && inspectingVisual) && readyUrl && <Tooltip.Root><Tooltip.Trigger asChild>
@@ -607,10 +627,16 @@ export function PrototypePanel({ active: visible, connected, renderStageActions,
         label="Prototype request history" open={historyOpen} onClose={() => setHistoryOpen(false)}>
         <p id="revision-queue-summary" className="muted" role="status">{unresolved.length
           ? `${revisions.filter(item => item.status === "queued").length} queued · ${unresolved.length} unresolved / 50` : ""}</p>
-        <ul id="revision-history" className="revision-history feedback-request-history">{revisions.filter(item => item.status !== "applied" || recentApplied.has(item.id)).slice().reverse().map(revision =>
-          <li key={revision.id} data-revision-id={revision.id} data-status={revision.status}><strong title={revision.summary}>{revision.suggestion || revision.summary}</strong>
-            <span>{revision.visualSelection ? "Visual direction · " : ""}{{ queued: "Queued", processing: "Building update", clarifying: "Needs clarification", ready: "Update ready - not applied", applied: "Applied", dismissed: "Put aside - current kept", failed: "Failed - retry needed" }[revision.status] || revision.status}</span></li>)}</ul>
-        {!revisions.length && <p className="muted">No prototype requests yet.</p>}
+        <ul id="revision-history" className="revision-history feedback-request-history">{history.map(({ id, request, revision }) =>
+          <li key={id} data-change-request-id={request?.id} data-revision-id={revision?.id}
+            data-status={revision?.status ?? (request && changeRequestHistoryStatus(request))}>
+            <strong title={request ? changeRequestResponse(request) : revision?.summary}>
+              {request?.message ?? (revision?.suggestion || revision?.summary)}
+            </strong>
+            <span>{request?.visualSelection || revision?.visualSelection ? "Visual direction · " : ""}
+              {revision ? revisionStatusLabels[revision.status] || revision.status : request && changeRequestStatus(request)}
+            </span></li>)}</ul>
+        {!history.length && <p className="muted">No prototype requests yet.</p>}
       </FeedbackHistory>
     <section id="prototype-review" className="prototype-review" hidden={!hasStageData(state, "prototype") || Boolean(unavailable)}>
       {(refiningVisual || !(viewingSavedMilestone || original && original.id !== displayed?.id)) &&
@@ -654,7 +680,7 @@ export function PrototypePanel({ active: visible, connected, renderStageActions,
           aria-label={sendLabel} title={`${sendLabel} (Enter)`}
           disabled={feedbackBlocked || unresolved.length >= 50}><Send size={15} aria-hidden="true" />Send</Button>
         <FeedbackHistoryButton id="prototype-history-toggle" target="revision-history-details"
-          open={historyOpen} error={Boolean(revisionError || failedRevision)} onToggle={() => setHistoryOpen(open => !open)} />
+          open={historyOpen} error={Boolean(revisionError || failedRevision || failedRequest)} onToggle={() => setHistoryOpen(open => !open)} />
       </form>
       {!renderReviewActions && reviewControls}
       {question && <Clarification key={JSON.stringify(question)} question={question} />}
