@@ -291,6 +291,10 @@ function Workspace(props: WorkspaceProps) {
   const stageAction = useAction("stage");
   const reviewAction = useAction("stage-review");
   const [review, setReview] = useDraft<UiState | null>("pinned-stage-review", null);
+  useEffect(() => {
+    if (review?.stageReview?.changeRequestId && state.changeRequests?.some(request =>
+      request.id === review.stageReview?.changeRequestId && request.abandonment)) setReview(null);
+  }, [review, state.changeRequests, setReview]);
   const workspace = useRef<HTMLElement>(null);
   const [stageActionsContainer, setStageActionsContainer] = useState<HTMLElement | null>(null);
   const [reviewControlsContainer, setReviewControlsContainer] = useState<HTMLElement | null>(null);

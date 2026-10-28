@@ -30,6 +30,7 @@ interface HarnessApi {
     discardStageReview(id: string, provider: string, input: Record<string, unknown>): Promise<TandemState>;
     submitChangeRequest(id: string, provider: string, input: Record<string, unknown>): Promise<{ requestId: string }>;
     decideChangeRequest(id: string, provider: string, input: Record<string, unknown>): Promise<TandemState>;
+    abandonChangeRequest(id: string, provider: string, input: Record<string, unknown>): Promise<TandemState>;
     continueChangeWork(id: string): Promise<void>;
     sendChangeToDevelopment(id: string, provider: string, requestId: string): Promise<TandemState>;
     createState(id: string, goal?: string): TandemState;
@@ -120,7 +121,7 @@ async function compile(): Promise<string> {
         logLevel: "silent",
         define: { __TANDEM_VERSION__: JSON.stringify("test") },
     });
-    return result.outputFiles[0].text + "\nObject.assign(module.exports, { inspectApplication, executeApplication, openStageReview, applyStageReview, discardStageReview, submitChangeRequest, decideChangeRequest, continueChangeWork, sendChangeToDevelopment }); module.exports.assertDevelopmentAvailable = assertDevelopmentAvailable; module.exports.resumeEffortRun = resumeEffortRun; module.exports.waitForSuggestion = id => activeSuggestionRuns.get(id);";
+    return result.outputFiles[0].text + "\nObject.assign(module.exports, { inspectApplication, executeApplication, openStageReview, applyStageReview, discardStageReview, submitChangeRequest, decideChangeRequest, abandonChangeRequest, continueChangeWork, sendChangeToDevelopment }); module.exports.assertDevelopmentAvailable = assertDevelopmentAvailable; module.exports.resumeEffortRun = resumeEffortRun; module.exports.waitForSuggestion = id => activeSuggestionRuns.get(id);";
 }
 
 export async function extensionHarness(environment: Record<string, string> = {}, sharedRoot?: string, rendererHtml = "", workspaceRoot?: string, unselectedEntry = false, gitReady = false) {

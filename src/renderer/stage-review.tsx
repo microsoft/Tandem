@@ -15,9 +15,9 @@ import { RequirementsPanel } from "./requirements-panel.js";
 import { requirementChange } from "./requirements-model.js";
 import { isSketchRevisionApproved, SketchPanel, type DraftDesignApproval } from "./sketch-panel.js";
 import { PrototypePanel, prototypeCompletionBlocked } from "./prototype-panel.js";
-import { ChangeRequestsPanel, ChangeReviewPath } from "./change-requests-panel.js";
+import { AbandonChangeReview, ChangeRequestsPanel, ChangeReviewPath } from "./change-requests-panel.js";
 import { DiscoveryRecovery } from "./discovery-recovery.js";
-import { changeReviewBlocksEditing, changeReviewWaitsForPrototype, currentChangeReview, pendingUpstreamReviewStage } from "../change-request-policy.js";
+import { changeReviewBlocksEditing, changeReviewToAbandon, changeReviewWaitsForPrototype, currentChangeReview, pendingUpstreamReviewStage } from "../change-request-policy.js";
 import { changeRequestHistoryStatus, changeRequestResponse, changeRequestReviewStage } from "./change-request-feedback.js";
 import { FeedbackHistory, FeedbackHistoryButton } from "./feedback-history.js";
 
@@ -30,20 +30,21 @@ export function PendingReviewPane({ viewedStage, pinnedReview, onActionsContaine
   const ui = useUi();
   const { state, changeRequestDialog, browseStage, reviewStage, confirm } = ui;
   const action = useAction("pending-review");
-  const request = currentChangeReview(state);
+  const pendingRequest = currentChangeReview(state);
+  const request = pendingRequest ?? changeReviewToAbandon(state);
   const reference = state.stageReviews?.find(item => item.generation === state.generation && !item.appliedAt && !item.discardedAt
     && (!request || item.changeRequestId === request.id));
   const prototypePending = Boolean(state.prototypeNeedsUpdate || state.prototypeFlow?.pendingCheckpointId || state.prototypeReview?.question
     || state.prototypeReview?.revisions?.some((item: { status: string }) => ["queued", "processing", "clarifying", "ready", "failed"].includes(item.status)));
   const waitingForPrototype = changeReviewWaitsForPrototype(state);
-  const target = waitingForPrototype ? "prototype" : request ? changeRequestReviewStage(request)
+  const target = waitingForPrototype ? "prototype" : request ? pendingRequest ? changeRequestReviewStage(request) : state.lifecycle.currentStage
     : pendingUpstreamReviewStage(state) ?? reference?.stage ?? (prototypePending ? "prototype" : undefined);
   if (!request && !target) return null;
   const waiting = request && !waitingForPrototype && ["queued", "analyzing"].includes(request.status);
   const earlier = target !== undefined && lifecycleStages.findIndex(item => item.id === target)
     < lifecycleStages.findIndex(item => item.id === state.lifecycle.currentStage);
   const inThisTab = target === viewedStage;
-  const needsDialog = Boolean(request && !waitingForPrototype && (request.assessment?.question || request.error || !target || target === "development"
+  const needsDialog = Boolean(pendingRequest && request && !waitingForPrototype && (request.assessment?.question || request.error || !target || target === "development"
     || !["proposed", "reviewing", "active"].includes(request.status)
     || request.status === "proposed" && !earlier || request.status === "active" && earlier));
   const targetLabel = target ? reviewStageLabel(target) : "";
@@ -62,6 +63,7 @@ export function PendingReviewPane({ viewedStage, pinnedReview, onActionsContaine
     ? "Your feedback is saved for re-evaluation after active work finishes. Applied changes and earlier drafts are retained."
     : waitingForPrototype ? "Resolve the existing prototype update or clarification first. Your new change is queued and will be checked afterwards."
     : waiting ? "Checking which stages this change affects. Your saved work is retained."
+    : request && !pendingRequest ? "The requested changes are saved. Continue reviewing the affected work. You can abandon the whole review until Finish Prototype."
     : needsDialog && request ? changeRequestResponse(request)
       : inThisTab && target ? earlier ? `Open the ${targetLabel} draft to review it in this tab. Accepted work stays unchanged until you apply.`
         : instructions[target]
@@ -120,6 +122,7 @@ export function PendingReviewPane({ viewedStage, pinnedReview, onActionsContaine
       </Button>}
       {inThisTab && !earlier && !needsDialog && !waiting
         && <span className="review-stage-actions" ref={onActionsContainer} aria-label="Current stage review actions" />}
+      <AbandonChangeReview />
       <ReviewDetailsDialog request={request} />
     </div>
     {action.error && <p className="error" role="alert">{action.error}</p>}
@@ -177,7 +180,9 @@ export function StageReviewWorkspace(props: Props) {
     canEdit: stage => stage === state.stageReview?.stage && state.lifecycle.currentStage === stage
       && !changeReviewBlocksEditing(state)
       && state.provider?.canSubmitAnswers !== false && !props.parent.state.effortReset,
-    guidance: () => state.stageReviewStatus?.appliedAt
+    guidance: () => state.stageReviewStatus?.abandonedAt
+      ? "This review's changes were abandoned. The saved draft is read-only history."
+      : state.stageReviewStatus?.appliedAt
       ? "This applied review is read-only. Its saved changes are now part of accepted work."
       : state.stageReviewStatus?.discardedAt ? "This discarded review is read-only. Its draft changes were not applied."
         : "This review draft is read-only. Accepted work has not been changed.",
@@ -223,7 +228,7 @@ function ReviewEditor({ parent, active, actionsContainer, headerActionsContainer
   const parentRequest = parent.state.changeRequests?.find(item => item.id === state.stageReview?.changeRequestId);
   const reviewRequest = parentRequest ?? requestedChange;
   const continuingRequest = parentRequest?.status === "reviewing" ? parentRequest : undefined;
-  const nextStage = status?.appliedAt ? pendingUpstreamReviewStage(parent.state) ?? continuingRequest?.remainingStages[0]
+  const nextStage = status?.appliedAt && !status.abandonedAt ? pendingUpstreamReviewStage(parent.state) ?? continuingRequest?.remainingStages[0]
     ?? (parent.state.prototypeNeedsUpdate ? "prototype" : undefined) : undefined;
   const nextIsEarlier = nextStage !== undefined && lifecycleStages.findIndex(item => item.id === nextStage)
     < lifecycleStages.findIndex(item => item.id === parent.state.lifecycle.currentStage);
@@ -311,9 +316,9 @@ function ReviewEditor({ parent, active, actionsContainer, headerActionsContainer
         <h2>{label} review</h2>
         {reviewRequest && <ChangeReviewPath request={reviewRequest} reviewingStage={status?.appliedAt ? undefined : stage} />}
       </div>
-    </div><span className="stage-review-status" data-status={status?.appliedAt ? "applied" : status?.discardedAt ? "discarded" : "draft"}>
-      {status?.appliedAt ? <Check size={14} aria-hidden="true" /> : <Pin size={14} aria-hidden="true" />}
-      {status?.appliedAt ? "Applied" : status?.discardedAt ? "Discarded" : "Draft only"}</span>
+    </div><span className="stage-review-status" data-status={status?.abandonedAt ? "discarded" : status?.appliedAt ? "applied" : status?.discardedAt ? "discarded" : "draft"}>
+      {status?.abandonedAt ? <X size={14} aria-hidden="true" /> : status?.appliedAt ? <Check size={14} aria-hidden="true" /> : <Pin size={14} aria-hidden="true" />}
+      {status?.abandonedAt ? "Abandoned" : status?.appliedAt ? "Applied" : status?.discardedAt ? "Discarded" : "Draft only"}</span>
   </div>;
   const reviewBanner = <section className="stage-review-banner" aria-label={`${label} draft review`}>
       <div className="stage-review-breadcrumb"><span>{reviewStageLabel(reviewRequest?.originStage ?? workingStage)}</span>
@@ -322,7 +327,8 @@ function ReviewEditor({ parent, active, actionsContainer, headerActionsContainer
       {reviewHeading}
       {reviewRequest && <p className="stage-review-request-copy">{reviewRequest.message}</p>}
       <p className="stage-review-safety"><ShieldCheck size={14} aria-hidden="true" />
-        {status?.appliedAt ? `Changes applied. ${reviewStageLabel(workingStage)} is still your current stage.`
+        {status?.abandonedAt ? "Changes abandoned. The work from before the original request is restored."
+          : status?.appliedAt ? `Changes applied. ${reviewStageLabel(workingStage)} is still your current stage.`
           : status?.discardedAt ? "Draft discarded. Accepted work is unchanged."
           : `Accepted work is unchanged until you apply. ${reviewStageLabel(workingStage)} stays current.`}</p>
       {hasActiveJobs(state) && <p role="status">{state.status}</p>}
@@ -334,6 +340,9 @@ function ReviewEditor({ parent, active, actionsContainer, headerActionsContainer
     <div className="pinned-review-buttons">
       {!settled && <span className="review-stage-actions" ref={setReviewControlsContainer} aria-label="Draft review actions" />}
       {controls}<ReviewDetailsDialog request={reviewRequest} />
+      {parentRequest && <UiContext.Provider value={parent}>
+        <AbandonChangeReview requestId={parentRequest.id} disabled={blocked} onAbandoned={onExit} />
+      </UiContext.Provider>}
       {!settled && <Button variant="secondary" id="discard-stage-review" className="plan-button secondary" type="button" disabled={blocked}
         onClick={() => void discard()}>Discard draft</Button>}
     </div>
@@ -521,6 +530,7 @@ function BaselineComparison({ onReadyChange, renderSummary, children }: {
     ]) if (before !== after) changed.push({ id, title, before: before || "None", after: after || "None" });
   }
   const unanswered = state.decisionGraph.nodes.filter(node => !node.answer).length;
+  const abandoned = Boolean(state.stageReviewStatus?.abandonedAt);
   const applied = Boolean(state.stageReviewStatus?.appliedAt);
   const discarded = Boolean(state.stageReviewStatus?.discardedAt);
   const removedQuestions = oldNodes.filter(node => !state.decisionGraph.nodes.some(candidate => candidate.id === node.id));
@@ -530,13 +540,14 @@ function BaselineComparison({ onReadyChange, renderSummary, children }: {
   ];
   const comparison = <section className="stage-review-comparison" aria-label={children ? "Requirements review summary" : "Accepted baseline comparison"}
     data-unanswered={stage === "requirements" ? unanswered : undefined}>
-    <h3 className={renderSummary ? "visually-hidden" : undefined}>{stage === "requirements" ? applied ? "Applied requirement changes"
+    <h3 className={renderSummary ? "visually-hidden" : undefined}>{stage === "requirements" ? abandoned ? "Abandoned requirement changes" : applied ? "Applied requirement changes"
       : discarded ? "Discarded requirement draft" : "Review saved requirement changes" : "Compare with the accepted baseline"}</h3>
     {loading && <p role="status">Reading the saved baseline...</p>}
     {error && <p role="alert">{error} <Button variant="secondary" type="button" onClick={() => void load()}>Retry</Button></p>}
     {baseline && <>
       <p className={stage === "requirements" ? "visually-hidden" : "muted"}>Accepted revision {state.stageReview!.baselineRevision}; draft revision {state.revision}.</p>
-      {stage === "requirements" && <p role="status">{applied ? "These saved changes have been applied. Independent answers were retained."
+      {stage === "requirements" && <p role="status">{abandoned ? "These changes were abandoned. The pre-request work is restored; this comparison is retained as history."
+        : applied ? "These saved changes have been applied. Independent answers were retained."
         : discarded ? "These draft changes were not applied. The comparison is retained for reference."
         : unanswered
         ? `${unanswered} requirement question${unanswered === 1 ? "" : "s"} still need${unanswered === 1 ? "s" : ""} an answer before Apply. Independent answers are retained.`

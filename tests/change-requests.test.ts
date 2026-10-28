@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
     activateChange, applyRequirementsDelta, changeBaselineDigest, readChangeAssessment, readChangeRequests, preserveUnchangedScreens,
@@ -15,10 +15,11 @@ import { state as uiState } from "./helpers/react-harness.js";
 import { buildChangeAssessmentPrompt } from "../src/planning-prompts.js";
 import { emptySketchState } from "../src/sketch.js";
 import { SketchStore } from "../src/sketch-store.js";
-import { sketchDocument } from "./helpers/sketch-lifecycle-fixture.js";
+import { screenPng, sketchDocument } from "./helpers/sketch-lifecycle-fixture.js";
 import { addUi } from "./helpers/ui-dsl-fixture.js";
 import { requirementsInputDigest } from "../src/requirements-reconciliation.js";
-import { changeReviewBlocksEditing, changeReviewNeedsAttention, currentChangeReview, pendingUpstreamReviewStage } from "../src/change-request-policy.js";
+import { changeReviewBlocksEditing, changeReviewNeedsAttention, changeReviewToAbandon, currentChangeReview, pendingUpstreamReviewStage } from "../src/change-request-policy.js";
+import type { TandemState } from "../src/types.js";
 
 const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 export function node(id: string, dependencies: string[] = [], answer: string | null = "Keep"): DecisionNode {
@@ -345,6 +346,287 @@ async function assess(f: Awaited<ReturnType<typeof fixture>>, result = assessmen
 function approval(request: ChangeRequest) {
     return { requestId: request.id, analysisId: request.analysisId, baselineDigest: request.baselineDigest, decision: "approve" };
 }
+
+function abandonment(state: TandemState, request = changeReviewToAbandon(state)!) {
+    return { requestId: request.id, generation: state.generation, expectedRevision: state.revision,
+        restorePointDigest: request.restorePoint?.digest, confirm: true };
+}
+
+for (const legacy of [false, true]) test(`abandon restores the original ${legacy ? "legacy" : "tracked"} work after applying upstream and prototype updates`, async t => {
+    const f = await fixture(); t.after(() => f.h.close());
+    if (legacy) {
+        f.initial.prototypeFlow = null;
+        await f.h.api.persistState(f.initial);
+        f.initial = await f.h.api.loadState("sample");
+    }
+    const plan = assessment(); plan.requirements!.upsert = [];
+    const { state } = await assess(f, plan);
+    const request = state.changeRequests![0];
+    assert.equal(request.restorePoint!.requestId, request.id);
+    const directory = join(f.h.root, ".tandem", "efforts", "sample", "changes", request.id);
+    const before = JSON.parse(await readFile(join(directory, "before-request.json"), "utf8"));
+    assert.deepEqual(before.baseline.changeRequests, []);
+    assert.deepEqual(before.baseline.requirements, plain(f.initial.requirements));
+    const reviewing = await f.h.api.decideChangeRequest("sample", "project:tandem", approval(request));
+    const draft = await f.h.api.loadState(reviewing.changeRequests![0].reviewId!);
+    await f.h.api.applyStageReview("sample", "project:tandem", { reviewId: draft.prototypeId, expectedRevision: draft.revision });
+    await f.h.api.beginPrototypeBuild("sample", "project:tandem");
+    await f.h.waitForRequests(2); await f.h.api.waitForAnswer("sample");
+    const ready = await f.h.api.loadState("sample");
+    const candidate = ready.prototypeFlow!.checkpoints.at(-1)!;
+    await f.h.api.prototypeAction("sample", "project:tandem", { action: "apply-update", checkpointId: candidate.id });
+    const applied = await f.h.api.loadState("sample");
+    assert.equal(applied.changeRequests![0].status, "reviewing");
+    assert.equal(changeReviewToAbandon(applied)?.id, request.id, "Showing a version is not Finish Prototype.");
+    const input = abandonment(applied);
+    const restored = await f.h.api.abandonChangeRequest("sample", "project:tandem", input);
+    assert.deepEqual(plain(restored.requirements), plain(f.initial.requirements));
+    assert.deepEqual(plain(restored.decisionGraph), plain(f.initial.decisionGraph));
+    assert.deepEqual(plain(restored.sketch), plain(f.initial.sketch));
+    assert.deepEqual(plain(restored.artifacts), plain(f.initial.artifacts));
+    assert.deepEqual(plain(restored.prototypeFlow), plain(f.initial.prototypeFlow));
+    assert.equal(restored.previewUrl, f.initial.previewUrl);
+    assert.deepEqual(plain(restored.lifecycle.outputs), plain(f.initial.lifecycle.outputs));
+    assert.deepEqual(plain(restored.lifecycle.completedStages), plain(f.initial.lifecycle.completedStages));
+    assert.equal(restored.lifecycle.reviewId, f.initial.lifecycle.reviewId);
+    assert.equal(restored.lifecycle.currentStage, "prototype");
+    assert.equal(prototypeNeedsChangeUpdate(restored), false);
+    assert.equal(currentChangeReview(restored), undefined);
+    assert.equal(changeReviewToAbandon(restored), undefined);
+    assert.deepEqual(plain(restored.factoryRuns), plain(applied.factoryRuns));
+    assert.deepEqual(plain(restored.process.receipts), plain(applied.process.receipts));
+    assert.equal(await readFile(join(f.h.root, "app.ts"), "utf8"), "export const keep = 'joint controls';\n");
+    assert.ok(restored.changeRequests![0].abandonment);
+    const archived = JSON.parse(await readFile(join(f.h.root, restored.changeRequests![0].abandonment!.snapshotPath), "utf8"));
+    assert.equal(archived.state.prototypeFlow.displayedCheckpointId, candidate.id);
+    assert.deepEqual(archived.state, plain(applied));
+    assert.ok(await readFile(join(f.h.root, ".tandem", "efforts", draft.prototypeId, "state.json"), "utf8"));
+    assert.equal(restored.stageReviews![0].appliedAt, applied.stageReviews![0].appliedAt, "The historical approval is retained, not rewritten.");
+    assert.deepEqual(plain(await f.h.api.abandonChangeRequest("sample", "project:tandem", input)), plain(restored), "Retries do not restore twice.");
+    const reopened = await extensionHarness({}, f.h.root);
+    t.after(() => reopened.close());
+    assert.deepEqual(plain(await reopened.api.loadState("sample")), plain(restored));
+    await reopened.api.continueChangeWork("sample");
+    assert.equal(reopened.requests.length, 0, "Restoration must never replay discarded work.");
+});
+
+test("re-evaluated feedback shares the original restore point and abandons applied and open drafts together", async t => {
+    const f = await fixture(); t.after(() => f.h.close());
+    const plan = assessment(); plan.requirements!.upsert = [];
+    const { state } = await assess(f, plan);
+    const first = state.changeRequests![0];
+    const reviewing = await f.h.api.decideChangeRequest("sample", "project:tandem", approval(first));
+    const draft = await f.h.api.loadState(reviewing.changeRequests![0].reviewId!);
+    await f.h.api.applyStageReview("sample", "project:tandem", { reviewId: draft.prototypeId, expectedRevision: draft.revision });
+    plan.requirements!.usages.add = ["I want to export sequences."];
+    worker(f.h, plan);
+    await f.h.api.submitChangeRequest("sample", "project:tandem", {
+        message: "Export sequences instead.", clientRequestId: "replacement", replacesRequestId: first.id,
+    });
+    await f.h.waitForRequests(2); await f.h.api.waitForAnswer("sample");
+    const reassessed = await f.h.api.loadState("sample");
+    const second = reassessed.changeRequests!.at(-1)!;
+    assert.deepEqual(plain(second.restorePoint), plain(first.restorePoint));
+    const secondReview = await f.h.api.decideChangeRequest("sample", "project:tandem", approval(second));
+    const secondDraft = await f.h.api.loadState(secondReview.changeRequests!.at(-1)!.reviewId!);
+    const restored = await f.h.api.abandonChangeRequest("sample", "project:tandem", abandonment(secondReview));
+    assert.deepEqual(plain(restored.requirements), plain(f.initial.requirements));
+    assert.ok(restored.changeRequests!.every(item => item.status === "cancelled" && item.abandonment));
+    assert.ok(restored.stageReviews!.find(item => item.id === secondDraft.prototypeId)?.discardedAt);
+    assert.ok(restored.stageReviews!.find(item => item.id === draft.prototypeId)?.appliedAt);
+    assert.ok((await f.h.api.loadState(secondDraft.prototypeId)).requirements.usageItems.includes("I want to export sequences."));
+    await assert.rejects(f.h.api.applyStageReview("sample", "project:tandem",
+        { reviewId: secondDraft.prototypeId, expectedRevision: secondDraft.revision }), /abandoned/);
+    assert.equal(f.h.requests.length, 2);
+});
+
+test("abandon restores the original approved design bytes after an applied Designs draft through HTTP", async t => {
+    const f = await fixture(); t.after(() => f.h.close());
+    const store = new SketchStore(f.h.root);
+    const document = sketchDocument();
+    document.screens[0].decisionIds = ["joints"];
+    const revision = await store.save("sample", document, {
+        requirementsDigest: requirementsInputDigest(f.initial), source: "generated", number: 1,
+    });
+    const previews = [{ screenId: "main", data: screenPng() }];
+    const approved = await store.approve("sample", revision, previews);
+    f.initial.sketch = { version: 1, status: "approved", current: revision, approved, history: [revision] };
+    f.initial.lifecycle.completedStages.push("sketch");
+    f.initial.lifecycle.skippedStages = [];
+    for (const checkpoint of f.initial.prototypeFlow!.checkpoints) {
+        checkpoint.requirementsDigest = requirementsInputDigest(f.initial);
+        checkpoint.sketchRevisionId = revision.id;
+        checkpoint.sketchInputHash = "a".repeat(64);
+    }
+    await f.h.api.persistState(f.initial);
+    f.initial = await f.h.api.loadState("sample");
+    const plan: ChangeAssessment = { ...assessment(), startStage: "sketch", requirements: null, affectedScreenIds: ["main"],
+        stages: [{ stage: "sketch", reason: "Change the main screen label." }, { stage: "prototype", reason: "Use the reviewed label." }] };
+    const { state } = await assess(f, plan);
+    const reviewing = await f.h.api.decideChangeRequest("sample", "project:tandem", approval(state.changeRequests![0]));
+    const draft = await f.h.api.loadState(reviewing.changeRequests![0].reviewId!);
+    const changedDocument = structuredClone(document);
+    changedDocument.screens[0].title = "Changed screen";
+    const changedRevision = await store.save("sample", changedDocument, {
+        requirementsDigest: requirementsInputDigest(draft), source: "edited", number: 2,
+    });
+    const changedApproval = await store.approve("sample", changedRevision, previews);
+    draft.sketch = { version: 1, status: "approved", current: changedRevision, approved: changedApproval, history: [revision, changedRevision] };
+    draft.artifacts.push({ id: "sketch-spec", title: "Reviewed design", kind: "sketch", stage: "sketch",
+        path: "", language: "markdown", content: "Changed screen", mermaid: "", reviewStatus: "current" });
+    await f.h.api.persistState(draft);
+    const applied = await f.h.api.applyStageReview("sample", "project:tandem", { reviewId: draft.prototypeId, expectedRevision: draft.revision });
+    assert.equal(applied.sketch.current!.id, changedRevision.id);
+    const server = await f.h.api.startServer("abandon-design", "sample", "project:tandem", true);
+    t.after(async () => {
+        clearInterval(server.heartbeat);
+        server.server.closeAllConnections();
+        await new Promise<void>(resolve => server.server.close(() => resolve()));
+    });
+    const response = await fetch(new URL("/api/change-requests/abandon", server.url), {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(abandonment(applied)),
+    });
+    const body = await response.json();
+    assert.equal(response.status, 200, body.error);
+    const restored = await f.h.api.loadState("sample");
+    assert.deepEqual(plain(restored.sketch), plain(f.initial.sketch));
+    assert.deepEqual(await store.read("sample", restored.sketch.current!), document);
+    assert.deepEqual(await store.read("sample", changedRevision), changedDocument, "The abandoned revision's immutable file remains available.");
+    assert.equal(prototypeNeedsChangeUpdate(restored), false);
+    const review = await (await fetch(new URL(`/api/reviews/${draft.prototypeId}/state`, server.url))).json();
+    assert.ok(review.stageReviewStatus.abandonedAt);
+    assert.match(review.stageReviewStatus.conflict, /abandoned/);
+    assert.equal(review.provider.canSubmitAnswers, false);
+});
+
+test("abandon refuses to overwrite an independently applied draft or a later request", async t => {
+    const f = await fixture(); t.after(() => f.h.close());
+    const { state } = await assess(f);
+    const unrelated = await f.h.api.openStageReview("sample", "project:tandem", {
+        stageId: "requirements", expectedGeneration: state.generation,
+    });
+    unrelated.requirements.usageItems.push("An unrelated accepted usage.");
+    await f.h.api.persistState(unrelated);
+    await f.h.api.applyStageReview("sample", "project:tandem", {
+        reviewId: unrelated.prototypeId, expectedRevision: unrelated.revision,
+    });
+    const applied = await f.h.api.loadState("sample");
+    await assert.rejects(f.h.api.abandonChangeRequest("sample", "project:tandem", abandonment(applied)), /independent draft/);
+    assert.deepEqual(plain(await f.h.api.loadState("sample")), plain(applied));
+    await f.h.api.persistState({ ...applied, changeRequests: [...applied.changeRequests!, {
+        ...proposed(), id: "later-independent", clientRequestId: "later-client", status: "completed", completedAt: applied.updatedAt,
+    }] });
+    const later = await f.h.api.loadState("sample");
+    await assert.rejects(f.h.api.abandonChangeRequest("sample", "project:tandem", abandonment(later)), /later independent request/);
+    assert.deepEqual(plain(await f.h.api.loadState("sample")), plain(later));
+});
+
+test("abandon requires exact confirmation and quiet parent, draft and native ownership", async t => {
+    const f = await fixture(); t.after(() => f.h.close());
+    const { state } = await assess(f);
+    const input = abandonment(state);
+    for (const patch of [{ confirm: false }, { expectedRevision: state.revision - 1 },
+        { generation: "another-effort" }, { restorePointDigest: "b".repeat(64) }]) {
+        await assert.rejects(f.h.api.abandonChangeRequest("sample", "project:tandem", { ...input, ...patch }), /Confirm|changed|restore point/);
+        assert.deepEqual(plain(await f.h.api.loadState("sample")), plain(state));
+    }
+    const busy = { ...state, factoryRuns: [...state.factoryRuns!, { requestId: "uncertain", generation: state.generation, runId: null }] };
+    await f.h.api.persistState(busy);
+    await assert.rejects(f.h.api.abandonChangeRequest("sample", "project:tandem", abandonment(busy)), /active work/);
+    await f.h.api.persistState({ ...state, revision: busy.revision });
+    const quiet = await f.h.api.loadState("sample");
+    const reviewed = await f.h.api.decideChangeRequest("sample", "project:tandem", approval(quiet.changeRequests![0]));
+    const draft = await f.h.api.loadState(reviewed.changeRequests![0].reviewId!);
+    await f.h.api.persistState({ ...draft, processing: { status: "running", action: "answer-decision",
+        requestId: "draft-worker", requestedAt: draft.updatedAt } });
+    await assert.rejects(f.h.api.abandonChangeRequest("sample", "project:tandem", abandonment(reviewed)), /draft work/);
+    const runningDraft = await f.h.api.loadState(draft.prototypeId);
+    await f.h.api.persistState({ ...runningDraft, processing: null });
+    f.h.developmentRequests.push({ id: "native-work" });
+    await assert.rejects(f.h.api.abandonChangeRequest("sample", "project:tandem", abandonment(reviewed)), /Development/);
+    assert.deepEqual(plain(await f.h.api.loadState("sample")), plain(reviewed));
+});
+
+test("missing, corrupt or externally changed restore sources fail without changing current work", async t => {
+    const f = await fixture(); t.after(() => f.h.close());
+    const { state } = await assess(f);
+    const path = join(f.h.root, ".tandem", "efforts", "sample", "changes", state.changeRequests![0].id, "before-request.json");
+    const original = await readFile(path, "utf8");
+    const snapshot = JSON.parse(original);
+    snapshot.baseline.goal = "A different request";
+    await writeFile(path, JSON.stringify(snapshot));
+    await assert.rejects(f.h.api.abandonChangeRequest("sample", "project:tandem", abandonment(state)), /snapshot could not be verified/);
+    await rm(path);
+    await assert.rejects(f.h.api.abandonChangeRequest("sample", "project:tandem", abandonment(state)), /ENOENT/);
+    await writeFile(path, original);
+    await writeFile(join(f.h.root, "app.ts"), "export const keep = 'external edit';\n");
+    await assert.rejects(f.h.api.abandonChangeRequest("sample", "project:tandem", abandonment(state)), /source files changed outside/);
+    assert.deepEqual(plain(await f.h.api.loadState("sample")), plain(state));
+    assert.equal(await readFile(join(f.h.root, "app.ts"), "utf8"), "export const keep = 'external edit';\n");
+});
+
+test("a failed abandonment state write retains the review and supports an explicit retry", async t => {
+    const f = await fixture(); t.after(() => f.h.close());
+    const { state } = await assess(f);
+    f.h.setRename(async (source, destination) => {
+        if (String(destination).endsWith("state.json")) throw new Error("Injected state write failure");
+        return rename(source, destination);
+    });
+    await assert.rejects(f.h.api.abandonChangeRequest("sample", "project:tandem", abandonment(state)), /Injected state write failure/);
+    assert.deepEqual(plain(await f.h.api.loadState("sample")), plain(state));
+    f.h.setRename(rename);
+    const restored = await f.h.api.abandonChangeRequest("sample", "project:tandem", abandonment(state));
+    assert.ok(restored.changeRequests![0].abandonment);
+});
+
+test("Finish Prototype commits the review permanently and agents cannot invoke abandonment", async t => {
+    const f = await fixture(); t.after(() => f.h.close());
+    const unchanged: ChangeAssessment = { ...assessment(), startStage: "none", stages: [], requirements: null };
+    const { state } = await assess(f, unchanged);
+    assert.ok(changeReviewToAbandon(state));
+    const inspected = await f.h.api.inspectApplication({ target: { prototypeId: "sample" }, operation: "changes.abandon" });
+    assert.equal(inspected.operations[0].availability.status, "human-required");
+    await assert.rejects(f.h.api.executeApplication({ protocol: "tandem-application/v1", target: { prototypeId: "sample" },
+        operation: "changes.abandon", input: abandonment(state), expected: inspected.binding }), /belongs to the user/);
+    await f.h.api.persistState({ ...state, prototypeReview: { ...state.prototypeReview, designSpecArtifactId: "draft-feature-spec" } });
+    const finished = await f.h.api.completeLifecycleStage("sample", "prototype", "project:tandem");
+    assert.equal(finished.lifecycle.currentStage, "development");
+    assert.ok(finished.changeRequests![0].committedAt);
+    assert.equal(changeReviewToAbandon(finished), undefined);
+    await assert.rejects(f.h.api.abandonChangeRequest("sample", "project:tandem", abandonment(finished, finished.changeRequests![0])), /uncommitted review/);
+});
+
+test("legacy requests remain readable but cannot invent an original restore point", async t => {
+    const f = await fixture(); t.after(() => f.h.close());
+    await f.h.api.persistState({ ...f.initial, changeRequests: [proposed()] });
+    const state = await f.h.api.loadState("sample");
+    assert.equal(changeReviewToAbandon(state), undefined);
+    await assert.rejects(f.h.api.abandonChangeRequest("sample", "project:tandem", abandonment(state, state.changeRequests![0])), /no saved pre-request restore point/);
+    assert.deepEqual(plain(await f.h.api.loadState("sample")), plain(state));
+    assert.throws(() => readChangeRequests([{ ...proposed(), restorePoint: { requestId: "..", generation: state.generation, digest: "a".repeat(64) } }]), /restore point/);
+    assert.throws(() => readChangeRequests([{ ...proposed(), abandonment: { abandonedAt: "invalid", snapshotPath: "saved" } }]), /review outcome/);
+    assert.equal(changeReviewToAbandon({ ...state, changeRequests: [{ ...proposed(),
+        restorePoint: { requestId: "change-one", generation: "previous-effort", digest: "a".repeat(64) } }] }), undefined);
+});
+
+test("abandon never resurrects the earlier worker captured in a busy pre-request snapshot", async t => {
+    const f = await fixture(); t.after(() => f.h.close());
+    await f.h.api.persistState({ ...f.initial, processing: { status: "running", action: "prototype-checkpoint",
+        requestId: "earlier-worker", requestedAt: f.initial.updatedAt } });
+    worker(f.h, assessment());
+    await f.h.api.submitChangeRequest("sample", "project:tandem", {
+        message: "Save and reload sequences.", clientRequestId: "during-earlier-work",
+    });
+    const queued = await f.h.api.loadState("sample");
+    assert.equal(queued.changeRequests![0].status, "queued");
+    await f.h.api.persistState({ ...queued, processing: { ...queued.processing, status: "success", completedAt: new Date().toISOString() } });
+    await f.h.api.continueChangeWork("sample");
+    await f.h.api.waitForAnswer("sample");
+    const reviewed = await f.h.api.loadState("sample");
+    await assert.rejects(f.h.api.abandonChangeRequest("sample", "project:tandem", abandonment(reviewed)), /Earlier work was still running/);
+    assert.deepEqual(plain(await f.h.api.loadState("sample")), plain(reviewed));
+    assert.equal(f.h.requests.length, 1, "The completed earlier worker is never restarted.");
+});
 
 test("already-satisfied requests finish assessment without creating an empty draft or rebuilding a preview", async t => {
     const f = await fixture(); t.after(() => f.h.close());

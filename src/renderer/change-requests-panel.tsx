@@ -5,12 +5,48 @@ import { ArrowRight, Check, ChevronRight, ListChecks, RefreshCw, ShieldCheck, X 
 import type { LifecycleStageId } from "../types.js";
 import type { ChangeRequest } from "../change-requests.js";
 import { lifecycleStages } from "../workflow.js";
-import { changeReviewNeedsAttention, changeReviewWaitsForPrototype, currentChangeReview, isDiscoveryChangeRequest } from "../change-request-policy.js";
+import { changeReviewNeedsAttention, changeReviewToAbandon, changeReviewWaitsForPrototype, currentChangeReview, isDiscoveryChangeRequest } from "../change-request-policy.js";
 import { hasActiveJobs, useAction, useChangeRequestDialog, useDraft, useUi, type UiState } from "./ui-context.js";
 import { useProjectView } from "./project-conversation.js";
 import { changeRequestResponse, changeRequestStatus } from "./change-request-feedback.js";
 
 const label = (stage: LifecycleStageId) => lifecycleStages.find(item => item.id === stage)?.label || stage;
+
+export function AbandonChangeReview({ id = "abandon-change-review", requestId, disabled = false, onAbandoned }: {
+    id?: string; requestId?: string; disabled?: boolean; onAbandoned?(): void;
+}) {
+    const { state, post, pending, confirm, browseStage, changeRequestDialog } = useUi();
+    const action = useAction("abandon-change-review");
+    const [actionRequestId, setActionRequestId] = useState<string | null>(null);
+    const latest = useRef(state);
+    latest.current = state;
+    const request = changeReviewToAbandon(state);
+    if (!request || requestId !== undefined && request.id !== requestId) return null;
+    const working = hasActiveJobs(state);
+    async function abandon() {
+        if (!request?.restorePoint) return;
+        const input = { requestId: request.id, generation: state.generation, expectedRevision: state.revision,
+            restorePointDigest: request.restorePoint.digest, confirm: true };
+        if (!await confirm("Abandon all changes in this review and return to the state before the original request? This also undoes Requirements, Designs and Prototype updates already applied during the review. Unsaved review edits will be lost. Request history, saved draft files and execution receipts are retained. This does not change Git or Development work.", "Abandon changes")) return;
+        setActionRequestId(request.id);
+        await action.run(async () => {
+            if (latest.current.generation !== input.generation || latest.current.revision !== input.expectedRevision) {
+                throw new Error("The review changed while confirmation was open. Review it again before abandoning changes.");
+            }
+            const restored = await post<UiState>("/api/change-requests/abandon", input);
+            changeRequestDialog?.close();
+            onAbandoned?.();
+            browseStage(restored.lifecycle.currentStage);
+        });
+    }
+    return <>
+        <Button variant="secondary" id={id} className="plan-button secondary review-cancel" type="button"
+            disabled={disabled || pending || working || Boolean(state.effortReset) || state.provider?.canSubmitAnswers === false}
+            title={working ? "Wait for active work to finish before abandoning changes." : "Restore the work from before the original request."}
+            onClick={() => void abandon()}>Abandon changes</Button>
+        {actionRequestId === request.id && action.error && <p className="error" role="alert">{action.error}</p>}
+    </>;
+}
 
 export function ChangeReviewPath({ request, reviewingStage, detailed = false }: {
     request: ChangeRequest; reviewingStage?: LifecycleStageId; detailed?: boolean;
@@ -52,6 +88,7 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: {
     const localDialog = useChangeRequestDialog();
     const dialog = changeRequestDialog ?? localDialog;
     const required = currentChangeReview(state);
+    const abandonable = changeReviewToAbandon(state);
     const current = required ?? requests.find(item => item.id === dialog.requestId) ?? requests.at(-1);
     const [refining, setRefining] = useState<string | null>(null);
     const [actionRequestId, setActionRequestId] = useState<string | null>(null);
@@ -146,10 +183,11 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: {
     }
     const waiting = ["queued", "analyzing"].includes(current.status);
     const waitingForPrototype = current.id === required?.id && changeReviewWaitsForPrototype(state);
-    const title = historical ? "Development request history" : current.status === "cancelled" && current.replacedByRequestId ? "Review updated with new feedback"
+    const title = historical ? "Development request history" : current.abandonment ? "Changes abandoned"
+        : current.status === "cancelled" && current.replacedByRequestId ? "Review updated with new feedback"
         : needsDetail ? "Clarify this change" : current.status === "reviewing" ? "Continue change review"
         : current.status === "failed" || error ? "Review needs attention"
-        : current.status === "completed" ? "Change review complete" : settled ? "Cancelled change"
+        : current.status === "completed" ? abandonable?.id === current.id ? "Changes ready to finish" : "Change review complete" : settled ? "Cancelled change"
         : waiting ? waitingForPrototype ? "Change queued" : "Checking your request" : current.status === "active" ? "Preparing your update" : "Review change impact";
     const primaryLabel = opensDraft && plan?.startStage !== "none" && plan
         ? `Review ${label(plan.startStage)} draft`
@@ -193,6 +231,8 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: {
                         : opensDraft || current.status === "reviewing"
                             ? "Review the affected stages in order. Each draft is separate from accepted work until you apply it."
                             : "Review the proposed update before continuing. Resolve this request before sending another change."
+                    : abandonable?.id === current.id
+                        ? "This review is not committed until Finish Prototype. You can still abandon the entire review and restore the original work."
                     : "This saved record is read-only. Your decisions and previous versions are retained."}</Dialog.Description>
                 <div className="change-request-details">
                     {error && <p id="change-dialog-error" className="review-error" role="alert">{error}</p>}
@@ -244,12 +284,16 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: {
                         {current.clarifications.length > 0 && <Disclosure className="review-supporting"><summary>Previous clarifications</summary>
                             {current.clarifications.map((item, index) => <p key={index}><strong>{item.question}</strong><br />{item.answer}</p>)}
                         </Disclosure>}
+                        {!settled && !state.stageReview && !current.restorePoint && <p className="muted">
+                            This older review has no saved pre-request restore point. Cancelling only stops remaining changes; it does not undo updates already applied.
+                        </p>}
                     </div>
                 </div>
                 <footer className="review-dialog-footer">
-                    {!settled && <Button variant="secondary" id="cancel-change" className="plan-button secondary review-cancel" type="button"
+                    <AbandonChangeReview id="abandon-change-dialog" requestId={current.id} onAbandoned={() => dialog.close()} />
+                    {!settled && abandonable?.id !== current.id && <Button variant="secondary" id="cancel-change" className="plan-button secondary review-cancel" type="button"
                         disabled={current.status === "reviewing" ? draftBusy : busy} onClick={() => void decide("cancel")}>
-                        {current.status === "active" ? "Cancel remaining change" : "Cancel request"}
+                        {["active", "reviewing"].includes(current.status) ? "Cancel remaining change" : "Cancel request"}
                     </Button>}
                     <div className="review-footer-actions">
                         {!settled && current.status === "proposed" && !needsDetail && <Button variant="secondary" className="plan-button secondary" disabled={busy}

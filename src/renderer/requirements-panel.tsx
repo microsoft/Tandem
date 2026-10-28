@@ -252,7 +252,8 @@ export function RequirementsPanel({ reviewBaseline }: {
     const addedUsages = reviewBaseline ? usageItems.filter(usage => !reviewBaseline.requirements.usageItems.includes(usage)) : [];
     const removedUsages = reviewBaseline?.requirements.usageItems.filter(usage => !usageItems.includes(usage)) ?? [];
     const usagesChanged = Boolean(reviewBaseline && JSON.stringify(usageItems) !== JSON.stringify(reviewBaseline.requirements.usageItems));
-    const usageListLabel = reviewBaseline ? state.stageReviewStatus?.appliedAt ? "Applied usages"
+    const usageListLabel = reviewBaseline ? state.stageReviewStatus?.abandonedAt ? "Abandoned draft usages"
+        : state.stageReviewStatus?.appliedAt ? "Applied usages"
         : state.stageReviewStatus?.discardedAt ? "Discarded draft usages" : "Draft usages" : "Accepted usages";
     const viewedSubstage = substageTab === "dag" && !nodes.length ? "usage"
         : substageTab ?? (isUsage || usagesChanged ? "usage" : "dag");
