@@ -24,6 +24,10 @@ export interface RuntimeSnapshot {
 }
 
 export interface UiState extends TandemState {
+  application?: {
+    protocol: string;
+    operations: Record<string, import("../../development/tandem/runtime-src/application-interface.js").ApplicationAvailability>;
+  };
   mainModelSelection?: import("../../development/tandem/public/model-selection.js").ModelSelection | null;
   projectPath?: string;
   developmentBlocker?: string | null;

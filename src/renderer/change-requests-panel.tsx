@@ -1,7 +1,7 @@
 import { Button, DialogParts as Dialog, Disclosure, IconButton, Textarea } from "./ui/index.js";
 import { useEffect, useRef, useState } from "react";
 
-import { ArrowRight, Check, ListChecks, RefreshCw, ShieldCheck, X } from "lucide-react";
+import { ArrowRight, Check, ChevronRight, ListChecks, RefreshCw, ShieldCheck, X } from "lucide-react";
 import type { LifecycleStageId } from "../types.js";
 import type { ChangeRequest } from "../change-requests.js";
 import { lifecycleStages } from "../workflow.js";
@@ -21,7 +21,7 @@ export function ChangeReviewPath({ request, reviewingStage, detailed = false }: 
     const inProgress = !historical && ["active", "reviewing"].includes(request.status);
     const next = inProgress ? request.remainingStages[0] : !historical && request.status === "proposed" ? plan.startStage : null;
     const settled = historical || ["completed", "cancelled"].includes(request.status);
-    return <ol className="change-stage-path" aria-label="Affected stages">
+    return <ol className="change-stage-path" data-detailed={detailed || undefined} aria-label="Affected stages">
         {plan.stages.map((item, index) => {
             const saved = !historical && (request.status === "completed" || inProgress && !request.remainingStages.includes(item.stage));
             const current = !settled && !saved && (reviewingStage ? reviewingStage === item.stage : next === item.stage);
@@ -30,9 +30,13 @@ export function ChangeReviewPath({ request, reviewingStage, detailed = false }: 
                     : request.status === "proposed" ? "Then review" : "Pending";
             return <li key={item.stage} data-status={saved ? "saved" : current ? "current" : "pending"}
                 aria-current={current ? "step" : undefined} aria-label={`${label(item.stage)}: ${status}`}>
-                <span className="change-step-marker" aria-hidden="true">{saved ? <Check size={13} /> : index + 1}</span>
-                <div className="change-step-copy"><strong>{label(item.stage)}</strong>
-                    {detailed && <p>{item.reason}</p>}</div>
+                <div className="change-step-content">
+                    <span className="change-step-marker" aria-hidden="true">{saved ? <Check size={13} /> : index + 1}</span>
+                    <div className="change-step-copy"><strong>{label(item.stage)}</strong>
+                        {detailed && <p>{item.reason}</p>}</div>
+                </div>
+                {!detailed && index < plan.stages.length - 1
+                    && <ChevronRight className="change-step-separator" size={12} strokeWidth={1.5} aria-hidden="true" />}
             </li>;
         })}
     </ol>;
@@ -220,7 +224,7 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true }: {
                             event.preventDefault(); void decide(plan?.question ? "clarify" : "refine");
                         }}>
                             <label htmlFor="change-detail">{plan?.question || "What should change in this request?"}</label>
-                            <Textarea className="composer-input" id="change-detail" rows={3} maxLength={4000}
+                            <Textarea submitOnEnter className="composer-input" id="change-detail" rows={3} maxLength={4000}
                                 value={drafts[current.id] ?? ""} disabled={busy}
                                 placeholder={current.originStage === "sketch" ? "Name the screen and element, or describe its position." : "Add the detail needed for this change."}
                                 aria-describedby={error ? "change-dialog-error" : undefined}

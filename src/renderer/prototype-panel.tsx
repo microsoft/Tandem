@@ -177,7 +177,7 @@ function Clarification({ question }: { question: DecisionQuestion }) {
           <span>{choice}</span>
         </label>)}
       </RadioGroup.Root>
-      {question.allowFreeText !== false && <Textarea className="composer-input" id="revision-question-detail" value={draft.detail}
+      {question.allowFreeText !== false && <Textarea submitOnEnter className="composer-input" id="revision-question-detail" value={draft.detail}
         onChange={(event) => {
           const detail = event.currentTarget.value;
           setDraft((current) => ({ detail, choice: detail.trim() ? "" : current.choice, version: current.version + 1 }));
@@ -643,19 +643,15 @@ export function PrototypePanel({ active: visible, connected, renderStageActions,
             ? { ...current, [feedbackKey]: { value: "", version: submitted + 1 } } : current);
         });
       }}>
-        <Textarea className="composer-input" id="revision-input" value={draft.value} onChange={(event) => {
+        <Textarea submitOnEnter className="composer-input" id="revision-input" value={draft.value} onChange={(event) => {
           const value = event.currentTarget.value;
           setFeedbackDrafts(current => ({ ...current, [feedbackKey]: { value, version: (current[feedbackKey]?.version ?? 0) + 1 } }));
-        }} onKeyDown={event => {
-          if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) {
-            event.preventDefault(); event.currentTarget.form?.requestSubmit();
-          }
         }}
           rows={1} maxLength={4000} disabled={Boolean(state.effortReset)}
           placeholder={refiningVisual ? "Keep this layout, but simplify the toolbar..." : milestonePlaceholders[feedbackMilestone]}
           aria-label={refiningVisual ? `Feedback for ${visualFeedback?.name ?? "selected direction"}` : "Prototype revision suggestion"} aria-describedby="revision-status" />
         <Button variant="primary" id="submit-revision" className="plan-button feedback-send" type="submit" aria-describedby="revision-status"
-          aria-label={sendLabel} title={`${sendLabel} (Ctrl+Enter)`}
+          aria-label={sendLabel} title={`${sendLabel} (Enter)`}
           disabled={feedbackBlocked || unresolved.length >= 50}><Send size={15} aria-hidden="true" />Send</Button>
         <FeedbackHistoryButton id="prototype-history-toggle" target="revision-history-details"
           open={historyOpen} error={Boolean(revisionError || failedRevision)} onToggle={() => setHistoryOpen(open => !open)} />

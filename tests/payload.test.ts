@@ -105,10 +105,10 @@ test("incompatible preferred providers fail visibly rather than falling back", (
     assert.throws(() => assertComposedProvider({ extensionId: "user:tandem", actions: [{ name: "complete_stage" }] }),
         /user:tandem.*not replaced or bypassed/);
     const compatible = { extensionId: "session:mine:tandem",
-        actions: ["get_integration", "close_development", "continue_design"].map(name => ({ name })) };
+        actions: ["get_integration", "close_development", "get_application", "execute_application"].map(name => ({ name })) };
     assert.doesNotThrow(() => assertComposedProvider(compatible));
     const payload = { schemaVersion: "tandem-composed-payload/v1" as const, version: "1.1.15", digest: "a".repeat(64), files: [] };
-    assert.doesNotThrow(() => assertComposedVersion({ result: { protocol: "development/v1", version: payload.version, payloadDigest: payload.digest } }, payload));
+    assert.doesNotThrow(() => assertComposedVersion({ result: { protocol: "development/v1", applicationProtocol: "tandem-application/v1", version: payload.version, payloadDigest: payload.digest } }, payload));
     assert.throws(() => assertComposedVersion({ result: { protocol: "development/v1", version: "older", payloadDigest: payload.digest } }, payload), /does not match/);
     for (const result of [
         { protocol: "development/v1", version: payload.version, payloadDigest: "b".repeat(64) },

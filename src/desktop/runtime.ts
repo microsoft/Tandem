@@ -9,6 +9,7 @@ import { claimDesktopWorkspace } from "./workspace.js";
 import { desktopRuntimeEnvironment } from "./environment.js";
 import { tandemWorkerInteractionRules } from "../planning-prompts.js";
 import { stagePayload, verifyPayload, type TandemPayload } from "../payload.js";
+import { APPLICATION_PROTOCOL } from "../../development/tandem/runtime-src/application-interface.js";
 
 export const PRIVATE_CLOSE_DEADLINE_MS = 30_000;
 export const MAIN_CLOSE_DEADLINE_MS = 8_000;
@@ -28,7 +29,7 @@ export function parseDesktopModelSelection(model?: string, effort?: string): Des
 }
 
 export function assertComposedProvider(canvas: { extensionId: string; actions?: { name: string }[] }): void {
-    if (!["get_integration", "close_development", "continue_design"].every(name => canvas.actions?.some(action => action.name === name))) {
+    if (!["get_integration", "close_development", "get_application", "execute_application"].every(name => canvas.actions?.some(action => action.name === name))) {
         throw new Error(`The preferred Tandem provider (${canvas.extensionId}) is an older or incompatible installation. It was not replaced or bypassed. Install the matching composed Development build explicitly, then reopen.`);
     }
 }
@@ -69,6 +70,7 @@ export function createSourcePreviewLaunchProvider(runtimeDirectory: string, sess
 export function assertComposedVersion(value: unknown, manifest: TandemPayload, extensionId = "unknown"): void {
     value = canvasActionResult(value);
     if (!value || typeof value !== "object" || !("protocol" in value) || value.protocol !== "development/v1" ||
+        !("applicationProtocol" in value) || value.applicationProtocol !== APPLICATION_PROTOCOL ||
         !("version" in value) || value.version !== manifest.version ||
         !("payloadDigest" in value) || value.payloadDigest !== manifest.digest) {
         const field = (name: string) => {
@@ -76,8 +78,8 @@ export function assertComposedVersion(value: unknown, manifest: TandemPayload, e
             return typeof item === "string" ? JSON.stringify(item.slice(0, 128)) : "missing or invalid";
         };
         throw new Error(`The preferred Tandem provider (${extensionId}) does not match this Node package's complete payload/version. ` +
-            `Expected protocol="development/v1", version=${JSON.stringify(manifest.version)}, payloadDigest=${manifest.digest}; ` +
-            `observed protocol=${field("protocol")}, version=${field("version")}, payloadDigest=${field("payloadDigest")}. ` +
+            `Expected protocol="development/v1", applicationProtocol=${APPLICATION_PROTOCOL}, version=${JSON.stringify(manifest.version)}, payloadDigest=${manifest.digest}; ` +
+            `observed protocol=${field("protocol")}, applicationProtocol=${field("applicationProtocol")}, version=${field("version")}, payloadDigest=${field("payloadDigest")}. ` +
             "No alternate provider was substituted.");
     }
 

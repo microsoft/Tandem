@@ -48,7 +48,7 @@ test("Designs naming covers actions, accessible copy and activity without renami
     assert.equal(h.get("sketch-generate").getAttribute("aria-label"), "Regenerate designs");
     assert.equal(h.get("sketch-save").getAttribute("aria-label"), "Save designs");
     assert.equal(text(h, "sketch-approve"), "Approve designs and continue");
-    assert.equal(field(h, "sketch-instruction").placeholder, "Describe a design change... (Ctrl+Enter)");
+    assert.equal(field(h, "sketch-instruction").placeholder, "Describe a design change... (Enter to send)");
     assert.ok(h.get("sketch-revise-form").classList.contains("feedback-composer"));
     assert.equal(h.get("sketch-revise-form").lastElementChild, h.get("sketch-history-toggle"));
     await h.click("sketch-history-toggle");

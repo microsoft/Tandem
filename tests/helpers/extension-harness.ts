@@ -11,6 +11,7 @@ import { assertFactoryRequestEnvelope, type FactoryLaunchRequest } from "../../s
 import { chooseProjectEntry } from "../../src/project-entry.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import type { ApplicationOperation } from "../../development/tandem/runtime-src/application-interface.js";
 
 interface CanvasContext {
     instanceId: string;
@@ -19,6 +20,11 @@ interface CanvasContext {
 }
 
 interface HarnessApi {
+    inspectApplication(value?: unknown): Promise<{
+        protocol: string; owner: string; state: TandemState; binding: { generation: string; revision: number };
+        operations: Array<{ id: string; availability: { status: string; blockers: Array<{ code: string; message: string }> }; inputSchema?: unknown }>;
+    }>;
+    executeApplication(value: unknown): Promise<{ protocol: string; operation: string; outcome: string; data: unknown }>;
     openStageReview(id: string, provider: string, input: Record<string, unknown>): Promise<TandemState>;
     applyStageReview(id: string, provider: string, input: Record<string, unknown>): Promise<TandemState>;
     discardStageReview(id: string, provider: string, input: Record<string, unknown>): Promise<TandemState>;
@@ -114,7 +120,7 @@ async function compile(): Promise<string> {
         logLevel: "silent",
         define: { __TANDEM_VERSION__: JSON.stringify("test") },
     });
-    return result.outputFiles[0].text + "\nObject.assign(module.exports, { openStageReview, applyStageReview, discardStageReview, submitChangeRequest, decideChangeRequest, continueChangeWork, sendChangeToDevelopment }); module.exports.assertDevelopmentAvailable = assertDevelopmentAvailable; module.exports.resumeEffortRun = resumeEffortRun; module.exports.waitForSuggestion = id => activeSuggestionRuns.get(id);";
+    return result.outputFiles[0].text + "\nObject.assign(module.exports, { inspectApplication, executeApplication, openStageReview, applyStageReview, discardStageReview, submitChangeRequest, decideChangeRequest, continueChangeWork, sendChangeToDevelopment }); module.exports.assertDevelopmentAvailable = assertDevelopmentAvailable; module.exports.resumeEffortRun = resumeEffortRun; module.exports.waitForSuggestion = id => activeSuggestionRuns.get(id);";
 }
 
 export async function extensionHarness(environment: Record<string, string> = {}, sharedRoot?: string, rendererHtml = "", workspaceRoot?: string, unselectedEntry = false, gitReady = false) {
@@ -135,6 +141,11 @@ export async function extensionHarness(environment: Record<string, string> = {},
     let mainReasoningEffort: string | undefined;
     let developmentReasoningEffort: string | null = null, developmentEffortActive = false, developmentEffortError: string | null = null;
     let beforeDevelopmentStart: () => Promise<void> = async () => {};
+    let developmentApplication: {
+        operations: readonly ApplicationOperation[];
+        inspect(input?: Record<string, unknown>): Promise<unknown>;
+        execute(input: unknown): Promise<unknown>;
+    } | undefined;
     let developmentModelRequired = false;
     let developmentOptions: { contextProvider(): Promise<unknown> } | undefined;
     const logs: string[] = [];
@@ -167,7 +178,7 @@ export async function extensionHarness(environment: Record<string, string> = {},
     };
     try {
         runInNewContext(await (compiled ??= compile()), {
-            module, exports: module.exports, console, URL, Buffer, AbortController, AbortSignal, Response, Error, TextDecoder, TextEncoder, structuredClone,
+            module, exports: module.exports, console, URL, URLSearchParams, Buffer, AbortController, AbortSignal, Response, Error, TextDecoder, TextEncoder, structuredClone,
             setTimeout, clearTimeout, setInterval, clearInterval,
             developmentFixture: (options: NonNullable<typeof developmentOptions>) => {
                 developmentOptions = options;
@@ -189,7 +200,7 @@ export async function extensionHarness(environment: Record<string, string> = {},
                         actual: developmentEffortActive ? developmentReasoningEffort : null, model: developmentEffortActive ? "private-model" : null,
                         supported: ["low", "high"], status: developmentEffortError ? "error" : developmentReasoningEffort === null ? "unset" : developmentEffortActive ? "applied" : "pending",
                         error: developmentEffortError }),
-                    openView: async (id: string) => { developmentOpens.push(id); return { url: "http://127.0.0.1:8765/" }; },
+                    openView: async (id: string) => { developmentOpens.push(id); return { url: "http://127.0.0.1:8765/", application: developmentApplication }; },
                     reportError: (error: Error) => { logs.push(error.message); },
                     close: async () => ({ status: "closed", warnings: [] }),
                     start: async () => { await beforeDevelopmentStart(); return {
@@ -245,6 +256,7 @@ export async function extensionHarness(environment: Record<string, string> = {},
             setDevelopmentEffortError(value: string | null) { developmentEffortError = value; },
             setBeforeDevelopmentStart(handler: () => Promise<void>) { beforeDevelopmentStart = handler; },
             setDevelopmentModelRequired(value: boolean) { developmentModelRequired = value; },
+            setDevelopmentApplication(value: NonNullable<typeof developmentApplication>) { developmentApplication = value; },
             setRename(value: typeof fs.rename) { rename = value; },
             setPreviewHtml(value: string) { previewHtml = value; },
             setPreviewFetch(value: typeof fetch) { previewFetch = value; },

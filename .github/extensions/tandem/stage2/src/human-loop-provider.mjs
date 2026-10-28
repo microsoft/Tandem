@@ -16,6 +16,8 @@ import { normalizeNavigationUrl } from "../public/link-navigation.js";
 import { HumanLoopPreferences } from "./human-loop-preferences.mjs";
 import { openProjectFolder } from "./open-project-folder.mjs";
 import { validHandoffDesign } from "../public/handoff-presentation.js";
+import { createDevelopmentApplication, developmentOperations } from "./human-loop-application.mjs";
+import { matchApplicationOperation } from "../runtime-src/application-interface.ts";
 
 export function projectHumanProgress(event) {
   return { type: `human.${event.kind}`, source: "system",
@@ -275,9 +277,9 @@ async function bytes(request, maximum) {
   for await (const chunk of request) { count += chunk.length; requireCondition(count <= maximum, "Request exceeds its size bound."); chunks.push(chunk); }
   return Buffer.concat(chunks);
 }
-async function body(request) {
+async function body(request, maximum = 65536) {
   requireCondition(request.headers["content-type"]?.startsWith("application/json"), "Use application/json.");
-  return JSON.parse((await bytes(request, 65536)).toString("utf8"));
+  return JSON.parse((await bytes(request, maximum)).toString("utf8"));
 }
 
 export async function createHumanLoopProvider({ repositoryRoot, publicDirectory, getInstallation, events, permissions, start, finishEmptyRepair, openBrowser,
@@ -328,32 +330,59 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
       recoveries: (state.recoveries ?? []).map(({ id, recoveredAt }) => ({ id, recoveredAt })),
       accessRequests: permissions.list(running.sessionId), rememberedApprovals: permissions.remembered?.(running.sessionId) ?? { all: false, tools: [] }, processes };
   }
-  const server = createServer(async (request, response) => {
+  async function storeImage(read, mimeType) {
+    requireCondition(["image/png", "image/jpeg"].includes(mimeType), "Paste a PNG or JPEG image; other image types are unsupported.");
+    const capability = await requireRuntime().transport.attachmentCapabilities(mimeType);
+    requireCondition(capability.supported, capability.reason ?? "Selected model cannot receive this image.");
+    return { attachment: await new ImageAttachmentStore(root).put(await read(capability.limits.maxBytes), mimeType) };
+  }
+  async function storeAnnotation(read, source) {
+    let maximumBytes = 4 * 1024 * 1024;
+    if (requireRuntime().transport?.attachmentCapabilities) {
+      const capability = await requireRuntime().transport.attachmentCapabilities();
+      requireCondition(capability.supported, capability.reason ?? "The selected private model cannot receive images.");
+      maximumBytes = Math.min(maximumBytes, capability.limits.maxBytes);
+    }
+    const state = await requireRuntime().state();
+    requireCondition(source?.revisionId === state.design.revisionId && source.revisionId, "A current Design diagram is required.");
+    const design = await requireRuntime().currentDesign();
+    requireCondition(policyHash(design.binding) === policyHash(state.design), "The current Design changed during annotation upload.");
+    validateArtifactAnnotationSource(source, state.design, design.content);
+    return { attachment: await attachments.put(await read(maximumBytes), source) };
+  }
+  function decodeImage(data, maximum) {
+    requireCondition(typeof data === "string" && data.length <= Math.ceil(maximum / 3) * 4, "Image exceeds its size bound.");
+    const content = Buffer.from(data, "base64");
+    requireCondition(content.length <= maximum && content.toString("base64") === data, "Supply canonical base64 image bytes.");
+    return content;
+  }
+  async function retainedAttachment(id) {
+    const state = await requireRuntime().state();
+    const ref = state.requests.flatMap(request => request.attachments ?? []).find(item => item.id === id);
+    requireCondition(ref, "Unknown retained attachment.");
+    return { ref, content: await readRequestAttachment(root, ref) };
+  }
+  async function dispatch(request, respond) {
     let admission = null;
     try {
-      requireCondition(request.headers.host === new URL(url).host, "Unexpected loopback host.");
-      if (request.method !== "GET") {
-        requireCondition(!request.headers.origin || request.headers.origin === new URL(url).origin, "Cross-origin mutation is not allowed.");
-        requireCondition(request.headers["sec-fetch-site"] !== "cross-site", "Cross-site mutation is not allowed.");
-      }
-      const path = new URL(request.url, url).pathname;
-      if (request.method === "GET" && path === "/api/settings") return json(response, 200, await settings());
+      const path = new URL(request.path, url).pathname;
+      if (request.method === "GET" && path === "/api/settings") return respond(200, await settings());
       if (request.method === "POST" && path === "/api/settings/main-model") {
-        const data = object(await body(request), ["model", "sessionId", "expectedModel"]);
+        const data = object(request.input, ["model", "sessionId", "expectedModel"]);
         requireCondition(typeof changeMainModel === "function", "This host cannot change the main-session model.");
         requireCondition(typeof data.model === "string" && data.model.trim() === data.model && data.model.length > 0 && data.model.length <= 200
           && typeof data.sessionId === "string" && data.sessionId.length > 0 && data.sessionId.length <= 200
           && (data.expectedModel === null || typeof data.expectedModel === "string" && data.expectedModel.length <= 200), "Invalid main model selection.");
         await changeMainModel(data);
-        return json(response, 200, await settings());
+        return respond(200, await settings());
       }
       if (request.method === "POST" && path === "/api/settings") {
-        const data = object(await body(request), ["theme", "fontSize"]);
+        const data = object(request.input, ["theme", "fontSize"]);
         await preferences.update(data); events.touch();
-        return json(response, 200, await settings());
+        return respond(200, await settings());
       }
       if (request.method === "POST" && path === "/api/settings/model") {
-        const input = await body(request);
+        const input = request.input;
         const data = object(input, ["action", "model", ...(Object.hasOwn(input ?? {}, "reasoningEffort") ? ["reasoningEffort"] : [])]);
         requireCondition(["select", "accept-actual"].includes(data.action), "Unknown model setting action.");
         requireCondition(data.action === "accept-actual" ? data.model === null
@@ -369,50 +398,44 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
           requireCondition((await getInstallation().read()).status === "ready", "Private runtime must be Ready for model settings.");
           await requireRuntime().changeModel(selection);
         }
-        return json(response, 200, await settings());
+        return respond(200, await settings());
       }
       if (request.method === "GET" && path === "/api/host-state") {
-        const query = new URL(request.url, url).searchParams;
-        return json(response, 200, await getHostStateWal(root).inventory(query.get("after"), Number(query.get("limit") ?? 100)));
+        const query = new URL(request.path, url).searchParams;
+        return respond(200, await getHostStateWal(root).inventory(query.get("after"), Number(query.get("limit") ?? 100)));
       }
-      if (request.method === "GET" && path === "/api/snapshot") return json(response, 200, await snapshot());
-      if (request.method === "GET" && path === "/api/events") {
-        response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" });
-        response.write(`event: update\ndata: ${JSON.stringify({ streamId: events.streamId })}\n\n`);
-        streams.add(response);
-        request.on("close", () => streams.delete(response)); return;
-      }
+      if (request.method === "GET" && path === "/api/snapshot") return respond(200, await snapshot());
       if (request.method === "POST" && path === "/api/runtime/start") {
-        const input = await body(request);
+        const input = request.input;
         object(input, Object.hasOwn(input, "retry") ? ["retry"] : []);
         requireCondition(input.retry === undefined || input.retry === true, "Retry must be an explicit affirmative action.");
         await start({ retry: input.retry === true });
-        return json(response, 200, await snapshot());
+        return respond(200, await snapshot());
       }
       if (request.method === "POST" && path === "/api/runtime/initial-creation/inspect") {
-        object(await body(request), []);
+        object(request.input, []);
         const installation = getInstallation();
         requireCondition(typeof installation?.requestInitialCreationRecovery === "function", "Unused-setup recovery inspection is unavailable.");
-        return json(response, 200, await installation.requestInitialCreationRecovery());
+        return respond(200, await installation.requestInitialCreationRecovery());
       }
       if (request.method === "POST" && path === "/api/runtime/initial-creation/decision") {
-        const input = object(await body(request), ["confirmationId", "approve"]);
+        const input = object(request.input, ["confirmationId", "approve"]);
         requireCondition(typeof input.confirmationId === "string" && typeof input.approve === "boolean",
           "A fresh explicit unused-setup recovery decision is required.");
         const installation = getInstallation();
         requireCondition(typeof installation?.decideInitialCreationRecovery === "function", "Unused-setup recovery is unavailable.");
         const result = await installation.decideInitialCreationRecovery(input);
         if (result.recovered) await start();
-        return json(response, 200, result);
+        return respond(200, result);
       }
       if (request.method === "POST" && path === "/api/runtime/empty-setup/inspect") {
-        object(await body(request), []);
+        object(request.input, []);
         const installation = getInstallation();
         requireCondition(typeof installation?.requestEmptySetupRepair === "function", "Empty Development setup repair is unavailable.");
-        return json(response, 200, await installation.requestEmptySetupRepair());
+        return respond(200, await installation.requestEmptySetupRepair());
       }
       if (request.method === "POST" && path === "/api/runtime/empty-setup/decision") {
-        const input = object(await body(request), ["confirmationId", "approve"]);
+        const input = object(request.input, ["confirmationId", "approve"]);
         requireCondition(typeof input.confirmationId === "string" && typeof input.approve === "boolean", "An explicit repair decision is required.");
         const installation = getInstallation();
         requireCondition(typeof installation?.decideEmptySetupRepair === "function" && typeof finishEmptyRepair === "function",
@@ -420,19 +443,19 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
         const result = await installation.decideEmptySetupRepair(input);
         const readback = result.repaired ? await finishEmptyRepair() : null;
         events.touch();
-        return json(response, 200, { ...result, readback });
+        return respond(200, { ...result, readback });
       }
       if (request.method === "POST" && path === "/api/navigation/open") {
-        const data = object(await body(request), ["url", "focus"]);
+        const data = object(request.input, ["url", "focus"]);
         const address = normalizeNavigationUrl(data.url);
         requireCondition(typeof data.focus === "boolean", "Browser focus must be a boolean.");
         requireCondition(typeof openBrowser === "function", "Host browser navigation is unavailable. Copy the address and open it using the Host browser controls.");
         const opened = await openBrowser(address, { focus: data.focus });
         requireCondition(typeof opened?.instanceId === "string" && opened.instanceId, "Host browser opening was not confirmed.");
-        return json(response, 200, { opened: true, instanceId: opened.instanceId });
+        return respond(200, { opened: true, instanceId: opened.instanceId });
       }
       if (request.method === "POST" && ["/api/requests", "/api/answers"].includes(path)) {
-        const data = await body(request), keys = ["id", "message", "receivedAt", ...(path === "/api/answers" ? ["answers"] : []),
+        const data = request.input, keys = ["id", "message", "receivedAt", ...(path === "/api/answers" ? ["answers"] : []),
           ...(path === "/api/requests" && Object.hasOwn(data, "roleHint") ? ["roleHint"] : []),
           ...(Object.hasOwn(data, "attachments") ? ["attachments"] : [])];
         object(data, keys);
@@ -458,106 +481,142 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
           answers: path === "/api/answers" ? data.answers : null, ...(ref.length ? { attachments: ref } : {}),
           ...(Object.hasOwn(data, "roleHint") ? { roleHint: data.roleHint } : {}) });
         await instance.send(input);
-        return json(response, 202, { requestId: input.id });
+        return respond(202, { requestId: input.id });
       }
       const confirmation = /^\/api\/implementation-confirmations\/([^/]+)$/.exec(path);
       if (request.method === "POST" && confirmation) {
-        const data = object(await body(request), ["decision"]);
+        const data = object(request.input, ["decision"]);
         requireCondition(["approved", "design", "cancelled"].includes(data.decision), "Unknown implementation confirmation decision.");
         requireCondition((await getInstallation().read()).status === "ready", "The runtime is not ready for confirmation.");
-        return json(response, 200, await requireRuntime().decideImplementation({
+        return respond(200, await requireRuntime().decideImplementation({
           confirmationId: decodeURIComponent(confirmation[1]), decision: data.decision,
         }));
       }
       if (request.method === "POST" && path === "/api/stop") {
-        const input = await body(request);
+        const input = request.input;
         const data = object(input, input && Object.hasOwn(input, "mode") ? ["stopId", "mode"] : ["stopId"]);
         requireCondition(data.mode === undefined || ["after-step", "immediate"].includes(data.mode), "Unknown Stop mode.");
         await requireRuntime().stop(text(data.stopId), data.mode ?? "after-step");
-        return json(response, 200, await snapshot());
+        return respond(200, await snapshot());
       }
       if (request.method === "POST" && path === "/api/runtime/close") {
-        await body(request); return json(response, 200, await getInstallation().close());
+        request.input; return respond(200, await getInstallation().close());
       }
       if (request.method === "POST" && path === "/api/project/open-folder") {
-        object(await body(request), []);
+        object(request.input, []);
         const result = await revealProject(root);
         requireCondition(result?.requested === true, "The file manager launch was not confirmed.");
-        return json(response, 200, result);
+        return respond(200, result);
       }
       if (request.method === "POST" && path === "/api/context/compaction/request") {
-        object(await body(request), []);
-        return json(response, 200, await requireRuntime().requestCompaction());
+        object(request.input, []);
+        return respond(200, await requireRuntime().requestCompaction());
       }
       if (request.method === "POST" && path === "/api/context/compaction/decision") {
-        const data = object(await body(request), ["requestId", "approve"]);
+        const data = object(request.input, ["requestId", "approve"]);
         requireCondition(typeof data.approve === "boolean", "An explicit compaction approval or refusal is required.");
-        return json(response, 200, await requireRuntime().decideCompaction({ requestId: text(data.requestId), approve: data.approve }));
+        return respond(200, await requireRuntime().decideCompaction({ requestId: text(data.requestId), approve: data.approve }));
       }
       if (request.method === "POST" && path === "/api/permissions/reset") {
-        object(await body(request), []);
+        object(request.input, []);
         await requireRuntime().resetRememberedApprovals((sessionId) => permissions.resetSession(sessionId));
         events.append({ type: "permission.reset", source: "user",
           summary: "Remembered approvals reset for future requests. Already authorized commands were not cancelled." });
-        return json(response, 200, await snapshot());
+        return respond(200, await snapshot());
       }
       if (request.method === "POST" && path === "/api/permissions/off") {
-        object(await body(request), []);
+        object(request.input, []);
         permissions.revokeAll(requireRuntime().sessionId);
         events.append({ type: "permission.reset", source: "user",
           summary: "Session-wide automatic access is Off. Pending requests and already authorized commands were not cancelled." });
-        return json(response, 200, await snapshot());
+        return respond(200, await snapshot());
       }
       if (request.method === "POST" && path === "/api/permissions/once") {
-        const data = object(await body(request), ["requestIds"]);
+        const data = object(request.input, ["requestIds"]);
         const sessionId = requireRuntime().sessionId;
         const results = await permissions.approvePendingOnce(sessionId, data.requestIds);
-        return json(response, 200, { results, accessRequests: permissions.list(sessionId) });
+        return respond(200, { results, accessRequests: permissions.list(sessionId) });
       }
       const permission = /^\/api\/access\/([^/]+)$/.exec(path);
       if (request.method === "POST" && permission) {
-        const data = object(await body(request), ["decision"]);
+        const data = object(request.input, ["decision"]);
         requireCondition(["once", "session", "all", "denied"].includes(data.decision), "Unknown permission decision.");
         const sessionId = requireRuntime().sessionId;
         await permissions.decide(decodeURIComponent(permission[1]), data.decision, sessionId);
-        return json(response, 200, { accessRequests: permissions.list(sessionId) });
+        return respond(200, { accessRequests: permissions.list(sessionId) });
       }
       if (request.method === "POST" && path === "/api/apps/stop") {
-        const data = object(await body(request), ["id"]);
-        return json(response, 200, await requireRuntime().commands.stop(text(data.id)));
+        const data = object(request.input, ["id"]);
+        return respond(200, await requireRuntime().commands.stop(text(data.id)));
+      }
+      if (request.method === "POST" && path === "/api/application/image") {
+        return respond(200, await storeImage(maximum => decodeImage(request.input.data, maximum), request.input.mimeType));
+      }
+      if (request.method === "POST" && path === "/api/application/annotation") {
+        return respond(201, await storeAnnotation(maximum => decodeImage(request.input.data, maximum), request.input.source));
+      }
+      const retainedImage = /^\/api\/application\/attachment\/([^/]+)$/.exec(path);
+      if (request.method === "GET" && retainedImage) {
+        const { ref, content } = await retainedAttachment(decodeURIComponent(retainedImage[1]));
+        return respond(200, { id: ref.id, mimeType: ref.mimeType, data: content.toString("base64") });
+      }
+      throw new Error("Unsupported application operation.");
+    } catch (error) {
+      const outcome = {};
+      if (admission) {
+        try {
+          const state = await runtime()?.state();
+          const saved = state?.requests.find(({ id }) => id === admission.id);
+          if (saved) {
+            const original = { id: saved.id, message: saved.message, receivedAt: saved.receivedAt,
+              ...(saved.roleHint ? { roleHint: saved.roleHint } : {}),
+              answers: saved.answers, attachments: saved.attachments ?? [] };
+            if (policyHash(original) === policyHash(admission)) outcome.accepted = true;
+            else outcome.notAccepted = true;
+          } else if (state) outcome.notAccepted = true;
+        } catch { /* No read proof means the client must retain its retry identity. */ }
+      }
+      respond(error.code === "ENOENT" ? 404 : 409, { error: error.message,
+        ...(error.code === "development_model_required" ? { code: error.code } : {}), ...outcome });
+    }
+  }
+  const application = createDevelopmentApplication({ snapshot, dispatch });
+  const server = createServer(async (request, response) => {
+    try {
+      requireCondition(request.headers.host === new URL(url).host, "Unexpected loopback host.");
+      if (request.method !== "GET") {
+        requireCondition(!request.headers.origin || request.headers.origin === new URL(url).origin, "Cross-origin mutation is not allowed.");
+        requireCondition(request.headers["sec-fetch-site"] !== "cross-site", "Cross-site mutation is not allowed.");
+      }
+      const path = new URL(request.url, url).pathname;
+      if (request.method === "GET" && path === "/api/events") {
+        response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" });
+        response.write(`event: update\ndata: ${JSON.stringify({ streamId: events.streamId })}\n\n`);
+        streams.add(response);
+        request.on("close", () => streams.delete(response)); return;
       }
       if (request.method === "POST" && path === "/api/image-attachments") {
         const mimeType = String(request.headers["content-type"] ?? "").split(";")[0].toLowerCase();
-        requireCondition(["image/png", "image/jpeg"].includes(mimeType), "Paste a PNG or JPEG image; other image types are unsupported.");
-        const capability = await requireRuntime().transport.attachmentCapabilities(mimeType);
-        requireCondition(capability.supported, capability.reason ?? "Selected model cannot receive this image.");
-        const attachment = await new ImageAttachmentStore(root).put(await bytes(request, capability.limits.maxBytes), mimeType);
-        return json(response, 200, { attachment });
+        return json(response, 200, await storeImage(maximum => bytes(request, maximum), mimeType));
       }
       if (request.method === "POST" && path === "/api/annotation-attachments") {
-        let maximumBytes = 4 * 1024 * 1024;
-        if (requireRuntime().transport?.attachmentCapabilities) {
-          const capability = await requireRuntime().transport.attachmentCapabilities();
-          requireCondition(capability.supported, capability.reason ?? "The selected private model cannot receive images.");
-          maximumBytes = Math.min(maximumBytes, capability.limits.maxBytes);
-        }
-        const state = await requireRuntime().state();
         const source = JSON.parse(decodeURIComponent(String(request.headers["x-annotation-source"] ?? "")));
-        requireCondition(source.revisionId === state.design.revisionId && source.revisionId, "A current Design diagram is required.");
-        const design = await requireRuntime().currentDesign();
-        requireCondition(policyHash(design.binding) === policyHash(state.design), "The current Design changed during annotation upload.");
-        validateArtifactAnnotationSource(source, state.design, design.content);
-        const attachment = await attachments.put(await bytes(request, maximumBytes), source);
-        return json(response, 201, { attachment });
+        return json(response, 201, await storeAnnotation(maximum => bytes(request, maximum), source));
       }
       const image = /^\/api\/(?:annotation|image)-attachments\/([^/]+)$/.exec(path);
       if (request.method === "GET" && image) {
-        const state = await requireRuntime().state();
-        const ref = state.requests.flatMap((request) => request.attachments ?? []).find(({ id }) => id === decodeURIComponent(image[1]));
-        requireCondition(ref, "Unknown retained attachment.");
-        const content = await readRequestAttachment(root, ref);
+        const { ref, content } = await retainedAttachment(decodeURIComponent(image[1]));
         response.writeHead(200, { "content-type": ref.mimeType, "x-content-type-options": "nosniff", "cache-control": "private, max-age=31536000, immutable" });
         response.end(content); return;
+      }
+      if (path.startsWith("/api/")) {
+        const input = request.method === "POST" ? await body(request, path === "/api/application/execute" ? 24 * 1024 * 1024 : 65536) : {};
+        if (path === "/api/application/inspect" && request.method === "POST") return json(response, 200, await application.inspect(input));
+        if (path === "/api/application/execute" && request.method === "POST") return json(response, 200, await application.execute(input));
+        const matched = matchApplicationOperation(developmentOperations, request.method, request.url, input);
+        if (matched) {
+          return await dispatch({ method: request.method, path: request.url, input }, (status, value) => json(response, status, value));
+        }
       }
       if (path.startsWith("/api/")) return json(response, 409, { error: "Unsupported or stale action. Human-loop/v1 has no technical-plan approval, per-item Review or Apply workflow." });
       requireCondition(request.method === "GET", "Unsupported method.");
@@ -586,22 +645,9 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
         "x-content-type-options": "nosniff" });
       response.end(content);
     } catch (error) {
-      const outcome = {};
-      if (admission) {
-        try {
-          const state = await runtime()?.state();
-          const saved = state?.requests.find(({ id }) => id === admission.id);
-          if (saved) {
-            const original = { id: saved.id, message: saved.message, receivedAt: saved.receivedAt,
-              ...(saved.roleHint ? { roleHint: saved.roleHint } : {}),
-              answers: saved.answers, attachments: saved.attachments ?? [] };
-            if (policyHash(original) === policyHash(admission)) outcome.accepted = true;
-            else outcome.notAccepted = true;
-          } else if (state) outcome.notAccepted = true;
-        } catch { /* No read proof means the client must retain its retry identity. */ }
-      }
-      json(response, error.code === "ENOENT" ? 404 : 409, { error: error.message,
-        ...(error.code === "development_model_required" ? { code: error.code } : {}), ...outcome });
+      json(response, error.statusCode ?? (error.code === "ENOENT" ? 404 : 409), {
+        error: error.message, code: error.code ?? "operation_failed", ...(error.details ? { details: error.details } : {}),
+      });
     }
   });
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
@@ -612,7 +658,7 @@ export async function createHumanLoopProvider({ repositoryRoot, publicDirectory,
   });
   const heartbeat = setInterval(() => { for (const response of streams) response.write(": heartbeat\n\n"); }, 15000);
   heartbeat.unref?.();
-  return { id: randomUUID(), url, snapshot, async close() {
+  return { id: randomUUID(), url, snapshot, application, async close() {
     clearInterval(heartbeat); unsubscribe(); for (const response of streams) response.end();
     await new Promise((resolve) => {
       server.close(resolve);

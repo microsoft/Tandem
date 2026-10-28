@@ -38,7 +38,7 @@ For direct edits rather than a chat request:
 2. In Requirements, choose the answered question and **Update answer and
    dependents**. Review affected decisions.
 3. In Designs, edit and **Save designs**, or type a precise change and use
-   **Send** (**Ctrl+Enter** or **Command+Enter**). Inspect
+   **Send** (**Enter**; **Ctrl+Enter** or **Command+Enter** inserts a new line). Inspect
    **Revision history** if a request failed; retry the recorded request deliberately.
 4. Approve the new designs before using them for Prototype.
 

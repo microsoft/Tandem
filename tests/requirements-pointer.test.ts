@@ -5,7 +5,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
-import { state } from "./helpers/react-harness.js";
+import { rendererFixtureScript, state } from "./helpers/react-harness.js";
 import { browserAvailable, openFixtureBrowser } from "../development/tandem/test/helpers/browser-fixture.mjs";
 import { curatedDefault } from "../src/workflow.js";
 
@@ -101,8 +101,8 @@ test("defaults mouse activation stays on its button when focus leaves the answer
                     ...(type === "mouseMoved" ? {} : { button: "left", clickCount: 1 }) });
             }
         }
-        await click('button[role="radio"][data-state="checked"]');
-        await browser.waitFor('document.activeElement.matches("button[role=radio]")');
+        await click("#question-host textarea");
+        await browser.waitFor('document.activeElement === document.querySelector("#question-host textarea")');
         await click(".all-recommended");
         t.diagnostic(JSON.stringify(await browser.evaluate('({events:window.pointerEvidence,status:document.querySelector("#design-tree-status").textContent,question:document.querySelector("#question-host").innerText})')));
         await browser.waitFor('Boolean(document.querySelector("[role=alertdialog]"))');
@@ -153,5 +153,126 @@ test("defaults mouse activation stays on its button when focus leaves the answer
         if (process.env.TANDEM_REQUIREMENTS_SCREENSHOTS) {
             await writeFile(join(process.env.TANDEM_REQUIREMENTS_SCREENSHOTS, "requirements-explicit-ready.png"), await browser.screenshot());
         }
+        assert.deepEqual(browser.exceptions, []);
+    });
+
+test("Requirements radios and answer buttons activate on the first pointer click from an unfocused inspector",
+    { skip: !browserAvailable, timeout: 60_000 }, async t => {
+        const value = state("requirements");
+        value.requirements.substage = "dag";
+        const choices = [
+            "Allow completion using explicitly labeled simulated item, order-wide sugar, and order-wide milk availability, while identifying real availability as unknown.",
+            "Require verified shop availability for items and both order-wide choices even for demonstration completion; otherwise explain why completion is blocked.",
+            "Demonstrate available and unavailable items, order-wide sugar choices, or order-wide milk choices using clearly labeled illustrative conditions, blocking completion in unavailable scenarios.",
+        ];
+        value.decisionGraph.nodes = [{
+            id: "availability", title: "Unknown menu availability", status: "active", dependencies: [], answer: null,
+            question: { id: "availability",
+                text: "When real availability of menu items and the order-wide sugar and milk choices is unknown, what should govern demonstration completion?",
+                rationale: "Sugar and milk are selected once for the whole order. Their real availability is unverified.",
+                choices, recommended: null, allowFreeText: true,
+                answerPlaceholder: "Choose how unknown item, sugar, and milk availability affects demonstration completion." },
+        }];
+        const [script, styles] = await Promise.all([
+            rendererFixtureScript(),
+            build({ entryPoints: [fileURLToPath(new URL("../src/renderer/styles.css", import.meta.url))],
+                bundle: true, write: false, logLevel: "silent" }),
+        ]);
+        const template = (await readFile(new URL("../src/renderer/index.html", import.meta.url), "utf8"))
+            .replace("__TANDEM_STYLES__", () => styles.outputFiles[0].text).replace("__TANDEM_VERSION__", "pointer-test")
+            .replace("<script>__TANDEM_CLIENT__</script>", () => `<script>
+                window.__renderMermaid = async () => ({svg:'<svg xmlns="http://www.w3.org/2000/svg"></svg>'});
+                ${script.replaceAll("</script", "<\\/script")}
+                window.pointerFixture = TandemTest.mount();
+                pointerFixture.store.refresh();
+                window.firstClickEvents = [];
+                for (const type of ["pointerdown", "focusin", "pointerup", "click"]) document.addEventListener(type, event => {
+                    const button = event.target.closest("button");
+                    window.firstClickEvents.push({type, trusted:event.isTrusted,
+                        target:button?.getAttribute("data-ui-key") ?? button?.id ?? event.target.tagName,
+                        top:button?.getBoundingClientRect().top,
+                        scroll:document.querySelector(".design-tree-inspector")?.scrollTop});
+                }, true);
+                </script>`);
+        const answers: { action?: string; answer?: string }[] = [];
+        const server = createServer((request, response) => {
+            if (request.url === "/") {
+                response.setHeader("Content-Type", "text/html");
+                response.end(template);
+            } else if (request.url === "/api/project-entry" || request.url === "/api/project-entry/open") {
+                response.setHeader("Content-Type", "application/json");
+                response.end(JSON.stringify({ projectPath: "C:\\pointer-fixture", startingPath: "preparation",
+                    developmentContext: false, developmentStarted: false }));
+            } else if (request.url === "/api/answer") {
+                let body = "";
+                request.on("data", chunk => { body += chunk; });
+                request.on("end", () => {
+                    answers.push(JSON.parse(body));
+                    value.revision++;
+                    response.setHeader("Content-Type", "application/json");
+                    response.end(JSON.stringify(value));
+                });
+            } else {
+                response.setHeader("Content-Type", "application/json");
+                response.end(JSON.stringify(request.url === "/api/state" ? value : {}));
+            }
+        });
+        await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
+        t.after(() => new Promise<void>(done => { server.close(() => done()); server.closeAllConnections(); }));
+        const browser = await openFixtureBrowser(t);
+        const address = server.address(); assert.ok(address && typeof address !== "string");
+        const failures: object[] = [];
+        const actions = [
+            { selector: '#question-host [role="radio"] .choice-control', kind: "radio" },
+            { selector: '#question-host [role="radio"]:nth-of-type(3) .choice-control', kind: "radio" },
+            { selector: "#decision-submit", kind: "validation" },
+            { selector: "#decision-submit", kind: "answer" },
+            { selector: ".all-recommended", kind: "defaults" },
+        ] as const;
+        for (const [width, height] of [[1440, 650], [1440, 820], [942, 650], [600, 650], [400, 760]]) {
+            await browser.call("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+            for (const { selector, kind } of actions) {
+                value.decisionGraph.nodes[0].question!.recommended = kind === "answer" || kind === "defaults" ? choices[0] : null;
+                await browser.call("Page.navigate", { url: `http://127.0.0.1:${address.port}/` });
+                await browser.waitFor('Boolean(document.querySelector("#decision-submit")) && !document.querySelector("#studio-workspace").inert');
+                await browser.evaluate(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:"center"})`);
+                await browser.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+                const submitted = answers.length;
+                const revision = value.revision;
+                const point = await browser.evaluate(`(() => {
+                    const target = document.querySelector(${JSON.stringify(selector)}), rect = target.getBoundingClientRect();
+                    const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+                    return {x, y, reachable:target.contains(document.elementFromPoint(x, y))};
+                })()`);
+                assert.equal(point.reachable, true, `${selector} is reachable at ${width}`);
+                for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) {
+                    await browser.call("Input.dispatchMouseEvent", { type, x: point.x, y: point.y,
+                        ...(type === "mouseMoved" ? {} : { button: "left", clickCount: 1 }) });
+                }
+                if (kind === "answer") {
+                    await browser.waitFor(`pointerFixture.store.getSnapshot().state.revision === ${revision + 1}`);
+                }
+                await browser.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+                const result = await browser.evaluate(`({
+                    selected:document.querySelector(${JSON.stringify(selector)})?.closest('[role="radio"]')?.getAttribute("aria-checked"),
+                    error:document.querySelector("#question-host .error")?.textContent,
+                    confirmation:Boolean(document.querySelector("[role=alertdialog]")),
+                    expanded:document.querySelector("#question-host textarea")?.dataset.composerExpanded === "true",
+                    events:window.firstClickEvents
+                })`);
+                const activated = kind === "radio" ? result.selected === "true"
+                    : kind === "validation" ? /Choose an option or enter an answer/.test(result.error)
+                        : kind === "defaults" ? result.confirmation
+                            : answers.length === submitted + 1 && answers.at(-1)?.answer === choices[0];
+                if (!activated || result.expanded) failures.push({ width, height, selector, kind, ...result });
+                assert.equal(answers.length, submitted + (kind === "answer" ? 1 : 0),
+                    "Only an explicit valid submission sends one answer.");
+                if (process.env.TANDEM_REQUIREMENTS_SCREENSHOTS && selector === actions[0].selector) {
+                    await writeFile(join(process.env.TANDEM_REQUIREMENTS_SCREENSHOTS,
+                        `requirements-first-click-${width}-${height}.png`), await browser.screenshot());
+                }
+            }
+        }
+        assert.equal(failures.length, 0, JSON.stringify(failures));
         assert.deepEqual(browser.exceptions, []);
     });

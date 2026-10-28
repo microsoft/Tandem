@@ -1,5 +1,6 @@
 import { decisionSections, technicalFindings, reviewCoverageText, emptyReviewSection } from '../review-decisions.js';
 import { renderQuestionMeaning, questionMeaning, questionStatus } from '../question-presentation.js';
+import { installComposerEnter } from '../composer-enter.js';
 
 const instances = new WeakMap();
 let questionTitleSequence = 0;
@@ -226,6 +227,9 @@ function createForm(state, interaction, previous) {
       const label = make('label', 'Your own answer (typing selects free text)');
       textarea.rows = 3;
       textarea.setAttribute('aria-label', `Your own answer: ${question.question}`);
+      textarea.title = 'Enter to send; Ctrl+Enter for a new line.';
+      textarea.setAttribute('aria-keyshortcuts', 'Enter');
+      installComposerEnter(textarea, form.node, () => canAnswer(state, form) && !form.submit.disabled);
       label.append(textarea);
       controls.append(label);
     }

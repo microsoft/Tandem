@@ -158,24 +158,27 @@ test("Rendering debugger opens inside Settings without popup navigation and pres
     assert.deepEqual(f.posts, []);
     assert.deepEqual(browser.exceptions, []);
   });
-test("chat Enter uses the existing submit envelope and Shift+Enter preserves multiline text", { skip: !browserAvailable }, async (t) => {
+test("chat Enter uses the existing submit envelope and modified Enter preserves multiline text", { skip: !browserAvailable }, async (t) => {
   const f = await fixture(t), { browser } = f;
   await browser.call("Page.navigate", { url: f.url });
   await browser.waitFor("document.querySelector('#send').disabled === false");
-  await browser.evaluate("document.querySelector('#message').focus()");
-  await browser.call("Input.insertText", { text: "First line" });
-  await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, modifiers: 8, text: "\r", unmodifiedText: "\r" });
-  await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
-  await browser.call("Input.insertText", { text: "Second line" });
-  assert.equal(await browser.evaluate("document.querySelector('#message').value"), "First line\nSecond line");
-  assert.equal(f.posts.length, 0);
-  await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
-  await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
-  await browser.waitFor("document.querySelector('#message').value === ''");
-  assert.equal(f.posts.length, 1); assert.equal(f.posts[0].path, "/api/requests");
-  assert.equal(f.posts[0].data.message, "First line\nSecond line");
+  for (const modifiers of [2, 4, 8]) {
+    const sent = f.posts.length;
+    await browser.evaluate("document.querySelector('#message').focus()");
+    await browser.call("Input.insertText", { text: "First line" });
+    await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, modifiers, text: "\r", unmodifiedText: "\r" });
+    await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+    await browser.call("Input.insertText", { text: "Second line" });
+    assert.equal(await browser.evaluate("document.querySelector('#message').value"), "First line\nSecond line");
+    assert.equal(f.posts.length, sent);
+    await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+    await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+    await browser.waitFor("document.querySelector('#message').value === ''");
+    assert.equal(f.posts.length, sent + 1); assert.equal(f.posts.at(-1).path, "/api/requests");
+    assert.equal(f.posts.at(-1).data.message, "First line\nSecond line");
+  }
   await browser.evaluate("document.querySelector('#message').value='   ';document.querySelector('#message').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',cancelable:true}))");
-  assert.equal(f.posts.length, 1);
+  assert.equal(f.posts.length, 3);
   assert.deepEqual(browser.exceptions, []);
 });
 
@@ -1723,7 +1726,7 @@ test("a delayed Designer answer failure stays beside its source form after activ
   })()`), { owner: "request", visible: true, draft: "Keep this Designer answer", wrongOwnerHasError: false });
 });
 
-test("active implementation questions preserve focus, drafts and exact retries beside their own cycle", { skip: !browserAvailable, timeout: 60_000 }, async (t) => {
+test("active implementation questions preserve Enter submission, multiline drafts and exact retries beside their own cycle", { skip: !browserAvailable, timeout: 60_000 }, async (t) => {
   let reject = true;
   const f = await fixture(t, { onPost: ({ path }) => {
     if (path === "/api/answers" && reject) throw new Error("Answer acknowledgement unavailable");
@@ -1757,16 +1760,29 @@ test("active implementation questions preserve focus, drafts and exact retries b
       input.closest('form').dataset.sourceRequestId,
       document.querySelector('#human-workflow').closest('[data-entry-id]').dataset.entryId];
   })()`), [true, true, 4, 7, "implementation-request", "implementation-message"]);
-  await browser.evaluate("document.querySelector('.human-loop-questions').requestSubmit()");
+  await browser.evaluate(`(() => {
+    const input = document.querySelector('.human-loop-questions textarea');
+    input.setSelectionRange(input.value.length, input.value.length);
+  })()`);
+  await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, modifiers: 2 });
+  await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+  await browser.call("Input.insertText", { text: "Keep its saved decisions." });
+  const answer = "Use the existing behavior\nKeep its saved decisions.";
+  assert.equal(await browser.evaluate("document.querySelector('.human-loop-questions textarea').value"), answer);
+  assert.equal(f.posts.filter(({ path }) => path === "/api/answers").length, 0);
+  await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+  await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
   await browser.waitFor("document.querySelector('.human-loop-questions').textContent.includes('Answer acknowledgement unavailable')");
-  assert.equal(await browser.evaluate("document.querySelector('.human-loop-questions textarea').value"), "Use the existing behavior");
+  assert.equal(await browser.evaluate("document.querySelector('.human-loop-questions textarea').value"), answer);
   reject = false;
-  await browser.evaluate("document.querySelector('.human-loop-questions').requestSubmit()");
+  await browser.evaluate("document.querySelector('.human-loop-questions textarea').focus()");
+  await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+  await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
   await browser.waitFor("document.querySelector('.human-loop-questions textarea').value === ''");
   const answers = f.posts.filter(({ path }) => path === "/api/answers");
   assert.equal(answers.length, 2);
   assert.deepEqual(answers[0].data, answers[1].data);
-  assert.equal(answers[0].data.answers.answers[0].value, "Use the existing behavior");
+  assert.equal(answers[0].data.answers.answers[0].value, answer);
   f.current.workflow.activeRequestId = answers[0].data.id;
   f.current.messages.push({ id: "answer-message", kind: "user", requestId: answers[0].data.id,
     text: "Question form submission.", timestamp: "2026-09-15T00:02:00Z", queueState: "active" });

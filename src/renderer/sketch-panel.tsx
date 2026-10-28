@@ -691,12 +691,6 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
   const canvasPreset = SKETCH_SIZE_PRESETS.find((size) => size.width === screen?.width && size.height === screen?.height);
   const revisions = [...new Map([...state.sketch.history, ...(state.sketch.current ? [state.sketch.current] : [])]
     .map((revision) => [revision.id, revision])).values()].reverse();
-  const sendShortcut = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && !event.nativeEvent.isComposing) {
-      event.preventDefault();
-      event.currentTarget.form?.requestSubmit();
-    }
-  };
   const approved = isSketchRevisionApproved(state.sketch) && !dirty && !conflict && !livePreview;
   const approvalStatus = document && approved && !state.stageReview && loadState.loadedKey === key && !loadState.loading
     ? wireframe ? "Layout and navigation approved" : "Saved designs approved" : "";
@@ -970,12 +964,12 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
     </FeedbackHistory>
     <form id="sketch-revise-form" className="sketch-revise-form feedback-composer" onSubmit={(event) => { event.preventDefault(); void submit("revise"); }}>
       <label className="visually-hidden" htmlFor="sketch-instruction">Describe a design change</label>
-      <Textarea className="composer-input" id="sketch-instruction" rows={1} maxLength={4000} disabled={!writable || Boolean(requiredReview)}
-        value={instruction} onChange={(event) => setInstruction(event.currentTarget.value)} onKeyDown={sendShortcut}
+      <Textarea submitOnEnter className="composer-input" id="sketch-instruction" rows={1} maxLength={4000} disabled={!writable || Boolean(requiredReview)}
+        value={instruction} onChange={(event) => setInstruction(event.currentTarget.value)}
         aria-describedby="sketch-focus sketch-status sketch-review-required"
-        placeholder={wireframe ? "Change a layout, label or navigation path... (Ctrl+Enter)" : "Describe a design change... (Ctrl+Enter)"} />
+        placeholder={wireframe ? "Change a layout, label or navigation path... (Enter to send)" : "Describe a design change... (Enter to send)"} />
       <Button variant="primary" id="sketch-revise" className="plan-button feedback-send" type="submit"
-        title={state.sketch.status === "stale" ? "Update designs from latest requirements before sending a revision." : "Send design revision (Ctrl+Enter)"}
+        title={state.sketch.status === "stale" ? "Update designs from latest requirements before sending a revision." : "Send design revision (Enter)"}
         disabled={!writable || !document || conflict || !instruction.trim() || invalidFields || Boolean(requiredReview) || state.sketch.status === "stale"}>
         <Send size={15} aria-hidden="true" /> Send
       </Button>

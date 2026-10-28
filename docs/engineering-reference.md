@@ -17,6 +17,7 @@ All source paths and command working directories below are relative to the
 | --- | --- |
 | [Browser host and ownership](#standalone-nodebrowser-app) | Shutdown, permissions, provider selection and local packaging. |
 | [Workflow contracts](#workflow) | Independent stages, effort, progress, source handoff and UI boundaries. |
+| [Agent application interface](agent-interface.md) | Headless inspection/commands, operation schemas, review targets and native Development authority. |
 | [State, migration and recovery](#state-migration-and-recovery) | Retained history, interrupted work and guarded setup repair. |
 | [Settings and retained history](#project-settings-and-retained-history) | Shared settings, independent runtime ownership and retired process records. |
 | [Windows Forms host](#optional-windows-forms-host) | Alternative host requirements. |
@@ -244,7 +245,7 @@ only complete, valid operations are applied, with unchanged size limits and
 strict rejection of prose, malformed JSON and invalid operations.
 On failure, the last validated preview remains inspectable and is persisted as a
 request-bound recovery checkpoint in ignored operational state, not in saved revision
-history or approval. `sketch_action` with `action: "retry"`, `expectedRevision`,
+history or approval. Application operation `designs.edit` with `action: "retry"`, `expectedRevision`,
 `expectedGeneration` and the failed `requestId` resumes its exact phase, pages, nodes
 and navigation. The SDK must confirm the failed run is terminal before retry.
 Recovery preserves its source request/run identities and is rejected if the generation,
@@ -742,7 +743,11 @@ their scrolling rather than expanding the outer workspace, including narrow view
 Successful preview checks and verbose version summaries stay collapsed in Details;
 unavailable versions and their targeted Restart actions remain prominent. The
 normal current-plus-pending view preserves a useful preview and initially reachable
-Feedback at 920x620, including an expanded feedback draft.
+Feedback at 920x620, including long feedback drafts. Feedback inputs are not
+manually resizable and keep the same size when focused, highlighting their
+existing border and scrolling internally for long drafts. Request and answer
+composers send through their existing submission path on Enter; Ctrl/Command+Enter
+inserts a newline, without bypassing validation, disabled controls or IME composition.
 Designs, Prototype (including visual-direction refinement) and draft Requirements
 change requests use the same input/Send/History layout and shared history controls.
 History reads the owning stage's existing request records, preserves drafts and

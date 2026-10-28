@@ -46,7 +46,7 @@ tokens. Keep the existing palette, compact density and host theme integration.
 | Spacing | `--studio-space-1/2/3/4/5/6/8`: 4, 8, 12, 16, 20, 24 and 32px |
 | Density | 30px default controls; explicit 26px small and 36px large variants; at least 44px for touch pointers. Native question forms retain their readable 44px targets. |
 | Shape and elevation | `--studio-radius-control`, `--studio-radius`, `--studio-radius-dialog`, `--studio-shadow`, `--studio-shadow-dialog` |
-| Focus and motion | Shared focus width/color/offset; visible keyboard focus; reduced-motion and forced-color support |
+| Focus and motion | Text inputs highlight their existing border without an additional outline or size change; other controls retain shared keyboard-focus outlines; reduced-motion and forced-color support |
 
 Existing density tokens remain compatible. Do not replace application typography
 or host theme values with a separate Storybook-only theme. Portaled dialogs must
@@ -69,15 +69,20 @@ Storybook imports the same theme and component stylesheet directly.
 | `Button` | `primary`, `secondary`, `danger`, `ghost`, `item`; `small`, `medium`, `large`. Defaults to `type="button"`. `item` is for navigation rows, not a second primary action. `loading` prevents repeat activation, exposes `aria-busy`, and retains the visible label. Native attributes, handlers and refs remain available. |
 | `IconButton` | Button behavior with a required `aria-label` and a square target. Mark the icon `aria-hidden`; use `aria-pressed` for toggles or `aria-expanded` and `aria-controls` for disclosures. |
 | `ActionLink` | Button appearance on a real anchor; preserves URL, target, rel and native link behavior. Use `iconOnly` only with an accessible name. |
-| `Input`, `Textarea`, `Select` | Styled native controls with forwarded refs and unchanged native attributes/events. Radio/checkbox inputs keep their native appearance and sizing, not text-field dimensions. |
+| `Input`, `Textarea`, `Select` | Styled native controls with forwarded refs and unchanged native attributes/events. Request textareas opt into `submitOnEnter`: Enter activates the form's enabled submit button, Ctrl/Command+Enter inserts a newline, and IME/repeat guards stay shared with Development. Other editors retain native Enter behavior. Radio/checkbox inputs keep their native appearance and sizing, not text-field dimensions. |
 | `FormField` | Visible label, stable control ID, description/error IDs and `aria-invalid`. Spread the supplied attributes onto the actual input, textarea or select. The caller owns values, validation, required/disabled state and submission. |
 | `Dialog` | Controlled Radix dialog with required title/description, shared overlay and optional footer/trigger. Retains content event handlers. A trigger restores focus automatically; external triggers can retain `onCloseAutoFocus`. |
 | `DialogParts`, `AlertDialog` | Styled composable Radix families for existing complex dialogs and consequential confirmations. Keep their original dismissal, initial focus and focus-return rules. |
 | `NativeDialog` | Shared appearance on a native `dialog`, with a forwarded `HTMLDialogElement` ref. The caller still owns `showModal`, `close`, cancellation and recovery. |
 | `Disclosure` | Native `details`/`summary` behavior, forwarded ref and shared summary typography/focus. Keep the existing `open` and `onToggle` contracts; Radix collapsibles compose their trigger with a shared `Button` through `asChild`. |
-| `Tabs` | Styled Radix family, including `List` and `Trigger`. Use `Tabs.Bar` around substage lists for the shared flat surface, bottom divider and action spacing. Put preview actions beside the list, not inside its keyboard navigation. Selection indicators, focus and horizontal overflow belong to the shared stylesheet. |
+| `Tabs` | Styled Radix family, including `List` and `Trigger`. Use `Tabs.Bar` around substage lists for the shared flat surface, bottom divider and action spacing. Selected tabs use an inset bottom-edge accent, matching the sidebar's active left-edge treatment, rather than a separate underline. Put preview actions beside the list, not inside its keyboard navigation. Selection indicators, focus and horizontal overflow belong to the shared stylesheet. |
 | `ToggleGroup`, `RadioGroup`, `Tooltip` | Styled Radix families preserving native Radix keyboard and controlled-state behavior. Radio items support circular controls or `presentation="choice"` cards; icon toggles declare `iconOnly`. |
 | `Status` | Meaningful text plus a decorative semantic icon. `busy` adds a reduced-motion-aware spinner. No live region by default; explicitly use `role="status"` for updates or `role="alert"` for urgent errors. |
+
+Compact composers expand only when their textarea receives focus and stay
+expanded for that mounted editor. Focusing a radio or action must not resize the
+form: moving controls between pointer-down and pointer-up can swallow the click.
+Feedback composers retain their own sizing.
 
 ```tsx
 <FormField id="project-name" label="Project name"

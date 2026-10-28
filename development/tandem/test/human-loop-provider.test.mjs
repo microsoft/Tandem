@@ -199,6 +199,82 @@ async function fixture(t, { onSend, content = sharedDesignExample(), openProject
     setInstallationStatus: (value) => { installationStatus = value; events.touch(); } };
 }
 
+test("application inspection exposes native task capabilities without submitting work or starting a runtime", async t => {
+  const f = await fixture(t);
+  const view = await f.provider.application.inspect();
+  assert.equal(view.protocol, "tandem-application/v1");
+  assert.equal(view.owner, "development");
+  assert.ok(view.operations.some(operation => operation.id === "native.submit"));
+  assert.equal(view.operations.find(operation => operation.id === "native.implementation.decide").availability.status, "human-required");
+  assert.ok(view.operations.every(operation => !operation.inputSchema));
+  const detailed = await f.provider.application.inspect({ operation: "native.submit" });
+  assert.deepEqual(detailed.operations[0].inputSchema.required, ["id", "message", "receivedAt"]);
+  assert.equal(f.received.length, 0);
+  assert.equal(f.starts(), 0);
+});
+
+test("native application commands use the same request admission and preserve retry identities", async t => {
+  const f = await fixture(t);
+  const input = { id: "agent-submission", message: "@designer Review this Design", receivedAt: "2026-10-27T18:00:00Z",
+    roleHint: { schemaVersion: "human-role-hint/v1", role: "designer" } };
+  const command = { protocol: "tandem-application/v1", operation: "native.submit", input };
+  const first = await f.provider.application.execute(command);
+  assert.equal(first.outcome, "accepted");
+  assert.deepEqual(first.data, { requestId: input.id });
+  assert.deepEqual(f.received[0], parseRequest({ ...input, answers: null }));
+  const http = await f.post("/api/application/execute", command);
+  assert.equal(http.status, 200);
+  assert.deepEqual(await http.json(), first);
+  assert.equal(f.state.requests.filter(request => request.id === input.id).length, 1);
+  assert.equal(f.starts(), 0, "Submitting is not a hidden runtime-start fallback.");
+});
+
+test("agent commands cannot impersonate human implementation or permission decisions", async t => {
+  const f = await fixture(t);
+  let decisions = 0;
+  f.runtime.decideImplementation = async () => { decisions++; };
+  for (const [operation, input] of [
+    ["native.implementation.decide", { confirmationId: "current", decision: "approved" }],
+    ["native.permissions.decide", { requestId: "access", decision: "all" }],
+    ["native.empty-setup.decide", { confirmationId: "setup", approve: true }],
+  ]) {
+    await assert.rejects(f.provider.application.execute({ protocol: "tandem-application/v1", operation, input }),
+      error => error.code === "human_decision_required");
+  }
+  const forged = await f.post("/api/application/execute", { protocol: "tandem-application/v1",
+    operation: "native.submit", input: {}, actor: "user" });
+  assert.equal(forged.status, 400);
+  assert.equal(decisions, 0);
+  assert.equal(f.received.length, 0);
+});
+
+test("native application errors preserve proof of admission instead of inviting a new request", async t => {
+  const f = await fixture(t);
+  const send = f.runtime.send;
+  f.runtime.send = async input => { await send(input); throw new Error("Synthetic post-admission readback failure"); };
+  await assert.rejects(f.provider.application.execute({
+    protocol: "tandem-application/v1", operation: "native.submit",
+    input: { id: "retained-admission", message: "Inspect this task", receivedAt: "2026-10-27T18:00:00Z" },
+  }), error => error.details?.accepted === true && /post-admission/.test(error.message));
+  assert.equal(f.state.requests.filter(request => request.id === "retained-admission").length, 1);
+});
+
+test("native image commands share the UI's capability checks, exact references and retained-byte reads", async t => {
+  const f = await fixture(t);
+  const call = (operation, input) => f.provider.application.execute({ protocol: "tandem-application/v1", operation, input });
+  const data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=";
+  const uploaded = await call("native.image.attach", { mimeType: "image/png", data });
+  const attachment = uploaded.data.attachment;
+  await assert.rejects(call("native.attachment.read", { id: attachment.id }), /Unknown retained attachment/);
+  await call("native.submit", { id: "image-request", message: "", receivedAt: "2026-10-27T18:00:00Z", attachments: [attachment] });
+  const image = await call("native.attachment.read", { id: attachment.id });
+  assert.deepEqual(image.data, { id: attachment.id, mimeType: "image/png", data });
+  await assert.rejects(call("native.submit", { id: "too-many", message: "", receivedAt: "2026-10-27T18:00:00Z",
+    attachments: [attachment, attachment] }), /invalid entries/);
+  f.runtime.transport.attachmentCapabilities = async () => ({ supported: false, reason: "Fixture model refuses images." });
+  await assert.rejects(call("native.image.attach", { mimeType: "image/png", data }), /refuses images/);
+});
+
 test("browser advisory form shows declared continuation and legacy clarification without submitting defaults",
   { skip: !browserAvailable, timeout: 30_000 }, async t => {
   const f = await fixture(t);

@@ -117,7 +117,7 @@ function RequestDialog({ request, remaining, disabled, reply }: {
             {request.choices?.length ? <label>Choose an answer<Select aria-label="Choose an answer" value={request.choices.includes(answer) ? answer : ""}
                 onChange={(event) => setAnswer(event.target.value)}><option value="">Select an answer</option>
                 {request.choices.map((choice) => <option key={choice}>{choice}</option>)}</Select></label> : null}
-            {request.allowFreeform !== false && <label>Written answer<Textarea aria-label="Written answer" value={answer} onChange={(event) => setAnswer(event.target.value)} /></label>}
+            {request.allowFreeform !== false && <label>Written answer<Textarea submitOnEnter aria-label="Written answer" value={answer} onChange={(event) => setAnswer(event.target.value)} /></label>}
             <div className="dialog-actions"><Button variant="secondary" type="button" disabled={pending || disabled} onClick={cancel}>Cancel</Button>
                 <Button variant="primary" type="submit" className="host-primary" disabled={pending || disabled || !answer.trim()}>Send answer</Button></div>
         </form>}

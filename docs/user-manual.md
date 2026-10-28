@@ -48,6 +48,9 @@ When work needs review, a highlighted panel appears at the bottom of
 the next stage to review. In that tab, follow its guidance and use the draft's
 approval controls; from another tab, use the panel's button to open or resume
 the required review. Opening a review does not apply changes.
+Affected stages appear as compact badges beside the review title, separated by
+chevrons. Checkmarks identify saved stages; the highlighted badge identifies the
+current review step. The badges wrap on narrow screens and do not change stages.
 When a change-triggered review targets another stage, the viewed stage's content
 is dimmed and inactive. Stage tabs and the bottom review panel remain available.
 

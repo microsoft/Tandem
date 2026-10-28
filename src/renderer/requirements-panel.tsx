@@ -164,6 +164,7 @@ function DecisionQuestion({ node, nodes, draft, busy, canEdit, guidance, process
                     </RadioGroup.Item>)}
                 </RadioGroup.Root>}
                 {question.allowFreeText !== false && <Textarea
+                    submitOnEnter
                     className="composer-input"
                     name="prototype-detail"
                     data-ui-key={`decision:${question.id}:detail`}
@@ -219,7 +220,6 @@ export function RequirementsPanel({ reviewBaseline }: {
     const [usagesExpanded, setUsagesExpanded] = useDraft("requirements:accepted-usages-expanded", true);
     const [substageTab, setSubstageTab] = useDraft<"usage" | "dag" | null>("requirements:substage-tab", null);
     const [focusRequest, setFocusRequest] = useState(0);
-    const [expandedQuestion, setExpandedQuestion] = useState<string | null>(null);
     const latest = useRef(ui);
     latest.current = ui;
     const mounted = useRef(true);
@@ -530,6 +530,7 @@ export function RequirementsPanel({ reviewBaseline }: {
                 </ul>
                 <form id="usage-form" className="usage-form inline-composer" onSubmit={(event) => { event.preventDefault(); void submitUsage("add-usage"); }}>
                     <Textarea
+                        submitOnEnter
                         className="composer-input"
                         id="usage-input"
                         value={usageDraft.value}
@@ -676,9 +677,7 @@ export function RequirementsPanel({ reviewBaseline }: {
                 <p className="eyebrow">{selected && reviewChanges.get(selected.id)
                     ? reviewChanges.get(selected.id) === "added" ? "New question" : "Changed question"
                     : reviewBaseline && selected?.answer ? "Existing question - answer retained" : "Selected question"}</p>
-                <div id="question-host" className="question-card" ref={questionHost}
-                    data-composer-expanded={expandedQuestion === draftKey || undefined}
-                    onFocusCapture={() => setExpandedQuestion(draftKey)}>
+                <div id="question-host" className="question-card" ref={questionHost}>
                     {selected && draft ? <DecisionQuestion
                         key={draftKey}
                         node={selected}

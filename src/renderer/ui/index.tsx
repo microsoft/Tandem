@@ -1,6 +1,7 @@
-import { forwardRef, useId, type AnchorHTMLAttributes, type ButtonHTMLAttributes, type ComponentPropsWithoutRef, type HTMLAttributes, type InputHTMLAttributes, type SelectHTMLAttributes, type TextareaHTMLAttributes, type ReactElement, type ReactNode } from "react";
+import { forwardRef, useId, useMemo, useState, type AnchorHTMLAttributes, type ButtonHTMLAttributes, type ComponentPropsWithoutRef, type HTMLAttributes, type InputHTMLAttributes, type SelectHTMLAttributes, type TextareaHTMLAttributes, type ReactElement, type ReactNode } from "react";
 import { Dialog as RadixDialog } from "radix-ui";
 import { CircleAlert, CircleCheck, CircleX, Info, LoaderCircle } from "lucide-react";
+import { createComposerEnterHandlers } from "../../../development/tandem/public/composer-enter.js";
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: "primary" | "secondary" | "danger" | "ghost" | "item";
@@ -39,10 +40,34 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
   return <input {...props} ref={ref} data-ui="input" className={`tandem-input ${className}`.trim()} />;
 });
 
-export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(function Textarea({
-  className = "", ...props
+export interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
+  submitOnEnter?: boolean;
+}
+
+export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function Textarea({
+  className = "", submitOnEnter = false, onKeyDown, onKeyUp, onFocus, onBlur, onCompositionStart, onCompositionEnd, ...props
 }, ref) {
-  return <textarea {...props} ref={ref} data-ui="input" className={`tandem-input ${className}`.trim()} />;
+  const [expanded, setExpanded] = useState(false);
+  const enter = useMemo(() => createComposerEnterHandlers(textarea => {
+    const form = textarea.form;
+    if (!form) return;
+    const submitter = Array.from(form.elements).find((element): element is HTMLButtonElement | HTMLInputElement =>
+      element.matches('button[type="submit"], button:not([type]), input[type="submit"]'));
+    if (submitter && !submitter.matches(":disabled")) form.requestSubmit(submitter);
+  }), []);
+  return <textarea {...props} ref={ref} data-ui="input" className={`tandem-input ${className}`.trim()}
+    data-composer-expanded={expanded || undefined}
+    title={props.title ?? (submitOnEnter ? "Enter to send; Ctrl+Enter for a new line." : undefined)}
+    aria-keyshortcuts={props["aria-keyshortcuts"] ?? (submitOnEnter ? "Enter" : undefined)}
+    onFocus={event => { setExpanded(true); onFocus?.(event); }}
+    onKeyDown={event => {
+      onKeyDown?.(event);
+      if (submitOnEnter) enter.keydown(event.nativeEvent, event.currentTarget);
+    }}
+    onKeyUp={event => { onKeyUp?.(event); enter.keyup(event); }}
+    onBlur={event => { onBlur?.(event); enter.blur(); }}
+    onCompositionStart={event => { onCompositionStart?.(event); enter.compositionstart(); }}
+    onCompositionEnd={event => { onCompositionEnd?.(event); enter.compositionend(); }} />;
 });
 
 export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElement>>(function Select({

@@ -20,8 +20,9 @@ test("responsive layout and graph keyboard focus have explicit accessible styles
     assert.match(shared, /\.tandem-tab-list\s*\{[^}]*overflow-x: auto/);
     assert.match(css, /\.preview\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
     assert.match(css, /\.prototype-view \.frame-wrap\s*\{[^}]*grid-template-rows:\s*minmax\(220px, 1fr\) auto/);
-    assert.match(layout, /form:not\(\.feedback-composer\):focus-within textarea\.tandem-input\.composer-input/);
-    assert.match(layout, /form\.feedback-composer > textarea\.tandem-input\.composer-input:focus/);
+    assert.match(layout, /form:not\(\.feedback-composer\) textarea\.tandem-input\.composer-input\[data-composer-expanded="true"\]/);
+    assert.match(layout, /form\.feedback-composer > textarea\.tandem-input\.composer-input\s*\{\s*resize:\s*none/);
+    assert.doesNotMatch(css + layout, /:focus-within textarea\.(?:tandem-input\.)?composer-input/);
     assert.doesNotMatch(css, /animation:\s*next-action/);
     assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.processing-indicator/);
 });
@@ -67,7 +68,7 @@ test("compact density is shared by all stage headers, panels, controls, and comp
         assert.match(rules(selector), /padding:\s*var\(--studio-heading-padding\)/, selector);
     }
     assert.match(rules("form textarea.composer-input"), /height:\s*var\(--studio-composer-height\)/);
-    assert.match(rules("#question-host:focus-within textarea.composer-input"), /var\(--studio-composer-expanded-height\)/);
+    assert.match(rules('form:not(.feedback-composer) textarea.composer-input[data-composer-expanded="true"]'), /var\(--studio-composer-expanded-height\)/);
     assert.match(rules(".start-form textarea.composer-input"), /min-height:\s*112px/);
     assert.match(rules(".tandem-input.composer-input", layout), /min-height:\s*var\(--studio-composer-height\)/);
     assert.match(rules(".artifact-content"), /line-height:\s*1\.55/);

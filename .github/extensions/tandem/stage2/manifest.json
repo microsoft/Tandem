@@ -137,9 +137,14 @@
       "sha256": "3add413098bb0971cd751b6d79dccc50469c2d39afda0a6371065c24184eab0c"
     },
     {
+      "path": "public/composer-enter.d.ts",
+      "bytes": 489,
+      "sha256": "c0c55a9817dbaa8d7d2547ee116da7e9ed2ccbe00b1c5090af94341bb030ec00"
+    },
+    {
       "path": "public/composer-enter.js",
-      "bytes": 796,
-      "sha256": "2644545e2d74c245aadc38cd21584952f64737ff3b73d13efc561a11cf9bd4e5"
+      "bytes": 1776,
+      "sha256": "0c3151e4b1a76ee4f655d2c83bf24cb316f88f3e684a386f81ccce0f5acbcf6a"
     },
     {
       "path": "public/composer-image.js",
@@ -183,8 +188,8 @@
     },
     {
       "path": "public/human-loop.html",
-      "bytes": 17442,
-      "sha256": "fcdd421db3fd7a429348bc9a8480c6a63faa79688d45999f3534ba4cc2166888"
+      "bytes": 17537,
+      "sha256": "feac69832e022152db9b66d867543fef36349165af2eb9b0ecbe9efda6fe5020"
     },
     {
       "path": "public/implementation-confirmation.js",
@@ -288,8 +293,8 @@
     },
     {
       "path": "public/renderers/human-loop.js",
-      "bytes": 36483,
-      "sha256": "c57163a6d7f399cb55533dc66c33d147085c9c908dfc2230d81e7838c9751e0c"
+      "bytes": 36779,
+      "sha256": "f293419027675f874d3792ef87b806b2e27d11aef9496fad5e213b97821f3962"
     },
     {
       "path": "public/renderers/shared-design.js",
@@ -368,18 +373,23 @@
     },
     {
       "path": "public/ui-native.css",
-      "bytes": 7691,
-      "sha256": "241f5e9b9534755c7ac4147efc8172c558e80b21abe9dce4c4dc7a5bd37e64e6"
+      "bytes": 7598,
+      "sha256": "e7b97a121f506120a36f9f40c77a982c80e72a35428945643a9de54e08ce6243"
     },
     {
       "path": "public/ui-system.css",
-      "bytes": 14227,
-      "sha256": "b0086f8d05ff66d3c30c8e1caa1c53caaff23c108d47bd59bc2bd54f54659d92"
+      "bytes": 14538,
+      "sha256": "3615f9df86d7c05ef4e7b84939ffc965e779304c2e6f9f7b953d53cb086bcc9a"
     },
     {
       "path": "public/workflow-stop-control.js",
       "bytes": 2296,
       "sha256": "1ed88ef98bd6b23bdd8b4f5732613a88a17708efe3863b01e323bcfd7630ac2c"
+    },
+    {
+      "path": "runtime-src/application-interface.ts",
+      "bytes": 11760,
+      "sha256": "d007089a29ad1e2bbab2b926b3a6da93aa78219038aad7cbd6a706b508ba6e4f"
     },
     {
       "path": "runtime-src/canvas-event.ts",
@@ -612,6 +622,11 @@
       "sha256": "56d6d688111bcd210baab640ea4ca971ba16f343aa991103f63310198a7265cb"
     },
     {
+      "path": "src/human-loop-application.mjs",
+      "bytes": 12726,
+      "sha256": "d231efd6427b0f4798c6a409d80264779474eb96e56adb79d0e82b6b836a9f0a"
+    },
+    {
       "path": "src/human-loop-browser-entry.mjs",
       "bytes": 2077,
       "sha256": "abc291840d973c25fd91ed04fd2b3972b026608999d2c27a25a70a764b68c7be"
@@ -673,8 +688,8 @@
     },
     {
       "path": "src/human-loop-provider.mjs",
-      "bytes": 47107,
-      "sha256": "5d096e3165b41d03150b64334ecc178224e2e1e8210acf8b760e4f81348324c7"
+      "bytes": 49011,
+      "sha256": "6b71809e86b443f5f3ba09c246f3c47f7765dbd87a4bdf0eb1c1f4aebab06461"
     },
     {
       "path": "src/human-loop-recovery.mjs",

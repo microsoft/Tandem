@@ -12,6 +12,7 @@ For the idea behind the product, read [the Tandem story](the-tandem-story.md).
 | Judge results and choose a follow-up | [Outcome reading](user-manual.md#read-an-outcome-and-decide-what-comes-next) and [follow-up recipe](use-cases.md#inspect-a-result-and-request-the-right-follow-up) |
 | Stop work, return later or recover a preview | [Troubleshooting](troubleshooting.md) |
 | Package Tandem or understand runtime and recovery contracts | [Engineering reference](engineering-reference.md) |
+| Operate Tandem through an agent or headless client | [Application interface](agent-interface.md) |
 
 ## Which version does this guide describe?
 

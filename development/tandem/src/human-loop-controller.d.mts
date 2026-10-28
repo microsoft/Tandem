@@ -1,6 +1,7 @@
 import type { CopilotSession, SessionConfig } from "@github/copilot-sdk";
 import type { HumanLoopState, Handoff, WorkCycle, RequestRecord } from "../runtime-types/domain/human-loop/model.js";
 import type { HumanRequest, HumanRole, DesignBinding, SnapshotRef } from "../runtime-types/domain/human-loop/contracts.js";
+import type { ApplicationActor, ApplicationInput, ApplicationOperation } from "../runtime-types/application-interface.js";
 
 export interface HumanLoopRuntimeHandle {
   sessionId: string;
@@ -19,7 +20,15 @@ export interface HumanLoopController {
   observe: NonNullable<SessionConfig["onEvent"]>;
   attach(session: CopilotSession): Promise<void>;
   start(options?: { retry?: boolean }): Promise<HumanLoopRuntimeHandle>;
-  openView(id: string, options?: { surface?: "browser"; projectHost?: { origin: string; channel: string } }): Promise<{ url: string; close(): Promise<void> }>;
+  openView(id: string, options?: { surface?: "browser"; projectHost?: { origin: string; channel: string } }): Promise<{
+    url: string;
+    application: {
+      operations: readonly ApplicationOperation[];
+      inspect(input?: ApplicationInput, actor?: ApplicationActor): Promise<unknown>;
+      execute(input: unknown, actor?: ApplicationActor): Promise<unknown>;
+    };
+    close(): Promise<void>;
+  }>;
   closeView(id: string): Promise<void>;
   assertQuiet(): Promise<void>;
   validateReasoningEffort(effort: string): Promise<void>;
