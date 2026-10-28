@@ -360,22 +360,23 @@ function Workspace(props: WorkspaceProps) {
   const savedPrototype = state.lifecycle.currentStage === "development" && state.lifecycle.outputs.some(output => output.stageId === "prototype")
     && state.status === "Prototype outputs saved. Stage 1 is complete. You can close now and open Development later with these files as input.";
   const privateStatus = activeTab === "development" ? projectView.presentation : null;
+  const upstreamStatus = directDevelopment && atStart && projectView.developmentEntered && privateStatus ? "" : handoffStatus.rootStatus;
   const selection = developmentView ? projectView.modelSelection : state.mainModelSelection;
   const selectionLabel = developmentView && !projectView.developmentEntered ? "Development: not started"
     : modelSelectionLabel(selection, developmentView ? "Development" : "Main");
   const authoritativeActivity = privateStatus?.kind === "active" && !handoffStatus.busy && !pending
-    && !hasActiveJobs(state) && (!handoffStatus.rootStatus || savedPrototype) ? privateStatus.text : "";
+    && !hasActiveJobs(state) && (!upstreamStatus || savedPrototype) ? privateStatus.text : "";
   const statusBarText = statusBarError || (privateStatus?.kind === "attention" ? privateStatus.text : "")
     || (activeTab === "development" && projectView.starting ? privateStatus?.text || "Starting Development..." : "")
     || authoritativeActivity || contextHelp
     || (activeTab === "sketch" && !reviewing && !pending && !hasActiveJobs(state) ? sketchApprovalStatus : "")
     || (nextAction ? "Next action: " + nextAction.label
     : (handoffStatus.busy ? handoffStatus.text : "") || developmentStatus
-    || (pending || hasActiveJobs(state) ? state.status : "") || (!savedPrototype ? handoffStatus.rootStatus : "")
+    || (pending || hasActiveJobs(state) ? state.status : "") || (!savedPrototype ? upstreamStatus : "")
     || (privateStatus?.kind === "active" ? privateStatus.text : "") || handoffStatus.text || privateStatus?.text
     || (activeTab === "development" && projectView.developmentEntered ? "Development" : "")
     || (savedPrototype ? "Prototype saved. Continue in Development when you're ready."
-    : handoffStatus.rootStatus || (atStart ? "Ready to start a project." : "Ready.")));
+    : upstreamStatus || (atStart ? "Ready to start a project." : "Ready.")));
   const narrow = () => window.matchMedia("(max-width: 760px)").matches;
   const showNextAction = () => {
     if (!nextAction) return;
