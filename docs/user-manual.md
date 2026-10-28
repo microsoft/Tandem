@@ -53,6 +53,9 @@ chevrons. Checkmarks identify saved stages; the highlighted badge identifies the
 current review step. The badges wrap on narrow screens and do not change stages.
 When a change-triggered review targets another stage, the viewed stage's content
 is dimmed and inactive. Stage tabs and the bottom review panel remain available.
+This cross-stage review is only needed when a request affects multiple stages.
+Once all affected stages have been reviewed and their changes applied, the panel
+closes. The request and its saved review history remain available.
 
 For an available earlier **Prototype** stage, you can also choose
 **Review changes** in its header. Its existing editor
@@ -86,13 +89,16 @@ Use **Details** for the full before/after comparison, including removed question
 assumptions and deferred work. Nothing is accepted until **Apply changes**.
 
 After applying a Requirements review, affected Designs are marked stale.
-In the Designs draft, choose **Update designs from latest requirements** in the
+Back in the working Designs stage or its pinned draft, choose **Update designs from latest requirements** in the
 review pane when designs are stale. This updates the existing saved designs against the accepted
 requirements and DAG, rather than starting with empty pages. Reviewed layouts,
 styling, content and refinements remain unless the changed requirements need an
 adjustment. Existing screens stay visible while the update arrives, including
 when the review was opened without a linked change request.
-Review the result, then choose **Apply changes** in the bottom review pane.
+Approval and **Finish Designs** stay unavailable until the required update is
+saved and reviewed; a failed update leaves the original designs available, not approved.
+In the working Designs stage, review the result and choose **Approve designs and continue**.
+In a pinned draft, choose **Apply changes** in the bottom review pane.
 For Designs, this approves the saved draft and applies it in one confirmation.
 Current Prototype work and saved revisions stay intact. **Reload saved designs**
 only reloads the saved revision; it does not incorporate requirement changes.
@@ -230,7 +236,7 @@ zoom and history, but closing does not resolve the review or enable new changes.
 **Cancel request** leaves unapproved work unchanged; a saved draft is never
 silently applied.
 New requests also save a pre-request restore point. **Abandon changes** in the
-bottom review pane or impact dialog restores that point, even after applying
+pending review pane or request-history dialog restores that point, even after applying
 intermediate drafts or showing an updated prototype. Feedback that re-evaluates
 the same review keeps its original restore point, rather than starting from a
 partially applied change. Confirmation explains that the entire review and its
@@ -250,10 +256,12 @@ Clear edits within the current Designs or Prototype stage prepare a draft withou
 an extra impact-approval step. Saving a design revision releases the request so
 you can keep editing; approving designs or applying a prototype update remains
 explicit.
-In the current Requirements stage, clear additions are saved directly and new
-questions remain unanswered. Changes to accepted answers, removals or existing
-constraints still need impact review. Once its patch is saved, the request no
-longer holds up additional Requirements edits.
+In the current Requirements stage, clear changes confined to that stage are
+saved directly, including edits and removals. Affected decisions retain their
+previous answers for your review, and new questions remain unanswered. Changes
+that also affect existing Designs or Prototype work still use cross-stage review.
+Once a single-stage patch is saved, the request no longer holds up additional
+Requirements edits.
 
 A genuine ambiguity asks one focused question in this same review. Submit the
 detail, review the proposal or cancel the request before sending an unrelated change.

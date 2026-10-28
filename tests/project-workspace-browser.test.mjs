@@ -824,6 +824,45 @@ test("whole project workspace uses one actual embedded renderer for navigation, 
       await waitSettings('!document.querySelector("#apply-project-effort").disabled');
       assert.equal(active, false, "Stage1 Settings never starts Development.");
       await browser.evaluate('window.retainedSettingsFrame = document.querySelector("#project-settings-frame"); true');
+      for (const [width, height] of [[1360, 1000], [800, 640], [390, 620]]) {
+        await browser.call("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
+        await browser.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+        const layout = await browser.evaluate(`(() => {
+          const dialog = document.querySelector("#project-settings-title").closest("dialog");
+          const rect = element => element.getBoundingClientRect();
+          const heading = rect(dialog.querySelector(".root-settings-heading"));
+          const title = rect(dialog.querySelector("h2"));
+          const description = rect(dialog.querySelector("#project-settings-description"));
+          const frame = rect(dialog.querySelector("iframe"));
+          const close = dialog.querySelector("#close-project-settings"), button = rect(close);
+          return { titleGap:description.top-heading.bottom, bodyGap:frame.top-description.bottom,
+            headingAligned:Math.abs(title.top+(title.height-button.height)/2-button.top)<1,
+            contentLeft:frame.left-title.left, frameHeight:frame.height,
+            overflow:dialog.scrollWidth>dialog.clientWidth,
+            closeReachable:document.elementFromPoint(button.x+button.width/2,button.y+button.height/2)===close };
+        })()`);
+        const sections = await settingsInside(`(() => {
+          const first = document.querySelector(".settings-section"), title = first.querySelector("h3").getBoundingClientRect();
+          const fields = document.querySelector(".settings-fields").getBoundingClientRect();
+          const sections = [...document.querySelectorAll(".settings-section:not([hidden])")];
+          return { top:title.top, left:title.left, fieldsLeft:fields.left,
+            overflow:document.documentElement.scrollWidth>innerWidth,
+            sections:sections.slice(1).map(section => {
+              const css = getComputedStyle(section);
+              return { margin:css.marginTop, padding:css.paddingTop };
+            }) };
+        })()`);
+        if (process.env.TANDEM_UI_EVIDENCE) await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `project-settings-${width}.png`), await browser.screenshot());
+        assert.deepEqual([layout.titleGap, layout.bodyGap, layout.contentLeft], [12, 12, 0],
+          `Settings header and content use one compact spacing rhythm at ${width}px: ${JSON.stringify(layout)}`);
+        assert.ok(layout.headingAligned && layout.closeReachable && layout.frameHeight > 160 && !layout.overflow,
+          `Settings keep an aligned, reachable header and scrollable body at ${width}px: ${JSON.stringify(layout)}`);
+        assert.deepEqual([sections.top, sections.left, sections.fieldsLeft, sections.overflow], [0, 0, 0, false],
+          `Appearance starts without duplicate iframe or section insets at ${width}px: ${JSON.stringify(sections)}`);
+        assert.ok(sections.sections.every(section => section.margin === "12px" && section.padding === "12px"),
+          "Later settings sections keep consistent separation.");
+      }
+      await browser.call("Emulation.setDeviceMetricsOverride", { width: 1360, height: 1000, deviceScaleFactor: 1, mobile: false });
       await settingsInside('document.querySelector("#setting-theme").value="dark"');
       await clickRoot("#close-project-settings");
       await browser.waitFor('document.activeElement.id==="project-settings"');

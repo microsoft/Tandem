@@ -146,7 +146,8 @@ test("Requirements substage tabs retain usages, research and decision drafts wit
         checks: [], sources: [{ title: "Reference", url: "https://example.com/reference", purpose: "Background" }],
     };
     const h = await setup(t, value);
-    assert.equal(text(h, "design-tree-phase"), "Requirements decisions");
+    assert.equal(h.document.getElementById("design-tree-phase"), null, "Active Requirements does not show a redundant phase badge.");
+    assert.match(text(h, "design-tree-current"), /Active.*first.*1 to answer/);
     assert.equal(h.get("dag-substage").getAttribute("role"), "tab");
     assert.equal(h.get("dag-substage").getAttribute("aria-label"), "Decision DAG, Decisions to answer");
     assert.equal(h.get("usage-substage").getAttribute("aria-label"), "Usage list, Usage list complete");

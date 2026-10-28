@@ -2278,16 +2278,6 @@ h1 {
 }
 .design-tree-location > .eyebrow > svg { flex: none; }
 
-.design-tree-phase {
-  flex: 0 0 auto;
-  padding: 3px 8px;
-  border: 1px solid var(--studio-border);
-  border-radius: 999px;
-  color: var(--studio-muted);
-  font-size: var(--text-body-small, 12px);
-  text-transform: capitalize;
-}
-
 .design-tree-body {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -3422,7 +3412,6 @@ textarea {
 
 @container output (max-width: 480px) {
   .design-tree-heading { padding-block: 6px; }
-  .design-tree-phase { display: none; }
 }
 
 @container output (max-width: 680px) {

@@ -152,15 +152,16 @@ test("a pinned discovery draft keeps unsaved edits and Apply guards across Devel
     assert.deepEqual(h.errors, []);
 });
 
-test("the review pane abandons the entire saved review only after confirmation with exact bindings", async t => {
+test("completed reviews hide the review pane and retain explicit abandonment in request history", async t => {
     const h = await reactHarness(t), initial = state("prototype");
     const change: ChangeRequest = { ...request(), status: "completed", completedAt: initial.updatedAt,
         restorePoint: { requestId: "change", generation: initial.generation, digest: "b".repeat(64) } };
     initial.changeRequests = [change];
     h.render(initial); await h.flush();
-    assert.ok(h.get("stage-input-review").contains(h.get("abandon-change-review")));
-    assert.match(h.get("stage-input-review").textContent!, /until Finish Prototype/);
-    await h.click("abandon-change-review");
+    assert.equal(h.document.querySelector(".review-guidance-pane"), null);
+    assert.equal(h.document.getElementById("abandon-change-review"), null);
+    await h.click("toggle-change-details");
+    await h.click("abandon-change-dialog");
     const confirmation = h.document.querySelector('[role="alertdialog"]')!;
     assert.match(confirmation.textContent!, /before the original request/);
     assert.match(confirmation.textContent!, /already applied/);
@@ -170,7 +171,7 @@ test("the review pane abandons the entire saved review only after confirmation w
     const restored = { ...initial, revision: initial.revision + 1, changeRequests: [{ ...change, status: "cancelled" as const,
         abandonment: { abandonedAt: initial.updatedAt, snapshotPath: ".tandem\\retained-review.json" } }] };
     h.setFetch(async () => response(restored));
-    await h.click("abandon-change-review"); await h.confirm();
+    await h.click("abandon-change-dialog"); await h.confirm();
     const sent = h.requests.find(item => item.path === "/api/change-requests/abandon")!;
     assert.deepEqual(sent.body, { requestId: change.id, generation: initial.generation, expectedRevision: initial.revision,
         restorePointDigest: change.restorePoint!.digest, confirm: true });
@@ -179,6 +180,53 @@ test("the review pane abandons the entire saved review only after confirmation w
     await h.click("toggle-change-details");
     assert.match(h.get("change-request-details").textContent!, /Changes abandoned/);
     assert.equal(h.document.getElementById("abandon-change-dialog"), null);
+    assert.deepEqual(h.errors, []);
+});
+
+test("single-stage edits use normal stage controls without a change-review pane", async t => {
+    const h = await reactHarness(t), drawing = sketchFixture();
+    const change: ChangeRequest = { ...request(), originStage: "sketch", baseSketchRevisionId: drawing.value.sketch.current.id,
+        assessment: { ...request().assessment!, startStage: "sketch",
+            stages: [{ stage: "sketch", reason: "Update the current layout." }] } };
+    h.setFetch(async () => response({ sketch: drawing.value.sketch, document: drawing.document }));
+    for (const [index, status] of (["queued", "analyzing", "proposed", "active", "completed"] as const).entries()) {
+        h.render({ ...drawing.value, revision: index + 1, changeRequests: [{ ...change, status,
+            assessment: ["queued", "analyzing"].includes(status) ? null : change.assessment,
+            remainingStages: status === "active" ? ["sketch"] : [],
+            completedAt: status === "completed" ? drawing.value.updatedAt : null,
+            restorePoint: { requestId: change.id, generation: drawing.value.generation, digest: "b".repeat(64) },
+        }] });
+        await h.flush();
+        assert.equal(h.document.querySelector(".review-guidance-pane"), null, status);
+        assert.equal(h.document.getElementById("change-request-details"), null, status);
+    }
+    assert.deepEqual(h.errors, []);
+});
+
+test("returning from Requirements exposes the pending Designs update and blocks the old design", async t => {
+    const h = await reactHarness(t), drawing = sketchFixture();
+    const change: ChangeRequest = { ...request(), originStage: "sketch", status: "reviewing",
+        baseSketchRevisionId: drawing.value.sketch.current.id, remainingStages: ["sketch"],
+        reviewId: "review-11111111-1111-4111-8111-111111111111",
+        assessment: { ...request().assessment!, stages: [
+            { stage: "requirements", reason: "Review the changed product behavior." },
+            { stage: "sketch", reason: "Update the saved screens." },
+        ] },
+    };
+    const initial = { ...drawing.value, changeRequests: [change] };
+    h.setFetch(async () => response({ sketch: initial.sketch, document: drawing.document }));
+    h.render(initial); await h.flush();
+    const update = h.get<HTMLButtonElement>("sketch-update-requirements");
+    assert.ok(update.closest("#stage-input-review"));
+    assert.equal(update.disabled, false);
+    assert.equal(h.get<HTMLButtonElement>("sketch-approve").disabled, true);
+    assert.equal(h.get<HTMLButtonElement>("complete-stage").disabled, true);
+    assert.match(h.get("stage-input-review").textContent!, /Designs review/);
+    h.render({ ...initial, revision: 2, processing: { action: "revise-sketch", status: "error",
+        requestId: "failed-update", changeRequestId: change.id, message: "The design update failed." } });
+    await h.flush();
+    assert.equal(h.get<HTMLButtonElement>("sketch-approve").disabled, true);
+    assert.equal(h.get<HTMLButtonElement>("complete-stage").disabled, true);
     assert.deepEqual(h.errors, []);
 });
 
@@ -433,7 +481,7 @@ test("Designs keeps required review in its pane, separate from History and tab-h
 
 test("a design review action error stays visible after closing the compact dialog", async t => {
     const h = await reactHarness(t), drawing = sketchFixture();
-    const change: ChangeRequest = { ...request(), originStage: "sketch", assessment: {
+    const change: ChangeRequest = { ...request(), originStage: "sketch", error: "The automatic design update could not start.", assessment: {
         ...request().assessment!, startStage: "sketch", stages: [{ stage: "sketch", reason: "Update the current design." }],
     } };
     h.setFetch(async () => response({ sketch: drawing.value.sketch, document: drawing.document }));

@@ -373,8 +373,8 @@
     },
     {
       "path": "public/ui-native.css",
-      "bytes": 7753,
-      "sha256": "68ba7193bf2b4b5f472eea8669bf8305594d7101d1796ed7d35d6b2665833858"
+      "bytes": 8118,
+      "sha256": "1a78285e02d172ad6b41644915c44bc83ebd6cddd032029d3b342a68cd586dd5"
     },
     {
       "path": "public/ui-system.css",

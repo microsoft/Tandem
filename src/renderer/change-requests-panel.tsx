@@ -187,7 +187,7 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true, activ
         : current.status === "cancelled" && current.replacedByRequestId ? "Review updated with new feedback"
         : needsDetail ? "Clarify this change" : current.status === "reviewing" ? "Continue change review"
         : current.status === "failed" || error ? "Review needs attention"
-        : current.status === "completed" ? abandonable?.id === current.id ? "Changes ready to finish" : "Change review complete" : settled ? "Cancelled change"
+        : current.status === "completed" ? "Change review complete" : settled ? "Cancelled change"
         : waiting ? waitingForPrototype ? "Change queued" : "Checking your request" : current.status === "active" ? "Preparing your update" : "Review change impact";
     const primaryLabel = opensDraft && plan?.startStage !== "none" && plan
         ? `Review ${label(plan.startStage)} draft`
@@ -232,7 +232,7 @@ export function ChangeRequestsPanel({ compact = false, showTrigger = true, activ
                             ? "Review the affected stages in order. Each draft is separate from accepted work until you apply it."
                             : "Review the proposed update before continuing. Resolve this request before sending another change."
                     : abandonable?.id === current.id
-                        ? "This review is not committed until Finish Prototype. You can still abandon the entire review and restore the original work."
+                        ? "The requested changes are saved. You can still abandon them and restore the original work until Finish Prototype."
                     : "This saved record is read-only. Your decisions and previous versions are retained."}</Dialog.Description>
                 <div className="change-request-details">
                     {error && <p id="change-dialog-error" className="review-error" role="alert">{error}</p>}

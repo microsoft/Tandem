@@ -17,7 +17,7 @@ import { isSketchRevisionApproved, SketchPanel, type DraftDesignApproval } from 
 import { PrototypePanel, prototypeCompletionBlocked } from "./prototype-panel.js";
 import { AbandonChangeReview, ChangeRequestsPanel, ChangeReviewPath } from "./change-requests-panel.js";
 import { DiscoveryRecovery } from "./discovery-recovery.js";
-import { changeReviewBlocksEditing, changeReviewToAbandon, changeReviewWaitsForPrototype, currentChangeReview, pendingUpstreamReviewStage } from "../change-request-policy.js";
+import { changeReviewBlocksEditing, changeReviewNeedsAttention, changeReviewWaitsForPrototype, currentChangeReview, isLocalChange, pendingUpstreamReviewStage } from "../change-request-policy.js";
 import { changeRequestHistoryStatus, changeRequestResponse, changeRequestReviewStage } from "./change-request-feedback.js";
 import { FeedbackHistory, FeedbackHistoryButton } from "./feedback-history.js";
 
@@ -30,21 +30,21 @@ export function PendingReviewPane({ viewedStage, pinnedReview, onActionsContaine
   const ui = useUi();
   const { state, changeRequestDialog, browseStage, reviewStage, confirm } = ui;
   const action = useAction("pending-review");
-  const pendingRequest = currentChangeReview(state);
-  const request = pendingRequest ?? changeReviewToAbandon(state);
+  const request = currentChangeReview(state);
   const reference = state.stageReviews?.find(item => item.generation === state.generation && !item.appliedAt && !item.discardedAt
     && (!request || item.changeRequestId === request.id));
   const prototypePending = Boolean(state.prototypeNeedsUpdate || state.prototypeFlow?.pendingCheckpointId || state.prototypeReview?.question
     || state.prototypeReview?.revisions?.some((item: { status: string }) => ["queued", "processing", "clarifying", "ready", "failed"].includes(item.status)));
   const waitingForPrototype = changeReviewWaitsForPrototype(state);
-  const target = waitingForPrototype ? "prototype" : request ? pendingRequest ? changeRequestReviewStage(request) : state.lifecycle.currentStage
+  const target = waitingForPrototype ? "prototype" : request ? changeRequestReviewStage(request)
     : pendingUpstreamReviewStage(state) ?? reference?.stage ?? (prototypePending ? "prototype" : undefined);
-  if (!request && !target) return null;
   const waiting = request && !waitingForPrototype && ["queued", "analyzing"].includes(request.status);
+  if (!request && !target || waiting && !request.replacesRequestId
+    || request && isLocalChange(state, request) && !changeReviewNeedsAttention(state)) return null;
   const earlier = target !== undefined && lifecycleStages.findIndex(item => item.id === target)
     < lifecycleStages.findIndex(item => item.id === state.lifecycle.currentStage);
   const inThisTab = target === viewedStage;
-  const needsDialog = Boolean(pendingRequest && request && !waitingForPrototype && (request.assessment?.question || request.error || !target || target === "development"
+  const needsDialog = Boolean(request && !waitingForPrototype && (request.assessment?.question || request.error || !target || target === "development"
     || !["proposed", "reviewing", "active"].includes(request.status)
     || request.status === "proposed" && !earlier || request.status === "active" && earlier));
   const targetLabel = target ? reviewStageLabel(target) : "";
@@ -63,7 +63,6 @@ export function PendingReviewPane({ viewedStage, pinnedReview, onActionsContaine
     ? "Your feedback is saved for re-evaluation after active work finishes. Applied changes and earlier drafts are retained."
     : waitingForPrototype ? "Resolve the existing prototype update or clarification first. Your new change is queued and will be checked afterwards."
     : waiting ? "Checking which stages this change affects. Your saved work is retained."
-    : request && !pendingRequest ? "The requested changes are saved. Continue reviewing the affected work. You can abandon the whole review until Finish Prototype."
     : needsDialog && request ? changeRequestResponse(request)
       : inThisTab && target ? earlier ? `Open the ${targetLabel} draft to review it in this tab. Accepted work stays unchanged until you apply.`
         : instructions[target]
@@ -212,7 +211,7 @@ function ReviewEditor({ parent, active, actionsContainer, headerActionsContainer
   const settled = Boolean(status?.appliedAt || status?.discardedAt);
   const blocked = pending || hasActiveJobs(state) || state.provider?.canSubmitAnswers === false;
   const unsaved = dirty;
-  const needsDesignApproval = stage === "sketch" && !isSketchRevisionApproved(state.sketch);
+  const needsDesignApproval = stage === "sketch" && !isSketchRevisionApproved(state.sketch, state.requirementsDigest);
   const canApproveDesign = needsDesignApproval && draftDesignApproval?.ready === true;
   const applicationBlockers = state.application?.operations["reviews.apply"]?.blockers.filter(blocker =>
     !(canApproveDesign && blocker.code === "review_not_ready"));
@@ -258,7 +257,7 @@ function ReviewEditor({ parent, active, actionsContainer, headerActionsContainer
       }
       const blocker = draft.stageReviewStatus?.conflict || draft.stageReviewStatus?.blocker;
       if (blocker) throw new Error(blocker);
-      if (stage === "sketch" && !isSketchRevisionApproved(draft.sketch)) throw new Error("The saved design draft approval could not be confirmed.");
+      if (stage === "sketch" && !isSketchRevisionApproved(draft.sketch, draft.requirementsDigest)) throw new Error("The saved design draft approval could not be confirmed.");
       await parent.post("/api/reviews/apply", { reviewId: draft.prototypeId, expectedRevision: draft.revision });
       await ui.refresh();
     });
@@ -293,12 +292,10 @@ function ReviewEditor({ parent, active, actionsContainer, headerActionsContainer
         disabled={blocked || !prototypeReady} onClick={() => void action.run(() => post("/api/stage/complete", { stageId: "prototype" }))}>
         Save draft outputs</Button>}
     </>}
-    {stage === "sketch" && state.sketch.status !== "stale" && requestedChange && !requestedChange.workStarted.includes("sketch") && !settled
+    {stage === "sketch" && !state.sketch.current && requestedChange && !requestedChange.workStarted.includes("sketch") && !settled
       && <Button variant="primary" id="prepare-review-drawings" className="complete-stage" type="button" disabled={blocked || dirty}
         onClick={() => void action.run(() => post("/api/sketch", {
-          action: !state.sketch.current ? "generate" : state.sketch.status === "stale" ? "update" : "revise",
-          expectedRevision: state.sketch.current?.id ?? null,
-          ...(state.sketch.status !== "stale" && state.sketch.current ? { instruction: requestedChange.message } : {}),
+          action: "generate", expectedRevision: null,
         }))}>Prepare draft designs</Button>}
     <Button variant="secondary" id="return-to-current-stage" className="complete-stage review-secondary" type="button" onClick={onReturn}>
       <ArrowRight size={15} aria-hidden="true" />{returnLabel}</Button>

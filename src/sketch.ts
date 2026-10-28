@@ -540,6 +540,11 @@ export function emptySketchState(): SketchState {
     return { version: 1, status: "empty", current: null, approved: null, history: [] };
 }
 
+export function sketchNeedsRequirementsUpdate(sketch: SketchState, requirementsDigest?: string): boolean {
+    return sketch.status === "stale" || Boolean(sketch.current && requirementsDigest !== undefined
+        && sketch.current.requirementsDigest !== requirementsDigest);
+}
+
 export function readSketchState(value: unknown): SketchState {
     if (value === undefined) return emptySketchState();
     const item = object(value, ["version", "status", "current", "approved", "history"], ["requests"]);

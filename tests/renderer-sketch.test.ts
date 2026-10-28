@@ -312,6 +312,29 @@ test("Sketch gates provider ownership, historical stages, workers, stale require
     assert.equal(disabled(h, "complete-stage"), true);
 });
 
+test("changed requirements expose incremental refresh and block approval even without a stale status marker", async t => {
+    const fixture = sketchFixture();
+    fixture.value.requirementsDigest = "updated-requirements";
+    fixture.value.sketch.status = "approved";
+    fixture.value.sketch.approved = {
+        revisionId: fixture.value.sketch.current.id,
+        documentHash: fixture.value.sketch.current.documentHash,
+        requirementsDigest: fixture.value.sketch.current.requirementsDigest,
+    };
+    const { h, value } = await sketchSetup(t, fixture);
+    assert.equal(disabled(h, "sketch-approve"), true);
+    assert.equal(disabled(h, "complete-stage"), true);
+    assert.equal(hidden(h, "sketch-update-requirements"), false);
+    assert.equal(disabled(h, "sketch-update-requirements"), false);
+    assert.match(text(h, "sketch-status"), /requirements changed/);
+    await h.click("sketch-approve"); await h.click("complete-stage");
+    assert.equal(h.requests.length, 1, "An old approval must not start Prototype.");
+    h.setFetch(async () => response({ ...value, revision: value.revision + 1,
+        processing: { action: "revise-sketch", status: "running" } }));
+    await h.click("sketch-update-requirements"); await h.confirm();
+    assert.deepEqual(h.requests.at(-1)!.body, { action: "update", expectedRevision: value.sketch.current.id });
+});
+
 test("Sketch generation is explicit; revisions retain instructions and block duplicates", async (t) => {
     const { h, value } = await sketchSetup(t);
     await h.click("sketch-generate"); await h.confirm(false);

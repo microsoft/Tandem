@@ -18,7 +18,7 @@ import { SketchStore } from "../src/sketch-store.js";
 import { screenPng, sketchDocument } from "./helpers/sketch-lifecycle-fixture.js";
 import { addUi } from "./helpers/ui-dsl-fixture.js";
 import { requirementsInputDigest } from "../src/requirements-reconciliation.js";
-import { changeReviewBlocksEditing, changeReviewNeedsAttention, changeReviewToAbandon, currentChangeReview, pendingUpstreamReviewStage } from "../src/change-request-policy.js";
+import { changeReviewBlocksEditing, changeReviewNeedsAttention, changeReviewToAbandon, currentChangeReview, currentSketchChange, pendingUpstreamReviewStage, sketchNeedsChangeUpdate } from "../src/change-request-policy.js";
 import type { TandemState } from "../src/types.js";
 
 const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -281,6 +281,28 @@ test("the single review gate permits inspection and the work needed to finish it
     assert.equal(changeReviewBlocksEditing(state), true, "Unresolved questions created inside the draft must still be resolved.");
 });
 
+test("design update guards preserve request priority and block older unbound failures", () => {
+    const state = baseState();
+    state.stage = state.lifecycle.currentStage = "sketch";
+    state.lifecycle.completedStages = ["prepare", "requirements"];
+    state.sketch.current = { id: "updated-design", number: 2, requirementsDigest: requirementsInputDigest(state),
+        documentHash: "b".repeat(64), createdAt: state.updatedAt, source: "revised" };
+    state.sketch.status = "draft";
+    const reviewing: ChangeRequest = { ...proposed(), status: "reviewing", remainingStages: ["sketch"], baseSketchRevisionId: "previous-design" };
+    const active: ChangeRequest = { ...reviewing, id: "active-design", clientRequestId: "active-design-client", status: "active" };
+    state.changeRequests = [reviewing, active];
+    assert.equal(currentSketchChange(state)?.id, active.id, "Running work owns its result before an older review.");
+    assert.equal(sketchNeedsChangeUpdate(state, requirementsInputDigest(state)), false);
+    state.changeRequests = [reviewing];
+    state.processing = { action: "revise-sketch", status: "error", requestId: "legacy-update",
+        changeRequestId: null, message: "The older update failed before it recorded the review identity." };
+    assert.equal(sketchNeedsChangeUpdate(state, requirementsInputDigest(state)), true);
+    state.processing = null;
+    assert.equal(sketchNeedsChangeUpdate(state, "new-requirements"), true);
+    state.sketch.current.id = reviewing.baseSketchRevisionId!;
+    assert.equal(sketchNeedsChangeUpdate(state, requirementsInputDigest(state)), true, "The original design cannot satisfy the requested update.");
+});
+
 async function fixture(gitReady = false) {
     const h = await extensionHarness({}, undefined, "", undefined, false, gitReady);
     const initial = h.api.createLegacyState("sample", "Robot simulation");
@@ -376,7 +398,7 @@ for (const legacy of [false, true]) test(`abandon restores the original ${legacy
     const candidate = ready.prototypeFlow!.checkpoints.at(-1)!;
     await f.h.api.prototypeAction("sample", "project:tandem", { action: "apply-update", checkpointId: candidate.id });
     const applied = await f.h.api.loadState("sample");
-    assert.equal(applied.changeRequests![0].status, "reviewing");
+    assert.equal(applied.changeRequests![0].status, "completed");
     assert.equal(changeReviewToAbandon(applied)?.id, request.id, "Showing a version is not Finish Prototype.");
     const input = abandonment(applied);
     const restored = await f.h.api.abandonChangeRequest("sample", "project:tandem", input);
@@ -1334,14 +1356,13 @@ test("explicit additive Requirements changes save directly and release the queue
     } finally { await f.h.close(); }
 });
 
-test("changing accepted Requirements decisions still needs review but its saved delta does not monopolize the queue", async () => {
+test("single-stage Requirements changes save directly while affected decisions still require answers", async () => {
     const f = await fixture();
     try {
         const initial = { ...f.initial, stage: "requirements" as const,
             lifecycle: { ...f.initial.lifecycle, currentStage: "requirements" as const, completedStages: ["prepare" as const] },
             prototypeFlow: null, previewUrl: null, previewStatus: "waiting" as const };
         await f.h.api.persistState(initial);
-        const baseline = await f.h.api.loadState("sample");
         const patch = delta();
         const changed = node("joints");
         changed.question!.text = "Choose the revised joint control behavior.";
@@ -1352,13 +1373,9 @@ test("changing accepted Requirements decisions still needs review but its saved 
             message: "Change the existing joint control behavior.", clientRequestId: "revise-accepted", originStage: "requirements",
         });
         await f.h.api.waitForAnswer("sample");
-        const proposed = await f.h.api.loadState("sample");
-        assert.equal(proposed.changeRequests![0].status, "proposed", proposed.changeRequests![0].error || proposed.processing?.message);
-        assert.deepEqual(plain(proposed.artifacts), plain(baseline.artifacts), "Read-only impact checks cannot rewrite the accepted diagram as reconciliation progress.");
-        assert.equal(proposed.changeRequests![0].baselineDigest, changeBaselineDigest(proposed), "The assessment must not stale its own proposal.");
-        assert.deepEqual(plain(proposed.decisionGraph), plain(initial.decisionGraph));
-        const applied = await f.h.api.decideChangeRequest("sample", "project:tandem", approval(proposed.changeRequests![0]));
-        assert.equal(applied.changeRequests![0].status, "completed");
+        const applied = await f.h.api.loadState("sample");
+        assert.equal(applied.changeRequests![0].status, "completed", applied.changeRequests![0].error || applied.processing?.message);
+        assert.equal(applied.stageReviews?.length ?? 0, 0, "A single-stage update does not open a cross-stage review.");
         assert.equal(applied.decisionGraph.nodes[0].answer, null);
         assert.equal(applied.decisionGraph.nodes[0].review!.previousAnswer, "Keep");
         assert.equal(applied.decisionGraph.nodes[2].answer, "Keep");
@@ -1503,8 +1520,14 @@ for (const legacy of [false, true]) test(`applying a draft usage explicitly upda
         assert.equal(workerRequest.args.state.changeRequest.id, state.changeRequests![0].id,
             "The worker must receive the full original request, not just a generic refresh instruction.");
         assert.deepEqual(plain(ready.decisionGraph), plain(f.initial.decisionGraph));
+        if (legacy) {
+            delete ready.prototypeReview.revisions[0].checkpointId;
+            await f.h.api.persistState(ready);
+        }
         const applied = await f.h.api.prototypeAction("sample", "project:tandem", { action: "apply-update", checkpointId: checkpoint.id });
         assert.equal(prototypeNeedsChangeUpdate(applied), false);
+        assert.equal(applied.changeRequests![0].status, "completed", "Applying the final affected stage finishes the change review, not the entire Prototype stage.");
+        assert.deepEqual(Array.from(applied.changeRequests![0].remainingStages), []);
         assert.equal(f.h.api.stageCompletionError(applied, "prototype", { requirePrototypeSpec: false }), null);
         assert.equal(f.h.requests.length, 2, "only assessment and the requested delta ran");
         const oldRequest = applied.changeRequests![0];
