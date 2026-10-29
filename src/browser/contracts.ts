@@ -12,6 +12,7 @@ export interface HostSnapshot {
     sessionId: string | null;
     canvasUrl: string | null;
     status: string;
+    statusKind?: "ready" | "message";
     error: string | null;
     notice?: { id: string; message: string } | null;
     warning: string | null;

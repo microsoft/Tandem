@@ -219,7 +219,9 @@ export function BrowserApp({ store, connect = true }: { store: BrowserStore; con
     const permissionsTitle = application.header?.permissionScope !== "main" ? "Tool permission controls are unavailable until application ownership is verified."
         : `Upstream tool permissions: ${host?.permissionMode === "allow-all" ? "Allow all for this session" : "Ask each time"}`;
     const displayedVersion = application.header?.version || host?.version;
-    const applicationStatus = application.header?.status;
+    const applicationStatus = connected && host?.phase === "ready" ? application.header?.status : undefined;
+    const hostStatus = connectionError || host?.status || "Connecting...";
+    const showHostStatus = !applicationStatus || host?.statusKind !== "ready" || Boolean(host?.error);
     const notice = host?.notice;
     return <div className="host-shell">
         <header className="host-header">
@@ -288,13 +290,12 @@ export function BrowserApp({ store, connect = true }: { store: BrowserStore; con
                 </section>}
         </main>
         <footer className="host-status">
-            <span className="host-status-state" role="status" title={host?.status || "Connecting..."}>{host?.status || "Connecting..."}</span>
+            {showHostStatus && <span className="host-status-state" role="status" title={hostStatus}>{hostStatus}</span>}
             {applicationStatus && <div className="host-application-status" data-status={applicationStatus.error ? "error" : "idle"}>
                 <span role="status" title={applicationStatus.text}>{applicationStatus.text}</span>
                 {applicationStatus.action && <IconButton variant="ghost" type="button" className="host-status-action" aria-label="Go to action"
                     title={`Go to action: ${applicationStatus.action}`} onClick={application.showNextAction}><ArrowRight size={13} aria-hidden="true" /></IconButton>}
             </div>}
-            <span className="host-status-hint">Tab close keeps running | Stop or Ctrl+C to exit</span>
         </footer>
         {dialog === "workspace" && host && <WorkspacePicker store={store} host={host} close={() => setDialog(null)} open={open} />}
         {dialog === "diagnostics" && <Modal title="Diagnostics" description="Redacted host and backend messages. Workspace logs are in .tandem\desktop\browser.log." close={() => setDialog(null)} wide>
