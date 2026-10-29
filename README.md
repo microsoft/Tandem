@@ -36,6 +36,9 @@ with mocked data, Design discussion, implementation and Review.
 
 https://github.com/user-attachments/assets/ea2c909b-97c7-44b2-adfe-86ff56e4c382
 
+[Watch this for an E2E tutorial](https://github.com/user-attachments/assets/d1460f4a-ab61-42de-be0b-914b4269069d):
+a 14-minute coffee-shop walkthrough from goal to implementation and Review.
+
 ## Why Tandem?
 
 - **See the idea before committing to it.** Explore requirements, UI designs and
