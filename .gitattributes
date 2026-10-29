@@ -1,0 +1,4 @@
+# Preserve hashed payload bytes, including bundled vendor whitespace.
+/.github/extensions/tandem/** -text -whitespace
+# Preserve the recorded upstream DSL snapshot hashes across checkouts.
+/src/vendor/ui-dsl/** -text -whitespace

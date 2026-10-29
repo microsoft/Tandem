@@ -1,0 +1,31 @@
+:root {
+  color-scheme: light;
+  font-family: var(--studio-font-family);
+  font-size: 13px;
+  line-height: var(--studio-line-height);
+  color: var(--studio-text);
+  background: var(--studio-surface);
+}
+:root[data-project-theme="dark"] { color-scheme: dark; }
+body { background: var(--studio-surface); }
+.tandem-story { min-width: 0; color: var(--studio-text); font-family: var(--studio-font-family); }
+.tandem-story-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--studio-space-3); }
+.tandem-story-stack { display: grid; gap: var(--studio-space-4); max-width: 520px; }
+.tandem-story-narrow { width: min(100%, 240px); }
+.tandem-story-foundations { max-width: 960px; }
+.tandem-story-foundations h1 { margin: 0 0 var(--studio-space-2); font-size: 28px; }
+.tandem-story-foundations h2 { margin: var(--studio-space-6) 0 var(--studio-space-3); font-size: var(--studio-text-title); }
+.tandem-story-foundations p { max-width: 70ch; color: var(--studio-muted); }
+.tandem-story-swatches { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: var(--studio-space-3); }
+.tandem-story-swatch { padding: var(--studio-space-3); border: 1px solid var(--studio-border); border-radius: var(--studio-radius); }
+.tandem-story-swatch > div { height: 48px; margin-bottom: var(--studio-space-2); border: 1px solid var(--studio-border); border-radius: var(--studio-radius-control); }
+.tandem-story-swatch code { display: block; overflow-wrap: anywhere; font: 11px var(--studio-font-mono); color: var(--studio-muted); }
+.tandem-story-spacing { display: flex; flex-wrap: wrap; align-items: end; gap: var(--studio-space-4); }
+.tandem-story-spacing > div { display: grid; gap: var(--studio-space-2); }
+.tandem-story-spacing span { display: block; height: var(--studio-space-4); background: var(--studio-accent); }
+.tandem-story-foundations table { width: 100%; border-collapse: collapse; }
+.tandem-story-foundations th, .tandem-story-foundations td { padding: var(--studio-space-2); border-bottom: 1px solid var(--studio-border); text-align: left; overflow-wrap: anywhere; }
+.tandem-story-surfaces { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: var(--studio-space-6); }
+.tandem-story-surfaces > section { padding: var(--studio-space-4); border: 1px solid var(--studio-border); border-radius: var(--studio-radius); }
+.tandem-story-surfaces > section h2, .tandem-story-surfaces > section p { margin: 0; }
+.tandem-story-surfaces > iframe { width: 100%; min-height: 480px; box-sizing: border-box; border: 1px solid var(--studio-border); border-radius: var(--studio-radius); }

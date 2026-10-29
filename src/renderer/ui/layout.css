@@ -1,0 +1,147 @@
+/* Feature layout is separate from the shared control appearance. */
+.sketch-sidebar { display: flex; flex-direction: column; gap: var(--studio-space-2); min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.sketch-sidebar > * { flex-shrink: 0; }
+:is(.tandem-pane, .sketch-pane) { box-sizing: border-box; min-width: 0; min-height: 0; border: 1px solid var(--studio-border); border-radius: var(--studio-radius); background: var(--studio-surface); overflow: hidden; }
+:is(.tandem-pane-heading, .sketch-pane-heading) {
+  display: flex; flex-direction: row; align-items: center; justify-content: flex-start; flex: none; gap: var(--studio-space-1); box-sizing: border-box;
+  min-width: 0; min-height: var(--studio-tab-height); margin: 0; padding: var(--studio-space-1) var(--studio-space-2);
+  color: var(--studio-text); font: inherit; font-weight: var(--studio-font-weight-semibold); line-height: var(--studio-control-line-height);
+}
+:is(.tandem-pane-heading, .sketch-pane-heading) > :is(span:first-of-type:not(.tandem-badge), h3) { flex: 1; min-width: 0; margin: 0; font: inherit; overflow-wrap: anywhere; }
+.sketch-pane-heading .section-count {
+  flex: none; padding: 0 var(--studio-space-1); border: 1px solid var(--studio-border); border-radius: var(--studio-radius-control);
+  color: var(--studio-muted); font-size: var(--studio-text-small); font-weight: 400;
+  line-height: var(--studio-control-line-height); font-variant-numeric: tabular-nums;
+}
+:is(.tandem-pane, .sketch-pane) > :is(.tandem-pane-heading, .sketch-pane-heading):not(summary),
+:is(.tandem-pane, .sketch-pane)[open] > summary { border-bottom: 1px solid var(--studio-border); }
+:is(.tandem-pane, .sketch-pane) > summary { list-style: none; }
+:is(.tandem-pane, .sketch-pane) > summary::-webkit-details-marker { display: none; }
+:is(.tandem-pane, .sketch-pane) > summary:focus-visible { outline-offset: calc(-1 * var(--studio-focus-width) - 1px); }
+:is(.tandem-pane-chevron, .sketch-pane-chevron) { flex: none; color: var(--studio-muted); }
+:is(.tandem-pane, .sketch-pane)[open] > summary > :is(.tandem-pane-chevron, .sketch-pane-chevron) { transform: rotate(90deg); }
+:is(.tandem-pane-body, .sketch-pane-body) { box-sizing: border-box; min-width: 0; min-height: 0; padding: var(--studio-space-2); }
+.tandem-pane-body > :first-child { margin-top: 0; }
+.tandem-pane-body > :last-child { margin-bottom: 0; }
+.tandem-pane-body { overflow-wrap: anywhere; }
+.preparation-stage-heading { align-items: flex-start; }
+.preparation-stage-heading > div { flex: 1; min-width: 0; }
+.preparation-stage-heading strong { font: inherit; }
+.preparation-stage-heading .eyebrow { margin-bottom: var(--studio-space-1); }
+.preparation-stage-heading #preparation-stage-progress:not(.visually-hidden) { margin-top: var(--studio-space-1); font-weight: 400; }
+.preparation-brief { gap: 0; padding: 0; }
+.preparation-stage-main > .tandem-pane, .preparation-stage-sidebar > .tandem-pane { padding: 0; }
+.preparation-stage-card .implementation-list { gap: var(--studio-space-2); }
+.preparation-stage-card .implementation-card, .preparation-result-item {
+  padding: var(--studio-space-2); border-radius: var(--studio-radius-control); font-size: inherit;
+}
+.preparation-result-item[data-status="deferred"] { box-shadow: inset 3px 0 0 var(--studio-muted); }
+.preparation-stage-card .implementation-card-heading { align-items: flex-start; flex-wrap: wrap; }
+.preparation-stage-card .implementation-card-heading > strong { flex-basis: 180px; }
+.preparation-stage-card .implementation-meta, .preparation-stage-card .implementation-event time { font-size: var(--studio-text-small); }
+.preparation-stage-card .implementation-event-heading { flex-wrap: wrap; gap: var(--studio-space-1) var(--studio-space-2); }
+.preparation-stage-card .implementation-event-heading > p { flex: 1 1 180px; }
+.preparation-result-list { gap: var(--studio-space-2); margin-top: var(--studio-space-2); }
+.preparation-result-suggestions, .preparation-result-sources { margin-top: var(--studio-space-2); }
+.preparation-result-item > strong { display: flex; flex-wrap: wrap; align-items: center; gap: var(--studio-space-1) var(--studio-space-2); }
+.preparation-result-item .tandem-badge { font-weight: 400; }
+.requirements-intake-panel.section { padding: 0; }
+.requirements-intake-heading { margin: 0; }
+.requirements-intake-heading > .eyebrow { font: inherit; color: inherit; letter-spacing: normal; text-transform: none; }
+#requirements-research { margin-top: var(--studio-space-2); padding: 0; }
+.design-tree-heading { align-items: center; }
+.design-tree-body, .design-tree-inspector { padding: var(--studio-space-2); }
+.design-tree-location > .eyebrow { font: inherit; color: inherit; letter-spacing: normal; text-transform: none; }
+.visual-exploration.tandem-pane { gap: 0; padding: 0; }
+.visual-exploration > .tandem-pane-body { display: flex; flex: 1; flex-direction: column; gap: var(--studio-space-2); }
+.visual-selection-toolbar { grid-template-columns: minmax(0, 1fr) auto; gap: var(--studio-space-2); }
+.tandem-toggle.visual-direction-toggle[data-applied="true"] { border-color: var(--studio-action-border); background: var(--studio-action-bg); color: var(--studio-on-action); }
+.tandem-toggle.visual-direction-toggle[data-preview="true"] { box-shadow: inset 0 0 0 1px var(--studio-accent); }
+.preview > :is(.preparation-panel, .design-tree-panel, .sketch-panel, .frame-wrap)[role="tabpanel"] { padding: var(--studio-space-2); }
+.preview :is(.processing-state, .processing-error, .provider-notice, .prototype-building-card) { border-radius: var(--studio-radius); }
+.sketch-screens-pane { display: flex; flex-direction: column; flex: none; max-height: 50%; }
+.sketch-screen-fields { display: grid; gap: var(--studio-space-3); }
+.sketch-structure[open] { display: flex; flex: 1; flex-direction: column; min-height: calc(var(--studio-tab-height) + var(--studio-control-height) + 2 * var(--studio-space-2) + 2px); }
+.sketch-structure[open]::details-content { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+.sketch-structure-tree { flex: 1; overflow: auto; overscroll-behavior: contain; }
+.sketch-structure-expander { display: flex; align-items: center; flex: 0 0 12px; }
+.sketch-structure-node[aria-expanded="true"] .sketch-structure-expander svg { transform: rotate(90deg); }
+.sketch-node-type { flex: 0 1 auto; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--studio-text-small); color: var(--studio-muted); }
+.sketch-node-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sketch-list { display: flex; flex-direction: column; gap: var(--studio-space-1); overflow: auto; }
+.sketch-list button { flex-shrink: 0; text-align: start; overflow-wrap: anywhere; }
+#sketch-screens { flex: 0 1 auto; overflow-y: auto; overscroll-behavior-y: contain; }
+#sketch-screens > button { flex: none; }
+.session-model-effort { max-width: 42%; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--studio-text-small); }
+.tandem-button.artifact-group-toggle, .tandem-button.artifact-button {
+  display: flex; justify-content: flex-start; width: 100%; text-align: start; white-space: normal;
+}
+.tandem-button.sketch-structure-node { display: flex; flex: none; justify-content: flex-start; width: 100%; gap: var(--studio-space-1); }
+.project-entry-choices > .tandem-button { display: grid; justify-items: start; gap: var(--studio-space-2); padding: var(--studio-space-4); border-color: var(--studio-border); }
+.project-tabs.tandem-tab-list { overflow: visible; }
+.artifact-library-nav.tandem-tab-list { margin-bottom: var(--studio-space-2); }
+.project-tabs .tandem-tab { display: grid; grid-template-columns: 15px minmax(0, 1fr) auto; max-width: 100%; justify-content: start; gap: var(--studio-space-1); padding-inline: var(--studio-space-2); text-align: start; white-space: normal; }
+#project-contents .tandem-tab::after { display: none; }
+@media (max-height: 700px) {
+  .stage-input-review:has(.review-guidance-pane, .pinned-review-actions) { max-height: min(16vh, 100px); }
+}
+@media (max-height: 700px) and (max-width: 760px) {
+  .stage-input-review:has(.review-guidance-pane, .pinned-review-actions) { max-height: 90px; }
+}
+.tandem-button.context-toggle { display: none; justify-content: flex-start; width: 100%; }
+.project-workspace .tandem-button.context-collapse { display: none; }
+.tandem-button.review-close { align-self: flex-start; }
+.tandem-button.review-trigger[data-status="attention"] { color: var(--studio-accent-strong); border-color: var(--studio-accent); background: var(--studio-accent-soft); }
+.decision-list .tandem-button[data-explicit-answer="true"] { border-style: dashed; border-color: var(--studio-warning); }
+.tandem-button.feedback-send { font-size: var(--studio-text-small); }
+.feedback-composer .tandem-icon-button[data-status="error"] {
+  color: var(--studio-danger); border-color: var(--studio-danger); background: var(--studio-danger-soft);
+}
+.feedback-composer .tandem-icon-button, .diagram-toolbar .tandem-icon-button { flex: none; }
+.diagram-toolbar .tandem-button { white-space: nowrap; font-size: var(--studio-text-small); }
+.tandem-input.composer-input { min-height: var(--studio-composer-height); height: var(--studio-composer-height); }
+form.feedback-composer > textarea.tandem-input.composer-input { resize: none; }
+form:not(.feedback-composer) textarea.tandem-input.composer-input[data-composer-expanded="true"] { min-height: var(--studio-composer-expanded-height); }
+.start-form textarea.tandem-input.composer-input { min-height: 112px; height: auto; }
+.change-details-dialog textarea.tandem-input.composer-input { min-height: 96px; height: auto; }
+.sketch-transition :is(.tandem-input, .tandem-button) { min-width: 0; }
+.sketch-panel .sketch-pane-controls .tandem-toggle { border-radius: 0; }
+.sketch-panel .sketch-pane-controls .tandem-toggle:first-child { border-radius: var(--studio-radius-control) 0 0 var(--studio-radius-control); }
+.sketch-panel .sketch-pane-controls .tandem-toggle:last-child { border-radius: 0 var(--studio-radius-control) var(--studio-radius-control) 0; }
+.sketch-pane-controls .tandem-toggle + .tandem-toggle { margin-inline-start: -1px; }
+.sketch-pane-controls .tandem-toggle[data-state="on"] { z-index: 1; }
+.tandem-input.sketch-size-preset { width: 180px; }
+.tandem-button.preview-recovery-action, .tandem-button.preview-open-action {
+  flex: none; width: var(--studio-control-height); height: var(--studio-control-height); padding: 0;
+}
+.tandem-button.preview-recovery-action[data-error="true"] { color: var(--studio-danger); border-color: var(--studio-danger); }
+.tandem-toggle.visual-direction-toggle { text-align: start; }
+.tandem-radio .choice-control { flex: none; }
+.tandem-radio .radio-dot { display: block; width: 9px; height: 9px; border-radius: 50%; background: var(--studio-accent); }
+.tandem-radio[data-presentation="choice"][data-state="checked"] .choice-control { color: var(--studio-accent-strong); }
+.dialog-content.change-details-dialog, .dialog-content.review-details-dialog {
+  display: flex; flex-direction: column; padding: 0; overflow: hidden;
+}
+.dialog-content.change-details-dialog { width: min(740px, calc(100vw - 32px)); max-height: min(860px, calc(100dvh - 32px)); }
+.dialog-content.review-details-dialog { width: min(820px, calc(100vw - 32px)); max-height: min(860px, calc(100dvh - 32px)); }
+.dialog-content.handoff-review-dialog { width: min(640px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); }
+.dialog-content.diagram-source-dialog { width: min(900px, calc(100vw - 32px)); }
+.dialog-content.project-settings-dialog { display: flex; flex-direction: column; gap: var(--studio-space-3); width: min(760px, calc(100vw - 24px)); height: min(820px, calc(100dvh - 24px)); padding: var(--studio-space-3); overflow-y: auto; }
+.project-settings-dialog .root-settings-heading, .project-settings-dialog > p { flex: none; }
+.project-settings-dialog .root-settings-heading h2, .project-settings-dialog > p { margin: 0; }
+#project-settings-frame { min-height: var(--studio-touch-target); }
+.dialog-content.project-entry { width: min(640px, calc(100vw - 32px)); }
+.tandem-native-dialog.preview-restart-dialog { width: min(600px, calc(100vw - 32px)); }
+dialog.dialog-content { inset: 0; margin: auto; transform: none; }
+dialog.dialog-content:not([open]) { display: none; }
+#project-contents .tandem-tab[aria-current="step"] { background: var(--studio-accent-soft); color: var(--studio-text); box-shadow: inset 3px 0 0 var(--studio-accent); }
+#project-contents .tandem-tab[aria-selected="true"]:not([aria-current="step"]) { background: transparent; border-color: transparent; box-shadow: none; color: var(--studio-text); }
+@media (pointer: coarse) {
+  :is(.tandem-pane-heading, .sketch-pane-heading) { min-height: calc(var(--studio-touch-target) + 2 * var(--studio-space-1)); }
+  .sketch-structure[open] { min-height: calc(2 * var(--studio-touch-target) + 2 * var(--studio-space-1) + 2 * var(--studio-space-2) + 2px); }
+  .tandem-button.preview-recovery-action, .tandem-button.preview-open-action { width: var(--studio-touch-target); height: var(--studio-touch-target); }
+}
+@media (max-width: 760px) {
+  .workspace:not(.project-workspace):not([data-development="true"]) > .tandem-button.context-toggle { display: flex; }
+  .tandem-button.context-collapse { display: none; }
+}

@@ -1,0 +1,6 @@
+.tandem/
+dist/
+node_modules/
+development/tandem/runtime-types/
+**/bin/
+**/obj/

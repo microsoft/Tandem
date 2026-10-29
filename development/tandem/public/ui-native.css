@@ -1,0 +1,114 @@
+.human-app {
+  --background: var(--studio-panel);
+  --surface: var(--studio-surface);
+  --surface-muted: var(--studio-panel);
+  --surface-raised: var(--studio-section);
+  --text: var(--studio-text);
+  --muted: var(--studio-muted);
+  --faint: var(--studio-muted);
+  --border: var(--studio-border);
+  --blue: var(--studio-accent);
+  --blue-soft: var(--studio-accent-soft);
+  --green: var(--studio-success);
+  --orange: var(--studio-warning);
+  --danger: var(--studio-danger);
+  --accent-fill: var(--studio-action-bg);
+  --accent-fill-hover: color-mix(in srgb, var(--studio-action-bg) 94%, #000);
+  --on-accent: var(--studio-on-action);
+  --shell-control-height: var(--studio-control-height);
+  --shell-control-radius: var(--studio-radius-control);
+  --shell-control-padding: var(--studio-control-padding-inline);
+  --shell-control-font: var(--shell-font-size);
+  --shell-control-weight: var(--studio-font-weight-semibold);
+  --shell-accent: var(--studio-accent);
+  --shell-accent-soft: var(--studio-accent-soft);
+  --shell-control-border: var(--studio-border);
+  --shell-primary-border: var(--studio-action-bg);
+  --shell-control-hover: var(--studio-accent-soft);
+  --shell-focus: var(--studio-focus);
+  --shell-destructive: var(--studio-danger);
+  --shell-font-size: var(--studio-font-size-readable);
+  font-family: var(--studio-font-family);
+  line-height: var(--studio-line-height);
+}
+.human-app[data-font-size="larger"] { --shell-font-size: calc(var(--studio-font-size-readable) + 2px); }
+.human-app[data-font-size="largest"] { --shell-font-size: calc(var(--studio-font-size-readable) + 4px); }
+.human-app[data-project-panel] { --shell-font-size: var(--studio-font-size); }
+.human-app[data-project-panel][data-font-size="larger"] { --shell-font-size: calc(var(--studio-font-size) + 2px); }
+.human-app[data-project-panel][data-font-size="largest"] { --shell-font-size: calc(var(--studio-font-size) + 4px); }
+.human-app:is([data-theme="light"], [data-theme="dark"]) {
+  --background-color-muted: initial; --text-color-muted: initial; --border-color-default: initial;
+}
+.human-app :is(#save-appearance, #apply-model, #accept-actual-model, #approve-compaction, #approve-empty-setup,
+  #approve-initial-creation, #apply-project-effort, #activate-project-development, #annotation-capture,
+  [data-implementation-decision="approved"], [data-access-decision="once"], [data-annotation-action="attach"],
+  #show-questions[data-unanswered="true"], .human-loop-questions button[type="submit"]) {
+  --tandem-control-background: var(--studio-action-bg);
+  --tandem-control-border: var(--studio-action-border);
+  --tandem-control-color: var(--studio-on-action);
+}
+.human-app :is(#save-appearance, #apply-model, #accept-actual-model, #approve-compaction, #approve-empty-setup,
+  #approve-initial-creation, #apply-project-effort, #activate-project-development, #annotation-capture,
+  [data-implementation-decision="approved"], [data-access-decision="once"], [data-annotation-action="attach"],
+  #show-questions[data-unanswered="true"], .human-loop-questions button[type="submit"]):hover:not(:disabled) {
+  background: var(--accent-fill-hover); color: var(--studio-on-action); border-color: var(--studio-action-bg);
+}
+.human-app :is(#annotation-reset, #annotation-remove, #clipboard-remove, #shutdown, #stop-now,
+  [data-annotation-action="replace"], [data-native-process-id]) { --tandem-control-color: var(--studio-danger); }
+.human-app :where(.artifact-navigation-row button, .state-history-step button, .question-list button,
+  .role-suggestions button, .quick-request-options button, #focus-current-message) {
+  --tandem-control-background: transparent; --tandem-control-border: transparent; --tandem-control-weight: 400;
+  justify-content: flex-start; text-align: start;
+}
+.human-app .question-list button { display: grid; gap: var(--studio-space-1); width: 100%; }
+.human-app .quick-request-options button, .human-app .role-suggestions button { width: 100%; }
+.human-app .artifact-navigation-row button { flex: none; white-space: nowrap; min-height: var(--studio-tab-height); }
+.human-app .artifact-navigation-row button[aria-pressed="true"] { font-weight: var(--studio-font-weight-semibold); }
+.human-app .perspective-toolbar button { flex: none; }
+.human-app :is(.settings-fields, .access-request-picker) select { width: auto; max-width: 100%; }
+.human-app .access-request-picker select { flex: 1; min-width: 0; }
+.human-app #project-message-target { width: auto; }
+.human-app :is(.settings-fields, .access-decision-buttons, .implementation-confirmation-actions, .human-runtime-actions) { gap: var(--studio-control-gap); }
+.human-app .human-loop-questions { --studio-control-height: var(--studio-touch-target); }
+.human-app .human-loop-questions :is(select, textarea) { width: 100%; font-weight: 400; }
+.human-app .human-loop-questions select { min-height: var(--studio-control-height); }
+.human-app .human-loop-questions button[type="submit"] { min-height: var(--studio-control-height); }
+.human-app .human-loop > .human-loop-actions:has(> [data-human-loop-action="continueQuery"]:not([hidden])) { display: flex; }
+.human-app .human-loop > .human-loop-actions > :not([data-human-loop-action="continueQuery"]) { display: none; }
+.human-app .activity-panel > .command-bar { grid-template-columns: minmax(0, 1fr); }
+.human-app .command-composer { border-right: 1px solid var(--studio-border); border-radius: var(--studio-radius); padding-right: var(--studio-space-3); }
+.human-app .composer-input-wrap { position: relative; --composer-send-width: var(--studio-control-height); }
+.human-app .composer-input-wrap:has(#send[data-retry="true"]) { --composer-send-width: calc(var(--studio-control-height) * 4); }
+.human-app #message { min-height: var(--studio-composer-expanded-height); height: auto; padding-inline-end: calc(var(--composer-send-width) + var(--studio-space-6) + var(--studio-space-2)); }
+.human-app #send { position: absolute; inset-inline-end: var(--studio-space-6); bottom: var(--studio-space-1); width: var(--composer-send-width); min-width: var(--studio-control-height); max-width: none; padding: 0; font-size: var(--studio-text-title); border-radius: var(--studio-radius-control); }
+.human-app #send[data-retry="true"] { font-size: var(--studio-text-small); }
+.human-app #send::before { content: none; }
+.human-app #stop-options { min-width: var(--studio-control-height); padding-inline: var(--studio-space-1); }
+.human-app .state-history-step button { min-height: var(--history-target-size); min-width: var(--history-target-size); justify-content: center; padding: 0; }
+.human-app #focus-current-message { gap: var(--studio-control-gap); border: 0; }
+.human-app .session-model-effort { flex: 1 1 0; max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--studio-text-small); }
+.human-app[data-project-panel="workspace"] #development-model-effort { display: none; }
+.human-app :is(#compaction-approval, #empty-setup-approval, #initial-creation-approval) > button { margin-top: var(--studio-space-3); }
+.human-app dialog.annotation-editor { display: flex; flex-direction: column; gap: var(--studio-space-3); width: min(1000px, calc(100vw - 24px)); }
+.human-app dialog.annotation-editor:not([open]) { display: none; }
+.human-app dialog#rendering-debugger { width: min(1200px, calc(100vw - 24px)); height: min(900px, calc(100dvh - 24px)); }
+.human-app .source-artifact [data-artifact-zoom] { min-width: var(--studio-control-height); padding-inline: var(--studio-space-2); }
+.human-app .annotation-editor-toolbar { gap: var(--studio-control-gap); }
+.human-app :is(.access-card, .implementation-confirmation, .question-batch, .background-panel) { border-radius: var(--studio-radius); }
+.human-app[data-project-panel="settings"] .human-header { height: auto; }
+.human-app[data-project-panel="settings"] .canvas-settings[open] {
+  max-height: 100dvh; overflow-y: auto; scrollbar-gutter: stable; overscroll-behavior: contain; padding: 0;
+}
+.human-app[data-project-panel="settings"] .settings-section:first-of-type { margin-top: 0; padding-top: 0; }
+.human-app[data-project-panel="settings"] #close-settings,
+.human-app[data-project-working="discovery"] #initialize { display: none; }
+@media (pointer: coarse) {
+  .human-app { --studio-control-height: var(--studio-touch-target); --studio-tab-height: var(--studio-touch-target); }
+  .human-app .state-history-step button { min-height: var(--studio-touch-target); min-width: var(--studio-touch-target); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .human-app :is(button, input, select, textarea) { animation: none; transition: none; }
+}
+@media (forced-colors: active) {
+  .human-app button:is([aria-pressed="true"], [aria-selected="true"], [aria-current="true"]) { outline: 2px solid Highlight; outline-offset: -2px; }
+}

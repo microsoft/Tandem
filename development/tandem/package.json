@@ -1,0 +1,30 @@
+{
+  "name": "@tandem/app",
+  "version": "0.1.0",
+  "description": "Tandem extension, browser renderer and shared runtime",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node --check src/extension.mjs",
+    "test": "npm run test:shared && npm run test:canvas",
+    "test:shared": "node --import tsx --test test/shared/*.test.ts",
+    "test:canvas": "node --test test/*.test.mjs",
+    "build:artifacts": "node scripts/bundle-artifacts.mjs",
+    "package:extension": "node scripts/package-extension.mjs"
+  },
+  "dependencies": {
+    "@github/copilot-sdk": "1.0.18"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "ajv": "8.18.0",
+    "css-tree": "3.1.0",
+    "esbuild": "0.28.2",
+    "jpeg-js": "0.4.4",
+    "marked": "15.0.12",
+    "mermaid": "12.1.0",
+    "parse5": "7.3.0",
+    "tsx": "^4.23.12",
+    "typescript": "5.9.3"
+  }
+}

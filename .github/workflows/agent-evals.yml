@@ -1,0 +1,164 @@
+name: Tandem agent evals
+
+on:
+  pull_request:
+    paths:
+      - "skills/**"
+      - ".github/copilot-instructions.md"
+      - "src/**"
+      - "development/**"
+      - "scripts/**"
+      - "tests/**"
+      - ".github/workflows/**"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig*.json"
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Explicit Copilot model ID (paid calls require this opt-in)"
+        required: true
+        type: string
+      max_cases:
+        description: "Maximum fixture cases to call (1-6)"
+        required: true
+        type: string
+      timeout_seconds:
+        description: "Timeout per case in seconds, including CLI startup"
+        required: true
+        type: string
+      max_ai_credits:
+        description: "Observed-usage AI-credit soft ceiling across cases; in-flight costs can exceed it"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  public-install:
+    name: Clean public install (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install both locked dependency trees without credentials or a warm cache
+        shell: pwsh
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $directory = Join-Path $env:RUNNER_TEMP 'tandem-public-install'
+          New-Item -ItemType Directory -Path $directory -ErrorAction Stop | Out-Null
+          Get-ChildItem Env: | Where-Object { $_.Name -match '^(NPM_CONFIG_|NODE_AUTH_TOKEN$|NPM_TOKEN$|GH_TOKEN$|GITHUB_TOKEN$|COPILOT_GITHUB_TOKEN$)' } |
+            ForEach-Object { Remove-Item "Env:$($_.Name)" }
+          $env:NPM_CONFIG_USERCONFIG = Join-Path $directory 'user.npmrc'
+          $env:NPM_CONFIG_GLOBALCONFIG = Join-Path $directory 'global.npmrc'
+          New-Item -ItemType File -Path $env:NPM_CONFIG_USERCONFIG, $env:NPM_CONFIG_GLOBALCONFIG | Out-Null
+          $env:NPM_CONFIG_CACHE = Join-Path $directory 'cache'
+          $env:NPM_CONFIG_REGISTRY = 'https://registry.npmjs.org/'
+          $env:NPM_CONFIG_STRICT_SSL = 'true'
+          $env:NPM_CONFIG_IGNORE_SCRIPTS = 'false'
+          foreach ($path in @('.npmrc', 'development\tandem\.npmrc', 'node_modules', 'development\tandem\node_modules', $env:NPM_CONFIG_CACHE)) {
+            if (Test-Path -LiteralPath $path) { throw "Clean-install precondition failed: $path already exists." }
+          }
+          $receipt = Join-Path $directory 'receipt.md'
+          @(
+            '# Cache-isolated unauthenticated Windows install'
+            "Checked-out commit: $env:GITHUB_SHA"
+            "PR head: $env:PR_HEAD_SHA"
+            "Node: $(node --version); npm: $(npm --version)"
+            'Registry: https://registry.npmjs.org/; user/global config empty; initial cache absent.'
+            'Lockfile resolved URLs retained; TLS verification enabled; lifecycle scripts enabled.'
+          ) | Set-Content -LiteralPath $receipt
+          $failed = $false
+          foreach ($target in @(@{ Name = 'root'; Path = '.' }, @{ Name = 'development'; Path = 'development\tandem' })) {
+            npm --prefix $target.Path ci --foreground-scripts --ignore-scripts=false --no-audit --no-fund 2>&1 |
+              Tee-Object -FilePath (Join-Path $directory "$($target.Name).log")
+            $code = $LASTEXITCODE
+            "$($target.Name) npm ci exit code: $code" | Add-Content -LiteralPath $receipt
+            if ($code -ne 0) { $failed = $true }
+          }
+          Get-Content -LiteralPath $receipt | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+          if ($failed) { throw 'At least one clean public dependency installation failed; see retained install logs.' }
+      - name: Retain install output and candidate receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-install-windows-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/tandem-public-install/receipt.md
+            ${{ runner.temp }}/tandem-public-install/root.log
+            ${{ runner.temp }}/tandem-public-install/development.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  deterministic:
+    name: Deterministic behavioral-eval harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci && npm --prefix development/tandem ci && npm run check && npm test
+      - name: Verify the extracted extension ZIP
+        run: npm run pack && node --import tsx --test tests/payload.test.ts
+        env:
+          TANDEM_PACKAGED_ZIP: dist/tandem-extension.zip
+          TANDEM_PACKAGED_EXTENSION: .github/extensions/tandem/extension.mjs
+      - name: Validate fixture inventory without model calls
+        run: npm run eval
+
+  # Live PR automation is deliberately not enabled: same-repo branches can still
+  # contain unreviewed code. Configure a protected copilot-evals environment with
+  # required reviewers and a COPILOT_EVAL_TOKEN secret before manually dispatching.
+  # Only the default branch can receive this secret. No pull_request_target,
+  # scheduled paid calls, or secrets available to fork PRs.
+  live:
+    name: Opt-in live planning probes
+    if: github.event_name == 'workflow_dispatch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    needs: deterministic
+    environment: copilot-evals
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      # npm ci restores the SDK and its bundled CLI from package-lock.json.
+      # The SDK resolves that local runtime; do not install a drifting global CLI.
+      - name: Run live probes with an observed-usage soft budget
+        shell: bash
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_EVAL_TOKEN }}
+          EVAL_MODEL: ${{ inputs.model }}
+          EVAL_MAX_CASES: ${{ inputs.max_cases }}
+          EVAL_TIMEOUT_SECONDS: ${{ inputs.timeout_seconds }}
+          EVAL_MAX_AI_CREDITS: ${{ inputs.max_ai_credits }}
+        run: |
+          args=(--live --model "$EVAL_MODEL" --max-cases "$EVAL_MAX_CASES" --timeout-seconds "$EVAL_TIMEOUT_SECONDS" --max-ai-credits "$EVAL_MAX_AI_CREDITS")
+          npm run eval -- "${args[@]}"
+      - name: Retain reports, including behavioral or infrastructure failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tandem-agent-evals-${{ github.run_id }}
+          path: .tandem/evals/*.json
+          if-no-files-found: warn
+          retention-days: 14
