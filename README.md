@@ -9,6 +9,12 @@
 
 **You and Copilot, thinking together before building.**
 
+## News
+
+- **2026-10-29:** We are releasing **Tandem 0.0.16** today.
+
+## Overview
+
 ![Original illustration of a person and Copilot discussing a user journey, interface sketch and technical flow on a shared whiteboard.](docs/images/tandem-vision.svg)
 
 Tandem is a collaborative workspace for turning ideas and existing code into
@@ -197,25 +203,22 @@ for service data handling.
 ## License
 
 [MIT](LICENSE.txt). Bundled third-party components retain their own licenses.
-
-### Third-party code
-
-The repository includes offline renderer bundles built from Mermaid, marked,
-Ajv, parse5, css-tree and jpeg-js, with their transitive components, in
-`development/tandem/public/artifacts/vendor`. Their notices are recorded in
-[LICENSES.json](development/tandem/public/artifacts/vendor/LICENSES.json);
-the generated extension carries copies under
-`.github/extensions/tandem/stage2/public/artifacts/vendor`.
-The [Chat UI DSL snapshot](src/vendor/ui-dsl/source.json) under
-`src/vendor/ui-dsl` includes Lucide icons with their
-[license](src/vendor/ui-dsl/lucide-LICENSE).
-Builds also bundle npm dependencies for the UI and host, including React,
-Radix UI, Lucide and proper-lockfile, preserving notices in the generated
-JavaScript. The manifests and lockfiles describe installed
-dependencies separately from these checked-in bundles. Standalone distributions
-install the Copilot CLI/SDK and other runtime dependencies under their own
-licenses; the desktop distribution also includes Node.js and its license.
+See the [renderer bundle notices](development/tandem/public/artifacts/vendor/LICENSES.json),
+the [Lucide license](src/vendor/ui-dsl/lucide-LICENSE), and the notices included
+in generated bundles and distributions.
 
 ## Trademarks
 
 This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft trademarks or logos is subject to and must follow [Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks/usage/general). Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship. Any use of third-party trademarks or logos are subject to those third-party's policies.
+
+## Citation
+
+To cite this repository, use the following BibTeX entry. Identify the version or
+commit you used alongside the citation so readers can find the same source.
+
+```bibtex
+@misc{tandem,
+  title = {Tandem},
+  url = {https://github.com/microsoft/Tandem}
+}
+```
