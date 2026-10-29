@@ -567,7 +567,7 @@ function Workspace(props: WorkspaceProps) {
             status={{ text: `${statusBarText} | ${selectionLabel}`, error: Boolean(statusBarError), action: nextAction?.label ?? null }}
             showNextAction={showNextAction} onHostedChange={setHosting} />
           <nav className="project-navigation" aria-label="Project navigation">
-            <Button variant="item" id="project-settings" type="button" className="plan-button" onClick={() => projectView.command("settings")}>Project settings</Button>
+            <Button variant="secondary" id="project-settings" type="button" className="plan-button" onClick={() => projectView.command("settings")}>Project settings</Button>
             <Tabs.List id="project-contents" className="preview-tabs project-tabs" aria-label="Project contents">
               {stageTabs.map(tab => {
                 const skipped = skippedStage(state, tab.stage);
@@ -598,7 +598,7 @@ function Workspace(props: WorkspaceProps) {
                 {tab.stage === "prototype" && state.prototypeFlow?.pendingCheckpointId && <span className="artifact-count">Ready to inspect</span>}
               </Tabs.Trigger>; })}
             </Tabs.List>
-            <Button variant="item" id="project-current-work" type="button" className="plan-button"
+            <Button variant="secondary" id="project-current-work" type="button" className="plan-button"
               aria-label={projectView.developmentEntered ? `Current work: Development ${projectView.status}` : "Current work"}
               onClick={() => projectView.command("current-work")}>
               Current work{projectView.attention ? ` (${projectView.attention} needs attention)` : ""}

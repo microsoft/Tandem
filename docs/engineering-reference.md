@@ -1089,6 +1089,16 @@ shows main; Development shows private; unopened private state says not started.
 Missing effective effort is labeled native default/not reported. The standalone
 native conversation header and integrated host status area preserve the same distinction.
 
+The standalone browser footer right-aligns the current application's status,
+model/effort readout and Go to action control. Routine host readiness is hidden
+only while connected to a ready host with a current, validated application
+status. Host `statusKind` distinguishes that readiness from backend messages
+(including expired-consent diagnostics), without matching English text.
+Startup, shutdown, errors, connection loss and missing/legacy application status
+retain host feedback. Reload and generation changes still invalidate the
+application header through its existing channel. Exit instructions remain in
+About and the CLI, not the footer; Stop still requires confirmation.
+
 Standalone startup makes an unselected main model concrete before opening the
 project: it reads the owning native catalog, selects its preferred available
 model through the idle-checked native API, and requires matching readback.

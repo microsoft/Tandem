@@ -37,11 +37,11 @@ html, body, #root { height: 100%; margin: 0; padding: 0; overflow: hidden; }
 .host-notice-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
 .host-status { display: flex; flex: none; align-items: center; gap: 12px; height: 28px; min-height: 28px; padding: 2px 10px; border-top: 1px solid var(--studio-border); background: var(--studio-panel); font-size: 11px; color: var(--studio-muted); }
 .host-status-state { flex: none; max-width: 35%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.host-application-status { display: flex; flex: 1; align-items: center; gap: 6px; min-width: 0; }
-.host-application-status > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.host-status-state:only-child { max-width: 100%; }
+.host-application-status { display: flex; flex: 0 1 auto; align-items: center; gap: 6px; min-width: 0; margin-inline-start: auto; }
+.host-application-status > span { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .host-application-status[data-status="error"] > span { color: var(--studio-danger); }
 .host-shell .host-status-action { flex: none; width: 24px; height: 24px; min-height: 24px; padding: 0; border: 0; border-radius: 3px; background: transparent; }
-.host-status-hint { flex: none; margin-inline-start: auto; white-space: nowrap; }
 .host-banner { padding: 8px 12px; border-bottom: 1px solid var(--studio-border); max-height: 20vh; overflow: auto; overflow-wrap: anywhere; white-space: pre-wrap; }
 .host-error { color: var(--studio-danger); white-space: pre-wrap; overflow-wrap: anywhere; }
 .host-banner.host-error { background: var(--studio-danger-soft); }
@@ -76,7 +76,6 @@ html, body, #root { height: 100%; margin: 0; padding: 0; overflow: hidden; }
   .host-header { gap: 8px; padding-inline: 8px; }
   .host-workspace, .host-version, .host-lifecycle { display: none; }
   .host-header-actions { gap: 4px; }
-  .host-status-hint { display: none; }
   .host-notice { padding: 24px 16px; }
 }
 @media (pointer: coarse) {

@@ -51,7 +51,7 @@ export async function createBrowserHost(options: BrowserHostOptions) {
     const clients = new Set<ServerResponse>();
     const state: HostSnapshot = {
         revision: 0, generation: randomUUID(), version: options.version, phase: "idle",
-        workspace: null, sessionId: null, canvasUrl: null, status: "Open a workspace to begin.",
+        workspace: null, sessionId: null, canvasUrl: null, status: "Open a workspace to begin.", statusKind: "message",
         error: null, notice: null, warning: null, permissionMode: "ask", requests: [], recentWorkspaces: [],
     };
     let backend: Backend | undefined;
@@ -88,6 +88,7 @@ export async function createBrowserHost(options: BrowserHostOptions) {
         state.requests = [];
         replying.clear();
         state.status = "The workspace needs attention.";
+        state.statusKind = "message";
         diagnostics.write(message);
         publish();
     };
@@ -121,7 +122,10 @@ export async function createBrowserHost(options: BrowserHostOptions) {
     const receive = (event: DesktopEvent, generation: string) => {
         if (generation !== state.generation || closing || state.phase === "stopping" || state.phase === "error") return;
         switch (event.type) {
-            case "status": state.status = redactDiagnostic(event.message); break;
+            case "status":
+                state.status = redactDiagnostic(event.message);
+                state.statusKind = "message";
+                break;
             case "error":
                 if (state.phase !== "ready") { fail(event.message); return; }
                 if (event.notificationId) {
@@ -164,6 +168,7 @@ export async function createBrowserHost(options: BrowserHostOptions) {
                     state.sessionId = event.sessionId;
                     state.phase = "ready";
                     state.status = "Ready";
+                    state.statusKind = "ready";
                     state.error = null;
                     clearTimeout(startupTimer);
                 } catch (error) { fail(errorMessage(error)); return; }
@@ -182,6 +187,7 @@ export async function createBrowserHost(options: BrowserHostOptions) {
             clearTimeout(startupTimer);
             state.phase = "stopping";
             state.status = "Stopping the previous workspace...";
+            state.statusKind = "message";
             state.canvasUrl = null;
             state.requests = [];
             replying.clear();
@@ -193,7 +199,7 @@ export async function createBrowserHost(options: BrowserHostOptions) {
             acknowledgedNotices.clear();
             const generation = state.generation;
             Object.assign(state, { workspace, phase: "starting", sessionId: null, permissionMode: "ask",
-                status: "Starting the independent Copilot runtime...", error: null, notice: null });
+                status: "Starting the independent Copilot runtime...", statusKind: "message", error: null, notice: null });
             modeReported = false;
             await diagnostics.setWorkspace(workspace);
             diagnostics.write(`Starting Tandem browser host ${options.version}.`);
@@ -365,6 +371,7 @@ export async function createBrowserHost(options: BrowserHostOptions) {
         clearTimeout(startupTimer);
         state.phase = "stopping";
         state.status = "Stopping Tandem...";
+        state.statusKind = "message";
         state.canvasUrl = null;
         state.requests = [];
         publish();
@@ -374,6 +381,7 @@ export async function createBrowserHost(options: BrowserHostOptions) {
             backend = undefined;
             state.phase = "stopped";
             state.status = "Tandem stopped. You can close this tab.";
+            state.statusKind = "message";
             publish();
         } catch (error) {
             fail(`Shutdown failed: ${errorMessage(error)}`);

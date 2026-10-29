@@ -151,7 +151,9 @@ test("startup permissions survive state/SSE reconnect and closing a tab never st
 
 test("native expired-consent events remove only that browser prompt and reject late approval", async (t) => {
     const f = await fixture(t);
+    assert.equal(f.host.snapshot().statusKind, "message");
     f.ready();
+    assert.equal(f.host.snapshot().statusKind, "ready");
     f.event(permission("cancelled-worker"));
     f.event(permission("independent-worker"));
     f.event(parseBackendEvent({ type: "permission-resolved", id: "cancelled-worker" }));
@@ -159,6 +161,9 @@ test("native expired-consent events remove only that browser prompt and reject l
     const state = await f.request("host/state").then(response => response.json());
     assert.deepEqual(state.requests.map(request => request.id), ["independent-worker"]);
     assert.match(state.status, /consent was dismissed/);
+    assert.equal(state.statusKind, "message", "Post-startup backend diagnostics are not routine readiness.");
+    f.ready();
+    assert.equal(f.host.snapshot().statusKind, "message", "Duplicate readiness must not erase a newer diagnostic.");
     assert.equal((await f.command({ type: "permission-response", id: "cancelled-worker", approved: true, allowAllForSession: true })).status, 409);
     assert.equal(f.backends[0].commands.length, 0);
     assert.equal((await f.command({ type: "permission-response", id: "independent-worker", approved: true })).status, 202);
