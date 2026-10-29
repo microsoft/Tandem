@@ -159,6 +159,14 @@ export function Dialog({ open, onOpenChange, title, description, trigger, footer
 
 const statusIcons = { info: Info, success: CircleCheck, warning: CircleAlert, danger: CircleX };
 
+export interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
+  tone?: "neutral" | keyof typeof statusIcons;
+}
+
+export function Badge({ tone = "neutral", className = "", ...props }: BadgeProps) {
+  return <span {...props} className={`tandem-badge ${className}`.trim()} data-tone={tone} />;
+}
+
 export interface StatusProps extends HTMLAttributes<HTMLParagraphElement> {
   tone?: keyof typeof statusIcons;
   busy?: boolean;

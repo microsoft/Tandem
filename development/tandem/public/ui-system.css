@@ -182,6 +182,18 @@ textarea.tandem-input, :where(.human-app) textarea { min-height: var(--studio-co
 }
 .tandem-tooltip p { margin: var(--studio-space-1) 0; }
 
+.tandem-badge {
+  display: inline-flex; align-items: center; flex: none; max-width: 100%; box-sizing: border-box;
+  padding: 0 var(--studio-space-1); border: 1px solid var(--studio-border); border-radius: var(--studio-radius-control);
+  background: var(--studio-section); color: var(--studio-muted);
+  font: 400 var(--studio-text-small)/var(--studio-control-line-height) var(--studio-font-family);
+  text-transform: capitalize; overflow-wrap: anywhere;
+}
+.tandem-badge[data-tone="info"] { color: var(--studio-accent-strong); background: var(--studio-accent-soft); }
+.tandem-badge[data-tone="success"] { color: var(--studio-success); background: var(--studio-success-soft); }
+.tandem-badge[data-tone="warning"] { color: var(--studio-warning); background: var(--studio-warning-soft); }
+.tandem-badge[data-tone="danger"] { color: var(--studio-danger); background: var(--studio-danger-soft); }
+
 .tandem-status {
   display: flex; align-items: flex-start; gap: var(--studio-control-gap);
   margin: var(--studio-space-2) 0; color: var(--studio-muted); line-height: var(--studio-line-height);
@@ -204,13 +216,14 @@ textarea.tandem-input, :where(.human-app) textarea { min-height: var(--studio-co
   border-color: var(--studio-focus);
   outline: none;
 }
+.tandem-input[aria-invalid="true"]:focus, :where(.human-app) :is(input, textarea, select)[aria-invalid="true"]:focus { border-color: var(--studio-danger); }
 .tandem-tab:focus-visible { outline-offset: calc(-1 * var(--studio-focus-width) - 1px); }
-.tandem-button[hidden], .tandem-field[hidden], .tandem-status[hidden], .tandem-tab[hidden], .tandem-tab-bar[hidden],
+.tandem-button[hidden], .tandem-field[hidden], .tandem-status[hidden], .tandem-badge[hidden], .tandem-tab[hidden], .tandem-tab-bar[hidden],
 .tandem-tab-list[hidden], .tandem-toggle[hidden], .tandem-disclosure[hidden] { display: none; }
 .tandem-spin { animation: tandem-spin 1.2s linear infinite; }
 @keyframes tandem-spin { to { transform: rotate(360deg); } }
 @media (pointer: coarse) {
-  .tandem-button, :where(.human-app) button { --tandem-button-height: var(--studio-touch-target); min-width: var(--studio-touch-target); }
+  .tandem-button, .tandem-toggle, :where(.human-app) button { --tandem-button-height: var(--studio-touch-target); min-width: var(--studio-touch-target); }
   .tandem-button[data-size] { --tandem-button-height: var(--studio-touch-target); }
   .tandem-input, .tandem-tab, .tandem-toggle, :where(.human-app) :is(input, textarea, select) { min-height: var(--studio-touch-target); }
   .tandem-tab { min-width: var(--studio-touch-target); }

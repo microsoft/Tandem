@@ -58,7 +58,16 @@ export const Select: Story = {
   args: { label: "Preview size", description: "This sample does not change the running app.",
     children: control => <SelectControl {...control} defaultValue="desktop"><option value="desktop">Desktop</option><option value="mobile">Mobile</option></SelectControl> },
 };
-export const Error: Story = { args: { error: "Enter a project name before continuing." } };
+export const Error: Story = {
+  args: { error: "Enter a project name before continuing." },
+  play: async ({ canvas, userEvent }) => {
+    const input = canvas.getByLabelText("Project name"), border = getComputedStyle(input).borderColor;
+    await userEvent.click(input);
+    await expect(input).toHaveFocus();
+    await expect(getComputedStyle(input).borderColor).toBe(border);
+    await expect(canvas.getByRole("alert")).toBeVisible();
+  },
+};
 export const Disabled: Story = { args: { children: control => <Input {...control} value="Weekend planner" disabled readOnly /> } };
 export const LongContent: Story = {
   args: { label: "Project name shown in the navigation and saved review history",

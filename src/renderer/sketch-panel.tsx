@@ -1,11 +1,11 @@
-import { Button, Disclosure, IconButton, Input, Select, Textarea, ToggleGroup } from "./ui/index.js";
+import { Button, Disclosure, FormField, IconButton, Input, Select, Textarea, ToggleGroup } from "./ui/index.js";
 import {
   createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState,
   type KeyboardEvent, type ReactNode,
 } from "react";
 
 import {
-  Check, CircleAlert, Clock, Hand, History, LoaderCircle, Monitor, MousePointer2, Plus, Redo2, RefreshCw, Save, Send, Sparkles, Trash2, Undo2, Workflow,
+  Check, ChevronRight, CircleAlert, Clock, Hand, History, LoaderCircle, Monitor, MousePointer2, Plus, Redo2, RefreshCw, Save, Send, Sparkles, Trash2, Undo2, Workflow, X,
 } from "lucide-react";
 import { hasScreenContent, sketchApprovalScope, sketchFidelity, sketchNeedsRequirementsUpdate, validateSketchDocument } from "../sketch.js";
 import type { DslSketchDocument, DslSketchScreen, SketchRevision, SketchState, SketchTransition } from "../sketch.js";
@@ -665,6 +665,19 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
     }
   }
 
+  function closeSidePane(element: HTMLElement) {
+    const trigger = element.ownerDocument.getElementById(`sketch-toggle-${sidePane}`);
+    setSidePane("");
+    trigger?.focus();
+  }
+
+  function sidePaneKeydown(event: KeyboardEvent<HTMLElement>) {
+    if (event.key !== "Escape" || event.defaultPrevented || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    event.stopPropagation();
+    closeSidePane(event.currentTarget);
+  }
+
   const status = skipped ? "Designs disabled: " + skipped.reason
     : stoppedPreview ? "Generation stopped. Generated pages and content are retained as an incomplete preview, not saved or approved. Retry generation or reload saved designs."
     : incoming.preview && previewKey !== dismissedPreview ? dirty
@@ -781,42 +794,52 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
         : "No UI views yet. Generate designs to begin."}</p>
     <div id="sketch-workspace" className="sketch-workspace" hidden={!screen}>
       <aside className="sketch-sidebar" aria-label="Design screens and properties">
-        <h3>Screens</h3>
-        <nav id="sketch-screens" className="sketch-list" aria-label="Screens">
-          {document?.screens.map((item) => {
-            const progress = screenStatus(item);
-            return <Button variant="item" key={item.id} type="button"
-              data-ui-key={`sketch-screen:${item.id}`} aria-pressed={item.id === screen?.id}
-              data-screen-status={progress ?? undefined}
-              onClick={() => setSelectedScreen(item.id)}>
-              {progress ? <ScreenStatusIcon status={progress} /> : <Monitor size={15} aria-hidden="true" />}
-              <span className="sketch-screen-label"><span>{item.title || item.id}</span>
-                {progress && <small>{screenStatusLabels[progress]}</small>}
-              </span>
-            </Button>;
-          })}
-        </nav>
-        <Disclosure className="sketch-screen-details">
-          <summary>Screen details</summary>
-          <label htmlFor="sketch-title">Screen title</label>
-          <Input id="sketch-title" maxLength={500} disabled={!writable || !screen}
-            value={fieldValue(screenFieldKey("title"), screen?.title)} aria-invalid={fieldInvalid(screenFieldKey("title"))}
-            onChange={(event) => editScreen((item) => { item.title = event.target.value; }, { key: screenFieldKey("title"), value: event.target.value })} />
-          {(["purpose", "notes"] as const).map((field) => <div key={field}>
-            <label htmlFor={`sketch-${field}`}>{field === "purpose" ? "Purpose" : "Notes"}</label>
-            <Textarea id={`sketch-${field}`} rows={2} maxLength={field === "purpose" ? 500 : 4000}
-              disabled={!writable || !screen} value={fieldValue(screenFieldKey(field), screen?.[field])}
-              aria-invalid={fieldInvalid(screenFieldKey(field))}
-              onChange={(event) => editScreen((item) => { item[field] = event.target.value; }, { key: screenFieldKey(field), value: event.target.value })} />
-          </div>)}
-          <label htmlFor="sketch-decisions">Requirement decision IDs</label>
-          <Input id="sketch-decisions" placeholder="Comma-separated IDs" disabled={!writable || !screen}
-            value={fieldValue(screenFieldKey("decisions"), screen?.decisionIds.join(", "))}
-            aria-invalid={fieldInvalid(screenFieldKey("decisions"))}
-            onBlur={() => finishField(screenFieldKey("decisions"))}
-            onChange={(event) => editScreen((item) => {
-              item.decisionIds = event.target.value.split(",").map((id) => id.trim()).filter(Boolean);
-            }, { key: screenFieldKey("decisions"), value: event.target.value, keepInput: true })} />
+        <section className="sketch-pane sketch-screens-pane" aria-labelledby="sketch-screens-heading">
+          <h3 id="sketch-screens-heading" className="sketch-pane-heading">
+            <span>Screens</span><span className="section-count">{document?.screens.length ?? 0}</span>
+          </h3>
+          <nav id="sketch-screens" className="sketch-list sketch-pane-body" aria-label="Screens">
+            {document?.screens.map((item) => {
+              const progress = screenStatus(item);
+              return <Button variant="item" key={item.id} type="button"
+                data-ui-key={`sketch-screen:${item.id}`} aria-pressed={item.id === screen?.id}
+                data-screen-status={progress ?? undefined}
+                onClick={() => setSelectedScreen(item.id)}>
+                {progress ? <ScreenStatusIcon status={progress} /> : <Monitor size={15} aria-hidden="true" />}
+                <span className="sketch-screen-label"><span>{item.title || item.id}</span>
+                  {progress && <small>{screenStatusLabels[progress]}</small>}
+                </span>
+              </Button>;
+            })}
+          </nav>
+        </section>
+        <Disclosure className="sketch-pane sketch-screen-details">
+          <summary className="sketch-pane-heading">
+            <ChevronRight className="sketch-pane-chevron" size={14} aria-hidden="true" /><span>Screen details</span>
+          </summary>
+          <div className="sketch-pane-body sketch-screen-fields">
+            <FormField id="sketch-title" label="Screen title" error={drafts[screenFieldKey("title")]?.error}>
+              {control => <Input {...control} maxLength={500} disabled={!writable || !screen}
+                value={fieldValue(screenFieldKey("title"), screen?.title)} aria-invalid={fieldInvalid(screenFieldKey("title"))}
+                onChange={(event) => editScreen((item) => { item.title = event.target.value; }, { key: screenFieldKey("title"), value: event.target.value })} />}
+            </FormField>
+            {(["purpose", "notes"] as const).map((field) => <FormField key={field} id={`sketch-${field}`}
+              label={field === "purpose" ? "Purpose" : "Notes"} error={drafts[screenFieldKey(field)]?.error}>
+              {control => <Textarea {...control} rows={3} maxLength={field === "purpose" ? 500 : 4000}
+                disabled={!writable || !screen} value={fieldValue(screenFieldKey(field), screen?.[field])}
+                aria-invalid={fieldInvalid(screenFieldKey(field))}
+                onChange={(event) => editScreen((item) => { item[field] = event.target.value; }, { key: screenFieldKey(field), value: event.target.value })} />}
+            </FormField>)}
+            <FormField id="sketch-decisions" label="Requirement decision IDs" error={drafts[screenFieldKey("decisions")]?.error}>
+              {control => <Input {...control} placeholder="Comma-separated IDs" disabled={!writable || !screen}
+                value={fieldValue(screenFieldKey("decisions"), screen?.decisionIds.join(", "))}
+                aria-invalid={fieldInvalid(screenFieldKey("decisions"))}
+                onBlur={() => finishField(screenFieldKey("decisions"))}
+                onChange={(event) => editScreen((item) => {
+                  item.decisionIds = event.target.value.split(",").map((id) => id.trim()).filter(Boolean);
+                }, { key: screenFieldKey("decisions"), value: event.target.value, keepInput: true })} />}
+            </FormField>
+          </div>
         </Disclosure>
         {screen && <DslStructure key={JSON.stringify([selectionKey, screen.id])}
           screen={screen} selectedId={selectedNodeId} onSelect={selectElement} />}
@@ -896,49 +919,68 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
               </div>}
           </div>
         </SketchViewport>
-        <aside id="sketch-screen-transitions" className="sketch-side-pane" aria-label="Screen transitions" hidden={sidePane !== "transitions"}>
-      <h3>Screen transitions</h3>
-      <div id="sketch-transitions">
-        {document?.transitions.map((transition) => <div key={transition.id} className="sketch-transition">
-          {(["fromScreenId", "toScreenId", "trigger", "description"] as const).map((field) => {
-            const fieldKey = `transition:${transition.id}:${field}`;
-            const change = (value: string) => edit((draft) => {
-              draft.transitions.find((item) => item.id === transition.id)![field] = value;
-            }, { key: fieldKey, value });
-            const props = {
-              disabled: !writable, "data-ui-key": `sketch-transition:${transition.id}:${field}`,
-              value: fieldValue(fieldKey, transition[field]), "aria-invalid": fieldInvalid(fieldKey),
-              onChange: (event: { target: { value: string } }) => change(event.target.value),
-            };
-            return <label key={field}>{({ fromScreenId: "From", toScreenId: "To", trigger: "Trigger", description: "Description" } satisfies Record<Exclude<keyof SketchTransition, "id">, string>)[field]}
-              {field === "fromScreenId" || field === "toScreenId"
-                ? <Select {...props}>{document.screens.map((item) => <option key={item.id} value={item.id}>{item.title || item.id}</option>)}</Select>
-                : <Input {...props} maxLength={500} />}
-            </label>;
-          })}
-          <Button variant="secondary" type="button" disabled={!writable} onClick={() => {
-            if (edit((draft) => { draft.transitions = draft.transitions.filter((item) => item.id !== transition.id); })) {
-              updateDrafts(Object.fromEntries(Object.entries(draftsRef.current).filter(([key]) => !key.startsWith(`transition:${transition.id}:`))));
-            }
-          }}><Trash2 size={14} aria-hidden="true" /> Remove transition</Button>
-        </div>)}
-      </div>
-      <Button variant="secondary" id="sketch-add-transition" type="button" disabled={!writable || !screen || (document?.transitions.length ?? 0) >= 40}
-        onClick={() => edit((draft) => {
-          draft.transitions.push({
-            id: nextId("transition", draft.transitions.map((item) => item.id)),
-            fromScreenId: screen!.id, toScreenId: draft.screens.find((item) => item.id !== screen!.id)?.id ?? screen!.id,
-            trigger: "Continue", description: "",
-          });
-        })}><Plus size={14} aria-hidden="true" /> Add transition</Button>
+        <aside id="sketch-screen-transitions" className="sketch-pane sketch-side-pane" aria-labelledby="sketch-transitions-heading"
+          hidden={sidePane !== "transitions"} onKeyDown={sidePaneKeydown}>
+          <div className="sketch-pane-heading">
+            <h3 id="sketch-transitions-heading">Screen transitions</h3>
+            <IconButton variant="ghost" size="small" aria-label="Close screen transitions" onClick={event => closeSidePane(event.currentTarget)}>
+              <X size={14} aria-hidden="true" />
+            </IconButton>
+          </div>
+          <div className="sketch-pane-body">
+            <div id="sketch-transitions">
+              {!document?.transitions.length && <p className="muted">No screen transitions yet.</p>}
+              {document?.transitions.map((transition) => <div key={transition.id} className="sketch-transition">
+                {(["fromScreenId", "toScreenId", "trigger", "description"] as const).map((field) => {
+                  const fieldKey = `transition:${transition.id}:${field}`;
+                  const change = (value: string) => edit((draft) => {
+                    draft.transitions.find((item) => item.id === transition.id)![field] = value;
+                  }, { key: fieldKey, value });
+                  const props = {
+                    disabled: !writable, "data-ui-key": `sketch-transition:${transition.id}:${field}`,
+                    value: fieldValue(fieldKey, transition[field]), "aria-invalid": fieldInvalid(fieldKey),
+                    onChange: (event: { target: { value: string } }) => change(event.target.value),
+                  };
+                  return <FormField key={field} id={`sketch-transition-${transition.id}-${field}`} error={drafts[fieldKey]?.error}
+                    label={({ fromScreenId: "From", toScreenId: "To", trigger: "Trigger", description: "Description" } satisfies Record<Exclude<keyof SketchTransition, "id">, string>)[field]}>
+                    {control => field === "fromScreenId" || field === "toScreenId"
+                      ? <Select {...control} {...props}>{document.screens.map((item) => <option key={item.id} value={item.id}>{item.title || item.id}</option>)}</Select>
+                      : <Input {...control} {...props} maxLength={500} />}
+                  </FormField>;
+                })}
+                <Button variant="secondary" type="button" disabled={!writable} onClick={() => {
+                  if (edit((draft) => { draft.transitions = draft.transitions.filter((item) => item.id !== transition.id); })) {
+                    updateDrafts(Object.fromEntries(Object.entries(draftsRef.current).filter(([key]) => !key.startsWith(`transition:${transition.id}:`))));
+                  }
+                }}><Trash2 size={14} aria-hidden="true" /> Remove transition</Button>
+              </div>)}
+            </div>
+            <Button variant="secondary" id="sketch-add-transition" type="button" disabled={!writable || !screen || (document?.transitions.length ?? 0) >= 40}
+              onClick={() => edit((draft) => {
+                draft.transitions.push({
+                  id: nextId("transition", draft.transitions.map((item) => item.id)),
+                  fromScreenId: screen!.id, toScreenId: draft.screens.find((item) => item.id !== screen!.id)?.id ?? screen!.id,
+                  trigger: "Continue", description: "",
+                });
+              })}><Plus size={14} aria-hidden="true" /> Add transition</Button>
+          </div>
         </aside>
-        <aside id="sketch-revision-history" className="sketch-side-pane" aria-label="Revision history" hidden={sidePane !== "history"}>
-          <h3>Revision history</h3>
-          <ul id="sketch-history" className="muted">{revisions.map((revision) => <li key={revision.id}>
-            {`Revision ${revision.number} · ${revision.source} · ${revision.createdAt}`}
-            {revision.id === state.sketch.approved?.revisionId ? " · approved" : ""}
-            {revision.id === state.sketch.current?.id ? " · current" : ""}
-          </li>)}</ul>
+        <aside id="sketch-revision-history" className="sketch-pane sketch-side-pane" aria-labelledby="sketch-history-heading"
+          hidden={sidePane !== "history"} onKeyDown={sidePaneKeydown}>
+          <div className="sketch-pane-heading">
+            <h3 id="sketch-history-heading">Revision history</h3>
+            <IconButton variant="ghost" size="small" aria-label="Close revision history" onClick={event => closeSidePane(event.currentTarget)}>
+              <X size={14} aria-hidden="true" />
+            </IconButton>
+          </div>
+          <div className="sketch-pane-body">
+            {!revisions.length && <p className="muted">No saved revisions yet.</p>}
+            <ul id="sketch-history" className="muted">{revisions.map((revision) => <li key={revision.id}>
+              {`Revision ${revision.number} · ${revision.source} · ${revision.createdAt}`}
+              {revision.id === state.sketch.approved?.revisionId ? " · approved" : ""}
+              {revision.id === state.sketch.current?.id ? " · current" : ""}
+            </li>)}</ul>
+          </div>
         </aside>
       </div>
     </div>
@@ -974,7 +1016,7 @@ export function SketchPanel({ renderApproval, renderReviewActions, onDraftApprov
       <label className="visually-hidden" htmlFor="sketch-instruction">Describe a design change</label>
       <Textarea submitOnEnter className="composer-input" id="sketch-instruction" rows={1} maxLength={4000} disabled={!writable || Boolean(requiredReview)}
         value={instruction} onChange={(event) => setInstruction(event.currentTarget.value)}
-        aria-describedby="sketch-focus sketch-status sketch-review-required"
+        aria-describedby="sketch-board-help sketch-status sketch-review-required"
         placeholder={wireframe ? "Change a layout, label or navigation path... (Enter to send)" : "Describe a design change... (Enter to send)"} />
       <Button variant="primary" id="sketch-revise" className="plan-button feedback-send" type="submit"
         title={requirementsChanged ? "Update designs from latest requirements before sending a revision." : "Send design revision (Enter)"}

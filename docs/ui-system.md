@@ -78,6 +78,7 @@ Storybook imports the same theme and component stylesheet directly.
 | `Tabs` | Styled Radix family, including `List` and `Trigger`. Use `Tabs.Bar` around substage lists for the shared flat surface, bottom divider and action spacing. Selected tabs use an inset bottom-edge accent, matching the sidebar's active left-edge treatment, rather than a separate underline. Put preview actions beside the list, not inside its keyboard navigation. Selection indicators, focus and horizontal overflow belong to the shared stylesheet. |
 | `ToggleGroup`, `RadioGroup`, `Tooltip` | Styled Radix families preserving native Radix keyboard and controlled-state behavior. Radio items support circular controls or `presentation="choice"` cards; icon toggles declare `iconOnly`. |
 | `Status` | Meaningful text plus a decorative semantic icon. `busy` adds a reduced-motion-aware spinner. No live region by default; explicitly use `role="status"` for updates or `role="alert"` for urgent errors. |
+| `Badge` | Compact inline status text with `neutral`, `info`, `success`, `warning` and `danger` tones. Always include a readable label; deferred work is neutral, not a failure. No live region or workflow behavior. |
 
 Compact composers expand only when their textarea receives focus and stay
 expanded for that mounted editor. Focusing a radio or action must not resize the
@@ -183,6 +184,30 @@ to the comparison. Keep genuine layout differences, such as the project sidebar,
 explicit in `tandem-layout`; do not flatten them into horizontal sub-tabs. The
 **Substage navigation** story covers completion, building, failure, locked items
 and long labels. These checks use synthetic local fixtures, not live project work.
+
+The Designs editor's Screens, Screen details, Structure, Screen transitions and
+Revision history use one pane treatment in `src\renderer\ui\layout.css`: matching surfaces,
+borders, headers, count badges and body insets. Keep native disclosures and their
+visible chevrons, inset keyboard focus, and independently scrolling lists and
+trees. Narrow layouts stack the inspector and canvas, and place optional panes
+below rather than over the canvas. Close and Escape return focus to the pane's
+toggle without discarding drafts. Screen and transition fields use `FormField`
+for local error messages; invalid borders remain visible while editing.
+The **Design inspector** story uses a synthetic component tree and no runtime.
+Rendered comparisons cover these production panes in both themes and narrow,
+wide and short windows, plus nested-label scrolling and 44px touch targets.
+
+Before Development, Preparation cards, Requirements intake/research and DAG
+headers, Designs inspector panes, and Prototype visual exploration share
+`tandem-pane`, `tandem-pane-heading` and `tandem-pane-body` in the upstream layout
+stylesheet. Existing `sketch-pane` names are aliases for the same treatment.
+Use the common surface, radius, compact semibold heading, divider and 8px body
+inset rather than separate stage-specific card styles. Stage workspaces also
+share the 8px outer inset. Keep stage-specific grids, disclosure behavior,
+scrolling and preview layouts; do not apply these rules inside generated
+designs, artifacts, prototype iframes or native Development.
+The **Pre-development panes** story documents this family. Rendered comparisons
+exercise the actual stage panels and status badges, not just catalogue mockups.
 
 Use `npm run build` and `npm run build:storybook` to verify the independent
 production and catalogue builds.

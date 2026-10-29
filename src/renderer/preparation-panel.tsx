@@ -1,4 +1,4 @@
-import { Button } from "./ui/index.js";
+import { Badge, Button } from "./ui/index.js";
 import { ExternalLink, RotateCcw } from "lucide-react";
 import type { PreparationState } from "../types.js";
 import { hasActiveJobs, useAction, useUi, type RuntimeSnapshot } from "./ui-context.js";
@@ -65,11 +65,12 @@ export function PreparationPanel() {
   }
 
   return <div>
-    {state.goal && !state.stageReview && <section className="preparation-stage-card preparation-brief" aria-labelledby="preparation-brief-title">
-      <h3 id="preparation-brief-title">Original project brief</h3><p id="goal" className="goal">{state.goal}</p>
+    {state.goal && !state.stageReview && <section className="preparation-stage-card preparation-brief tandem-pane" aria-labelledby="preparation-brief-title">
+      <h3 id="preparation-brief-title" className="tandem-pane-heading">Original project brief</h3>
+      <div className="tandem-pane-body"><p id="goal" className="goal">{state.goal}</p></div>
     </section>}
     <section className="preparation-stage-card">
-      <div className="preparation-stage-heading" aria-describedby="preparation-stage-progress">
+      <div className="preparation-stage-heading tandem-pane tandem-pane-heading" aria-describedby="preparation-stage-progress">
         <div>
           <p className="eyebrow">Environment preparation</p>
           <strong id="preparation-stage-title">
@@ -77,14 +78,17 @@ export function PreparationPanel() {
           </strong>
           <p id="preparation-stage-progress" className={preparing || preparation.status === "failed" ? "muted" : "visually-hidden"}>{progress}</p>
         </div>
-        <span id="preparation-stage-status" className="preparation-status" data-status={preparation.status}>
+        <Badge id="preparation-stage-status" data-status={preparation.status}
+          tone={preparation.status === "ready" ? "success" : preparation.status === "failed" ? "danger"
+            : preparation.status === "needs-attention" ? "warning" : preparing ? "info" : "neutral"}>
           {preparation.status.replace("-", " ")}
-        </span>
+        </Badge>
       </div>
       <div className="preparation-stage-grid">
         <div className="preparation-stage-main">
-          <section className="plan-section" aria-describedby="preparation-stage-message">
-            <h3>Work items</h3>
+          <section className="plan-section tandem-pane" aria-describedby="preparation-stage-message">
+            <h3 className="tandem-pane-heading">Work items</h3>
+            <div className="tandem-pane-body">
             <div id="preparation-work-items" className="implementation-list">
               {(preparation.workItems || []).map((workItem) => {
                 const live = liveByWorkItem.get(workItem.id);
@@ -92,7 +96,8 @@ export function PreparationPanel() {
                 return <div key={workItem.id} className="implementation-card" data-status={status}>
                   <div className="implementation-card-heading">
                     <strong>{workItem.title}</strong>
-                    <span className="implementation-badge">{status}</span>
+                    <Badge tone={status === "completed" ? "success" : status === "running" ? "info"
+                      : ["failed", "blocked", "cancelled"].includes(status) ? "danger" : "neutral"}>{status}</Badge>
                   </div>
                   <p className="implementation-meta">{workItem.detail}</p>
                   {(live?.activity || workItem.result) && <p>{live?.activity || workItem.result}</p>}
@@ -100,9 +105,11 @@ export function PreparationPanel() {
               })}
               {!preparation.workItems?.length && <p className="muted">No work items yet.</p>}
             </div>
+            </div>
           </section>
-          <section className="plan-section">
-            <h3>Results</h3>
+          <section className="plan-section tandem-pane">
+            <h3 className="tandem-pane-heading">Results</h3>
+            <div className="tandem-pane-body">
             <p id="preparation-result-summary" className={preparation.summary ? undefined : "muted"}>
               {preparation.summary || "No results yet."}
             </p>
@@ -114,7 +121,8 @@ export function PreparationPanel() {
             </div>
             <div id="preparation-result-checks" className="preparation-result-list">
               {(preparation.checks || []).map((check, index) => <div key={check.label + ":" + index} className="preparation-result-item" data-status={check.status}>
-                <strong>{check.label} · {check.status}</strong>
+                <strong>{check.label}{" "}<Badge tone={check.status === "ready" ? "success"
+                  : check.status === "missing" ? "warning" : "neutral"}>{check.status}</Badge></strong>
                 <span>{check.detail}</span>
               </div>)}
             </div>
@@ -130,11 +138,13 @@ export function PreparationPanel() {
                 {source.title} <ExternalLink size={14} aria-hidden="true" />
               </a>)}
             </div>
+            </div>
           </section>
         </div>
         <aside className="preparation-stage-sidebar">
-          <section className="plan-section">
-            <h3>Progress</h3>
+          <section className="plan-section tandem-pane">
+            <h3 className="tandem-pane-heading">Progress</h3>
+            <div className="tandem-pane-body">
             <div id="preparation-messages" className="implementation-events">
               {messages.map((message) => <div key={message.id} className="implementation-event" data-status={message.kind}>
                 <div className="implementation-event-heading">
@@ -161,6 +171,7 @@ export function PreparationPanel() {
               data-status={action.error || preparation.status === "failed" || runtime?.error ? "error" : "idle"}>
               {message}
             </p>
+            </div>
           </section>
         </aside>
       </div>

@@ -88,12 +88,14 @@ test("failed Preparation without an error never reports success", async (t) => {
     const value = state("prepare"); value.preparation.status = "failed";
     const h = await setup(t, value);
     assert.match(text(h, "preparation-stage-progress"), /stopped before completion/);
+    assert.equal(h.get("preparation-stage-status").dataset.tone, "danger");
 });
 
 test("Preparation runtime stays ordered and advances automatically to Requirements", async (t) => {
     const value = state("prepare"); value.preparation.status = "running";
     value.preparation.workItems = [{ id: "context", title: "Inspect context", status: "running", detail: "Read guidance" }];
     const h = await setup(t, value); h.render(value, 10);
+    assert.equal(h.get("preparation-stage-status").dataset.tone, "info");
     assert.equal(h.get("project-contents").querySelectorAll("[data-stage-id]").length, 5);
     assert.equal(text(h, "current-stage-index"), "1");
     assert.equal(disabled(h, "design-tree-tab"), true);

@@ -1,6 +1,6 @@
-import { Button, Disclosure, RadioGroup, Tabs, Textarea } from "./ui/index.js";
+import { Badge, Button, Disclosure, RadioGroup, Tabs, Textarea } from "./ui/index.js";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, Check, ChevronDown, CircleDot, ExternalLink, GitBranch, LoaderCircle, LockKeyhole, Plus, RefreshCw, Send, Sparkles } from "lucide-react";
+import { ArrowRight, Check, ChevronDown, ChevronRight, CircleDot, ExternalLink, GitBranch, LoaderCircle, LockKeyhole, Plus, RefreshCw, Send, Sparkles } from "lucide-react";
 import { Collapsible } from "radix-ui";
 import { buildDecisionGraphMermaid } from "../decision-diagram.js";
 import { decisionIsReady, requiresExplicitAnswer, type DecisionNode } from "../workflow.js";
@@ -519,8 +519,9 @@ export function RequirementsPanel({ reviewBaseline }: {
         </Tabs.Bar>
         <Tabs.Content id="requirements-usage-panel" value="usage" forceMount hidden={viewedSubstage !== "usage"}
             className="requirements-usage-panel" aria-labelledby="usage-substage">
-        <section id="requirements-substage-section" className="section requirements-intake-panel" aria-label="Requirements" aria-describedby="usage-message" data-substage={isUsage ? "usage" : "dag"}>
-            <div className="requirements-intake-heading"><p className="eyebrow"><GitBranch size={14} aria-hidden="true" />Requirements</p></div>
+        <section id="requirements-substage-section" className="section requirements-intake-panel tandem-pane" aria-label="Requirements" aria-describedby="usage-message" data-substage={isUsage ? "usage" : "dag"}>
+            <div className="requirements-intake-heading tandem-pane-heading"><p className="eyebrow"><GitBranch size={14} aria-hidden="true" />Requirements</p></div>
+            <div className="tandem-pane-body">
             <div id="usage-intake" className="usage-intake" hidden={!isUsage}>
                 <div className="usage-entry">
                 <h2 className="usage-title">What should this help you do?</h2>
@@ -605,14 +606,18 @@ export function RequirementsPanel({ reviewBaseline }: {
             </Button>}
             <p id="usage-message" className={usageError || dagFailed || activeAction || workerBusy || suggestionsLoading ? "usage-message" : "visually-hidden"} role={usageError || dagFailed ? "alert" : "status"} aria-live="polite"
                 data-status={usageError || dagFailed ? "error" : "idle"}>{usageMessage}</p>
+            </div>
         </section>
-        {research && <Disclosure id="requirements-research" className="section" open>
-            <summary>{researchIsCurrent ? "Research and sources" : "Earlier research and sources"}</summary>
+        {research && <Disclosure id="requirements-research" className="tandem-pane" open>
+            <summary className="tandem-pane-heading"><ChevronRight className="tandem-pane-chevron" size={14} aria-hidden="true" />
+                <span>{researchIsCurrent ? "Research and sources" : "Earlier research and sources"}</span></summary>
+            <div className="tandem-pane-body">
             {!researchIsCurrent && <p className="muted">These findings belong to earlier inputs and are retained for reference.</p>}
             <p>{research.summary}</p>
             {!!research.checks.length && <div className="preparation-result-list">
                 {research.checks.map((check, index) => <div className="preparation-result-item" key={`${index}:${check.label}`} data-status={check.status}>
-                    <strong>{check.label} · {check.status}</strong><span>{check.detail}</span>
+                    <strong>{check.label}{" "}<Badge tone={check.status === "ready" ? "success"
+                        : check.status === "missing" ? "warning" : "neutral"}>{check.status}</Badge></strong><span>{check.detail}</span>
                 </div>)}
             </div>}
             <div className="preparation-result-sources">
@@ -622,12 +627,13 @@ export function RequirementsPanel({ reviewBaseline }: {
                 </a>)}
                 {!research.sources.length && <p className="muted">No external sources recorded.</p>}
             </div>
+            </div>
         </Disclosure>}
         </Tabs.Content>
         <Tabs.Content id="requirements-dag-panel" value="dag" forceMount hidden={viewedSubstage !== "dag"}
             className="requirements-dag-panel" aria-labelledby="dag-substage">
-        <div id="design-tree-card" className="design-tree-card" hidden={!nodes.length}>
-            <div className="design-tree-heading">
+        <div id="design-tree-card" className="design-tree-card tandem-pane" hidden={!nodes.length}>
+            <div className="design-tree-heading tandem-pane-heading">
                 <div className="design-tree-location">
                     <p id="design-tree-current" className="eyebrow"><GitBranch size={14} aria-hidden="true" />{selected
                         ? `${selected.status === "active" ? "Active" : selected.status === "answered" ? "Answered"

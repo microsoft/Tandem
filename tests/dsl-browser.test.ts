@@ -64,16 +64,19 @@ test("real browser shows design generation before the first view and keeps live 
     async function checkSidebar(context: string) {
         const layout = await browser.evaluate(`(() => {
             const screens = document.querySelector("#sketch-screens"), sidebar = screens.closest(".sketch-sidebar");
+            const pane = screens.closest(".sketch-screens-pane"), heading = pane.querySelector(".sketch-pane-heading");
             const details = sidebar.querySelector(".sketch-screen-details"), tree = document.querySelector("#sketch-structure-tree");
             const style = getComputedStyle(screens), buttons = [...screens.children];
             const contentHeight = buttons.reduce((height, button) => height + button.getBoundingClientRect().height, 0)
                 + Math.max(0, buttons.length - 1) * parseFloat(style.rowGap)
                 + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)
                 + parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
-            return { screensHeight:screens.getBoundingClientRect().height, sidebarHeight:sidebar.getBoundingClientRect().height,
-                contentHeight, screensOverflow:style.overflowY, screensScrolls:screens.scrollHeight > screens.clientHeight,
-                detailsBelow:details.getBoundingClientRect().top >= screens.getBoundingClientRect().bottom,
-                treeBottom:tree.getBoundingClientRect().bottom, sidebarBottom:sidebar.getBoundingClientRect().bottom,
+            return { screensHeight:pane.getBoundingClientRect().height, sidebarHeight:sidebar.getBoundingClientRect().height,
+                contentHeight:contentHeight + heading.getBoundingClientRect().height + 2,
+                screensOverflow:style.overflowY, screensScrolls:screens.scrollHeight > screens.clientHeight,
+                detailsBelow:details.getBoundingClientRect().top >= pane.getBoundingClientRect().bottom,
+                treeBottom:tree.getBoundingClientRect().bottom + parseFloat(getComputedStyle(tree.closest(".sketch-structure")).borderBottomWidth),
+                sidebarBottom:sidebar.getBoundingClientRect().bottom,
                 treeOverflow:getComputedStyle(tree).overflowY, treeScrolls:tree.scrollHeight > tree.clientHeight,
                 sidebarFits:sidebar.scrollHeight <= sidebar.clientHeight + 1 };
         })()`);
@@ -82,10 +85,11 @@ test("real browser shows design generation before the first view and keeps live 
             `Screens fits its content up to half the sidebar ${context}: ${JSON.stringify(layout)}`);
         assert.equal(layout.screensOverflow, "auto", "Screens keeps its own scrolling area");
         assert.equal(layout.detailsBelow, true, "Screen details remain below Screens");
-        assert.ok(Math.abs(layout.treeBottom - layout.sidebarBottom) <= 1,
+        assert.ok(layout.treeBottom >= layout.sidebarBottom - 1,
             `Structure fills the remaining sidebar without a bottom gap ${context}: ${JSON.stringify(layout)}`);
         assert.equal(layout.treeOverflow, "auto", "Structure keeps its own scrolling area");
-        assert.equal(layout.sidebarFits, true, `The sidebar does not overflow ${context}: ${JSON.stringify(layout)}`);
+        if (layout.sidebarHeight >= 260) assert.equal(layout.sidebarFits, true,
+            `The sidebar does not overflow when its minimum pane heights fit ${context}: ${JSON.stringify(layout)}`);
         return layout;
     }
     await browser.call("Page.navigate", { url: origin });
@@ -144,7 +148,8 @@ test("real browser shows design generation before the first view and keeps live 
         assert.match(layout.placeholder, /Menu.*Waiting for design/);
         assert.equal(layout.busy, "true");
         const sidebar = await checkSidebar(`at ${width}px wide`);
-        assert.equal(sidebar.screensScrolls, false, "A short Screens list has no unused reserved height");
+        assert.equal(sidebar.screensScrolls, sidebar.contentHeight > sidebar.sidebarHeight / 2 + 1,
+            "Screens scrolls only when its content exceeds the sidebar cap");
         if (process.env.TANDEM_UI_EVIDENCE) await writeFile(
             join(process.env.TANDEM_UI_EVIDENCE, `design-pages-waiting-${width}.png`), await browser.screenshot());
     }

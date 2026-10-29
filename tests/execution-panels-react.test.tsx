@@ -114,7 +114,8 @@ test("React preparation shows runtime/results, and only explicitly retries edita
   };
   await h.update({ ...h.state, preparation });
   assert.match(h.element("#preparation-stage-progress").textContent!, /stopped before completion/);
-  assert.match(h.element("#preparation-result-checks").textContent!, /Workspace · missing/);
+  assert.match(h.element("#preparation-result-checks").textContent!, /Workspace missing/);
+  assert.equal(h.element("#preparation-result-checks .tandem-badge").dataset.tone, "warning");
   assert.match(h.element("#preparation-result-suggestions").textContent!, /Suggested requirement/);
   assert.equal(h.element<HTMLAnchorElement>("#preparation-result-sources a").rel, "noreferrer");
   h.setPost(async () => { throw new Error("Preparation unavailable"); });

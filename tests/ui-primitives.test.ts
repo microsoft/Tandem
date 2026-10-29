@@ -15,7 +15,7 @@ function compile() {
         import { createRoot } from "react-dom/client";
         import { flushSync } from "react-dom";
         import { History } from "lucide-react";
-        import { Button, Dialog, FormField, IconButton, Status, Textarea } from "./index.js";
+        import { Badge, Button, Dialog, FormField, IconButton, Status, Textarea } from "./index.js";
         export function mount() {
           const root = createRoot(document.getElementById("root"));
           const buttonRef = createRef(), iconRef = createRef();
@@ -60,6 +60,9 @@ function compile() {
               <Status id="success-status" tone="success">Changes saved.</Status>
               <Status id="warning-status" tone="warning">Review the changed source.</Status>
               <Status id="hidden-status" hidden>Hidden status</Status>
+              {["neutral", "info", "success", "warning", "danger"].map(tone =>
+                <Badge key={tone} id={tone + "-badge"} tone={tone} data-owner="fixture">{tone}</Badge>)}
+              <Badge id="hidden-badge" hidden>Hidden badge</Badge>
             </>;
           }
           return {
@@ -134,6 +137,20 @@ test("shared buttons preserve native form semantics, refs and explicit loading s
   await h.render({ disabled: true });
   assert.equal(h.element<HTMLButtonElement>("#action").disabled, true);
   assert.notEqual(h.element("#action").getAttribute("aria-busy"), "true");
+  assert.deepEqual(h.errors, []);
+});
+
+test("shared badges preserve readable tone labels and native attributes without implicit announcements", async t => {
+  const h = await fixture(t);
+  for (const tone of ["neutral", "info", "success", "warning", "danger"]) {
+    const badge = h.element(`#${tone}-badge`);
+    assert.equal(badge.tagName, "SPAN");
+    assert.equal(badge.dataset.tone, tone);
+    assert.equal(badge.dataset.owner, "fixture");
+    assert.equal(badge.textContent, tone);
+    assert.equal(badge.hasAttribute("role") || badge.hasAttribute("aria-live"), false);
+  }
+  assert.equal(h.element("#hidden-badge").hidden, true);
   assert.deepEqual(h.errors, []);
 });
 
@@ -302,12 +319,14 @@ test("shared controls retain contrast, focus, touch sizes and portal themes in t
     const colors: Array<{ id: string; foreground: number[]; background: number[] }> = await browser.evaluate(`(() => {
       const canvas = document.createElement("canvas"), context = canvas.getContext("2d");
       const rgb = color => { context.fillStyle = color; context.fillRect(0, 0, 1, 1); return [...context.getImageData(0, 0, 1, 1).data].slice(0, 3); };
-      return ["action", "danger", "error-status", "warning-status", "success-status"].map(id => {
+      return ["action", "danger", "error-status", "warning-status", "success-status",
+        "neutral-badge", "info-badge", "success-badge", "warning-badge", "danger-badge"].map(id => {
         const element = document.getElementById(id), style = getComputedStyle(element);
         return { id, foreground: rgb(style.color), background: rgb(id.endsWith("-status") ? getComputedStyle(document.documentElement).backgroundColor : style.backgroundColor) };
       });
     })()`);
     for (const color of colors) assert.ok(contrast(color.foreground, color.background) >= 4.5, `${theme} ${color.id} text contrast`);
+    assert.equal(await browser.evaluate('getComputedStyle(document.getElementById("hidden-badge")).display'), "none");
     await browser.evaluate('document.getElementById("open-dialog").click()');
     await browser.waitFor('Boolean(document.querySelector("[role=dialog]"))');
     assert.equal(await browser.evaluate('getComputedStyle(document.querySelector("[role=dialog]")).backgroundColor === getComputedStyle(document.documentElement).backgroundColor'), true);

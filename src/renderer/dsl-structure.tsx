@@ -38,9 +38,15 @@ export function DslStructure({ screen, selectedId, onSelect }: {
     }
     const row = tree.current?.querySelector<HTMLElement>(`[data-node-id="${selected.id}"]`);
     if (!row || !tree.current) return;
-    const bounds = row.getBoundingClientRect(), viewport = tree.current.getBoundingClientRect();
+    const bounds = row.getBoundingClientRect(), area = tree.current.getBoundingClientRect();
+    const viewport = { left: area.left + tree.current.clientLeft, top: area.top + tree.current.clientTop,
+      right: area.left + tree.current.clientLeft + tree.current.clientWidth,
+      bottom: area.top + tree.current.clientTop + tree.current.clientHeight, width: tree.current.clientWidth };
     if (bounds.top < viewport.top) tree.current.scrollTop += bounds.top - viewport.top;
     else if (bounds.bottom > viewport.bottom) tree.current.scrollTop += bounds.bottom - viewport.bottom;
+    const label = row.querySelector(".sketch-node-label")!.getBoundingClientRect();
+    if (label.left < viewport.left || label.width > viewport.width) tree.current.scrollLeft += label.left - viewport.left;
+    else if (label.right > viewport.right) tree.current.scrollLeft += label.right - viewport.right;
   }, [selected, screen.ui, collapsed]);
 
   function toggle(id: string) {
@@ -72,12 +78,15 @@ export function DslStructure({ screen, selectedId, onSelect }: {
     if (next) tree.current?.querySelector<HTMLElement>(`[data-node-id="${next}"]`)?.focus({ preventScroll: true });
   }
   const tabStop = rows.some(row => row.node.id === selectedId) ? selectedId : screen.ui.root;
-  return <Disclosure id="sketch-structure" className="sketch-structure" open>
-    <summary>Structure <span className="section-count">{Object.keys(screen.ui.nodes).length}</span></summary>
-    <div ref={tree} id="sketch-structure-tree" className="sketch-structure-tree" role="tree" aria-label="UI component structure">
+  return <Disclosure id="sketch-structure" className="sketch-pane sketch-structure" open>
+    <summary className="sketch-pane-heading">
+      <ChevronRight className="sketch-pane-chevron" size={14} aria-hidden="true" />
+      <span>Structure</span><span className="section-count">{Object.keys(screen.ui.nodes).length}</span>
+    </summary>
+    <div ref={tree} id="sketch-structure-tree" className="sketch-pane-body sketch-structure-tree" role="tree" aria-label="UI component structure">
       {rows.map(({ node, depth, position, siblings }, index) => <Button variant="item" key={node.id} type="button"
         className="sketch-structure-node" role="treeitem" data-node-id={node.id}
-        style={{ paddingInlineStart: 4 + Math.min(depth - 1, 8) * 12 }}
+        style={{ paddingInlineStart: 4 + (depth - 1) * 12, minWidth: 180 + (depth - 1) * 12 }}
         aria-level={depth} aria-posinset={position} aria-setsize={siblings}
         aria-expanded={node.children.length ? !collapsed.has(node.id) : undefined}
         aria-selected={node.id === selectedId} aria-label={`${uiNodeLabel(node)} (${node.id})`}

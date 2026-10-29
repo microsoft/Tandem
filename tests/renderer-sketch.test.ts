@@ -151,11 +151,16 @@ test("incomplete Sketch fields remain editable across SSE and cannot silently ap
     h.render({ ...value, revision: 2 });
     assert.equal(field(h, "sketch-purpose").value, "");
     assert.equal(field(h, "sketch-purpose").getAttribute("aria-invalid"), "true");
+    assert.equal(field(h, "sketch-purpose").getAttribute("aria-describedby"), "sketch-purpose-error");
+    assert.ok(h.get("sketch-purpose-error").closest(".sketch-screen-details"));
+    assert.equal(h.get("sketch-purpose-error").getAttribute("role"), "alert");
+    assert.equal(hidden(h, "sketch-request-history-pane"), true, "Field errors do not require opening request history.");
     assert.equal(disabled(h, "sketch-save"), true);
     await h.click("sketch-approve");
     assert.equal(h.requests.length, 1);
     await h.input("sketch-purpose", "Updated purpose");
     assert.equal(field(h, "sketch-purpose").getAttribute("aria-invalid"), "false");
+    assert.equal(h.document.getElementById("sketch-purpose-error"), null);
     assert.equal(disabled(h, "sketch-save"), false);
     assert.equal(disabled(h, "sketch-approve"), false);
     await h.input("sketch-purpose", "");
@@ -185,6 +190,29 @@ test("manual Sketch screens use only accepted decisions and reject unaccepted re
     await h.click("sketch-save");
     assert.equal(h.requests.length, 1);
     assert.match(text(h, "sketch-message"), /outside the accepted requirements DAG/);
+});
+
+test("Design side pane dismissal respects composition and retains edits with focus restored", async t => {
+    const fixture = sketchFixture(), screen = fixture.document.screens[0];
+    fixture.document.transitions.push({ id: "next", fromScreenId: screen.id, toScreenId: screen.id, trigger: "Continue", description: "" });
+    const { h } = await sketchSetup(t, fixture);
+    await h.click("sketch-toggle-transitions");
+    const input = field(h, "sketch-transition-next-trigger");
+    await h.input(input, "Review result");
+    input.focus();
+    await h.fire(input, "keydown", { key: "Escape", isComposing: true });
+    assert.equal(hidden(h, "sketch-screen-transitions"), false, "Cancelling IME composition must not dismiss the editor.");
+    input.addEventListener("keydown", event => event.preventDefault(), { once: true });
+    await h.fire(input, "keydown", { key: "Escape" });
+    assert.equal(hidden(h, "sketch-screen-transitions"), false, "Nested controls can consume Escape.");
+    await h.fire(input, "keydown", { key: "Escape" });
+    assert.equal(hidden(h, "sketch-screen-transitions"), true);
+    assert.equal(h.document.activeElement, h.get("sketch-toggle-transitions"));
+    await h.click("sketch-toggle-transitions");
+    assert.equal(input.value, "Review result");
+    await h.click(h.get("sketch-screen-transitions").querySelector('[aria-label="Close screen transitions"]')!);
+    assert.equal(h.document.activeElement, h.get("sketch-toggle-transitions"));
+    assert.equal(h.requests.length, 1, "Opening, editing and closing a pane do not submit work.");
 });
 
 test("Sketch save errors retain edits; approving an older revision does not permit Finish", async (t) => {

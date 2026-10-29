@@ -219,14 +219,15 @@ const r=e.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,disab
         fits:input.width >= 60 && history.right <= innerWidth };
     })()`);
     assert.deepEqual(inputLayout, { ordered:true, aligned:true, fits:true }, `Input, Send and History stay aligned at ${width}.`);
+    const feedbackHeight = await browser.evaluate('document.querySelector("#revision-input").getBoundingClientRect().height');
     await click("#revision-input");
-    const expandedInput = await browser.evaluate(`(() => {
+    const focusedInput = await browser.evaluate(`(() => {
       const input=document.querySelector("#revision-input").getBoundingClientRect(),
         send=document.querySelector("#submit-revision").getBoundingClientRect(),
         history=document.querySelector("#prototype-history-toggle").getBoundingClientRect();
-      return { expanded:input.height>send.height, aligned:Math.abs(input.bottom-send.bottom)<1 && Math.abs(send.bottom-history.bottom)<1 };
+      return { height:input.height, aligned:Math.abs(input.bottom-send.bottom)<1 && Math.abs(send.bottom-history.bottom)<1 };
     })()`);
-    assert.deepEqual(expandedInput, { expanded:true, aligned:true }, `Expanded feedback keeps Send and History anchored at ${width}.`);
+    assert.deepEqual(focusedInput, { height:feedbackHeight, aligned:true }, `Focusing feedback does not resize it or move Send and History at ${width}.`);
     const requestsBeforeHistory = actions.length;
     await click("#prototype-history-toggle");
     await browser.waitFor('document.querySelector("#prototype-history-toggle").getAttribute("aria-expanded")==="true" && !document.querySelector("#revision-history-details").hidden');

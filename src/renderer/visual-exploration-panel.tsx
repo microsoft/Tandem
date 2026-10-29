@@ -269,10 +269,11 @@ export function VisualExplorationPanel({ active, connected, inspecting, onInspec
   </>;
   return <>
     {renderActions ? renderActions(previewActions) : <div className="prototype-preview-actions">{previewActions}</div>}
-    <section className="visual-exploration" data-inspecting={inspecting} aria-labelledby="visual-exploration-title">
-    <div className="visual-exploration-heading">
+    <section className="visual-exploration tandem-pane" data-inspecting={inspecting} aria-labelledby="visual-exploration-title">
+    <div className="visual-exploration-heading tandem-pane-heading">
       <strong id="visual-exploration-title">Compare visual directions</strong>
     </div>
+    <div className="tandem-pane-body">
     <div className="visual-selection-toolbar">
       <ToggleGroup.Root className="visual-direction-toggles" type="single" aria-label="Design directions"
         value={previewDirection} disabled={controlsBlocked}
@@ -367,6 +368,7 @@ export function VisualExplorationPanel({ active, connected, inspecting, onInspec
       hidden={!inspecting || !verified} src={verified && opened ? checkpoint.previewUrl || undefined : undefined}
       referrerPolicy="origin" sandbox="allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
       onLoad={() => setLoaded(value => value + 1)} />
+    </div>
     </section>
   </>;
 }
