@@ -1,11 +1,11 @@
 {
   "schemaVersion": "tandem-composed-payload/v1",
-  "version": "1.1.15",
+  "version": "0.0.16",
   "files": [
     {
       "path": "extension.mjs",
-      "bytes": 3062267,
-      "sha256": "8a2f63198e10fe75d0529b619c2d8ebd4705298b0197d89397dbfc16f0274341"
+      "bytes": 3062277,
+      "sha256": "c788f993920ee9c2c1de6056f2e34b2f5b613e4c5546f7e83cb6264a9669682c"
     },
     {
       "path": "preview-launcher.mjs",
@@ -798,5 +798,5 @@
       "sha256": "92b92e76eb4ac3bee96c6bbdde06ed1f7d9c0088576a51db1276c567dbb207f8"
     }
   ],
-  "digest": "20d85151a917c5cda46e0cb7b81dc85e7f92f57a8e4d2c5a39f9519beaea95d2"
+  "digest": "fe491b40373f91728f78eda2bad66f9d2ffa739801a3ba27dc7f0baa5eacd950"
 }

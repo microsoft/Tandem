@@ -99,6 +99,9 @@ Keep one main action per decision. Prefer an existing variant to a new CSS
 override. Keep layout-specific classes on the surrounding feature when possible;
 add shared variants only for recurring needs. Controls must remain understandable
 with long labels, narrow layouts, keyboard navigation and non-color status cues.
+The root sidebar's Project settings and Current work use the secondary button
+variant so their border and background indicate clickability before hover;
+they are actions, not selected stages or primary workflow actions.
 
 Do not substitute `Dialog` for consequential `AlertDialog` confirmations or
 replace native dialogs with custom permission/recovery behavior just to share

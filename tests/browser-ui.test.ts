@@ -28,7 +28,7 @@ const applicationHeader: ApplicationHeader = {
 
 function state(overrides: Partial<HostSnapshot> = {}): HostSnapshot {
     return { revision: 1, generation: "generation-one", version: "1.1.15", phase: "ready", workspace: "C:\\workspace",
-        canvasUrl: "http://127.0.0.1:5000/", sessionId: "session-one", status: "Ready", error: null, warning: null,
+        canvasUrl: "http://127.0.0.1:5000/", sessionId: "session-one", status: "Ready", statusKind: "ready", error: null, warning: null,
         permissionMode: "ask", requests: [], recentWorkspaces: ["C:\\workspace"], ...overrides };
 }
 
@@ -495,7 +495,7 @@ test("an incompatible header response restores the application's own controls", 
     assert.match(h.document.querySelector('[role="alert"]')!.textContent!, /original controls remain available/);
 });
 
-test("browser footer combines workspace help, navigation and host status without reviving stale controls", async (t) => {
+test("browser footer shows actual work and navigation without redundant readiness or stale controls", async (t) => {
     const h = await fixture(t);
     const frame = h.document.querySelector<HTMLIFrameElement>("#tandem-application")!;
     const sent: Array<{ data: Record<string, unknown>; origin: string }> = [];
@@ -504,22 +504,30 @@ test("browser footer combines workspace help, navigation and host status without
     };
     await h.fromApplication({ type: "tandem:header:ready" });
     assert.equal(sent.at(-1)!.data.statusBar, true);
-    const status = { text: ".tandem\\efforts\\active\\stages\\requirements-r53.json", error: false, action: "Add the first usage" };
+    const status = { text: "Implementer working... | Development: auto · Effort: native default (not reported)", error: false, action: "Inspect current work" };
     await h.fromApplication({ type: "tandem:header:state", header: { ...applicationHeader, status } }, "https://untrusted.example");
+    await h.fromApplication({ type: "tandem:header:state", header: { ...applicationHeader, status } }, undefined, null);
     assert.equal(h.document.querySelector(".host-application-status"), null);
+    assert.equal(h.document.querySelector(".host-status-state")!.textContent, "Ready");
     await h.fromApplication({ type: "tandem:header:state", header: { ...applicationHeader, status } });
     const footer = h.document.querySelector(".host-status")!;
-    assert.equal(footer.querySelector(".host-status-state")!.textContent, "Ready");
+    assert.equal(footer.querySelector(".host-status-state"), null);
     assert.equal(footer.querySelector(".host-application-status > span")!.textContent, status.text);
+    assert.equal(footer.querySelector(".host-application-status > span")!.getAttribute("role"), "status");
     assert.equal(footer.querySelector<HTMLElement>(".host-application-status > span")!.title, status.text);
-    assert.match(footer.querySelector(".host-status-hint")!.textContent!, /Tab close keeps running/);
+    assert.equal(footer.querySelector(".host-status-hint"), null);
+    assert.doesNotMatch(footer.textContent!, /Tab close|Ctrl\+C/);
     assert.ok(footer.contains(h.button("Go to action")));
-    assert.equal(h.button("Go to action").title, "Go to action: Add the first usage");
+    assert.equal(h.button("Go to action").title, "Go to action: Inspect current work");
     await h.click("Go to action");
     const channel = sent[0].data.channel;
     assert.deepEqual(sent.at(-1), { data: { type: "tandem:status:action", channel, scope: applicationHeader.scope },
         origin: "http://127.0.0.1:5000" });
     assert.equal(h.requests.length, 0);
+    const ready = "Ready | Development: auto · Effort: native default (not reported)";
+    await h.fromApplication({ type: "tandem:header:state", header: { ...applicationHeader,
+        status: { text: ready, error: false, action: null } } });
+    assert.equal(footer.textContent, ready, "Genuine application Ready remains; only host readiness is redundant.");
     await h.fromApplication({ type: "tandem:header:state", header: { ...applicationHeader,
         status: { text: "Stage output could not be saved.", error: true, action: null } } });
     assert.equal(footer.querySelector(".host-application-status")!.getAttribute("data-status"), "error");
@@ -527,8 +535,61 @@ test("browser footer combines workspace help, navigation and host status without
     assert.equal(footer.querySelector(".host-status-action"), null);
     await h.click("Reload page");
     assert.equal(footer.querySelector(".host-application-status"), null);
+    assert.equal(footer.querySelector(".host-status-state")!.textContent, "Ready");
     await h.fromApplication({ type: "tandem:header:state", channel, header: { ...applicationHeader, status } });
     assert.equal(footer.querySelector(".host-status-action"), null);
+    await h.fromApplication({ type: "tandem:header:state", header: { ...applicationHeader, status } });
+    const previousFrame = h.document.querySelector<HTMLIFrameElement>("#tandem-application")!;
+    const previousChannel = new URLSearchParams(new URL(previousFrame.src).hash.slice(1)).get("header-channel");
+    await h.accept(state({ revision: 2, generation: "generation-two" }));
+    assert.equal(footer.querySelector(".host-application-status"), null);
+    await h.fromApplication({ type: "tandem:header:state", channel: previousChannel, header: { ...applicationHeader, status } });
+    assert.equal(footer.querySelector(".host-application-status"), null);
+    await h.fromApplication({ type: "tandem:header:state", header: { ...applicationHeader, status } });
+    await h.fromApplication({ type: "tandem:header:unavailable" });
+    assert.equal(footer.querySelector(".host-application-status"), null);
+    assert.equal(footer.querySelector(".host-status-state")!.textContent, "Ready");
+    assert.deepEqual(h.errors, []);
+});
+
+test("browser footer preserves backend diagnostics, disconnected and no-application fallback states", async (t) => {
+    const h = await fixture(t);
+    const status = { text: "Implementer working...", error: false, action: "Inspect current work" };
+    const footer = h.document.querySelector(".host-status")!;
+    await h.fromApplication({ type: "tandem:header:state", header: applicationHeader });
+    assert.equal(footer.textContent, "Ready", "A header without application status still needs host feedback.");
+    await h.fromApplication({ type: "tandem:header:state", header: { ...applicationHeader, status } });
+    await h.accept(state({ status: "Host initialized", statusKind: "ready" }));
+    assert.equal(footer.querySelector(".host-status-state"), null, "Readiness suppression does not match English text.");
+    for (const overrides of [
+        { status: "Native work ended; its pending consent was dismissed.", statusKind: "message" as const },
+        { status: "Ready", statusKind: "message" as const },
+        { status: "Ready", statusKind: undefined },
+        { status: "The workspace needs attention.", error: "Backend error" },
+    ]) {
+        await h.accept(state(overrides));
+        assert.equal(footer.querySelector(".host-status-state")!.textContent, overrides.status);
+        assert.equal(footer.querySelector(".host-application-status > span")!.textContent, status.text);
+    }
+    assert.match(h.document.querySelector('.host-banner[role="alert"]')!.textContent!, /Backend error/);
+    await h.accept(state({ notice: { id: "notice", message: "Retained notification" }, warning: "Retained warning" }));
+    assert.match(h.document.body.textContent!, /Retained notification/);
+    assert.match(h.document.body.textContent!, /Retained warning/);
+    await h.disconnect();
+    assert.equal(footer.querySelector(".host-application-status"), null);
+    assert.equal(footer.querySelector(".host-status-action"), null);
+    assert.equal(footer.querySelector<HTMLElement>(".host-status-state")!.title, "Host connection lost. Reconnecting...");
+    assert.equal(footer.textContent, "Host connection lost. Reconnecting...");
+    for (const [phase, text] of [
+        ["idle", "Open a workspace to begin."], ["starting", "Loading Tandem..."],
+        ["stopping", "Stopping Tandem..."], ["stopped", "Tandem stopped. You can close this tab."],
+        ["error", "The workspace needs attention."],
+    ] as const) {
+        await h.accept(state({ phase, status: text, statusKind: "message", canvasUrl: null }));
+        assert.equal(footer.textContent, text);
+        assert.equal(footer.querySelector(".host-status-action"), null);
+        assert.equal(footer.querySelector(".host-status-state")!.getAttribute("role"), "status");
+    }
     assert.deepEqual(h.errors, []);
 });
 
@@ -587,6 +648,117 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
         const selectionSuffix = " | Main: model/effort unavailable";
         await browser.waitFor(`document.querySelector(".host-application-status > span")?.textContent === ${JSON.stringify(savedPath + selectionSuffix)}
             && document.querySelector("#tandem-application")?.contentDocument.querySelector("#next-action-bar")?.hidden`);
+        for (const width of [1280, 375]) {
+            await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 800, deviceScaleFactor: 1, mobile: false });
+            for (const theme of ["light", "dark"]) {
+                await browser.evaluate(`(() => {
+                    document.documentElement.dataset.colorMode = ${JSON.stringify(theme)};
+                    const inner = document.querySelector("#tandem-application").contentDocument;
+                    inner.documentElement.dataset.colorMode = ${JSON.stringify(theme)};
+                })()`);
+                const buttons = await browser.evaluate(`(() => {
+                    const inner = document.querySelector("#tandem-application").contentDocument;
+                    return ["project-settings", "project-current-work"].map(id => {
+                        const button = inner.getElementById(id), style = inner.defaultView.getComputedStyle(button);
+                        const rect = button.getBoundingClientRect(), nav = button.parentElement;
+                        return { id, variant:button.dataset.variant, border:style.borderTopColor, borderWidth:style.borderTopWidth,
+                            background:style.backgroundColor, cursor:style.cursor, width:rect.width,
+                            available:nav.clientWidth - parseFloat(inner.defaultView.getComputedStyle(nav).paddingInlineStart)
+                                - parseFloat(inner.defaultView.getComputedStyle(nav).paddingInlineEnd),
+                            fits:button.scrollWidth <= button.clientWidth + 1, tag:button.tagName, type:button.type };
+                    });
+                })()`);
+                for (const button of buttons) {
+                    assert.equal(button.variant, "secondary");
+                    assert.equal(button.borderWidth, "1px");
+                    assert.notEqual(button.border, "rgba(0, 0, 0, 0)");
+                    assert.notEqual(button.background, "rgba(0, 0, 0, 0)");
+                    assert.equal(button.cursor, "pointer");
+                    assert.equal(button.tag, "BUTTON");
+                    assert.equal(button.type, "button");
+                    assert.ok(Math.abs(button.width - button.available) <= 1, `${button.id} keeps its full-width layout.`);
+                    assert.equal(button.fits, true);
+                }
+                if (process.env.TANDEM_UI_EVIDENCE) {
+                    await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `browser-footer-${theme}-${width}.png`), await browser.screenshot());
+                }
+            }
+        }
+        await browser.evaluate(`(() => {
+            document.documentElement.dataset.colorMode = "light";
+            document.querySelector("#tandem-application").contentDocument.documentElement.dataset.colorMode = "light";
+        })()`);
+        await browser.call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
+        await browser.evaluate('document.querySelector("#tandem-application").contentDocument.querySelector("#project-settings").focus()');
+        await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", text: "\r", windowsVirtualKeyCode: 13 });
+        await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+        await browser.waitFor('document.querySelector("#tandem-application").contentDocument.querySelector(".project-settings-dialog")?.open');
+        await browser.evaluate('document.querySelector("#tandem-application").contentDocument.querySelector("#close-project-settings").click()');
+        await browser.waitFor('document.querySelector("#tandem-application").contentDocument.activeElement.id === "project-settings"');
+        await browser.evaluate(`(() => {
+            const inner = document.querySelector("#tandem-application").contentDocument;
+            inner.querySelector("#preparation-workspace-tab").dispatchEvent(new inner.defaultView.MouseEvent("mousedown", { bubbles:true, button:0 }));
+        })()`);
+        await browser.waitFor('!document.querySelector("#tandem-application").contentDocument.querySelector("#preparation-panel").hidden');
+        await browser.evaluate('document.querySelector("#tandem-application").contentDocument.querySelector("#project-current-work").focus()');
+        await browser.call("Input.dispatchKeyEvent", { type: "keyDown", key: " ", code: "Space", text: " ", windowsVirtualKeyCode: 32 });
+        await browser.call("Input.dispatchKeyEvent", { type: "keyUp", key: " ", code: "Space", windowsVirtualKeyCode: 32 });
+        await browser.waitFor('!document.querySelector("#tandem-application").contentDocument.querySelector("#design-tree-panel").hidden');
+        for (const width of [1280, 375]) {
+            await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 800, deviceScaleFactor: 1, mobile: false });
+            const longLabelFits = await browser.evaluate(`(() => {
+                const inner = document.querySelector("#tandem-application").contentDocument;
+                const button = inner.querySelector("#project-current-work"), original = button.textContent;
+                button.textContent = "Current work (999999 needs attention)";
+                const fits = button.scrollWidth <= button.clientWidth + 1 && button.scrollHeight <= button.clientHeight + 1;
+                button.textContent = original;
+                return fits;
+            })()`);
+            assert.equal(longLabelFits, true, "A long attention label wraps without clipping.");
+        }
+        for (const coarse of [false, true]) {
+            await browser.call("Emulation.setTouchEmulationEnabled", { enabled: coarse });
+            for (const width of [1280, 375]) {
+                await browser.call("Emulation.setDeviceMetricsOverride", { width, height: 800, deviceScaleFactor: 1, mobile: false });
+                for (const action of [null, "Inspect current work"]) {
+                    const text = action ? "Implementer working... | Development: auto · Effort: native default (not reported)" : "Ready";
+                    await browser.evaluate(`(() => {
+                        const frame = document.querySelector("#tandem-application");
+                        const channel = new URLSearchParams(new URL(frame.src).hash.slice(1)).get("header-channel");
+                        window.dispatchEvent(new MessageEvent("message", { origin: ${JSON.stringify(origin)}, source: frame.contentWindow,
+                            data: { type:"tandem:header:state", channel, header:${JSON.stringify({ ...applicationHeader, status: { text, error: false, action } })} } }));
+                    })()`);
+                    await browser.waitFor(`document.querySelector(".host-application-status > span")?.textContent === ${JSON.stringify(text)}`);
+                    const layout = await browser.evaluate(`(() => {
+                        const footer = document.querySelector(".host-status"), status = footer.querySelector(".host-application-status");
+                        const text = status.querySelector("span"), button = status.querySelector("button");
+                        const rect = text.getBoundingClientRect(), range = document.createRange(); range.selectNodeContents(text);
+                        return { right:status.getBoundingClientRect().right, height:footer.getBoundingClientRect().height,
+                            textWidth:rect.width, glyphWidth:range.getBoundingClientRect().width,
+                            gap:button ? button.getBoundingClientRect().left - rect.right : 0,
+                            buttonSize:button ? button.getBoundingClientRect().height : 0,
+                            fits:footer.scrollWidth <= footer.clientWidth, hostVisible:!!footer.querySelector(".host-status-state"),
+                            coarse:matchMedia("(pointer: coarse)").matches };
+                    })()`);
+                    assert.equal(layout.coarse, coarse);
+                    assert.ok(Math.abs(layout.right - (width - 10)) <= 1, `The status and action end at the right footer padding: ${JSON.stringify(layout)}`);
+                    assert.equal(layout.fits, true);
+                    assert.equal(layout.hostVisible, false);
+                    assert.equal(layout.height, coarse ? action ? 49 : 48 : 28);
+                    if (!action || width === 1280) {
+                        assert.ok(Math.abs(layout.textWidth - layout.glyphWidth) <= 1, "Short text is shrink-wrapped, not left-aligned inside a wide flex block.");
+                    }
+                    if (action) {
+                        assert.equal(layout.gap, 6);
+                        assert.equal(layout.buttonSize, coarse ? 44 : 24);
+                    }
+                    if (action && process.env.TANDEM_UI_EVIDENCE) {
+                        await writeFile(join(process.env.TANDEM_UI_EVIDENCE, `browser-working-${coarse ? "touch" : "mouse"}-${width}.png`), await browser.screenshot());
+                    }
+                }
+            }
+        }
+        await browser.call("Emulation.setTouchEmulationEnabled", { enabled: false });
         const longStatus = `${savedPath} ${"Saved workspace status and help. ".repeat(40)}`;
         await browser.evaluate(`(() => {
             const frame = document.querySelector("#tandem-application").contentWindow;
@@ -602,7 +774,8 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
                     hiddenHeight: inner.querySelector("#next-action-bar").getBoundingClientRect().height,
                     workspaceHeight: inner.querySelector("#studio-workspace").getBoundingClientRect().height,
                     frameHeight: frame.clientHeight, clipped: text.scrollWidth > text.clientWidth,
-                    title: text.title, hintVisible: getComputedStyle(footer.querySelector(".host-status-hint")).display !== "none" };
+                    title: text.title, hintPresent: !!footer.querySelector(".host-status-hint"),
+                    right: footer.querySelector(".host-application-status").getBoundingClientRect().right };
             })()`);
             assert.equal(geometry.width, width);
             assert.equal(geometry.height, 28, "The merged footer remains a single compact row.");
@@ -610,7 +783,8 @@ test("real browser keeps merged status and Requirements layouts bounded with wor
             assert.equal(geometry.workspaceHeight, geometry.frameHeight, "The workspace reclaims the removed row.");
             assert.equal(geometry.clipped, true);
             assert.equal(geometry.title, longStatus + selectionSuffix);
-            assert.equal(geometry.hintVisible, width > 680);
+            assert.equal(geometry.hintPresent, false);
+            assert.ok(Math.abs(geometry.right - (width - 10)) <= 1);
         }
         const activeRequirements = rendererState("requirements", 3);
         activeRequirements.goal = "Build a menu and ordering app.\n" + "Keep the accepted workflow and earlier decisions available for reference. ".repeat(40);
@@ -1060,6 +1234,8 @@ test("browser host state rejects unsafe URLs and ignores out-of-order snapshots"
     assert.equal(store.getSnapshot().host!.permissionMode, "ask");
     assert.throws(() => parseHostSnapshot(state({ canvasUrl: "https://untrusted.example/" })), /unsafe/);
     assert.throws(() => parseHostSnapshot({ ...state(), requests: [{ type: "stopped" }] }), /invalid pending request/);
+    assert.throws(() => parseHostSnapshot({ ...state(), statusKind: "unknown" }), /invalid state/);
+    assert.equal(parseHostSnapshot(state({ statusKind: undefined })).statusKind, undefined);
     for (const notice of [{ id: "", message: "error" }, { id: 1, message: "error" }, { id: "valid", message: {} },
         { id: "x".repeat(513), message: "error" }, { id: "valid", message: "x".repeat(8193) }]) {
         assert.throws(() => parseHostSnapshot({ ...state(), notice }), /invalid notification/);

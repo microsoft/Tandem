@@ -47,6 +47,7 @@ export function parseHostSnapshot(value: unknown): HostSnapshot {
         && ["idle", "starting", "ready", "stopping", "error", "stopped"].includes(value);
     if (!isRecord(value) || typeof value.revision !== "number" || !Number.isSafeInteger(value.revision) || typeof value.generation !== "string"
         || typeof value.version !== "string" || typeof value.status !== "string"
+        || (value.statusKind !== undefined && value.statusKind !== "ready" && value.statusKind !== "message")
         || !isPhase(value.phase)
         || (value.permissionMode !== "ask" && value.permissionMode !== "allow-all")
         || !["workspace", "sessionId", "canvasUrl", "error", "warning"].every((key) => value[key] === null || typeof value[key] === "string")
@@ -65,7 +66,9 @@ export function parseHostSnapshot(value: unknown): HostSnapshot {
             || url.username || url.password || url.search || url.hash) throw new Error("The host returned an unsafe application URL.");
     }
     return { revision: value.revision, generation: value.generation, version: value.version, phase: value.phase,
-        permissionMode: value.permissionMode, status: value.status, requests, recentWorkspaces: value.recentWorkspaces,
+        permissionMode: value.permissionMode, status: value.status,
+        statusKind: value.statusKind === "ready" || value.statusKind === "message" ? value.statusKind : undefined,
+        requests, recentWorkspaces: value.recentWorkspaces,
         workspace: nullableText(value.workspace), sessionId: nullableText(value.sessionId), canvasUrl: nullableText(value.canvasUrl),
         error: nullableText(value.error), warning: nullableText(value.warning),
         notice: parseNotice(value.notice) };
