@@ -1,8 +1,6 @@
 <h1 align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/tandem-mark-dark.png">
-    <img src="docs/images/tandem-mark-light.png" alt="Tandem bicycle logo" width="72" align="absmiddle">
-  </picture>
+  <img src="docs/images/tandem-mark-light.png#gh-light-mode-only" alt="Tandem bicycle logo" width="72" align="absmiddle">
+  <img src="docs/images/tandem-mark-dark.png#gh-dark-mode-only" alt="Tandem bicycle logo" width="72" align="absmiddle">
   Tandem: Two minds, one direction.
 </h1>
 
