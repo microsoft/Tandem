@@ -1,21 +1,16 @@
-<a href="development/tandem/public/branding/tandem-blue-light.png#gh-light-mode-only">
-  <img src="development/tandem/public/branding/tandem-blue-light.png" alt="Tandem logo: a blue bicycle built for two beside the Tandem wordmark." width="420">
-</a>
-<a href="development/tandem/public/branding/tandem-blue-dark.png#gh-dark-mode-only">
-  <img src="development/tandem/public/branding/tandem-blue-dark.png" alt="Tandem logo: a blue bicycle built for two beside the Tandem wordmark." width="420">
-</a>
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/tandem-mark-dark.png">
+    <img src="docs/images/tandem-mark-light.png" alt="Tandem bicycle logo" width="72" align="absmiddle">
+  </picture>
+  Tandem: Two minds, one direction.
+</h1>
 
-# Tandem
-
-**You and Copilot, thinking together before building.**
-
-## News
-
-- **2026-10-29:** We are releasing **Tandem 0.0.16** today.
-
-## Overview
-
-![Original illustration of a person and Copilot discussing a user journey, interface sketch and technical flow on a shared whiteboard.](docs/images/tandem-vision.svg)
+<p align="center">
+  <a href="package.json"><img src="https://img.shields.io/github/package-json/v/microsoft/Tandem?label=version" alt="Package version"></a>
+  <a href="LICENSE.txt"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
+  <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/contributions-welcome-brightgreen" alt="Contributions welcome"></a>
+</p>
 
 Tandem is a collaborative workspace for turning ideas and existing code into
 software you understand and intend. Discuss the experience, make decisions
@@ -23,7 +18,20 @@ visible in UI designs and Design artifacts, then explicitly approve implementati
 
 It is for developers, designers and project owners who want to work with a coding
 agent without leaving product decisions hidden in a prompt.
+
+![Original illustration of a person and Copilot discussing a user journey, interface sketch and technical flow on a shared whiteboard.](docs/images/tandem-vision.svg)
+
 The illustration above expresses that vision; it is not a product screenshot.
+
+<a id="news"></a>
+
+## 📰 News
+
+- **2026-10-29:** We are releasing **Tandem 0.0.16** today.
+
+<a id="see-tandem-in-action"></a>
+
+## 🎬 See Tandem in action
 
 **Watch the 94-second introduction:**
 
@@ -39,7 +47,9 @@ https://github.com/user-attachments/assets/ea2c909b-97c7-44b2-adfe-86ff56e4c382
 [Watch this for an E2E tutorial](https://github.com/user-attachments/assets/d1460f4a-ab61-42de-be0b-914b4269069d):
 a 14-minute coffee-shop walkthrough from goal to implementation and Review.
 
-## Why Tandem?
+<a id="why-tandem"></a>
+
+## 💡 Why Tandem?
 
 - **See the idea before committing to it.** Explore requirements, UI designs and
   interactive prototypes instead of reconstructing everything from a long spec.
@@ -51,7 +61,9 @@ a 14-minute coffee-shop walkthrough from goal to implementation and Review.
 Read [the Tandem story](docs/the-tandem-story.md) for the approach and a concrete
 example.
 
-## Get started
+<a id="get-started"></a>
+
+## 🚀 Get started
 
 **Source preview:** the instructions below build this checkout; they do not
 install a published release. Use Windows with PowerShell, actual **Node 24.15+
