@@ -83,12 +83,12 @@ function declaredArrow(scene, arrow) {
 export function addLabeledBox(input, options) {
   const scene = canonicalScene(input);
   const { id, labelId, text, x, y, width, height, groupIds = [], frameId = null,
-    fill = "#edf3fb", stroke = "#2b456b", fontSize = 20, align = "center", vertical = "middle", customData } = options;
+    fill = "#edf3fb", stroke = "#2b456b", strokeWidth = 1.5, fontSize = 20, align = "center", vertical = "middle", customData } = options;
   if (scene.elements.some((element) => element.id === id || element.id === labelId) || id === labelId) reject("new box/label IDs must be different and unused.");
   if (typeof text !== "string" || !["left", "center", "right"].includes(align) || !["top", "middle", "bottom"].includes(vertical)) reject("use literal text and supported label alignment.");
   const node = {
     id, type: "rectangle", x, y, width, height, groupIds: [...groupIds], frameId,
-    backgroundColor: fill, strokeColor: stroke, fillStyle: "solid", roughness: 0,
+    backgroundColor: fill, strokeColor: stroke, strokeWidth, fillStyle: "solid", roughness: 0,
     boundElements: [{ id: labelId, type: "text" }], ...(customData === undefined ? {} : { customData }),
   };
   const label = labelPosition(node, {
@@ -108,7 +108,7 @@ export function connectNodes(input, { id, fromId, toId, fromSide = "right", toSi
   const declaration = { version: 1, fromId, toId, fromSide, toSide };
   const arrow = connectorGeometry(scene, {
     ...(existing ?? { id, type: "arrow", angle: 0, locked: false, elbowed: false,
-      endArrowhead: "arrow", strokeColor: "#526b8b", roughness: 0, frameId: from.frameId }),
+      endArrowhead: "arrow", strokeColor: "#526b8b", strokeWidth: 1.25, roughness: 0, frameId: from.frameId }),
     customData: { ...existing?.customData, [META]: declaration },
   }, declaration);
   const elements = scene.elements.map((element) => {

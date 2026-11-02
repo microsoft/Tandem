@@ -40,6 +40,10 @@ authoring/refinement, load the [tested editing cookbook](references/editing-cook
 on demand: it supplies complete executable recipes and a few deterministic
 native-operation helpers, including a rough UX sketch and a targeted update.
 The agent does not need to reverse-engineer the validator for ordinary edits.
+When creating or refining a visual, use the on-demand
+[visual authoring guide](references/visual-authoring.md) to choose a structure,
+compose readable native objects, and inspect the exact sealed result before
+handoff. Preserve existing human styles; JSON validity is not visual review.
 
 The small local Node service supplies topics, in-memory working state, immutable
 seals, factual diffs and the read/edit/seal/snapshot API. PNG snapshots use

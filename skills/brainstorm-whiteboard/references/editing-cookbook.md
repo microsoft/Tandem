@@ -5,6 +5,9 @@ self-contained; the human can originate a sketch and need not repeat it all
 in prose. These are sample drawings, not inferred project requirements.
 The [API/native reference](api-and-elements.md) is sufficient for ordinary raw
 edits; agents do not need to reverse-engineer the implementation.
+For pattern selection, composition, restrained styling and reviewing the exact
+sealed image, load the [visual authoring guide](visual-authoring.md). A valid
+payload is only the structural check, not proof that the drawing reads well.
 
 ## Use current objects and a real precondition
 
@@ -58,8 +61,8 @@ native edits/clarification rather than flattening or guessing.
 
 | Helper | Input / result |
 | --- | --- |
-| `addLabeledBox(scene,{id,labelId,text,x,y,width,height,...})` | Adds complete rectangle + bound text with reciprocal references. Defaults: normal font 20, center/middle, 10-unit padding, pale fill. Optional `fill`, `stroke`, `fontSize`, `align`, `vertical`, `groupIds`, `frameId`, `customData`. IDs must be unused. |
-| `connectNodes(scene,{id,fromId,toId,fromSide?,toSide?})` | Adds a straight bound arrow, or explicitly rewires that existing arrow ID. Sides default right -> left; choices left/right/top/bottom. Repairs old/new reciprocal node references in the same batch. |
+| `addLabeledBox(scene,{id,labelId,text,x,y,width,height,...})` | Adds complete rectangle + bound text with reciprocal references. Defaults: normal font 20, roughness 0, border 1.5, center/middle, 10-unit padding, pale fill. Optional `fill`, `stroke`, `strokeWidth`, `fontSize`, `align`, `vertical`, `groupIds`, `frameId`, `customData`. IDs must be unused. |
+| `connectNodes(scene,{id,fromId,toId,fromSide?,toSide?})` | Adds a straight bound arrow (new arrow width 1.25), or explicitly rewires that existing arrow ID without restyling it. Sides default right -> left; choices left/right/top/bottom. Repairs old/new reciprocal node references in the same batch. |
 | `renameLabel(scene,labelId,text)` | Updates the named bound text ID and its native text metrics/position; preserves the container, IDs, metadata and other elements. |
 | `moveResizeNode(scene,nodeId,{x?,y?,width?,height?})` | Moves/resizes that node, positions its existing bound label and adjusts declared connected arrow endpoints. Preserves IDs, styles, groups, frame membership and unrelated annotations. |
 | `deleteNode(scene,nodeId)` | Explicitly removes that node, its bound text and incident arrows/arrow labels, then removes their reciprocal references. Does not delete neighboring nodes, standalone ink or other group members. |
@@ -94,6 +97,34 @@ The IDs below are the fixture's IDs, not IDs to invent on an unrelated board.
 For custom content, call the same helpers with the IDs and intent read from the
 current native scene. The helper doesn't decide which step the user meant.
 Deleting a step does **not** invent a new connection between the survivors.
+
+## A real fork, not a longer chain
+
+`branch` appends four labeled nodes and three bound arrows: Submit request ->
+Check ownership, then separate Approve release and Request changes outcomes.
+The lower outcome uses the review node's **bottom** anchor and its own **left**
+anchor; the upper route stays horizontal. Outcome text, not color alone,
+explains the difference. All eleven added objects remain editable. Existing
+annotations/metadata are retained; repeating the recipe with colliding IDs fails.
+
+```powershell
+node scripts\cookbook.mjs branch --read current.json --out branch-edit.json
+node scripts\whiteboard.mjs edit --url "<url>" --topic "<topicId>" --input branch-edit.json
+```
+
+Seal that edit's actual returned working ID, then capture its exact version:
+
+```powershell
+node scripts\whiteboard.mjs seal --url "<url>" --topic "<topicId>" --json '{"expectedVersionId":"<actual-edit-versionId>"}'
+node scripts\whiteboard.mjs snapshot --url "<url>" --topic "<topicId>" --json '{"target":"<actual-sealed-versionId>"}'
+```
+
+The identifiers above are placeholders for real replies, not literal IDs.
+Inspect the returned PNG with available image tools before handoff. If a label
+clips or a connector crosses a card, correct only that area with a **fresh**
+sealed read/no pending work and a new guarded edit/seal/snapshot. If visual
+inspection is unavailable, state that limitation. Do not regenerate a recipe
+over an existing human branch or infer a new outcome from its color.
 
 ## Native rough UX, then a targeted refinement
 

@@ -98,3 +98,28 @@ test("native UX creation and targeted refinement append elements and preserve us
     assert.deepEqual(refined.scene.elements.find((element) => element.id === id), before.elements.find((element) => element.id === id));
   }
 });
+test("native branch recipe makes distinct outcomes with thin bound structure and preserves peer styles", () => {
+  const board = seeded(), originalPeer = board.state().scene.elements[0];
+  const result = edit(board, recipes.branch(board.state().scene));
+  assert.equal(result.effects.added.length, 11);
+  const byId = new Map(result.scene.elements.map((element) => [element.id, element]));
+  assert.equal(byId.get("branch-review-approve").startBinding.elementId, "branch-review");
+  assert.equal(byId.get("branch-review-changes").startBinding.elementId, "branch-review");
+  assert.equal(byId.get("branch-review-changes").endBinding.elementId, "branch-changes");
+  assert.ok(byId.get("branch-changes").y > byId.get("branch-approve").y + byId.get("branch-approve").height);
+  for (const element of result.effects.added) {
+    assert.equal(element.roughness, 0);
+    if (element.type === "rectangle") assert.equal(element.strokeWidth, 1.5);
+    if (element.type === "arrow") assert.equal(element.strokeWidth, 1.25);
+    if (element.type === "text") {
+      assert.equal(element.fontFamily, 2);
+      assert.ok(byId.get(element.containerId).boundElements.some(({ id }) => id === element.id));
+    }
+  }
+  assert.deepEqual(byId.get("peer-ink"), originalPeer);
+  edit(board, [{ op: "update", id: "branch-review-approve", set: { strokeWidth: 4, roughness: 1, strokeColor: "#e03131" } }]);
+  const rewired = edit(board, connectNodes(board.state().scene, { id: "branch-review-approve", fromId: "branch-review", toId: "branch-approve" }));
+  const arrow = rewired.scene.elements.find(({ id }) => id === "branch-review-approve");
+  assert.equal(arrow.strokeWidth, 4); assert.equal(arrow.roughness, 1); assert.equal(arrow.strokeColor, "#e03131");
+  assert.throws(() => recipes.branch(board.state().scene), /unused|different|unknown|Authoring helper/);
+});

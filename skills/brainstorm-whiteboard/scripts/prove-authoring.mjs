@@ -31,6 +31,14 @@ try {
     await operation("seal", { expectedVersionId: result.versionId });
     return result;
   }
+  const branch = await topic("Native branching composition"), branchAPI = await connect(owned.info.url, branch.topicId);
+  const branchEdit = await apply(branchAPI, "branch");
+  assert.equal(branchEdit.effects.added.length, 11);
+  const branchRead = await branchAPI("read", { target: branchEdit.versionId, includeImage: true });
+  assert.equal(branchRead.hasUnsealedChanges, false);
+  assert.equal(branchRead.scene.elements.find(({ id }) => id === "branch-review-changes").startBinding.elementId, "branch-review");
+  await record("branch-read.json", branchRead);
+  await record("branch.png", Buffer.from(branchRead.image.dataURL.split(",")[1], "base64"));
   const flow = await topic("Cookbook operations"), flowAPI = await connect(owned.info.url, flow.topicId);
   const initialFlow = await flowAPI("read");
   const seeded = await flowAPI("edit", { expectedVersionId: initialFlow.versionId, operations: [
@@ -165,6 +173,7 @@ try {
     isolatedUrl: owned.info.url, heldReviewsContacted: false, temporaryServiceAndBrowsersClosedInFinally: true,
     flowRecipeOperationsTested: ["create", "insert/rewire", "rename same label ID", "move/resize bound geometry", "explicit node deletion"],
     actualCookbookCLIPayloadExecuted: true, nativeUXObjectsAdded: 15, nativeUXTextEditorReached: true,
+    nativeBranchRecipeAddedElevenObjectsWithTwoOutcomes: true, exactBranchSealRendered: branchRead.versionId,
     humanNameAndButtonMoveAndInkRead: true, ambiguousNewBoxPreservedNotInterpreted: true,
     agentRefinementPreservedHumanEditsAndUnrelatedMetadata: true,
     boundConnectorMovedWithHumanButton: true, stableIDsAndImmutablePriorSeals: true, staleRecipeRejected: true,

@@ -17,6 +17,20 @@ function batch(scene, steps) {
   return operationsBetween(scene, draft.state().scene);
 }
 export const recipes = {
+  branch(scene) {
+    const nodes = [
+      { id: "branch-request", labelId: "branch-request-label", text: "Submit request", x: 60, y: 180, width: 230, height: 100, fill: "#f5f7fb", stroke: "#52657a" },
+      { id: "branch-review", labelId: "branch-review-label", text: "Check ownership", x: 380, y: 180, width: 240, height: 100 },
+      { id: "branch-approve", labelId: "branch-approve-label", text: "Approve release", x: 740, y: 180, width: 260, height: 100, fill: "#eff7f0", stroke: "#367650" },
+      { id: "branch-changes", labelId: "branch-changes-label", text: "Request changes", x: 740, y: 400, width: 260, height: 100, fill: "#fff5e5", stroke: "#936a22" },
+    ];
+    return batch(scene, [
+      ...nodes.map((node) => (s) => addLabeledBox(s, node)),
+      (s) => connectNodes(s, { id: "branch-request-review", fromId: "branch-request", toId: "branch-review" }),
+      (s) => connectNodes(s, { id: "branch-review-approve", fromId: "branch-review", toId: "branch-approve" }),
+      (s) => connectNodes(s, { id: "branch-review-changes", fromId: "branch-review", toId: "branch-changes", fromSide: "bottom", toSide: "left" }),
+    ]);
+  },
   flow(scene) {
     return batch(scene, [
       (s) => addLabeledBox(s, { id: "request", labelId: "request-label", text: "Request", x: 80, y: 180, width: 220, height: 110 }),
@@ -36,13 +50,13 @@ export const recipes = {
   remove(scene) { return deleteNode(scene, "review"); },
   ux(scene) {
     const specifications = [
-      { id: "ux-screen", labelId: "ux-title", text: "Settings / rough UX sketch", x: 50, y: 60, width: 1130, height: 700, fill: "#f8f9fa", fontSize: 24, align: "left", vertical: "top" },
-      { id: "ux-nav", labelId: "ux-nav-label", text: "Workspace\n\nGeneral\nTeam\nNotifications", x: 80, y: 150, width: 220, height: 550, fill: "#edf3fb", align: "left", vertical: "top" },
-      { id: "ux-name", labelId: "ux-name-label", text: "Display name\nSam", x: 340, y: 170, width: 450, height: 100, fill: "#ffffff", align: "left" },
-      { id: "ux-email", labelId: "ux-email-label", text: "Email\nsam@example.test", x: 340, y: 300, width: 450, height: 100, fill: "#ffffff", align: "left" },
-      { id: "ux-notify", labelId: "ux-notify-label", text: "Notifications\n[ ] Email me updates", x: 340, y: 430, width: 450, height: 100, fill: "#ffffff", align: "left" },
-      { id: "ux-primary", labelId: "ux-primary-label", text: "Save", x: 360, y: 610, width: 250, height: 70, fill: "#d3ebda" },
-      { id: "ux-preview", labelId: "ux-preview-label", text: "Preview\n\nChanges shown here", x: 850, y: 420, width: 270, height: 250, fill: "#fff3bf" },
+      { id: "ux-screen", labelId: "ux-title", text: "Settings / rough UX sketch", x: 50, y: 60, width: 1130, height: 700, fill: "#ffffff", fontSize: 24, align: "left", vertical: "top" },
+      { id: "ux-nav", labelId: "ux-nav-label", text: "Workspace\n\nGeneral\nTeam\nNotifications", x: 80, y: 150, width: 220, height: 550, fill: "#f5f7fb", fontSize: 16, stroke: "#52657a", align: "left", vertical: "top" },
+      { id: "ux-name", labelId: "ux-name-label", text: "Display name\nSam", x: 340, y: 170, width: 450, height: 100, fill: "#ffffff", fontSize: 18, align: "left" },
+      { id: "ux-email", labelId: "ux-email-label", text: "Email\nsam@example.test", x: 340, y: 300, width: 450, height: 100, fill: "#ffffff", fontSize: 18, align: "left" },
+      { id: "ux-notify", labelId: "ux-notify-label", text: "Notifications\n[ ] Email me updates", x: 340, y: 430, width: 450, height: 100, fill: "#ffffff", fontSize: 18, align: "left" },
+      { id: "ux-primary", labelId: "ux-primary-label", text: "Save", x: 360, y: 610, width: 250, height: 70, fill: "#dbeafe", stroke: "#1d4ed8" },
+      { id: "ux-preview", labelId: "ux-preview-label", text: "Preview\n\nChanges shown here", x: 850, y: 420, width: 270, height: 250, fill: "#f5f7fb", fontSize: 18, stroke: "#52657a" },
     ];
     return batch(scene, [
       ...specifications.map((specification) => (s) => addLabeledBox(s, specification)),
@@ -63,7 +77,7 @@ if (resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
   try {
     const { values, positionals } = parseArgs({ allowPositionals: true, options: { read: { type: "string" }, out: { type: "string" } } });
     const recipe = Object.hasOwn(recipes, positionals[0]) ? recipes[positionals[0]] : null;
-    if (typeof recipe !== "function" || !values.read) throw new Error("Use flow|insert|rename|move|remove|ux|ux-edit --read <current-read.json> [--out edit.json].");
+    if (typeof recipe !== "function" || !values.read) throw new Error("Use branch|flow|insert|rename|move|remove|ux|ux-edit --read <current-read.json> [--out edit.json].");
     const current = JSON.parse((await readFile(values.read, "utf8")).replace(/^\uFEFF/, ""));
     if (typeof current.topicId !== "string" || typeof current.versionId !== "string" || current.sealed !== true || current.hasUnsealedChanges) {
       throw new Error("Use a fresh sealed read with topicId/versionId and no pending work; do not replace a stale precondition.");

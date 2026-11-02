@@ -5,7 +5,7 @@ export function flowElements() {
   for (const [index, title] of ["Idea", "Discuss", "Refine"].entries()) {
     const x = 80 + index * 310;
     elements.push({ id: `node-${index + 1}`, type: "rectangle", x, y: 180, width: 200, height: 100,
-      backgroundColor: index === 2 ? "#d3ebda" : "#dbe4ff", fillStyle: "solid", roughness: 0,
+      backgroundColor: index === 2 ? "#eff7f0" : "#edf3fb", fillStyle: "solid", strokeWidth: 1.5, roughness: 0,
       boundElements: [{ id: `label-${index + 1}`, type: "text" },
         ...(index ? [{ id: `arrow-${index}`, type: "arrow" }] : []),
         ...(index < 2 ? [{ id: `arrow-${index + 1}`, type: "arrow" }] : [])] });
@@ -13,7 +13,7 @@ export function flowElements() {
       text: title, fontSize: 20, fontFamily: 2, lineHeight: 1.15, textAlign: "center", verticalAlign: "middle",
       autoResize: false, containerId: `node-${index + 1}` });
     if (index < 2) elements.push({ id: `arrow-${index + 1}`, type: "arrow", x: x + 208.5, y: 230, width: 93, height: 0,
-      points: [[0, 0], [93, 0]], endArrowhead: "arrow", roughness: 0,
+      points: [[0, 0], [93, 0]], endArrowhead: "arrow", strokeWidth: 1.25, roughness: 0,
       startBinding: { elementId: `node-${index + 1}`, focus: 0, gap: 8 },
       endBinding: { elementId: `node-${index + 2}`, focus: 0, gap: 8 },
       customData: { [CONNECTOR_META]: { version: 1, fromId: `node-${index + 1}`, toId: `node-${index + 2}`,

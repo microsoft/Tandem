@@ -25,6 +25,11 @@ provides executable native recipes and deterministic operation helpers for
 flow edits, move/resize, insertion/rewire, explicit deletion, rough UX and a
 subsequent refinement. Load it on demand, not as a required visual workflow.
 Native shapes/text are the foundation; Mermaid is not a general UX solution.
+The original [visual authoring guide](references/visual-authoring.md) adds pattern
+selection, a small role-based palette, typography/spacing and an exact-seal
+visual review loop. The `branch` recipe makes an actual fork rather than another
+row of identical steps. These defaults apply to new agent-created structure,
+not a restyling of existing human content.
 
 ## Powered by Excalidraw
 
