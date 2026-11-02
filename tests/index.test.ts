@@ -69,3 +69,4 @@ import "./browser-process.test.js";
 import "./standalone-header.test.js";
 import "./role-suggestions.test.mjs";
 import "./permission-broker.test.js";
+import "./skill-plugins.test.mjs";

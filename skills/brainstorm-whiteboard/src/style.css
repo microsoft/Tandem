@@ -1,0 +1,17 @@
+* { box-sizing: border-box; }
+body { margin: 0; font-family: "Segoe UI", Arial, sans-serif; color: #293447; }
+.whiteboard { height: 100dvh; min-width: 320px; display: flex; flex-direction: column; }
+.whiteboard > header { min-height: 48px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 14px; background: #f5f3ed; border-bottom: 1px solid #deded7; font-size: 12px; }
+.whiteboard strong { font-size: 16px; }
+.memory { color: #9c4b14; font-size: 11px; }
+.version { margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 35vw; color: #657185; }
+.topic-control { display: flex; align-items: center; gap: 5px; font-size: 12px; }
+.topic-control select { font: inherit; max-width: 160px; padding: 6px; border: 1px solid #bcc9da; border-radius: 6px; background: white; }
+.whiteboard > main { flex: 1; min-height: 250px; }
+.whiteboard > header button, .whiteboard > footer button { font: inherit; padding: 7px 12px; border: 1px solid #bcc9da; border-radius: 6px; background: white; cursor: pointer; }
+.whiteboard > header button { background: #2b507e; color: white; }
+.whiteboard > header button.secondary { background: white; color: #293447; }
+.whiteboard button:disabled { opacity: 0.45; cursor: not-allowed; }
+.whiteboard > footer { padding: 7px 14px; background: #f5f3ed; font-size: 11px; min-height: 30px; }
+.whiteboard > footer[role="alert"] { color: #922f17; background: #fff0df; }
+.whiteboard > footer button { margin-left: 10px; }

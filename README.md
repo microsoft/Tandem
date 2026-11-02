@@ -25,6 +25,10 @@ The illustration above expresses that vision; it is not a product screenshot.
 
 ## 📰 News
 
+- **2026-11-02:** Meet [Brainstorm whiteboard](skills/brainstorm-whiteboard/README.md),
+  an optional, agent-neutral Excalidraw whiteboard where humans and agents can
+  edit, annotate and seal versions, then read factual changes. It complements
+  normal chat without replacing the Tandem framework.
 - **2026-10-29:** We are releasing **Tandem 0.0.16** today.
 
 <a id="see-tandem-in-action"></a>
