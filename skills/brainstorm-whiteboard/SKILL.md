@@ -341,5 +341,5 @@ Raster/HTML/embed objects are outside this first native-only prototype, not
 screenshots masquerading as editable drawings. Physical pen/touch and actual
 Claude Code/Codex sessions remain unqualified.
 
-The Excalidraw library catalog was suggested for later. Do not download or
-integrate library packs as part of this prototype.
+Excalidraw library packs are outside this prototype's scope. Do not download or
+integrate them as part of this skill.

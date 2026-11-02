@@ -100,46 +100,45 @@ own normal installation, access and tool-permission requirements.
 
 ### Plugin installation
 
-The commands below follow the official formats, but **native installation and
-discovery have not been executed**: neither Claude Code nor Codex is installed
-in the qualification environment. Use a host version with the cited plugin
-support; check its help if these commands are unavailable.
-
-Until [PR #76](https://github.com/microsoft/Tandem/pull/76) is merged, `main` does
-not contain this package. For review, obtain the feature checkout:
-
-```powershell
-git clone --branch liqul-skill-based-tandem --single-branch https://github.com/microsoft/Tandem.git tandem-whiteboard
-Set-Location tandem-whiteboard
-```
-
-From that checkout's **repository root**, select the appropriate host:
+Marketplace installation requires the catalogs to be available in the published
+repository source being registered. For the public marketplace, select your host:
 
 ```powershell
 # Claude Code
-claude plugin marketplace add .
+claude plugin marketplace add microsoft/Tandem
 claude plugin install brainstorm-whiteboard@tandem-skills
 claude plugin list
 
 # Codex (a build that provides the plugin commands below)
-codex plugin marketplace add .
+codex plugin marketplace add microsoft/Tandem
 codex plugin add brainstorm-whiteboard@tandem-skills
 codex plugin list --marketplace tandem-skills
 ```
 
-After the package is merged, each host's `plugin marketplace add microsoft/Tandem`
-can register the public repository instead; the install identifier is unchanged.
-A marketplace may fetch the repository as its catalog, but the selected plugin
-root is only `skills/brainstorm-whiteboard`, not the repository root.
+If the remote catalog is unavailable, register an existing checkout containing
+these manifests from its **repository root**, then install with the same identifier:
 
-Claude Code's optional native checks, **not run here**, are:
+```powershell
+claude plugin marketplace add .
+# Or, for Codex:
+codex plugin marketplace add .
+```
+
+These commands follow the official formats; **native host installation,
+discovery and activation remain unqualified**. Use a host version with the cited
+plugin support and check its help if a command is unavailable. A marketplace may
+fetch the repository as its catalog, but the selected plugin root is only
+`skills/brainstorm-whiteboard`, not the repository root.
+
+From a checkout containing the manifests, Claude Code also provides native
+validation commands:
 
 ```powershell
 claude plugin validate .
 claude plugin validate .\skills\brainstorm-whiteboard
 ```
 
-Prepare the runtime in the installed copy, then start a fresh chat. For example:
+Prepare the runtime in the plugin directory, then start a fresh chat. For example:
 
 > Help me compare two retry strategies. Explain the trade-offs in chat and use
 > Brainstorm whiteboard if an editable sketch helps. I may move or mark the
@@ -188,9 +187,9 @@ All runtime, authoring references and build inputs remain inside the plugin.
 | --- | --- |
 | Catalogs, manifest fields, paths and versions | Repository checks cover the one-skill scope, relative containment and clean extracted plugin subtree. |
 | Standalone runtime | Store/topic/authoring tests and existing isolated native-browser proofs; not changed by host metadata. |
-| Claude Code | Format and commands checked against official documentation; native validator, install, discovery and live-agent use not run. |
-| Codex | Format, resolver and commands checked against pinned official source; native CLI, discovery and live-agent use not run. |
-| Dependencies | Pinned graph unchanged; prior clean cached/offline setup passed. Online public-registry installation remains unverified because of environment TLS failure; no TLS checks were relaxed. |
+| Claude Code | Format and commands follow official documentation; native validation, installation, discovery and live-agent use remain unqualified. |
+| Codex | Format, resolver and commands follow pinned official source; native installation, discovery and live-agent use remain unqualified. |
+| Dependencies | Pinned by `package-lock.json`; runtime preparation is separate from plugin discovery. |
 
 Official references:
 [Claude manifests](https://code.claude.com/docs/en/plugins-reference),
@@ -202,8 +201,8 @@ Codex
 [skill roots](https://github.com/openai/codex/blob/05c08d76552371400d273d4539c2a116d6340755/codex-rs/core-plugins/src/loader.rs),
 [plugin commands](https://github.com/openai/codex/blob/05c08d76552371400d273d4539c2a116d6340755/codex-rs/cli/src/plugin_cmd.rs) and
 [marketplace commands](https://github.com/openai/codex/blob/05c08d76552371400d273d4539c2a116d6340755/codex-rs/cli/src/marketplace_cmd.rs).
-The Codex documentation site returned HTTP 403 here; the source links, not a
-third-party example, are the authority used for these fields and commands.
+The pinned official Codex source defines the legacy manifest compatibility used
+by this package.
 
 For repository maintainers, root `package.json` remains the single release-version
 source; the plugin versions are checked copies, not a separate release channel.
@@ -216,7 +215,7 @@ node --test tests\skill-plugins.test.mjs
 ```
 
 These are repository-only maintenance checks; standalone `npm test` never needs
-the Tandem root or its version script. This packaging change does not bump a release.
+the Tandem root or its version script.
 
 ## Run without the full framework
 
@@ -526,8 +525,8 @@ automatic eviction until the service stops; this is not a production retention
 or memory-budget policy.
 
 The LLM interprets changes; no semantic intent engine is implemented.
-https://libraries.excalidraw.com/ is deferred; no library packs are included or
-downloaded. Physical pen/touch and real Claude Code/Codex runtime use are untested.
+No Excalidraw library packs are included or downloaded. Physical pen/touch and
+real Claude Code/Codex runtime use are untested.
 The prototype has an npm/browser setup and does not claim zero setup.
 Named pages do not add persistence, source attachments, topic deletion/rename,
 branch/merge or simultaneous editing guarantees. Switching is not a seal or
@@ -557,21 +556,14 @@ npm run build -- --outDir dist-test
 node scripts\prove.mjs --out "<explicit-evidence-directory>"
 ```
 
-`prove` **always** creates an isolated temporary RAM service; it cannot accept a
-public review URL. It closes the service and owned browsers in `finally`.
+`prove` **always** creates an isolated temporary RAM service; it cannot accept an
+existing board URL. It closes the service and owned browsers in `finally`.
 It reaches the real native text editor, edits/moves/resizes a bound node, draws
 ink, checks the pre-seal V1 pending read, seals V2 through the UI, checks factual
 changes/immutable V1/matching PNG pixels, rejects stale/invalid atomic batches,
 checks camera/selection noise, and forces a peer race to verify local preservation.
-No live model or paid/native agent journey is run.
-
-A separate clean-start smoke check exercises the documented CLI in a fresh
-temporary service: startup URL/health, empty sealed read, a bound native diagram
-edit/seal, exact sealed read with baseline diff and matching PNG. It uses existing
-installed dependencies and separate qualified assets, then stops its owned
-service/browser processes. This is command/browser smoke evidence, **not** a
-clean LLM-agent session, skill-discovery evaluation or Claude Code/Codex
-qualification. Activation examples are guidance, not a brittle prose test.
+These are deterministic browser/API checks, not live-agent or host-activation
+evaluations.
 
 The focused Reset/Fit checks use separate assets and a temporary RAM service:
 
@@ -584,8 +576,8 @@ node scripts\prove-snapshot.mjs --out "<explicit-evidence-directory>"
 They exercise fresh/last-seal restoration, no-op/cancel, canonical content and
 immutable seals, working/latest-seal races, pending native edits, actual
 whole-diagram fit including distant text/ink despite selection, unchanged
-content/version and a narrow header. All owned test browsers/services close
-afterward; no held review or installed copy is exercised.
+content/version and a narrow header. The scripts create their own service and
+browser resources and close them afterward.
 Snapshot checks additionally cover actual API/CLI default/exact targets,
 captured-once behavior during a newer seal, pending flags, missing/unsealed
 errors, all-diagram PNG pixels independent of selection/viewport, no mutation
@@ -601,11 +593,11 @@ node scripts\prove-topics.mjs --out "<explicit-evidence-directory>"
 It exercises UI/CLI create/list, explicit and fixed-default routing, identical
 native IDs in independent drawings, separate pending/seals/diffs/PNG captures,
 draft-preserving round-trip switches, stale/cross-topic rejection, selected-page
-Reset/Fit, in-flight topic identity and conflicted-local preservation. It starts
-no persistent review server and closes its owned temporary service/browsers.
+Reset/Fit, in-flight topic identity and conflicted-local preservation. It closes
+its owned temporary service/browsers without leaving a server running.
 
 The authoring reference/cookbook proof runs the real emitted request payloads
-through isolated store/API topics and exercises a native UX sketch in Edge:
+through isolated store/API topics and exercises a native UX sketch in a browser:
 
 ```powershell
 npm run build -- --outDir dist-authoring
@@ -617,21 +609,16 @@ unchanged unrelated metadata/ink/groups/frame membership, unsupported-helper
 failures, stable IDs/diffs/seals, actual bound UX text editing and a human button
 move, then an agent refinement that preserves the human's name/ink and
 unexplained `new` box. The PNG is Excalidraw rendering of native objects, not a
-website screenshot. The helper is stopped after the proof; no held review or
-installed skill is contacted. This is local command/browser evidence, not a
-clean LLM-agent session or runtime-portability qualification.
+website screenshot. The proof closes its own service/browser resources afterward.
+This tests native construction and editing, not live-agent use or host portability.
 
 Explicit evidence files are test exports, not a persistence implementation.
-During review the public service/bundle can be held unchanged while private
-`dist-test` and temporary servers qualify newer source; do not redeploy/restart a
-held RAM board without acknowledging that its working/sealed versions would be lost.
 
-For an explicitly requested fresh development preview while holding another
-review instance, build to a different directory and serve that directory:
+To serve an explicit development build directory:
 
 ```powershell
-npm run build -- --outDir dist-review
-node scripts\whiteboard.mjs serve --assets dist-review
+npm run build -- --outDir dist-preview
+node scripts\whiteboard.mjs serve --assets dist-preview
 ```
 
 This is startup tooling, not a product session/workspace management feature.
