@@ -1,0 +1,28 @@
+{
+  "name": "@tandem/optional-whiteboard-prototype",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24.15.0" },
+  "scripts": {
+    "assets": "node scripts/assets.mjs",
+    "check": "tsc --noEmit",
+    "prebuild": "npm run assets",
+    "build": "tsc --noEmit && vite build --logLevel warn",
+    "start": "node scripts/whiteboard.mjs serve",
+    "test": "node --test tests/store.test.mjs tests/topics.test.mjs tests/authoring.test.mjs",
+    "prove": "node scripts/prove.mjs"
+  },
+  "dependencies": {
+    "@excalidraw/excalidraw": "0.18.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "@types/node": "26.3.0",
+    "@types/react": "18.3.20",
+    "@types/react-dom": "18.3.6",
+    "typescript": "7.0.2",
+    "vite": "8.3.5"
+  }
+}
