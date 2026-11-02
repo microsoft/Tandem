@@ -1,0 +1,13 @@
+{
+  "name": "tandem-skills",
+  "owner": {
+    "name": "Tandem contributors"
+  },
+  "plugins": [
+    {
+      "name": "brainstorm-whiteboard",
+      "source": "./skills/brainstorm-whiteboard",
+      "description": "An optional Excalidraw whiteboard that humans and agents edit together alongside chat."
+    }
+  ]
+}

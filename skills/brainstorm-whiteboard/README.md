@@ -78,6 +78,141 @@ turn. A stopped RAM instance loses its versions; an old URL/export is not a
 restored session. Without host browser/image tools, give the real URL and state
 what cannot be inspected. Do not claim successful rendering from JSON alone.
 
+## Install for Claude Code, Codex or another agent
+
+There is **one canonical skill and runtime in this folder**. The two plugin
+manifests point directly to its `SKILL.md`; neither installs the Tandem framework
+or the repository's other skills. The repository-level `tandem-skills` catalogs
+list only `brainstorm-whiteboard`. No provider backend, MCP server, hooks,
+accounts or automatic service startup are added.
+
+**Plugin discovery is not runtime setup.** Installation makes the instructions
+available to the host; it does not install npm dependencies, build the editor,
+prepare a PNG browser or start a board. Resolve the host's actual installed
+plugin directory and follow [Run without the full framework](#run-without-the-full-framework)
+there. The whiteboard requires no Copilot account; the chosen agent still has its
+own normal installation, access and tool-permission requirements.
+
+### Plugin installation
+
+The commands below follow the official formats, but **native installation and
+discovery have not been executed**: neither Claude Code nor Codex is installed
+in the qualification environment. Use a host version with the cited plugin
+support; check its help if these commands are unavailable.
+
+Until [PR #76](https://github.com/microsoft/Tandem/pull/76) is merged, `main` does
+not contain this package. For review, obtain the feature checkout:
+
+```powershell
+git clone --branch liqul-skill-based-tandem --single-branch https://github.com/microsoft/Tandem.git tandem-whiteboard
+Set-Location tandem-whiteboard
+```
+
+From that checkout's **repository root**, select the appropriate host:
+
+```powershell
+# Claude Code
+claude plugin marketplace add .
+claude plugin install brainstorm-whiteboard@tandem-skills
+claude plugin list
+
+# Codex (a build that provides the plugin commands below)
+codex plugin marketplace add .
+codex plugin add brainstorm-whiteboard@tandem-skills
+codex plugin list --marketplace tandem-skills
+```
+
+After the package is merged, each host's `plugin marketplace add microsoft/Tandem`
+can register the public repository instead; the install identifier is unchanged.
+A marketplace may fetch the repository as its catalog, but the selected plugin
+root is only `skills/brainstorm-whiteboard`, not the repository root.
+
+Claude Code's optional native checks, **not run here**, are:
+
+```powershell
+claude plugin validate .
+claude plugin validate .\skills\brainstorm-whiteboard
+```
+
+Prepare the runtime in the installed copy, then start a fresh chat. For example:
+
+> Help me compare two retry strategies. Explain the trade-offs in chat and use
+> Brainstorm whiteboard if an editable sketch helps. I may move or mark the
+> sketch to show what I mean.
+
+Claude Code plugin skills use namespaced commands; this one is
+`/brainstorm-whiteboard:brainstorm-whiteboard`. Natural requests can also activate
+the skill when useful. Neither host discovery nor automatic activation has been
+qualified in a fresh native-agent session.
+
+### Local folder / offline-copy fallback
+
+Copy **this entire folder**, including hidden `.claude-plugin` / `.codex-plugin`
+metadata, references, helpers, package lock and `LICENSE.txt`, to a directory you
+control. Do not copy every skill in the repository or just `SKILL.md`. No symlink
+to the Tandem checkout is needed.
+
+Claude Code can load that folder for one session without a marketplace:
+
+```powershell
+claude --plugin-dir "<whiteboard-folder>"
+```
+
+For Codex versions without plugin commands, or another agent including Copilot,
+use that host's documented standalone-skill installation method with only this
+folder. If it supports explicit local instruction files, ask it to read
+`<whiteboard-folder>\SKILL.md`. This is a manual fallback, not a claim of automatic
+discovery. Do not install both forms in one host and create duplicate skills.
+
+An offline folder copy still needs already prepared dependencies, built assets
+and a suitable browser to run offline. A source-only copy needs registry access
+for `npm ci`; nothing here bundles `node_modules` or downloads libraries on
+plugin discovery.
+
+### Packaging contract and qualification
+
+Claude Code reads `.claude-plugin/plugin.json` inside the plugin root;
+`skills: "./"` addresses this folder's own `SKILL.md`. Codex reads
+`.codex-plugin/plugin.json`; `skills: "./."` resolves to the same folder.
+Its legacy manifest resolver rejects the empty relative tail in `"./"`, so that
+spelling is intentionally different. Both catalog sources resolve from the
+**repository/marketplace root**, not their hidden metadata directories.
+All runtime, authoring references and build inputs remain inside the plugin.
+
+| Surface | Evidence / limit |
+| --- | --- |
+| Catalogs, manifest fields, paths and versions | Repository checks cover the one-skill scope, relative containment and clean extracted plugin subtree. |
+| Standalone runtime | Store/topic/authoring tests and existing isolated native-browser proofs; not changed by host metadata. |
+| Claude Code | Format and commands checked against official documentation; native validator, install, discovery and live-agent use not run. |
+| Codex | Format, resolver and commands checked against pinned official source; native CLI, discovery and live-agent use not run. |
+| Dependencies | Pinned graph unchanged; prior clean cached/offline setup passed. Online public-registry installation remains unverified because of environment TLS failure; no TLS checks were relaxed. |
+
+Official references:
+[Claude manifests](https://code.claude.com/docs/en/plugins-reference),
+[marketplaces](https://code.claude.com/docs/en/plugin-marketplaces) and
+[local plugin loading](https://code.claude.com/docs/en/plugins/create.md);
+Codex
+[manifest/path resolution](https://github.com/openai/codex/blob/05c08d76552371400d273d4539c2a116d6340755/codex-rs/core-plugins/src/manifest.rs),
+[marketplace roots/sources](https://github.com/openai/codex/blob/05c08d76552371400d273d4539c2a116d6340755/codex-rs/core-plugins/src/marketplace.rs),
+[skill roots](https://github.com/openai/codex/blob/05c08d76552371400d273d4539c2a116d6340755/codex-rs/core-plugins/src/loader.rs),
+[plugin commands](https://github.com/openai/codex/blob/05c08d76552371400d273d4539c2a116d6340755/codex-rs/cli/src/plugin_cmd.rs) and
+[marketplace commands](https://github.com/openai/codex/blob/05c08d76552371400d273d4539c2a116d6340755/codex-rs/cli/src/marketplace_cmd.rs).
+The Codex documentation site returned HTTP 403 here; the source links, not a
+third-party example, are the authority used for these fields and commands.
+
+For repository maintainers, root `package.json` remains the single release-version
+source; the plugin versions are checked copies, not a separate release channel.
+After an intentional root version change, run from the repository root:
+
+```powershell
+node scripts\sync-skill-plugins.mjs
+node scripts\sync-skill-plugins.mjs --check
+node --test tests\skill-plugins.test.mjs
+```
+
+These are repository-only maintenance checks; standalone `npm test` never needs
+the Tandem root or its version script. This packaging change does not bump a release.
+
 ## Run without the full framework
 
 From this directory, with Node 24.15+ or Node 26+ and npm:
@@ -95,6 +230,10 @@ For a long-lived agent-hosted preview use that host's supported detached-service
 mechanism, not a workspace/session registry. Ctrl+C stops the owned foreground
 service. No root package, Copilot account/SDK, MCP integration or global agent
 installation is needed. Initial npm setup requires registry access.
+PNG snapshots additionally need installed Edge on Windows (the default) or
+prepared Playwright Chromium on other platforms (`npx playwright install chromium`
+after `npm ci`). The agent also needs image-reading tools to interpret a snapshot;
+a running local API alone does not provide vision.
 
 The service prints `{ service, instanceId, url, pid, memoryOnly: true }`.
 `node scripts\whiteboard.mjs health --url <url>` verifies its service identity;

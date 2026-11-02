@@ -1,0 +1,12 @@
+{
+  "name": "brainstorm-whiteboard",
+  "displayName": "Brainstorm whiteboard",
+  "version": "0.0.16",
+  "description": "An optional Excalidraw-powered whiteboard where humans and agents edit, annotate and seal drawings as peers. Chat stays self-contained.",
+  "author": {
+    "name": "Tandem contributors"
+  },
+  "repository": "https://github.com/microsoft/Tandem",
+  "license": "MIT",
+  "skills": "./"
+}

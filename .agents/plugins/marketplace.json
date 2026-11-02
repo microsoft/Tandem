@@ -1,0 +1,9 @@
+{
+  "name": "tandem-skills",
+  "plugins": [
+    {
+      "name": "brainstorm-whiteboard",
+      "source": "./skills/brainstorm-whiteboard"
+    }
+  ]
+}
