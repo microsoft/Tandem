@@ -530,6 +530,21 @@ approval. Production topic/scene memory budgets and retention remain undecided.
 
 ## Focused qualification
 
+The native synchronization regression covers API-sealed paths whose first point
+is not their bounding-box origin and explicit zero-width strokes:
+
+```powershell
+npm run build -- --outDir dist-native-sync
+node scripts\prove-native-sync.mjs --out "<explicit-evidence-directory>"
+```
+
+Mounting the editor, loading fonts, fitting/resizing the view, remote agent updates
+and exact-seal PNGs must not publish native restoration as human edits. The editor
+compares against its installed native projection while retaining the authoritative
+scene/version for guards, seals and Reset. Real human geometry, stroke and ink edits
+still create protected drafts; rebased line origins and points travel together.
+Pending means working content differs from the latest seal, not a particular actor.
+
 ```powershell
 npm run check
 npm test

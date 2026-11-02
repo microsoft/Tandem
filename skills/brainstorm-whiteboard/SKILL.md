@@ -234,6 +234,9 @@ Default/`"latest"` means the most recent **sealed** snapshot, never the draft.
 It resolves only within the addressed topic, as does `compareTo`.
 When a peer has newer unsealed work, still read the old seal with the pending
 flag; wait/discuss the next seal instead of overwriting unseen work.
+The flag compares working content with the latest seal; it does not identify who
+changed it. Keep the instance/topic and your actual edit/seal receipts together;
+an agent's own unsealed edit is not evidence that the human changed anything.
 
 Exact sealed IDs remain repeatable. Missing/unsealed target or comparison IDs
 fail explicitly; do not silently substitute another state or empty differences.

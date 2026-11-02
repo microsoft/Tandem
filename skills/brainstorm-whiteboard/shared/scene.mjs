@@ -162,6 +162,20 @@ export function operationsBetween(before, after) {
   }
   return operations;
 }
+export function editorOperationsBetween(before, after) {
+  const operations = operationsBetween(before, after);
+  const elements = new Map(after.elements.map((element) => [element.id, element]));
+  for (const operation of operations) {
+    if (operation.op !== "update") continue;
+    const element = elements.get(operation.id);
+    if (["line", "arrow"].includes(element.type) &&
+        ["x", "y", "width", "height", "angle", "points"].some((key) => key in operation.set)) {
+      // Native restoration rebases paths to their first point. Keep origin and points in one coordinate basis.
+      for (const key of ["x", "y", "width", "height", "angle", "points"]) operation.set[key] = element[key];
+    }
+  }
+  return operations;
+}
 export function latestSealedEdit(working, sealed) {
   if (!isRecord(sealed) || sealed.sealed !== true || typeof sealed.versionId !== "string" ||
       sealed.versionId !== working.latestSealedVersionId) {

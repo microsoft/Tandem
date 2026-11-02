@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { CaptureUpdateAction, Excalidraw, MainMenu, exportToBlob, restoreElements } from "@excalidraw/excalidraw";
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 import type { AppState, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
-import { canonicalScene, fingerprint, latestSealedEdit, operationsBetween } from "../shared/scene.mjs";
+import { canonicalScene, editorOperationsBetween, fingerprint, latestSealedEdit } from "../shared/scene.mjs";
 import "@excalidraw/excalidraw/index.css";
 import "./style.css";
 
@@ -29,7 +29,14 @@ function parseTopics(value: unknown): Topic[] {
     return { topicId: topic.topicId, name: topic.name };
   });
 }
-const nativeElements = (scene: Scene) => restoreElements(scene.elements as readonly ExcalidrawElement[], null, { repairBindings: true });
+const nativeElements = (scene: Scene) => {
+  // Excalidraw restoration treats zero as a missing stroke width; zero is explicit in our API.
+  const elements = scene.elements as readonly ExcalidrawElement[];
+  const zeroStroke = new Set(elements.filter((element) => element.strokeWidth === 0).map((element) => element.id));
+  return restoreElements(elements, null, { repairBindings: true })
+    .map((element) => zeroStroke.has(element.id) ? { ...element, strokeWidth: 0 } : element);
+};
+const editorScene = (scene: Scene) => canonicalScene({ elements: nativeElements(scene) });
 
 function Whiteboard() {
   const [api, setApi] = useState<ExcalidrawImperativeAPI | null>(null);
@@ -46,6 +53,8 @@ function Whiteboard() {
   const [conflict, setConflict] = useState(false);
   const [resetting, setResetting] = useState(false);
   const base = useRef<State | null>(null), local = useRef<Scene | null>(null), latest = useRef<State | null>(null);
+  // Compare user edits with the installed native projection, not its pre-restoration path origins.
+  const displayedBase = useRef<Scene | null>(null);
   const instance = useRef(""), inFlight = useRef(false), installing = useRef(false), blocked = useRef(false);
   const stream = useRef<EventSource | null>(null);
   const resubscribe = useRef<() => void>(() => {});
@@ -54,11 +63,12 @@ function Whiteboard() {
   const install = useCallback((next: State) => {
     if (next.topicId !== topicId.current) return;
     const changingTopic = !base.current || base.current.topicId !== next.topicId;
-    base.current = next; local.current = next.scene; setState(next);
+    const elements = nativeElements(next.scene);
+    base.current = next; displayedBase.current = canonicalScene({ elements }); local.current = displayedBase.current; setState(next);
     if (!apiRef.current) return;
     installing.current = true;
     const app = apiRef.current.getAppState();
-    apiRef.current.updateScene({ elements: nativeElements(next.scene), appState: {
+    apiRef.current.updateScene({ elements, appState: {
       isLoading: false,
       selectedElementIds: changingTopic ? {} : app.selectedElementIds,
       selectedGroupIds: changingTopic ? {} : app.selectedGroupIds,
@@ -78,17 +88,17 @@ function Whiteboard() {
   }, []);
 
   const flush = useCallback(async () => {
-    if (inFlight.current || blocked.current || !base.current || !local.current) return;
+    if (inFlight.current || blocked.current || !base.current || !displayedBase.current || !local.current) return;
     const sent = local.current, acknowledged = base.current;
-    const operations = operationsBetween(acknowledged.scene, sent);
+    const operations = editorOperationsBetween(displayedBase.current, sent);
     if (!operations.length) { setPending(false); return; }
     inFlight.current = true; setPending(true);
     stream.current?.close(); stream.current = null;
     try {
       const result = parseState(await post("edit", { expectedVersionId: acknowledged.versionId, operations }, acknowledged.topicId));
-      base.current = result; setState(result); setError(null);
+      base.current = result; displayedBase.current = editorScene(result.scene); setState(result); setError(null);
       if (fingerprint(local.current) === fingerprint(sent)) {
-        local.current = result.scene; setPending(false);
+        local.current = displayedBase.current; setPending(false);
       }
     } catch (failure) {
       blocked.current = true; setConflict(true); setPending(false);
@@ -96,7 +106,7 @@ function Whiteboard() {
     } finally {
       inFlight.current = false;
       resubscribe.current();
-      if (!blocked.current && base.current && local.current && fingerprint(local.current) !== fingerprint(base.current.scene)) {
+      if (!blocked.current && displayedBase.current && local.current && fingerprint(local.current) !== fingerprint(displayedBase.current)) {
         timer.current = setTimeout(() => void flush(), 50);
       }
     }
@@ -132,7 +142,7 @@ function Whiteboard() {
             setMessage(`Topic: ${incoming.topicName}. RAM only; switching keeps drafts and seals, but restart loses them.`);
             return;
           }
-          if (inFlight.current || local.current && fingerprint(local.current) !== fingerprint(base.current.scene)) return;
+          if (inFlight.current || displayedBase.current && local.current && fingerprint(local.current) !== fingerprint(displayedBase.current)) return;
           if (blocked.current) return;
           if (incoming.versionId !== base.current.versionId) install(incoming);
           else { base.current = incoming; setState(incoming); }
@@ -150,7 +160,7 @@ function Whiteboard() {
 
   useEffect(() => {
     const protect = (event: BeforeUnloadEvent) => {
-      if (blocked.current || inFlight.current || base.current && local.current && fingerprint(base.current.scene) !== fingerprint(local.current)) {
+      if (blocked.current || inFlight.current || displayedBase.current && local.current && fingerprint(displayedBase.current) !== fingerprint(local.current)) {
         event.preventDefault(); event.returnValue = "";
       }
     };
@@ -160,12 +170,12 @@ function Whiteboard() {
 
   const changed = useCallback((elements: readonly ExcalidrawElement[], appState: AppState) => {
     setInteracting(Boolean(appState.editingTextElement || appState.multiElement || appState.isResizing || appState.isRotating));
-    if (installing.current || !base.current) return;
+    if (installing.current || !base.current || !displayedBase.current) return;
     try {
       const scene = canonicalScene({ elements: elements.filter((element) => !element.isDeleted) });
       local.current = scene;
       if (blocked.current) { setPending(false); return; }
-      if (fingerprint(scene) === fingerprint(base.current.scene) && !inFlight.current) {
+      if (fingerprint(scene) === fingerprint(displayedBase.current) && !inFlight.current) {
         clearTimeout(timer.current); setPending(false); return;
       }
       setPending(true); clearTimeout(timer.current);
@@ -195,7 +205,7 @@ function Whiteboard() {
     } catch (failure) { setError(String(failure)); }
     finally {
       inFlight.current = false;
-      const dirty = Boolean(base.current && local.current && fingerprint(base.current.scene) !== fingerprint(local.current));
+      const dirty = Boolean(displayedBase.current && local.current && fingerprint(displayedBase.current) !== fingerprint(local.current));
       setPending(dirty);
       resubscribe.current();
       if (dirty && !blocked.current) timer.current = setTimeout(() => void flush(), 50);
@@ -206,7 +216,7 @@ function Whiteboard() {
     const inspected = base.current;
     const currentContent = () => canonicalScene({ elements: apiRef.current!.getSceneElements() });
     const inspectedContent = fingerprint(currentContent());
-    if (inspectedContent !== fingerprint(inspected.scene)) {
+    if (inspectedContent !== fingerprint(displayedBase.current)) {
       setError("Wait for this tab's edits to finish sending before resetting.");
       return;
     }
@@ -229,7 +239,7 @@ function Whiteboard() {
       }
       const result = parseState(await post("edit", edit, inspected.topicId));
       if (!unchangedLocalContent()) {
-        base.current = result; setState(result); keepLocal = true;
+        base.current = result; displayedBase.current = editorScene(result.scene); setState(result); keepLocal = true;
         throw new Error("Working content was reset, but newer local edits remain in this tab. Download them before reloading working state.");
       }
       install(result);
@@ -243,7 +253,7 @@ function Whiteboard() {
       setError(String(failure));
     } finally {
       inFlight.current = false; setResetting(false);
-      const dirty = Boolean(base.current && local.current && fingerprint(base.current.scene) !== fingerprint(local.current));
+      const dirty = Boolean(displayedBase.current && local.current && fingerprint(displayedBase.current) !== fingerprint(local.current));
       setPending(dirty && !blocked.current);
       resubscribe.current();
       if (dirty && !blocked.current) timer.current = setTimeout(() => void flush(), 50);
@@ -280,7 +290,7 @@ function Whiteboard() {
       setError("Finish the current canvas interaction before changing topics."); return false;
     }
     try {
-      if (fingerprint(canonicalScene({ elements: editor.getSceneElements() })) !== fingerprint(base.current.scene)) {
+      if (fingerprint(canonicalScene({ elements: editor.getSceneElements() })) !== fingerprint(displayedBase.current)) {
         setError("Wait for this topic's local edits to finish sending before changing topics."); return false;
       }
     } catch (failure) { setError(String(failure)); return false; }
@@ -291,7 +301,7 @@ function Whiteboard() {
     clearTimeout(timer.current);
     stream.current?.close(); stream.current = null;
     topicId.current = nextTopicId;
-    base.current = null; local.current = null; latest.current = null;
+    base.current = null; displayedBase.current = null; local.current = null; latest.current = null;
     setState(null); setError(null); setPending(false); setInteracting(false);
     apiRef.current?.history.clear();
     resubscribe.current();
@@ -318,7 +328,7 @@ function Whiteboard() {
     finally {
       inFlight.current = false; setCreating(false);
       resubscribe.current();
-      if (!blocked.current && base.current && local.current && fingerprint(local.current) !== fingerprint(base.current.scene)) {
+      if (!blocked.current && displayedBase.current && local.current && fingerprint(local.current) !== fingerprint(displayedBase.current)) {
         setPending(true); timer.current = setTimeout(() => void flush(), 50);
       }
     }

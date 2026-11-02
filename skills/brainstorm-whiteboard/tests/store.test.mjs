@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createBoard } from "../shared/store.mjs";
-import { canonicalScene, fingerprint, latestSealedEdit, operationsBetween } from "../shared/scene.mjs";
+import { canonicalScene, editorOperationsBetween, fingerprint, latestSealedEdit, operationsBetween } from "../shared/scene.mjs";
 import { flowElements } from "../scripts/example.mjs";
 
 function drawn() {
@@ -170,4 +170,29 @@ test("reset refuses newer working content or a newer seal even when the working 
   const newest = board.state();
   assert.throws(() => board.edit(nextRequest), /Working version changed/);
   assert.deepEqual(board.state(), newest);
+});
+test("native path edits keep rebased origins and points together without restyling unrelated source elements", () => {
+  const board = createBoard(), empty = board.read();
+  const added = board.edit({ expectedVersionId: empty.versionId, operations: [
+    { op: "add", element: { id: "path", type: "line", x: 200, y: 200, width: 100, height: 120,
+      points: [[100, 50], [30, 0], [0, 120]], customData: { keep: true } } },
+    { op: "add", element: { id: "fill", type: "ellipse", x: 420, y: 300, width: 70, height: 100, strokeWidth: 0 } },
+  ] });
+  board.seal({ expectedVersionId: added.versionId });
+  const displayed = canonicalScene({ elements: added.scene.elements.map((element) => element.id === "path"
+    ? { ...element, x: 300, y: 250, points: [[0, 0], [-70, -50], [-100, 70]] } : element) });
+  assert.deepEqual(editorOperationsBetween(displayed, displayed), []);
+  const edited = structuredClone(displayed);
+  edited.elements[0].x += 30; edited.elements[0].y += 20;
+  const result = board.edit({ expectedVersionId: added.versionId, operations: editorOperationsBetween(displayed, edited) });
+  assert.deepEqual(result.scene.elements[0], edited.elements[0]);
+  assert.deepEqual(result.scene.elements[1], added.scene.elements[1]);
+  assert.deepEqual(result.scene.elements[0].points.map(([x, y]) => [x + result.scene.elements[0].x, y + result.scene.elements[0].y]),
+    added.scene.elements[0].points.map(([x, y]) => [x + added.scene.elements[0].x + 30, y + added.scene.elements[0].y + 20]));
+  assert.equal(result.hasUnsealedChanges, true);
+  assert.throws(() => board.seal({ expectedVersionId: added.versionId }), /Working version changed/);
+  assert.deepEqual(board.read({ target: added.versionId }).scene, added.scene);
+  const styled = structuredClone(edited); styled.elements[1].strokeWidth = 1;
+  const operations = editorOperationsBetween(edited, styled);
+  assert.equal(operations[0].set.strokeWidth, 1, "Real stroke edits must not be suppressed.");
 });
