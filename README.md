@@ -31,6 +31,13 @@ The illustration above expresses that vision; it is not a product screenshot.
   normal chat without replacing the Tandem framework.
 - **2026-10-29:** We are releasing **Tandem 0.0.16** today.
 
+**Brainstorm whiteboard: add a missing branch**
+
+![A user adds a missing branch to an editable review flow, then the agent reads the sealed change.](skills/brainstorm-whiteboard/media/diagram.gif)
+
+Automated replay of actual native UI/API edits, not a live LLM session or a
+real-human recording. [See all three whiteboard demos](skills/brainstorm-whiteboard/README.md#demos).
+
 <a id="see-tandem-in-action"></a>
 
 ## 🎬 See Tandem in action
