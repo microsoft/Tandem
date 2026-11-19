@@ -2,3 +2,5 @@
 /.github/extensions/tandem/** -text -whitespace
 # Preserve the recorded upstream DSL snapshot hashes across checkouts.
 /src/vendor/ui-dsl/** -text -whitespace
+# Keep the generated chat instructions identical to their canonical builder.
+/skills/requirements/SKILL.md text eol=lf

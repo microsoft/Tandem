@@ -4,6 +4,10 @@
     {
       "name": "brainstorm-whiteboard",
       "source": "./skills/brainstorm-whiteboard"
+    },
+    {
+      "name": "requirements",
+      "source": "./skills/requirements"
     }
   ]
 }

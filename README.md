@@ -74,6 +74,17 @@ example.
 
 ## 🚀 Get started
 
+**Portable skills:** [Requirements](skills/requirements/README.md) plans the complete
+currently identifiable question/prerequisite DAG up front, shows it in Mermaid
+chat, and clarifies one eligible decision at a time. No local runtime, Node/npm setup
+or full Tandem installation is needed; files are saved only on request. It and
+[Brainstorm whiteboard](skills/brainstorm-whiteboard/README.md) are independently
+consumable; neither requires the other or a mandatory pipeline.
+
+**Requirements demo:** [See the complete question DAG evolve](skills/requirements/README.md#demo)
+in an illustrative replay of rendered screenshots. Synthetic authored examples,
+not a native-agent recording or live-model evaluation.
+
 **Source preview:** the instructions below build this checkout; they do not
 install a published release. Use Windows with PowerShell, actual **Node 24.15+
 (24.x LTS) or Node 26+**, Git, and a Copilot account with the required model access.

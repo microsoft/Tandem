@@ -1,0 +1,11 @@
+{
+  "name": "requirements",
+  "version": "0.0.16",
+  "description": "Plan the complete question/prerequisite DAG up front in Mermaid chat, then ask one eligible question and revise affected decisions. No local runtime.",
+  "skills": "./.",
+  "interface": {
+    "displayName": "Requirements",
+    "shortDescription": "Complete question DAG, focused clarification",
+    "developerName": "Tandem contributors"
+  }
+}

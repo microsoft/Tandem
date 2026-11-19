@@ -1,0 +1,10 @@
+{
+  "name": "requirements",
+  "displayName": "Requirements",
+  "version": "0.0.16",
+  "description": "Plan the complete question/prerequisite DAG up front in Mermaid chat, then ask one eligible question and revise affected decisions. No local runtime.",
+  "author": { "name": "Tandem contributors" },
+  "repository": "https://github.com/microsoft/Tandem",
+  "license": "MIT",
+  "skills": "./"
+}
