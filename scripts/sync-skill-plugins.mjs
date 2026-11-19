@@ -8,6 +8,8 @@ if (typeof version !== "string" || !version.trim()) throw new Error("The root pa
 const manifests = [
   "skills/brainstorm-whiteboard/.claude-plugin/plugin.json",
   "skills/brainstorm-whiteboard/.codex-plugin/plugin.json",
+  "skills/requirements/.claude-plugin/plugin.json",
+  "skills/requirements/.codex-plugin/plugin.json",
 ];
 const entries = await Promise.all(manifests.map(async (path) => ({
   path, manifest: JSON.parse(await readFile(new URL(path, root), "utf8")),

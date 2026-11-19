@@ -8,6 +8,11 @@
       "name": "brainstorm-whiteboard",
       "source": "./skills/brainstorm-whiteboard",
       "description": "An optional Excalidraw whiteboard that humans and agents edit together alongside chat."
+    },
+    {
+      "name": "requirements",
+      "source": "./skills/requirements",
+      "description": "Plan a complete question/prerequisite DAG up front, then clarify one eligible decision at a time in chat."
     }
   ]
 }

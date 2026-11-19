@@ -25,6 +25,11 @@ The illustration above expresses that vision; it is not a product screenshot.
 
 ## 📰 News
 
+- **2026-11-19:** Introducing [Requirements](skills/requirements/README.md), a
+  standalone skill that helps you clarify a brief and confirm what you want in
+  your existing agent conversation. It joins Brainstorm whiteboard as an
+  independently usable Tandem skill. [Try the PR checkout](skills/requirements/README.md#getting-started)
+  while [#78](https://github.com/microsoft/Tandem/pull/78) is under review.
 - **2026-11-02:** Meet [Brainstorm whiteboard](skills/brainstorm-whiteboard/README.md),
   an optional, agent-neutral Excalidraw whiteboard where humans and agents can
   edit, annotate and seal versions, then read factual changes. It complements
@@ -73,6 +78,26 @@ example.
 <a id="get-started"></a>
 
 ## 🚀 Get started
+
+### Standalone skills: use your existing agent
+
+Choose a focused skill without installing the Tandem framework. Each works
+independently with the agent you already use; neither requires the other or a
+mandatory pipeline.
+
+| Skill | Choose it when you want to | Setup |
+| --- | --- | --- |
+| [Requirements](skills/requirements/README.md) | Turn a brief into a shared understanding: see the whole question graph, clarify one decision at a time, and confirm whether anything is missing. | [Load the static skill](skills/requirements/README.md#getting-started). No browser, local server or Node/npm setup. |
+| [Brainstorm whiteboard](skills/brainstorm-whiteboard/README.md) | Explain or refine an idea visually, with human and agent editing the same drawing. | [Set up the standalone board](skills/brainstorm-whiteboard/README.md#get-started). Uses Node, npm and a browser; no full Tandem installation. |
+
+Both skills retain your chosen agent's account, tool permissions and host
+limitations; they do not require a separate Copilot account or the framework's
+runtime. Requirements is available from the PR checkout before merge; its guide
+separates that local preview from post-merge marketplace installation.
+[See its illustrative walkthrough](skills/requirements/README.md#demo) for how
+the question graph evolves; the skill itself runs in your conversation.
+
+### Full Tandem framework: source preview
 
 **Source preview:** the instructions below build this checkout; they do not
 install a published release. Use Windows with PowerShell, actual **Node 24.15+

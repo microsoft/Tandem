@@ -8,6 +8,11 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const skillPath = join("skills", "brainstorm-whiteboard");
+const requirementPath = join("skills", "requirements");
+const chatFiles = [
+  ".claude-plugin/plugin.json", ".codex-plugin/plugin.json", "LICENSE.txt", "README.md", "SKILL.md",
+].map(path => join(...path.split("/"))).sort();
+const chatDocumentationFiles = [join("media", "requirements-question-dag.gif")];
 const hosts = [
   { catalog: ".claude-plugin/marketplace.json", manifest: ".claude-plugin/plugin.json", skills: "./" },
   { catalog: ".agents/plugins/marketplace.json", manifest: ".codex-plugin/plugin.json", skills: "./." },
@@ -43,12 +48,12 @@ async function temporary(t) {
   return directory;
 }
 
-async function checkPlugin(directory, version) {
+async function checkPlugin(directory, version, name = "brainstorm-whiteboard", includeDocumentationMedia = true) {
   const files = await sourceFiles(directory);
   assert.deepEqual(files.filter((path) => path.endsWith("SKILL.md")), ["SKILL.md"], "Only one canonical skill is shipped.");
   for (const host of hosts) {
     const manifest = await json(join(directory, host.manifest));
-    assert.equal(manifest.name, "brainstorm-whiteboard");
+    assert.equal(manifest.name, name);
     assert.equal(manifest.version, version);
     assert.equal(typeof manifest.description, "string");
     assert.ok(manifest.description.length);
@@ -69,7 +74,22 @@ async function checkPlugin(directory, version) {
     }
   }
   assert.ok(!files.some((path) => path.startsWith(`skills${sep}`)), "No default sub-skill scan or duplicate implementation.");
-  for (const path of [
+  if (name === "requirements") {
+    assert.deepEqual(files, [...chatFiles, ...(includeDocumentationMedia ? chatDocumentationFiles : [])].sort(),
+      "Five static core files plus only the explicitly allowed optional documentation media.");
+    assert.deepEqual((await readdir(directory)).sort(), [
+      ".claude-plugin", ".codex-plugin", "LICENSE.txt", "README.md", "SKILL.md", ...(includeDocumentationMedia ? ["media"] : []),
+    ].sort(),
+      "No hidden runtime, package installer, listener, scripts or dependency directory is required.");
+    if (includeDocumentationMedia) {
+      assert.deepEqual(await readdir(join(directory, "media")), ["requirements-question-dag.gif"], "No capture scripts or raw frames are distributed.");
+      const gif = await readFile(join(directory, chatDocumentationFiles[0]));
+      assert.match(gif.subarray(0, 6).toString("ascii"), /^GIF8[79]a$/, "The optional demo is an actual GIF, not executable content.");
+    }
+  }
+  for (const path of name === "requirements" ? [
+    "LICENSE.txt", "README.md", "SKILL.md",
+  ] : [
     "LICENSE.txt", "package.json", "package-lock.json", "index.html", "tsconfig.json", "vite.config.ts",
     "server.mjs", "src/main.tsx", "src/style.css", "scripts/assets.mjs", "scripts/whiteboard.mjs",
     "scripts/cookbook.mjs", "scripts/example.mjs", "shared/authoring.mjs",
@@ -87,6 +107,9 @@ async function checkPlugin(directory, version) {
     for (const link of links) {
       const target = contained(directory, `./${relative(directory, resolve(directory, dirname(path), link)).split(sep).join("/")}`);
       const local = relative(directory, target);
+      if (name === "requirements" && !includeDocumentationMedia && path === "README.md" && chatDocumentationFiles.includes(local)) {
+        continue; // Core-only consumers may omit the README's illustrative media, never skill instructions.
+      }
       // These contained resources are prepared by npm ci/build, not shipped as source.
       const top = local.split(sep)[0];
       if (top === "node_modules" || top === "dist" || top.startsWith("dist-") || local.startsWith(join("public", "excalidraw") + sep)) continue;
@@ -96,18 +119,44 @@ async function checkPlugin(directory, version) {
   return files;
 }
 
-test("Claude and Codex catalogs resolve exactly the canonical whiteboard from the repository root", async () => {
+test("Claude and Codex catalogs select independently contained canonical skills", async () => {
   const { version } = await json(join(root, "package.json"));
   for (const host of hosts) {
     const catalog = await json(join(root, host.catalog));
     assert.equal(catalog.name, "tandem-skills");
-    assert.deepEqual(catalog.plugins.map(({ name }) => name), ["brainstorm-whiteboard"]);
+    assert.deepEqual(catalog.plugins.map(({ name }) => name), ["brainstorm-whiteboard", "requirements"]);
     assert.equal(catalog.plugins[0].source, "./skills/brainstorm-whiteboard");
     assert.equal(contained(root, catalog.plugins[0].source), join(root, skillPath));
+    assert.equal(contained(root, catalog.plugins[1].source), join(root, requirementPath));
     if (host.catalog.startsWith(".claude-plugin")) assert.equal(typeof catalog.owner.name, "string");
   }
   await checkPlugin(join(root, skillPath), version);
+  await checkPlugin(join(root, requirementPath), version, "requirements");
   execFileSync(process.execPath, [join(root, "scripts", "sync-skill-plugins.mjs"), "--check"]);
+});
+
+test("Requirements copied subtree is complete static chat content with no executable consumption dependency", async t => {
+  const extracted = await temporary(t);
+  const original = join(root, requirementPath);
+  for (const file of await sourceFiles(original)) {
+    await mkdir(dirname(join(extracted, file)), { recursive: true });
+    await copyFile(join(original, file), join(extracted, file));
+  }
+  const { version } = await json(join(root, "package.json"));
+  await checkPlugin(extracted, version, "requirements");
+  for (const file of [...chatFiles, ...chatDocumentationFiles]) {
+    assert.deepEqual(await readFile(join(extracted, file)), await readFile(join(original, file)),
+      `The copied skill preserves ${file} without generation or startup.`);
+  }
+  const coreOnly = await temporary(t);
+  for (const file of chatFiles) {
+    await mkdir(dirname(join(coreOnly, file)), { recursive: true });
+    await copyFile(join(original, file), join(coreOnly, file));
+  }
+  await checkPlugin(coreOnly, version, "requirements", false);
+  assert.deepEqual(await readFile(join(coreOnly, "SKILL.md")), await readFile(join(extracted, "SKILL.md")),
+    "Omitting optional demo media leaves the complete canonical instructions unchanged.");
+  execFileSync(process.execPath, ["--import", "tsx", "scripts/build-requirements-skill.ts", "--check"], { cwd: root, encoding: "utf8" });
 });
 
 test("a clean extracted plugin subtree retains both manifests, all resources and standalone tests without Tandem", async (t) => {
@@ -139,6 +188,9 @@ test("root release version is checked and explicitly synchronized without changi
     const path = join(fixture, skillPath, host.manifest);
     await mkdir(dirname(path), { recursive: true });
     await copyFile(join(root, skillPath, host.manifest), path);
+    const requirement = join(fixture, requirementPath, host.manifest);
+    await mkdir(dirname(requirement), { recursive: true });
+    await copyFile(join(root, requirementPath, host.manifest), requirement);
   }
   const before = await Promise.all(hosts.map((host) => json(join(fixture, skillPath, host.manifest))));
   const failed = spawnSync(process.execPath, [script, "--check"], { encoding: "utf8" });
@@ -150,6 +202,7 @@ test("root release version is checked and explicitly synchronized without changi
   for (const [index, host] of hosts.entries()) {
     const manifest = await json(join(fixture, skillPath, host.manifest));
     assert.deepEqual(manifest, { ...before[index], version: "9.8.7" });
+    assert.equal((await json(join(fixture, requirementPath, host.manifest))).version, "9.8.7");
   }
 });
 

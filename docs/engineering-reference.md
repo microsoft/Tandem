@@ -33,6 +33,53 @@ Design. Development owns canonical Design, confirmed implementation and
 Review, using its original Design/Conversation UI and native role workflow.
 The former Design, Plan, Implement and Test stage engine is retired.
 
+## Portable Requirements skill
+
+The optional [Requirements skill](../skills/requirements/README.md) is pure chat:
+it plans the complete currently identifiable question/prerequisite DAG from
+accepted intent before the first clarification. Blocked descendants already have
+complete questions, rationales, choices/recommendations and free-text routes.
+The primary Mermaid diagram contains questions, not scope/feature containment.
+Every substantive iteration shows the full current DAG, including answered,
+ready, blocked and applicable review/deferral states, with a short text delta.
+Actual answers revise only affected descendants; corrections reopen old
+descendant answers with their exact history while independent decisions survive.
+New nodes require genuinely new accepted information, not a one-question-per-turn
+planning policy. Native framework DAG/answer prompts remain separate and unchanged.
+Each active clarification turn then asks one consequential question needed now
+or explicitly requests confirmation, rather than ending at unresolved items.
+Actual pause/deferral, unavailable interaction, status-only turns and completed
+confirmation remain exceptions. Passive thick-border styling plus FOCUS text
+marks one eligible question; accompanying text marks whole-DAG review
+without changing its ID/status or implying acceptance.
+Overall graph confirmation does not implicitly accept every proposal or
+authorize implementation. The skill requires no browser, local service, listener,
+runtime installation, Copilot account or other phase. Native host question
+tools are preferred when available; ordinary chat is the fallback.
+
+Research also supports comprehension: confusion or an unfamiliar term pauses
+the affected decision for proportionate lookup through existing permitted host
+tools/material, a brief sourced explanation, and resumption of the same decision.
+It does not create terminology nodes or accept intent; new evidence only revises
+affected definitions/readiness. Missing access and uncertainty remain explicit.
+Final confirmation includes one completeness question asking whether everything
+the user wants is covered or needs additions/changes. Additions extend the existing
+full DAG with all newly identifiable questions together, preserving unaffected
+answers/history; completeness is revisited after addressing them. Explicit
+completion closes the loop without promoting unaccepted items or authorizing code.
+
+`buildRequirementsSkill()` in `src/planning-prompts.ts` is the canonical source.
+Root `npm run build:requirements` generates the static `skills/requirements/SKILL.md`;
+`node --import tsx scripts\build-requirements-skill.ts --check` checks exact agreement.
+These are maintainer commands, not consumer prerequisites. Catalog versions
+remain derived from root `package.json`; the copied skill ships no executable
+runtime. Packaging tests are not model-quality or host-activation evidence.
+
+Retention is controlled by the host, not a skill-owned RAM service. Files are
+saved only on explicit request. Requirements confirmation is not implementation
+permission. The previous portable-web experiment is not shipped with this chat
+skill; the full framework and whiteboard retain their own independent behavior.
+
 ## Standalone Node/browser app
 
 Use the [source quick start](quick-start.md#1-launch-the-source-preview) for
