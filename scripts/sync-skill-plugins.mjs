@@ -10,6 +10,8 @@ const manifests = [
   "skills/brainstorm-whiteboard/.codex-plugin/plugin.json",
   "skills/requirements/.claude-plugin/plugin.json",
   "skills/requirements/.codex-plugin/plugin.json",
+  "skills/ui-design/.claude-plugin/plugin.json",
+  "skills/ui-design/.codex-plugin/plugin.json",
 ];
 const entries = await Promise.all(manifests.map(async (path) => ({
   path, manifest: JSON.parse(await readFile(new URL(path, root), "utf8")),

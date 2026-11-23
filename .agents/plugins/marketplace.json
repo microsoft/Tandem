@@ -8,6 +8,10 @@
     {
       "name": "requirements",
       "source": "./skills/requirements"
+    },
+    {
+      "name": "ui-design",
+      "source": "./skills/ui-design"
     }
   ]
 }

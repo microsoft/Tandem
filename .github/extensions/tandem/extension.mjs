@@ -8982,6 +8982,15 @@ function processMetrics(process2) {
 
 // src/planning-prompts.ts
 import { relative as relative3 } from "node:path";
+var uiDesignMethod = {
+  outline: "Plan the complete page structure and navigation before any page contents are generated.",
+  preserve: "These designs contain reviewed choices and user refinements. Patch only what the request or changed accepted requirements require.",
+  unchanged: "Retain unrelated screens, layout, styling, content, viewport sizes, annotations, stable IDs and transitions exactly.",
+  wireframe: "WIREFRAME FOCUS: confirm layout, meaningful content and navigation, not final appearance. The host supplies a neutral wireframe token kit; reuse it instead of emitting palette, font or radius tuning. Prefer standard semantic controls, clear primary actions and labeled image placeholders. Omit decorative icons, ornamental containers and duplicate sample rows. Include essential state/behavior annotations, not separate screens for every state. Do not spend this pass on branding or production polish.",
+  existing: "EXISTING DESIGN FOCUS: preserve the established components, appearance and reviewed choices. Do not downgrade existing designs to wireframes or restyle unrelated content.",
+  content: "Keep real task headings, action labels and enough representative content to judge the information hierarchy. Never replace meaningful labels with Button, H1 or lorem ipsum.",
+  navigation: "For click-through navigation, set Button.action or Link.destination to the exact outgoing transition ID. These links only preview the saved journey; they do not implement business logic."
+};
 var tandemWorkerInteractionRules = [
   "Tandem owns user interaction. Do not call ask_user, ask_user_question, or any",
   "other interactive question tool, open a question dialog, or request answers",
@@ -9301,7 +9310,7 @@ function buildSketchPrompt(args) {
     "The host owns persistence, rendering, revision history and explicit user approval.",
     "Emit one complete JSON object per line, without markdown or prose. The host previews each complete operation.",
     ...phase === "outline" ? [
-      "OUTLINE ONLY: Plan the complete page structure and navigation before any page contents are generated.",
+      `OUTLINE ONLY: ${uiDesignMethod.outline}`,
       "TITLE-FIRST ORDER: Emit upsert-screen metadata for ALL planned pages, with their final readable titles, before ANY ui edit.",
       "After all page metadata, emit every planned upsert-transition to describe the user journey, then done.",
       "Do not emit ui or screen-status operations. A separate content worker will fill this exact outline after the host displays it.",
@@ -9313,10 +9322,10 @@ function buildSketchPrompt(args) {
       "Then build one page at a time: emit screen-status processing, its UI edits, then screen-status ready before starting the next page."
     ] : [
       "INCREMENTAL UPDATE: The host has already loaded previousDocument as the editable baseline, including every existing screen and UI node.",
-      "These designs contain reviewed choices and user refinements. Patch only what the request or changed accepted requirements require.",
+      uiDesignMethod.preserve,
       "Do not emit a new outline for the whole app, recreate existing pages, or remove and rebuild their component trees.",
       "Use ui edits against existing node IDs. Emit upsert-screen only for new screens or changed screen metadata; it retains existing UI nodes.",
-      "Retain unrelated screens, layout, styling, content, viewport sizes, annotations, stable IDs and transitions exactly.",
+      uiDesignMethod.unchanged,
       "Emit screen-status processing only for a page you are changing, then ready when its requested changes are complete.",
       "If no UI changes are needed, re-emit one existing screen's metadata unchanged to retain the design under the new requirements binding."
     ],
@@ -9335,9 +9344,9 @@ function buildSketchPrompt(args) {
     "Never return a whole SketchDocument or redraw unchanged content to make a small edit.",
     `Effort: ${args.prototypeId}. Read-only project context: ${args.projectRoot}.`,
     "Build app UI views with the fixed UI DSL component catalog, grounded in the accepted requirements.",
-    fidelity === "wireframe" ? "WIREFRAME FOCUS: confirm layout, meaningful content and navigation, not final appearance. The host supplies a neutral wireframe token kit; reuse it instead of emitting palette, font or radius tuning. Prefer standard semantic controls, clear primary actions and labeled image placeholders. Omit decorative icons, ornamental containers and duplicate sample rows. Include essential state/behavior annotations, not separate screens for every state. Do not spend this pass on branding or production polish." : "EXISTING DESIGN FOCUS: preserve the established components, appearance and reviewed choices. Do not downgrade existing designs to wireframes or restyle unrelated content.",
-    "Keep real task headings, action labels and enough representative content to judge the information hierarchy. Never replace meaningful labels with Button, H1 or lorem ipsum.",
-    "For click-through navigation, set Button.action or Link.destination to the exact outgoing transition ID. These links only preview the saved journey; they do not implement business logic.",
+    fidelity === "wireframe" ? uiDesignMethod.wireframe : uiDesignMethod.existing,
+    uiDesignMethod.content,
+    uiDesignMethod.navigation,
     incremental ? "Use the existing screens and user journey as the baseline; reconcile only the required changes." : "Infer the primary screens and user journey from usages and answered decisions;",
     "the decision DAG is NOT a navigation graph. Do not create one screen per decision.",
     incremental ? "Keep the existing screen set unless the changed requirements call for adding or removing a screen; never exceed 8." : "Prefer a small complete primary journey (usually 2-4 screens), never more than 8.",
