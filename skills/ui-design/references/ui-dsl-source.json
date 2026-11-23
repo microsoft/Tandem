@@ -1,0 +1,17 @@
+{
+  "name": "chat-ui-dsl",
+  "version": "0.1.0",
+  "description": "Unmodified library snapshot; excludes the standalone canvas, host and persistence.",
+  "files": {
+    "agent.js": "a5133352f28eab2f4b8f149a4ec4902c8f7b606aceeac7bfdcbb064ce66ba498",
+    "catalog.js": "c3382228fa519584e98cf9551f7885f2a4356054e011bf95d928ea280f01584f",
+    "context.js": "92412ca749249cedfeecfd479c7ecbe2282388cfd72cf623c50498d050a10c7d",
+    "document.js": "81f471de2bbb35e4393da81974098cab7a8c992d472c79705c07debe929281ce",
+    "index.js": "a57fdafede1abff3dbb234f42a19d65a425c73f525246ed1a8632eadfe899ee9",
+    "lucide-icons.js": "c81cc32988f6393567fbec7c6a7c283fe9c6bc75a69f825335a0e0e836ec8ebb",
+    "lucide-LICENSE": "b495047bd93a9b06913511076f504daba17d5bbeb3e0650f3bb53a4220329c57",
+    "renderer.css": "1887beadda8404e942cb79dd10ce7ab5174969d69ace34cd783a90f5ea04837a",
+    "renderer.js": "221b4e142e61cd3f084c98365d2146dbecf4ffc0d950e3b42d5e8b6f5437d9d8",
+    "stream.js": "1ccba5cbf4dd7a9e648ae6e3b3abceb07e7fb44148eac1f8eccd84c9adff463f"
+  }
+}

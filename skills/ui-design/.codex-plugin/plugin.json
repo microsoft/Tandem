@@ -1,0 +1,11 @@
+{
+  "name": "ui-design",
+  "version": "0.0.16",
+  "description": "Discuss and revise stable UI wireframes in chat with a lightweight offline screen preview.",
+  "skills": "./.",
+  "interface": {
+    "displayName": "UI design",
+    "shortDescription": "Chat revisions with a wireframe preview",
+    "developerName": "Tandem contributors"
+  }
+}

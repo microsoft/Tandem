@@ -1,0 +1,16 @@
+:root { color-scheme: light; font: 15px/1.5 system-ui, sans-serif; color: #24292f; background: #f6f8fa; }
+body { max-width: 1280px; margin: auto; padding: 20px; }
+h1 { font-size: 22px; margin: 0 0 8px; }
+h2 { font-size: 18px; }
+p { margin: 8px 0 16px; }
+nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+button { font: inherit; color: inherit; background: white; border: 1px solid #8c959f; border-radius: 6px; padding: 6px 12px; cursor: pointer; min-height: 36px; }
+button[aria-pressed="true"] { background: #24292f; color: white; }
+button:focus-visible { outline: 3px solid #0969da; outline-offset: 2px; }
+article { overflow: auto; padding-bottom: 12px; }
+.frame { position: relative; overflow: hidden; background: white; outline: 1px solid #d0d7de; margin: 1px; }
+.surface { position: absolute; transform-origin: top left; overflow: auto; }
+#error { padding: 12px; border: 2px solid #cf222e; background: #fff1f1; }
+#status { color: #57606a; }
+[hidden] { display: none !important; }
+@media (max-width: 600px) { body { padding: 12px; } }

@@ -13,6 +13,11 @@
       "name": "requirements",
       "source": "./skills/requirements",
       "description": "Plan a complete question/prerequisite DAG up front, then clarify one eligible decision at a time in chat."
+    },
+    {
+      "name": "ui-design",
+      "source": "./skills/ui-design",
+      "description": "Discuss and revise UI wireframes in chat with a lightweight offline screen preview."
     }
   ]
 }

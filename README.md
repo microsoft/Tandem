@@ -25,6 +25,11 @@ The illustration above expresses that vision; it is not a product screenshot.
 
 ## 📰 News
 
+- **2026-11-23:** Introducing [UI design](skills/ui-design/README.md), a standalone
+  skill for discussing and revising interfaces in your existing coding-agent
+  chat or console. Review lightweight wireframes rendered with the same Tandem
+  UI DSL, then refine them without rebuilding reviewed work.
+  [See the console-and-wireframe walkthrough](skills/ui-design/README.md#demo).
 - **2026-11-19:** Introducing [Requirements](skills/requirements/README.md), a
   standalone skill that helps you clarify a brief and confirm what you want in
   your existing agent conversation. It joins Brainstorm whiteboard as an
@@ -77,15 +82,18 @@ example.
 ### Standalone skills: use your existing agent
 
 Choose a focused skill without installing the Tandem framework. Each works
-independently with the agent you already use; neither requires the other or a
+independently with the agent you already use; none requires another or a
 mandatory pipeline.
 
 | Skill | Choose it when you want to | Setup |
 | --- | --- | --- |
 | [Requirements](skills/requirements/README.md) | Turn a brief into a shared understanding: see the whole question graph, clarify one decision at a time, and confirm whether anything is missing. | [Install the skill](skills/requirements/README.md#getting-started). No browser, local server or Node/npm setup. |
+| [UI design](skills/ui-design/README.md) | Discuss wireframes in chat, review real screens and revise them without rebuilding reviewed work. | [Load the skill](skills/ui-design/README.md#load-the-skill). The offline preview helper uses existing Node 24+ and a browser; no server or npm setup. |
 | [Brainstorm whiteboard](skills/brainstorm-whiteboard/README.md) | Explain or refine an idea visually, with human and agent editing the same drawing. | [Set up the standalone board](skills/brainstorm-whiteboard/README.md#get-started). Uses Node, npm and a browser; no full Tandem installation. |
 
-Both skills retain your chosen agent's account, tool permissions and host
+[See UI design's console-and-wireframe walkthrough](skills/ui-design/README.md#demo).
+
+All skills retain your chosen agent's account, tool permissions and host
 limitations; they do not require a separate Copilot account or the framework's
 runtime. Requirements is available from the repository catalog on `main`; its
 guide also covers optional source-checkout loading.

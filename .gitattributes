@@ -4,3 +4,5 @@
 /src/vendor/ui-dsl/** -text -whitespace
 # Keep the generated chat instructions identical to their canonical builder.
 /skills/requirements/SKILL.md text eol=lf
+/skills/ui-design/** -text -whitespace
+/src/renderer/ui-design-preview.css text eol=lf
